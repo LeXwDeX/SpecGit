@@ -1,195 +1,170 @@
 # Troubleshooting
 
-Concrete fixes for concrete problems. Each entry names a symptom, explains the likely cause in a sentence, and gives you the fix. If you don't see your issue here, the [FAQ](faq.md) may help, and the [Discord](https://discord.gg/YctCnvvshC) definitely will.
+Concrete fixes for concrete problems. Most entries correspond to a diagnostic code — run with `--json` to see codes directly. If `specgit accept` exited `3`, fix the environment entries first; if it exited `1`, jump to the gate it named.
 
-## Installation and setup
+## Environment and setup
 
-### `openspec: command not found`
+### `not_a_git_repo` (exit 3)
 
-The CLI isn't installed, or your shell can't find it. Install it globally and check:
+You are not inside a git repository. SpecGit has no fallback mode — `cd` into one (root discovery is `git rev-parse --show-toplevel`; any subdirectory works).
 
-```bash
-npm install -g @fission-ai/openspec@latest
-openspec --version
-```
+### `git_unavailable`
 
-If it installed but still isn't found, your global npm bin directory probably isn't on your `PATH`. Run `npm prefix -g` to see where global packages live: on macOS and Linux the binaries are in that directory's `bin/`, and on Windows they sit directly in it. Make sure that path is on your `PATH`. (`npm bin -g` was removed in npm 9.)
+The `git` binary is missing or failing. Install git, then confirm `git status` works in the same shell.
 
-If you used the [AI-assisted install](installation.md#install-with-your-ai-assistant), this is the expected hand-off point: that prompt tells your assistant to show you the `PATH` change rather than edit your shell startup files itself.
+### `gh_missing` (exit 3)
 
-### "Requires Node.js 20.19.0 or higher"
+The GitHub CLI is not installed or not on `PATH`. Install `gh` (`brew install gh`, `gh` on your platform's package manager), then authenticate.
 
-OpenSpec runs on Node 20.19.0+. Check your version and upgrade if needed:
+### `gh_unauthenticated` (exit 3)
 
-```bash
-node --version
-```
-
-If you use bun to install OpenSpec, note that OpenSpec still *runs* on Node, so you need Node 20.19.0+ available on your `PATH` regardless. See [Installation](installation.md).
-
-### `openspec init` didn't configure my AI tool
-
-Init asks which tools to set up. If you skipped your tool or want to add another, just run it again, or use the non-interactive form:
+`gh` is installed but not signed in, or the session expired:
 
 ```bash
-openspec init --tools claude,cursor
+gh auth login
+gh auth status
 ```
 
-The full list of tool IDs is in [Supported Tools](supported-tools.md). Use `--tools all` for everything, `--tools none` to skip tool setup.
+SpecGit never reads or prints tokens — it relies entirely on your `gh` session.
 
-## Commands don't show up
+### `gh_transport` (exit 3)
 
-If `/opsx:propose` (or your tool's equivalent) doesn't appear or doesn't do anything, work down this list. They're ordered fastest-to-check first.
-
-1. **You may be in the wrong place.** Slash commands go in your AI assistant's chat, not your terminal. If you typed `/opsx:propose` into your shell, that's the issue. See [How Commands Work](how-commands-work.md).
-
-2. **Regenerate the files.** From your project root:
-
-   ```bash
-   openspec update
-   ```
-
-   This rewrites the skill and command files for every tool you've configured.
-
-   Instruction files come from the *installed* CLI, so an outdated CLI reports everything up to date without ever writing the newer workflows. `openspec update` now checks for that and offers to upgrade — take the offer if you see it.
-
-3. **Restart your assistant.** Most tools scan for skills and commands at startup. A fresh window often does it.
-
-4. **Confirm the files exist.** For Claude Code, check that `.claude/skills/` contains `openspec-*` folders. Other tools use their own directories, all listed in [Supported Tools](supported-tools.md).
-
-5. **Check you initialized this project.** Skills are written per project. If you cloned a repo or switched folders, run `openspec init` (or `openspec update`) there.
-
-6. **Confirm your tool supports command files.** Codex, CodeArts, ForgeCode, Hermes, Kimi Code, Mistral Vibe and the shared `.agents` target don't get generated `opsx-*` command files; they use skill-based invocations instead, so `/opsx` will never autocomplete for them. Type `$openspec-propose` in Codex, `/skill:openspec-propose` in Kimi Code, and `/openspec-propose` in the rest. The shared `.agents` target is vendor-neutral, so `/openspec-propose` is the common form rather than a guaranteed one — if your assistant does not answer to it, check its own docs for how it invokes a skill. Amazon Q does get command files, but loads them into its prompt library rather than its slash menu — type `@opsx-propose` there, not `/opsx`. Every tool's form is listed in [How To Invoke](supported-tools.md#how-to-invoke).
-
-## Working with changes
-
-### "Change not found"
-
-The command couldn't tell which change you meant. Name it explicitly, or check what exists:
+`gh` reached GitHub but the call failed (network, rate limit, server error, or the 15-second timeout). Retry; if it persists, run the same call by hand to see GitHub's message:
 
 ```bash
-openspec list                    # see active changes
-/opsx:apply add-dark-mode        # name the change in chat
+gh api repos/<owner>/<repo>
 ```
 
-Also confirm you're in the right project directory.
+Rate-limit responses usually self-heal after the window resets.
 
-### "No artifacts ready"
+### `no_origin` / `origin_unresolvable`
 
-Every artifact is either already created or blocked waiting on a dependency. See what's blocking:
+The repository has no `origin` remote, or it does not parse to a GitHub repository. Only `github.com` remotes resolve (HTTPS, SCP-style SSH, or `ssh://`). Check:
 
 ```bash
-openspec status --change <name>
+git remote get-url origin
 ```
 
-Then create the missing dependency first. Remember the order: proposal enables specs and design; specs and design together enable tasks.
+Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version.
 
-### `openspec validate` reports warnings or errors
+## Record and policy
 
-Validation checks your specs and changes for structural problems. Read the message: it names the file and the issue.
+### `record_missing`
+
+No `.specgit.yaml` at the repository root. Bind first: `specgit bind --delivery <id> --issue <n>`.
+
+### `record_invalid`
+
+The record failed validation. Read the message — it names the field. Typical causes: `version` is not `1`; `delivery` is not kebab-case; `context.kind` is neither `branch` nor `worktree`; `issues` contains non-positive numbers; a worktree `label` is a local path. Fix the named field; `specgit bind` rewrites the file safely.
+
+### `policy_missing`
+
+No `spec_git/policy.yaml`. Run `specgit init --required-check "<name>"` and commit the result.
+
+### `policy_invalid`
+
+The policy failed validation. The list of `required_checks` must be non-empty with non-empty names, and the file must not contain unknown keys (the policy schema is strict). Recreate it with `init` if in doubt.
+
+## Completeness
+
+### `issues_empty` (rejected)
+
+The record has no issues. Bind at least one GitHub issue number: `specgit bind --issue <n>`.
+
+### `pr_missing` (rejected)
+
+The record has no PR. Create the pull request and bind it: `specgit bind --pr <number-or-url>`.
+
+### `issue_ref_not_github` (bind fails)
+
+You tried to bind a non-GitHub reference (e.g. `JIRA-123`). Only GitHub issue numbers and issue URLs bind. If the work is tracked elsewhere, open a GitHub issue that links out to it and bind that number.
+
+## Context gates
+
+### `detached_head`
+
+HEAD is detached; there is no live branch to match. `git checkout <context-branch>` and re-run.
+
+### `branch_mismatch`
+
+The live branch differs from `context.branch`. You are in the wrong checkout for this record — switch branches, or if the branch was renamed, update the record's context with a fresh `specgit bind` on the new branch.
+
+### `worktree_mismatch`
+
+The record says `kind: worktree`, but the current checkout is not a linked worktree whose label resolves to the record's branch. Either run from the intended worktree (`git worktree list` shows them) or re-bind from this checkout so the context reflects reality.
+
+### `no_commits`
+
+The repository has no commits yet; there is no HEAD to evaluate. Make the first commit.
+
+## Issues and PR
+
+### `issue_not_found` (rejected)
+
+GitHub has no such issue number in this repository. Check for a typo in `issues` or a wrong repository origin.
+
+### `issue_is_pull_request` (rejected)
+
+A bound "issue" number is actually a pull request. Bind the tracking issue, not the PR number.
+
+### `pr_not_found` (rejected)
+
+The PR number/URL does not exist in the repository the origin resolves to.
+
+### `pr_closed_unmerged` (rejected)
+
+The PR was closed without merging — the delivery is broken. Reopen the PR or bind its replacement.
+
+### `pr_head_mismatch` (rejected)
+
+The PR's head branch is not `context.branch`. The record and the PR must describe the same delivery: fix the PR's branch or re-bind from the correct checkout.
+
+### `pr_repo_mismatch` (rejected)
+
+The PR URL points at a different repository than `origin`. Bind a PR in this repository.
+
+## Closing refs
+
+### `closing_refs_incomplete` (rejected)
+
+The PR body does not close every bound issue; the failure lists exactly which numbers are missing. Add a closing reference per issue to the PR body:
+
+```markdown
+Closes #124
+```
+
+Keyword variants (`fixes`, `resolves`, tenses) and `owner/repo#N` or full-URL forms all count. Note that `Related to #124` does **not** close anything.
+
+## Checks
+
+### `checks_missing` (rejected)
+
+No check run with the policy's exact name exists at the PR head. Cause is almost always a naming gap between policy and CI. Compare:
 
 ```bash
-openspec validate <name>           # validate one item
-openspec validate --all            # validate everything
-openspec validate --all --strict   # stricter checks, good for CI
-openspec validate --archived       # fail if archived changes have unchecked tasks
+gh api repos/<owner>/<repo>/commits/<pr-head-sha>/check-runs --jq '.check_runs[].name'
 ```
 
-Common causes are a missing required section (like a spec with no scenarios) or a malformed delta header. Fix the file and re-run. The [CLI reference](cli.md#openspec-validate) documents the output format.
+against `required_checks`. Fix the policy or the workflow's job `name:` — see the aggregator pattern in [GitHub Actions](actions.md).
 
-One message deserves its own note:
+### `checks_pending`
 
-```text
-MODIFIED "<requirement>" omits scenario(s) the current spec still has: "<scenario>"
-```
+Check runs exist but haven't all completed. Wait for CI, then re-run `specgit accept`.
 
-A `MODIFIED` requirement replaces the whole requirement block, so it has to carry every scenario that survives the change, not only the ones you edited. Copy the named scenarios from `openspec/specs/<capability-path>/spec.md` back into the delta, preserving any domain directories in the path. This often appears on an older change after someone else's change added a scenario to the same requirement — archive refuses that change either way, and validation now says so before you implement it.
+### `checks_failed` (rejected)
 
-### The AI created incomplete or wrong artifacts
+The named check reported a non-success conclusion at the PR head. Open the run's logs, fix the failure (or the flaky test), push, and re-run acceptance — checks are re-read from the new PR head.
 
-The AI didn't have enough context. A few levers help:
+## Verdict behaviors
 
-- Add project context in `openspec/config.yaml` so your stack and conventions are injected into every request. See [Customization](customization.md#project-configuration).
-- Add per-artifact `rules:` for guidance that only applies to, say, specs.
-- Give a more detailed description when you propose.
-- Use the expanded `/opsx:continue` to create one artifact at a time and review each, instead of `/opsx:ff` doing them all at once.
+### Exit 3 with `unknown` but "everything looks fine"
 
-### Archive won't finish, or warns about incomplete tasks
+`unknown` means evidence could not be gathered — record/policy problems, provider problems, or not a git repo. `specgit doctor --json` names the first failing probe.
 
-Archive won't *block* on incomplete tasks, but it warns you, because archiving usually means the work is done. If tasks remain on purpose (you're filing a partial change), proceed. Otherwise finish the tasks first. Archive will also offer to sync your delta specs into the main specs if you haven't synced yet; say yes unless you have a reason not to.
+### `local_head_stale` warning
 
-### "User force closed the prompt with 0 null"
+Informational: your checkout is behind or ahead of the PR head. Acceptance still evaluates the PR head. Push your commits (if they belong in the delivery) or ignore the warning.
 
-Something ran `openspec archive` where nothing can answer a question — an AI agent calling it from a tool, a CI job, or any shell with stdin closed. Archive asks up to three confirmations, and an unanswerable one used to fail with that raw message.
+### Verdict differs from GitHub's merge-requirement UI
 
-Pass `--yes` to answer them up front:
-
-```bash
-openspec archive <change-name> --yes
-```
-
-Keep any flags you were already passing — `--skip-specs` and `--no-validate` change what archive does, so a bare `--yes` rerun is not the same command. Current versions name the flag for you and print a `Fix:` line you can paste. If you meant to pick from a list, pass the change name explicitly: the picker needs an answer too.
-
-If you instead ran archive with its output redirected to a file or captured by a tool and *did* pipe an answer (`printf 'y\n' | openspec archive …`), older versions wrote terminal escape codes into that capture while drawing the prompt — in some environments enough to bloat the file badly. Current versions read the confirmation prompts as plain text whenever stdout is not a terminal, and a no-argument `openspec archive` (which would otherwise draw an interactive change picker) asks you to pass a change name up front instead of rendering a menu into the capture. Either way, redirected and agent runs stay clean; passing `--yes` (with a change name) skips the prompts entirely.
-
-## Configuration
-
-### My `config.yaml` isn't being applied
-
-Three usual suspects:
-
-1. **Wrong filename.** It must be `openspec/config.yaml`, not `.yml`.
-2. **Invalid YAML.** Run it through any YAML validator; the CLI also reports syntax errors with line numbers.
-3. **You expected a restart.** You don't need one. Config changes take effect immediately.
-
-### "Unknown artifact ID in rules: X"
-
-A key under `rules:` doesn't match any artifact in your schema. For the default `spec-driven` schema the valid IDs are `proposal`, `specs`, `design`, `tasks`. To see the IDs for any schema:
-
-```bash
-openspec schemas --json
-```
-
-### "Context too large"
-
-The `context:` field is capped at 50KB, on purpose, because it's injected into every request. Summarize it, or link out to longer docs instead of pasting them. Lean context also produces better, faster results.
-
-### "Schema not found"
-
-The schema name you referenced doesn't exist. List what's available and check spelling:
-
-```bash
-openspec schemas                    # list available schemas
-openspec schema which <name>        # see where a schema resolves from
-openspec schema init <name>         # create a custom one
-```
-
-See [Customization](customization.md#custom-schemas).
-
-## Migration from the legacy workflow
-
-### "Legacy files detected in non-interactive mode"
-
-You're in CI or a non-interactive shell, and OpenSpec found old files to clean up but can't prompt you. Approve automatically:
-
-```bash
-openspec init --force
-```
-
-For Codex, OpenSpec may detect old managed prompt files in `$CODEX_HOME/prompts` or `~/.codex/prompts`. That cleanup is limited to OpenSpec's allowlisted legacy Codex prompt filenames, and non-interactive `openspec init` removes only the files whose replacement `.agents/skills/openspec-*` skills exist. Non-interactive `openspec update` leaves all legacy cleanup untouched unless you pass `--force`.
-
-### Commands didn't appear after migrating
-
-Restart your IDE. Skills are detected at startup. If they still don't appear, run `openspec update` and check the file locations in [Supported Tools](supported-tools.md).
-
-### My old `project.md` wasn't migrated
-
-That's intentional. OpenSpec never deletes `project.md` automatically because it may hold context you wrote. Move the useful parts into `config.yaml`'s `context:` section, then delete it yourself. The [Migration Guide](migration-guide.md#migrating-projectmd-to-configyaml) walks through this, including a prompt you can hand to your AI to do the distilling.
-
-## Still stuck?
-
-- **Discord:** [discord.gg/YctCnvvshC](https://discord.gg/YctCnvvshC)
-- **GitHub Issues:** [github.com/Fission-AI/OpenSpec/issues](https://github.com/Fission-AI/OpenSpec/issues)
-- **From your terminal:** `openspec feedback "what went wrong"` opens an issue for you.
-
-When you report a problem, include your OpenSpec version (`openspec --version`), your Node version (`node --version`), your AI tool, and the exact command and output. It makes help much faster.
+SpecGit matches `required_checks` byte-for-byte against check runs; the branch-protection UI may display status contexts differently. Align names per `checks_missing` above, and keep branch protection and the policy listing the same aggregator check.

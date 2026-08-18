@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.repository == 'Fission-AI/OpenSpec' && github.event_name == 'push'
+    if: github.repository == 'LeXwDeX/SpecGit' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,9 +71,9 @@ jobs:
   # unaffected. This job lives in this file because npm trusted publishing
   # authorizes a single workflow file per package.
   #
-  # Users opt in with: npm install -g @fission-ai/openspec@beta
+  # Users opt in with: npm install -g specgit@beta
   beta:
-    if: github.repository == 'Fission-AI/OpenSpec' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.repository == 'LeXwDeX/SpecGit' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,7 +116,7 @@ jobs:
             if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
               TAG_EXISTS=true
             fi
-            if npm view "@fission-ai/openspec@${VERSION}" version >/dev/null 2>&1; then
+            if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
               NPM_EXISTS=true
             fi
             if gh release view "${TAG}" >/dev/null 2>&1; then
@@ -147,8 +147,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if npm view "@fission-ai/openspec@${VERSION}" version >/dev/null 2>&1; then
-            echo "@fission-ai/openspec@${VERSION} is already on npm; skipping publish."
+          if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
+            echo "specgit@${VERSION} is already on npm; skipping publish."
             exit 0
           fi
           npm publish --tag beta
@@ -184,5 +184,5 @@ jobs:
               --prerelease \
               --generate-notes \
               --title "${TAG}" \
-              --notes "Beta prerelease. Install with \`npm install -g @fission-ai/openspec@beta\`."
+              --notes "Beta prerelease. Install with \`npm install -g specgit@beta\`."
           fi

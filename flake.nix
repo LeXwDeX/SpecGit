@@ -1,5 +1,5 @@
 {
-  description = "OpenSpec - AI-native system for spec-driven development";
+  description = "SpecGit - delivery binding and acceptance harness";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -26,7 +26,7 @@
         in
         {
           default = pkgs.stdenv.mkDerivation (finalAttrs: {
-            pname = "openspec";
+            pname = "specgit";
             version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
 
             src = lib.fileset.toSource {
@@ -73,11 +73,11 @@
             dontNpmPrune = true;
 
             meta = with pkgs.lib; {
-              description = "AI-native system for spec-driven development";
-              homepage = "https://github.com/Fission-AI/OpenSpec";
+              description = "Delivery binding and acceptance harness";
+              homepage = "https://github.com/LeXwDeX/SpecGit";
               license = licenses.mit;
               maintainers = [ ];
-              mainProgram = "openspec";
+              mainProgram = "specgit";
             };
           });
         }
@@ -86,7 +86,7 @@
       apps = forAllSystems (system: {
         default = {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/openspec";
+          program = "${self.packages.${system}.default}/bin/specgit";
         };
       });
 
@@ -103,7 +103,7 @@
             ];
 
             shellHook = ''
-              echo "OpenSpec development environment"
+              echo "SpecGit development environment"
               echo "Node version: $(node --version)"
               echo "pnpm version: $(pnpm --version)"
               echo "Run 'pnpm install' to install dependencies"

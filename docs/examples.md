@@ -1,224 +1,132 @@
 # Examples & Recipes
 
-Real changes, start to finish. Each recipe shows the commands you'd type and what you'd see back, so you can match your situation to a pattern and copy it. These use the default **core** commands (`propose`, `explore`, `apply`, `update`, `sync`, `archive`); where the expanded set helps, it's noted.
+Real deliveries, start to finish. Each recipe shows the commands you type and the evidence SpecGit checks, so you can match your situation to a pattern and copy it.
 
-A reminder before you start: slash commands like `/opsx:propose` go in your **AI assistant's chat**, and `openspec` commands go in your **terminal**. If that's new, read [How Commands Work](how-commands-work.md) first. In the transcripts below, `You:` and `AI:` are the chat, and lines starting with `$` are the terminal.
+## Recipe 1: One issue, one branch, one PR
 
-> **Not sure what you're building yet?** Most of these recipes are sharper if you start with `/opsx:explore` to think it through first. [Recipe 3](#recipe-3-exploring-before-you-commit) shows it in action, and the [Explore First](explore.md) guide makes the full case.
+The default shape of a delivery.
 
-## Recipe 1: A small feature, the fast path
+```bash
+# once per repository (already done if spec_git/policy.yaml exists)
+specgit init --required-check "All checks passed"
 
-**When to use it:** you know what you want, and it's a contained piece of work. This is the most common recipe.
+git checkout -b feat/123-add-login-flow
+specgit bind --delivery add-login-flow --issue 123
+git commit -m "feat: add login flow"
+git push -u origin feat/123-add-login-flow
+gh pr create --title "Add login flow" --body "Closes #123"
+# note the PR number, then:
+specgit bind --pr 84
 
-The whole thing is three commands. Propose, build, archive.
-
-```text
-You: /opsx:propose add-logout-button
-
-AI:  Created openspec/changes/add-logout-button/
-     ✓ proposal.md — why and what
-     ✓ specs/      — the new requirement and its scenarios
-     ✓ design.md   — technical approach
-     ✓ tasks.md    — implementation checklist
-     Ready for implementation. Run /opsx:apply.
+# ... CI runs, checks go green ...
+specgit accept
+# ✓ accepted — exit 0
 ```
 
-Now read the plan. Open the proposal and the delta spec. This is the moment OpenSpec is built for: catching a wrong assumption while it's still one paragraph, not 400 lines of code. Edit any artifact directly if something's off, then continue.
+What acceptance verified: you're on `feat/123-add-login-flow` (context matches live git), issue #123 exists, PR #84 is open with head branch `feat/123-add-login-flow` in the same repo, its body closes #123, and `All checks passed` is green at the PR head commit.
 
-```text
-You: /opsx:apply
+## Recipe 2: Closing two issues from a worktree
 
-AI:  Working through tasks...
-     ✓ 1.1 Add logout button to header
-     ✓ 1.2 Clear session on click
-     ✓ 1.3 Add confirmation dialog
-     All tasks complete!
+One PR may close N issues, and worktrees are first-class execution contexts.
 
-You: /opsx:archive
+```bash
+git worktree add ../wt-124-fix-flaky-tests fix/124-flaky-tests
+cd ../wt-124-fix-flaky-tests
 
-AI:  Archiving add-logout-button...
-     ✓ Merged specs into openspec/specs/auth/spec.md
-     ✓ Moved to openspec/changes/archive/2026-06-22-add-logout-button/
-     Done. Ready for the next change.
+specgit bind --delivery fix-flaky-tests --issue 124 --issue 131
+# work, commit, push, open PR #85...
+specgit bind --pr 85
 ```
 
-That's it. The logout behavior is now part of your specs, and the change is filed away with its full context.
-
-## Recipe 2: A bug fix
-
-**When to use it:** something is broken and you want the fix recorded as a deliberate change to behavior, not a mystery commit.
-
-Bug fixes work exactly like features. The difference is in how you frame the proposal: describe the *correct* behavior, not just "fix the bug."
-
-```text
-You: /opsx:propose fix-login-redirect-loop
-
-AI:  Created openspec/changes/fix-login-redirect-loop/
-     The proposal captures the current broken behavior and the
-     intended behavior. The delta spec MODIFIES the redirect
-     requirement so it's now precise and testable.
-     Ready for implementation.
-```
-
-Because the fix lands as a `MODIFIED` requirement with a fresh scenario, the next person (or the next AI session) sees not just that you fixed it, but what "correct" means. Then `/opsx:apply` and `/opsx:archive` as usual.
-
-Tip: for a fix, a good scenario is the regression test in prose. "GIVEN a logged-out user, WHEN they submit valid credentials, THEN they land on the dashboard and are not redirected again." Write that, and the implementation has a clear target.
-
-## Recipe 3: Exploring before you commit
-
-**When to use it:** you have a problem but not yet a plan. You're not sure what to build, or which approach is right.
-
-Start with `/opsx:explore`. It's a thinking partner with no structure and no artifacts created. It reads your codebase and helps you decide.
-
-```text
-You: /opsx:explore
-
-AI:  What would you like to explore?
-
-You: Page loads feel slow but I don't know where the time goes.
-
-AI:  Let me look... I found three likely culprits:
-     1. Large unoptimized images on the product list
-     2. Synchronous data fetching that blocks render
-     3. Re-renders triggered by context changes
-     Which should we tackle first?
-
-You: The data fetching one.
-
-You: /opsx:propose optimize-product-list-fetching
-
-AI:  Created the change, with a proposal informed by what we just
-     found. Ready for implementation.
-```
-
-Exploration clarifies your thinking *before* you spend a change on it. When the insight crystallizes, propose, and the AI carries the context forward.
-
-## Recipe 4: Juggling two changes at once
-
-**When to use it:** you're mid-feature and an urgent fix jumps the queue.
-
-Changes are independent folders, so parallel work doesn't conflict. Start the fix, ship it, then return to the feature right where you left off.
-
-```text
-You: I'm partway through add-dark-mode, but I need to fix a login bug now.
-
-You: /opsx:propose fix-login-redirect
-
-AI:  Created openspec/changes/fix-login-redirect/. Ready for implementation.
-
-You: /opsx:apply
-
-AI:  Implemented the fix. All tasks complete.
-
-You: /opsx:archive
-
-AI:  ✓ Archived fix-login-redirect.
-
-You: Back to dark mode.
-
-You: /opsx:apply add-dark-mode
-
-AI:  Resuming add-dark-mode. Picking up at task 2.3: Update Header...
-```
-
-Naming the change in `/opsx:apply add-dark-mode` is how you point the AI at a specific change when more than one is active. Because tasks track completion in `tasks.md`, the AI knows exactly where you stopped.
-
-When several changes are done at once, the expanded `/opsx:bulk-archive` files them together and resolves spec conflicts by checking what's actually implemented. See [Workflows](workflows.md#parallel-changes).
-
-## Recipe 5: A refactor with no behavior change
-
-**When to use it:** you're restructuring code, and externally visible behavior should stay identical.
-
-This is the interesting case, because a pure refactor has *nothing to add to your specs*. The behavior contract doesn't change; only the implementation does. So the work lives in the design and tasks, and the spec delta is empty or absent.
-
-```text
-You: /opsx:propose refactor-payment-module
-
-AI:  Created the change. The proposal states the goal (split the
-     payment module, no behavior change) and the design captures
-     the new structure. No spec changes, since behavior is identical.
-     Ready for implementation.
-```
-
-Declare the empty delta explicitly by setting `skip_specs: true` in the change's `.openspec.yaml`:
+The record now carries a worktree context:
 
 ```yaml
-schema: spec-driven
-skip_specs: true
+version: 1
+delivery: fix-flaky-tests
+context:
+  kind: worktree
+  label: wt-124-fix-flaky-tests
+  branch: fix/124-flaky-tests
+issues: [124, 131]
+pr: 85
 ```
 
-Without the marker, `openspec validate` rejects a change with zero deltas (so a forgotten specs phase still gets caught); with it, validation passes and `openspec status` shows the specs stage as explicitly skipped rather than pending. If the refactor turns out to change behavior after all, remove `skip_specs` from `.openspec.yaml` and write the delta specs — validate treats the marker plus spec files as a conflict, so the stale marker can't linger silently.
+The PR body must close **both** issues:
 
-Archiving a marked change needs no extra flags (there are no deltas to merge). Independently, the `--skip-specs` flag tells the terminal command to skip the spec step explicitly:
-
-```bash
-$ openspec archive refactor-payment-module --skip-specs
+```markdown
+Fixes #124
+Fixes #131
 ```
 
-The same flag is handy for tooling, CI, and docs-only changes. The principle: specs describe behavior, so if behavior didn't change, the spec shouldn't either. See [Concepts](concepts.md#what-a-spec-is-and-is-not).
-
-## Recipe 6: Step-by-step control (expanded commands)
-
-**When to use it:** a complex or risky change where you want to review each artifact before moving on.
-
-The core `/opsx:propose` drafts everything at once. When you'd rather go one step at a time, turn on the expanded commands:
-
-```bash
-$ openspec config profile      # select the expanded workflows
-$ openspec update              # apply them to this project
-```
-
-Now you can scaffold and build incrementally:
+If you forget the second one, acceptance names it precisely:
 
 ```text
-You: /opsx:new add-2fa
-
-AI:  Created openspec/changes/add-2fa/. Ready to create: proposal.
-
-You: /opsx:continue
-
-AI:  Created proposal.md. Now available: specs, design.
-
-You: /opsx:continue
-
-AI:  Created specs/auth/spec.md. Now available: design.
+✗ rejected — closing_refs_incomplete
+  PR 85 does not close: #131
+  fix: add "Fixes #131" to the PR body
 ```
 
-Review each artifact as it lands, edit freely, and continue when you're happy. When you want the rest drafted in one go, `/opsx:ff` fast-forwards through the remaining planning artifacts. Before archiving, `/opsx:verify` checks that the implementation actually matches the specs. See [Workflows](workflows.md#opsxff-vs-opsxcontinue).
+The worktree label (`wt-124-fix-flaky-tests`) is the basename of the checkout — portable, no paths stored. Any machine with a matching worktree on the same branch satisfies the same record.
 
-## Recipe 7: Learning the whole loop hands-on
+## Recipe 3: Diagnosing a rejected verdict
 
-**When to use it:** you've installed OpenSpec and want to *feel* the workflow on your own code, not a toy example.
-
-Turn on the expanded commands (see Recipe 6), then:
-
-```text
-You: /opsx:onboard
-
-AI:  Welcome to OpenSpec! I'll walk you through a complete change
-     using your actual codebase. Let me scan for a small, safe
-     improvement we can make together...
-```
-
-`/opsx:onboard` finds a real (small) improvement, creates a change for it, implements it, and archives it, narrating every step. It takes 15 to 30 minutes and leaves you with a real change you can keep or discard. It's the gentlest way to learn. See [Commands](commands.md#opsxonboard).
-
-## Checking your work from the terminal
-
-Any time, from your terminal, you can inspect the state of things:
+Run with `--json` and read the gates; every failure carries a code and a fix.
 
 ```bash
-$ openspec list                      # active changes
-$ openspec show add-dark-mode        # one change in detail
-$ openspec validate add-dark-mode    # check structure
-$ openspec view                      # interactive dashboard
+specgit accept --json | jq '.verdict.gates[] | select(.status == "fail")'
 ```
 
-These are read-and-inspect tools. The proposing and building still happen through slash commands in chat. Full details in the [CLI reference](cli.md).
+```json
+{
+  "id": "checks",
+  "status": "fail",
+  "code": "checks_failed",
+  "detail": { "name": "All checks passed" },
+  "fix": "Re-run or fix the failing CI run for this check"
+}
+```
 
-## Where to go next
+Common endings:
 
-- [Explore First](explore.md): the recommended way to start when you're unsure
-- [Workflows](workflows.md): the patterns above, with decision guidance on when to use each
-- [Commands](commands.md): every slash command in detail
-- [Getting Started](getting-started.md): the canonical first-change walkthrough
-- [Concepts](concepts.md): why the pieces fit together the way they do
+- `checks_pending` — CI has not finished; wait and re-run `specgit accept`.
+- `pr_head_mismatch` — the PR's head branch differs from `context.branch`; the record and the PR must describe the same delivery.
+- `checks_missing` — the policy name is not a check GitHub reports for the PR head; see [GitHub Actions](actions.md).
+
+## Recipe 4: Local-only health check, no network
+
+`status` never calls GitHub — useful in planes and firewalls:
+
+```bash
+specgit status --json
+```
+
+Reports record validity, derived state, live branch/worktree, upstream ahead/behind drift, and parsed origin. It cannot say `accepted` — only the full evaluation can.
+
+## Recipe 5: Scripting the verdict
+
+Exit codes are contractual, so gates in CI or merge scripts are one line:
+
+```bash
+if specgit accept --json > verdict.json; then
+  echo "delivery accepted"
+else
+  code=$?
+  case $code in
+    1) echo "rejected — see verdict.json" ;;
+    3) echo "cannot determine — record/policy/provider problem" ;;
+    *) echo "usage error" ;;
+  esac
+fi
+```
+
+In JSON mode stdout is exactly one JSON document; send anything chatty to stderr yourself.
+
+## Anti-recipes
+
+Things that deliberately do not work, by design:
+
+- **"Accept" while offline.** Evidence requires the provider; offline the best verdict is `unknown` (exit 3).
+- **Binding a JIRA-style id.** `--issue JIRA-42` fails at bind time (`issue_ref_not_github`). Only GitHub issue numbers bind.
+- **Two PRs for one delivery.** The second `--pr` replaces the first. Split the work or close both issues from one PR.
+- **Passing the context as a flag.** There are no `--branch`/`--worktree` flags. Check out the branch (or worktree) and the context follows from live git.
+- **Claiming done via files.** No artifact, checklist, or spec file influences the verdict. Only git, the PR, closing refs, and checks do.

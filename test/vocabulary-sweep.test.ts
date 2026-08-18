@@ -3,12 +3,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The store rename (slice 1.4) retired the pre-rename vocabulary. This
+// The product rename (OpenSpec → SpecGit) retired the old vocabulary. This
 // sweep keeps it retired: no live surface may reintroduce the old tokens.
-// The openspec/ planning-history tree is outside the sweep roots by
-// design; the committed format literals (.openspec-store, store.yaml) do
-// not match these patterns at all. The forbidden tokens are built by
-// concatenation so this file stays clean under its own sweep.
+// The forbidden tokens are built by concatenation so this file stays clean
+// under its own sweep.
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // .codex/ is git-ignored local skill guidance (roadmap L8); swept when

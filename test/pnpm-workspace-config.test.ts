@@ -32,24 +32,6 @@ describe('pnpm workspace configuration', () => {
     expect(workspace.overrides).toEqual(lockfile.overrides);
   });
 
-  it('keeps the website as an independently locked project', () => {
-    const packageJson = readJson('website/package.json');
-    const lockfile = readYaml('website/pnpm-lock.yaml');
-    const workspace = readYaml('website/pnpm-workspace.yaml');
-    const esbuildVersions = Object.keys(lockfile.packages)
-      .filter((key) => key.startsWith('esbuild@'))
-      .map((key) => key.slice('esbuild@'.length));
-
-    expect(workspace.packages).toEqual(['.']);
-    expect(packageJson.pnpm.onlyBuiltDependencies).toEqual(['esbuild']);
-    expect(esbuildVersions).toHaveLength(1);
-    expect(workspace.allowBuilds).toEqual({
-      [`esbuild@${esbuildVersions[0]}`]: true,
-    });
-    expect(workspace.overrides).toEqual(packageJson.pnpm.overrides);
-    expect(workspace.overrides).toEqual(lockfile.overrides);
-  });
-
   it('includes install policy changes in Nix and security validation', () => {
     const flake = fs.readFileSync(path.join(projectRoot, 'flake.nix'), 'utf8');
     const ci = fs.readFileSync(path.join(projectRoot, '.github/workflows/ci.yml'), 'utf8');

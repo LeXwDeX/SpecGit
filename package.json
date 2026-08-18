@@ -1,21 +1,23 @@
 {
-  "name": "@fission-ai/openspec",
-  "version": "1.9.0",
-  "description": "AI-native system for spec-driven development",
+  "name": "specgit",
+  "version": "0.0.1",
+  "description": "Delivery binding and acceptance harness: bind a branch or worktree to GitHub issues and one PR, then derive acceptance from real git, PR, and CI evidence",
   "keywords": [
-    "openspec",
-    "specs",
-    "cli",
-    "ai",
-    "development"
+    "specgit",
+    "delivery-binding",
+    "acceptance",
+    "github",
+    "pull-request",
+    "ci",
+    "cli"
   ],
-  "homepage": "https://github.com/Fission-AI/OpenSpec",
+  "homepage": "https://github.com/LeXwDeX/SpecGit",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Fission-AI/OpenSpec"
+    "url": "https://github.com/LeXwDeX/SpecGit"
   },
   "license": "MIT",
-  "author": "OpenSpec Contributors",
+  "author": "SpecGit Contributors",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
   "publishConfig": {
@@ -28,13 +30,12 @@
     }
   },
   "bin": {
-    "openspec": "./bin/openspec.js"
+    "specgit": "./bin/specgit.js"
   },
   "files": [
     "dist",
     "bin",
     "schemas",
-    "scripts/postinstall.js",
     "!dist/**/*.test.js",
     "!dist/**/__tests__",
     "!dist/**/*.map"
@@ -42,18 +43,14 @@
   "scripts": {
     "lint": "eslint src/",
     "build": "node build.js",
-    "generate:skills": "node scripts/generate-skillssh.mjs",
-    "regen:parity-hashes": "node scripts/regen-parity-hashes.mjs",
     "dev": "tsc --watch",
-    "dev:cli": "pnpm build && node bin/openspec.js",
+    "dev:cli": "pnpm build && node bin/specgit.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "test:postinstall": "node scripts/postinstall.js",
     "prepare": "pnpm run build",
     "prepublishOnly": "pnpm run build",
-    "postinstall": "node scripts/postinstall.js",
     "check:pack-version": "node scripts/pack-version-check.mjs",
     "release": "pnpm run release:ci",
     "release:ci": "pnpm run check:pack-version && pnpm exec changeset publish",

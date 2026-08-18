@@ -1,703 +1,272 @@
-import { asStatus } from '../commands/shared-output.js';
-import { Command, Option } from 'commander';
-import { createRequire } from 'module';
-import ora from 'ora';
-import path from 'path';
+/**
+ * `specgit` — delivery binding and acceptance harness.
+ *
+ * The execution context is a git branch or worktree; a delivery binds linked
+ * GitHub issues and one pull request; acceptance is derived fail-closed from
+ * real git, PR, and check evidence. Spec/task artifacts are not inputs.
+ *
+ * Output contract: `--json` puts exactly one JSON document on stdout and all
+ * human text on stderr. Exit codes: 0 success/accepted · 1 rejected with
+ * complete evidence · 2 usage error · 3 fail-closed unknown.
+ */
+
+import { Command, CommanderError } from 'commander';
+import path from 'node:path';
 import { fileURLToPath } from 'url';
-import { existsSync, promises as fs } from 'fs';
-import { AI_TOOLS, TOOL_ID_ALIASES } from '../core/config.js';
-import { UpdateCommand } from '../core/update.js';
-import {
-  getAvailableCliUpdate,
-  displayCliUpdateNote,
-  shouldOfferUpgrade,
-  getInstallDir,
-  offerCliUpgrade,
-  rerunUpdateWithUpgradedCli,
-  displayUpgradeCommand,
-  isSourceCheckout,
-} from '../core/version-check.js';
-import { ListCommand } from '../core/list.js';
-import { ArchiveCommand, type ArchiveOptions } from '../core/archive.js';
-import { ViewCommand } from '../core/view.js';
-import { resolveRootForCommand, toRootOutput } from '../core/root-selection.js';
-import { registerSpecCommand } from '../commands/spec.js';
-import { ChangeCommand } from '../commands/change.js';
-import { ValidateCommand } from '../commands/validate.js';
-import { ShowCommand } from '../commands/show.js';
-import { CompletionCommand } from '../commands/completion.js';
-import { FeedbackCommand } from '../commands/feedback.js';
-import { registerConfigCommand } from '../commands/config.js';
-import { registerSchemaCommand } from '../commands/schema.js';
-import { registerStoreCommand } from '../commands/store.js';
-import { registerDoctorCommand } from '../commands/doctor.js';
-import { registerContextCommand } from '../commands/context.js';
-import { registerWorksetCommand } from '../commands/workset.js';
-import {
-  statusCommand,
-  instructionsCommand,
-  applyInstructionsCommand,
-  archiveInstructionsCommand,
-  templatesCommand,
-  schemasCommand,
-  newChangeCommand,
-  DEFAULT_SCHEMA,
-  type StatusOptions,
-  type InstructionsOptions,
-  type TemplatesOptions,
-  type SchemasOptions,
-  type NewChangeOptions,
-} from '../commands/workflow/index.js';
-import { maybeShowTelemetryNotice, trackCommand, shutdown } from '../telemetry/index.js';
-import { COMMON_FLAGS } from '../core/completions/shared-flags.js';
-import { isInteractive } from '../utils/interactive.js';
 
-const STORE_OPTION_DESCRIPTION = COMMON_FLAGS.store.description;
+import { runAccept } from './commands/accept.js';
+import { runBind } from './commands/bind.js';
+import { runDoctor } from './commands/doctor.js';
+import { runInit } from './commands/init.js';
+import { runStatus } from './commands/status.js';
+import { runUnbind } from './commands/unbind.js';
+import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from './exit-codes.js';
+import { errorDiagnostic, finishOutcome, sanitize, type CommandOutcome } from './output.js';
+import type { CliIO, CommandContext } from './types.js';
+import { createDefaultContext, readPackageJson } from './wiring.js';
 
-// Deliberate rejection path: --store-path stays registered (hidden) so the
-// resolver can explain that registering the path is the supported route,
-// instead of Commander emitting a generic unknown-option error (or, for
-// `show`, silently ignoring it via allowUnknownOption).
-function hiddenStorePathOption(): Option {
-  return new Option(
-    '--store-path <path>',
-    'Not supported; register the path with "openspec store register <path>" and use --store <id>'
-  ).hideHelp();
+export type ContextResolution =
+  | { ctx: CommandContext }
+  | { failure: ReturnType<typeof errorDiagnostic> };
+
+export type ContextResolver = () => Promise<ContextResolution>;
+
+const COMMAND_NAMES = ['init', 'bind', 'unbind', 'status', 'accept', 'doctor'];
+
+type CommandRun = (options: Record<string, unknown>, ctx: CommandContext) => Promise<CommandOutcome>;
+
+function isPromptCancel(error: unknown): boolean {
+  const candidate = error as { name?: string; code?: string };
+  return candidate?.name === 'ExitPromptError' || candidate?.code === 'ERR_USE_AFTER_EXIT';
 }
 
-function failWithError(
-  error: unknown,
-  json?: { enabled: boolean | undefined; payload?: Record<string, unknown>; fallbackCode?: string }
-): void {
-  // The agent contract: every --json failure leaves exactly one JSON
-  // document on stdout (the command's null-shape plus a status array).
-  if (json?.enabled) {
-    console.log(
-      JSON.stringify(
-        { ...(json.payload ?? {}), status: [asStatus(error, json.fallbackCode ?? 'command_error')] },
-        null,
-        2
-      )
-    );
-    process.exitCode = 1;
-    return;
-  }
-  ora().fail(`Error: ${(error as Error).message}`);
-  // Resolution and store errors carry a pasteable fix - never drop it.
-  const fix = (error as { diagnostic?: { fix?: string } }).diagnostic?.fix;
-  if (fix) {
-    console.error(`Fix: ${fix}`);
-  }
-  process.exitCode = process.exitCode ?? 1;
+function unexpectedOutcome(error: unknown): CommandOutcome {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    exit: EXIT_UNKNOWN,
+    errors: [errorDiagnostic('unexpected_error', message)],
+    human: [`Error: ${sanitize(message)}`],
+  };
 }
 
-const program = new Command();
-const require = createRequire(import.meta.url);
-const { version } = require('../../package.json');
-
-/**
- * Get the full command path for nested commands.
- * For example: 'change show' -> 'change:show'
- */
-export function getCommandPath(command: Command): string {
-  const names: string[] = [];
-  let current: Command | null = command;
-
-  while (current) {
-    const name = current.name();
-    // Skip the root 'openspec' command
-    if (name && name !== 'openspec') {
-      names.unshift(name);
-    }
-    current = current.parent;
-  }
-
-  return names.join(':') || 'openspec';
+function detectCommand(argv: string[]): string {
+  const positional = argv.slice(2).find((token) => !token.startsWith('-'));
+  return positional && COMMAND_NAMES.includes(positional) ? positional : 'specgit';
 }
 
-/**
- * True when the executing command asked for JSON output — used to suppress the
- * first-run telemetry notice so stdout stays a single valid JSON document.
- *
- * `--json` reaches commands three ways, so a single parsed option is not enough:
- * - declared on the leaf (`openspec status --json`) → `opts().json`
- * - declared on a parent group and read via globals (`openspec workset --json list`)
- *   → `optsWithGlobals().json`
- * - a residual arg on a permissive group that never declares the option
- *   (`openspec store --json`, which detects it from `command.args`) → `args`
- *
- * Suppressing is always safe: the disclosure is only deferred to the next
- * non-JSON run, never lost, whereas printing it on a JSON run corrupts stdout.
- */
-export function isJsonRun(command: Command): boolean {
-  return (
-    command.optsWithGlobals().json === true ||
-    command.args.includes('--json')
-  );
+function usageOutcome(code: string, message: string): CommandOutcome {
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(code, message, {
+        fix: 'Run "specgit --help" for the supported commands and flags.',
+      }),
+    ],
+  };
 }
 
-program
-  .name('openspec')
-  .description('AI-native system for spec-driven development')
-  .version(version);
+export function createProgram(
+  resolve: ContextResolver,
+  io: CliIO,
+  version: string,
+  result: { exit: number },
+  argv: string[]
+): Command {
+  const program = new Command();
 
-// Global options
-program.option('--no-color', 'Disable color output');
+  program
+    .name('specgit')
+    .description(
+      'Delivery binding and acceptance harness: bind a branch or worktree to GitHub issues and one PR, then derive acceptance from real git, PR, and CI evidence.'
+    )
+    .version(version)
+    .exitOverride()
+    .configureOutput({
+      writeOut: (text: string) => {
+        for (const line of text.split('\n')) {
+          io.stdout(line);
+        }
+      },
+      writeErr: (text: string) => {
+        for (const line of text.split('\n')) {
+          io.stderr(line);
+        }
+      },
+    })
+    .option('--json', 'Output as JSON (stdout carries exactly one JSON document)');
 
-// Apply global flags and telemetry before any command runs
-// Note: preAction receives (thisCommand, actionCommand) where:
-// - thisCommand: the command where hook was added (root program)
-// - actionCommand: the command actually being executed (subcommand)
-program.hook('preAction', async (thisCommand, actionCommand) => {
-  const opts = thisCommand.opts();
-  if (opts.color === false) {
-    process.env.NO_COLOR = '1';
-  }
+  const wrap = (name: string, run: CommandRun) => {
+    return async (_options: Record<string, unknown>, command: Command) => {
+      const opts = command.optsWithGlobals() as Record<string, unknown>;
+      const json = opts.json === true;
 
-  // Show first-run telemetry notice (if not seen). Suppress it whenever the run
-  // asked for JSON so stdout stays a single valid JSON document (see isJsonRun).
-  await maybeShowTelemetryNotice({ silent: isJsonRun(actionCommand) });
-
-  // Track command execution (use actionCommand to get the actual subcommand)
-  const commandPath = getCommandPath(actionCommand);
-  await trackCommand(commandPath, version);
-});
-
-// Shutdown telemetry after command completes
-program.hook('postAction', async () => {
-  await shutdown();
-});
-
-const availableToolIds = AI_TOOLS
-  .filter((tool) => tool.skillsDir || tool.globalSkillsDir)
-  .map((tool) => tool.value);
-const toolAliasNote = Object.entries(TOOL_ID_ALIASES)
-  .map(([retired, current]) => `${retired} (now ${current})`)
-  .join(', ');
-const toolsOptionDescription = `Configure AI tools non-interactively. Use "all", "none", or a comma-separated list of: ${availableToolIds.join(', ')}. Also accepted: ${toolAliasNote}`;
-
-program
-  .command('init [path]')
-  .description('Initialize OpenSpec in your project')
-  .option('--tools <tools>', toolsOptionDescription)
-  .option('--force', 'Auto-cleanup legacy files without prompting')
-  .option('--profile <profile>', 'Override global config profile (core or custom)')
-  .option('--no-animation', 'Show a static welcome screen instead of the animated one')
-  .option('--copilot-cloud', 'Set up GitHub Copilot cloud coding-agent files without prompting')
-  .option('--no-copilot-cloud', 'Skip GitHub Copilot cloud coding-agent files without prompting')
-  .action(async (targetPath = '.', options?: { tools?: string; force?: boolean; profile?: string; animation?: boolean; copilotCloud?: boolean }) => {
-    try {
-      // Validate that the path is a valid directory
-      const resolvedPath = path.resolve(targetPath);
+      const resolution = await resolve();
+      if ('failure' in resolution) {
+        result.exit = finishOutcome(
+          io,
+          name,
+          version,
+          { exit: EXIT_UNKNOWN, errors: [resolution.failure] },
+          json
+        );
+        return;
+      }
 
       try {
-        const stats = await fs.stat(resolvedPath);
-        if (!stats.isDirectory()) {
-          throw new Error(`Path "${targetPath}" is not a directory`);
-        }
-      } catch (error: any) {
-        if (error.code === 'ENOENT') {
-          // Directory doesn't exist, but we can create it
-          console.log(`Directory "${targetPath}" doesn't exist, it will be created.`);
-        } else if (error.message && error.message.includes('not a directory')) {
-          throw error;
-        } else {
-          throw new Error(`Cannot access path "${targetPath}": ${error.message}`);
-        }
-      }
-
-      const { InitCommand } = await import('../core/init.js');
-      const initCommand = new InitCommand({
-        tools: options?.tools,
-        force: options?.force,
-        profile: options?.profile,
-        animation: options?.animation,
-        copilotCloud: options?.copilotCloud,
-      });
-      await initCommand.execute(targetPath);
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-// Hidden alias: 'experimental' -> 'init' for backwards compatibility
-program
-  .command('experimental', { hidden: true })
-  .description('Alias for init (deprecated)')
-  .option('--tool <tool-id>', 'Target AI tool (maps to --tools)')
-  .option('--no-interactive', 'Disable interactive prompts')
-  .action(async (options?: { tool?: string; noInteractive?: boolean }) => {
-    try {
-      console.log('Note: "openspec experimental" is deprecated. Use "openspec init" instead.');
-      const { InitCommand } = await import('../core/init.js');
-      const initCommand = new InitCommand({
-        tools: options?.tool,
-        interactive: options?.noInteractive === true ? false : undefined,
-      });
-      await initCommand.execute('.');
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-program
-  .command('update [path]')
-  .description('Update OpenSpec instruction files')
-  .option('--force', 'Force update even when tools are up to date')
-  .action(async (targetPath = '.', options?: { force?: boolean }) => {
-    try {
-      const installDir = getInstallDir();
-      // Running from a clone: the version is whatever the branch says, so any
-      // upgrade advice would be noise. Decided before the request, so a
-      // contributor never waits on an answer that gets thrown away.
-      const latestVersion = isSourceCheckout(installDir) ? null : await getAvailableCliUpdate();
-      const announce = latestVersion !== null;
-      // Offer to upgrade first: this process generates files from its own
-      // templates, so upgrading afterwards would leave the old ones on disk.
-      // Both streams must be a terminal — with stdout redirected the question
-      // lands in the file and the user waits at a blank screen forever.
-      const canOffer =
-        announce &&
-        shouldOfferUpgrade({
-          installDir,
-          projectPath: targetPath,
-          interactive: isInteractive(),
-          stdoutIsTty: Boolean(process.stdout.isTTY),
-        });
-
-      let declined = false;
-      if (latestVersion && canOffer) {
-        displayCliUpdateNote(latestVersion, targetPath, { withCommand: false });
-        const outcome = await offerCliUpgrade(latestVersion);
-
-        // Set the code and return rather than process.exit: exiting here would
-        // skip commander's postAction hook, killing the telemetry flush
-        // mid-request.
-        if (outcome === 'cancelled') {
-          // Ctrl-C means stop the command, not fall through to more prompts.
-          process.exitCode = 130;
+        const outcome = await run(opts, resolution.ctx);
+        result.exit = finishOutcome(io, name, version, outcome, json);
+      } catch (error) {
+        if (isPromptCancel(error)) {
+          io.stderr('Interrupted.');
+          result.exit = 130;
           return;
         }
-        if (outcome === 'upgraded') {
-          process.exitCode = await rerunUpdateWithUpgradedCli(targetPath, {
-            force: options?.force,
-          });
-          return;
-        }
-        // Declined, failed, or upgraded-but-unreachable: fall through to the
-        // update, then leave the command on screen underneath it.
-        declined = true;
+        result.exit = finishOutcome(io, name, version, unexpectedOutcome(error), json);
       }
+    };
+  };
 
-      const updateCommand = new UpdateCommand({ force: options?.force });
-      await updateCommand.execute(targetPath);
+  const collect = (value: string, previous: string[]): string[] => [...previous, value];
 
-      if (declined) {
-        // The headline was printed before the prompt; only the manual route is
-        // still owed, and it belongs where the user is looking now.
-        displayUpgradeCommand(targetPath);
-      } else if (latestVersion) {
-        displayCliUpdateNote(latestVersion, targetPath);
+  program
+    .command('init')
+    .description('Create spec_git/policy.yaml with the required CI check names')
+    .option('--required-check <name>', 'Required check name; repeatable', collect, [])
+    .option('--json', 'Output as JSON')
+    .action(wrap('init', runInit as CommandRun));
+
+  program
+    .command('bind')
+    .description(
+      'Write or update .specgit.yaml; the execution context is taken from live git'
+    )
+    .option('--issue <n>', 'GitHub issue number or issue URL; repeatable, merged', collect, [])
+    .option('--pr <ref>', 'Pull request number or URL (replaces)')
+    .option('--delivery <kebab-id>', 'Delivery id (first bind only)')
+    .option('--json', 'Output as JSON')
+    .action(wrap('bind', runBind as CommandRun));
+
+  program
+    .command('unbind')
+    .description('Delete .specgit.yaml')
+    .option('-y, --yes', 'Delete without confirmation')
+    .option('--json', 'Output as JSON')
+    .action(wrap('unbind', runUnbind as CommandRun));
+
+  program
+    .command('status')
+    .description('Local evidence only: record, state, live context, drift, origin (no network)')
+    .option('--json', 'Output as JSON')
+    .action(wrap('status', runStatus as CommandRun));
+
+  program
+    .command('accept')
+    .description('Evaluate acceptance against real git, PR, and check evidence')
+    .option('--json', 'Output as JSON')
+    .action(wrap('accept', runAccept as CommandRun));
+
+  program
+    .command('doctor')
+    .description('Probe git, repository, origin, gh, and policy')
+    .option('--json', 'Output as JSON')
+    .action(wrap('doctor', runDoctor as CommandRun));
+
+  program.action(() => {
+    const json = argv.includes('--json');
+    result.exit = finishOutcome(
+      io,
+      detectCommand(argv),
+      version,
+      usageOutcome('no_command', 'No command given.'),
+      json
+    );
+  });
+
+  return program;
+}
+
+export async function runCliWith(
+  argv: string[],
+  ctx: CommandContext,
+  resolve?: ContextResolver
+): Promise<number> {
+  const result = { exit: EXIT_SUCCESS };
+  const resolver: ContextResolver = resolve ?? (async () => ({ ctx }));
+  const program = createProgram(resolver, ctx.io, ctx.version, result, argv);
+
+  try {
+    await program.parseAsync(argv);
+  } catch (error) {
+    if (error instanceof CommanderError) {
+      if (error.exitCode === 0) {
+        return EXIT_SUCCESS;
       }
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
+      const json = argv.includes('--json');
+      result.exit = finishOutcome(
+        ctx.io,
+        detectCommand(argv),
+        ctx.version,
+        usageOutcome('usage_error', error.message),
+        json
+      );
+      return result.exit;
     }
-  });
+    const json = argv.includes('--json');
+    result.exit = finishOutcome(
+      ctx.io,
+      detectCommand(argv),
+      ctx.version,
+      unexpectedOutcome(error),
+      json
+    );
+  }
 
-program
-  .command('list')
-  .description('List items (changes by default). Use --specs to list specs.')
-  .option('--specs', 'List specs instead of changes')
-  .option('--changes', 'List changes explicitly (default)')
-  .option('--sort <order>', 'Sort order: "recent" (default) or "name"', 'recent')
-  .option('--json', 'Output as JSON (for programmatic use)')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (options?: { specs?: boolean; changes?: boolean; sort?: string; json?: boolean; store?: string; storePath?: string }) => {
-    try {
-      const root = await resolveRootForCommand(options ?? {}, {
-        json: options?.json,
-        failurePayload: options?.specs ? { specs: [], root: null } : { changes: [], root: null },
-        // Preserve the cwd fallback for pre-config.yaml projects. The resolver
-        // still lets a registered/default store take precedence over it.
-        allowImplicitRoot: existsSync(path.join(process.cwd(), 'openspec', 'project.md')),
-      });
-      if (!root) {
-        return;
+  return result.exit;
+}
+
+export async function runMain(argv: string[] = process.argv): Promise<number> {
+  const io: CliIO = {
+    stdout: (line) => process.stdout.write(`${line}\n`),
+    stderr: (line) => process.stderr.write(`${line}\n`),
+  };
+
+  let version = '0.0.0';
+  try {
+    version = readPackageJson().version;
+  } catch {
+    // Fallback version keeps --help/--version usable with a broken manifest.
+  }
+
+  let cached: CommandContext | undefined;
+  const resolve: ContextResolver = async () => {
+    cached ??= createDefaultContext();
+    return { ctx: cached };
+  };
+
+  const result = { exit: EXIT_SUCCESS };
+  const program = createProgram(resolve, io, version, result, argv);
+
+  try {
+    await program.parseAsync(argv);
+  } catch (error) {
+    if (error instanceof CommanderError) {
+      if (error.exitCode === 0) {
+        return EXIT_SUCCESS;
       }
-      const listCommand = new ListCommand();
-      const mode: 'changes' | 'specs' = options?.specs ? 'specs' : 'changes';
-      const sort = options?.sort === 'name' ? 'name' : 'recent';
-      await listCommand.execute(root.path, mode, {
-        sort,
-        json: options?.json,
-        ...(options?.json ? { root: toRootOutput(root) } : {}),
-      });
-    } catch (error) {
-      failWithError(error, {
-        enabled: options?.json,
-        payload: options?.specs ? { specs: [], root: null } : { changes: [], root: null },
-        fallbackCode: 'list_error',
-      });
-      process.exit(1);
+      const json = argv.includes('--json');
+      return finishOutcome(io, detectCommand(argv), version, usageOutcome('usage_error', error.message), json);
     }
+    const json = argv.includes('--json');
+    return finishOutcome(io, detectCommand(argv), version, unexpectedOutcome(error), json);
+  }
+
+  return result.exit;
+}
+
+export function runCli(argv: string[] = process.argv): void {
+  void runMain(argv).then((code) => {
+    process.exitCode = code;
   });
-
-program
-  .command('view')
-  .description('Display an interactive dashboard of specs and changes')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (options?: { store?: string; storePath?: string }) => {
-    try {
-      // Implicit cwd fallback stays enabled so `view` keeps accepting the same
-      // directories as `list`/`status` — notably pre-config.yaml `openspec/`
-      // dirs. ViewCommand still reports a missing openspec/ directory itself.
-      const root = await resolveRootForCommand(options ?? {});
-      if (!root) {
-        return;
-      }
-      const viewCommand = new ViewCommand();
-      await viewCommand.execute(root.path);
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-// Change command with subcommands
-const changeCmd = program
-  .command('change')
-  .description('Manage OpenSpec change proposals');
-
-// Deprecation notice for noun-based commands
-changeCmd.hook('preAction', () => {
-  console.error('Warning: The "openspec change ..." commands are deprecated. Prefer verb-first commands (e.g., "openspec list", "openspec validate --changes").');
-});
-
-changeCmd
-  .command('show [change-name]')
-  .description('Show a change proposal in JSON or markdown format')
-  .option('--json', 'Output as JSON')
-  .option('--deltas-only', 'Show only deltas (JSON only)')
-  .option('--requirements-only', 'Alias for --deltas-only (deprecated)')
-  .option('--no-interactive', 'Disable interactive prompts')
-  .action(async (changeName?: string, options?: { json?: boolean; requirementsOnly?: boolean; deltasOnly?: boolean; noInteractive?: boolean }) => {
-    try {
-      const changeCommand = new ChangeCommand();
-      await changeCommand.show(changeName, options);
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exitCode = 1;
-    }
-  });
-
-changeCmd
-  .command('list')
-  .description('List all active changes (DEPRECATED: use "openspec list" instead)')
-  .option('--json', 'Output as JSON')
-  .option('--long', 'Show id and title with counts')
-  .action(async (options?: { json?: boolean; long?: boolean }) => {
-    try {
-      console.error('Warning: "openspec change list" is deprecated. Use "openspec list".');
-      const changeCommand = new ChangeCommand();
-      await changeCommand.list(options);
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exitCode = 1;
-    }
-  });
-
-changeCmd
-  .command('validate [change-name]')
-  .description('Validate a change proposal')
-  .option('--strict', 'Enable strict validation mode')
-  .option('--json', 'Output validation report as JSON')
-  .option('--no-interactive', 'Disable interactive prompts')
-  .action(async (changeName?: string, options?: { strict?: boolean; json?: boolean; noInteractive?: boolean }) => {
-    try {
-      const changeCommand = new ChangeCommand();
-      await changeCommand.validate(changeName, options);
-      if (typeof process.exitCode === 'number' && process.exitCode !== 0) {
-        process.exit(process.exitCode);
-      }
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command('archive [change-name]')
-  .description('Archive a completed change and update main specs')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .option('--skip-specs', 'Skip spec update operations (useful for infrastructure, tooling, or doc-only changes)')
-  .option('--no-validate', 'Skip validation (not recommended, requires confirmation)')
-  .option('--json', 'Output as JSON (non-interactive)')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (changeName?: string, options?: ArchiveOptions) => {
-    try {
-      const archiveCommand = new ArchiveCommand();
-      await archiveCommand.execute(changeName, options);
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-registerSpecCommand(program);
-registerConfigCommand(program);
-registerSchemaCommand(program);
-registerStoreCommand(program);
-registerDoctorCommand(program);
-registerContextCommand(program);
-registerWorksetCommand(program);
-
-// Top-level validate command
-program
-  .command('validate [item-name]')
-  .description('Validate changes and specs')
-  .option('--all', 'Validate all changes and specs')
-  .option('--changes', 'Validate all changes')
-  .option('--specs', 'Validate all specs')
-  .option('--archived', 'Validate that archived changes have all tasks completed (for pre-commit linting)')
-  .option('--type <type>', 'Specify item type when ambiguous: change|spec')
-  .option('--strict', 'Enable strict validation mode')
-  .option('--json', 'Output validation results as JSON')
-  .option('--concurrency <n>', 'Max concurrent validations (defaults to env OPENSPEC_CONCURRENCY or 6)')
-  .option('--no-interactive', 'Disable interactive prompts')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (itemName?: string, options?: { all?: boolean; changes?: boolean; specs?: boolean; archived?: boolean; type?: string; strict?: boolean; json?: boolean; noInteractive?: boolean; concurrency?: string; store?: string; storePath?: string }) => {
-    try {
-      const validateCommand = new ValidateCommand();
-      await validateCommand.execute(itemName, options);
-    } catch (error) {
-      failWithError(error, { enabled: options?.json, fallbackCode: 'validate_error' });
-      process.exit(1);
-    }
-  });
-
-// Top-level show command
-program
-  .command('show [item-name]')
-  .description('Show a change or spec')
-  .option('--json', 'Output as JSON')
-  .option('--type <type>', 'Specify item type when ambiguous: change|spec')
-  .option('--no-interactive', 'Disable interactive prompts')
-  // change-only flags
-  .option('--deltas-only', 'Show only deltas (JSON only, change)')
-  .option('--requirements-only', 'Alias for --deltas-only (deprecated, change)')
-  // spec-only flags
-  .option('--requirements', 'JSON only: Show only requirements (exclude scenarios)')
-  .option('--no-scenarios', 'JSON only: Exclude scenario content')
-  .option('-r, --requirement <id>', 'JSON only: Show specific requirement by ID (1-based)')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  // Explicit registration required: allowUnknownOption would otherwise
-  // silently swallow --store-path instead of rejecting it deliberately.
-  .addOption(hiddenStorePathOption())
-  // allow unknown options to pass-through to underlying command implementation
-  .allowUnknownOption(true)
-  .action(async (itemName?: string, options?: { json?: boolean; type?: string; noInteractive?: boolean; [k: string]: any }) => {
-    try {
-      const showCommand = new ShowCommand();
-      await showCommand.execute(itemName, options ?? {});
-    } catch (error) {
-      failWithError(error, { enabled: options?.json, fallbackCode: 'show_error' });
-      process.exit(1);
-    }
-  });
-
-// Feedback command
-program
-  .command('feedback <message>')
-  .description('Submit feedback about OpenSpec')
-  .option('--body <text>', 'Detailed description for the feedback')
-  .action(async (message: string, options?: { body?: string }) => {
-    try {
-      const feedbackCommand = new FeedbackCommand();
-      await feedbackCommand.execute(message, options);
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-// Completion command with subcommands
-const completionCmd = program
-  .command('completion')
-  .description('Manage shell completions for OpenSpec CLI');
-
-completionCmd
-  .command('generate [shell]')
-  .description('Generate completion script for a shell (outputs to stdout)')
-  .action(async (shell?: string) => {
-    try {
-      const completionCommand = new CompletionCommand();
-      await completionCommand.generate({ shell });
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-completionCmd
-  .command('install [shell]')
-  .description('Install completion script for a shell')
-  .option('--verbose', 'Show detailed installation output')
-  .action(async (shell?: string, options?: { verbose?: boolean }) => {
-    try {
-      const completionCommand = new CompletionCommand();
-      await completionCommand.install({ shell, verbose: options?.verbose });
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-completionCmd
-  .command('uninstall [shell]')
-  .description('Uninstall completion script for a shell')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(async (shell?: string, options?: { yes?: boolean }) => {
-    try {
-      const completionCommand = new CompletionCommand();
-      await completionCommand.uninstall({ shell, yes: options?.yes });
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-// Hidden command for machine-readable completion data
-program
-  .command('__complete <type>', { hidden: true })
-  .description('Output completion data in machine-readable format (internal use)')
-  .action(async (type: string) => {
-    try {
-      const completionCommand = new CompletionCommand();
-      await completionCommand.complete({ type });
-    } catch (error) {
-      // Silently fail for graceful shell completion experience
-      process.exitCode = 1;
-    }
-  });
-
-// ═══════════════════════════════════════════════════════════
-// Workflow Commands (formerly experimental)
-// ═══════════════════════════════════════════════════════════
-
-// Status command
-program
-  .command('status')
-  .description('Display artifact completion status for a change')
-  .option('--change <id>', 'Change name to show status for')
-  .option('--schema <name>', 'Schema override (auto-detected from config.yaml)')
-  .option('--json', 'Output as JSON')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (options: StatusOptions) => {
-    try {
-      await statusCommand(options);
-    } catch (error) {
-      failWithError(error, { enabled: options.json, fallbackCode: 'change_error' });
-      process.exit(1);
-    }
-  });
-
-// Instructions command
-program
-  .command('instructions [artifact]')
-  .description('Output enriched instructions for artifacts, apply, or archive')
-  .option('--change <id>', 'Change name')
-  .option('--schema <name>', 'Schema override (auto-detected from config.yaml)')
-  .option('--json', 'Output as JSON')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (artifactId: string | undefined, options: InstructionsOptions) => {
-    try {
-      // Workflow instruction surfaces are reserved command branches, not artifacts.
-      if (artifactId === 'apply') {
-        await applyInstructionsCommand(options);
-      } else if (artifactId === 'archive') {
-        await archiveInstructionsCommand(options);
-      } else {
-        await instructionsCommand(artifactId, options);
-      }
-    } catch (error) {
-      failWithError(error, { enabled: options.json, fallbackCode: 'change_error' });
-      process.exit(1);
-    }
-  });
-
-// Templates command
-program
-  .command('templates')
-  .description('Show resolved template paths for all artifacts in a schema')
-  .option('--schema <name>', `Schema to use (default: ${DEFAULT_SCHEMA})`)
-  .option('--json', 'Output as JSON mapping artifact IDs to template paths')
-  .action(async (options: TemplatesOptions) => {
-    try {
-      await templatesCommand(options);
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-// Schemas command
-program
-  .command('schemas')
-  .description('List available workflow schemas with descriptions')
-  .option('--json', 'Output as JSON (for agent use)')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  .action(async (options: SchemasOptions) => {
-    try {
-      await schemasCommand(options);
-    } catch (error) {
-      failWithError(error, {
-        enabled: options.json,
-        payload: { schemas: [], root: null },
-        fallbackCode: 'schemas_error',
-      });
-      process.exit(1);
-    }
-  });
-
-// New command group with change subcommand
-const newCmd = program.command('new').description('Create new items');
-
-newCmd
-  .command('change <name>')
-  .description('Create a new change directory')
-  .option('--description <text>', 'Description to add to README.md')
-  .option('--goal <text>', 'Optional goal metadata to store with the change')
-  .option('--schema <name>', `Workflow schema to use (default: ${DEFAULT_SCHEMA})`)
-  .option('--json', 'Output as JSON')
-  .option('--store <id>', STORE_OPTION_DESCRIPTION)
-  .addOption(hiddenStorePathOption())
-  // Removed options kept registered (hidden) so users get a deliberate
-  // explanation instead of a generic unknown-option error.
-  .addOption(new Option('--initiative <id>', 'No longer supported').hideHelp())
-  .addOption(new Option('--areas <names>', 'No longer supported').hideHelp())
-  .action(async (name: string, options: NewChangeOptions) => {
-    try {
-      await newChangeCommand(name, options);
-    } catch (error) {
-      failWithError(error);
-      process.exit(1);
-    }
-  });
-
-export { program };
-
-export function runCli(argv = process.argv): void {
-  program.parse(argv);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
