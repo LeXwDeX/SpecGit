@@ -57,7 +57,15 @@ export {
 } from './gitfacts/origin.js';
 export type { RepoRef } from './gitfacts/origin.js';
 
-export type { GitHubProvider, IssueFact, PrFact, CheckRunInfo } from './github/port.js';
+export type {
+  GitHubProvider,
+  IssueFact,
+  PrFact,
+  CheckRunInfo,
+  IssueCreation,
+  PrCreation,
+  PrSummary,
+} from './github/port.js';
 export { GhCliGitHubProvider, sanitizeApiText } from './github/gh-cli.js';
 export type { GhCliGitHubProviderOptions } from './github/gh-cli.js';
 export { parseClosingRefs } from './github/closing-refs.js';

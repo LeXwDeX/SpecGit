@@ -34,6 +34,13 @@ export interface PrCreation {
   url: string;
 }
 
+/** An open pull request as listed for one head branch. */
+export interface PrSummary {
+  number: number;
+  title: string;
+  url: string;
+}
+
 export interface GitHubProvider {
   preflight(): Promise<Evidence<{ authenticated: boolean }>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
@@ -47,4 +54,5 @@ export interface GitHubProvider {
     title: string,
     body: string
   ): Promise<Evidence<PrCreation>>;
+  listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
 }

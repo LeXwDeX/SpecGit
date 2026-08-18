@@ -10,6 +10,7 @@ import type {
   IssueFact,
   PrCreation,
   PrFact,
+  PrSummary,
 } from './port.js';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -378,6 +379,57 @@ export class GhCliGitHubProvider implements GitHubProvider {
       return fail('gh_transport', 'GitHub CLI did not report a pull request URL.');
     }
     return ok({ number: Number(match[1]), url: match[0] });
+  }
+
+  /**
+   * PR discovery by head branch (`gh pr list --state open`). Used by
+   * `specgit pr` to repair a binding: exactly one candidate binds, zero
+   * or several refuse. Auth failures classify from stderr like the
+   * other creation paths.
+   */
+  async listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>> {
+    if (!head.trim()) {
+      return fail('gh_transport', 'Cannot list pull requests without a head branch.');
+    }
+
+    const result = await this.runCreateGh([
+      'pr',
+      'list',
+      '--repo',
+      `${repo.owner}/${repo.repo}`,
+      '--head',
+      head,
+      '--state',
+      'open',
+      '--json',
+      'number,title,url',
+      '--limit',
+      '30',
+    ]);
+    if (!result.ok) {
+      return result;
+    }
+
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    if (!Array.isArray(parsed.value)) {
+      return fail('gh_transport', 'GitHub returned an unexpected pull-request list payload.');
+    }
+    const prs: PrSummary[] = [];
+    for (const entry of parsed.value) {
+      const item = entry as { number?: unknown; title?: unknown; url?: unknown };
+      if (
+        typeof item.number !== 'number' ||
+        typeof item.title !== 'string' ||
+        typeof item.url !== 'string'
+      ) {
+        return fail('gh_transport', 'GitHub returned an unexpected pull-request list payload.');
+      }
+      prs.push({ number: item.number, title: item.title, url: item.url });
+    }
+    return ok(prs);
   }
 
   private parseJsonOutput(stdout: string): Evidence<unknown> {

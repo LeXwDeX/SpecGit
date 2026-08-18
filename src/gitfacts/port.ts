@@ -1,3 +1,5 @@
+import type { Evidence } from '../kernel/evidence.js';
+
 export interface GitFacts {
   repo: boolean;
   toplevel: string | null;
@@ -12,7 +14,41 @@ export interface GitFacts {
   gitAvailable: boolean;
 }
 
-export interface GitPort {
+export interface BranchCheckout {
+  branch: string;
+  created: boolean;
+}
+
+/**
+ * Local git write operations for the delivery bootstrap (`specgit
+ * issue`). Like the read side, everything goes through real local git —
+ * there is no other transport and no network except the push itself.
+ */
+export interface GitWritePort {
+  /** Check out `branch`, creating it from the current HEAD if absent. */
+  checkoutOrCreateBranch(root: string, branch: string): Promise<Evidence<BranchCheckout>>;
+  /**
+   * Commit the current state of one repo-relative file in isolation
+   * (`git add` + pathspec-limited commit). An unchanged file is a
+   * successful no-op (`committed: false`), which makes the bootstrap
+   * idempotent across re-runs.
+   */
+  commitFile(
+    root: string,
+    relativePath: string,
+    message: string
+  ): Promise<Evidence<{ committed: boolean }>>;
+  /** Push `branch` to origin, setting upstream (`git push -u`). */
+  pushBranch(root: string, branch: string): Promise<Evidence<{ pushed: boolean }>>;
+  /**
+   * The remote's default branch (`origin/HEAD`). Falls back to `main`
+   * when the symbolic ref is unset locally — the same default `gh`
+   * would resolve server-side for `--base`.
+   */
+  remoteDefaultBranch(root: string): Promise<Evidence<string>>;
+}
+
+export interface GitPort extends GitWritePort {
   facts(root: string): Promise<GitFacts>;
 }
 

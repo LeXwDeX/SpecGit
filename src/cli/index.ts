@@ -17,7 +17,10 @@ import { fileURLToPath } from 'url';
 import { runAccept } from './commands/accept.js';
 import { runBind } from './commands/bind.js';
 import { runDoctor } from './commands/doctor.js';
+import { runFinish } from './commands/finish.js';
 import { runInit } from './commands/init.js';
+import { runIssue } from './commands/issue.js';
+import { runPr } from './commands/pr.js';
 import { runStatus } from './commands/status.js';
 import { runUnbind } from './commands/unbind.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from './exit-codes.js';
@@ -31,7 +34,17 @@ export type ContextResolution =
 
 export type ContextResolver = () => Promise<ContextResolution>;
 
-const COMMAND_NAMES = ['init', 'bind', 'unbind', 'status', 'accept', 'doctor'];
+const COMMAND_NAMES = [
+  'init',
+  'issue',
+  'pr',
+  'finish',
+  'bind',
+  'unbind',
+  'status',
+  'accept',
+  'doctor',
+];
 
 type CommandRun = (options: Record<string, unknown>, ctx: CommandContext) => Promise<CommandOutcome>;
 
@@ -130,10 +143,32 @@ export function createProgram(
 
   program
     .command('init')
-    .description('Create spec_git/policy.yaml with the required CI check names')
+    .description('Create spec_git/policy.yaml with the required CI check names and generate the harness')
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
     .option('--json', 'Output as JSON')
     .action(wrap('init', runInit as CommandRun));
+
+  program
+    .command('issue')
+    .description(
+      'One-command delivery bootstrap: create/reuse issues, branch, draft PR, record — resumable'
+    )
+    .argument('[titles...]', 'Issue titles to create (quoted) or existing issue numbers to reuse')
+    .option('--json', 'Output as JSON')
+    .action(wrap('issue', runIssue as CommandRun));
+
+  program
+    .command('pr')
+    .description('Repair the PR binding: auto-discover by head branch, or bind an explicit PR')
+    .argument('[ref]', 'Pull request number or URL; omit to auto-discover by head branch')
+    .option('--json', 'Output as JSON')
+    .action(wrap('pr', runPr as CommandRun));
+
+  program
+    .command('finish')
+    .description('Evidence verdict for the delivery (same evaluation as accept; the CI gate)')
+    .option('--json', 'Output as JSON')
+    .action(wrap('finish', runFinish as CommandRun));
 
   program
     .command('bind')
