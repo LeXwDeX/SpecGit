@@ -47,6 +47,9 @@ export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
 
   const recorderPath = path.join(binDir, 'fake-gh.cjs');
   fs.writeFileSync(recorderPath, `#!/usr/bin/env node\n${FAKE_GH_SCRIPT}`);
+  // Executable bit so POSIX execFile can run the shebang directly; Windows
+  // goes through the provider's node-shebang detection instead.
+  fs.chmodSync(recorderPath, 0o755);
 
   // The extensionless `gh` script works on POSIX (kernel shebang) and — via
   // the provider's node-shebang detection — on Windows too. gh.cmd stays for
