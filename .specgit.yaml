@@ -1,8 +1,0 @@
-version: 1
-delivery: init-specgit-policy
-context:
-  kind: branch
-  branch: chore/1-init-specgit-policy
-issues:
-  - 1
-pr: 2
