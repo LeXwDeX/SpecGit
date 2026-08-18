@@ -34,7 +34,7 @@ Every SpecGit term in one place. Terms are grouped by topic, then alphabetized.
 
 **Code** — The stable identifier of a failure (`closing_refs_incomplete`, `checks_failed`, …). Codes are machine-friendly and never change meaning.
 
-**Verdict** — The outcome of `specgit accept`: `accepted` (exit 0), `rejected` (exit 1, complete evidence), or `unknown` (exit 3, fail-closed).
+**Verdict** — The outcome of `specgit finish` (alias `accept`): `accepted` (exit 0), `rejected` (exit 1, complete evidence), or `unknown` (exit 3, fail-closed).
 
 **Closing reference** — A PR-body phrase that closes an issue: a closing keyword (`closes`, `fixes`, `resolves`, plus tense variants) followed by `#N`, `owner/repo#N`, or a full issue URL. Every bound issue needs one.
 

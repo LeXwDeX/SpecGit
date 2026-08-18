@@ -34,11 +34,9 @@ Fix what it reports (usually: `gh auth login`) before the first delivery, not du
 Don't manufacture a trial delivery — take the next bug or feature your team already planned:
 
 ```bash
-git checkout -b fix/214-race-in-cache
-specgit bind --delivery fix-cache-race --issue 214
-# ... implement, push, PR #220 with "Fixes #214" ...
-specgit bind --pr 220
-specgit accept
+specgit issue "fix: race in cache" 214
+# ... implement, push — branch, draft PR (Fixes #214), and record already exist ...
+specgit finish
 ```
 
 That's the whole adoption. Old branches, old PRs, and closed issues need nothing at all.

@@ -42,4 +42,4 @@ Closing references follow the CLI contract: `Closes #N`, `Fixes #N`,
 `delivery` plus an assignee is the trigger defined in
 [workflows/specgit-dev-loop.md](../../workflows/specgit-dev-loop.md). One PR
 may close N issues; every bound issue needs its own closing reference in the
-PR body or `specgit accept` will reject with `closing_refs_incomplete`.
+PR body or `specgit finish` will reject with `closing_refs_incomplete`.

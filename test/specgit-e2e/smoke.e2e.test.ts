@@ -33,15 +33,17 @@ describe('specgit CLI package smoke', () => {
     expect(pkg.bin).toEqual({ specgit: './bin/specgit.js' });
   });
 
-  it('--help lists exactly the six SpecGit commands', async () => {
+  it('--help lists exactly the nine SpecGit commands', async () => {
     const result = await specgit(['--help'], { cwd: projectRoot });
 
     expect(result.exitCode).toBe(0);
     const commandLines = result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => /^(init|bind|unbind|status|accept|doctor)\b/.test(line));
-    expect(commandLines.length).toBeGreaterThanOrEqual(6);
+      .filter((line) =>
+        /^(init|issue|pr|finish|bind|unbind|status|accept|doctor)\b/.test(line)
+      );
+    expect(commandLines.length).toBeGreaterThanOrEqual(9);
     for (const retired of ['archive', 'propose', 'validate', 'continue', 'completion', 'show']) {
       const hasRetired = result.stdout
         .split(/\r?\n/)

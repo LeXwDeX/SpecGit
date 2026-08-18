@@ -108,10 +108,22 @@ export function createProgram(
     })
     .option('--json', 'Output as JSON (stdout carries exactly one JSON document)');
 
-  const wrap = (name: string, run: CommandRun) => {
-    return async (_options: Record<string, unknown>, command: Command) => {
-      const opts = command.optsWithGlobals() as Record<string, unknown>;
-      const json = opts.json === true;
+  // Commander passes (…positional, options, Command); option-only
+  // commands receive just (options, Command). The last argument is
+  // always the Command; optional extractors fold positionals into the
+  // options object a run function expects.
+  const wrap = (
+    name: string,
+    run: CommandRun,
+    extractOptions?: (rest: unknown[]) => Record<string, unknown>
+  ) => {
+    return async (...rest: unknown[]) => {
+      const command = rest[rest.length - 1] as Command;
+      const allOpts = command.optsWithGlobals() as Record<string, unknown>;
+      const json = allOpts.json === true;
+      const opts: Record<string, unknown> = extractOptions
+        ? { ...extractOptions(rest), json: allOpts.json }
+        : (rest[0] as Record<string, unknown>) ?? {};
 
       const resolution = await resolve();
       if ('failure' in resolution) {
@@ -155,14 +167,24 @@ export function createProgram(
     )
     .argument('[titles...]', 'Issue titles to create (quoted) or existing issue numbers to reuse')
     .option('--json', 'Output as JSON')
-    .action(wrap('issue', runIssue as CommandRun));
+    .action(
+      wrap('issue', runIssue as CommandRun, (rest) => ({
+        titles: (rest[0] as string[]) ?? [],
+        ...((rest[1] as Record<string, unknown>) ?? {}),
+      }))
+    );
 
   program
     .command('pr')
     .description('Repair the PR binding: auto-discover by head branch, or bind an explicit PR')
     .argument('[ref]', 'Pull request number or URL; omit to auto-discover by head branch')
     .option('--json', 'Output as JSON')
-    .action(wrap('pr', runPr as CommandRun));
+    .action(
+      wrap('pr', runPr as CommandRun, (rest) => ({
+        ref: rest[0] as string | undefined,
+        ...((rest[1] as Record<string, unknown>) ?? {}),
+      }))
+    );
 
   program
     .command('finish')

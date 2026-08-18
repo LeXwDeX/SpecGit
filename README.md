@@ -21,7 +21,7 @@ execution context (branch or worktree)
   + required CI checks
 ```
 
-`specgit accept` re-derives the verdict from **live evidence** — your git
+`specgit finish` re-derives the verdict from **live evidence** — your git
 checkout, the issues, the PR's closing references, and the check runs
 reported at the PR head commit. There are no spec files, no task lists, no
 artifact states that can claim completion for themselves. If the evidence
@@ -37,23 +37,23 @@ gh auth status || gh auth login
 # 1. install (once published): npm install -g specgit
 specgit --version
 
-# 2. once per repository — declare the required CI checks
+# 2. once per repository — declare the required CI checks and generate the
+#    harness (.github/workflows/specgit-accept.yml + the managed AGENTS.md block)
 specgit init --required-check "Test" --required-check "Lint"
 specgit doctor                       # all probes green?
 
-# 3. per delivery — on the delivery branch
-git checkout -b feat/123-add-login
-specgit bind --delivery add-login --issue 123
+# 3. per delivery — one command bootstraps everything
+#    (creates the issues, branches, opens the draft PR with Closes #n for
+#     every issue, writes .specgit.yaml, commits and pushes; re-run resumes)
+specgit issue "feat: add login" "Harden the session model"
 
-# 4. work, push, open the PR (body must say: Closes #123)
-specgit bind --pr 42                 # record the PR once it exists
-git add .specgit.yaml && git commit -m "chore: record binding"
+# 4. work, push; CI runs on the PR — including the SpecGit Acceptance job
 
 # 5. gate the merge on evidence
-specgit accept                       # exit 0 → merge; else fix what it names
+specgit finish                       # exit 0 → merge; else fix what it names
 ```
 
-`specgit accept` exit `0` is the *only* definition of done. The full
+`specgit finish` exit `0` is the *only* definition of done. The full
 walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 [Workflow Guide](docs/workflow-guide.md).
 
@@ -61,21 +61,22 @@ walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 
 ```bash
 # once per repository: declare which CI checks a delivery must pass
-specgit init --required-check "All checks passed"      # → spec_git/policy.yaml
+specgit init --required-check "All checks passed"      # → spec_git/policy.yaml + harness
 
-# per delivery, on the delivery branch (context comes from live git)
-git checkout -b feat/123-add-login
-specgit bind --delivery add-login --issue 123          # → .specgit.yaml
+# per delivery: one command — issues, branch, draft PR (Closes #n), record
+specgit issue "feat: add login" 123                    # titles create; numbers reuse
 
-# work, commit, push, open PR #42 with “Closes #123”, make CI green
-specgit bind --pr 42
+# work, commit, push; the draft PR and binding already exist
+specgit pr                      # only to repair the PR binding (auto-discovers by head branch)
 
-specgit accept
+specgit finish
 # exit 0 → accepted · exit 1 → rejected (evidence attached) · exit 3 → cannot determine
 ```
 
 (Condensed in [Quick start](#quick-start) above; the
-[Workflow Guide](docs/workflow-guide.md) expands every step.)
+[Workflow Guide](docs/workflow-guide.md) expands every step. `bind`,
+`unbind`, and `accept` remain as machine aliases for scripts — `accept`
+runs the same evaluation as `finish`.)
 
 Two committed files, zero other state. One PR may close N issues; every bound
 issue must be closed from the PR body; checks are matched byte-for-byte
@@ -100,12 +101,13 @@ reality.
 
 | Command | Does | Network |
 | --- | --- | --- |
-| `specgit init` | Creates the policy `spec_git/policy.yaml` | no |
-| `specgit bind` | Creates/updates the record `.specgit.yaml` (context auto-resolved from live git) | no |
-| `specgit unbind` | Deletes the record | no |
+| `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, record, commit, push (idempotent resume) | yes (`gh`) |
+| `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`) |
+| `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`) |
+| `specgit init` | Creates the policy `spec_git/policy.yaml` and generates the harness (acceptance workflow + managed AGENTS block) | no |
 | `specgit status` | Local evidence snapshot (record, policy, git facts, drift) | no |
-| `specgit accept` | Full evaluation → accepted / rejected / unknown | yes (`gh`) |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, gh, policy) | gh auth |
+| `specgit bind` / `unbind` / `accept` | Machine aliases for scripts: record edits, and the same evaluation as `finish` | accept: yes (`gh`) |
 
 Every command supports `--json` (one JSON document on stdout, human text on
 stderr). Exit-code contract: `0` accepted/success · `1` rejected with complete
@@ -120,9 +122,9 @@ telemetry and no configuration beyond the two files.
   [Team Workflow](docs/team-workflow.md) and
   [GitHub Actions guidance](docs/actions.md).
 - **AI agents**: stable commands, contractual exit codes, one JSON envelope —
-  and the rule that `specgit accept` exit `0` is the *only* definition of
-  done. See the [Agent Contract](docs/agent-contract.md) and the
-  [skills](skills/README.md).
+  and the rule that `specgit finish` exit `0` is the *only* definition of
+  done. `specgit init` injects the managed agent block into `AGENTS.md`; see
+  the [Agent Contract](docs/agent-contract.md).
 
 ## Documentation
 

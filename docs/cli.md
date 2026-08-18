@@ -1,16 +1,19 @@
 # CLI Reference
 
-The `specgit` CLI has six commands. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
+The `specgit` CLI has nine commands. The human story is `issue` → `finish`; `bind`/`unbind`/`accept` are machine aliases for scripts. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
 
 ## Command summary
 
 | Command | Purpose | Network | Exit codes |
 | --- | --- | --- | --- |
-| `specgit init` | Create the project policy (`spec_git/policy.yaml`) | no | 0 · 2 |
-| `specgit bind` | Create/update the delivery record (`.specgit.yaml`) | no | 0 · 2 · 3 |
-| `specgit unbind` | Delete the delivery record | no | 0 · 2 |
+| `specgit issue` | One-command delivery bootstrap (issues, branch, draft PR, record, commit, push) | yes | 0 · 2 · 3 |
+| `specgit finish` | The verdict — full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
+| `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
+| `specgit init` | Create the project policy and generate the harness | no | 0 · 2 · 3 |
+| `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias | no | 0 · 2 · 3 |
+| `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift) | no | 0 · 2 · 3 |
-| `specgit accept` | Full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
+| `specgit accept` | Same evaluation as `finish` — script/CI alias | yes | 0 · 1 · 2 · 3 |
 | `specgit doctor` | Probe prerequisites (git, repo, origin, gh, policy) | gh auth only | 0 · 3 |
 
 Plus `--version` and `--help` (exit 0; usage errors exit 2).
@@ -32,7 +35,10 @@ The distinction between `1` and `3` is contractual: `1` means the evidence was g
 
 ## `specgit init`
 
-Creates `spec_git/policy.yaml`. Refuses to overwrite an existing policy.
+Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates the delivery harness idempotently:
+
+- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance** runs `node bin/specgit.js finish --json` with `GH_TOKEN: ${{ github.token }}`. The workflow is never listed in `policy.required_checks` (self-deadlock avoidance).
+- a managed prompt block `<!-- specgit:block:start --> … <!-- specgit:block:end -->` injected into `AGENTS.md` (created if missing) and `CLAUDE.md` (only if present). Re-running `init` rewrites only the block.
 
 ```bash
 specgit init --required-check "All checks passed"
@@ -43,11 +49,62 @@ specgit init --required-check build --required-check test    # repeatable
 | --- | --- |
 | `--required-check <name>` | A CI check name every delivery must pass. Repeatable; required in non-interactive terminals. |
 
-Creates the policy file and nothing else — SpecGit generates no skills, commands, or instructions.
+## `specgit issue`
+
+The one-command bootstrap: create/reuse N issues (one issue = one independently verifiable WHY), create the branch `<type>/<first-issue#>-<slug>`, open a draft PR whose body says `Closes #n` for every issue, write `.specgit.yaml`, commit, and push. Re-running resumes: completed steps (record with issues → branch → PR → commit → push) are detected and skipped, so a failure between steps heals on the next invocation.
+
+```bash
+specgit issue "feat: add login" "Harden the session model"   # two new issues, one delivery
+specgit issue 4 "Extend the harness"                          # reuse #4, create one
+specgit issue                                                 # resume an incomplete bootstrap (no args + no record → exit 2)
+```
+
+Each positional argument is a quoted title (a new issue is created from a Why/Scope/Acceptance template) or a pure number (an existing issue is reused). The branch `type` comes from a conventional-commit prefix on the first new title (`feat:` default; `fix:`, `chore:`, …); the slug is kebab-case from its first three ASCII words, falling back to `issue<N>` for titles without ASCII words. The PR base is the remote's default branch (`origin/HEAD`, `main` fallback).
+
+```json
+{
+  "tool": "specgit",
+  "version": "1.0.0",
+  "command": "issue",
+  "status": "ok",
+  "state": "bound",
+  "record": {
+    "version": 1,
+    "delivery": "add-login",
+    "context": { "kind": "branch", "branch": "feat/11-add-login" },
+    "issues": [11, 12],
+    "pr": 77
+  }
+}
+```
+
+Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` (exit 2); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
+
+## `specgit finish`
+
+The verdict command of the human story — the CI gate (`.github/workflows/specgit-accept.yml`) runs it with `--json` on every PR. Runs the full ten-gate evaluation (record → policy → completeness → context → origin → provider → issues → PR → closing refs → checks) through the same fail-closed evaluator as `accept`; checks are verified at the **PR head commit**, via `gh`.
+
+```bash
+specgit finish            # human-readable verdict
+specgit finish --json     # machine-readable verdict (what CI parses)
+```
+
+Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` cannot determine (missing record/policy, `gh` absent or unauthenticated, transport failure). See [Reference](reference.md) for the gate table and every code, and [Troubleshooting](troubleshooting.md) for fixes.
+
+## `specgit pr`
+
+Repairs the PR binding of the current delivery. Without arguments it auto-discovers the open pull request whose head is the record's branch: exactly one candidate binds; zero fails with a fix; several refuse and list. With an explicit number or URL the PR binds directly without contacting GitHub.
+
+```bash
+specgit pr                 # auto-discover by head branch
+specgit pr 42              # bind explicitly
+```
+
+Diagnostics: `pr_not_found` (zero candidates, with fix), `pr_ambiguous` (several candidates, with the list), `record_missing` (nothing to repair — run `specgit issue` first); all exit 3.
 
 ## `specgit bind`
 
-Creates or updates `.specgit.yaml` at the repository root. The execution context is **auto-resolved from live git**; no context flags exist.
+Script alias: creates or updates `.specgit.yaml` at the repository root, one field at a time (`specgit issue` is the one-command form). The execution context is **auto-resolved from live git**; no context flags exist.
 
 ```bash
 specgit bind --delivery add-login-flow --issue 123
@@ -83,14 +140,11 @@ specgit status --json
 
 ## `specgit accept`
 
-Runs the full ten-gate evaluation (record → policy → completeness → context → origin → provider → issues → PR → closing refs → checks). Checks are verified at the **PR head commit**, via `gh`.
+Script/CI alias of `specgit finish`: the identical ten-gate evaluation and exit codes, differing only in the envelope's `command` field. Prefer `finish` in human flows and new automation; `accept` stays stable for existing scripts.
 
 ```bash
-specgit accept            # human-readable verdict
-specgit accept --json     # machine-readable verdict
+specgit accept --json
 ```
-
-Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` cannot determine (missing record/policy, `gh` absent or unauthenticated, transport failure). See [Reference](reference.md) for the gate table and every code, and [Troubleshooting](troubleshooting.md) for fixes.
 
 ## `specgit doctor`
 

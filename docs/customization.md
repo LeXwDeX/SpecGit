@@ -29,7 +29,7 @@ Choosing names well is the real customization; the aggregator pattern in [GitHub
 
 ## 3. Nothing is generated — and that's the setting
 
-`specgit init` creates only the policy. There are no per-tool instruction files, slash commands, skill generators, schema registries, or plugin hooks to configure. AI-agent integration is a matter of the [skills](../skills/README.md) and the [agent contract](agent-contract.md): run the CLI, read the JSON, trust the verdict.
+`specgit init` creates the policy and generates the delivery harness — the acceptance workflow and the managed prompt block in `AGENTS.md`/`CLAUDE.md` (rewritten between the `specgit:block` markers on re-init). There are no per-tool instruction variants, slash commands, skill generators, schema registries, or plugin hooks to configure. AI-agent integration is the [managed agent block](supported-tools.md) and the [agent contract](agent-contract.md): run the CLI, read the JSON, trust the verdict.
 
 ## Deliberately not customizable
 

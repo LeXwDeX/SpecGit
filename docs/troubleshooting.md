@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Concrete fixes for concrete problems. Most entries correspond to a diagnostic code — run with `--json` to see codes directly. If `specgit accept` exited `3`, fix the environment entries first; if it exited `1`, jump to the gate it named.
+Concrete fixes for concrete problems. Most entries correspond to a diagnostic code — run with `--json` to see codes directly. If `specgit finish` exited `3`, fix the environment entries first; if it exited `1`, jump to the gate it named.
 
 ## Environment and setup
 
@@ -51,7 +51,7 @@ Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git
 
 ### `record_missing`
 
-No `.specgit.yaml` at the repository root. Bind first: `specgit bind --delivery <id> --issue <n>`.
+No `.specgit.yaml` at the repository root. Bootstrap first: `specgit issue "<type>: <title>" <n>`.
 
 ### `record_invalid`
 
@@ -69,11 +69,11 @@ The policy failed validation. The list of `required_checks` must be non-empty wi
 
 ### `issues_empty` (rejected)
 
-The record has no issues. Bind at least one GitHub issue number: `specgit bind --issue <n>`.
+The record has no issues. Bind at least one GitHub issue: re-run `specgit issue` with the issue numbers, or `specgit bind --issue <n>`.
 
 ### `pr_missing` (rejected)
 
-The record has no PR. Create the pull request and bind it: `specgit bind --pr <number-or-url>`.
+The record has no PR. Re-run `specgit issue` to resume the bootstrap, or repair with `specgit pr` (auto-discovers the PR by head branch).
 
 ### `issue_ref_not_github` (bind fails)
 
@@ -149,7 +149,7 @@ against `required_checks`. Fix the policy or the workflow's job `name:` — see 
 
 ### `checks_pending`
 
-Check runs exist but haven't all completed. Wait for CI, then re-run `specgit accept`.
+Check runs exist but haven't all completed. Wait for CI, then re-run `specgit finish`.
 
 ### `checks_failed` (rejected)
 
