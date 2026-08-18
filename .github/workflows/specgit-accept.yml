@@ -60,7 +60,7 @@ jobs:
           };
           const url = 'https://api.github.com/repos/' + process.env.WAIT_REPO
             + '/commits/' + process.env.WAIT_SHA + '/check-runs?per_page=100';
-          const terminal = new Set(['success', 'failure', 'neutral', 'cancelled', 'skipped', 'stale']);
+          const terminal = new Set(['completed']);
           const terminalHas = (byName, name) => {
             if (byName.has(name)) return terminal.has(byName.get(name));
             const retried = [...byName.keys()].find((k) => k.startsWith(name + ' ('));
