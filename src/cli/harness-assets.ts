@@ -69,19 +69,49 @@ jobs:
 
       - name: Wait for sibling checks
         # The verdict must see the OTHER required checks in a terminal
-        # state; sibling jobs start in parallel, so poll until they finish
-        # (this job is excluded — waiting on itself would deadlock).
+        # state. Sibling jobs start in parallel AND may not have registered
+        # their check-runs yet, so an empty poll is not "done": wait until
+        # every name in spec_git/policy.yaml is present with a terminal
+        # conclusion. This job is not in the policy, so no self-deadlock.
         env:
           GH_TOKEN: \${{ github.token }}
+          WAIT_REPO: \${{ github.repository }}
+          WAIT_SHA: \${{ github.event.pull_request.head.sha }}
         run: |
-          for i in $(seq 1 90); do
-            pending=$(gh pr checks "\${{ github.event.pull_request.number }}" -R "\${{ github.repository }}" --json name,state --jq '[.[] | select(.name != "SpecGit Acceptance") | select(.state == "pending" or .state == "skipping" or .state == "none")] | length' || echo 1)
-            if [ "\$pending" = "0" ]; then
-              echo "Sibling checks are in a terminal state."
-              break
-            fi
-            sleep 10
-          done
+          node --input-type=module <<'EOF'
+          import { readFileSync } from 'node:fs';
+          import { parse } from 'yaml';
+          const policy = parse(readFileSync('spec_git/policy.yaml', 'utf8'));
+          const required = policy.required_checks ?? [];
+          const headers = {
+            authorization: 'Bearer ' + process.env.GH_TOKEN,
+            accept: 'application/vnd.github+json',
+          };
+          const url = 'https://api.github.com/repos/' + process.env.WAIT_REPO
+            + '/commits/' + process.env.WAIT_SHA + '/check-runs?per_page=100';
+          const terminal = new Set(['success', 'failure', 'neutral', 'cancelled', 'skipped', 'stale']);
+          const terminalHas = (byName, name) => {
+            if (byName.has(name)) return terminal.has(byName.get(name));
+            const retried = [...byName.keys()].find((k) => k.startsWith(name + ' ('));
+            return retried !== undefined && terminal.has(byName.get(retried));
+          };
+          const deadline = Date.now() + 15 * 60 * 1000;
+          while (Date.now() < deadline) {
+            const res = await fetch(url, { headers });
+            if (!res.ok) throw new Error('check-runs API ' + res.status);
+            const payload = await res.json();
+            const byName = new Map(payload.check_runs.map((r) => [r.name, r.status]));
+            const missing = required.filter((n) => !terminalHas(byName, n));
+            if (missing.length === 0) {
+              console.log('All required checks are in a terminal state.');
+              process.exit(0);
+            }
+            console.log('Waiting for: ' + missing.join(', '));
+            await new Promise((r) => setTimeout(r, 10000));
+          }
+          console.error('Timed out waiting for sibling checks.');
+          process.exit(1);
+          EOF
 
       - name: specgit finish
         run: node bin/specgit.js finish --json
