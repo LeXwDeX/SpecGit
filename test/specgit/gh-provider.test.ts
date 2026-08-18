@@ -4,7 +4,12 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { GhCliGitHubProvider, sanitizeApiText } from '../../src/github/gh-cli.js';
-import { createFakeGh, readFakeGhCalls, type FakeGhRule } from './helpers/fake-gh.js';
+import {
+  createFakeGh,
+  readFakeGhCalls,
+  readFakeGhStdin,
+  type FakeGhRule,
+} from './helpers/fake-gh.js';
 import { makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 const REPO = { owner: 'LeXwDeX', repo: 'SpecGit' };
@@ -311,6 +316,201 @@ describe('GhCliGitHubProvider', () => {
     for (const call of calls) {
       expect(call).toMatch(/^(--version|auth status|api repos\/)/);
     }
+  });
+});
+
+describe('GhCliGitHubProvider#createIssue', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-create-issue-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGhRule[], providerOptions: { timeoutMs?: number; maxBuffer?: number } = {}) {
+    const fake = createFakeGh(tempDir, rules);
+    const provider = new GhCliGitHubProvider({ env: fake.env(), ...providerOptions });
+    return { fake, provider };
+  }
+
+  it('creates an issue through gh api -f fields and returns {number, url}', async () => {
+    const { provider, fake } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/issues ',
+        stdout: JSON.stringify({ number: 8, html_url: 'https://github.com/LeXwDeX/SpecGit/issues/8' }),
+      },
+    ]);
+    const result = await provider.createIssue(REPO, 'Add strict delivery harness', 'Body with #4 ref');
+    expect(result).toEqual({
+      ok: true,
+      value: { number: 8, url: 'https://github.com/LeXwDeX/SpecGit/issues/8' },
+    });
+    expect(readFakeGhCalls(fake.logPath)).toEqual([
+      'api repos/LeXwDeX/SpecGit/issues -f title=Add strict delivery harness -f body=Body with #4 ref',
+    ]);
+  });
+
+  it('fails closed with gh_transport when the response is not valid JSON', async () => {
+    const { provider } = setup([{ match: '^api repos/LeXwDeX/SpecGit/issues ', stdout: 'not json' }]);
+    const result = await provider.createIssue(REPO, 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(result.message).toContain('not valid JSON');
+  });
+
+  it('fails closed with gh_transport when the payload misses number or url', async () => {
+    const { provider } = setup([
+      { match: '^api repos/LeXwDeX/SpecGit/issues ', stdout: JSON.stringify({ number: 8 }) },
+    ]);
+    const result = await provider.createIssue(REPO, 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(result.message).toContain('unexpected issue payload');
+  });
+
+  it('classifies an HTTP 401 as gh_unauthenticated', async () => {
+    const { provider } = setup([
+      { match: '^api repos/LeXwDeX/SpecGit/issues ', exit: 1, stderr: 'gh: HTTP 401 (https://docs.github.com/rest)\n' },
+    ]);
+    const result = await provider.createIssue(REPO, 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_unauthenticated');
+    expect(JSON.stringify(result)).not.toContain('HTTP 401');
+  });
+
+  it('classifies a server error as gh_transport with sanitized text', async () => {
+    const { provider } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/issues ',
+        exit: 1,
+        stderr: '\u001b[31mgh: HTTP 500 uptime noise\u001b[0m\n',
+      },
+    ]);
+    const result = await provider.createIssue(REPO, 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(result.message).not.toContain('\u001b');
+    expect(result.message).toContain('HTTP 500');
+  });
+
+  it('fails closed with gh_missing when gh is not on PATH', async () => {
+    const emptyBin = path.join(tempDir, 'empty-bin');
+    fs.mkdirSync(emptyBin, { recursive: true });
+    const provider = new GhCliGitHubProvider({ env: { PATH: emptyBin } });
+    const result = await provider.createIssue(REPO, 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_missing');
+  });
+
+  it('refuses an empty title without invoking gh', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.createIssue(REPO, '   ', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(readFakeGhCalls(fake.logPath)).toEqual([]);
+  });
+});
+
+describe('GhCliGitHubProvider#createDraftPr', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-create-pr-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGhRule[], providerOptions: { timeoutMs?: number; maxBuffer?: number } = {}) {
+    const fake = createFakeGh(tempDir, rules);
+    const provider = new GhCliGitHubProvider({ env: fake.env(), ...providerOptions });
+    return { fake, provider };
+  }
+
+  it('creates a draft PR and parses the printed URL for the number', async () => {
+    const { provider, fake } = setup([
+      { match: '^pr create ', stdout: 'https://github.com/LeXwDeX/SpecGit/pull/12\n' },
+    ]);
+    const result = await provider.createDraftPr(
+      REPO,
+      'feat/4-strict-delivery-harness',
+      'main',
+      'Strict delivery harness',
+      'Closes #4\n\nDraft body'
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { number: 12, url: 'https://github.com/LeXwDeX/SpecGit/pull/12' },
+    });
+    expect(readFakeGhCalls(fake.logPath)).toEqual([
+      'pr create --draft --repo LeXwDeX/SpecGit --head feat/4-strict-delivery-harness --base main --title Strict delivery harness --body-file -',
+    ]);
+    expect(readFakeGhStdin(fake.logPath)).toEqual(['Closes #4\n\nDraft body']);
+  });
+
+  it('fails closed with gh_transport when gh prints no pull request URL', async () => {
+    const { provider } = setup([{ match: '^pr create ', stdout: 'created something somewhere\n' }]);
+    const result = await provider.createDraftPr(REPO, 'head', 'main', 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(result.message).toContain('did not report a pull request URL');
+  });
+
+  it('classifies a creation failure as gh_transport', async () => {
+    const { provider } = setup([
+      { match: '^pr create ', exit: 1, stderr: 'gh: Pull request creation failed (HTTP 502)\n' },
+    ]);
+    const result = await provider.createDraftPr(REPO, 'head', 'main', 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(result.message).toContain('HTTP 502');
+  });
+
+  it('classifies an auth-prompt failure as gh_unauthenticated', async () => {
+    const { provider } = setup([
+      {
+        match: '^pr create ',
+        exit: 1,
+        stderr: 'gh: To get started with GitHub CLI, please run:  gh auth login\n',
+      },
+    ]);
+    const result = await provider.createDraftPr(REPO, 'head', 'main', 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_unauthenticated');
+  });
+
+  it('kills a slow gh at the timeout and reports gh_transport', async () => {
+    const { provider } = setup([{ match: '^pr create ', delayMs: 5000, stdout: '' }], {
+      timeoutMs: 250,
+    });
+    const started = Date.now();
+    const result = await provider.createDraftPr(REPO, 'head', 'main', 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(Date.now() - started).toBeLessThan(4000);
+  });
+
+  it('refuses an empty head without invoking gh', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.createDraftPr(REPO, '  ', 'main', 'T', 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(readFakeGhCalls(fake.logPath)).toEqual([]);
   });
 });
 

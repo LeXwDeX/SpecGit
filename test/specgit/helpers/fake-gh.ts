@@ -19,22 +19,37 @@ export interface FakeGh {
 const FAKE_GH_SCRIPT = `
 const fs = require('node:fs');
 const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_GH_CONFIG, 'utf8'));
-const args = process.argv.slice(2).join(' ');
-fs.appendFileSync(cfg.logPath, JSON.stringify({ args }) + '\\n');
-const rule = cfg.rules.find((r) => new RegExp(r.match).test(args));
-if (!rule) {
-  process.stderr.write('fake gh: no rule matched: ' + args);
-  process.exit(1);
+const argv = process.argv.slice(2);
+const args = argv.join(' ');
+// Mirror real gh: '--body-file -' reads the request body from stdin.
+const bodyFileIdx = argv.indexOf('--body-file');
+const readsStdin = bodyFileIdx !== -1 && argv[bodyFileIdx + 1] === '-';
+function finish(stdinText) {
+  const record = readsStdin ? { args, stdin: stdinText } : { args };
+  fs.appendFileSync(cfg.logPath, JSON.stringify(record) + '\\n');
+  const rule = cfg.rules.find((r) => new RegExp(r.match).test(args));
+  if (!rule) {
+    process.stderr.write('fake gh: no rule matched: ' + args);
+    process.exit(1);
+  }
+  function respond() {
+    if (rule.stdout) process.stdout.write(rule.stdout);
+    if (rule.stderr) process.stderr.write(rule.stderr);
+    process.exit(typeof rule.exit === 'number' ? rule.exit : 0);
+  }
+  if (rule.delayMs && rule.delayMs > 0) {
+    setTimeout(respond, rule.delayMs);
+  } else {
+    respond();
+  }
 }
-function respond() {
-  if (rule.stdout) process.stdout.write(rule.stdout);
-  if (rule.stderr) process.stderr.write(rule.stderr);
-  process.exit(typeof rule.exit === 'number' ? rule.exit : 0);
-}
-if (rule.delayMs && rule.delayMs > 0) {
-  setTimeout(respond, rule.delayMs);
+if (readsStdin) {
+  let pending = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => (pending += chunk));
+  process.stdin.on('end', () => finish(pending));
 } else {
-  respond();
+  finish('');
 }
 `;
 
@@ -86,4 +101,19 @@ export function readFakeGhCalls(logPath: string): string[] {
     .split('\n')
     .filter((line) => line.trim().length > 0)
     .map((line) => (JSON.parse(line) as { args: string }).args);
+}
+
+/**
+ * Stdin bodies captured from invocations that read stdin (`--body-file -`),
+ * in call order; invocations that do not read stdin contribute nothing.
+ */
+export function readFakeGhStdin(logPath: string): string[] {
+  if (!fs.existsSync(logPath)) return [];
+  return fs
+    .readFileSync(logPath, 'utf-8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as { stdin?: string })
+    .filter((record) => typeof record.stdin === 'string')
+    .map((record) => record.stdin as string);
 }
