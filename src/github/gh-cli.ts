@@ -35,8 +35,9 @@ const shebangCache = new Map<string, boolean>();
  * A gh command that resolves to a Node script (#!…node shebang) cannot be
  * executed directly on Windows. Detect that case once per path and re-run it
  * through the current Node executable; native binaries are untouched.
+ * Exported for tests that wrap the spawn seam and must mirror this behavior.
  */
-function resolveNodeScriptCommand(command: string): { command: string; scriptArgs: string[] } {
+export function resolveNodeScriptCommand(command: string): { command: string; scriptArgs: string[] } {
   if (command === 'gh' || command === '') return { command, scriptArgs: [] };
   let isNodeScript: boolean;
   const cached = shebangCache.get(command);
@@ -120,15 +121,29 @@ export class GhCliGitHubProvider implements GitHubProvider {
   private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly timeoutMs: number;
   private readonly maxBuffer: number;
-  private readonly ghCommand: string;
+  private readonly explicitGhCommand: string | undefined;
   private readonly spawn: SpawnFn;
 
   constructor(options: GhCliGitHubProviderOptions = {}) {
     this.env = options.env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxBuffer = options.maxBuffer ?? DEFAULT_MAX_BUFFER;
-    this.ghCommand = options.ghCommand ?? process.env.SPECGIT_GH ?? 'gh';
+    this.explicitGhCommand = options.ghCommand;
     this.spawn = options.spawnImpl ?? defaultSpawn;
+  }
+
+  /**
+   * Resolved per invocation so a runtime `SPECGIT_GH` in the injected or
+   * process environment takes effect without re-construction. An explicit
+   * `ghCommand` option always wins; `gh` is the fallback.
+   */
+  private resolveGhCommand(): string {
+    return (
+      this.explicitGhCommand ??
+      this.env?.SPECGIT_GH ??
+      process.env.SPECGIT_GH ??
+      'gh'
+    );
   }
 
   async preflight(): Promise<Evidence<{ authenticated: boolean }>> {
@@ -287,7 +302,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
     | (GhFailure & { ok: false; code: string; message: string; fix?: string; exitCode?: number })
   > {
     try {
-      const { stdout, stderr } = await this.spawn(this.ghCommand, args, {
+      const { stdout, stderr } = await this.spawn(this.resolveGhCommand(), args, {
         timeoutMs: this.timeoutMs,
         maxBuffer: this.maxBuffer,
         env: this.env,
