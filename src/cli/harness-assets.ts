@@ -67,6 +67,22 @@ jobs:
       - name: Build CLI
         run: pnpm run build
 
+      - name: Wait for sibling checks
+        # The verdict must see the OTHER required checks in a terminal
+        # state; sibling jobs start in parallel, so poll until they finish
+        # (this job is excluded — waiting on itself would deadlock).
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          for i in $(seq 1 90); do
+            pending=$(gh pr checks "\${{ github.event.pull_request.number }}" -R "\${{ github.repository }}" --json name,state --jq '[.[] | select(.name != "SpecGit Acceptance") | select(.state == "pending" or .state == "skipping" or .state == "none")] | length' || echo 1)
+            if [ "\$pending" = "0" ]; then
+              echo "Sibling checks are in a terminal state."
+              break
+            fi
+            sleep 10
+          done
+
       - name: specgit finish
         run: node bin/specgit.js finish --json
         env:
