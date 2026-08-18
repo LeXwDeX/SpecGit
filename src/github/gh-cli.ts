@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
 import { promisify } from 'node:util';
 
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
@@ -26,8 +27,43 @@ export type SpawnFn = (
   options: SpawnOptions
 ) => Promise<{ stdout: string; stderr: string }>;
 
+const NODE_SHEBANG = /^#!\s*(?:\/usr\/bin\/env\s+)?node/;
+
+const shebangCache = new Map<string, boolean>();
+
+/**
+ * A gh command that resolves to a Node script (#!…node shebang) cannot be
+ * executed directly on Windows. Detect that case once per path and re-run it
+ * through the current Node executable; native binaries are untouched.
+ */
+function resolveNodeScriptCommand(command: string): { command: string; scriptArgs: string[] } {
+  if (command === 'gh' || command === '') return { command, scriptArgs: [] };
+  let isNodeScript: boolean;
+  const cached = shebangCache.get(command);
+  if (cached === undefined) {
+    isNodeScript = false;
+    try {
+      const fd = fs.openSync(command, 'r');
+      try {
+        const buf = Buffer.alloc(128);
+        const read = fs.readSync(fd, buf, 0, buf.length, 0);
+        isNodeScript = NODE_SHEBANG.test(buf.subarray(0, read).toString('utf-8'));
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      isNodeScript = false;
+    }
+    shebangCache.set(command, isNodeScript);
+  } else {
+    isNodeScript = cached;
+  }
+  return isNodeScript ? { command: process.execPath, scriptArgs: [command] } : { command, scriptArgs: [] };
+}
+
 const defaultSpawn: SpawnFn = async (command, args, options) => {
-  const { stdout, stderr } = await execFileAsync(command, args, {
+  const resolved = resolveNodeScriptCommand(command);
+  const { stdout, stderr } = await execFileAsync(resolved.command, [...resolved.scriptArgs, ...args], {
     timeout: options.timeoutMs,
     maxBuffer: options.maxBuffer,
     env: options.env,
@@ -91,7 +127,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
     this.env = options.env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxBuffer = options.maxBuffer ?? DEFAULT_MAX_BUFFER;
-    this.ghCommand = options.ghCommand ?? 'gh';
+    this.ghCommand = options.ghCommand ?? process.env.SPECGIT_GH ?? 'gh';
     this.spawn = options.spawnImpl ?? defaultSpawn;
   }
 
