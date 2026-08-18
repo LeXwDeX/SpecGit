@@ -107,7 +107,11 @@ describe('specgit init', () => {
     expect(fs.existsSync(path.join(root, '.opencode', 'hooks.json'))).toBe(true);
     const guard = path.join(root, '.opencode', 'hooks', 'specgit-merge-guard.sh');
     expect(fs.existsSync(guard)).toBe(true);
-    expect(fs.statSync(guard).mode & 0o111).not.toBe(0);
+    // Windows filesystems do not carry POSIX exec bits; git-for-windows
+    // executes hooks regardless. Assert the bit only where it exists.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(guard).mode & 0o111).not.toBe(0);
+    }
     // No .git directory in this fixture → no git hook, but no failure either.
     expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
   });
