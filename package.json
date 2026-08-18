@@ -1,0 +1,96 @@
+{
+  "name": "specgit",
+  "version": "0.0.1",
+  "description": "Delivery binding and acceptance harness: bind a branch or worktree to GitHub issues and one PR, then derive acceptance from real git, PR, and CI evidence",
+  "keywords": [
+    "specgit",
+    "delivery-binding",
+    "acceptance",
+    "github",
+    "pull-request",
+    "ci",
+    "cli"
+  ],
+  "homepage": "https://github.com/LeXwDeX/SpecGit",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LeXwDeX/SpecGit"
+  },
+  "license": "MIT",
+  "author": "SpecGit Contributors",
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "specgit": "./bin/specgit.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "schemas",
+    "!dist/**/*.test.js",
+    "!dist/**/__tests__",
+    "!dist/**/*.map"
+  ],
+  "scripts": {
+    "lint": "eslint src/",
+    "build": "node build.js",
+    "dev": "tsc --watch",
+    "dev:cli": "pnpm build && node bin/specgit.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "prepare": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
+    "check:pack-version": "node scripts/pack-version-check.mjs",
+    "release": "pnpm run release:ci",
+    "release:ci": "pnpm run check:pack-version && pnpm exec changeset publish",
+    "changeset": "changeset"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.1",
+    "@types/node": "^20.19.43",
+    "@vitest/ui": "^3.2.6",
+    "eslint": "^10.5.0",
+    "smol-toml": "^1.7.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^3.2.6"
+  },
+  "dependencies": {
+    "@inquirer/core": "^10.3.2",
+    "@inquirer/prompts": "^7.10.1",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.0",
+    "cross-spawn": "7.0.6",
+    "fast-glob": "^3.3.3",
+    "ora": "^9.4.1",
+    "yaml": "^2.8.3",
+    "zod": "^4.4.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ],
+    "overrides": {
+      "brace-expansion@<=5.0.8": ">=5.0.9 <6",
+      "postcss@<8.5.23": ">=8.5.23 <9",
+      "js-yaml@>=3.0.0 <3.15.1": ">=3.15.1 <4",
+      "js-yaml@>=4.0.0 <4.3.1": ">=4.3.1 <5",
+      "nanoid@<3.3.17": ">=3.3.17 <4"
+    }
+  }
+}

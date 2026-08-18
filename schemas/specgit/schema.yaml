@@ -1,0 +1,102 @@
+# SpecGit schema guidance (schema-facing documentation).
+#
+# This file documents the two normative schemas SpecGit validates:
+#   1. the delivery binding record  — `.specgit.yaml` at the repository root
+#   2. the project policy           — `spec_git/policy.yaml`
+# It is guidance for humans and agents; the validating implementation is the
+# specgit CLI. Templates for both files live in ./templates/.
+#
+# There are intentionally no artifact schemas (proposal/spec/design/tasks):
+# acceptance derives from git, issues, the PR, and checks — never from
+# authored artifacts.
+
+name: specgit
+version: 1
+description: >-
+  Delivery binding schemas. One delivery = execution context (branch or
+  worktree) + GitHub issues[] + one PR + required checks. States are derived
+  per invocation and never persisted; evaluation fails closed.
+
+documents:
+
+  record:
+    filename: ".specgit.yaml"
+    location: repository root (git rev-parse --show-toplevel)
+    committed: on the delivery branch
+    schema:
+      version:
+        type: literal 1
+        required: true
+      delivery:
+        type: string
+        required: true
+        pattern: kebab-case (lowercase alphanumerics, single-hyphen separators)
+        notes: Set once at first bind; rejected on later binds.
+      context:
+        type: discriminated union on "kind"
+        required: true
+        variants:
+          - kind: branch
+            fields:
+              branch: { type: string, required: true, notes: must equal the live branch at evaluation }
+          - kind: worktree
+            fields:
+              label: { type: string, required: true, notes: portable label, never a local path }
+              branch: { type: string, required: true }
+        notes: >-
+          Written by `specgit bind` from live git. No CLI flag can set the
+          context; unknown kinds are invalid. Worktree labels resolve through
+          `git worktree list` to the record branch.
+      issues:
+        type: array of positive integers
+        default: []
+        notes: >-
+          GitHub issue numbers only (opaque tracker ids are rejected at bind:
+          issue_ref_not_github). Record cardinality 0..N; acceptance requires
+          >= 1 (issues_empty). Values merge-dedupe across binds, first-seen
+          order kept.
+      pr:
+        type: positive integer or non-empty string (URL verbatim)
+        optional: true
+        notes: >-
+          At most one PR per delivery; a new --pr replaces the old. Record
+          cardinality 0..1; acceptance requires exactly one (pr_missing).
+    unknown_keys: parsed-but-ignored and preserved on rewrite
+
+  policy:
+    filename: "policy.yaml"
+    location: spec_git/ under the repository root (the directory marks the project)
+    committed: yes, typically on the default branch
+    schema:
+      version:
+        type: literal 1
+        required: true
+      required_checks:
+        type: array of non-empty strings
+        required: true
+        min_length: 1
+        notes: >-
+          Exact check-run names matched byte-for-byte against check runs
+          reported at the PR head commit. Declared locally, never read from
+          GitHub rulesets. An empty list is invalid (policy_invalid) — there
+          is no "no required checks" mode.
+    unknown_keys: invalid (strict schema)
+
+acceptance:
+  gates:
+    - g1_record        # record_missing, record_invalid
+    - g2_policy        # policy_missing, policy_invalid
+    - g3_completeness  # issues_empty, pr_missing
+    - g4_context       # not_a_git_repo, git_unavailable, no_commits, detached_head, branch_mismatch, worktree_mismatch
+    - g5_origin        # no_origin, origin_unresolvable
+    - g6_provider      # gh_missing, gh_unauthenticated, gh_transport
+    - g7_issues        # issue_not_found, issue_is_pull_request
+    - g8_pr            # pr_not_found, pr_closed_unmerged, pr_head_mismatch, pr_repo_mismatch
+    - g9_closing_refs  # closing_refs_incomplete
+    - g10_checks       # checks_missing, checks_pending, checks_failed (per check name)
+  semantics: >-
+    Gates short-circuit across gates and collect all failures within a gate.
+    All evidence gathered and >= 1 gate failed => rejected (exit 1). Evidence
+    unavailable => unknown (exit 3). Every gate passed => accepted (exit 0).
+    Checks evaluate at the PR head SHA; local head staleness is a warning
+    (local_head_stale) only; a dirty tree is evidence, never a gate.

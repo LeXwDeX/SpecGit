@@ -1,0 +1,51 @@
+# Overview
+
+**SpecGit is an acceptance gate for deliveries.** One delivery = one execution context (a branch or worktree) + one or more GitHub issues + one pull request + required CI checks. SpecGit derives the verdict from the real evidence and fails closed.
+
+The whole idea in one line: **if git, the PR, and the checks can prove it, it's accepted.**
+
+## The model on one screen
+
+```text
+.specgit.yaml (record)          spec_git/policy.yaml (policy)
+┌────────────────────────┐      ┌──────────────────────────────┐
+│ delivery: add-login    │      │ required_checks:             │
+│ context:               │      │   - "All checks passed"      │
+│   kind: branch         │      └──────────────────────────────┘
+│   branch: feat/123     │                 │
+│ issues: [123, 124]     │                 │
+│ pr: 42                 │                 │
+└───────────┬────────────┘                 │
+            ▼                              ▼
+   live git facts              GitHub via `gh`
+   branch/worktree match       issues exist · PR open/merged
+   origin → owner/repo         closing refs close every issue
+                               checks green at PR head
+            │                              │
+            └──────────────┬───────────────┘
+                           ▼
+        accepted (0) · rejected (1) · unknown (3)
+```
+
+## The loop
+
+```bash
+specgit init --required-check "All checks passed"   # once per repo → spec_git/policy.yaml
+git checkout -b feat/123-add-login                  # execution context = live git
+specgit bind --delivery add-login --issue 123       # → .specgit.yaml
+specgit bind --pr 42                                # rebind as the delivery grows
+# ... push, open PR #42 with "Closes #123", make CI green ...
+specgit accept                                      # derived verdict, fail-closed
+```
+
+## Why derived, not declared
+
+A delivery is not done because a file says it is done. It is done when the branch is bound, every issue is closed by the PR, and the required checks are green at the PR head commit — all verified live, on every `accept`. States are computed per invocation and never persisted, so nothing can lie about itself. When evidence cannot be gathered (no network, missing `gh`, invalid record), the answer is `unknown`, never `accepted`. See [Concepts](concepts.md).
+
+## Where to go next
+
+- [Getting Started](getting-started.md) — the loop, step by step
+- [CLI Reference](cli.md) — `init`, `bind`, `unbind`, `status`, `accept`, `doctor`
+- [Reference](reference.md) — record/policy schemas, the ten gates, all diagnostic codes
+- [GitHub Actions](actions.md) — picking check names, wiring required checks, security
+- [Examples & Recipes](examples.md) — real deliveries end to end

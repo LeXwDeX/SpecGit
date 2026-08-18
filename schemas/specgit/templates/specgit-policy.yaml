@@ -1,0 +1,14 @@
+# SpecGit project policy — template.
+# Write this file as `spec_git/policy.yaml` at the repository root and commit
+# it (usually on the default branch). Prefer `specgit init --required-check`,
+# which refuses to overwrite an existing policy.
+#
+# required_checks: non-empty list of EXACT check-run names, matched
+# byte-for-byte against check runs reported at the PR head commit. Keep them
+# aligned with the repository's required status checks (branch protection).
+# The schema is strict: unknown keys make the policy invalid, and an empty
+# list is invalid — there is no "no required checks" mode.
+
+version: 1
+required_checks:
+  - "All checks passed"

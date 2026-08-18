@@ -1,0 +1,29 @@
+# SpecGit delivery binding record — template.
+# Write this file as `.specgit.yaml` at the repository root and commit it on
+# the delivery branch. Prefer `specgit bind`, which fills the context from
+# live git and keeps unknown keys intact.
+
+version: 1
+
+# Kebab-case delivery id. Set once at first bind.
+delivery: add-login-flow
+
+# Execution context — resolve from live git, never by hand.
+# Checkout on a branch:
+context:
+  kind: branch
+  branch: feat/123-login
+
+# Linked worktree instead (label is the portable checkout name, never a path):
+# context:
+#   kind: worktree
+#   label: 123-login
+#   branch: feat/123-login
+
+# GitHub issue numbers this delivery closes. May be empty in a draft;
+# acceptance requires at least one.
+issues: [123]
+
+# The single pull request merging this delivery. Number or URL verbatim;
+# a later bind replaces it. Acceptance requires exactly one.
+pr: 42
