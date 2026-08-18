@@ -28,6 +28,35 @@ artifact states that can claim completion for themselves. If the evidence
 can't be gathered, the answer is `unknown`, never `accepted` — SpecGit
 **fails closed**.
 
+## Quick start
+
+```bash
+# 0. prerequisites: Node ≥ 20.19, git, and gh authenticated
+gh auth status || gh auth login
+
+# 1. install (once published): npm install -g specgit
+specgit --version
+
+# 2. once per repository — declare the required CI checks
+specgit init --required-check "Test" --required-check "Lint"
+specgit doctor                       # all probes green?
+
+# 3. per delivery — on the delivery branch
+git checkout -b feat/123-add-login
+specgit bind --delivery add-login --issue 123
+
+# 4. work, push, open the PR (body must say: Closes #123)
+specgit bind --pr 42                 # record the PR once it exists
+git add .specgit.yaml && git commit -m "chore: record binding"
+
+# 5. gate the merge on evidence
+specgit accept                       # exit 0 → merge; else fix what it names
+```
+
+`specgit accept` exit `0` is the *only* definition of done. The full
+walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
+[Workflow Guide](docs/workflow-guide.md).
+
 ## The loop
 
 ```bash
@@ -44,6 +73,9 @@ specgit bind --pr 42
 specgit accept
 # exit 0 → accepted · exit 1 → rejected (evidence attached) · exit 3 → cannot determine
 ```
+
+(Condensed in [Quick start](#quick-start) above; the
+[Workflow Guide](docs/workflow-guide.md) expands every step.)
 
 Two committed files, zero other state. One PR may close N issues; every bound
 issue must be closed from the PR body; checks are matched byte-for-byte

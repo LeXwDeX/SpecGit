@@ -13,6 +13,11 @@ If you read nothing else, read these two pages:
 1. [Getting Started](getting-started.md): install, initialize the policy, and take your first delivery to acceptance.
 2. [Concepts](concepts.md): the delivery binding aggregate and why acceptance is derived, never asserted.
 
+New: the [Workflow Guide](workflow-guide.md) (中文) is the canonical
+step-by-step walkthrough — machine setup, repo init, the per-delivery loop,
+and the agent operating loop (skills → commands → dev loop), with
+troubleshooting at the end.
+
 ## Pick your path
 
 **I'm brand new.** Start with [Getting Started](getting-started.md), then skim [Concepts](concepts.md). When something feels mysterious, the [FAQ](faq.md) and [Glossary](glossary.md) are nearby.

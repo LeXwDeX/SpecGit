@@ -10,6 +10,54 @@ import { makeTempDir, rmDir } from './helpers/temp-repo.js';
 const REPO = { owner: 'LeXwDeX', repo: 'SpecGit' };
 const SHA = 'a'.repeat(40);
 
+describe('gh command resolution', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-resolve-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  it('SPECGIT_GH pointing at a node-shebang script executes through node', async () => {
+    const { provider, fake } = (() => {
+      const fake = createFakeGh(tempDir, [
+        { match: '^--version$', stdout: 'gh version 2.60.0\n' },
+        { match: '^auth status$', stdout: 'Logged in to github.com\n' },
+      ]);
+      // The injected env carries only the fake's config — no SPECGIT_GH — so
+      // command resolution must fall through to the process-level override
+      // set below.
+      const provider = new GhCliGitHubProvider({ env: { FAKE_GH_CONFIG: fake.configPath } });
+      return { provider, fake };
+    })();
+    const prev = process.env.SPECGIT_GH;
+    process.env.SPECGIT_GH = path.join(fake.binDir, 'fake-gh.cjs');
+    try {
+      const result = await provider.preflight();
+      expect(result).toEqual({ ok: true, value: { authenticated: true } });
+    } finally {
+      if (prev === undefined) delete process.env.SPECGIT_GH;
+      else process.env.SPECGIT_GH = prev;
+    }
+  });
+
+  it('a node-shebang script passed as ghCommand runs identically', async () => {
+    const fake = createFakeGh(tempDir, [
+      { match: '^--version$', stdout: 'gh version 2.60.0\n' },
+      { match: '^auth status$', stdout: 'Logged in to github.com\n' },
+    ]);
+    const provider = new GhCliGitHubProvider({
+      ghCommand: path.join(fake.binDir, 'fake-gh.cjs'),
+      env: fake.env(),
+    });
+    const result = await provider.preflight();
+    expect(result).toEqual({ ok: true, value: { authenticated: true } });
+  });
+});
+
 describe('GhCliGitHubProvider', () => {
   let tempDir: string;
 

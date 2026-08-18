@@ -46,8 +46,14 @@ export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
   fs.writeFileSync(configPath, JSON.stringify({ rules, logPath }));
 
   const recorderPath = path.join(binDir, 'fake-gh.cjs');
-  fs.writeFileSync(recorderPath, FAKE_GH_SCRIPT);
+  fs.writeFileSync(recorderPath, `#!/usr/bin/env node\n${FAKE_GH_SCRIPT}`);
+  // Executable bit so POSIX execFile can run the shebang directly; Windows
+  // goes through the provider's node-shebang detection instead.
+  fs.chmodSync(recorderPath, 0o755);
 
+  // The extensionless `gh` script works on POSIX (kernel shebang) and — via
+  // the provider's node-shebang detection — on Windows too. gh.cmd stays for
+  // any shell-based consumer.
   const posixExecutable = path.join(binDir, 'gh');
   fs.writeFileSync(posixExecutable, `#!/bin/sh\nexec node ${JSON.stringify(recorderPath)} "$@"\n`);
   fs.chmodSync(posixExecutable, 0o755);
@@ -64,6 +70,10 @@ export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
       ...process.env,
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
       FAKE_GH_CONFIG: configPath,
+      // Cross-platform: point SPECGIT_GH at the node-shebang script so the
+      // provider executes it through node on every OS (real gh stays
+      // unreachable even where a system gh exists).
+      SPECGIT_GH: recorderPath,
       ...extra,
     }),
   };

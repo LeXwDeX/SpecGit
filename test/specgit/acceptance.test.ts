@@ -11,7 +11,7 @@ import type { Policy } from '../../src/record/policy.js';
 import type { GitFacts, GitPort } from '../../src/gitfacts/port.js';
 import type { SpawnFn as GitSpawnFn } from '../../src/gitfacts/local.js';
 import { LocalGitAdapter } from '../../src/gitfacts/local.js';
-import { GhCliGitHubProvider, type SpawnFn as GhSpawnFn } from '../../src/github/gh-cli.js';
+import { GhCliGitHubProvider, resolveNodeScriptCommand, type SpawnFn as GhSpawnFn } from '../../src/github/gh-cli.js';
 import {
   evaluate,
   type EvaluateInput,
@@ -552,7 +552,10 @@ describe('acceptance evaluator evidence discipline', () => {
   const execFileAsync = promisify(execFile);
 
   const realSpawn: GitSpawnFn & GhSpawnFn = async (command, args, options) => {
-    const result = await execFileAsync(command, args, {
+    // Mirror the production spawn seam: a node-shebang gh command runs
+    // through the current Node executable on every platform.
+    const resolved = resolveNodeScriptCommand(command);
+    const result = await execFileAsync(resolved.command, [...resolved.scriptArgs, ...args], {
       timeout: options.timeoutMs,
       maxBuffer: options.maxBuffer,
       env: options.env,
@@ -626,7 +629,13 @@ describe('acceptance evaluator evidence discipline', () => {
       expect(checksGate.failures.map((f) => f.code)).toEqual(['checks_missing']);
 
       const commands = new Set(spawned.map((s) => s.command));
-      expect(commands).toEqual(new Set(['git', 'gh']));
+      // git for local facts; the fake gh script (SPECGIT_GH seam) for
+      // GitHub evidence — nothing else may ever be spawned.
+      expect(commands.has('git')).toBe(true);
+      for (const entry of spawned) {
+        if (entry.command === 'git') continue;
+        expect(entry.command).toMatch(/fake-gh\.cjs$/);
+      }
 
       const artifactPattern = /(^|[\\/])(tasks|proposal|design|spec)\.md$/;
       const openspecPattern = /(^|[\\/])openspec([\\/]|$)/;
