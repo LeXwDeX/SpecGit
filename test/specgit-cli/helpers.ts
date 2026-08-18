@@ -296,6 +296,7 @@ export interface CtxOptions {
   facts?: GitFacts;
   evaluate?: (input: EvaluateCall) => Promise<Verdict>;
   root?: Evidence<string>;
+  cwd?: string;
   stdinIsTTY?: boolean;
   gh?: GitHubProvider;
   gitWrites?: GitWriteScript;
@@ -323,7 +324,7 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
   const ctx: CommandContext = {
     io: io.writeOut,
     version: '0.0.0-test',
-    cwd: '/repo',
+    cwd: options.cwd ?? '/repo',
     stdinIsTTY: options.stdinIsTTY ?? false,
     discoverRoot: vi.fn(async () => options.root ?? { ok: true, value: '/repo' }),
     probeGitBinary: vi.fn(async () => ({ ok: true, value: 'git version 2.39.0' })),

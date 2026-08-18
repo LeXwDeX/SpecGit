@@ -183,7 +183,60 @@ export function injectManagedBlock(existing: string, block: string): string {
 export interface HarnessWriteResult {
   workflow: string;
   prompts: string[];
+  hooks: string[];
+  gitHook: string | null;
 }
+
+const GUARD_HOOK_JSON = `{
+  "PreToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": ".opencode/hooks/specgit-merge-guard.sh",
+          "timeout": 10
+        }
+      ]
+    }
+  ]
+}
+`;
+
+// Blocks merge/push-main attempts that bypass the evidence verdict. Matches
+// only the command's leading verb pattern so prose containing the keywords
+// (e.g. an issue body) never trips the guard.
+const GUARD_SCRIPT = `#!/bin/sh
+# SpecGit merge guard (managed by specgit init). Exit 2 = block with reason.
+command=\$(printf '%s' "\$1" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_input&&j.tool_input.command)||'')}catch{process.stdout.write('')}})")
+
+case "\$command" in
+  gh\\ pr\\ merge*|git\\ push\\ origin\\ main*|git\\ push\\ origin\\ +main*|git\\ push\\ origin\\ HEAD:main*)
+    echo "specgit: merge/push-main attempted without a recorded verdict. Run 'specgit finish' first - exit 0 is the only path to merge; fix what the failures name; never weaken spec_git/policy.yaml to pass." >&2
+    exit 2
+    ;;
+esac
+exit 0
+`;
+
+// Local git-layer guard: refuses direct pushes to main; deliveries must go
+// through PR + CI + specgit finish.
+const GIT_PRE_PUSH = `#!/bin/sh
+# SpecGit pre-push guard (managed by specgit init).
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "\$remote_ref" in
+    refs/heads/main)
+      echo "specgit: direct push to main is not the delivery path." >&2
+      echo "Deliveries go: specgit issue -> PR -> CI -> specgit finish (exit 0) -> merge." >&2
+      exit 1
+      ;;
+  esac
+done
+exit 0
+`;
+
+const HOOKS_SEGMENTS = ['.opencode', 'hooks'];
+const GUARD_HOOK_PATH = [...HOOKS_SEGMENTS, 'specgit-merge-guard.sh'].join('/');
 
 async function readIfExists(target: string): Promise<string | null> {
   try {
@@ -214,5 +267,27 @@ export async function writeHarnessAssets(root: string): Promise<HarnessWriteResu
     prompts.push(filename);
   }
 
-  return { workflow: HARNESS_WORKFLOW_PATH, prompts };
+  const hooksJsonTarget = path.join(root, '.opencode', 'hooks.json');
+  await fs.mkdir(path.dirname(hooksJsonTarget), { recursive: true });
+  await fs.writeFile(hooksJsonTarget, GUARD_HOOK_JSON, 'utf-8');
+
+  const guardTarget = path.join(root, ...HOOKS_SEGMENTS, 'specgit-merge-guard.sh');
+  await fs.mkdir(path.dirname(guardTarget), { recursive: true });
+  await fs.writeFile(guardTarget, GUARD_SCRIPT, 'utf-8');
+  await fs.chmod(guardTarget, 0o755);
+
+  const hooks = ['.opencode/hooks.json', GUARD_HOOK_PATH];
+
+  let gitHook: string | null = null;
+  const gitHookTarget = path.join(root, '.git', 'hooks', 'pre-push');
+  const gitDir = path.join(root, '.git');
+  const gitStat = await fs.stat(gitDir).catch(() => null);
+  if (gitStat?.isDirectory() ?? false) {
+    await fs.mkdir(path.dirname(gitHookTarget), { recursive: true });
+    await fs.writeFile(gitHookTarget, GIT_PRE_PUSH, 'utf-8');
+    await fs.chmod(gitHookTarget, 0o755);
+    gitHook = '.git/hooks/pre-push';
+  }
+
+  return { workflow: HARNESS_WORKFLOW_PATH, prompts, hooks, gitHook };
 }
