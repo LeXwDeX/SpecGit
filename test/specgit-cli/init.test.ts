@@ -78,14 +78,38 @@ describe('specgit init', () => {
     expect(envelope.policy).toEqual({ version: 1, required_checks: ['Test'] });
   });
 
-  it('fails usage in non-TTY when no --required-check is given, writing nothing', async () => {
+  it('with no --required-check and no workflows, falls back to the aggregate check', async () => {
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
-    expect(code).toBe(EXIT_USAGE);
+    expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.errors[0].code).toBe('required_check_required');
-    expect(t.recordPort.policyWrites).toHaveLength(0);
-    expect(fs.readdirSync(root)).toHaveLength(0);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['All checks passed'] });
+  });
+
+  it('with no --required-check, auto-detects job names from .github/workflows', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n  test:\n    name: Test (linux)\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['build', 'Test (linux)'] });
+  });
+
+  it('generates the guard hooks and the git pre-push hook', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'T', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(fs.existsSync(path.join(root, '.opencode', 'hooks.json'))).toBe(true);
+    const guard = path.join(root, '.opencode', 'hooks', 'specgit-merge-guard.sh');
+    expect(fs.existsSync(guard)).toBe(true);
+    expect(fs.statSync(guard).mode & 0o111).not.toBe(0);
+    // No .git directory in this fixture → no git hook, but no failure either.
+    expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
   });
 
   it('does not overwrite an existing policy', async () => {

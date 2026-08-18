@@ -152,7 +152,10 @@ CLAUDE.md
 result
 
 # OpenCode
-.opencode/
+.opencode/*
+!.opencode/hooks.json
+!.opencode/hooks/
+!.opencode/command/
 opencode.json
 
 # Codex
