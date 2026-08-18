@@ -1,10 +1,12 @@
 /**
- * `specgit init` — creates `spec_git/policy.yaml` and nothing else. The
- * generation surface of the retired product (skills/commands/instructions)
- * does not exist here.
+ * `specgit init` — creates `spec_git/policy.yaml` and generates the
+ * delivery harness: the CI acceptance workflow and the managed prompt
+ * block in the agent instruction files. Harness generation is
+ * idempotent; the policy itself is write-once and never overwritten.
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
+import { writeHarnessAssets, type HarnessWriteResult } from '../harness-assets.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext } from '../types.js';
 
@@ -63,6 +65,17 @@ export async function runInit(
   }
   const root = rootEv.value;
 
+  let harness: HarnessWriteResult;
+  try {
+    harness = await writeHarnessAssets(root);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [errorDiagnostic('harness_write_failed', message)],
+    };
+  }
+
   const existingPolicy = await ctx.record.readPolicy(root);
   if (existingPolicy.ok) {
     return {
@@ -103,6 +116,8 @@ export async function runInit(
       `Created ${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
       `Required checks (${checks.length}):`,
       ...checks.map((name) => `  - ${name}`),
+      `Created ${harness.workflow}`,
+      ...harness.prompts.map((filename) => `Managed block refreshed in ${filename}`),
     ],
   };
 }
