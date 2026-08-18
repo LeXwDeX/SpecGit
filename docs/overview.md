@@ -30,12 +30,10 @@ The whole idea in one line: **if git, the PR, and the checks can prove it, it's 
 ## The loop
 
 ```bash
-specgit init --required-check "All checks passed"   # once per repo → spec_git/policy.yaml
-git checkout -b feat/123-add-login                  # execution context = live git
-specgit bind --delivery add-login --issue 123       # → .specgit.yaml
-specgit bind --pr 42                                # rebind as the delivery grows
-# ... push, open PR #42 with "Closes #123", make CI green ...
-specgit accept                                      # derived verdict, fail-closed
+specgit init --required-check "All checks passed"   # once per repo → policy + harness
+specgit issue "feat: add login"                     # → issues, branch, draft PR, .specgit.yaml
+# ... work, push; CI runs (including the SpecGit Acceptance job) ...
+specgit finish                                      # derived verdict, fail-closed
 ```
 
 ## Why derived, not declared

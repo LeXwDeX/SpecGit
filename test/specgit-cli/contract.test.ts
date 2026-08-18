@@ -100,12 +100,12 @@ describe('CLI contract: usage surface', () => {
     expect(code).toBe(EXIT_SUCCESS);
   });
 
-  it('registers exactly the six SpecGit commands', async () => {
+  it('registers exactly the nine SpecGit commands', async () => {
     const t = makeCtx();
     await runCliWith(['node', 'specgit', '--help'], t.ctx);
     const help = stdoutText(t.io);
-    for (const cmd of ['init', 'bind', 'unbind', 'status', 'accept', 'doctor']) {
-      expect(help).toContain(cmd);
+    for (const cmd of ['init', 'issue', 'pr', 'finish', 'bind', 'unbind', 'status', 'accept', 'doctor']) {
+      expect(help, `help must mention ${cmd}`).toMatch(new RegExp(`\\b${cmd}\\b`));
     }
   });
 });

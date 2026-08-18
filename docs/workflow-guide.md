@@ -53,55 +53,39 @@ specgit init --required-check "Test (linux-bash)" --required-check "Lint & Type 
 ## 2. 单次交付的标准流程（人类视角）
 
 一次 delivery = 一个 change = 绑定三元组的完整生命周期。
+命令故事是 **issue → finish**：一条命令开始，一条命令裁决。
 
-### Step 1 — 建 issue（WHY）
-
-```bash
-gh issue create --title "..." --body "## Why ... ## Scope ... ## Acceptance ..."
-```
-
-Issue 是交付的 WHY 载体。一个交付可以对应 N 个 issue。
-
-### Step 2 — 建分支（或 worktree）
+### Step 1 — 一键引导：`specgit issue`
 
 ```bash
-# 分支模式
-git switch -c feat/<issue#>-<slug>
-
-# worktree 模式（并行交付互不干扰）
-git worktree add ../<repo>-<issue#>-<slug> -b feat/<issue#>-<slug>
-cd ../<repo>-<issue#>-<slug>
+specgit issue "feat: add login" "Harden the session model" --json
 ```
 
-分支命名约定 `<type>/<issue#>-<slug>`（feat/fix/docs/chore/...）。
-`bind` 从**活体 git** 读上下文——在哪个分支/worktree 上运行就绑定哪个。
+一个参数 = 一个独立可验证的 WHY：
 
-### Step 3 — 开发（TDD）
+- 带引号的文本 → 新建 issue（Why/Scope/Acceptance 模板）；
+- 纯数字 → 复用已有 issue。
+
+N 个参数 = N 个 issue 绑进 **同一个** 交付（1 PR : N issues）。
+该命令依次完成：创建/复用 issues → 建分支 `<type>/<first#>-<slug>`
+（type 取自首个标题的 conventional 前缀，默认 feat；slug 取前三个
+ASCII 单词，非 ASCII 回退 `issue<N>`）→ 开 draft PR（body 自动写
+`Closes #n`，覆盖每个 issue）→ 写 `.specgit.yaml` → commit → push。
+
+**幂等续跑**：任何一步之间失败后，重跑同一条命令即恢复——已完成的
+步骤（记录里的 issues → 分支 → PR → commit → push）会被检测并跳过，
+不会重复建 issue、不会重复开 PR。无参数且无记录时退出 2（CLI 不交互）。
+
+### Step 2 — 开发（TDD）
 
 按 `workflows/specgit-dev-loop.md` 的切片纪律：
 红测 → 最小绿 → mutation（回退必红）→ 定向测试 + typecheck → commit。
+分支与 draft PR 已在 Step 1 就位，直接在其上工作、push。
 
-### Step 4 — 开 PR 并绑定
-
-```bash
-git push -u origin feat/<issue#>-<slug>
-gh pr create --title "..." --body "Closes #<N>
-
-## What / Why / Evidence"
-# PR body 必须为每个绑定 issue 写 closing 引用（Closes #N / Fixes #N）
-
-specgit bind --delivery <kebab-id> --issue <N> [--issue <M>...] --pr <PR#> --json
-git add .specgit.yaml && git commit -m "chore: record delivery binding" && git push
-```
-
-- `.specgit.yaml` 是交付记录，随分支一起版本化。
-- 一个 PR 可绑定 N 个 issues（`--issue` 可重复）。
-- `--delivery` id 首次绑定后不可变；后续增量用 `specgit bind --issue <M>`。
-
-### Step 5 — 验收
+### Step 3 — 验收
 
 ```bash
-specgit accept --json
+specgit finish --json
 ```
 
 10 道门禁全部从真实 git/PR/CI 证据推导：
@@ -109,6 +93,10 @@ specgit accept --json
 1. `record` / 2. `policy` / 3. `completeness` / 4. `context` / 5. `origin`
 6. `provider` / 7. `issues` / 8. `pr` / 9. `closing`（PR body 覆盖所有 issue）
 10. `checks`（policy 里的每个 check 在 PR head 上 success）
+
+`spec_git/policy.yaml` 已由 `specgit init` 声明的 required checks 与
+`.github/workflows/specgit-accept.yml` 里的 **SpecGit Acceptance** job
+（跑 `specgit finish --json`）共同构成物理 CI 门禁。
 
 退出码契约：
 
@@ -121,68 +109,61 @@ specgit accept --json
 
 `checks_pending`：CI 还在跑 → `gh pr checks <PR> --watch` 后重试。
 
-### Step 6 — 合并
+### Step 4 — 合并
 
 - 人工检查点 **push right**：唯一一次人审 = 读 PR brief（what/why/issue+PR+CI
-  链接 + `specgit accept` 裁决），批准合并。
+  链接 + `specgit finish` 裁决），批准合并。
 - 机器裁决先行：**verdict ≠ accepted 的 PR 不允许合并**。
 
-### Step 7 — 收尾
+### Step 5 — 收尾
 
 ```bash
 git switch main && git pull            # 回主干
-gh issue view <N>                      # issue 已被 Closes 自动关闭
+gh issue view <N>                      # issues 已被 Closes 自动关闭
 specgit status                          # main 上无绑定（正常态）
 ```
 
 ---
 
-## 3. Agent 视角（在 AGENT 里怎么做）
+## 3. Agent 视角（在 AGENTS 里怎么做）
 
-Agent 与人类走同一条流程，差异只在驱动者是模型。三层接入：
+Agent 与人类走同一条流程，差异只在驱动者是模型。行为来源是
+`specgit init` 注入 `AGENTS.md` 的 **specgit 托管块**
+（`<!-- specgit:block:start/end -->` 之间的内容，re-init 只重写块内
+内容），规范化版本见 [`docs/agent-contract.md`](agent-contract.md)。
+本仓库不再提供 skills 目录或 `.opencode/command/` 命令插件——
+CLI 契约 + AGENTS.md 块就是全部接入面。
 
-### 3.1 Skills（能力层）
-
-安装到 agent 的 skills 目录（如 `~/.agents/skills/`）：
-
-| Skill | 职责 |
-|---|---|
-| `specgit-setup-policy` | 初始化 `spec_git/policy.yaml`（读 CI workflow 推导 check 名） |
-| `specgit-bind-delivery` | 从活体 git 创建/更新 `.specgit.yaml`，补 PR body closing 引用 |
-| `specgit-accept-delivery` | 跑 accept、按 failures[].fix 修复循环、产出合并 brief |
-
-### 3.2 OpenCode commands（触发层）
-
-本仓库 `.opencode/command/` 提供：
-
-- `/specgit-setup` — 一次性 policy 初始化
-- `/specgit-bind` — 绑定交付（分支上运行）
-- `/specgit-accept` — 验收 + 修复循环 + 合并 brief
-- `/specgit-status` — 本地证据速览
-
-### 3.3 Agent 的标准作业循环
+### 3.1 Agent 的标准作业循环
 
 ```
 触发：新 issue 被认领 / 用户指派交付
-  1. 读 issue（WHY/Scope/Acceptance）
-  2. git switch -c <type>/<issue#>-<slug>（或 worktree）
-  3. TDD 切片循环（红→绿→mutation→门禁→commit）
-  4. push + gh pr create（body 含 Closes #N）
-  5. specgit bind --delivery ... --issue ... --pr ...
-  6. 提交 .specgit.yaml
-  7. specgit accept --json
+  1. specgit issue "<type>: <标题>"...        # 一键引导（幂等，失败重跑同命令）
+  2. TDD 切片循环（红→绿→mutation→门禁→commit）
+  3. push（分支、draft PR、记录都已就位）
+  4. specgit finish --json
      ├─ exit 0  → 输出 PR brief（含 issue/PR/CI run 链接），请人批准合并
-     ├─ exit 1  → 读 failures[].fix → 修复 → 回到 7
+     ├─ exit 1  → 读 failures[].fix → 修复 → 回到 4
      └─ exit 3  → 报告环境问题（gh auth/网络），不动代码
-  8. 人批准 → gh pr merge → issue 自动关闭
+  5. 人批准 → gh pr merge → issues 自动关闭
 ```
 
-**铁律（agent 必须遵守）**：
+### 3.2 修复与诊断
+
+- PR 绑定缺失/失准 → `specgit pr`（无参自动按 head 分支发现 PR；
+  0 个 → 报错并给 fix；多个 → 拒绝并列出，此时显式 `specgit pr <n>`）。
+- 环境疑难 → `specgit doctor --json`（git → repo → origin → gh → auth
+  → policy 的探测顺序即排查顺序）。
+
+### 3.3 粒度原则与铁律（agent 必须遵守）
+
+**一个 issue = 一个独立可验证的 WHY。** 交付物无法凭自身证据验证时，
+先拆分再绑定。
 
 - 验收只认证据：任何 spec/task/计划文件的内容都不能改变 verdict。
 - `spec_git/policy.yaml` 不许为了让 verdict 通过而削弱——check 名写错走
   reviewed change 修。
-- verdict 非 accepted 的 PR 永远不请求合并、不自行合并。
+- `specgit finish` 退出码非 0 的 PR 永远不请求合并、不自行合并。
 - `--json` 输出是唯一可靠解析面：stdout 恰好一个 JSON 文档。
 
 ### 3.4 Dev loop 规范

@@ -120,7 +120,10 @@ export class LocalGitAdapter implements GitPort {
 
     const worktrees = await this.listWorktrees(probe);
 
-    const originUrl = (await probe(['remote', 'get-url', 'origin']))?.trim() || null;
+    // Raw config value, not `git remote get-url`: url.<x>.insteadOf
+    // rewrites apply to the latter, which would mask the GitHub origin
+    // this harness binds to.
+    const originUrl = (await probe(['config', '--get', 'remote.origin.url']))?.trim() || null;
 
     const upstreamDrift = await this.trackingDrift(probe);
 
@@ -163,6 +166,20 @@ export class LocalGitAdapter implements GitPort {
     if (!add.ok) {
       return add;
     }
+    // Locale-independent emptiness probe: `git diff --cached --quiet`
+    // exits 1 exactly when the path has staged changes. (git's own
+    // "nothing to commit" text is localized and must not be parsed.)
+    const hasStagedChanges = await this.spawn(
+      'git',
+      ['-C', root, 'diff', '--cached', '--quiet', '--', relativePath],
+      { timeoutMs: GIT_WRITE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env }
+    ).then(
+      () => false,
+      () => true
+    );
+    if (!hasStagedChanges) {
+      return ok({ committed: false });
+    }
     const commit = await this.write('commit', [
       '-C',
       root,
@@ -174,9 +191,6 @@ export class LocalGitAdapter implements GitPort {
     ]);
     if (commit.ok) {
       return ok({ committed: true });
-    }
-    if (/nothing to commit|no changes added/i.test(commit.message)) {
-      return ok({ committed: false });
     }
     return commit;
   }

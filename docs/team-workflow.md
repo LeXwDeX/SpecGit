@@ -22,16 +22,16 @@ That aggregate is the team's unit of work and the unit of acceptance:
 ## A delivery's lifecycle
 
 ```text
-issue(s) filed ──► branch/worktree + specgit bind ──► commits ──► PR
-                                                                   │
-        specgit accept ◄── closing refs + green checks ◄───────────┘
+issue(s) filed ──► specgit issue (branch + draft PR + record) ──► commits ──► push
+                                                                                        │
+        specgit finish ◄── closing refs + green checks ◄────────────────────────────────┘
               │
               ├── accepted ──► merge ──► specgit unbind (or delete .specgit.yaml)
-              ├── rejected ──► fix what the gates named, re-run accept
-              └── unknown  ──► fix record/policy/auth, re-run accept
+              ├── rejected ──► fix what the gates named, re-run finish
+              └── unknown  ──► fix record/policy/auth, re-run finish
 ```
 
-The record (`.specgit.yaml`) is committed on the delivery branch, so the binding travels with the work: anyone who checks the branch out — including worktrees on their own machine — can run `specgit status` and `specgit accept` and get the same verdict.
+The record (`.specgit.yaml`) is committed on the delivery branch, so the binding travels with the work: anyone who checks the branch out — including worktrees on their own machine — can run `specgit status` and `specgit finish` and get the same verdict.
 
 ## What review reviews
 

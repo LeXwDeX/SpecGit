@@ -49,7 +49,7 @@ repo root/
 ```
 
 - **Policy** (`spec_git/policy.yaml`): the project-level contract — the non-empty list of CI check names every delivery must pass. Created by `specgit init`, versioned like code.
-- **Record** (`.specgit.yaml`): the delivery-level binding. Written by `specgit bind`, removed by `specgit unbind`. Unknown keys are preserved on rewrite so other tools can coexist in the file.
+- **Record** (`.specgit.yaml`): the delivery-level binding. Written by `specgit issue` (script alias: `bind`), removed by `specgit unbind`. Unknown keys are preserved on rewrite so other tools can coexist in the file.
 
 No other state exists. No artifact directories, no caches, no global stores. Root discovery is `git rev-parse --show-toplevel` — SpecGit runs only inside a git repository, at its root.
 
@@ -78,7 +78,7 @@ Every piece of evidence is either gathered successfully or it is a failure — t
 
 Consequences worth knowing:
 
-- `specgit accept` offline can return `unknown`, never `accepted`. Acceptance requires the provider by design.
+- `specgit finish` (alias `accept`) offline can return `unknown`, never `accepted`. Acceptance requires the provider by design.
 - A dirty working tree is reported as evidence but never fails acceptance — acceptance is about the PR head, not your local edits.
 - If your local HEAD differs from the PR head, you get an informational `local_head_stale` warning; checks are evaluated at the **PR head commit**, because that is what will be merged.
 
