@@ -27,13 +27,14 @@ Per slice, in order:
 
 ## Branch and binding
 
-- Branch from the bound context as `<type>/<issue>-<slug>`, e.g.
-  `feat/123-add-login`. `<type>` mirrors the issue label vocabulary:
-  `feat` | `fix` | `docs` | `chore`.
-- `specgit bind --delivery <slug> --issue <n>` **on the branch** records
-  the execution context (auto-resolved from live git) and the bound issues.
-  After opening the PR: `specgit bind --pr <n>`. The PR body must carry a
-  closing reference (`Closes #N`) for every bound issue.
+- `specgit issue "<type>: <title>"...` bootstraps the delivery in one
+  command: it creates/reuses the issues, branches as
+  `<type>/<first-issue#>-<slug>` (e.g. `feat/123-add-login`; `<type>`
+  mirrors the issue label vocabulary: `feat` | `fix` | `docs` | `chore`),
+  opens the draft PR (body carries `Closes #N` for every bound issue),
+  writes the record, commits, and pushes. Re-run the same command to
+  resume an interrupted bootstrap; `specgit bind` remains as the
+  script alias for record surgery.
 
 ## PR and gates
 
@@ -59,11 +60,12 @@ the brief is approved, do not push decisions upward again.
 
 ## Machine verdict
 
-`specgit accept` is the machine verdict and the only definition of done:
+`specgit finish` is the machine verdict and the only definition of done
+(`specgit accept` is the script alias running the same evaluation):
 
 - exit `0` → the human may merge;
 - exit `1` → fix exactly what the gates named and re-run;
 - exit `3` → evidence is missing; run `specgit doctor`, fix the
   environment, then re-run.
 
-Human merge happens **after** `accept` exits `0` — never instead of it.
+Human merge happens **after** `finish` exits `0` — never instead of it.

@@ -1,8 +1,8 @@
 version: 1
-delivery: init-specgit-policy
+delivery: strict-delivery-harness
 context:
   kind: branch
-  branch: chore/1-init-specgit-policy
+  branch: feat/4-strict-delivery-harness
 issues:
-  - 1
-pr: 2
+  - 4
+pr: 5

@@ -14,15 +14,16 @@ If you read nothing else, read these two pages:
 2. [Concepts](concepts.md): the delivery binding aggregate and why acceptance is derived, never asserted.
 
 New: the [Workflow Guide](workflow-guide.md) (中文) is the canonical
-step-by-step walkthrough — machine setup, repo init, the per-delivery loop,
-and the agent operating loop (skills → commands → dev loop), with
+step-by-step walkthrough — machine setup, repo init, the one-command
+per-delivery loop (`specgit issue` → `specgit finish`), and the agent
+operating loop (managed AGENTS.md block → dev loop), with
 troubleshooting at the end.
 
 ## Pick your path
 
 **I'm brand new.** Start with [Getting Started](getting-started.md), then skim [Concepts](concepts.md). When something feels mysterious, the [FAQ](faq.md) and [Glossary](glossary.md) are nearby.
 
-**I want every command, flag, and exit code.** The [CLI reference](cli.md) covers the six commands, the `--json` envelope, and the exit-code contract.
+**I want every command, flag, and exit code.** The [CLI reference](cli.md) covers the nine commands, the `--json` envelope, and the exit-code contract.
 
 **I want the exact schemas and gate table.** [Reference](reference.md) documents `.specgit.yaml`, `spec_git/policy.yaml`, the ten gates, and every diagnostic code.
 
@@ -34,6 +35,6 @@ troubleshooting at the end.
 
 **I work on a team.** [Team Workflow](team-workflow.md) shows how one delivery maps onto one branch (or worktree), N issues, one PR, and the checks everyone agrees are required.
 
-**An AI agent does my work.** Read the [Agent Contract](agent-contract.md) and install the [skills](../skills/README.md). Agents run `specgit accept` and trust the verdict — they never declare completion themselves.
+**An AI agent does my work.** Read the [Agent Contract](agent-contract.md) — and run `specgit init`, which injects the managed agent block into `AGENTS.md`. Agents run `specgit finish` and trust the verdict — they never declare completion themselves.
 
 **Something is failing.** [Troubleshooting](troubleshooting.md) maps every diagnostic code to its cause and fix.

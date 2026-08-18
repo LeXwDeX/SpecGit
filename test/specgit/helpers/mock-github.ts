@@ -1,6 +1,14 @@
 import { fail, ok, type Evidence } from '../../../src/kernel/evidence.js';
 import type { RepoRef } from '../../../src/gitfacts/origin.js';
-import type { CheckRunInfo, GitHubProvider, IssueFact, PrFact } from '../../../src/github/port.js';
+import type {
+  CheckRunInfo,
+  GitHubProvider,
+  IssueCreation,
+  IssueFact,
+  PrCreation,
+  PrFact,
+  PrSummary,
+} from '../../../src/github/port.js';
 
 export interface MockGitHubFixtures {
   preflight?: Evidence<{ authenticated: boolean }>;
@@ -8,6 +16,9 @@ export interface MockGitHubFixtures {
   defaultIssue?: (n: number) => Evidence<IssueFact>;
   pr?: Evidence<PrFact>;
   checkRuns?: Evidence<CheckRunInfo[]>;
+  createIssue?: (title: string) => Evidence<IssueCreation>;
+  createDraftPr?: (head: string) => Evidence<PrCreation>;
+  listOpenPrsByHead?: Evidence<PrSummary[]>;
 }
 
 function formatRepo(repo: RepoRef): string {
@@ -41,6 +52,27 @@ export class MockGitHubProvider implements GitHubProvider {
   async getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>> {
     this.calls.push(`getCheckRuns:${formatRepo(repo)}@${sha}`);
     return this.fixtures.checkRuns ?? ok([]);
+  }
+
+  async createIssue(repo: RepoRef, title: string): Promise<Evidence<IssueCreation>> {
+    this.calls.push(`createIssue:${formatRepo(repo)}:${title}`);
+    return (
+      this.fixtures.createIssue?.(title) ??
+      fail('gh_transport', 'createIssue not configured in mock')
+    );
+  }
+
+  async createDraftPr(repo: RepoRef, head: string): Promise<Evidence<PrCreation>> {
+    this.calls.push(`createDraftPr:${formatRepo(repo)}:${head}`);
+    return (
+      this.fixtures.createDraftPr?.(head) ??
+      fail('gh_transport', 'createDraftPr not configured in mock')
+    );
+  }
+
+  async listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>> {
+    this.calls.push(`listOpenPrsByHead:${formatRepo(repo)}:${head}`);
+    return this.fixtures.listOpenPrsByHead ?? fail('gh_transport', 'listOpenPrsByHead not configured in mock');
   }
 }
 

@@ -117,10 +117,29 @@ export interface RecordingGitHubProvider extends GitHubProvider {
   calls: string[];
 }
 
+export interface GhScript {
+  createIssue?: (
+    repo: { owner: string; repo: string },
+    title: string,
+    body: string
+  ) => Evidence<{ number: number; url: string }>;
+  createDraftPr?: (
+    repo: { owner: string; repo: string },
+    head: string,
+    base: string,
+    title: string,
+    body: string
+  ) => Evidence<{ number: number; url: string }>;
+  listOpenPrsByHead?: (
+    repo: { owner: string; repo: string },
+    head: string
+  ) => Evidence<Array<{ number: number; title: string; url: string }>>;
+}
+
 export function makeGhProvider(
   behavior: {
     preflight?: Evidence<{ authenticated: boolean }>;
-  } = {}
+  } & GhScript = {}
 ): RecordingGitHubProvider {
   const calls: string[] = [];
   const preflight = behavior.preflight ?? { ok: true, value: { authenticated: true } };
@@ -142,18 +161,83 @@ export function makeGhProvider(
       calls.push('getCheckRuns');
       return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
     }),
+    createIssue: vi.fn(async (repo: never, title: string, body: string) => {
+      calls.push(`createIssue:${title}`);
+      return (
+        behavior.createIssue?.(repo, title, body) ??
+        ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+      );
+    }),
+    createDraftPr: vi.fn(
+      async (repo: never, head: string, base: string, title: string, body: string) => {
+        calls.push(`createDraftPr:${head}`);
+        return (
+          behavior.createDraftPr?.(repo, head, base, title, body) ??
+          ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+        );
+      }
+    ),
+    listOpenPrsByHead: vi.fn(async (repo: never, head: string) => {
+      calls.push(`listOpenPrsByHead:${head}`);
+      return (
+        behavior.listOpenPrsByHead?.(repo, head) ??
+        ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+      );
+    }),
   };
 }
 
-export function makeGitPort(facts: GitFacts): GitPort & { factsCalls: string[] } {
-  const factsCalls: string[] = [];
-  return {
-    factsCalls,
+export interface GitWriteScript {
+  checkoutOrCreateBranch?: (
+    branch: string
+  ) => Evidence<{ branch: string; created: boolean }>;
+  commitFile?: (
+    relativePath: string,
+    message: string
+  ) => Evidence<{ committed: boolean }>;
+  pushBranch?: (branch: string) => Evidence<{ pushed: boolean }>;
+  remoteDefaultBranch?: () => Evidence<string>;
+}
+
+export interface RecordingGitPort extends GitPort {
+  factsCalls: string[];
+  checkoutCalls: string[];
+  commitCalls: Array<{ path: string; message: string }>;
+  pushCalls: string[];
+  defaultBranchCalls: string[];
+}
+
+export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): RecordingGitPort {
+  const port: RecordingGitPort = {
+    factsCalls: [],
+    checkoutCalls: [],
+    commitCalls: [],
+    pushCalls: [],
+    defaultBranchCalls: [],
     facts: vi.fn(async (root: string) => {
-      factsCalls.push(root);
+      port.factsCalls.push(root);
       return facts;
     }),
+    checkoutOrCreateBranch: vi.fn(async (_root: string, branch: string) => {
+      port.checkoutCalls.push(branch);
+      return (
+        writes.checkoutOrCreateBranch?.(branch) ?? { ok: true, value: { branch, created: true } }
+      );
+    }),
+    commitFile: vi.fn(async (_root: string, relativePath: string, message: string) => {
+      port.commitCalls.push({ path: relativePath, message });
+      return writes.commitFile?.(relativePath, message) ?? { ok: true, value: { committed: true } };
+    }),
+    pushBranch: vi.fn(async (_root: string, branch: string) => {
+      port.pushCalls.push(branch);
+      return writes.pushBranch?.(branch) ?? { ok: true, value: { pushed: true } };
+    }),
+    remoteDefaultBranch: vi.fn(async (_root: string) => {
+      port.defaultBranchCalls.push(_root);
+      return writes.remoteDefaultBranch?.() ?? { ok: true, value: 'main' };
+    }),
   };
+  return port;
 }
 
 export function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
@@ -214,6 +298,7 @@ export interface CtxOptions {
   root?: Evidence<string>;
   stdinIsTTY?: boolean;
   gh?: GitHubProvider;
+  gitWrites?: GitWriteScript;
 }
 
 export interface TestCtx {
@@ -232,7 +317,7 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
       ? {}
       : { policy: options.policy }),
   });
-  const gitPort = makeGitPort(options.facts ?? makeGitFacts());
+  const gitPort = makeGitPort(options.facts ?? makeGitFacts(), options.gitWrites);
   const ghProvider = makeGhProvider();
 
   const ctx: CommandContext = {

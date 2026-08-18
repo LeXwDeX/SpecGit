@@ -5,9 +5,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { runCLI, type RunCLIResult } from '../helpers/run-cli.js';
-import { createFakeGh, readFakeGhCalls, type FakeGhRule } from '../specgit/helpers/fake-gh.js';
+import { createFakeGh, readFakeGhCalls, readFakeGhStdin, type FakeGhRule } from '../specgit/helpers/fake-gh.js';
 
-export { createFakeGh, readFakeGhCalls };
+export { createFakeGh, readFakeGhCalls, readFakeGhStdin };
 export type { FakeGhRule, RunCLIResult };
 
 export const OWNER = 'LeXwDeX';
