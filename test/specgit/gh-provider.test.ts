@@ -514,6 +514,77 @@ describe('GhCliGitHubProvider#createDraftPr', () => {
   });
 });
 
+describe('GhCliGitHubProvider#listOpenPrsByHead', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-list-prs-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGhRule[]) {
+    const fake = createFakeGh(tempDir, rules);
+    const provider = new GhCliGitHubProvider({ env: fake.env() });
+    return { fake, provider };
+  }
+
+  it('lists open PRs through gh pr list with fixed flags', async () => {
+    const { provider, fake } = setup([
+      {
+        match: '^pr list ',
+        stdout: JSON.stringify([
+          { number: 7, title: 'Delivery one', url: 'https://github.com/LeXwDeX/SpecGit/pull/7' },
+        ]),
+      },
+    ]);
+    const result = await provider.listOpenPrsByHead(REPO, 'feat/4-strict-delivery-harness');
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { number: 7, title: 'Delivery one', url: 'https://github.com/LeXwDeX/SpecGit/pull/7' },
+      ],
+    });
+    expect(readFakeGhCalls(fake.logPath)).toEqual([
+      'pr list --repo LeXwDeX/SpecGit --head feat/4-strict-delivery-harness --state open --json number,title,url --limit 30',
+    ]);
+  });
+
+  it('returns an empty list when no PR matches', async () => {
+    const { provider } = setup([{ match: '^pr list ', stdout: '[]\n' }]);
+    const result = await provider.listOpenPrsByHead(REPO, 'feat/none');
+    expect(result).toEqual({ ok: true, value: [] });
+  });
+
+  it('fails closed with gh_transport on a non-array payload', async () => {
+    const { provider } = setup([{ match: '^pr list ', stdout: '{"total": 0}\n' }]);
+    const result = await provider.listOpenPrsByHead(REPO, 'feat/x');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+  });
+
+  it('fails closed with gh_transport on invalid JSON', async () => {
+    const { provider } = setup([{ match: '^pr list ', stdout: 'not json\n' }]);
+    const result = await provider.listOpenPrsByHead(REPO, 'feat/x');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+  });
+
+  it('classifies an HTTP 401 stderr as gh_unauthenticated', async () => {
+    const { provider } = setup([
+      { match: '^pr list ', exit: 1, stderr: 'gh: HTTP 401: Bad credentials\n' },
+    ]);
+    const result = await provider.listOpenPrsByHead(REPO, 'feat/x');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_unauthenticated');
+  });
+});
+
 describe('sanitizeApiText', () => {
   it('strips ANSI escapes and control characters', () => {
     const dirty = '\u001b[31mERROR\u001b[0m\u0007 with\u0000 controls\u001b[2J';
