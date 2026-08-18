@@ -20,13 +20,17 @@ afterAll(async () => {
 });
 
 describe('specgit root resolution seam (real git)', () => {
+  // git on Windows reports the toplevel with forward slashes; normalize both
+  // sides before comparing so the assertion holds on every platform.
+  const samePath = (a: string, b: string) => path.normalize(a) === path.normalize(b);
+
   it('resolves the repository toplevel from inside a git repository', async () => {
     const dir = await makeTempDir();
     await execFileAsync('git', ['init', '-q', dir]);
     const result = await discoverRepoRoot(dir);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe(await realpath(dir));
+      expect(samePath(result.value, await realpath(dir))).toBe(true);
     }
   });
 
@@ -38,7 +42,7 @@ describe('specgit root resolution seam (real git)', () => {
     const result = await discoverRepoRoot(nested);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe(await realpath(dir));
+      expect(samePath(result.value, await realpath(dir))).toBe(true);
     }
   });
 
