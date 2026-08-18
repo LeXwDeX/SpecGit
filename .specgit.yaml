@@ -1,0 +1,7 @@
+version: 1
+delivery: strict-delivery-harness
+context:
+  kind: branch
+  branch: feat/4-strict-delivery-harness
+issues:
+  - 4
