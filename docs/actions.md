@@ -67,7 +67,7 @@ Naming rules that matter:
 2. Declare the same name(s) in `spec_git/policy.yaml` and commit it.
 3. Protect the base branch against deletions and force-pushes, and restrict who can dismiss reviews or bypass checks — SpecGit trusts whatever GitHub reports at the PR head, so the integrity of that surface is the integrity of acceptance.
 
-`specgit accept` failing with `checks_missing` almost always means the policy name and the reported check name disagree — compare `gh api repos/{owner}/{repo}/commits/{pr-head-sha}/check-runs` output against the policy.
+`specgit finish` failing with `checks_missing` almost always means the policy name and the reported check name disagree — compare `gh api repos/{owner}/{repo}/commits/{pr-head-sha}/check-runs` output against the policy.
 
 ## Security guidance
 
@@ -85,4 +85,4 @@ Naming rules that matter:
 
 **Supply chain.** Pin third-party actions by full commit SHA (`uses: actions/checkout@<sha>`) in workflows whose results gate acceptance; a compromised gate job is a compromised verdict. Keep the aggregator job dependency-free: no third-party actions, plain `run` steps only.
 
-**Auditability.** The evidence SpecGit checks — branch, PR, closing refs, check runs — all lives in GitHub, where it is auditable. Prefer branch-protection enforcement (required checks) over convention, so a delivery cannot merge without the same evidence `specgit accept` requires.
+**Auditability.** The evidence SpecGit checks — branch, PR, closing refs, check runs — all lives in GitHub, where it is auditable. Prefer branch-protection enforcement (required checks) over convention, so a delivery cannot merge without the same evidence `specgit finish` requires.

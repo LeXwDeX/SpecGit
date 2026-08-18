@@ -1,12 +1,17 @@
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
-import { promisify } from 'node:util';
 
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { RepoRef } from '../gitfacts/origin.js';
-import type { CheckRunInfo, GitHubProvider, IssueFact, PrFact } from './port.js';
-
-const execFileAsync = promisify(execFile);
+import type {
+  CheckRunInfo,
+  GitHubProvider,
+  IssueCreation,
+  IssueFact,
+  PrCreation,
+  PrFact,
+  PrSummary,
+} from './port.js';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BUFFER = 4 * 1024 * 1024;
@@ -14,11 +19,18 @@ const CHECK_RUN_PAGE_SIZE = 100;
 const MAX_CHECK_RUN_PAGES = 10;
 const MAX_EMBEDDED_TEXT = 400;
 
+/** gh stderr markers that mean "not authenticated" rather than transport. */
+const AUTH_FAILURE_PATTERN = /HTTP 40[13]|Bad credentials|gh auth login|not logged in|authentication required/i;
+
+const PR_URL_PATTERN = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/;
+
 export interface SpawnOptions {
   timeoutMs?: number;
   maxBuffer?: number;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+  /** Body piped to the child's stdin (used by `--body-file -`). */
+  stdin?: string;
 }
 
 export type SpawnFn = (
@@ -62,17 +74,40 @@ export function resolveNodeScriptCommand(command: string): { command: string; sc
   return isNodeScript ? { command: process.execPath, scriptArgs: [command] } : { command, scriptArgs: [] };
 }
 
-const defaultSpawn: SpawnFn = async (command, args, options) => {
-  const resolved = resolveNodeScriptCommand(command);
-  const { stdout, stderr } = await execFileAsync(resolved.command, [...resolved.scriptArgs, ...args], {
-    timeout: options.timeoutMs,
-    maxBuffer: options.maxBuffer,
-    env: options.env,
-    cwd: options.cwd,
-    encoding: 'utf-8',
+const defaultSpawn: SpawnFn = (command, args, options) =>
+  new Promise((resolve, reject) => {
+    const resolved = resolveNodeScriptCommand(command);
+    const child = execFile(
+      resolved.command,
+      [...resolved.scriptArgs, ...args],
+      {
+        timeout: options.timeoutMs,
+        maxBuffer: options.maxBuffer,
+        env: options.env,
+        cwd: options.cwd,
+        encoding: 'utf-8',
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          // Mirror promisify(execFile): keep captured output on the error so
+          // the failure taxonomy can read err.stderr.
+          const withOutput = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+          withOutput.stdout = stdout;
+          withOutput.stderr = stderr;
+          reject(error);
+        } else {
+          resolve({ stdout, stderr: stderr ?? '' });
+        }
+      }
+    );
+    // A child that exits before draining stdin raises EPIPE here; the
+    // failure is already reported through the callback. stdin is always a
+    // pipe unless stdio was customized, which this transport never does.
+    if (child.stdin) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(options.stdin ?? '');
+    }
   });
-  return { stdout, stderr };
-};
 
 /**
  * API-sourced text can carry ANSI cursor controls or hostile bytes; anything
@@ -270,6 +305,170 @@ export class GhCliGitHubProvider implements GitHubProvider {
     return ok(runs);
   }
 
+  async createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>> {
+    if (!title.trim()) {
+      return fail('gh_transport', 'Cannot create an issue without a title.');
+    }
+
+    const result = await this.runCreateGh([
+      'api',
+      `repos/${repo.owner}/${repo.repo}/issues`,
+      '-f',
+      `title=${title}`,
+      '-f',
+      `body=${body}`,
+    ]);
+    if (!result.ok) {
+      return result;
+    }
+
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const issue = parsed.value as { number?: unknown; html_url?: unknown };
+    if (typeof issue.number !== 'number' || typeof issue.html_url !== 'string' || !issue.html_url) {
+      return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
+    }
+    return ok({ number: issue.number, url: issue.html_url });
+  }
+
+  /**
+   * Draft PRs cannot be created through the REST pulls API:
+   * POST /repos/{owner}/{repo}/pulls has no draft parameter — a draft can
+   * only be created via GraphQL createPullRequest(input: { draft: true }),
+   * which `gh pr create --draft` performs. So this method shells out to gh,
+   * streams the body over stdin (`--body-file -`, keeping bodies out of
+   * argv), and parses the PR URL gh prints into {number, url}.
+   */
+  async createDraftPr(
+    repo: RepoRef,
+    head: string,
+    base: string,
+    title: string,
+    body: string
+  ): Promise<Evidence<PrCreation>> {
+    if (!head.trim() || !base.trim() || !title.trim()) {
+      return fail('gh_transport', 'Cannot create a pull request without a head, base, and title.');
+    }
+
+    const result = await this.runCreateGh(
+      [
+        'pr',
+        'create',
+        '--draft',
+        '--repo',
+        `${repo.owner}/${repo.repo}`,
+        '--head',
+        head,
+        '--base',
+        base,
+        '--title',
+        title,
+        '--body-file',
+        '-',
+      ],
+      body
+    );
+    if (!result.ok) {
+      return result;
+    }
+
+    const match = result.value.stdout.match(PR_URL_PATTERN);
+    if (!match) {
+      return fail('gh_transport', 'GitHub CLI did not report a pull request URL.');
+    }
+    return ok({ number: Number(match[1]), url: match[0] });
+  }
+
+  /**
+   * PR discovery by head branch (`gh pr list --state open`). Used by
+   * `specgit pr` to repair a binding: exactly one candidate binds, zero
+   * or several refuse. Auth failures classify from stderr like the
+   * other creation paths.
+   */
+  async listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>> {
+    if (!head.trim()) {
+      return fail('gh_transport', 'Cannot list pull requests without a head branch.');
+    }
+
+    const result = await this.runCreateGh([
+      'pr',
+      'list',
+      '--repo',
+      `${repo.owner}/${repo.repo}`,
+      '--head',
+      head,
+      '--state',
+      'open',
+      '--json',
+      'number,title,url',
+      '--limit',
+      '30',
+    ]);
+    if (!result.ok) {
+      return result;
+    }
+
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    if (!Array.isArray(parsed.value)) {
+      return fail('gh_transport', 'GitHub returned an unexpected pull-request list payload.');
+    }
+    const prs: PrSummary[] = [];
+    for (const entry of parsed.value) {
+      const item = entry as { number?: unknown; title?: unknown; url?: unknown };
+      if (
+        typeof item.number !== 'number' ||
+        typeof item.title !== 'string' ||
+        typeof item.url !== 'string'
+      ) {
+        return fail('gh_transport', 'GitHub returned an unexpected pull-request list payload.');
+      }
+      prs.push({ number: item.number, title: item.title, url: item.url });
+    }
+    return ok(prs);
+  }
+
+  private parseJsonOutput(stdout: string): Evidence<unknown> {
+    try {
+      return ok(JSON.parse(stdout));
+    } catch {
+      return fail('gh_transport', 'GitHub returned a response that is not valid JSON.');
+    }
+  }
+
+  /**
+   * Creation calls share the read taxonomy but classify authentication
+   * failures from gh's stderr (HTTP 401/403, "gh auth login" prompts)
+   * instead of relying on `gh auth status`.
+   */
+  private async runCreateGh(
+    args: string[],
+    stdin?: string
+  ): Promise<
+    | { ok: true; value: { stdout: string; stderr: string } }
+    | { ok: false; code: string; message: string; fix?: string }
+  > {
+    const result = await this.runGh(args, stdin);
+    if (!result.ok) {
+      if (result.code === 'gh_missing') {
+        return result;
+      }
+      if (AUTH_FAILURE_PATTERN.test(result.message)) {
+        return fail(
+          'gh_unauthenticated',
+          'GitHub CLI is not authenticated.',
+          'Run "gh auth login" to authenticate.'
+        );
+      }
+      return fail('gh_transport', result.message, result.fix);
+    }
+    return result;
+  }
+
   private async runApi(endpoint: string, kind: CallKind): Promise<Evidence<unknown>> {
     const result = await this.runGh(['api', endpoint]);
     if (!result.ok) {
@@ -297,7 +496,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
     }
   }
 
-  private async runGh(args: string[]): Promise<
+  private async runGh(args: string[], stdin?: string): Promise<
     | { ok: true; value: { stdout: string; stderr: string } }
     | (GhFailure & { ok: false; code: string; message: string; fix?: string; exitCode?: number })
   > {
@@ -306,6 +505,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
         timeoutMs: this.timeoutMs,
         maxBuffer: this.maxBuffer,
         env: this.env,
+        stdin,
       });
       return { ok: true, value: { stdout, stderr: stderr ?? '' } };
     } catch (error) {

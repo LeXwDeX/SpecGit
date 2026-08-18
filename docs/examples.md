@@ -2,6 +2,8 @@
 
 Real deliveries, start to finish. Each recipe shows the commands you type and the evidence SpecGit checks, so you can match your situation to a pattern and copy it.
 
+> Command note: these recipes use the script aliases `specgit bind` / `specgit accept`. The one-command equivalents are `specgit issue "fix: …" 214` (creates branch + draft PR + record in one step) and `specgit finish` (the same evaluation as `accept`).
+
 ## Recipe 1: One issue, one branch, one PR
 
 The default shape of a delivery.
