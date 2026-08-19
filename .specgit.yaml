@@ -1,8 +1,8 @@
 version: 1
-delivery: release-changelog-token-fix
+delivery: release-oidc-environment
 context:
   kind: branch
-  branch: fix/release-changelog-token
+  branch: fix/release-oidc-environment
 issues:
-  - 13
-pr: 12
+  - 14
+pr: 15
