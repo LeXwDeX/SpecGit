@@ -1,6 +1,7 @@
 import { fail, ok, type Evidence } from '../../../src/kernel/evidence.js';
 import type { RepoRef } from '../../../src/gitfacts/origin.js';
 import type {
+  BranchProtectionFact,
   CheckRunInfo,
   GitHubProvider,
   IssueCreation,
@@ -8,6 +9,7 @@ import type {
   PrCreation,
   PrFact,
   PrSummary,
+  RepoAutomergeFact,
 } from '../../../src/github/port.js';
 
 export interface MockGitHubFixtures {
@@ -19,6 +21,10 @@ export interface MockGitHubFixtures {
   createIssue?: (title: string) => Evidence<IssueCreation>;
   createDraftPr?: (head: string) => Evidence<PrCreation>;
   listOpenPrsByHead?: Evidence<PrSummary[]>;
+  branchProtection?: Evidence<BranchProtectionFact>;
+  enableBranchProtection?: Evidence<BranchProtectionFact>;
+  repoAutomerge?: Evidence<RepoAutomergeFact>;
+  enableRepoAutomerge?: Evidence<RepoAutomergeFact>;
 }
 
 function formatRepo(repo: RepoRef): string {
@@ -73,6 +79,33 @@ export class MockGitHubProvider implements GitHubProvider {
   async listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>> {
     this.calls.push(`listOpenPrsByHead:${formatRepo(repo)}:${head}`);
     return this.fixtures.listOpenPrsByHead ?? fail('gh_transport', 'listOpenPrsByHead not configured in mock');
+  }
+
+  async getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>> {
+    this.calls.push(`getBranchProtection:${formatRepo(repo)}:${branch}`);
+    return this.fixtures.branchProtection ?? ok({ protected: false, requiredChecks: [] });
+  }
+
+  async enableBranchProtection(
+    repo: RepoRef,
+    branch: string,
+    requiredCheck: string
+  ): Promise<Evidence<BranchProtectionFact>> {
+    this.calls.push(`enableBranchProtection:${formatRepo(repo)}:${branch}:${requiredCheck}`);
+    return (
+      this.fixtures.enableBranchProtection ??
+      ok({ protected: true, requiredChecks: [requiredCheck] })
+    );
+  }
+
+  async getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
+    this.calls.push(`getRepoAutomerge:${formatRepo(repo)}`);
+    return this.fixtures.repoAutomerge ?? ok({ enabled: false });
+  }
+
+  async enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
+    this.calls.push(`enableRepoAutomerge:${formatRepo(repo)}`);
+    return this.fixtures.enableRepoAutomerge ?? ok({ enabled: true });
   }
 }
 

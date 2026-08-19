@@ -48,6 +48,10 @@ specgit init --required-check build --required-check test    # repeatable
 | Flag | Meaning |
 | --- | --- |
 | `--required-check <name>` | A CI check name every delivery must pass. Repeatable; required in non-interactive terminals. |
+| `--protect` | Enable branch protection + auto-merge without asking. |
+| `--no-protect` | Skip the protection probe and warning entirely. |
+
+After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation (default yes) and, when confirmed, requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with the exact `gh api` command as the fix; pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"`.
 
 ## `specgit issue`
 

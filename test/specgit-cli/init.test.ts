@@ -11,7 +11,7 @@ import {
   HARNESS_WORKFLOW_PATH,
   managedPromptBlock,
 } from '../../src/cli/harness-assets.js';
-import { makeCtx, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
+import { makeCtx, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const WORKFLOW_ABS = (root: string) => path.join(root, ...HARNESS_WORKFLOW_PATH.split('/'));
@@ -77,6 +77,87 @@ describe('specgit init', () => {
     expect(envelope.command).toBe('init');
     expect(envelope.policy).toEqual({ version: 1, required_checks: ['Test'] });
   });
+
+  it('probes protection after writing the policy and warns without a TTY (no changes)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.ghProvider.calls).toContain('getBranchProtection:LeXwDeX/SpecGit:main');
+    expect(t.ghProvider.calls).toContain('getRepoAutomerge:LeXwDeX/SpecGit');
+    expect(t.ghProvider.calls).not.toContain('enableBranchProtection:LeXwDeX/SpecGit:main:SpecGit Acceptance');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({
+      branch: 'main',
+      protected: false,
+      automerge: false,
+      action: 'warned',
+    });
+    expect(JSON.stringify(envelope.protection)).toContain('gh api');
+  });
+
+  it('--protect enables protection and auto-merge from scripts', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.ghProvider.calls).toContain('enableBranchProtection:LeXwDeX/SpecGit:main:SpecGit Acceptance');
+    expect(t.ghProvider.calls).toContain('enableRepoAutomerge:LeXwDeX/SpecGit');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({
+      protected: true,
+      requiredChecks: ['SpecGit Acceptance'],
+      automerge: true,
+      action: 'protected',
+    });
+  });
+
+  it('--no-protect skips the probe entirely', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.ghProvider.calls).not.toContain('getBranchProtection:LeXwDeX/SpecGit:main');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toBeUndefined();
+  });
+
+  it('reports already-protected without re-enabling', async () => {
+    const gh = makeGhProvider({
+      branchProtection: { ok: true, value: { protected: true, requiredChecks: ['SpecGit Acceptance'] } },
+      repoAutomerge: { ok: true, value: { enabled: true } },
+    });
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false, gh });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(gh.calls).not.toContain('enableBranchProtection:LeXwDeX/SpecGit:main:SpecGit Acceptance');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({ action: 'already-protected' });
+  });
+
+  it('fail-open: provider failure during probing leaves init succeeding as unavailable', async () => {
+    const gh = makeGhProvider({
+      branchProtection: { ok: false, code: 'gh_transport', message: 'HTTP 403: resource not accessible' },
+    });
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false, gh });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({ action: 'unavailable' });
+  });
+
 
   it('with no --required-check and no workflows, falls back to the aggregate check', async () => {
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });

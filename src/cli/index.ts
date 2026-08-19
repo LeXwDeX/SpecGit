@@ -161,6 +161,8 @@ export function createProgram(
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
     .option('--force', 'Rebuild spec_git/policy.yaml even when it already exists')
     .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
+    .option('--protect', 'Enable branch protection + auto-merge without asking')
+    .option('--no-protect', 'Skip the branch-protection probe and warning entirely')
     .option('--json', 'Output as JSON')
     .action(wrap('init', runInit as CommandRun));
 

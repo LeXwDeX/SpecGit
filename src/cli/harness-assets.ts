@@ -21,6 +21,8 @@ import * as path from 'node:path';
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
 export const HARNESS_WORKFLOW_PATH = HARNESS_WORKFLOW_SEGMENTS.join('/');
+/** The CI check name the harness workflow contributes; also the check init guards behind branch protection. */
+export const ACCEPTANCE_CHECK_NAME = 'SpecGit Acceptance';
 export const AGENTS_FILENAME = 'AGENTS.md';
 export const CLAUDE_FILENAME = 'CLAUDE.md';
 export const BLOCK_START_MARKER = '<!-- specgit:block:start -->';
