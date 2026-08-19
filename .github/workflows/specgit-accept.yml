@@ -3,6 +3,7 @@ name: SpecGit Acceptance
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,9 +11,18 @@ permissions:
 jobs:
   specgit-acceptance:
     name: SpecGit Acceptance
+    # Hosted pool on purpose: a required check must not hinge on one
+    # self-hosted container. The shadow Test (self-hosted-linux) matrix
+    # entry in ci.yml proves the docker runner before any migration.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # The docker runner image ships without git; checkout needs it.
+      - name: Bootstrap container tools (self-hosted only)
+        if: runner.name == '33.110-docker'
+        run: |
+          command -v git >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git ca-certificates curl)
+
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

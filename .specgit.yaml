@@ -1,8 +1,8 @@
 version: 1
-delivery: init-detection-skips
+delivery: route-key-checks
 context:
   kind: branch
-  branch: fix/39-init-detection-skips
+  branch: ci/43-route-key-checks
 issues:
-  - 39
-pr: 40
+  - 43
+pr: 44
