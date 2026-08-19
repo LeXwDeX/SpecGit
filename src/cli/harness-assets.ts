@@ -34,6 +34,7 @@ export function harnessWorkflowYaml(): string {
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -41,6 +42,9 @@ permissions:
 jobs:
   specgit-acceptance:
     name: SpecGit Acceptance
+    # Hosted pool on purpose: a required check must not hinge on one
+    # self-hosted container. A shadow self-hosted matrix entry in ci.yml
+    # proves the docker runner before any migration.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -78,7 +82,7 @@ jobs:
         env:
           GH_TOKEN: \${{ github.token }}
           WAIT_REPO: \${{ github.repository }}
-          WAIT_SHA: \${{ github.event.pull_request.head.sha }}
+          WAIT_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node --input-type=module <<'EOF'
           import { readFileSync } from 'node:fs';
@@ -97,11 +101,32 @@ jobs:
             const retried = [...byName.keys()].find((k) => k.startsWith(name + ' ('));
             return retried !== undefined && terminal.has(byName.get(retried));
           };
+          // Transient API failures (5xx, 429, network) retry with bounded
+          // exponential backoff — a platform blip must not fail the gate.
+          const MAX_ATTEMPTS = 5;
+          const fetchJsonWithRetry = async () => {
+            for (let attempt = 1; ; attempt += 1) {
+              try {
+                const res = await fetch(url, { headers });
+                if (res.ok) return await res.json();
+                if (res.status >= 500 || res.status === 429) {
+                  if (attempt >= MAX_ATTEMPTS) throw new Error('check-runs API ' + res.status + ' after ' + attempt + ' attempts');
+                } else {
+                  throw new Error('check-runs API ' + res.status);
+                }
+              } catch (error) {
+                if (attempt >= MAX_ATTEMPTS) throw error;
+              }
+              const retryAfterHeader = 0; // fetch hides headers on throw; fixed ladder below
+              const backoff = Math.min(30000, 2000 * 2 ** (attempt - 1));
+              const retryAfter = retryAfterHeader || backoff;
+              console.log('Transient failure; retry ' + attempt + '/' + MAX_ATTEMPTS + ' in ' + retryAfter + 'ms');
+              await new Promise((r) => setTimeout(r, retryAfter));
+            }
+          };
           const deadline = Date.now() + 15 * 60 * 1000;
           while (Date.now() < deadline) {
-            const res = await fetch(url, { headers });
-            if (!res.ok) throw new Error('check-runs API ' + res.status);
-            const payload = await res.json();
+            const payload = await fetchJsonWithRetry();
             const byName = new Map(payload.check_runs.map((r) => [r.name, r.status]));
             const missing = required.filter((n) => !terminalHas(byName, n));
             if (missing.length === 0) {
