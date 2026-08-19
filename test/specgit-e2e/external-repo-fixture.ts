@@ -37,36 +37,60 @@ export interface PackedSpecgit {
 let packed: PackedSpecgit | undefined;
 
 /**
- * `npm pack` the repository once per test file.
+ * `npm pack` the repository once per test file, hermetically (plan N7
+ * dist-race fix).
  *
- * `--ignore-scripts` is the dist-race fix (plan N7): `npm pack` would
- * otherwise run `prepare` (a full `build.js` that wipes and rebuilds
- * `dist/`) while parallel e2e workers are mid-run against
- * `dist/cli/index.js`. The suite's global setup builds exactly once
- * before any worker starts; the pack then ships those bytes untouched.
+ * The pack runs from a staged copy of exactly what the package ships
+ * (`files` entries + manifest + README/LICENSE) whose package.json
+ * carries NO lifecycle scripts: `npm pack` cannot run `prepare` there,
+ * so it can never wipe `dist/` while parallel e2e workers are mid-run
+ * against `dist/cli/index.js`. This holds for every npm version,
+ * including the ones where `--ignore-scripts` still runs `prepare`
+ * (a long-standing npm quirk observed on CI runners). The suite's
+ * global setup builds exactly once before any worker starts; the pack
+ * ships those bytes untouched.
  */
 export function packSpecgit(): PackedSpecgit {
   if (packed) return packed;
   if (!fs.existsSync(path.join(PROJECT_ROOT, 'dist', 'cli', 'index.js'))) {
     throw new Error('dist/cli/index.js is missing — run `pnpm run build` before packing.');
   }
-  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-pack-'));
-  const out = execFileSync(
-    'npm',
-    ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
-    { cwd: PROJECT_ROOT, encoding: 'utf-8' }
-  );
-  const entries = JSON.parse(out) as Array<{
-    filename?: string;
-  }>;
-  const filename = entries.at(-1)?.filename;
-  if (!filename) throw new Error('npm pack returned no tarball');
-  const version = (
-    JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8')) as {
-      version: string;
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-pack-stage-'));
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8')
+  ) as { version: string; scripts?: Record<string, string> };
+  const { scripts: _scripts, ...scriptless } = manifest;
+  fs.writeFileSync(path.join(staging, 'package.json'), `${JSON.stringify(scriptless, null, 2)}\n`);
+  for (const entry of ['dist', 'bin', 'schemas']) {
+    fs.cpSync(path.join(PROJECT_ROOT, entry), path.join(staging, entry), { recursive: true });
+  }
+  for (const doc of ['README.md', 'LICENSE']) {
+    const source = path.join(PROJECT_ROOT, doc);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, path.join(staging, doc));
     }
-  ).version;
-  packed = { tarballPath: path.join(dest, filename), version };
+  }
+
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-pack-'));
+  try {
+    const out = execFileSync(
+      'npm',
+      ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
+      { cwd: staging, encoding: 'utf-8' }
+    );
+    // Belt and braces: tolerate any banner lines before npm's JSON array.
+    const lines = out.split('\n');
+    const jsonStart = lines.findIndex((line) => line.trimStart().startsWith('['));
+    if (jsonStart === -1) throw new Error('npm pack returned no JSON array');
+    const entries = JSON.parse(lines.slice(jsonStart).join('\n')) as Array<{
+      filename?: string;
+    }>;
+    const filename = entries.at(-1)?.filename;
+    if (!filename) throw new Error('npm pack returned no tarball');
+    packed = { tarballPath: path.join(dest, filename), version: manifest.version };
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
   return packed;
 }
 
