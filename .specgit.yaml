@@ -1,8 +1,7 @@
 version: 1
 delivery: guard-acceptance-bypass
 context:
-  kind: worktree
-  label: specgit-wt-guard-init
+  kind: branch
   branch: feat/28-guard-acceptance-bypass
 issues:
   - 28
