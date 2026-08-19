@@ -57,7 +57,7 @@ No other state exists. No artifact directories, no caches, no global stores. Roo
 
 Delivery states — `unbound`, `draft`, `bound`, `accepted`, `rejected`, `unknown` — are **computed on every invocation**. Nothing is persisted, so a state can never drift from reality.
 
-Evaluation runs ten gates in order, from cheapest local facts to live GitHub evidence:
+Evaluation runs eleven gates in order, from cheapest local facts to live GitHub evidence:
 
 1. Record present and valid
 2. Policy present and valid
@@ -66,9 +66,10 @@ Evaluation runs ten gates in order, from cheapest local facts to live GitHub evi
 5. Origin resolves to a GitHub repository
 6. GitHub provider reachable and authenticated
 7. Issues exist (and are issues, not PRs)
-8. PR exists, open or merged, head matches the context branch, same repository
-9. PR body closes every bound issue
-10. Every required check is green at the PR head commit
+8. Sequence — when `ordered_issues` is on, no open issue with a smaller number precedes this delivery
+9. PR exists, open or merged, head matches the context branch, same repository
+10. PR body closes every bound issue
+11. Every required check is green at the PR head commit
 
 Gates short-circuit across gates; within a gate, every failure is collected and reported. Full table and codes: [Reference](reference.md).
 

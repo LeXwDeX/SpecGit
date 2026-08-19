@@ -13,7 +13,7 @@
  * 3→unknown.
  */
 
-import { statusFromExit } from './exit-codes.js';
+import { statusFromExit, EXIT_INTERRUPTED } from './exit-codes.js';
 import type {
   BindingState,
   CliIO,
@@ -79,6 +79,7 @@ export interface CommandOutcome {
   protection?: Record<string, unknown>;
   platform?: Record<string, unknown>;
   harness?: Record<string, unknown>;
+  assets?: Record<string, unknown>;
   human?: string[];
 }
 
@@ -107,6 +108,7 @@ export function buildEnvelope(
     ['protection', outcome.protection],
     ['platform', outcome.platform],
     ['harness', outcome.harness],
+    ['assets', outcome.assets],
   ];
   for (const [key, value] of optional) {
     if (value !== undefined) {
@@ -158,4 +160,15 @@ export function finishOutcome(
     }
   }
   return outcome.exit;
+}
+
+/**
+ * The Ctrl-C path (#69): the one interruption exception. Deterministic and
+ * JSON-mode-aware by being JSON-mode-invariant — stdout receives nothing
+ * (exactly-zero documents even under `--json`), stderr carries the human
+ * "Interrupted." line, and the exit code is 130.
+ */
+export function emitInterrupted(io: CliIO): number {
+  io.stderr('Interrupted.');
+  return EXIT_INTERRUPTED;
 }

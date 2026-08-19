@@ -95,10 +95,15 @@ Add `--json` for machine-readable output; see the [CLI reference](cli.md). When 
 
 ## Where things live
 
-| Path | What it is | Committed? |
-| --- | --- | --- |
-| `spec_git/policy.yaml` | The project's required-checks policy (created by `init`) | Yes |
-| `.specgit.yaml` | This delivery's binding record (created by `issue`) | Yes, on the delivery branch |
-| `.github/workflows/specgit-accept.yml` | The generated acceptance gate | Yes |
+SpecGit's entire footprint is three tiers of files:
 
-No other state exists. There are no artifact folders, no stores, no caches, and nothing persisted outside these files plus the git and GitHub facts they point at.
+| Tier | Path | What it is | Committed? |
+| --- | --- | --- | --- |
+| Authoritative | `spec_git/policy.yaml` | The project's required-checks policy (created by `init`) | Yes |
+| Authoritative | `.specgit.yaml` | This delivery's binding record (created by `issue`) | Yes, on the delivery branch |
+| Authoritative | `spec_git/providers.yaml` | Optional platform declaration (only with a declared GitLab host) | Yes |
+| Derived harness | `.github/workflows/specgit-accept.yml` | The generated acceptance gate — regenerate with `init --force` | Yes |
+| Derived harness | `AGENTS.md` / `CLAUDE.md` managed block | The generated agent contract between the `specgit` markers | Yes |
+| Local integration | `.opencode/hooks.json`, `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`, `setup` entry points | Machine-local wiring, merged non-destructively | Your choice |
+
+There are no artifact folders, no stores, no caches, and nothing persisted outside these files plus the git and GitHub facts they point at. Verdicts are never stored — they are computed on every run. The full normative table is in [Reference](reference.md#state-and-assets).

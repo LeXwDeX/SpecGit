@@ -29,13 +29,13 @@ SpecGit never reads or prints tokens — it relies entirely on your `gh` session
 
 ### `gh_transport` (exit 3)
 
-`gh` reached GitHub but the call failed (network, rate limit, server error). Retry; if it persists, run the same call by hand to see GitHub's message:
+`gh` reached GitHub but the call failed (network, rate limit, server error, or the per-call timeout). Retry; if it persists, run the same call by hand to see GitHub's message:
 
 ```bash
 gh api repos/<owner>/<repo>
 ```
 
-Rate-limit responses usually self-heal after the window resets.
+If calls are timing out on a slow network, raise the per-call budget with `SPECGIT_GH_TIMEOUT_MS` (milliseconds; default `15000`). Rate-limit responses usually self-heal after the window resets.
 
 ### `gh_timeout` (exit 3)
 
@@ -58,14 +58,17 @@ git remote get-url origin
 
 Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version.
 
-### `gitlab_unsupported`
+### `gitlab_unsupported` (exit 3)
 
-The origin points at a GitLab repository (gitlab.com or a self-hosted
-`*gitlab*` host). GitLab evidence requires `glab` support, which is not
-implemented yet — see the [GitLab support roadmap](gitlab-support.md). Point
-origin at a github.com repository to use SpecGit today; the platform and
-`glab` presence are already reported by `specgit init --json` and probed by
-`specgit doctor`.
+The origin points at a GitLab repository — `gitlab.com`, or a self-hosted host
+declared in `spec_git/providers.yaml` (created by `specgit init
+--gitlab-host <hostname>` or the interactive platform question). GitLab
+evidence requires `glab` support, which is not implemented in v1 — see the
+[GitLab support roadmap](gitlab-support.md). The declaration is honored
+diagnostically: matching origins fail with this dedicated code instead of the
+generic `origin_unresolvable`, and `specgit init --json` / `specgit doctor`
+report the platform and `glab` presence. Point origin at a github.com
+repository to use SpecGit today.
 
 ## Record and policy
 
@@ -167,15 +170,27 @@ gh api repos/<owner>/<repo>/commits/<pr-head-sha>/check-runs --jq '.check_runs[]
 
 against `required_checks`. Fix the policy or the workflow's job `name:` — see the aggregator pattern in [GitHub Actions](actions.md).
 
-### `checks_pending`
+### `checks_pending` (exit 1 — transient)
 
-Check runs exist but haven't all completed. Wait for CI, then re-run `specgit finish`.
+Check runs exist but haven't all completed. This is a **transient, retryable**
+non-acceptance, not a defect: the evidence is complete and says "not yet".
+Wait for CI to finish, then re-run `specgit finish` — checks are re-read from
+the PR head, so no repair work is needed unless a check then *fails*.
 
 ### `checks_failed` (rejected)
 
 The named check reported a non-success conclusion at the PR head. Open the run's logs, fix the failure (or the flaky test), push, and re-run acceptance — checks are re-read from the new PR head.
 
 ## Verdict behaviors
+
+### Exit 130 after Ctrl-C
+
+Interrupting an interactive prompt (e.g. `init`'s protection confirmation) with
+Ctrl-C exits `130` after printing `Interrupted.` to stderr. This is the one
+documented interruption exception to the exit-code contract: no JSON envelope
+is emitted — stdout stays empty — and no verdict was reached. Re-run the
+command; nothing was half-applied (interactive confirmations happen before
+mutations).
 
 ### Exit 3 with `unknown` but "everything looks fine"
 

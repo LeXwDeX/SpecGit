@@ -1,0 +1,87 @@
+# Product Baseline — v1
+
+This is the versioned public contract of SpecGit v1. It fixes what "supported"
+means, so README, docs, help text, schemas, generated assets, and reviews can
+be checked against one page. When the contract changes, this document changes
+first — versioned per major line (`baseline-v1.md`, `baseline-v2.md`, …) and
+referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/SpecGit/milestone/1).
+
+## Supported platforms and prerequisites
+
+| Dimension | v1 baseline |
+| --- | --- |
+| Hosted forge | **GitHub.com only.** Origins must parse to `github.com` (HTTPS, SCP-style SSH, `ssh://`). A GitLab host declared in `spec_git/providers.yaml` fails closed with the dedicated `gitlab_unsupported`; everything else fails `origin_unresolvable`. GitLab is a roadmap, not a feature ([gitlab-support.md](gitlab-support.md)). |
+| GitHub access | Exclusively the authenticated `gh` CLI. No direct REST client, no stored or logged tokens. |
+| Git | Required; local facts come from the git binary (`src/gitfacts` seam). Linked worktrees and `core.hooksPath` setups are first-class. |
+| Runtime | Node.js ≥ 20.19 (the `specgit` CLI is an npm package). |
+| Operating systems | macOS, Linux, and Windows where Node ≥ 20.19, git, and gh run. |
+| CI systems | Any system that reports check runs to the GitHub PR head (GitHub Actions is the documented path — [actions.md](actions.md)). |
+
+## Commands (ten)
+
+| Command | Role |
+| --- | --- |
+| `specgit init` | Public. Create the policy, generate the harness. |
+| `specgit setup` | Public. Install agent entry points (`--tool opencode \| generic \| all`). |
+| `specgit issue` | Public. One-command delivery bootstrap; idempotent resume. |
+| `specgit pr` | Public. Repair the PR binding. |
+| `specgit finish` | Public. The verdict; the CI gate runs this. |
+| `specgit status` | Public. Local evidence only, zero network. |
+| `specgit doctor` | Public. Probe prerequisites. |
+| `specgit bind` | Automation alias. Record edits from scripts. |
+| `specgit unbind` | Automation alias. Delete the record. |
+| `specgit accept` | Automation alias. The same evaluation as `finish`. |
+
+Nothing else is public surface. Full reference: [cli.md](cli.md).
+
+## Exit codes, JSON, and environment
+
+- Exit codes `0` (success/accepted) · `1` (rejected with complete evidence) · `2` (usage) · `3` (fail-closed unknown). `1` vs `3` is contractual.
+- `130` is the single **interruption exception**: Ctrl-C during an interactive prompt prints `Interrupted.` to stderr, emits no JSON envelope, and exits 130. This is documented, deterministic behavior — automation treats it as "interrupted, no verdict".
+- With `--json`, stdout carries **exactly one** valid JSON document (the envelope in [cli.md](cli.md#json-envelope)); every human-readable line goes to stderr. The `130` path above is the only exception.
+- Environment inputs: `SPECGIT_GH` (path to the `gh` executable) and `SPECGIT_GH_TIMEOUT_MS` (per-call gh timeout, default `15000` ms), plus standard `NO_COLOR`/`CI`. No tokens, no telemetry.
+
+## State and assets
+
+Three tiers, nothing else (normative table: [reference.md](reference.md#state-and-assets)):
+
+1. **Authoritative committed files** — `spec_git/policy.yaml`, `.specgit.yaml`, and the optional `spec_git/providers.yaml`. Human-owned, reviewed like code.
+2. **Derived committed harness** — `.github/workflows/specgit-accept.yml` and the managed block in `AGENTS.md`/`CLAUDE.md`. Generated, regenerable (`init --force` repairs drift).
+3. **Local integration assets** — guard hooks (`.opencode/hooks.json` entry, `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`) and `setup` entry points. Merged non-destructively into your existing wiring.
+
+Verdicts and delivery states are derived per invocation and never persisted.
+
+## Evaluation semantics
+
+- Eleven ordered gates: record → policy → completeness → context → origin → provider → issues → sequence → pr → closing → checks ([gate table](reference.md#gates)).
+- **Transient semantics:** `checks_pending` is `factual` and exits `1` — a complete verdict saying "CI has not finished". It is transient and retryable: wait, re-run `specgit finish`. It is never reclassified, never exit `3`.
+- Acceptance is fail-closed: ungatherable evidence ⇒ `unknown` (exit 3), never `accepted`. A delivery is done **iff** `specgit finish` exits `0`.
+
+## Compatibility
+
+- The record schema (`version: 1`) and policy schema (`version: 1`) are strict; unknown policy keys are invalid, unknown record keys are preserved.
+- Check names match byte-for-byte against `required_checks`.
+- The `accept` alias is permanent for v1 — existing scripts keep working.
+
+## Non-goals (v1)
+
+- No GitLab/GitHub Enterprise evidence (declaration and diagnostics only).
+- No direct REST clients, no token storage, no telemetry.
+- No spec-artifact or task-list inputs — evidence is git + GitHub only.
+- No cross-platform deliveries (one delivery, one platform, one PR).
+- No weakening of `spec_git/policy.yaml` to pass a verdict, ever.
+
+## Deprecation policy
+
+- **Stable within v1 (major):** command names and roles, the exit-code contract, the JSON envelope shape, the two schema files, diagnostic codes and their classification (`factual`/`evidence`).
+- **Deprecation procedure:** any removal or semantic change to a stable surface is (1) documented here and in [CHANGELOG.md](../CHANGELOG.md) via a changeset, (2) announced at least one minor release ahead with the old behavior still present and a warning where output allows, (3) removed only in a major version.
+- Generated assets (harness workflow, managed block, skills) track the CLI version that generated them; re-running `init --force` after upgrading is the supported refresh path.
+
+## Release process
+
+Releases are automatic, PR-gated, and OIDC-based ([release-prepare.yml](../.github/workflows/release-prepare.yml)):
+
+1. A feature/fix PR carries its changeset (`.changeset/*.md`); merging to `main` opens (or force-updates) the **version PR** `changeset-release/main` with the consumed bump.
+2. Merging the version PR lands `chore(release): v<version>` on `main`, which builds, verifies the packed version, and publishes to npm via **OIDC trusted publishing** (no token, no environment secret) with provenance.
+3. The tag `v<version>` and the GitHub Release follow; every step is idempotent, decided by tag/npm existence — a replay never double-publishes.
+4. Direct pushes to `main` are refused by the pre-push guard, so **every published version traces to a merged PR**. Release candidates are verified without accidental final publish via dry-runs (`npm publish --dry-run`, tarball inspection) and the tag-based idempotence above.

@@ -3,22 +3,29 @@
 SpecGit (package and CLI: `specgit`) is a delivery binding and acceptance
 harness: bind a branch or worktree to GitHub issues and one pull request, then
 derive acceptance from real git, PR, and CI evidence. Repository:
-https://github.com/LeXwDeX/SpecGit. All persistent state is two committed
-files: the policy `spec_git/policy.yaml` and the record `.specgit.yaml`.
+https://github.com/LeXwDeX/SpecGit. Everything SpecGit writes falls into three
+tiers: **authoritative committed files** (the policy `spec_git/policy.yaml`,
+the record `.specgit.yaml`, optional `spec_git/providers.yaml`), a **derived
+committed harness** (the acceptance workflow and the managed AGENTS/CLAUDE
+block — regenerate with `init --force`, never hand-edit), and **local
+integration assets** (guard hooks and `setup` entry points; agent
+conveniences, never acceptance inputs). Verdicts are never persisted.
 
 ## Product contract (never break)
 
-- Nine commands. Human story: `specgit issue` (one-command bootstrap,
+- Ten commands. Human story: `specgit issue` (one-command bootstrap,
   idempotent resume) → `specgit finish` (verdict; the CI gate runs this
   in `.github/workflows/specgit-accept.yml`), with `specgit pr`
-  (repair the PR binding: auto-discover by head branch) and `specgit
+  (repair the PR binding: auto-discover by head branch), `specgit
+  setup` (agent entry points: commands/skills), and `specgit
   init` / `status` / `doctor` for setup and diagnostics. Machine
   aliases for scripts: `bind`, `unbind`, `accept` — nothing else is
   public surface.
 - Exit-code contract: `0` success/accepted · `1` rejected with complete
   evidence · `2` usage error · `3` fail-closed unknown. Exit `1` vs `3` is
   contractual: `1` = evidence gathered and it says no; `3` = no verdict
-  possible.
+  possible. `130` (SIGINT interruption) is the single exception outside the
+  JSON envelope: stderr `Interrupted.`, no envelope, deterministic.
 - With `--json`, stdout is exactly one valid JSON document (the envelope in
   [docs/cli.md](docs/cli.md)); every human-readable line goes to stderr.
 - Fail-closed acceptance: if evidence cannot be gathered, the verdict is
@@ -30,7 +37,10 @@ files: the policy `spec_git/policy.yaml` and the record `.specgit.yaml`.
 - Provider seams: git facts come from **local git** (`src/gitfacts`);
   GitHub evidence (issues, PR, checks) flows exclusively through the
   authenticated **`gh` CLI** (`src/github`). No direct REST client, no
-  stored or logged tokens.
+  stored or logged tokens. v1 delivers GitHub.com only: a GitLab host
+  declared via `specgit init --gitlab-host` is a declaration-diagnostics
+  seam (`gitlab_unsupported`), not a provider — see
+  [docs/gitlab-support.md](docs/gitlab-support.md).
 
 ## Build, test, lint
 
@@ -73,6 +83,15 @@ already exists); keep manual guidance outside them.
 - `specgit status` shows local evidence only: record, state, drift,
   origin. `specgit doctor` probes git, repository, origin, gh, and
   policy.
+
+### The command surface
+
+- Ten commands: `specgit init`, `specgit setup`, `specgit issue`,
+  `specgit pr`, `specgit finish`, `specgit bind`, `specgit unbind`,
+  `specgit status`, `specgit accept`, `specgit doctor`.
+- `specgit setup` installs the agent entry points (commands for opencode,
+  portable skills for other tools); `specgit bind`, `specgit unbind`,
+  and `specgit accept` are automation aliases for scripts and CI.
 
 ### Before creating an issue, check for duplicates
 

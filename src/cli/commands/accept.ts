@@ -1,5 +1,5 @@
 /**
- * `specgit accept` — full G1-G10 evaluation via the acceptance evaluator
+ * `specgit accept` — full eleven-gate evaluation via the acceptance evaluator
  * (`src/acceptance/**`). States are derived per invocation and never
  * persisted. Spec/task artifacts are not inputs anywhere on this path —
  * only the record, the policy, live git facts, and GitHub provider facts.
