@@ -1,8 +1,8 @@
 version: 1
-delivery: issue10
+delivery: release-changelog-token-fix
 context:
   kind: branch
-  branch: feat/10-issue10
+  branch: fix/release-changelog-token
 issues:
-  - 10
-pr: 11
+  - 13
+pr: 12

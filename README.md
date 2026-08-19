@@ -10,6 +10,26 @@
 
 ---
 
+## For AI agents: start SpecGit in a project
+
+When the user says something like **“在本项目中启动 specgit 规范：
+https://github.com/LeXwDeX/SpecGit”** (or points you at this repository),
+execute this protocol — no further questions needed:
+
+1. Install the CLI: `npm install -g specgit`
+2. Verify prerequisites: `git --version` and `gh auth status`
+   (if `gh` is not authenticated, ask the user to run `gh auth login`)
+3. In the repository root: `specgit init` (auto-detects the required CI
+   checks) then `specgit setup` (installs your entry points: commands for
+   opencode, portable skills for other tools)
+4. Commit the generated harness (`spec_git/`, `.github/workflows/specgit-accept.yml`,
+   `AGENTS.md` managed block, hooks) on a branch and open a PR
+5. Confirm with `specgit doctor --json` and report the result
+
+From then on, deliveries are two commands: `specgit issue "<title>"` →
+work → `specgit finish` (exit 0 is the only done). The AGENTS.md managed
+block is your behavior contract.
+
 ## What SpecGit is
 
 SpecGit defines **done** as a verifiable fact. A delivery is one aggregate:
