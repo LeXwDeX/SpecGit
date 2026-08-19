@@ -126,6 +126,22 @@ telemetry and no configuration beyond the two files.
   done. `specgit init` injects the managed agent block into `AGENTS.md`; see
   the [Agent Contract](docs/agent-contract.md).
 
+### Agent guard hooks
+
+`specgit init` also installs two guard hooks (both idempotent, re-run safe):
+
+| Hook | Layer | What it does |
+| --- | --- | --- |
+| `.opencode/hooks.json` + `.opencode/hooks/specgit-merge-guard.sh` | opencode PreToolUse | Blocks `gh pr merge` / push-to-main tool calls that bypass the verdict, with the iron-rule reason |
+| `.git/hooks/pre-push` | git | Refuses direct pushes to `main` — deliveries must go PR → CI → finish |
+
+Event-driven beats periodic prompting: the guard fires exactly at the
+highest-risk moment, not every N turns. For other tools (codex, pi-agent,
+cursor, …) the portable entry points live in [`skills/`](skills/) — see
+[the skills index](skills/README.md). A guided `specgit setup` installer for
+the whole agent surface is tracked in
+[#7](https://github.com/LeXwDeX/SpecGit/issues/7).
+
 ## Documentation
 
 - [Documentation home](docs/README.md)
