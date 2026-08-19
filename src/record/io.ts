@@ -233,7 +233,8 @@ export async function deleteRecord(root: string): Promise<void> {
   });
 }
 
-export async function readPolicy(root: string): Promise<Evidence<Policy>> {  let raw: string;
+export async function readPolicy(root: string): Promise<Evidence<Policy>> {
+  let raw: string;
   try {
     raw = await fs.readFile(policyPath(root), 'utf-8');
   } catch (error) {

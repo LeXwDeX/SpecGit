@@ -54,6 +54,23 @@ ordered_issues: true
 
 The policy is strict: unknown keys make it invalid. Required checks are **declared locally** and matched against check runs reported to the PR head commit — they are not read from GitHub rulesets.
 
+## `spec_git/providers.yaml` — platform declarations
+
+Optional; created by `specgit init --gitlab-host <hostname>` (or the interactive platform question). Committed to the repository so the team shares one declaration.
+
+```yaml
+gitlab:
+  host: git.ycgame.com
+  insecure_ssl: false
+```
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `gitlab.host` | string | Bare hostname (no scheme/path); must match the origin host when declared from `init`. |
+| `gitlab.insecure_ssl` | boolean | Default `false`. Reserved for the glab roadmap (self-signed certificates). |
+
+A declared host changes origin classification: matching origins report `gitlab_unsupported` (dedicated diagnostic) instead of `origin_unresolvable`. Strict schema: unknown keys are rejected.
+
 ## Root discovery
 
 SpecGit runs only inside a git repository. Root = `git rev-parse --show-toplevel`; record and policy live at that root. No ancestor walking, no global stores. Outside a repository: `not_a_git_repo`, exit 3. Linked-worktree checkouts are first-class (a `.git` file, not directory, is fine).

@@ -108,7 +108,11 @@ export function createDefaultContext(): CommandContext {
     gh,
     record: recordIo,
     evaluate: (async (input: Parameters<typeof evaluate>[0]) =>
-      evaluate({ ...input, gitlabHost: await declaredGitlabHost() })) as typeof evaluate,
+      evaluate(
+        input.gitlabHost === undefined
+          ? { ...input, gitlabHost: await declaredGitlabHost() }
+          : input
+      )) as typeof evaluate,
     parseRepoRef: parseRepoRefWithProviders as CommandContext['parseRepoRef'],
   };
 }

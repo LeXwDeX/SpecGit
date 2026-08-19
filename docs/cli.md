@@ -48,8 +48,11 @@ specgit init --required-check build --required-check test    # repeatable
 | Flag | Meaning |
 | --- | --- |
 | `--required-check <name>` | A CI check name every delivery must pass. Repeatable; required in non-interactive terminals. |
+| `--gitlab-host <hostname>` | Declare the origin's platform as GitLab on a self-hosted instance (bare hostname, must match the origin host; rejected for github.com origins). Persists to `spec_git/providers.yaml`. |
 | `--protect` | Enable branch protection + auto-merge without asking. |
 | `--no-protect` | Skip the protection probe and warning entirely. |
+
+**Platform mode.** `init` resolves a platform: a `github.com` origin defaults to GitHub; any other origin asks on an interactive terminal (GitHub or GitLab) or takes an explicit `--gitlab-host`. The declaration persists in `spec_git/providers.yaml` (`gitlab.host` bare hostname, `gitlab.insecure_ssl` reserved for the glab roadmap) and is committed, so the team shares one declaration. Origin classification (`parseRepoRef`, the evaluator, `doctor`, `status`) honors the declared host: matching origins report `gitlab_unsupported` instead of the generic `origin_unresolvable`. An undeclared non-github origin leaves mode `undecided` with a `platform_undecided` warning; the `--json` envelope carries a `platform` section (`{ mode, gitlabHost? }`). Evidence providers are the official CLIs only — `gh` for GitHub, `glab` for GitLab (see [gitlab-support.md](gitlab-support.md)).
 
 After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation (default yes) and, when confirmed, requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with the exact `gh api` command as the fix; pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"`.
 
