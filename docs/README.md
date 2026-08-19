@@ -23,9 +23,11 @@ troubleshooting at the end.
 
 **I'm brand new.** Start with [Getting Started](getting-started.md), then skim [Concepts](concepts.md). When something feels mysterious, the [FAQ](faq.md) and [Glossary](glossary.md) are nearby.
 
-**I want every command, flag, and exit code.** The [CLI reference](cli.md) covers the nine commands, the `--json` envelope, and the exit-code contract.
+**I want every command, flag, and exit code.** The [CLI reference](cli.md) covers the ten commands, the `--json` envelope, and the exit-code contract.
 
-**I want the exact schemas and gate table.** [Reference](reference.md) documents `.specgit.yaml`, `spec_git/policy.yaml`, the ten gates, and every diagnostic code.
+**I want the exact schemas and gate table.** [Reference](reference.md) documents `.specgit.yaml`, `spec_git/policy.yaml`, the eleven gates, and every diagnostic code.
+
+**I want the versioned product contract.** [Product Baseline v1](baseline-v1.md) fixes the supported platforms, the ten commands, state and assets, compatibility, non-goals, and the deprecation policy.
 
 **I run GitHub Actions.** [GitHub Actions](actions.md) defines how check names are chosen, how required checks are wired, and the security guidance for workflows.
 
@@ -38,3 +40,5 @@ troubleshooting at the end.
 **An AI agent does my work.** Read the [Agent Contract](agent-contract.md) — and run `specgit init`, which injects the managed agent block into `AGENTS.md`. Agents run `specgit finish` and trust the verdict — they never declare completion themselves.
 
 **Something is failing.** [Troubleshooting](troubleshooting.md) maps every diagnostic code to its cause and fix.
+
+**I want to contribute, get support, or report a problem.** See [Contributing](../CONTRIBUTING.md), [Support](../SUPPORT.md), and the issue templates on GitHub. Security reports follow [SECURITY.md](../SECURITY.md).

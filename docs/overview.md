@@ -44,6 +44,6 @@ A delivery is not done because a file says it is done. It is done when the branc
 
 - [Getting Started](getting-started.md) — the loop, step by step
 - [CLI Reference](cli.md) — `init`, `bind`, `unbind`, `status`, `accept`, `doctor`
-- [Reference](reference.md) — record/policy schemas, the ten gates, all diagnostic codes
+- [Reference](reference.md) — record/policy schemas, the eleven gates, all diagnostic codes
 - [GitHub Actions](actions.md) — picking check names, wiring required checks, security
 - [Examples & Recipes](examples.md) — real deliveries end to end

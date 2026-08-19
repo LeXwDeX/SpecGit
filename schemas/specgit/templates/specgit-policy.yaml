@@ -14,3 +14,8 @@
 version: 1
 required_checks:
   - build
+
+# Optional: enforce delivery ordering (the sequence gate, G8). When true, no
+# OPEN issue with a smaller number than this delivery's smallest bound issue
+# may exist (issue_out_of_order). Default is false (gate passes vacuously).
+# ordered_issues: true

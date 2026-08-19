@@ -84,9 +84,15 @@ walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 `unbind`, and `accept` remain as machine aliases for scripts — `accept`
 runs the same evaluation as `finish`.)
 
-Two committed files, zero other state. One PR may close N issues; every bound
-issue must be closed from the PR body; checks are matched byte-for-byte
-against the names in `spec_git/policy.yaml`.
+State and assets, in three tiers: **authoritative committed files**
+(`spec_git/policy.yaml`, `.specgit.yaml`, optional `spec_git/providers.yaml`),
+a **derived committed harness** (the acceptance workflow and the managed
+AGENTS/CLAUDE block — regenerable with `init --force`), and **local
+integration assets** (guard hooks and `setup` entry points, merged
+non-destructively). Verdicts are never persisted. One PR may close N issues;
+every bound issue must be closed from the PR body; checks are matched
+byte-for-byte against the names in `spec_git/policy.yaml`. Full table:
+[Reference](docs/reference.md#state-and-assets).
 
 ## Why evidence, not artifacts
 
@@ -99,7 +105,7 @@ instead asks git and GitHub:
 - Does the PR body close **every** bound issue? *(closing-ref gate)*
 - Is every required check green **at the PR head commit**? *(check gates)*
 
-Ten ordered gates, each reporting stable diagnostic codes with fixes. Verdicts
+Eleven ordered gates, each reporting stable diagnostic codes with fixes. Verdicts
 are computed per invocation and never persisted, so they cannot drift from
 reality.
 
@@ -118,9 +124,14 @@ reality.
 
 Every command supports `--json` (one JSON document on stdout, human text on
 stderr). Exit-code contract: `0` accepted/success · `1` rejected with complete
-evidence · `2` usage error · `3` fail-closed unknown. Requirements: Node ≥
-20.19, `git`, and `gh` (authenticated) for GitHub evidence. There is no
-telemetry and no configuration beyond the two files.
+evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C
+interruption exception (no envelope — see the [CLI reference](docs/cli.md)).
+Environment inputs: `SPECGIT_GH` (path to the `gh` executable) and
+`SPECGIT_GH_TIMEOUT_MS` (per-call gh timeout, default 15 s). Requirements:
+Node ≥ 20.19, `git`, and `gh` (authenticated) for GitHub evidence. There is no
+telemetry and no configuration beyond the three file tiers. The versioned
+contract — platforms, commands, state, compatibility, non-goals, deprecation —
+is pinned in the [Product Baseline v1](docs/baseline-v1.md).
 
 ## Built for teams and agents
 
@@ -151,29 +162,45 @@ the whole agent surface is tracked in
 
 ## Releasing
 
-Releases are automatic and PR-gated. A feature/fix branch carries its
-changeset (`.changeset/*.md`); merging the PR to `main` triggers the Release
-workflow: consume changesets → bump → build → `npm publish` → tag
-`v<version>` → GitHub Release. Direct pushes to `main` are blocked by the
-pre-push guard, so **every published version traces to a merged PR**.
-Prerequisite (repo admin, once): an npm **trusted publisher** bound to this
-repository + `release-prepare.yml` workflow + the `NPM` environment (OIDC,
-no long-lived token; provenance included).
+Releases are automatic, PR-gated, and OIDC-based. A feature/fix branch carries
+its changeset (`.changeset/*.md`); merging it to `main` makes the Release
+workflow open (or update) the **version PR** (`changeset-release/main`) with
+the consumed version bump. Merging *that* PR lands `chore(release):
+v<version>` on `main`, which builds, verifies the packed version, and
+publishes to npm via **OIDC trusted publishing** (no long-lived token, no
+environment secret; provenance included), then tags `v<version>` and creates
+the GitHub Release. Each step is idempotent — decided by tag and npm
+existence — so replays never double-publish, and release candidates can be
+verified (dry-run publish, tarball inspection) without accidentally shipping
+the final version. Direct pushes to `main` are blocked by the pre-push guard,
+so **every published version traces to a merged PR**. Prerequisite (repo
+admin, once): an npm **trusted publisher** bound to this repository and the
+Release workflow's OIDC token.
 
 ## Documentation
 
 - [Documentation home](docs/README.md)
 - [Getting Started](docs/getting-started.md) · [Installation](docs/installation.md)
+- [Product Baseline v1](docs/baseline-v1.md) — the versioned public contract
 - [Concepts](docs/concepts.md) · [Overview](docs/overview.md)
 - [CLI Reference](docs/cli.md) · [Reference (schemas, gates, codes)](docs/reference.md)
 - [GitHub Actions usage & security](docs/actions.md)
-- [Examples & Recipes](docs/examples.md) · [Existing Projects](docs/existing-projects.md)
+- [Examples & Recipes](docs/examples.md) · [Existing Projects](docs/existing-projects.md) (adoption & uninstall)
 - [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) · [Glossary](docs/glossary.md)
+
+## Community
+
+- [Contributing](CONTRIBUTING.md) — development setup, the delivery workflow, and PR expectations
+- [Support](SUPPORT.md) — where to ask what, and how to report bugs and security issues
+- [Code of Conduct](CODE_OF_CONDUCT.md) — applies to every interaction in this project
+- [Maintainers](MAINTAINERS.md) · [Security policy](SECURITY.md)
 
 ## Security
 
 SpecGit reads git facts and GitHub evidence (via your existing `gh` session);
-it writes only its two YAML files. It never reads, prints, or stores tokens,
+it writes only the [three file tiers](docs/reference.md#state-and-assets) —
+authoritative YAML, the derived harness, and local hook wiring. It never
+reads, prints, or stores tokens,
 performs no telemetry, and sanitizes API-sourced strings before rendering.
 For workflow-side guidance — permissions, secrets, fork PRs, supply chain —
 see [GitHub Actions security](docs/actions.md#security-guidance). To report a

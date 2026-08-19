@@ -1,15 +1,16 @@
 # CLI Reference
 
-The `specgit` CLI has nine commands. The human story is `issue` → `finish`; `bind`/`unbind`/`accept` are machine aliases for scripts. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
+The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `setup` installs agent entry points; `bind`/`unbind`/`accept` are machine aliases for scripts. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
 
 ## Command summary
 
 | Command | Purpose | Network | Exit codes |
 | --- | --- | --- | --- |
+| `specgit init` | Create the project policy and generate the harness | gh (protection probe) | 0 · 2 · 3 |
+| `specgit setup` | Install agent entry points (commands for opencode, portable skills for other tools) | no | 0 · 2 · 3 |
 | `specgit issue` | One-command delivery bootstrap (issues, branch, draft PR, record, commit, push) | yes | 0 · 2 · 3 |
 | `specgit finish` | The verdict — full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
 | `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
-| `specgit init` | Create the project policy and generate the harness | gh (protection probe) | 0 · 2 · 3 |
 | `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias | no | 0 · 2 · 3 |
 | `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift) | no | 0 · 2 · 3 |
@@ -26,12 +27,24 @@ Plus `--version` and `--help` (exit 0; usage errors exit 2).
 | `1` | **Rejected** with complete evidence (all evidence gathered, ≥1 gate failed) |
 | `2` | Usage error (bad flags, invalid arguments) |
 | `3` | Fail-closed **unknown** — evidence could not be gathered: record/policy missing or invalid, provider missing or unauthenticated, transport failure, not a git repository |
+| `130` | **Interruption exception** — Ctrl-C (SIGINT) during an interactive prompt. The process prints `Interrupted.` to stderr and exits 130. |
 
 The distinction between `1` and `3` is contractual: `1` means the evidence was gathered and says no; `3` means no verdict is possible. Automation should treat them differently.
 
+`130` is the single interruption exception and sits outside the JSON envelope contract: on that path stdout stays empty — no envelope is emitted — which is the documented, deterministic behavior. Automation should treat `130` as "interrupted, no verdict", distinct from both `1` and `3`.
+
 ## Global flags
 
-- `--json` — available on every command. stdout becomes a single valid JSON document (the envelope below); all human-readable text goes to stderr.
+- `--json` — available on every command. stdout becomes a single valid JSON document (the envelope below); all human-readable text goes to stderr. The one exception is the [Ctrl-C `130` interruption](#exit-code-contract), which emits no envelope.
+
+## Environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `SPECGIT_GH` | Path to the `gh` executable used for all GitHub evidence. Resolved per invocation; defaults to `gh` on `PATH`. Useful for testing against a scripted `gh`. |
+| `SPECGIT_GH_TIMEOUT_MS` | Per-call timeout for `gh` invocations, in milliseconds. Defaults to `15000` (15 s). Raise it on slow networks; the timeout is what turns a hung call into `gh_transport` (exit 3). |
+
+These are the only SpecGit-specific environment inputs. Standard `NO_COLOR`/`CI` detection also applies. No tokens are ever read from the environment — authentication is your existing `gh` session.
 
 ## `specgit init`
 
@@ -63,6 +76,23 @@ specgit init --required-check build --required-check test    # repeatable
 **Platform mode.** `init` resolves a platform: a `github.com` origin defaults to GitHub; any other origin asks on an interactive terminal (GitHub or GitLab) or takes an explicit `--gitlab-host`. The declaration persists in `spec_git/providers.yaml` (`gitlab.host` bare hostname, `gitlab.insecure_ssl` reserved for the glab roadmap) and is committed, so the team shares one declaration. Origin classification (`parseRepoRef`, the evaluator, `doctor`, `status`) honors the declared host: matching origins report `gitlab_unsupported` instead of the generic `origin_unresolvable`. An undeclared non-github origin leaves mode `undecided` with a `platform_undecided` warning; the `--json` envelope carries a `platform` section (`{ mode, gitlabHost? }`). Evidence providers are the official CLIs only — `gh` for GitHub, `glab` for GitLab (see [gitlab-support.md](gitlab-support.md)).
 
 After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation (default yes) and, when confirmed (or with `--protect` from scripts), requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. The protection update is read-modify-write and never weakens governance: existing required checks, pull-request reviews (including dismissal rules), push restrictions, and admin enforcement are read first and preserved, with `SpecGit Acceptance` the only addition; the reported fact comes from the server's post-update payload. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with non-weakening fix guidance (the settings-UI path that preserves existing rules); pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"` and the remote unchanged.
+
+## `specgit setup`
+
+Installs the agent entry points — the pieces that make AI coding agents first-class SpecGit users. Complements `init` (which creates the policy and harness); idempotent, safe to re-run.
+
+```bash
+specgit setup                 # auto-detect the tool
+specgit setup --tool opencode # commands for opencode only
+specgit setup --tool generic  # portable skills for any tool
+specgit setup --tool all      # everything
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--tool <tool>` | `opencode` \| `generic` \| `all`. Omit to auto-detect (opencode when `.opencode/` exists, otherwise generic). |
+
+`opencode` installs command entry points under `.opencode/command/`; `generic` installs the portable skills (see [`skills/`](../skills/README.md)) that work with any agent that reads files. Exits `2` for an unknown tool (`setup_tool_invalid`), `3` outside a git repository or on write failure.
 
 ## `specgit issue`
 
@@ -99,7 +129,7 @@ Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` 
 
 ## `specgit finish`
 
-The verdict command of the human story — the CI gate (`.github/workflows/specgit-accept.yml`) runs it with `--json` on every PR. Runs the full ten-gate evaluation (record → policy → completeness → context → origin → provider → issues → PR → closing refs → checks) through the same fail-closed evaluator as `accept`; checks are verified at the **PR head commit**, via `gh`.
+The verdict command of the human story — the CI gate (`.github/workflows/specgit-accept.yml`) runs it with `--json` on every PR. Runs the full eleven-gate evaluation (record → policy → completeness → context → origin → provider → issues → sequence → PR → closing refs → checks) through the same fail-closed evaluator as `accept`; checks are verified at the **PR head commit**, via `gh`.
 
 ```bash
 specgit finish            # human-readable verdict
@@ -149,15 +179,26 @@ Requires `--yes`; there is no interactive prompt. The policy is untouched.
 
 ## `specgit status`
 
-Reports local evidence only — record, policy, live git context, upstream drift, origin — with **zero network calls**. Safe to run anywhere, any time. Exit `0` when record and policy are locally valid, `3` when they are missing/invalid or the directory is not a git repo.
+Reports local evidence only — record, policy, live git context, upstream drift, origin — with **zero network calls**. Safe to run anywhere, any time.
 
 ```bash
 specgit status --json
 ```
 
+Normative exit table:
+
+| Condition | Exit |
+| --- | --- |
+| The status snapshot was computed (record present and valid) | `0` |
+| Usage error | `2` |
+| Not a git repository / git unavailable (`not_a_git_repo`, `git_unavailable`) | `3` |
+| Record missing (`record_missing`; reported with state `unbound`) or invalid (`record_invalid`) | `3` |
+
+Policy and context problems discovered along the way (`policy_missing`, `policy_invalid`, `branch_mismatch`, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
+
 ## `specgit accept`
 
-Script/CI alias of `specgit finish`: the identical ten-gate evaluation and exit codes, differing only in the envelope's `command` field. Prefer `finish` in human flows and new automation; `accept` stays stable for existing scripts.
+Script/CI alias of `specgit finish`: the identical eleven-gate evaluation and exit codes, differing only in the envelope's `command` field. Prefer `finish` in human flows and new automation; `accept` stays stable for existing scripts.
 
 ```bash
 specgit accept --json

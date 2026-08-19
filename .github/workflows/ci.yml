@@ -47,10 +47,6 @@ jobs:
     name: Test (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    # The shadow self-hosted entry is experimental: its failures must not
-    # redden the run (continue-on-error is set per-matrix-entry below).
-    continue-on-error: ${{ matrix.experimental }}
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -60,24 +56,14 @@ jobs:
           - os: ubuntu-latest
             shell: bash
             label: linux-bash
-            experimental: false
-            vitest_workers: 4
-          # Shadow entry on the project docker runner: never a required
-          # check, proves the container build before any migration.
-          - os: [self-hosted, Linux, X64]
-            shell: bash
-            label: self-hosted-linux
-            experimental: true
             vitest_workers: 4
           - os: macos-latest
             shell: bash
             label: macos-bash
-            experimental: false
             vitest_workers: 4
           - os: windows-latest
             shell: pwsh
             label: windows-pwsh
-            experimental: false
             vitest_workers: 2
 
     defaults:
@@ -85,12 +71,6 @@ jobs:
         shell: ${{ matrix.shell }}
 
     steps:
-      # The docker runner image ships without git; checkout needs it.
-      - name: Bootstrap container tools (self-hosted only)
-        if: matrix.label == 'self-hosted-linux'
-        run: |
-          command -v git >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git ca-certificates curl)
-
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,6 +108,66 @@ jobs:
           name: coverage-report-${{ github.event_name }}
           path: coverage/
           retention-days: 7
+
+  # Experimental shadow leg on the project docker runner: proves the
+  # container before any migration. Never a required check (the policy
+  # names hosted checks only), never another job's dependency, and its
+  # failures never redden the run. Deliberately OUTSIDE test_matrix:
+  # a matrix entry cannot fail independently of the required
+  # "Test (<label>)" check names, and a queued/broken self-hosted leg
+  # would wedge every gate that needs test_matrix.
+  test_selfhosted:
+    name: Test (self-hosted-linux)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    continue-on-error: true
+    # Untrusted code (fork pull requests) must never execute on the
+    # self-hosted shadow runner: its runner and cache state outlive the
+    # job. Same-repo pull requests keep proving the container; every
+    # other event (push, merge_group, workflow_dispatch) checks out
+    # trusted refs. github context only — a job-level if cannot see
+    # matrix/steps/env contexts (that is why this is a separate job).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The docker runner image ships without git; checkout needs it.
+      - name: Bootstrap container tools
+        run: |
+          command -v git >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git ca-certificates curl)
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          cache: 'pnpm'
+
+      - name: Print environment diagnostics
+        run: |
+          node -p "JSON.stringify({ platform: process.platform, arch: process.arch, shell: process.env.SHELL || process.env.ComSpec || '' })"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project
+        run: pnpm run build
+
+      - name: Run tests
+        env:
+          VITEST_MAX_WORKERS: 4
+        run: pnpm test
 
   test_pr_required:
     name: Test

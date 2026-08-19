@@ -1,9 +1,12 @@
 version: 1
-delivery: issue62
+delivery: issue69
 context:
   kind: branch
-  branch: feat/62-issue62
+  branch: feat/69-issue69
 issues:
-  - 62
-  - 63
-pr: 81
+  - 69
+  - 66
+  - 68
+  - 72
+  - 71
+pr: 82
