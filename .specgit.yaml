@@ -5,3 +5,4 @@ context:
   branch: chore/53-remove-openspec-promo
 issues:
   - 53
+pr: 54
