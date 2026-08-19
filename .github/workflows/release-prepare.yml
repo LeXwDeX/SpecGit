@@ -1,15 +1,21 @@
 name: Release
 
-# Release on merge to main: when pending changesets exist, consume them,
-# publish to npm, tag, and create the GitHub Release. Direct pushes to main
-# are already blocked by the specgit pre-push guard, so every release traces
-# to a merged pull request.
+# Release on merge to main, through version pull requests (main is
+# PR-only for every actor, including this workflow's GITHUB_TOKEN):
+#
+# 1. push to main with pending changesets -> open (or force-update) the
+#    branch changeset-release/main carrying the consumed bump commit
+#    "chore(release): v<version>" as a PR with auto-merge enabled.
+# 2. that PR merges (SpecGit Acceptance passes via its no-record skip
+#    path) -> push to main with no pending changesets and a head commit
+#    matching "chore(release): v" -> publish to npm, tag, GitHub Release.
 on:
   push:
     branches: [main]
 
 permissions:
-  contents: write # tag push + GitHub Release
+  contents: write # tag push + GitHub Release + version branch
+  pull-requests: write # create/merge the version pull request
   id-token: write # npm OIDC trusted publishing
 
 concurrency:
@@ -35,65 +41,63 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Consume changesets
-        id: version
-        env:
-          # @changesets/changelog-github needs a token to link PRs in the
-          # generated changelog entries.
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Count pending changesets
+        id: pending
         run: |
-          BEFORE=$(node -p "require('./package.json').version")
-          pnpm exec changeset version
-          AFTER=$(node -p "require('./package.json').version")
-          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
-          echo "after=$AFTER" >> "$GITHUB_OUTPUT"
-          if [ "$BEFORE" = "$AFTER" ]; then
-            echo "No pending changesets — nothing to release."
-          fi
+          COUNT=$(ls .changeset/*.md 2>/dev/null | grep -v 'README' | wc -l | tr -d ' ')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Pending changesets: $COUNT"
 
+      # Push with pending changesets: propose the version PR.
+      - name: Open version pull request
+        if: steps.pending.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "specgit-release-bot"
+          git config user.email "noreply@users.noreply.github.com"
+          git checkout -B changeset-release/main
+          pnpm exec changeset version
+          VERSION=$(node -p "require('./package.json').version")
+          git commit -am "chore(release): v${VERSION}"
+          git push --force origin changeset-release/main
+          BODY="Automated version bump. Merging publishes specgit@${VERSION} to npm and tags v${VERSION}."
+          gh pr create --base main --head changeset-release/main \
+            --title "chore(release): v${VERSION}" --body "$BODY" \
+            || gh pr edit changeset-release/main --title "chore(release): v${VERSION}" --body "$BODY"
+          gh pr merge changeset-release/main --auto --squash --delete-branch
+
+      # Push without pending changesets whose head is a version bump: publish.
       - name: Build
-        if: steps.version.outputs.before != steps.version.outputs.after
+        if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
         run: pnpm run build
 
       - name: Publish to npm
-        if: steps.version.outputs.before != steps.version.outputs.after
-        env:
-          VERSION: ${{ steps.version.outputs.after }}
+        if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
         run: |
+          VERSION=$(node -p "require('./package.json').version")
           if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
             echo "specgit@${VERSION} is already on npm; skipping publish."
             exit 0
           fi
           pnpm run check:pack-version
           # npm authentication via OIDC trusted publishing (id-token: write
-          # + registry-url), matching the proven setup used by this
-          # maintainer's other packages: no environment binding, no token.
+          # + registry-url): no environment binding, no token.
           npm publish --access public
 
-      - name: Commit version bump and push tag
-        if: steps.version.outputs.before != steps.version.outputs.after
+      - name: Tag and create GitHub Release
+        if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
         env:
-          VERSION: ${{ steps.version.outputs.after }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "specgit-release-bot"
-          git config user.email "noreply@users.noreply.github.com"
-          git add -A
-          git commit -m "chore(release): v${VERSION}"
+          VERSION=$(node -p "require('./package.json').version")
           TAG="v${VERSION}"
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists on origin; skipping tag push."
           else
             git tag "${TAG}"
+            git push origin "${TAG}"
           fi
-          git push origin HEAD:main "${TAG}" --follow-tags
-
-      - name: Create GitHub Release
-        if: steps.version.outputs.before != steps.version.outputs.after
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.after }}
-        run: |
-          TAG="v${VERSION}"
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists; skipping."
             exit 0
