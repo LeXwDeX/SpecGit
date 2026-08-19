@@ -311,6 +311,16 @@ export async function runIssue(
           }
         }
       } else {
+        // Partial continuation (issues ⊂ args) is only possible while the
+        // bootstrap is incomplete: no PR recorded yet. A record with a PR
+        // bound is a complete delivery — a finished bootstrap never creates
+        // issues, so surplus arguments are drift, refused with zero side
+        // effects before any probe or create.
+        if (record.pr !== undefined) {
+          return driftError(
+            `This checkout already carries the complete delivery '${record.delivery}' with ${record.issues.length} bound issue(s) and PR #${record.pr}; the ${args.length} argument(s) do not match.`
+          );
+        }
         // Partial record (issues ⊂ args): the first issues.length
         // arguments were consumed by the previous run — numeric ones are
         // verified positionally — and creation continues from there.

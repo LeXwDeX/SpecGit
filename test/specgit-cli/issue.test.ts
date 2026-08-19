@@ -791,3 +791,120 @@ describe('specgit issue: partial-resume drift guards', () => {
     expect(written?.issues).toEqual([11, 99]);
   });
 });
+
+describe('specgit issue: complete-record argument drift (P1 regression)', () => {
+  // A live complete record — every bound issue recorded AND the PR bound —
+  // is a finished bootstrap. Extra arguments are drift: usage exit 2 with
+  // zero side effects (no probes, no creates, byte-identical record).
+  function completeRecordCtx() {
+    const record = sampleBinding({
+      delivery: 'strict-delivery-harness',
+      context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+      issues: [11, 12],
+      pr: 42,
+    });
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record,
+      gh: {
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11\nCloses #12\n',
+            mergeCommitSha: null,
+          }),
+      },
+    });
+    return { t, record };
+  }
+
+  /** Creation-path probe and create calls — must stay empty on drift. */
+  function creationPathCalls(calls: string[]): string[] {
+    return calls.filter(
+      (c) =>
+        c === 'getOpenIssueNumbers' ||
+        c.startsWith('getIssue:') ||
+        c.startsWith('createIssue') ||
+        c.startsWith('listOpenPrsByHead') ||
+        c.startsWith('createDraftPr')
+    );
+  }
+
+  async function expectZeroSideEffects(
+    t: ReturnType<typeof issueCtx>,
+    record: DeliveryBinding
+  ): Promise<void> {
+    expect(creationPathCalls(t.gh.calls)).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+    // Byte-identical .specgit.yaml: nothing was rewritten, and reading the
+    // record back yields the identical binding.
+    const reread = await t.recordPort.readRecord('/repo');
+    expect(reread.ok && JSON.stringify(reread.value)).toBe(JSON.stringify(record));
+  }
+
+  it('refuses a numeric-extra argument on a live complete record with zero side effects', async () => {
+    const { t, record } = completeRecordCtx();
+    const outcome = await runIssue({ titles: ['11', '12', '99'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    await expectZeroSideEffects(t, record);
+  });
+
+  it('refuses a title-extra argument on a live complete record with zero side effects', async () => {
+    const { t, record } = completeRecordCtx();
+    const outcome = await runIssue(
+      { titles: ['feat: alpha why', 'fix: beta why', 'chore: gamma why'] },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    await expectZeroSideEffects(t, record);
+  });
+
+  it('keeps the exact-count numeric resume of a complete record a healing no-op', async () => {
+    const { t } = completeRecordCtx();
+    const outcome = await runIssue({ titles: ['11', '12'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(creationPathCalls(t.gh.calls)).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+  });
+
+  it('still continues a partial record (no PR bound) with extra arguments', async () => {
+    // Legitimate partial records keep healing: the gate is record.pr ===
+    // undefined, so a crash between issue creation and PR opening resumes.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-alpha-why' },
+      record: issuesOnly({
+        delivery: 'alpha-why',
+        context: { kind: 'branch', branch: 'feat/11-alpha-why' },
+        issues: [11],
+      }),
+      gh: {
+        createIssue: (_repo, title, body) => {
+          t.harness.createdIssues.push({ title, body });
+          return {
+            ok: true as const,
+            value: { number: 12, url: 'https://github.com/LeXwDeX/SpecGit/issues/12' },
+          };
+        },
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why', 'fix: beta why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['fix: beta why']);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11, 12]);
+    expect(written?.pr).toBe(42);
+  });
+});
