@@ -1,8 +1,8 @@
 version: 1
-delivery: sync-harness-workflow
+delivery: attributed-timeout-diagnostics
 context:
   kind: branch
-  branch: fix/55-sync-harness-workflow
+  branch: fix/57-attributed-timeout-diagnostics
 issues:
-  - 55
-pr: 56
+  - 57
+pr: 58
