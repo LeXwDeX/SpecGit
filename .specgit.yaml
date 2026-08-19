@@ -6,3 +6,4 @@ context:
   branch: feat/87-issue87
 issues:
   - 87
+pr: 89
