@@ -46,6 +46,14 @@ export interface GitWritePort {
    * would resolve server-side for `--base`.
    */
   remoteDefaultBranch(root: string): Promise<Evidence<string>>;
+  /**
+   * The directory git would actually run hooks from, absolute:
+   * `git rev-parse --git-path hooks`. Respects linked-worktree layout
+   * (hooks live in the common dir) and a configured `core.hooksPath`
+   * (husky/lefthook). Fail-closed when git cannot answer (e.g. not a
+   * repository): the caller skips installing the git hook.
+   */
+  hooksPath(root: string): Promise<Evidence<string>>;
 }
 
 export interface GitPort extends GitWritePort {

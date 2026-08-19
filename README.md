@@ -110,7 +110,7 @@ reality.
 | `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, record, commit, push (idempotent resume) | yes (`gh`) |
 | `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`) |
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`) |
-| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block) | no |
+| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; empty list for no-CI repos) and generates the harness (portable acceptance workflow that installs the published CLI — the SpecGit repo itself keeps the local-build template — + guard hooks + managed AGENTS block) | no |
 | `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills for other tools (`--tool opencode \| generic \| all`) | no |
 | `specgit status` | Local evidence snapshot (record, policy, git facts, drift) | no |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, gh, policy) | gh auth |

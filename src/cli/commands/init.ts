@@ -1,23 +1,48 @@
 /**
  * `specgit init` — creates `spec_git/policy.yaml` and generates the
  * delivery harness: the CI acceptance workflow, the opencode guard hooks,
- * and the managed prompt block in the agent instruction files. Harness
- * generation is idempotent; the policy itself is write-once and never
- * overwritten.
+ * and the managed prompt block in the agent instruction files. The
+ * harness generation is idempotent and merges with existing hooks; the
+ * policy itself is write-once and never overwritten.
+ *
+ * Non-destructive contract (#62): every check that can reject the run —
+ * input validation, `--gitlab-host` validation, `policy_exists`, and a
+ * root-writability preflight — happens BEFORE any filesystem or remote
+ * mutation. A rejected init leaves the repository byte-identical. The
+ * harness write itself is error-atomic (rolled back on failure). Remote
+ * mutation (branch protection) happens last and only when explicitly
+ * requested (`--protect` or an interactive confirmation).
+ *
+ * Workflow template selection (#63): the SpecGit repository itself
+ * (root package name `specgit`) keeps the local-build template — the
+ * anti-drift lock pins it byte-exactly to this repo's own workflow.
+ * Every other (adopting) repository gets the portable external template:
+ * it installs the published CLI at the exact running version, sets up
+ * only Node, parameterizes the default branch, and never assumes the
+ * adopting project's toolchain, lockfile, layout, or build.
  *
  * With no arguments, required-check names are auto-detected from
  * `.github/workflows/*.{yml,yaml}` (job `name:`, falling back to the job
  * id; the generated SpecGit Acceptance job is excluded to avoid
- * self-reference). When no workflow exists, the policy falls back to the
- * GitHub aggregate check name "All checks passed".
+ * self-reference). When no CI exists at all, the policy names zero
+ * checks (#63: a fallback name the harness cannot produce would deadlock
+ * the wait step and make the verdict unsatisfiable) — the acceptance
+ * job itself, enforced through branch protection, is then the gate.
  */
+
+import * as fsConstants from 'node:fs';
+import { access, readFile } from 'node:fs/promises';
+import * as path from 'node:path';
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import {
   ACCEPTANCE_CHECK_NAME,
+  legacyGitHooksDir,
+  harnessWorkflowYaml,
   writeHarnessAssets,
   type HarnessWriteResult,
 } from '../harness-assets.js';
+import { externalAcceptanceWorkflowYaml } from '../external-harness.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext } from '../types.js';
@@ -35,8 +60,6 @@ export interface InitOptions {
   gitlabHost?: string;
   json?: boolean;
 }
-
-const FALLBACK_CHECK = 'All checks passed';
 
 const BARE_HOSTNAME = /^[A-Za-z0-9.-]+$/;
 
@@ -57,16 +80,71 @@ function originHost(originUrl: string): string | null {
   return null;
 }
 
+/** The root package name that marks the SpecGit repository itself. */
+const SELF_PACKAGE_NAME = 'specgit';
+
 /**
- * Validate and persist an explicit --gitlab-host declaration. Returns a
- * CommandOutcome on usage error, null to continue the init flow.
+ * Template selection (#63): true only for the SpecGit repository itself,
+ * identified by the root package name. Self-detection keeps this repo on
+ * the local-build template (pinned byte-exactly by the anti-drift lock);
+ * every other repository is an adopting repo and gets the portable
+ * external template.
  */
-async function declareGitlabHost(
+async function isSelfRepository(root: string): Promise<boolean> {
+  try {
+    const raw = await readFile(path.join(root, 'package.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { name?: unknown };
+    return parsed !== null && typeof parsed === 'object' && parsed.name === SELF_PACKAGE_NAME;
+  } catch {
+    // Missing, unreadable, or unparseable package.json: an adopting repo.
+    return false;
+  }
+}
+
+/**
+ * Compute the acceptance-workflow bytes for this repository (validation
+ * phase — a pure function of inputs, no writes). External inputs are the
+ * adopting repo's remote default branch and the running CLI's exact
+ * version; an unresolvable remote falls back to `main` with a warning,
+ * mirroring the branch fallback the protection guard already uses.
+ */
+async function selectWorkflowYaml(
+  ctx: CommandContext,
+  root: string
+): Promise<{ yaml: string; template: 'self' | 'external'; warning?: Diagnostic }> {
+  if (await isSelfRepository(root)) {
+    return { yaml: harnessWorkflowYaml(), template: 'self' };
+  }
+  const branchEv = await ctx.git.remoteDefaultBranch(root);
+  let warning: Diagnostic | undefined;
+  let defaultBranch = 'main';
+  if (branchEv.ok) {
+    defaultBranch = branchEv.value;
+  } else {
+    warning = {
+      severity: 'warning',
+      code: 'default_branch_unresolved',
+      message: `The remote default branch could not be resolved (${branchEv.message}).`,
+      fix: 'Fetch the remote (git fetch) and set origin/HEAD, then re-run init --force to re-pin the branch.',
+    };
+  }
+  return {
+    yaml: externalAcceptanceWorkflowYaml({ defaultBranch, version: ctx.version }),
+    template: 'external',
+    ...(warning !== undefined ? { warning } : {}),
+  };
+}
+
+/**
+ * Validate an explicit --gitlab-host declaration WITHOUT writing
+ * (#62: validation precedes every mutation). Returns a CommandOutcome on
+ * usage error, or the normalized host to persist later.
+ */
+async function validateGitlabHost(
   options: InitOptions,
   ctx: CommandContext,
-  root: string,
-  warnings: Diagnostic[]
-): Promise<CommandOutcome | null> {
+  root: string
+): Promise<CommandOutcome | { host: string }> {
   const host = options.gitlabHost!.trim().toLowerCase();
   const facts = await ctx.git.facts(root).catch(() => null);
   const originH = facts?.originUrl ? originHost(facts.originUrl) : null;
@@ -101,6 +179,15 @@ async function declareGitlabHost(
       ],
     };
   }
+  return { host };
+}
+
+/** Persist an already-validated platform declaration (post-validation write). */
+async function persistGitlabHost(
+  host: string,
+  root: string,
+  warnings: Diagnostic[]
+): Promise<void> {
   try {
     await writeProviders(root, { gitlab: { host, insecure_ssl: false } });
   } catch {
@@ -110,7 +197,6 @@ async function declareGitlabHost(
       message: `Could not write ${SPEC_GIT_DIR}/providers.yaml.`,
     });
   }
-  return null;
 }
 
 /**
@@ -204,12 +290,19 @@ interface ProtectionOutcome {
   fix?: string;
 }
 
+/**
+ * Non-weakening fix guidance (#62): the string printed for a human to act
+ * on must not teach a command that clears reviews, push restrictions, or
+ * admin enforcement. The settings-UI path preserves every existing rule
+ * while adding the check; `specgit init --protect` (read-modify-write)
+ * is the scripted equivalent.
+ */
 const PROTECT_FIX = (branch: string) =>
-  `Require check "${ACCEPTANCE_CHECK_NAME}" on ${branch}: gh api -X PUT repos/<owner>/<repo>/branches/${branch}/protection ` +
-  'with body {"required_status_checks":{"strict":false,"contexts":["' +
-  ACCEPTANCE_CHECK_NAME +
-  '"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null}, ' +
-  'then gh api -X PATCH repos/<owner>/<repo> --input - with {"allow_auto_merge":true}.';
+  `Require check "${ACCEPTANCE_CHECK_NAME}" on ${branch} without weakening existing rules: ` +
+  'in the repository Settings → Branches, edit the existing protection and add status check ' +
+  `"${ACCEPTANCE_CHECK_NAME}" (keep existing required checks, reviews, restrictions, and admin ` +
+  'enforcement), then enable auto-merge under Settings → General. Scripts: `specgit init --force ' +
+  '--protect` re-applies it read-modify-write.';
 
 /**
  * Post-policy guardrail: the acceptance gate only binds when the default
@@ -382,11 +475,15 @@ export async function runInit(
       };
     }
     // Auto-detect from the repo's CI files (GitHub workflows, GitLab CI);
-    // when none exist, the GitHub aggregate check is the safe fail-closed
-    // fallback.
+    // a repository with no CI at all names zero required checks (#63):
+    // every fallback NAME is a name the generated harness can never
+    // produce as a check-run, which would deadlock the wait step and
+    // make the verdict unsatisfiable. The acceptance job itself — kept
+    // out of the policy and enforced through branch protection — is the
+    // gate for such repositories.
     const facts = await ctx.git.facts(ctx.cwd).catch(() => null);
     detected = await detectInitInputs(ctx.cwd, facts?.originUrl ?? null);
-    checks = detected.requiredChecks.length > 0 ? detected.requiredChecks : [FALLBACK_CHECK];
+    checks = detected.requiredChecks;
   }
 
   const invalid = checks.find((value) => value.length === 0);
@@ -397,7 +494,7 @@ export async function runInit(
         errorDiagnostic(
           'required_check_invalid',
           'Required check names must be non-empty.',
-          { fix: 'Pass the exact check name, e.g. --required-check "All checks passed".' }
+          { fix: 'Pass the exact check name as it appears in check-runs, e.g. --required-check build.' }
         ),
       ],
     };
@@ -412,28 +509,23 @@ export async function runInit(
   }
   const root = rootEv.value;
 
-  let harness: HarnessWriteResult;
-  try {
-    harness = await writeHarnessAssets(root);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      exit: EXIT_UNKNOWN,
-      errors: [errorDiagnostic('harness_write_failed', message)],
-    };
-  }
+  // ---- Validation phase (#62): every rejection below happens before any
+  // filesystem or remote mutation, so a rejected init leaves the tree
+  // byte-identical. ----
 
-  const warnings: Diagnostic[] = [];
-
-  // Platform-mode declaration is independent of the policy: it must work on
-  // re-init too (policy_exists exits before the tail of the command).
+  // Validate the --gitlab-host declaration now; persist it only after the
+  // policy_exists gate passes.
+  let declaredHost: string | null = null;
   if (options.gitlabHost !== undefined) {
-    const declared = await declareGitlabHost(options, ctx, root, warnings);
-    if (declared !== null) {
+    const declared = await validateGitlabHost(options, ctx, root);
+    if ('exit' in declared) {
       return declared;
     }
+    declaredHost = declared.host;
   }
 
+  // policy_exists is the write gate: with an existing policy init refuses
+  // (zero writes, zero remote calls) unless --force explicitly rebuilds.
   const existingPolicy = await ctx.record.readPolicy(root);
   if (existingPolicy.ok && !options.force) {
     return {
@@ -442,7 +534,7 @@ export async function runInit(
         errorDiagnostic(
           'policy_exists',
           `${SPEC_GIT_DIR}/${POLICY_FILENAME} already exists in this repository.`,
-          { fix: `Edit ${SPEC_GIT_DIR}/${POLICY_FILENAME} directly, or re-run with --force to rebuild it.` }
+          { fix: `Edit ${SPEC_GIT_DIR}/${POLICY_FILENAME} directly, or re-run with --force to rebuild it (also refreshes the harness).` }
         ),
       ],
     };
@@ -456,6 +548,69 @@ export async function runInit(
     };
   }
 
+  // Writability preflight: fail usage before touching the tree rather
+  // than discovering EACCES halfway through the harness write.
+  try {
+    await access(root, fsConstants.constants.W_OK);
+  } catch {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'root_not_writable',
+          `The repository root ${root} is not writable.`,
+          { fix: 'Fix the directory permissions (or re-run from a writable checkout) and retry.' }
+        ),
+      ],
+    };
+  }
+
+  // Workflow template selection (#63) closes the validation phase: it is
+  // a pure computation over already-read inputs, so a bad combination
+  // (e.g. a non-exact version pin) still rejects before any write.
+  let selection: Awaited<ReturnType<typeof selectWorkflowYaml>>;
+  try {
+    selection = await selectWorkflowYaml(ctx, root);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_USAGE,
+      errors: [errorDiagnostic('workflow_input_invalid', message)],
+    };
+  }
+
+  // ---- Mutation phase: local writes first (error-atomic), remote last. ----
+
+  const warnings: Diagnostic[] = [];
+  if (selection.warning !== undefined) {
+    warnings.push(selection.warning);
+  }
+
+  // The git hook goes where git actually runs hooks from: worktree and
+  // core.hooksPath aware. When git cannot answer, fall back to the legacy
+  // .git/hooks probe; when neither resolves, the git hook is skipped.
+  const resolveHooksDir = async (repoRoot: string): Promise<string | null> => {
+    const hooksEv = await ctx.git.hooksPath(repoRoot);
+    if (hooksEv.ok) {
+      return hooksEv.value;
+    }
+    return legacyGitHooksDir(repoRoot);
+  };
+
+  let harness: HarnessWriteResult;
+  try {
+    harness = await writeHarnessAssets(root, { resolveHooksDir, workflowYaml: selection.yaml });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [errorDiagnostic('harness_write_failed', message)],
+    };
+  }
+  for (const warning of harness.warnings) {
+    warnings.push({ severity: 'warning', ...warning });
+  }
+
   const policy = { version: 1 as const, required_checks: checks };
   try {
     await ctx.record.writePolicy(root, policy);
@@ -465,6 +620,10 @@ export async function runInit(
       exit: EXIT_UNKNOWN,
       errors: [errorDiagnostic('policy_write_failed', message)],
     };
+  }
+
+  if (declaredHost !== null) {
+    await persistGitlabHost(declaredHost, root, warnings);
   }
 
   const platform = await resolvePlatformMode(options, ctx, root, warnings);
@@ -480,6 +639,7 @@ export async function runInit(
   return {
     exit: EXIT_SUCCESS,
     policy,
+    harness: { template: selection.template },
     platform: platform.outcome,
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),
@@ -489,7 +649,7 @@ export async function runInit(
             platform: detected.platform,
             sources: detected.sources,
             clis: detected.clis,
-            fallback: checks.length === 1 && checks[0] === FALLBACK_CHECK,
+            fallback: checks.length === 0,
           },
         }
       : {}),

@@ -33,10 +33,10 @@ specgit doctor --json
 In the repository root, on the default branch:
 
 ```bash
-specgit init --required-check "All checks passed"
+specgit init
 ```
 
-Creates `spec_git/policy.yaml` — nothing else. Commit it. Choose check names with care; [GitHub Actions](actions.md) explains the naming model and the recommended aggregator pattern.
+Creates `spec_git/policy.yaml` and the delivery harness. Required-check names are auto-detected from CI files; a no-CI repository gets the empty list (the acceptance job itself is the gate). Choose check names with care; [GitHub Actions](actions.md) explains the naming model and the recommended aggregator pattern.
 
 ## Uninstall
 

@@ -10,7 +10,7 @@ The default shape of a delivery.
 
 ```bash
 # once per repository (already done if spec_git/policy.yaml exists)
-specgit init --required-check "All checks passed"
+specgit init --required-check "All checks passed"   # this repo uses the aggregator pattern
 
 git checkout -b feat/123-add-login-flow
 specgit bind --delivery add-login-flow --issue 123

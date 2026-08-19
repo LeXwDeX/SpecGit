@@ -78,6 +78,7 @@ export interface CommandOutcome {
   detected?: Record<string, unknown>;
   protection?: Record<string, unknown>;
   platform?: Record<string, unknown>;
+  harness?: Record<string, unknown>;
   human?: string[];
 }
 
@@ -105,6 +106,7 @@ export function buildEnvelope(
     ['detected', outcome.detected],
     ['protection', outcome.protection],
     ['platform', outcome.platform],
+    ['harness', outcome.harness],
   ];
   for (const [key, value] of optional) {
     if (value !== undefined) {

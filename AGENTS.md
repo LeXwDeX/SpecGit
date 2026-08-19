@@ -52,8 +52,9 @@ files: the policy `spec_git/policy.yaml` and the record `.specgit.yaml`.
 <!-- specgit:block:start -->
 ## SpecGit delivery harness
 
-Managed by `specgit init`. Everything between the markers is rewritten on
-re-init; keep manual guidance outside them.
+Managed by `specgit init`. Everything between the markers is regenerated
+whenever init writes the harness (a fresh init, or `--force` when a policy
+already exists); keep manual guidance outside them.
 
 ### The delivery story
 
