@@ -46,6 +46,27 @@ const USER_PRE_PUSH = `#!/bin/sh
 ./scripts/verify.sh || exit 1
 `;
 
+// The managed layout as #62 first shipped it: the start marker on line
+// 1 and the shebang buried on line 2. POSIX shells fall back to sh on
+// ENOEXEC so it worked there, but git on Windows execs the hook
+// directly and cannot spawn it ("Exec format error") — installs from
+// that era must be upgraded by re-running init.
+const OLD_LAYOUT_PRE_PUSH = `# >>> specgit:start >>>
+#!/bin/sh
+# SpecGit pre-push guard (managed by specgit init).
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "\$remote_ref" in
+    refs/heads/main)
+      echo "specgit: direct push to main is not the delivery path." >&2
+      echo "Deliveries go: specgit issue -> PR -> CI -> specgit finish (exit 0) -> merge." >&2
+      exit 1
+      ;;
+  esac
+done
+exit 0
+# <<< specgit:end <<<
+`;
+
 describe('mergeHooksJson', () => {
   it('returns the canonical hooks.json for a fresh install', () => {
     const result = mergeHooksJson(null);
@@ -132,6 +153,24 @@ exit 0
     const managed = mergeGitPrePush(legacy);
     expect(managed).toBe(mergeGitPrePush(null));
     expect(countOccurrences(managed, 'while read')).toBe(1);
+  });
+
+  it('fresh install keeps the shebang on line 1 so Windows git can spawn the hook', () => {
+    const managed = mergeGitPrePush(null);
+    expect(managed.startsWith('#!/bin/sh\n')).toBe(true);
+    expect(managed.split('\n')[1]).toBe('# >>> specgit:start >>>');
+    // Re-merge stays in the spawnable layout, byte for byte.
+    expect(mergeGitPrePush(managed)).toBe(managed);
+  });
+
+  it('upgrades the marker-first layout (shebang buried on line 2) to the spawnable layout', () => {
+    expect(mergeGitPrePush(OLD_LAYOUT_PRE_PUSH)).toBe(mergeGitPrePush(null));
+  });
+
+  it('an appended region after a user hook keeps the byte-stable spawnable head', () => {
+    const merged = mergeGitPrePush(USER_PRE_PUSH);
+    expect(merged.startsWith('#!/bin/sh\n')).toBe(true);
+    expect(mergeGitPrePush(merged)).toBe(merged);
   });
 });
 
