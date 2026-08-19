@@ -50,6 +50,16 @@ jobs:
       - name: Verify the packed tarball carries the CLI
         run: pnpm run check:pack-version
 
+      # Stage an RC version for the rest of the job: the dry-run below
+      # would otherwise collide with the already-published base version,
+      # and verifying an actual RC version is the point. Workspace-only —
+      # never committed, never published.
+      - name: Stage a release-candidate version
+        run: |
+          RC_VERSION="$(node -p "require('./package.json').version + '-rc.' + process.env.GITHUB_RUN_ID")"
+          npm pkg set "version=${RC_VERSION}"
+          echo "RC_VERSION=${RC_VERSION}" >> "$GITHUB_ENV"
+
       - name: Pack and verify the tarball shape
         run: |
           # --ignore-scripts: the build already ran; letting pack run the
@@ -76,7 +86,7 @@ jobs:
       - name: Registry reachability and dist-tag baseline (read-only)
         run: npm view specgit version dist-tags --json
 
-      - name: Dry-run publish (never uploads)
+      - name: Dry-run publish the RC version (never uploads)
         run: npm publish --dry-run --ignore-scripts
 
       # Fork pull requests cannot be granted id-token: write, so the
