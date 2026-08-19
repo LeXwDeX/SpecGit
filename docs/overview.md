@@ -30,7 +30,7 @@ The whole idea in one line: **if git, the PR, and the checks can prove it, it's 
 ## The loop
 
 ```bash
-specgit init --required-check "All checks passed"   # once per repo → policy + harness
+specgit init                                        # once per repo → policy + harness
 specgit issue "feat: add login"                     # → issues, branch, draft PR, .specgit.yaml
 # ... work, push; CI runs (including the SpecGit Acceptance job) ...
 specgit finish                                      # derived verdict, fail-closed

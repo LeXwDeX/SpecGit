@@ -74,12 +74,17 @@ documents:
       required_checks:
         type: array of non-empty strings
         required: true
-        min_length: 1
         notes: >-
           Exact check-run names matched byte-for-byte against check runs
           reported at the PR head commit. Declared locally, never read from
-          GitHub rulesets. An empty list is invalid (policy_invalid) — there
-          is no "no required checks" mode.
+          GitHub rulesets. An empty list is the no-CI policy: the
+          repository names zero sibling checks, the acceptance workflow's
+          wait step trivially completes, and the SpecGit Acceptance job
+          itself (kept out of this list to avoid wait-step self-deadlock,
+          enforced through branch protection) is the gate. Init's no-CI
+          detection fallback writes exactly this list — a fallback NAME
+          the harness cannot produce as a check-run would make the
+          verdict unsatisfiable.
     unknown_keys: invalid (strict schema)
 
 acceptance:

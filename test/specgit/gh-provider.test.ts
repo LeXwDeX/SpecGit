@@ -133,8 +133,62 @@ describe('GhCliGitHubProvider', () => {
       if (!result.ok) expect(result.code).toBe('gh_transport');
     });
 
-    it('enables protection with the required check via PUT --input', async () => {
+    it('enables protection read-modify-write: reads governance, PUTs an additive body', async () => {
+      const existing = {
+        required_status_checks: { enforcement_level: 'non_admins', contexts: ['build'] },
+        required_pull_request_reviews: {
+          dismiss_stale_reviews: true,
+          required_approving_review_count: 2,
+          dismissal_restrictions: { users: [{ login: 'alice' }], teams: [{ slug: 'core' }] },
+        },
+        enforce_admins: { enabled: true },
+        restrictions: { users: [{ login: 'bob' }], teams: [{ slug: 'devs' }] },
+      };
+      const afterPut = {
+        ...existing,
+        required_status_checks: { enforcement_level: 'non_admins', contexts: ['build', 'SpecGit Acceptance'] },
+      };
       const { provider, fake } = setup([
+        {
+          match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$',
+          stdout: JSON.stringify(existing),
+        },
+        {
+          match: '^api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection',
+          stdout: JSON.stringify(afterPut),
+        },
+      ]);
+      const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+      // The reported fact comes from the server's post-update payload:
+      // governance dimensions survived, the check was added.
+      expect(result).toEqual({
+        ok: true,
+        value: { protected: true, requiredChecks: ['build', 'SpecGit Acceptance'] },
+      });
+      const calls = readFakeGhCalls(fake.logPath);
+      expect(calls).toEqual([
+        'api repos/LeXwDeX/SpecGit/branches/main/protection',
+        'api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection --input -',
+      ]);
+      // The PUT body preserves every governance dimension and only adds the check.
+      const body = JSON.parse(readFakeGhStdin(fake.logPath)[0]);
+      expect(body.required_status_checks.contexts).toEqual(['build', 'SpecGit Acceptance']);
+      expect(body.enforce_admins).toBe(true);
+      expect(body.required_pull_request_reviews).toEqual({
+        dismiss_stale_reviews: true,
+        required_approving_review_count: 2,
+        dismissal_restrictions: { users: ['alice'], teams: ['core'] },
+      });
+      expect(body.restrictions).toEqual({ users: ['bob'], teams: ['devs'] });
+    });
+
+    it('an unprotected branch gets the minimal additive body (no governance to lose)', async () => {
+      const { provider, fake } = setup([
+        {
+          match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$',
+          exit: 1,
+          stderr: 'HTTP 404: Branch not protected',
+        },
         {
           match: '^api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection',
           stdout: JSON.stringify({
@@ -148,11 +202,66 @@ describe('GhCliGitHubProvider', () => {
         value: { protected: true, requiredChecks: ['SpecGit Acceptance'] },
       });
       const calls = readFakeGhCalls(fake.logPath);
-      expect(calls[0]).toContain('-X PUT repos/LeXwDeX/SpecGit/branches/main/protection');
-      const bodies = readFakeGhStdin(fake.logPath);
-      const body = JSON.parse(bodies[0]);
-      expect(body.required_status_checks.contexts).toEqual(['SpecGit Acceptance']);
-      expect(body.enforce_admins).toBe(false);
+      expect(calls).toEqual([
+        'api repos/LeXwDeX/SpecGit/branches/main/protection',
+        'api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection --input -',
+      ]);
+      const body = JSON.parse(readFakeGhStdin(fake.logPath)[0]);
+      expect(body).toEqual({
+        required_status_checks: { strict: false, contexts: ['SpecGit Acceptance'] },
+        enforce_admins: false,
+        required_pull_request_reviews: null,
+        restrictions: null,
+      });
+    });
+
+    it('a PUT response without parseable checks fails closed instead of fabricating the list', async () => {
+      const { provider } = setup([
+        {
+          match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$',
+          exit: 1,
+          stderr: 'HTTP 404: Branch not protected',
+        },
+        {
+          match: '^api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection',
+          stdout: JSON.stringify({ unexpected: 'shape' }),
+        },
+      ]);
+      const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('gh_transport');
+        expect(result.message).toContain('verified');
+      }
+    });
+
+    it('a failed PUT leaves the reported fact as an error, never a fabricated check list', async () => {
+      const { provider } = setup([
+        {
+          match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$',
+          exit: 1,
+          stderr: 'HTTP 404: Branch not protected',
+        },
+        {
+          match: '^api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection',
+          exit: 1,
+          stderr: 'HTTP 403: Resource not accessible by integration',
+        },
+      ]);
+      const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('gh_transport');
+    });
+
+    it('a malformed protection payload reports empty required checks, not the requested one', async () => {
+      const { provider } = setup([
+        {
+          match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$',
+          stdout: JSON.stringify({ required_status_checks: {} }),
+        },
+      ]);
+      const result = await provider.getBranchProtection(REPO, 'main');
+      expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
     });
   });
 

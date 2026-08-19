@@ -63,13 +63,13 @@ describe('policy io', () => {
     expect(read.code).toBe('policy_invalid');
   });
 
-  it('rejects an empty required_checks list', async () => {
+  it('accepts an empty required_checks list (no-CI policy, #63)', async () => {
     fs.mkdirSync(path.dirname(policyPath()), { recursive: true });
     fs.writeFileSync(policyPath(), 'version: 1\nrequired_checks: []\n');
     const read = await readPolicy(root);
-    expect(read.ok).toBe(false);
-    if (read.ok) return;
-    expect(read.code).toBe('policy_invalid');
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.required_checks).toEqual([]);
   });
 
   it('rejects unknown keys (strict schema)', async () => {

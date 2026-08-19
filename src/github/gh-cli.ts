@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { RepoRef } from '../gitfacts/origin.js';
+import { buildProtectionUpdateBody } from './protection-merge.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
@@ -14,6 +15,18 @@ import type {
   PrSummary,
   RepoAutomergeFact,
 } from './port.js';
+
+/** Map a classic-protection payload to the reported fact (contexts only, never fabricated). */
+function protectionFactFromPayload(payload: unknown): BranchProtectionFact {
+  const contexts = (payload as { required_status_checks?: { contexts?: unknown } })
+    .required_status_checks?.contexts;
+  return {
+    protected: true,
+    requiredChecks: Array.isArray(contexts)
+      ? contexts.filter((name): name is string => typeof name === 'string')
+      : [],
+  };
+}
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
@@ -472,37 +485,31 @@ export class GhCliGitHubProvider implements GitHubProvider {
 
   /**
    * Branch protection lookup. A 404 means GitHub reports the branch as
-   * not protected — evidence, not an error.
+   * not protected — evidence, not an error. (Ruleset-only protection also
+   * surfaces as 404 here; the classic endpoint cannot distinguish it.)
    */
   async getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>> {
     if (!branch.trim()) {
       return fail('gh_transport', 'Cannot query branch protection without a branch name.');
     }
-    const result = await this.runAdminApi([
-      'api',
-      `repos/${repo.owner}/${repo.repo}/branches/${branch}/protection`,
-    ]);
-    if (!result.ok) {
-      if (result.code === 'not_found') {
-        return ok({ protected: false, requiredChecks: [] });
-      }
-      return result;
+    const payloadEv = await this.fetchProtectionPayload(repo, branch);
+    if (!payloadEv.ok) {
+      return payloadEv;
     }
-    const parsed = this.parseJsonOutput(result.value.stdout);
-    if (!parsed.ok) {
-      return parsed;
+    if (payloadEv.value === null) {
+      return ok({ protected: false, requiredChecks: [] });
     }
-    const payload = parsed.value as { required_status_checks?: { contexts?: unknown } };
-    const contexts = payload.required_status_checks?.contexts;
-    return ok({
-      protected: true,
-      requiredChecks: Array.isArray(contexts)
-        ? contexts.filter((name): name is string => typeof name === 'string')
-        : [],
-    });
+    return ok(protectionFactFromPayload(payloadEv.value));
   }
 
-  /** Require `requiredCheck` on the branch (PUT, body over stdin). */
+  /**
+   * Read-modify-write: read the current protection, PUT a body that adds
+   * `requiredCheck` while preserving required checks, reviews, push
+   * restrictions, admin enforcement, and rule booleans (#62: never weaken
+   * existing governance). The reported fact comes from the server's
+   * post-update payload — a response we cannot parse is reported as a
+   * failure to verify, never as a fabricated check list.
+   */
   async enableBranchProtection(
     repo: RepoRef,
     branch: string,
@@ -511,12 +518,11 @@ export class GhCliGitHubProvider implements GitHubProvider {
     if (!branch.trim() || !requiredCheck.trim()) {
       return fail('gh_transport', 'Cannot enable branch protection without a branch and check name.');
     }
-    const body = JSON.stringify({
-      required_status_checks: { strict: false, contexts: [requiredCheck] },
-      enforce_admins: false,
-      required_pull_request_reviews: null,
-      restrictions: null,
-    });
+    const currentEv = await this.fetchProtectionPayload(repo, branch);
+    if (!currentEv.ok) {
+      return currentEv;
+    }
+    const body = JSON.stringify(buildProtectionUpdateBody(currentEv.value, requiredCheck));
     const result = await this.runAdminApi(
       ['api', '-X', 'PUT', `repos/${repo.owner}/${repo.repo}/branches/${branch}/protection`, '--input', '-'],
       body
@@ -529,13 +535,28 @@ export class GhCliGitHubProvider implements GitHubProvider {
       return parsed;
     }
     const payload = parsed.value as { required_status_checks?: { contexts?: unknown } };
-    const contexts = payload.required_status_checks?.contexts;
-    return ok({
-      protected: true,
-      requiredChecks: Array.isArray(contexts)
-        ? contexts.filter((name): name is string => typeof name === 'string')
-        : [requiredCheck],
-    });
+    if (!Array.isArray(payload.required_status_checks?.contexts)) {
+      return fail(
+        'gh_transport',
+        'Protection was applied but the response could not be verified: no required_status_checks.contexts.'
+      );
+    }
+    return ok(protectionFactFromPayload(payload));
+  }
+
+  /** Raw classic-protection payload; null when the branch is not protected (404). */
+  private async fetchProtectionPayload(repo: RepoRef, branch: string): Promise<Evidence<unknown | null>> {
+    const result = await this.runAdminApi([
+      'api',
+      `repos/${repo.owner}/${repo.repo}/branches/${branch}/protection`,
+    ]);
+    if (!result.ok) {
+      if (result.code === 'not_found') {
+        return ok(null);
+      }
+      return result;
+    }
+    return this.parseJsonOutput(result.value.stdout);
   }
 
   async getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {

@@ -9,7 +9,7 @@ The `specgit` CLI has nine commands. The human story is `issue` → `finish`; `b
 | `specgit issue` | One-command delivery bootstrap (issues, branch, draft PR, record, commit, push) | yes | 0 · 2 · 3 |
 | `specgit finish` | The verdict — full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
 | `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
-| `specgit init` | Create the project policy and generate the harness | no | 0 · 2 · 3 |
+| `specgit init` | Create the project policy and generate the harness | gh (protection probe) | 0 · 2 · 3 |
 | `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias | no | 0 · 2 · 3 |
 | `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift) | no | 0 · 2 · 3 |
@@ -35,26 +35,34 @@ The distinction between `1` and `3` is contractual: `1` means the evidence was g
 
 ## `specgit init`
 
-Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates the delivery harness idempotently:
+Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates the delivery harness. Initialization is non-destructive:
 
-- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance** runs `node bin/specgit.js finish --json` with `GH_TOKEN: ${{ github.token }}`. The workflow is never listed in `policy.required_checks` (self-deadlock avoidance).
-- a managed prompt block `<!-- specgit:block:start --> … <!-- specgit:block:end -->` injected into `AGENTS.md` (created if missing) and `CLAUDE.md` (only if present). Re-running `init` rewrites only the block.
+- **Validation before mutation.** Every check that can reject the run — flag validation, `--gitlab-host` validation, `policy_exists`, and a root-writability preflight — happens before any filesystem or remote change. A rejected init leaves the repository byte-identical (no probes, no writes).
+- **Error-atomic harness writes.** All harness targets are computed first; if any write fails mid-sequence, prior writes are rolled back (bytes and modes restored, created files/directories removed) and init exits 3.
+- **Hooks are merged, never overwritten.** An existing `.opencode/hooks.json` keeps every user entry and unknown key; the specgit guard entry is added once (an unparseable file is left untouched with a `hooks_json_unmerged` warning). A user-owned git `pre-push` hook is preserved verbatim with the specgit guard appended inside managed markers; the hook installs into the directory `git rev-parse --git-path hooks` resolves, so linked worktrees and `core.hooksPath` (husky/lefthook) behave correctly.
+- **Re-init semantics.** Running `init` again with an existing policy exits 2 (`policy_exists`) having written nothing and probed nothing; `specgit init --force` rebuilds the policy and refreshes the harness (the managed block region is replaced, drift in generated artifacts repaired).
+- **Workflow template selection.** The SpecGit repository itself (root package name `specgit`) keeps the local-build template; every other (adopting) repository gets the portable external template: it installs the published CLI at the exact running version (`specgit@<version>`, no ranges), sets up only Node at the engine floor, parameterizes the adopting repo's remote default branch, and never assumes the adopting project's toolchain, lockfile, layout, or build. An unresolvable remote default branch falls back to `main` with a `default_branch_unresolved` warning. The `--json` envelope reports the choice as `harness.template` (`self` | `external`).
+
+Artifacts:
+
+- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance**. In the self template it runs the local build and `node bin/specgit.js finish --json`; in the external template it installs the pinned published CLI and runs `npx --no-install specgit finish --json`. Both wait for sibling checks to reach a terminal state first (through the authenticated `gh` CLI). The workflow is never listed in `policy.required_checks` (self-deadlock avoidance).
+- a managed prompt block `<!-- specgit:block:start --> … <!-- specgit:block:end -->` injected into `AGENTS.md` (created if missing) and `CLAUDE.md` (only if present). A harness rewrite replaces only the block region.
 
 ```bash
-specgit init --required-check "All checks passed"
+specgit init                       # auto-detect required checks from CI files
 specgit init --required-check build --required-check test    # repeatable
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| `--required-check <name>` | A CI check name every delivery must pass. Repeatable; required in non-interactive terminals. |
+| `--required-check <name>` | A CI check name every delivery must pass (the exact check-run name). Repeatable. Omitted: names are auto-detected from CI files; a repository with no CI at all gets an empty list — the acceptance job itself, enforced through branch protection, is then the gate (a fallback name the harness cannot produce would deadlock the wait step). |
 | `--gitlab-host <hostname>` | Declare the origin's platform as GitLab on a self-hosted instance (bare hostname, must match the origin host; rejected for github.com origins). Persists to `spec_git/providers.yaml`. |
 | `--protect` | Enable branch protection + auto-merge without asking. |
 | `--no-protect` | Skip the protection probe and warning entirely. |
 
 **Platform mode.** `init` resolves a platform: a `github.com` origin defaults to GitHub; any other origin asks on an interactive terminal (GitHub or GitLab) or takes an explicit `--gitlab-host`. The declaration persists in `spec_git/providers.yaml` (`gitlab.host` bare hostname, `gitlab.insecure_ssl` reserved for the glab roadmap) and is committed, so the team shares one declaration. Origin classification (`parseRepoRef`, the evaluator, `doctor`, `status`) honors the declared host: matching origins report `gitlab_unsupported` instead of the generic `origin_unresolvable`. An undeclared non-github origin leaves mode `undecided` with a `platform_undecided` warning; the `--json` envelope carries a `platform` section (`{ mode, gitlabHost? }`). Evidence providers are the official CLIs only — `gh` for GitHub, `glab` for GitLab (see [gitlab-support.md](gitlab-support.md)).
 
-After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation (default yes) and, when confirmed, requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with the exact `gh api` command as the fix; pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"`.
+After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation (default yes) and, when confirmed (or with `--protect` from scripts), requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. The protection update is read-modify-write and never weakens governance: existing required checks, pull-request reviews (including dismissal rules), push restrictions, and admin enforcement are read first and preserved, with `SpecGit Acceptance` the only addition; the reported fact comes from the server's post-update payload. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with non-weakening fix guidance (the settings-UI path that preserves existing rules); pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"` and the remote unchanged.
 
 ## `specgit issue`
 

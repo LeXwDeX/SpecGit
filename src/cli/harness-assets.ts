@@ -1,15 +1,25 @@
 /**
  * Generated harness assets for `specgit init`.
  *
- * Two artifacts, both deterministic so that re-init rewrites byte-identical
- * files:
+ * Artifacts, all deterministic so repeated harness writes are byte-stable:
  *
  * - `.github/workflows/specgit-accept.yml` — the CI acceptance gate that
  *   runs `specgit finish --json` on every pull request targeting the
  *   default branch.
  * - the managed prompt block — injected into AGENTS.md (created when
  *   missing) and CLAUDE.md (only when the file already exists), delimited
- *   by exact markers; re-init replaces only the region between them.
+ *   by exact markers; a rewrite replaces only the region between them.
+ * - the OpenCode guard hook (`.opencode/hooks.json` merged, never
+ *   overwritten; `.opencode/hooks/specgit-merge-guard.sh` is specgit-owned)
+ *   and the git `pre-push` guard (merged with any existing user hook via
+ *   markers, installed into the directory `git rev-parse --git-path hooks`
+ *   resolves — worktree and `core.hooksPath` aware).
+ *
+ * The whole write sequence is error-atomic (#62): every target is read and
+ * transformed first; if any write fails, prior targets are restored to
+ * their pre-write bytes and newly created files/directories are removed.
+ * Crash-atomicity is out of scope; remote mutations happen later in init
+ * and are never attempted when the local harness could not be written.
  *
  * Paths surfaced in output are repo-relative with forward slashes; file
  * contents use LF line endings only.
@@ -151,8 +161,9 @@ export function managedPromptBlock(): string {
   return `${BLOCK_START_MARKER}
 ## SpecGit delivery harness
 
-Managed by \`specgit init\`. Everything between the markers is rewritten on
-re-init; keep manual guidance outside them.
+Managed by \`specgit init\`. Everything between the markers is regenerated
+whenever init writes the harness (a fresh init, or \`--force\` when a policy
+already exists); keep manual guidance outside them.
 
 ### The delivery story
 
@@ -225,7 +236,11 @@ export interface HarnessWriteResult {
   prompts: string[];
   hooks: string[];
   gitHook: string | null;
+  /** Non-fatal merge refusals (e.g. an unmergeable hooks.json), surfaced by init as warnings. */
+  warnings: Array<{ code: string; message: string }>;
 }
+
+const GUARD_COMMAND = '.opencode/hooks/specgit-merge-guard.sh';
 
 const GUARD_HOOK_JSON = `{
   "PreToolUse": [
@@ -234,7 +249,7 @@ const GUARD_HOOK_JSON = `{
       "hooks": [
         {
           "type": "command",
-          "command": ".opencode/hooks/specgit-merge-guard.sh",
+          "command": "${GUARD_COMMAND}",
           "timeout": 10
         }
       ]
@@ -242,6 +257,79 @@ const GUARD_HOOK_JSON = `{
   ]
 }
 `;
+
+/** The specgit entry to merge into an existing hooks.json. */
+const GUARD_HOOK_ENTRY = JSON.parse(GUARD_HOOK_JSON) as {
+  PreToolUse: Array<{ matcher: string; hooks: Array<Record<string, unknown>> }>;
+};
+
+export const HOOKS_JSON_PATH = '.opencode/hooks.json';
+
+export interface HooksJsonMergeResult {
+  json: string;
+  /** Present when the existing file could not be merged; `json` is then the unchanged input. */
+  warning?: string;
+}
+
+/**
+ * Merge the specgit guard into existing `.opencode/hooks.json` content
+ * (#62: merge, never overwrite). User entries and unknown top-level keys
+ * are preserved verbatim; the specgit `PreToolUse`/Bash entry is appended
+ * exactly once. Byte-stable: merging the merge output again is a no-op.
+ * Invalid or non-object JSON is returned untouched with a warning — the
+ * user's broken file must not be destroyed by us.
+ */
+export function mergeHooksJson(existing: string | null): HooksJsonMergeResult {
+  if (existing === null) {
+    return { json: GUARD_HOOK_JSON };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(existing);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      json: existing,
+      warning: `existing ${HOOKS_JSON_PATH} is not valid JSON (${detail}); left untouched`,
+    };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return {
+      json: existing,
+      warning: `existing ${HOOKS_JSON_PATH} is not a JSON object; left untouched`,
+    };
+  }
+
+  const config = structuredClone(parsed) as Record<string, unknown>;
+  const specgitEntry = structuredClone(GUARD_HOOK_ENTRY.PreToolUse[0]);
+
+  if (!Array.isArray(config.PreToolUse)) {
+    config.PreToolUse = [];
+  }
+  const preToolUse = config.PreToolUse as unknown[];
+  const bashEntry = preToolUse.find(
+    (entry): entry is { matcher?: unknown; hooks?: unknown } =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      (entry as { matcher?: unknown }).matcher === 'Bash' &&
+      Array.isArray((entry as { hooks?: unknown }).hooks)
+  );
+  if (bashEntry && Array.isArray(bashEntry.hooks)) {
+    const alreadyPresent = bashEntry.hooks.some(
+      (hook) =>
+        typeof hook === 'object' &&
+        hook !== null &&
+        (hook as { command?: unknown }).command === GUARD_COMMAND
+    );
+    if (!alreadyPresent) {
+      bashEntry.hooks.push(specgitEntry.hooks[0]);
+    }
+  } else {
+    preToolUse.push(specgitEntry);
+  }
+
+  return { json: `${JSON.stringify(config, null, 2)}\n` };
+}
 
 // Blocks merge/push-main attempts that bypass the evidence verdict. Matches
 // only the command's leading verb pattern so prose containing the keywords
@@ -269,7 +357,9 @@ exit 0
 `;
 
 // Local git-layer guard: refuses direct pushes to main; deliveries must go
-// through PR + CI + specgit finish.
+// through PR + CI + specgit finish. This is the guard BODY; the managed
+// file wraps it in SPECGIT_PRE_PUSH_MARKERS so an existing user hook is
+// merged, not replaced (#62).
 const GIT_PRE_PUSH = `#!/bin/sh
 # SpecGit pre-push guard (managed by specgit init).
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -284,8 +374,73 @@ done
 exit 0
 `;
 
+const PRE_PUSH_START = '# >>> specgit:start >>>';
+const PRE_PUSH_END = '# <<< specgit:end <<<';
+
+function managedPrePush(): string {
+  return `${PRE_PUSH_START}\n${GIT_PRE_PUSH}${PRE_PUSH_END}\n`;
+}
+
+/**
+ * Merge the specgit pre-push guard into existing hook content (#62:
+ * merge, never overwrite). Cases, all byte-stable on re-merge:
+ * - absent/empty: the managed region alone;
+ * - the legacy unmarked specgit guard (pre-#62 installs): upgraded;
+ * - markers present: only the delimited region is replaced;
+ * - anything else (a user hook, e.g. husky): preserved verbatim with the
+ *   managed region appended after it.
+ */
+export function mergeGitPrePush(existing: string | null): string {
+  const managed = managedPrePush();
+  if (existing === null || existing === '') {
+    return managed;
+  }
+  if (existing === GIT_PRE_PUSH) {
+    // Legacy specgit install without markers: upgrade in place.
+    return managed;
+  }
+  const startIndex = existing.indexOf(PRE_PUSH_START);
+  const endIndex = existing.indexOf(PRE_PUSH_END);
+  if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+    const afterEnd = endIndex + PRE_PUSH_END.length;
+    return existing.slice(0, startIndex) + managed.trimEnd() + existing.slice(afterEnd);
+  }
+  const separator = existing.endsWith('\n') ? '' : '\n';
+  return `${existing}${separator}${managed}`;
+}
+
 const HOOKS_SEGMENTS = ['.opencode', 'hooks'];
 const GUARD_HOOK_PATH = [...HOOKS_SEGMENTS, 'specgit-merge-guard.sh'].join('/');
+export const GUARD_SCRIPT_PATH = GUARD_HOOK_PATH;
+
+/**
+ * Legacy resolution used when no git-backed resolver is available: install
+ * into `<root>/.git/hooks` only when `.git` is a real directory (a linked
+ * worktree's `.git` is a file, so the git hook is skipped there).
+ */
+export async function legacyGitHooksDir(root: string): Promise<string | null> {
+  const gitDir = path.join(root, '.git');
+  const gitStat = await fs.stat(gitDir).catch(() => null);
+  return gitStat?.isDirectory() ?? false ? path.join(gitDir, 'hooks') : null;
+}
+
+export interface HarnessWriteOptions {
+  /**
+   * Resolve the directory git actually runs hooks from (absolute), or
+   * null to skip the git hook. Production wires this to
+   * `git rev-parse --git-path hooks` via the git port so linked
+   * worktrees and `core.hooksPath` (husky/lefthook) behave correctly.
+   */
+  resolveHooksDir?: (root: string) => Promise<string | null>;
+  /**
+   * Workflow bytes to write (#63 template selection). Defaults to the
+   * self-hosted template (the SpecGit repository's own workflow);
+   * `specgit init` passes the portable external template for adopting
+   * repositories. Either way the write is planned and rolled back
+   * atomically with the rest of the harness.
+   */
+  workflowYaml?: string;
+}
 
 async function readIfExists(target: string): Promise<string | null> {
   try {
@@ -299,44 +454,154 @@ async function readIfExists(target: string): Promise<string | null> {
   }
 }
 
-export async function writeHarnessAssets(root: string): Promise<HarnessWriteResult> {
-  const workflowTarget = path.join(root, ...HARNESS_WORKFLOW_SEGMENTS);
-  await fs.mkdir(path.dirname(workflowTarget), { recursive: true });
-  await fs.writeFile(workflowTarget, harnessWorkflowYaml(), 'utf-8');
+interface Snapshot {
+  target: string;
+  existed: boolean;
+  content: string | null;
+  mode: number | null;
+}
 
+async function snapshot(target: string): Promise<Snapshot> {
+  const [content, stat] = await Promise.all([
+    readIfExists(target),
+    fs.stat(target).catch(() => null),
+  ]);
+  return { target, existed: content !== null, content, mode: stat?.mode ?? null };
+}
+
+interface PlannedWrite {
+  target: string;
+  content: string;
+  mode: number;
+}
+
+/**
+ * Write the full harness (#62 non-destructive contract):
+ *
+ * 1. Plan — read every target and compute its final bytes up front
+ *    (merging user hooks, injecting the managed block).
+ * 2. Commit — create directories and write files in order.
+ * 3. Rollback — if any commit step fails, restore every prior target to
+ *    its snapshot (bytes and mode) and remove files/directories this run
+ *    created, then rethrow so init reports exit 3 with a clean tree.
+ */
+export async function writeHarnessAssets(
+  root: string,
+  options: HarnessWriteOptions = {}
+): Promise<HarnessWriteResult> {
+  const warnings: Array<{ code: string; message: string }> = [];
+
+  // ---- Plan phase (reads + pure transforms; no writes yet) ----
   const block = managedPromptBlock();
+  const planned: PlannedWrite[] = [];
   const prompts: string[] = [];
+
+  planned.push({
+    target: path.join(root, ...HARNESS_WORKFLOW_SEGMENTS),
+    content: options.workflowYaml ?? harnessWorkflowYaml(),
+    mode: 0o644,
+  });
+
   for (const filename of [AGENTS_FILENAME, CLAUDE_FILENAME]) {
     const target = path.join(root, filename);
     const existing = await readIfExists(target);
     if (existing === null && filename === CLAUDE_FILENAME) {
       continue;
     }
-    await fs.writeFile(target, injectManagedBlock(existing ?? '', block), 'utf-8');
+    planned.push({ target, content: injectManagedBlock(existing ?? '', block), mode: 0o644 });
     prompts.push(filename);
   }
 
-  const hooksJsonTarget = path.join(root, '.opencode', 'hooks.json');
-  await fs.mkdir(path.dirname(hooksJsonTarget), { recursive: true });
-  await fs.writeFile(hooksJsonTarget, GUARD_HOOK_JSON, 'utf-8');
-
-  const guardTarget = path.join(root, ...HOOKS_SEGMENTS, 'specgit-merge-guard.sh');
-  await fs.mkdir(path.dirname(guardTarget), { recursive: true });
-  await fs.writeFile(guardTarget, GUARD_SCRIPT, 'utf-8');
-  await fs.chmod(guardTarget, 0o755);
-
-  const hooks = ['.opencode/hooks.json', GUARD_HOOK_PATH];
-
-  let gitHook: string | null = null;
-  const gitHookTarget = path.join(root, '.git', 'hooks', 'pre-push');
-  const gitDir = path.join(root, '.git');
-  const gitStat = await fs.stat(gitDir).catch(() => null);
-  if (gitStat?.isDirectory() ?? false) {
-    await fs.mkdir(path.dirname(gitHookTarget), { recursive: true });
-    await fs.writeFile(gitHookTarget, GIT_PRE_PUSH, 'utf-8');
-    await fs.chmod(gitHookTarget, 0o755);
-    gitHook = '.git/hooks/pre-push';
+  const hooksJsonTarget = path.join(root, ...HOOKS_JSON_PATH.split('/'));
+  const hooksJsonExisting = await readIfExists(hooksJsonTarget);
+  const hooksJsonMerge = mergeHooksJson(hooksJsonExisting);
+  let hooksJsonWritten = true;
+  if (hooksJsonMerge.warning !== undefined) {
+    warnings.push({ code: 'hooks_json_unmerged', message: hooksJsonMerge.warning });
+    hooksJsonWritten = false;
+  } else {
+    planned.push({ target: hooksJsonTarget, content: hooksJsonMerge.json, mode: 0o644 });
   }
 
-  return { workflow: HARNESS_WORKFLOW_PATH, prompts, hooks, gitHook };
+  const guardTarget = path.join(root, ...HOOKS_SEGMENTS, 'specgit-merge-guard.sh');
+  planned.push({ target: guardTarget, content: GUARD_SCRIPT, mode: 0o755 });
+
+  const hooksDir = options.resolveHooksDir
+    ? await options.resolveHooksDir(root)
+    : await legacyGitHooksDir(root);
+  let gitHook: string | null = null;
+  let gitHookTarget: string | null = null;
+  if (hooksDir !== null) {
+    gitHookTarget = path.join(hooksDir, 'pre-push');
+    const existing = await readIfExists(gitHookTarget);
+    planned.push({ target: gitHookTarget, content: mergeGitPrePush(existing), mode: 0o755 });
+    gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
+  }
+
+  // ---- Commit phase (writes; rollback restores on failure) ----
+  const snapshots: Snapshot[] = [];
+  const createdDirs: string[] = [];
+  try {
+    for (const step of planned) {
+      snapshots.push(await snapshot(step.target));
+      await ensureDirTracked(path.dirname(step.target), createdDirs);
+      await fs.writeFile(step.target, step.content, 'utf-8');
+      await fs.chmod(step.target, step.mode);
+    }
+  } catch (error) {
+    const rollbackNote = await rollback(snapshots, createdDirs);
+    if (rollbackNote !== null) {
+      throw new Error(`${(error as Error).message} (rollback incomplete: ${rollbackNote})`);
+    }
+    throw error;
+  }
+
+  const hooks = [...(hooksJsonWritten ? [HOOKS_JSON_PATH] : []), GUARD_HOOK_PATH];
+  return { workflow: HARNESS_WORKFLOW_PATH, prompts, hooks, gitHook, warnings };
+}
+
+/** mkdir -p that records the directory chain it had to create. */
+async function ensureDirTracked(dir: string, created: string[]): Promise<void> {
+  const missing: string[] = [];
+  let cursor = dir;
+  while (!(await fs.stat(cursor).then(() => true).catch(() => false))) {
+    missing.push(cursor);
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  if (missing.length > 0) {
+    await fs.mkdir(dir, { recursive: true });
+    created.push(...missing);
+  }
+}
+
+/**
+ * Best-effort restore to the pre-write state: rewritten files get their
+ * original bytes and mode back, files this run created are removed, and
+ * directories this run created are removed deepest-first (rmdir refuses
+ * non-empty dirs, so user content can never be deleted here).
+ */
+async function rollback(snapshots: Snapshot[], createdDirs: string[]): Promise<string | null> {
+  let failure: string | null = null;
+  for (const snap of [...snapshots].reverse()) {
+    try {
+      if (snap.existed && snap.content !== null) {
+        await fs.writeFile(snap.target, snap.content, 'utf-8');
+        if (snap.mode !== null) await fs.chmod(snap.target, snap.mode);
+      } else {
+        await fs.unlink(snap.target).catch(() => undefined);
+      }
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+  }
+  for (const dir of [...createdDirs].sort((a, b) => b.length - a.length)) {
+    try {
+      await fs.rmdir(dir);
+    } catch {
+      // Non-empty (or already gone) — nothing more we can safely do.
+    }
+  }
+  return failure;
 }

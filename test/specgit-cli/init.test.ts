@@ -12,6 +12,7 @@ import {
   harnessWorkflowYaml,
   managedPromptBlock,
 } from '../../src/cli/harness-assets.js';
+import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
@@ -21,10 +22,6 @@ const CLAUDE_ABS = (root: string) => path.join(root, 'CLAUDE.md');
 
 function read(filePath: string): string {
   return fs.readFileSync(filePath, 'utf-8');
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  return haystack.split(needle).length - 1;
 }
 
 describe('specgit init', () => {
@@ -96,7 +93,14 @@ describe('specgit init', () => {
       automerge: false,
       action: 'warned',
     });
-    expect(JSON.stringify(envelope.protection)).toContain('gh api');
+    // The fix guidance must be non-weakening: it may not teach a command
+    // that clears reviews, restrictions, or admin enforcement.
+    const fix = String(envelope.protection.fix ?? '');
+    expect(fix).not.toContain('gh api');
+    expect(fix).not.toContain('"required_pull_request_reviews":null');
+    expect(fix).not.toContain('"restrictions":null');
+    expect(fix).not.toContain('"enforce_admins":false');
+    expect(fix).toContain('SpecGit Acceptance');
   });
 
   it('--protect enables protection and auto-merge from scripts', async () => {
@@ -245,12 +249,23 @@ describe('specgit init', () => {
   });
 
 
-  it('with no --required-check and no workflows, falls back to the aggregate check', async () => {
+  it('with no --required-check and no CI anywhere, writes an empty checks policy (#63)', async () => {
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['All checks passed'] });
+    // A fallback NAME is a name the generated harness can never produce
+    // as a check-run: it would deadlock the wait step and make the
+    // verdict unsatisfiable. Zero checks + branch protection on the
+    // acceptance job is the only satisfiable no-CI policy.
+    expect(envelope.policy).toEqual({ version: 1, required_checks: [] });
+    expect(envelope.detected.fallback).toBe(true);
+    // The wait step in the generated workflow completes immediately with
+    // zero required checks: the empty policy is one the harness itself
+    // can satisfy (missing.length === 0 on the first poll).
+    const workflow = read(WORKFLOW_ABS(root));
+    expect(workflow).toContain('const required = policy.required_checks ?? [];');
+    expect(workflow).toContain('missing.length === 0');
   });
 
   it('with no --required-check, auto-detects job names from .github/workflows', async () => {
@@ -388,6 +403,8 @@ describe('specgit init', () => {
     const envelope = parseStdoutJson(t.io);
     expect(envelope.errors[0].code).toBe('policy_exists');
     expect(t.recordPort.policyWrites).toHaveLength(0);
+    // The rejection happens before any harness write: the tree is untouched.
+    expect(fs.readdirSync(root)).toHaveLength(0);
   });
 
   it('fails usage when a required check name is empty, writing nothing', async () => {
@@ -430,16 +447,19 @@ describe('specgit init harness generation', () => {
   });
 
   it('generates the acceptance workflow and the AGENTS.md managed block; no CLAUDE.md when absent', async () => {
+    // Self-detection (#63): the root package name `specgit` keeps this
+    // repository shape on the local-build template.
+    fs.writeFileSync(path.join(root, 'package.json'), `${JSON.stringify({ name: 'specgit', version: '0.0.0' }, null, 2)}\n`);
     const t = makeCtx({ root: { ok: true, value: root } });
-    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).harness).toEqual({ template: 'self' });
 
     const workflow = read(WORKFLOW_ABS(root));
+    expect(workflow).toBe(harnessWorkflowYaml());
     expect(workflow).toContain('name: SpecGit Acceptance');
     expect(workflow).toContain('pull_request');
     expect(workflow).toContain('branches: [main]');
-    expect(workflow).toContain('contents: read');
-    expect(workflow).toContain('GH_TOKEN: ${{ github.token }}');
     expect(workflow).toContain('node bin/specgit.js finish --json');
     expect(workflow).not.toContain('\r');
 
@@ -450,6 +470,45 @@ describe('specgit init harness generation', () => {
     expect(agents).not.toContain('\r');
 
     expect(fs.existsSync(CLAUDE_ABS(root))).toBe(false);
+  });
+
+  it('adopting repositories get the portable external workflow (#63 wiring)', async () => {
+    // No specgit package at the root: an adopting repository. The remote
+    // default branch (here genuinely non-main) and the CLI version pin
+    // the template; nothing about the adopting stack is assumed.
+    fs.writeFileSync(path.join(root, 'package.json'), `${JSON.stringify({ name: 'unrelated-app', version: '1.0.0' }, null, 2)}\n`);
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: { remoteDefaultBranch: () => ({ ok: true, value: 'master' }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Build', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.harness).toEqual({ template: 'external' });
+
+    const workflow = read(WORKFLOW_ABS(root));
+    expect(workflow).toBe(externalAcceptanceWorkflowYaml({ defaultBranch: 'master', version: '0.0.0-test' }));
+    expect(workflow).toContain('branches: [master]');
+    expect(workflow).toContain(`npm install --no-save --no-audit --no-fund specgit@0.0.0-test`);
+    expect(workflow).toContain('npx --no-install specgit finish --json');
+    // The adopting project's toolchain is never invoked.
+    expect(workflow).not.toContain('pnpm');
+    expect(workflow).not.toContain('bin/specgit.js');
+  });
+
+  it('an unresolvable remote default branch falls back to main with a warning', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: {
+        remoteDefaultBranch: () => ({ ok: false, code: 'git_probe_failed', message: 'no origin/HEAD' }),
+      },
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Build', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.harness).toEqual({ template: 'external' });
+    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'default_branch_unresolved')).toBe(true);
+    expect(read(WORKFLOW_ABS(root))).toContain('branches: [main]');
   });
 
   it('template stays in sync with this repo own workflow file (anti-drift lock)', async () => {
@@ -509,13 +568,16 @@ describe('specgit init harness generation', () => {
     expect(agents).toContain('### Before creating an issue, check for duplicates');
   });
 
-  it('second init is idempotent: artifacts are rewritten byte-identical, policy still protected', async () => {
+  it('re-init with an existing policy rejects before writing: drift stays, no probes', async () => {
     const first = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
     const workflowAfterFirst = read(WORKFLOW_ABS(root));
     const agentsAfterFirst = read(AGENTS_ABS(root));
 
+    // Inject drift into every managed artifact.
     fs.appendFileSync(WORKFLOW_ABS(root), '# drifted local edit\n');
+    fs.appendFileSync(AGENTS_ABS(root), '# drifted tail\n');
+
     const second = makeCtx({ root: { ok: true, value: root }, policy: samplePolicy() });
     const code = await runCliWith(
       ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
@@ -526,11 +588,37 @@ describe('specgit init harness generation', () => {
     const envelope = parseStdoutJson(second.io);
     expect(envelope.errors[0].code).toBe('policy_exists');
 
+    // policy_exists happens before filesystem AND remote mutation: the
+    // drift is left exactly as it was and no gh probe runs.
+    expect(read(WORKFLOW_ABS(root))).toBe(`${workflowAfterFirst}# drifted local edit\n`);
+    expect(read(AGENTS_ABS(root))).toBe(`${agentsAfterFirst}# drifted tail\n`);
+    expect(second.ghProvider.calls).toHaveLength(0);
+    expect(second.recordPort.policyWrites).toHaveLength(0);
+  });
+
+  it('--force is the refresh path: drifted harness is repaired, policy rebuilt', async () => {
+    const first = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
+    const workflowAfterFirst = read(WORKFLOW_ABS(root));
+    const agentsAfterFirst = read(AGENTS_ABS(root));
+    const markerTail = agentsAfterFirst.slice(
+      agentsAfterFirst.indexOf(BLOCK_END_MARKER) + BLOCK_END_MARKER.length
+    );
+
+    fs.appendFileSync(WORKFLOW_ABS(root), '# drifted local edit\n');
+
+    const second = makeCtx({ root: { ok: true, value: root }, policy: samplePolicy() });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json'],
+      second.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
     expect(read(WORKFLOW_ABS(root))).toBe(workflowAfterFirst);
-    const agentsAfterSecond = read(AGENTS_ABS(root));
-    expect(agentsAfterSecond).toBe(agentsAfterFirst);
-    expect(countOccurrences(agentsAfterSecond, BLOCK_START_MARKER)).toBe(1);
-    expect(countOccurrences(agentsAfterSecond, BLOCK_END_MARKER)).toBe(1);
+    expect(read(AGENTS_ABS(root))).toBe(`${agentsAfterFirst.slice(0, agentsAfterFirst.indexOf(BLOCK_END_MARKER) + BLOCK_END_MARKER.length)}${markerTail}`);
+    expect(second.recordPort.policyWrites).toEqual([
+      { root, policy: { version: 1, required_checks: ['Test'] } },
+    ]);
   });
 
   it('injects the block into an existing AGENTS.md without touching surrounding content', async () => {
@@ -562,7 +650,7 @@ describe('specgit init harness generation', () => {
     expect(agents).toBe(`# Agents\n\n${managedPromptBlock()}\n`);
   });
 
-  it('re-init replaces only the content between the markers (round-trip)', async () => {
+  it('re-init with --force replaces only the content between the markers (round-trip)', async () => {
     const first = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
 
@@ -577,8 +665,132 @@ describe('specgit init harness generation', () => {
     );
 
     const second = makeCtx({ root: { ok: true, value: root }, policy: samplePolicy() });
-    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], second.ctx);
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--force'], second.ctx);
 
     expect(read(AGENTS_ABS(root))).toBe(`${prefix}${managedPromptBlock()}${suffix}`);
+  });
+});
+
+describe('specgit init validate-before-write', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-order-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('rejects a mismatched --gitlab-host before any filesystem write', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'evil.example.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+
+  it('fails usage on an unwritable root before any write', async () => {
+    if (process.platform === 'win32') return; // chmod is advisory on Windows
+    const t = makeCtx({ root: { ok: true, value: root } });
+    fs.chmodSync(root, 0o500);
+    let code: number | undefined;
+    try {
+      code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    } finally {
+      fs.chmodSync(root, 0o700);
+    }
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('root_not_writable');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+
+  it('a mid-sequence harness write failure rolls back to the pre-init tree (exit 3)', async () => {
+    // `.opencode` as a regular file: the workflow and prompt writes succeed,
+    // then mkdir('.opencode') fails — everything must roll back.
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# existing notes\n');
+    fs.writeFileSync(path.join(root, '.opencode'), 'not a directory');
+
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('harness_write_failed');
+    expect(read(path.join(root, 'AGENTS.md'))).toBe('# existing notes\n');
+    expect(fs.existsSync(path.join(root, '.github'))).toBe(false);
+    expect(fs.readFileSync(path.join(root, '.opencode'), 'utf-8')).toBe('not a directory');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+  });
+});
+
+describe('specgit init hook merging', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-hooks-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('merges existing hooks.json and git pre-push instead of overwriting', async () => {
+    const gitHooks = path.join(root, 'git-hooks');
+    fs.mkdirSync(gitHooks, { recursive: true });
+    fs.mkdirSync(path.join(root, '.opencode'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.opencode', 'hooks.json'),
+      '{\n  "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "greet.sh" }] }],\n  "custom": { "kept": true }\n}\n'
+    );
+    fs.writeFileSync(path.join(gitHooks, 'pre-push'), '#!/bin/sh\n./scripts/verify.sh || exit 1\n');
+
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: { hooksPath: () => ({ ok: true, value: gitHooks }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+
+    const hooksJson = JSON.parse(read(path.join(root, '.opencode', 'hooks.json'))) as {
+      SessionStart: unknown[];
+      custom: unknown;
+      PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }>;
+    };
+    expect(hooksJson.SessionStart).toHaveLength(1);
+    expect(hooksJson.custom).toEqual({ kept: true });
+    const bash = hooksJson.PreToolUse.find((entry) => entry.matcher === 'Bash');
+    expect(bash?.hooks).toHaveLength(1);
+
+    const prePush = read(path.join(gitHooks, 'pre-push'));
+    expect(prePush).toContain('./scripts/verify.sh');
+    expect(prePush.indexOf('./scripts/verify.sh')).toBeLessThan(prePush.indexOf('# >>> specgit:start >>>'));
+
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.warnings ?? []).toEqual([]);
+  });
+
+  it('leaves an unmergeable hooks.json untouched and surfaces a warning', async () => {
+    fs.mkdirSync(path.join(root, '.opencode'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.opencode', 'hooks.json'), '{ broken');
+
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+
+    expect(read(path.join(root, '.opencode', 'hooks.json'))).toBe('{ broken');
+    expect(fs.existsSync(path.join(root, '.opencode', 'hooks', 'specgit-merge-guard.sh'))).toBe(true);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'hooks_json_unmerged')).toBe(true);
   });
 });
