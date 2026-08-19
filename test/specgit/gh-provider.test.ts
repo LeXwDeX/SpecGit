@@ -74,9 +74,14 @@ describe('GhCliGitHubProvider', () => {
     rmDir(tempDir);
   });
 
-  function setup(rules: FakeGhRule[], providerOptions: { timeoutMs?: number; maxBuffer?: number } = {}) {
+  function setup(
+    rules: FakeGhRule[],
+    providerOptions: { timeoutMs?: number; maxBuffer?: number; env?: NodeJS.ProcessEnv } = {}
+  ) {
     const fake = createFakeGh(tempDir, rules);
-    const provider = new GhCliGitHubProvider({ env: fake.env(), ...providerOptions });
+    const { env: extraEnv, ...rest } = providerOptions;
+    // fake.env(extra) merges the fake's own vars with the caller's extras.
+    const provider = new GhCliGitHubProvider({ env: fake.env(extraEnv), ...rest });
     return { fake, provider };
   }
 
@@ -512,9 +517,13 @@ describe('GhCliGitHubProvider#createDraftPr', () => {
     rmDir(tempDir);
   });
 
-  function setup(rules: FakeGhRule[], providerOptions: { timeoutMs?: number; maxBuffer?: number } = {}) {
+  function setup(
+    rules: FakeGhRule[],
+    providerOptions: { timeoutMs?: number; maxBuffer?: number; env?: NodeJS.ProcessEnv } = {}
+  ) {
     const fake = createFakeGh(tempDir, rules);
-    const provider = new GhCliGitHubProvider({ env: fake.env(), ...providerOptions });
+    const { env: extraEnv, ...rest } = providerOptions;
+    const provider = new GhCliGitHubProvider({ env: fake.env(extraEnv), ...rest });
     return { fake, provider };
   }
 
@@ -573,7 +582,7 @@ describe('GhCliGitHubProvider#createDraftPr', () => {
     expect(result.code).toBe('gh_unauthenticated');
   });
 
-  it('kills a slow gh at the timeout and reports gh_transport', async () => {
+  it('kills a slow gh at the timeout and reports gh_timeout with attributed fix', async () => {
     const { provider } = setup([{ match: '^pr create ', delayMs: 5000, stdout: '' }], {
       timeoutMs: 250,
     });
@@ -581,8 +590,28 @@ describe('GhCliGitHubProvider#createDraftPr', () => {
     const result = await provider.createDraftPr(REPO, 'head', 'main', 'T', 'B');
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.code).toBe('gh_transport');
+    expect(result.code).toBe('gh_timeout');
+    expect(result.message).toContain('250 ms');
+    // Attribution: the fix names all three likely causes and the knob.
+    expect(result.fix).toContain('network');
+    expect(result.fix).toContain('githubstatus');
+    expect(result.fix).toContain('SPECGIT_GH_TIMEOUT_MS');
     expect(Date.now() - started).toBeLessThan(4000);
+  });
+
+  it('SPECGIT_GH_TIMEOUT_MS raises the default timeout', async () => {
+    const { provider } = setup(
+      [
+        {
+          match: '^pr create ',
+          delayMs: 5000,
+          stdout: 'https://github.com/LeXwDeX/SpecGit/pull/42\n',
+        },
+      ],
+      { env: { SPECGIT_GH_TIMEOUT_MS: '6000' } as NodeJS.ProcessEnv }
+    );
+    const result = await provider.createDraftPr(REPO, 'head', 'main', 'T', 'B');
+    expect(result.ok).toBe(true);
   });
 
   it('refuses an empty head without invoking gh', async () => {
@@ -606,11 +635,16 @@ describe('GhCliGitHubProvider#listOpenPrsByHead', () => {
     rmDir(tempDir);
   });
 
-  function setup(rules: FakeGhRule[]) {
+  function setup(
+    rules: FakeGhRule[],
+    providerOptions: { timeoutMs?: number; maxBuffer?: number; env?: NodeJS.ProcessEnv } = {}
+  ) {
     const fake = createFakeGh(tempDir, rules);
-    const provider = new GhCliGitHubProvider({ env: fake.env() });
+    const { env: extraEnv, ...rest } = providerOptions;
+    const provider = new GhCliGitHubProvider({ env: fake.env(extraEnv), ...rest });
     return { fake, provider };
   }
+
 
   it('lists open PRs through gh pr list with fixed flags', async () => {
     const { provider, fake } = setup([
