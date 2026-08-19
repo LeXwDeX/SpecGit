@@ -5,3 +5,4 @@ context:
   branch: feat/3-issue3
 issues:
   - 3
+pr: 18
