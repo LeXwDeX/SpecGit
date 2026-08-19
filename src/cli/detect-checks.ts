@@ -39,7 +39,29 @@ interface WorkflowJobsShape {
 function jobName(id: string, job: unknown): string | null {
   if (typeof job !== 'object' || job === null) return null;
   const name = (job as { name?: unknown }).name;
-  return typeof name === 'string' && name.trim().length > 0 ? name.trim() : id;
+  if (typeof name === 'string' && name.trim().length > 0) {
+    // A matrix placeholder (e.g. "Tests (${{ matrix.os }})") never appears
+    // in check-runs; the job id is the stable identity.
+    return name.includes('${{') ? id : name.trim();
+  }
+  return id;
+}
+
+/**
+ * Workflows that cannot run on a PR head (dispatch-only) never register
+ * check runs there, so their jobs must not become required checks.
+ * YAML 1.1 parses the bare key `on` as boolean true — both shapes are read.
+ */
+function runsOnPullRequests(parsed: unknown): boolean {
+  const record = parsed as { on?: unknown; true?: unknown } | null;
+  const on = record?.on ?? record?.true;
+  if (on === undefined) return true; // implicit push/PR per GitHub defaults
+  if (typeof on === 'string') return on !== 'workflow_dispatch';
+  if (Array.isArray(on)) return on.some((trigger) => trigger !== 'workflow_dispatch');
+  if (typeof on === 'object' && on !== null) {
+    return Object.keys(on).some((trigger) => trigger !== 'workflow_dispatch');
+  }
+  return true;
 }
 
 export async function classifyPlatform(originUrl: string | null): Promise<OriginPlatform> {
@@ -79,6 +101,7 @@ async function detectGithubChecks(root: string, sources: string[]): Promise<stri
     }
     const jobs = (parsed as WorkflowJobsShape | null)?.jobs;
     if (typeof jobs !== 'object' || jobs === null) continue;
+    if (!runsOnPullRequests(parsed)) continue;
     sources.push(`.github/workflows/${entry}`);
     for (const [id, job] of Object.entries(jobs)) {
       const name = jobName(id, job);
