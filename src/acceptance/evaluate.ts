@@ -88,15 +88,17 @@ export interface EvaluateInput {
   policy: Evidence<Policy>;
   git: GitPort;
   gh?: GitHubProvider;
+  /** Declared self-hosted GitLab host (spec_git/providers.yaml), if any. */
+  gitlabHost?: string;
 }
 
 function isEvidenceKind(code: string): boolean {
   return (CODE_INFO[code as SpecGitCode]?.kind ?? 'evidence') === 'evidence';
 }
 
-function repoRefForMergedCheck(originUrl: string | null): { owner: string; repo: string } | null {
+function repoRefForMergedCheck(originUrl: string | null, gitlabHost?: string): { owner: string; repo: string } | null {
   if (!originUrl) return null;
-  const parsed = parseRepoRef(originUrl);
+  const parsed = parseRepoRef(originUrl, gitlabHost !== undefined ? { gitlabHost } : {});
   return parsed.ok ? parsed.value : null;
 }
 
@@ -222,7 +224,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
         // not a mismatch. Verify against the PR evidence; a provider
         // failure keeps the fail-closed mismatch (never upgrades on
         // missing evidence).
-        const repoForMerged = repoRefForMergedCheck(facts.originUrl);
+        const repoForMerged = repoRefForMergedCheck(facts.originUrl, input.gitlabHost);
         if (repoForMerged && binding!.pr !== undefined && input.gh) {
           const prEv = await input.gh.getPr(repoForMerged, binding!.pr);
           if (prEv.ok && prEv.value.state === 'merged') {
@@ -254,7 +256,10 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       if (!facts || facts.originUrl === null) {
         return [makeFailure('no_origin')];
       }
-      const parsed = parseRepoRef(facts.originUrl);
+      const parsed = parseRepoRef(
+        facts.originUrl,
+        input.gitlabHost !== undefined ? { gitlabHost: input.gitlabHost } : {}
+      );
       if (!parsed.ok) {
         return [makeFailure('origin_unresolvable')];
       }
