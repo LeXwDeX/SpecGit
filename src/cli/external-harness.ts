@@ -128,7 +128,9 @@ jobs:
                   'api',
                   'repos/' + process.env.WAIT_REPO + '/commits/' + process.env.WAIT_SHA + '/check-runs?per_page=100',
                 ],
-                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+                // gh.cmd needs a shell on Windows; POSIX execs the binary
+                // directly (shell stays off where it is not needed).
+                { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }
               )
             );
           const terminal = new Set(['completed']);
