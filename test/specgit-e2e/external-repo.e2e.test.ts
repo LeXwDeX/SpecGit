@@ -65,11 +65,11 @@ describe('e2e external repository adoption (#63)', () => {
     'adopts the packed CLI in an unrelated npm repo and reaches an accepted verdict',
     { timeout: 240_000 },
     async () => {
-      const { tarballPath, version } = packSpecgit();
+      const { tarballPath, version } = await packSpecgit();
       const fixture = makeExternalRepo('specgit-external-repo-');
       cleanup.push(fixture.dir);
 
-      npmInstallPacked(tarballPath, fixture.dir);
+      await npmInstallPacked(tarballPath, fixture.dir);
       // The adoption install must not dirty the adopting repository.
       const adoptingPkg = JSON.parse(
         fs.readFileSync(path.join(fixture.dir, 'package.json'), 'utf-8')
