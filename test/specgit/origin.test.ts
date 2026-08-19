@@ -52,11 +52,33 @@ describe('parseRepoRef', () => {
     if (result.ok) return;
     expect(result.code).toBe('gitlab_unsupported');
     expect(result.message).toContain('GitLab');
-    expect(result.fix).toContain('github.com');
+    expect(result.fix).toContain('gitlab-host');
   });
 
   it('keeps shorthand gitlab: refs as unresolvable', () => {
     const result = parseRepoRef('gitlab:owner/repo.git');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('origin_unresolvable');
+  });
+
+  it('classifies a configured self-hosted gitlab host as gitlab_unsupported', () => {
+    for (const url of [
+      'git@git.ycgame.com:suntao/specgit.git',
+      'ssh://git@git.ycgame.com/suntao/specgit.git',
+      'https://git.ycgame.com/suntao/specgit.git',
+    ]) {
+      const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe('gitlab_unsupported');
+    }
+  });
+
+  it('a configured gitlab host does not capture other hosts', () => {
+    const result = parseRepoRef('https://git.other.com/o/r.git', {
+      gitlabHost: 'git.ycgame.com',
+    });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('origin_unresolvable');

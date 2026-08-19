@@ -1,8 +1,8 @@
 version: 1
-delivery: prompt-agents-to
+delivery: explicit-gitlab-host
 context:
   kind: branch
-  branch: feat/33-prompt-agents-to
+  branch: feat/41-explicit-gitlab-host
 issues:
-  - 33
-pr: 34
+  - 41
+pr: 42
