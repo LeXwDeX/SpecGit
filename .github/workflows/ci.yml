@@ -46,7 +46,10 @@ jobs:
   test_matrix:
     name: Test (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Headroom for the #67 install/external e2e on the slowest leg:
+    # hosted Windows runners execute npm/git fixtures 3-5x slower than
+    # linux, and the suite's test-time sum grew past the old budget.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -61,10 +64,16 @@ jobs:
             shell: bash
             label: macos-bash
             vitest_workers: 4
+          # Windows runs serialized: with 2 workers the heavy install e2e
+          # starves the vitest main process until worker RPC calls
+          # ("onTaskUpdate", fixed 60s birpc timeout, no config knob in
+          # vitest 3.2.6) fail as unhandled errors and redden an otherwise
+          # green run (36/36 files passed). One worker keeps the runner
+          # responsive; wall-clock stays inside the job timeout.
           - os: windows-latest
             shell: pwsh
             label: windows-pwsh
-            vitest_workers: 2
+            vitest_workers: 1
 
     defaults:
       run:
