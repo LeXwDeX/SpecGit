@@ -83,6 +83,7 @@ describe('rc-verify is a safe RC path (#71)', () => {
     expect(publishes.length).toBeGreaterThan(0);
     for (const line of publishes) {
       expect(line).toContain('--dry-run');
+      expect(line).toContain('--tag rc');
     }
     // The dry-run target is a workspace-only RC version, so it can never
     // collide with (or shadow) a published release.

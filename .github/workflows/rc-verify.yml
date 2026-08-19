@@ -87,7 +87,8 @@ jobs:
         run: npm view specgit version dist-tags --json
 
       - name: Dry-run publish the RC version (never uploads)
-        run: npm publish --dry-run --ignore-scripts
+        # --tag rc: prerelease dist-tag intent, proven without publishing.
+        run: npm publish --dry-run --ignore-scripts --tag rc
 
       # Fork pull requests cannot be granted id-token: write, so the
       # provenance proof runs on same-repo PRs and manual dispatch only.
@@ -108,7 +109,7 @@ jobs:
           }
           console.log('OIDC token minted for audience npmjs.org (' + value.length + ' chars)');
           EOF
-          npm publish --dry-run --ignore-scripts --provenance
+          npm publish --dry-run --ignore-scripts --provenance --tag rc
 
       - name: Note the fork limitation (visible, never silent)
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
