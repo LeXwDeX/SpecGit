@@ -63,7 +63,7 @@ specgit issue "feat: add login" "Harden the session model" --json
 
 一个参数 = 一个独立可验证的 WHY：
 
-- 带引号的文本 → 新建 issue（Why/Scope/Acceptance 模板）；
+- 带引号的文本 → 新建 issue（必填/选填模板；标题必须 `<type>: <英文标题>`，type 走固定白名单，非英文标题直接 usage 报错）；
 - 纯数字 → 复用已有 issue。
 
 N 个参数 = N 个 issue 绑进 **同一个** 交付（1 PR : N issues）。

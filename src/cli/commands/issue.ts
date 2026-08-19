@@ -26,18 +26,23 @@ export interface IssueOptions {
 const BRANCH_TYPES = new Set([
   'feat',
   'fix',
-  'chore',
-  'docs',
-  'test',
   'refactor',
   'perf',
+  'docs',
+  'test',
+  'chore',
+  'style',
   'build',
   'ci',
-  'style',
   'revert',
+  'security',
+  'deprecate',
+  'dogfood',
 ]);
 
 const CONVENTIONAL_PREFIX = /^([a-z]+):\s+(.*)$/s;
+const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+const TYPE_LIST = [...BRANCH_TYPES].join(', ');
 
 export function parseIssueTitle(title: string): { type: string; cleanTitle: string } {
   const match = CONVENTIONAL_PREFIX.exec(title.trim());
@@ -45,6 +50,31 @@ export function parseIssueTitle(title: string): { type: string; cleanTitle: stri
     return { type: match[1], cleanTitle: match[2].trim() };
   }
   return { type: 'feat', cleanTitle: title.trim() };
+}
+
+/** First usage error among the titles, or null when every title conforms. */
+export function validateIssueTitles(
+  args: string[]
+): { code: string; message: string; fix: string } | null {
+  for (const arg of args) {
+    if (parseNumericRef(arg) !== null || !arg) continue;
+    const match = CONVENTIONAL_PREFIX.exec(arg.trim());
+    if (!match || !BRANCH_TYPES.has(match[1])) {
+      return {
+        code: 'issue_type_invalid',
+        message: `Issue title '${sanitize(arg)}' must start with a known <type>: prefix.`,
+        fix: `Prefix the title with one of: ${TYPE_LIST}. Example: specgit issue "feat: add login".`,
+      };
+    }
+    if (!PRINTABLE_ASCII.test(match[2].trim())) {
+      return {
+        code: 'issue_title_not_english',
+        message: `Issue title '${sanitize(arg)}' must be English (printable ASCII).`,
+        fix: 'Rewrite the title in English — printable ASCII letters, digits, and punctuation.',
+      };
+    }
+  }
+  return null;
 }
 
 /**
@@ -62,10 +92,12 @@ export function slugifyTitle(title: string): string {
 
 function issueBody(title: string): string {
   return [
-    '## Why',
+    '## Why (required)',
     title,
     '',
-    '## Acceptance',
+    '## Scope (optional)',
+    '',
+    '## Acceptance (required)',
     'The delivery pull request closes this issue; `specgit finish` must exit 0.',
     '',
   ].join('\n');
@@ -196,6 +228,14 @@ export async function runIssue(
             fix: 'Pass one or more quoted issue titles to create, or existing issue numbers to reuse, e.g. specgit issue "feat: add login".',
           }),
         ],
+      };
+    }
+
+    const invalid = validateIssueTitles(args);
+    if (invalid) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [errorDiagnostic(invalid.code, invalid.message, { fix: invalid.fix })],
       };
     }
 

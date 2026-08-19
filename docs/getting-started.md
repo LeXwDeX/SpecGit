@@ -63,7 +63,7 @@ pr: 42
 Rules that matter:
 
 - One issue = one independently verifiable WHY; if a deliverable cannot be verified on its own evidence, split it before binding.
-- The branch `type` comes from a conventional-commit prefix (`feat:` default); the slug from the first three ASCII words of the title.
+- The branch `type` is validated against a fixed whitelist (`feat`, `fix`, `chore`, … full list in the CLI reference); the title must be English (printable ASCII). The slug comes from the first three ASCII words of the title.
 - `context` is filled in automatically from live git — never hand-edit it. (The `bind` alias exists for script-level record surgery.)
 
 ### 3. Work, push, and keep the closing refs
