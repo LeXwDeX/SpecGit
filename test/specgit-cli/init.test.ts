@@ -193,6 +193,23 @@ describe('specgit init', () => {
     expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
   });
 
+  it('--gitlab-host on a github.com origin is rejected as nonsensical', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({}),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.example.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+  });
+
   it('github.com origin defaults to github mode without asking', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },

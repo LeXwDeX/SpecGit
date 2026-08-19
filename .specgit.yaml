@@ -1,8 +1,8 @@
 version: 1
-delivery: explicit-gitlab-host
+delivery: address-review-findings
 context:
   kind: branch
-  branch: feat/41-explicit-gitlab-host
+  branch: fix/48-address-review-findings
 issues:
-  - 41
-pr: 42
+  - 48
+pr: 49
