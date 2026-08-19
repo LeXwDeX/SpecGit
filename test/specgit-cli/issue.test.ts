@@ -318,6 +318,7 @@ describe('specgit issue: idempotent resume', () => {
             headSha: 'd'.repeat(40),
             baseBranch: 'main',
             body: 'Closes #11 Closes #12',
+            mergeCommitSha: null,
           }),
       },
     });

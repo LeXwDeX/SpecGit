@@ -274,6 +274,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
       number?: unknown;
       state?: unknown;
       merged_at?: unknown;
+      merge_commit_sha?: unknown;
       head?: { ref?: unknown; sha?: unknown };
       base?: { ref?: unknown };
       body?: unknown;
@@ -292,6 +293,10 @@ export class GhCliGitHubProvider implements GitHubProvider {
       headSha: typeof parsed.head?.sha === 'string' ? parsed.head.sha : '',
       baseBranch: typeof parsed.base?.ref === 'string' ? parsed.base.ref : '',
       body: typeof parsed.body === 'string' ? parsed.body : '',
+      mergeCommitSha:
+        typeof parsed.merge_commit_sha === 'string' && parsed.merge_commit_sha.length > 0
+          ? parsed.merge_commit_sha
+          : null,
     });
   }
 

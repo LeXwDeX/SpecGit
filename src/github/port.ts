@@ -14,6 +14,16 @@ export interface PrFact {
   headSha: string;
   baseBranch: string;
   body: string;
+  /**
+   * GitHub's merge_commit_sha. Once a PR is merged this is a commit on
+   * the base branch under every merge method — the merge commit, the
+   * squashed commit, or the commit the base was updated to by a rebase —
+   * which makes it the strategy-invariant anchor for proving the merged
+   * delivery is contained by a local HEAD. Before a merge it is
+   * GitHub's throwaway test-merge commit, which no branch contains.
+   * Null when GitHub reports no value.
+   */
+  mergeCommitSha: string | null;
 }
 
 export interface CheckRunInfo {

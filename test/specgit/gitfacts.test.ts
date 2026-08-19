@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LocalGitAdapter } from '../../src/gitfacts/local.js';
-import { git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
+import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 describe('LocalGitAdapter', () => {
   let tempDir: string;
@@ -115,5 +115,35 @@ describe('LocalGitAdapter', () => {
 
     const facts = await adapter.facts(root);
     expect(facts.upstreamDrift).toEqual({ ahead: 1, behind: 0 });
+  });
+
+  describe('headContains (merged-delivery lineage)', () => {
+    it('proves containment for an ancestor commit and for HEAD itself', async () => {
+      const ancestor = git(root, ['rev-parse', 'HEAD'], env).trim();
+      const head = commitFile(root, 'two.txt', '2\n', env);
+      await expect(adapter.headContains(root, ancestor)).resolves.toEqual({
+        ok: true,
+        value: { contained: true },
+      });
+      await expect(adapter.headContains(root, head)).resolves.toEqual({
+        ok: true,
+        value: { contained: true },
+      });
+    });
+
+    it('decisively reports a locally known commit that is not an ancestor of HEAD', async () => {
+      git(root, ['checkout', '-b', 'side'], env);
+      const side = commitFile(root, 'side.txt', 'side\n', env);
+      git(root, ['checkout', 'main'], env);
+      const result = await adapter.headContains(root, side);
+      expect(result).toEqual({ ok: true, value: { contained: false } });
+    });
+
+    it('fails closed when the commit is unknown to the local object store', async () => {
+      const result = await adapter.headContains(root, 'd'.repeat(40));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe('merged_lineage_unavailable');
+    });
   });
 });

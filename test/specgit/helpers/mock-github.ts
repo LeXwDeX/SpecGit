@@ -123,6 +123,7 @@ export function makePrFact(overrides: Partial<PrFact> = {}): PrFact {
     headSha: 'a'.repeat(40),
     baseBranch: 'main',
     body: 'Closes #123',
+    mergeCommitSha: null,
     ...overrides,
   };
 }

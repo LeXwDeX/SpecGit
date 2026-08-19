@@ -220,6 +220,40 @@ export class LocalGitAdapter implements GitPort {
     return ok('main');
   }
 
+  async headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {
+    try {
+      await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
+        timeoutMs: GIT_PROBE_TIMEOUT_MS,
+        maxBuffer: GIT_PROBE_MAX_BUFFER,
+        env: this.env,
+      });
+      return ok({ contained: true });
+    } catch (error) {
+      if (isSpawnNotFoundError(error)) {
+        return fail(
+          'git_unavailable',
+          'The git executable could not be found on PATH.',
+          'Install git and ensure it is on PATH.'
+        );
+      }
+      const err = error as { code?: unknown; killed?: boolean };
+      // Exit 1 is git's decisive answer: both commits are locally known
+      // and the first is not an ancestor of HEAD.
+      if (!err.killed && err.code === 1) {
+        return ok({ contained: false });
+      }
+      // Any other failure — unknown object (exit 128), timeout, repo
+      // problems — leaves the lineage question unanswered: fail closed.
+      const detail = error instanceof Error ? sanitizeGitText(error.message) : '';
+      return fail(
+        'merged_lineage_unavailable',
+        `Local git could not verify whether HEAD contains ${sanitizeGitText(sha)}` +
+          (detail ? `: ${detail}` : '.'),
+        'Fetch the remote (git fetch) and pull the base branch that received the merge, then re-run.'
+      );
+    }
+  }
+
   /**
    * Runs one write-side git invocation and maps failures to Evidence.
    * `kind` picks the stable diagnostic code (git_checkout_failed, …).
