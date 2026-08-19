@@ -456,11 +456,12 @@ describe('specgit init harness generation', () => {
     // The generated template IS this repository's acceptance workflow:
     // when the repo file evolves (dispatch trigger, WAIT_SHA fallback…),
     // the template source must follow, or a re-init silently regresses it.
-    const repoWorkflow = fs.readFileSync(
-      path.join(__dirname, '..', '..', '.github', 'workflows', 'specgit-accept.yml'),
-      'utf-8'
+    // Normalize line endings: the working tree may carry CRLF on Windows.
+    const readNormalized = (p: string) => fs.readFileSync(p, 'utf-8').replace(/\r\n/g, '\n');
+    const repoWorkflow = readNormalized(
+      path.join(__dirname, '..', '..', '.github', 'workflows', 'specgit-accept.yml')
     );
-    expect(harnessWorkflowYaml()).toBe(repoWorkflow);
+    expect(harnessWorkflowYaml().replace(/\r\n/g, '\n')).toBe(repoWorkflow);
   });
 
   it('wait-for-siblings script retries transient API failures', async () => {
