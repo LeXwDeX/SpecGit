@@ -202,10 +202,12 @@ export function parseEnvelope(result: RunCLIResult): Record<string, any> {
 }
 
 export async function initPolicy(cwd: string, env?: NodeJS.ProcessEnv): Promise<RunCLIResult> {
-  const result = await specgit(['init', '--required-check', REQUIRED_CHECK, '--json'], {
-    cwd,
-    env,
-  });
+  // --no-protect: these scenarios pin the acceptance api-call surface; the
+  // protection probe would add unrelated gh api calls against the fakes.
+  const result = await specgit(
+    ['init', '--required-check', REQUIRED_CHECK, '--no-protect', '--json'],
+    { cwd, env }
+  );
   if (result.exitCode !== 0) {
     throw new Error(`init failed (exit ${result.exitCode}): ${result.stdout}\n${result.stderr}`);
   }

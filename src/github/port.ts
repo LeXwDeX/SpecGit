@@ -41,6 +41,17 @@ export interface PrSummary {
   url: string;
 }
 
+/** Branch protection state: whether the branch is protected and by which checks. */
+export interface BranchProtectionFact {
+  protected: boolean;
+  requiredChecks: string[];
+}
+
+/** Repository-level auto-merge setting. */
+export interface RepoAutomergeFact {
+  enabled: boolean;
+}
+
 export interface GitHubProvider {
   preflight(): Promise<Evidence<{ authenticated: boolean }>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
@@ -55,4 +66,12 @@ export interface GitHubProvider {
     body: string
   ): Promise<Evidence<PrCreation>>;
   listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
+  getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>>;
+  enableBranchProtection(
+    repo: RepoRef,
+    branch: string,
+    requiredCheck: string
+  ): Promise<Evidence<BranchProtectionFact>>;
+  getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
+  enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
 }

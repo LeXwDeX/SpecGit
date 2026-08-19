@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { RepoRef } from '../gitfacts/origin.js';
 import type {
+  BranchProtectionFact,
   CheckRunInfo,
   GitHubProvider,
   IssueCreation,
@@ -11,6 +12,7 @@ import type {
   PrCreation,
   PrFact,
   PrSummary,
+  RepoAutomergeFact,
 } from './port.js';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -432,12 +434,140 @@ export class GhCliGitHubProvider implements GitHubProvider {
     return ok(prs);
   }
 
+  /**
+   * Branch protection lookup. A 404 means GitHub reports the branch as
+   * not protected — evidence, not an error.
+   */
+  async getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>> {
+    if (!branch.trim()) {
+      return fail('gh_transport', 'Cannot query branch protection without a branch name.');
+    }
+    const result = await this.runAdminApi([
+      'api',
+      `repos/${repo.owner}/${repo.repo}/branches/${branch}/protection`,
+    ]);
+    if (!result.ok) {
+      if (result.code === 'not_found') {
+        return ok({ protected: false, requiredChecks: [] });
+      }
+      return result;
+    }
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const payload = parsed.value as { required_status_checks?: { contexts?: unknown } };
+    const contexts = payload.required_status_checks?.contexts;
+    return ok({
+      protected: true,
+      requiredChecks: Array.isArray(contexts)
+        ? contexts.filter((name): name is string => typeof name === 'string')
+        : [],
+    });
+  }
+
+  /** Require `requiredCheck` on the branch (PUT, body over stdin). */
+  async enableBranchProtection(
+    repo: RepoRef,
+    branch: string,
+    requiredCheck: string
+  ): Promise<Evidence<BranchProtectionFact>> {
+    if (!branch.trim() || !requiredCheck.trim()) {
+      return fail('gh_transport', 'Cannot enable branch protection without a branch and check name.');
+    }
+    const body = JSON.stringify({
+      required_status_checks: { strict: false, contexts: [requiredCheck] },
+      enforce_admins: false,
+      required_pull_request_reviews: null,
+      restrictions: null,
+    });
+    const result = await this.runAdminApi(
+      ['api', '-X', 'PUT', `repos/${repo.owner}/${repo.repo}/branches/${branch}/protection`, '--input', '-'],
+      body
+    );
+    if (!result.ok) {
+      return result;
+    }
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const payload = parsed.value as { required_status_checks?: { contexts?: unknown } };
+    const contexts = payload.required_status_checks?.contexts;
+    return ok({
+      protected: true,
+      requiredChecks: Array.isArray(contexts)
+        ? contexts.filter((name): name is string => typeof name === 'string')
+        : [requiredCheck],
+    });
+  }
+
+  async getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
+    const result = await this.runAdminApi(['api', `repos/${repo.owner}/${repo.repo}`]);
+    if (!result.ok) {
+      return result;
+    }
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const payload = parsed.value as { allow_auto_merge?: unknown };
+    return ok({ enabled: payload.allow_auto_merge === true });
+  }
+
+  async enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
+    const body = JSON.stringify({ allow_auto_merge: true });
+    const result = await this.runAdminApi(
+      ['api', '-X', 'PATCH', `repos/${repo.owner}/${repo.repo}`, '--input', '-'],
+      body
+    );
+    if (!result.ok) {
+      return result;
+    }
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const payload = parsed.value as { allow_auto_merge?: unknown };
+    return ok({ enabled: payload.allow_auto_merge === true });
+  }
+
   private parseJsonOutput(stdout: string): Evidence<unknown> {
     try {
       return ok(JSON.parse(stdout));
     } catch {
       return fail('gh_transport', 'GitHub returned a response that is not valid JSON.');
     }
+  }
+
+  /**
+   * Repository-administration calls (branch protection, auto-merge). Unlike
+   * runCreateGh, HTTP 403 means missing admin permission — a transport
+   * fact for the caller to report, not an authentication problem — and
+   * not_found passes through so reads can treat it as evidence.
+   */
+  private async runAdminApi(
+    args: string[],
+    stdin?: string
+  ): Promise<
+    | { ok: true; value: { stdout: string; stderr: string } }
+    | { ok: false; code: string; message: string; fix?: string }
+  > {
+    const result = await this.runGh(args, stdin);
+    if (!result.ok) {
+      if (result.code === 'gh_missing' || result.code === 'not_found') {
+        return { ok: false, code: result.code, message: result.message, ...(result.fix ? { fix: result.fix } : {}) };
+      }
+      if (/HTTP 401|Bad credentials|gh auth login|not logged in|authentication required/i.test(result.message)) {
+        return fail(
+          'gh_unauthenticated',
+          'GitHub CLI is not authenticated.',
+          'Run "gh auth login" to authenticate.'
+        );
+      }
+      return fail('gh_transport', result.message, result.fix);
+    }
+    return result;
   }
 
   /**

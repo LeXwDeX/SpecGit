@@ -139,6 +139,10 @@ export interface GhScript {
     repo: { owner: string; repo: string },
     head: string
   ) => Evidence<Array<{ number: number; title: string; url: string }>>;
+  branchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
+  enableBranchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
+  repoAutomerge?: Evidence<{ enabled: boolean }>;
+  enableRepoAutomerge?: Evidence<{ enabled: boolean }>;
 }
 
 export function makeGhProvider(
@@ -190,6 +194,34 @@ export function makeGhProvider(
       return (
         behavior.listOpenPrsByHead?.(repo, head) ??
         ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+      );
+    }),
+    getBranchProtection: vi.fn(async (repo: never, branch: string) => {
+      calls.push(`getBranchProtection:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}:${branch}`);
+      return (
+        behavior.branchProtection ??
+        ({ ok: true, value: { protected: false, requiredChecks: [] } } as Evidence<never>)
+      );
+    }),
+    enableBranchProtection: vi.fn(async (repo: never, branch: string, requiredCheck: string) => {
+      calls.push(`enableBranchProtection:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}:${branch}:${requiredCheck}`);
+      return (
+        behavior.enableBranchProtection ??
+        ({ ok: true, value: { protected: true, requiredChecks: [requiredCheck] } } as Evidence<never>)
+      );
+    }),
+    getRepoAutomerge: vi.fn(async (repo: never) => {
+      calls.push(`getRepoAutomerge:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+      return (
+        behavior.repoAutomerge ??
+        ({ ok: true, value: { enabled: false } } as Evidence<never>)
+      );
+    }),
+    enableRepoAutomerge: vi.fn(async (repo: never) => {
+      calls.push(`enableRepoAutomerge:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+      return (
+        behavior.enableRepoAutomerge ??
+        ({ ok: true, value: { enabled: true } } as Evidence<never>)
       );
     }),
   };

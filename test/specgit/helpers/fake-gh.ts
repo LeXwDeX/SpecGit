@@ -28,9 +28,12 @@ const fs = require('node:fs');
 const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_GH_CONFIG, 'utf8'));
 const argv = process.argv.slice(2);
 const args = argv.join(' ');
-// Mirror real gh: '--body-file -' reads the request body from stdin.
+// Mirror real gh: '--body-file -' and '--input -' read their payload from stdin.
 const bodyFileIdx = argv.indexOf('--body-file');
-const readsStdin = bodyFileIdx !== -1 && argv[bodyFileIdx + 1] === '-';
+const inputIdx = argv.indexOf('--input');
+const readsStdin =
+  (bodyFileIdx !== -1 && argv[bodyFileIdx + 1] === '-') ||
+  (inputIdx !== -1 && argv[inputIdx + 1] === '-');
 function statePath() {
   return cfg.statePath || (cfg.logPath + '.state');
 }
