@@ -146,7 +146,7 @@ export interface GhCliGitHubProviderOptions {
   spawnImpl?: SpawnFn;
 }
 
-type CallKind = 'issue' | 'pr' | 'checks';
+type CallKind = 'issue' | 'pr' | 'checks' | 'search';
 
 /**
  * The only real GitHub transport: the `gh` CLI. Detection → auth → invoke;
@@ -228,6 +228,22 @@ export class GhCliGitHubProvider implements GitHubProvider {
     }
 
     return ok({ number: parsed.number, state: parsed.state, pullRequest: parsed.pull_request != null });
+  }
+
+  /** Open issue numbers via the search API (excludes PRs, newest first). */
+  async getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>> {
+    const endpoint =
+      `search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+is:open` +
+      `&per_page=100`;
+    const result = await this.runApi(endpoint, 'search');
+    if (!result.ok) {
+      return result;
+    }
+    const parsed = result.value as { items?: unknown };
+    if (!Array.isArray(parsed.items)) {
+      return fail('gh_transport', 'GitHub returned an unexpected issue-search payload.');
+    }
+    return ok(parsed.items.map((i) => (i as { number?: unknown }).number).filter((n): n is number => typeof n === 'number'));
   }
 
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {

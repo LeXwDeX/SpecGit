@@ -25,6 +25,7 @@ export type GateId =
   | 'origin'
   | 'provider'
   | 'issues'
+  | 'sequence'
   | 'pr'
   | 'closing'
   | 'checks';
@@ -37,6 +38,7 @@ const GATE_ORDER: GateId[] = [
   'origin',
   'provider',
   'issues',
+  'sequence',
   'pr',
   'closing',
   'checks',
@@ -298,6 +300,34 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
 
   const prState: { fact: PrFact | null } = { fact: null };
   const currentPrFact = (): PrFact | null => prState.fact;
+
+  // G7.5 sequencing: with ordered_issues on, no open issue may precede the
+  // delivery's smallest bound issue — deliveries merge in ascending issue
+  // order. Off (the default), the gate passes without any provider call so
+  // the verdict stays complete.
+  const sequencingOn = g7 && policy !== null && policy.ordered_issues === true;
+  if (sequencingOn) {
+    await runGate('sequence', async () => {
+      const open = await gh!.getOpenIssueNumbers(repoRef!);
+      if (!open.ok) {
+        return [makeFailure(open.code)];
+      }
+      const first = Math.min(...binding!.issues);
+      const earlier = open.value.filter((n) => n < first).sort((a, b) => a - b);
+      if (earlier.length > 0) {
+        return [
+          makeFailure('issue_out_of_order', {
+            earliestBound: first,
+            openEarlier: earlier.slice(0, 20),
+          }),
+        ];
+      }
+      return [];
+    });
+  } else if (g7) {
+    results.set('sequence', []);
+  }
+
   const g8 =
     g7 &&
     (await runGate('pr', async () => {

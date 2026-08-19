@@ -36,6 +36,31 @@ describe('policy io', () => {
     expect(read.ok).toBe(true);
     if (!read.ok) return;
     expect(read.value.required_checks).toEqual(['All checks passed']);
+    expect(read.value.ordered_issues).toBeUndefined();
+  });
+
+  it('round-trips ordered_issues: true', async () => {
+    fs.mkdirSync(path.dirname(policyPath()), { recursive: true });
+    fs.writeFileSync(
+      policyPath(),
+      'version: 1\nrequired_checks: [a]\nordered_issues: true\n'
+    );
+    const read = await readPolicy(root);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.ordered_issues).toBe(true);
+  });
+
+  it('rejects a non-boolean ordered_issues', async () => {
+    fs.mkdirSync(path.dirname(policyPath()), { recursive: true });
+    fs.writeFileSync(
+      policyPath(),
+      'version: 1\nrequired_checks: [a]\nordered_issues: yes-please\n'
+    );
+    const read = await readPolicy(root);
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.code).toBe('policy_invalid');
   });
 
   it('rejects an empty required_checks list', async () => {
