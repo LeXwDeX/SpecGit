@@ -112,6 +112,7 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
       'origin',
       'provider',
       'issues',
+      'sequence',
       'pr',
       'closing',
       'checks',

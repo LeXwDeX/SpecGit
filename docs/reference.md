@@ -43,12 +43,14 @@ Located under `spec_git/` at the repository root; the directory is the project m
 version: 1
 required_checks:
   - "All checks passed"
+ordered_issues: true
 ```
 
 | Field | Type | Rule |
 | --- | --- | --- |
 | `version` | `1` | Only `1` is accepted. |
 | `required_checks` | string[] | Non-empty list of non-empty check names, matched exactly. There is no "no required checks" mode. |
+| `ordered_issues` | boolean | Optional, default `false`. When `true`, deliveries must merge in ascending issue order: `specgit finish` rejects (`issue_out_of_order`, exit 1) if any open issue has a number smaller than the smallest bound issue of this delivery. Close or deliver the earlier issue first. |
 
 The policy is strict: unknown keys make it invalid. Required checks are **declared locally** and matched against check runs reported to the PR head commit — they are not read from GitHub rulesets.
 

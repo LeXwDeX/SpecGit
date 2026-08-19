@@ -55,6 +55,8 @@ export interface RepoAutomergeFact {
 export interface GitHubProvider {
   preflight(): Promise<Evidence<{ authenticated: boolean }>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
+  /** Numbers of all open issues (for the ordered_issues sequencing gate). */
+  getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>>;
   getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>>;
   getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>>;
   createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>>;
