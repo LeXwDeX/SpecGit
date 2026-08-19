@@ -16,6 +16,14 @@ import type {
 } from './port.js';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** SPECGIT_GH_TIMEOUT_MS (milliseconds) raises the per-call budget. */
+function readEnvTimeoutMs(env: NodeJS.ProcessEnv): number | null {
+  const raw = env.SPECGIT_GH_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
 const DEFAULT_MAX_BUFFER = 4 * 1024 * 1024;
 const CHECK_RUN_PAGE_SIZE = 100;
 const MAX_CHECK_RUN_PAGES = 10;
@@ -163,7 +171,8 @@ export class GhCliGitHubProvider implements GitHubProvider {
 
   constructor(options: GhCliGitHubProviderOptions = {}) {
     this.env = options.env;
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const envTimeout = readEnvTimeoutMs(options.env ?? process.env);
+    this.timeoutMs = options.timeoutMs ?? envTimeout ?? DEFAULT_TIMEOUT_MS;
     this.maxBuffer = options.maxBuffer ?? DEFAULT_MAX_BUFFER;
     this.explicitGhCommand = options.ghCommand;
     this.spawn = options.spawnImpl ?? defaultSpawn;
@@ -610,6 +619,11 @@ export class GhCliGitHubProvider implements GitHubProvider {
           'Run "gh auth login" to authenticate.'
         );
       }
+      // Timeouts carry their own attributed diagnostic; do not flatten
+      // them into the generic transport failure.
+      if (result.code === 'gh_timeout') {
+        return { ok: false, code: result.code, message: result.message, ...(result.fix ? { fix: result.fix } : {}) };
+      }
       return fail('gh_transport', result.message, result.fix);
     }
     return result;
@@ -676,9 +690,9 @@ export class GhCliGitHubProvider implements GitHubProvider {
       if (err.killed || err.signal === 'SIGTERM') {
         return {
           ok: false,
-          code: 'gh_transport',
+          code: 'gh_timeout',
           message: `GitHub CLI timed out after ${this.timeoutMs} ms.`,
-          fix: 'Check your network connection and try again.',
+          fix: 'A timeout this basic points at one of three causes — check in order: (1) network reachability (curl -sI https://api.github.com), (2) a GitHub incident (https://www.githubstatus.com), (3) a genuinely slow call — raise the budget via SPECGIT_GH_TIMEOUT_MS (milliseconds).',
           error,
         };
       }

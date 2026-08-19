@@ -29,13 +29,24 @@ SpecGit never reads or prints tokens — it relies entirely on your `gh` session
 
 ### `gh_transport` (exit 3)
 
-`gh` reached GitHub but the call failed (network, rate limit, server error, or the 15-second timeout). Retry; if it persists, run the same call by hand to see GitHub's message:
+`gh` reached GitHub but the call failed (network, rate limit, server error). Retry; if it persists, run the same call by hand to see GitHub's message:
 
 ```bash
 gh api repos/<owner>/<repo>
 ```
 
 Rate-limit responses usually self-heal after the window resets.
+
+### `gh_timeout` (exit 3)
+
+A `gh` call exceeded its time budget (default 15 s) and was killed. The fix
+attributes the three likely causes in order:
+
+1. **Network** — `curl -sI https://api.github.com` should answer quickly.
+2. **A GitHub incident** — check <https://www.githubstatus.com>.
+3. **A genuinely slow call** (huge repo, slow link) — raise the budget:
+   `SPECGIT_GH_TIMEOUT_MS=60000 specgit issue ...` (milliseconds; applies to
+   every `gh` invocation SpecGit spawns).
 
 ### `no_origin` / `origin_unresolvable`
 
