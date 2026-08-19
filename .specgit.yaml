@@ -1,8 +1,0 @@
-version: 1
-delivery: release-oidc-environment
-context:
-  kind: branch
-  branch: fix/release-oidc-environment
-issues:
-  - 14
-pr: 15
