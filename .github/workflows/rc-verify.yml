@@ -97,8 +97,11 @@ jobs:
         run: |
           set -e
           # Audience probe: this runner can mint an npm-audience OIDC token.
+          # The response embeds the raw JWT — a short-lived bearer
+          # credential. It goes straight to a file (never piped to the
+          # log); only derived claims and the token length are printed.
           curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npmjs.org" | tee oidc.json
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npmjs.org" > oidc.json
           node --input-type=module <<'EOF'
           import { readFileSync } from 'node:fs';
           const { value } = JSON.parse(readFileSync('oidc.json', 'utf8'));
@@ -107,7 +110,13 @@ jobs:
             console.error('OIDC response is not a JWT');
             process.exit(1);
           }
-          console.log('OIDC token minted for audience npmjs.org (' + value.length + ' chars)');
+          // Safe derived claims only: audience, issuer, expiry, length.
+          const claims = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+          if (claims.aud !== 'npmjs.org') {
+            console.error(`unexpected OIDC audience: ${claims.aud}`);
+            process.exit(1);
+          }
+          console.log(`OIDC token minted for audience ${claims.aud} (issuer ${claims.iss}, exp ${claims.exp}, ${value.length} chars)`);
           EOF
           npm publish --dry-run --ignore-scripts --provenance --tag rc
 
