@@ -1,8 +1,8 @@
 version: 1
-delivery: gitlab-cli
+delivery: release-via-version
 context:
   kind: branch
-  branch: feat/19-gitlab-cli
+  branch: ci/30-release-via-version
 issues:
-  - 19
-pr: 20
+  - 30
+pr: 31
