@@ -5,7 +5,10 @@ export interface RepoRef {
   repo: string;
 }
 
-export function parseRepoRef(originUrl: string): Evidence<RepoRef> {
+export function parseRepoRef(
+  originUrl: string,
+  options: { gitlabHost?: string } = {}
+): Evidence<RepoRef> {
   const url = originUrl.trim();
   if (!url) {
     return fail(
@@ -22,25 +25,45 @@ export function parseRepoRef(originUrl: string): Evidence<RepoRef> {
 
   if (!match) {
     // A GitLab origin is a recognized-but-unsupported platform, not an
-    // unresolvable URL: the diagnostic names the actual gap.
+    // unresolvable URL: the diagnostic names the actual gap. gitlab.com
+    // and *gitlab* hosts are detected from the URL itself; any other
+    // self-hosted host counts only when the user declared it (providers.yaml).
     const gitlabHttps = /^https:\/\/(?:[a-z0-9.-]*gitlab[a-z0-9.-]*)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
     const gitlabScp = /^git@(?:[a-z0-9.-]*gitlab[a-z0-9.-]*):([^/]+)\/([^/]+?)(?:\.git)?$/i.exec(url);
     const gitlabSsh = /^ssh:\/\/git@([a-z0-9.-]*gitlab[a-z0-9.-]*)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
-    if (gitlabHttps ?? gitlabScp ?? gitlabSsh) {
+    const declaredHttps = options.gitlabHost
+      ? new RegExp(`^https://${escapeRegExp(options.gitlabHost.toLowerCase())}/([^/]+)/([^/]+?)(?:\\.git)?/?$`, 'i').exec(url)
+      : null;
+    const declaredScp = options.gitlabHost
+      ? new RegExp(`^${escapeRegExp(options.gitlabHost.toLowerCase())}:([^/]+)/([^/]+?)(?:\\.git)?$`, 'i').exec(
+          url.replace(/^git@/i, '')
+        )
+      : null;
+    const declaredSsh = options.gitlabHost
+      ? new RegExp(
+          `^ssh://git@${escapeRegExp(options.gitlabHost.toLowerCase())}/([^/]+)/([^/]+?)(?:\\.git)?/?$`,
+          'i'
+        ).exec(url)
+      : null;
+    if (gitlabHttps ?? gitlabScp ?? gitlabSsh ?? declaredHttps ?? declaredScp ?? declaredSsh) {
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a GitLab repository; GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
-        'Point origin at a github.com repository (https or ssh), or track the GitLab/glab support roadmap in docs/gitlab-support.md.'
+        'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.'
       );
     }
     return fail(
       'origin_unresolvable',
       `Origin "${truncateUrl(url)}" does not point at a github.com repository.`,
-      'Point origin at a github.com repository (https or ssh).'
+      'Point origin at a github.com repository (https or ssh), or declare a GitLab host via "specgit init --gitlab-host <hostname>".'
     );
   }
 
   return ok({ owner: match[1], repo: match[2] });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function formatRepoRef(repo: RepoRef): string {

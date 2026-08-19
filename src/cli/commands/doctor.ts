@@ -38,7 +38,7 @@ export async function runDoctor(
     if (!facts.originUrl) {
       probes.push({ name: 'origin', ok: false, code: 'no_origin' });
     } else {
-      const parsed = ctx.parseRepoRef(facts.originUrl);
+      const parsed = await ctx.parseRepoRef(facts.originUrl);
       probes.push(
         parsed.ok
           ? { name: 'origin', ok: true, detail: `${parsed.value.owner}/${parsed.value.repo}` }

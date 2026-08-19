@@ -11,7 +11,7 @@ import {
   HARNESS_WORKFLOW_PATH,
   managedPromptBlock,
 } from '../../src/cli/harness-assets.js';
-import { makeCtx, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
+import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const WORKFLOW_ABS = (root: string) => path.join(root, ...HARNESS_WORKFLOW_PATH.split('/'));
@@ -156,6 +156,74 @@ describe('specgit init', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.protection).toMatchObject({ action: 'unavailable' });
+  });
+
+  it('--gitlab-host declares the platform and writes spec_git/providers.yaml', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'git.ycgame.com' });
+    expect(fs.readFileSync(path.join(root, 'spec_git', 'providers.yaml'), 'utf-8')).toContain(
+      'git.ycgame.com'
+    );
+  });
+
+  it('--gitlab-host validates the host against the origin (bare hostname, must match)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'https://evil.com/', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+  });
+
+  it('github.com origin defaults to github mode without asking', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: true,
+      facts: makeGitFacts({}),
+    });
+    // --no-protect keeps this test on the platform path only (protection
+    // would ask its own TTY question).
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'github' });
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+  });
+
+  it('non-github origin without a declaration warns: platform undecided', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'undecided' });
+    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'platform_undecided')).toBe(true);
   });
 
 

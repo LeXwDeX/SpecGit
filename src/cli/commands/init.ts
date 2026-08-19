@@ -19,20 +19,168 @@ import {
   type HarnessWriteResult,
 } from '../harness-assets.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import type { Diagnostic } from '../../kernel/diagnostics.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext } from '../types.js';
 import { detectInitInputs, type DetectionReport } from '../detect-checks.js';
 import type { BranchProtectionFact } from '../../github/port.js';
+import { readProviders, writeProviders } from '../../record/io.js';
 
 export interface InitOptions {
   requiredCheck?: string[];
   force?: boolean;
   detect?: boolean;
-  /** true (--protect): enable without asking; false (--no-protect): skip probing; undefined: ask on TTY. */
   protect?: boolean;
+  /** true (--protect): enable without asking; false (--no-protect): skip probing; undefined: ask on TTY. */
+  gitlabHost?: string;
   json?: boolean;
 }
 
 const FALLBACK_CHECK = 'All checks passed';
+
+const BARE_HOSTNAME = /^[A-Za-z0-9.-]+$/;
+
+interface PlatformOutcome {
+  [key: string]: unknown;
+  mode: 'github' | 'gitlab' | 'undecided';
+  gitlabHost?: string;
+}
+
+/** Origin host of the common URL shapes (https / scp / ssh), lowercase. */
+function originHost(originUrl: string): string | null {
+  const https = /^https:\/\/([^/]+)\//i.exec(originUrl);
+  if (https) return https[1].toLowerCase();
+  const scp = /^git@([^:]+):/i.exec(originUrl);
+  if (scp) return scp[1].toLowerCase();
+  const ssh = /^ssh:\/\/git@([^/]+)\//i.exec(originUrl);
+  if (ssh) return ssh[1].toLowerCase();
+  return null;
+}
+
+/**
+ * Validate and persist an explicit --gitlab-host declaration. Returns a
+ * CommandOutcome on usage error, null to continue the init flow.
+ */
+async function declareGitlabHost(
+  options: InitOptions,
+  ctx: CommandContext,
+  root: string,
+  warnings: Diagnostic[]
+): Promise<CommandOutcome | null> {
+  const host = options.gitlabHost!.trim().toLowerCase();
+  const facts = await ctx.git.facts(root).catch(() => null);
+  const originH = facts?.originUrl ? originHost(facts.originUrl) : null;
+  if (!BARE_HOSTNAME.test(host)) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'gitlab_host_invalid',
+          `"${host}" is not a bare hostname (no scheme, no path).`,
+          { fix: 'Pass the host only, e.g. --gitlab-host git.ycgame.com.' }
+        ),
+      ],
+    };
+  }
+  if (originH !== null && originH !== 'github.com' && host !== originH) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'gitlab_host_invalid',
+          `The declared host "${host}" does not match the origin host "${originH}".`,
+          { fix: `Declare the origin's own host: --gitlab-host ${originH}.` }
+        ),
+      ],
+    };
+  }
+  try {
+    await writeProviders(root, { gitlab: { host, insecure_ssl: false } });
+  } catch {
+    warnings.push({
+      severity: 'warning',
+      code: 'providers_write_failed',
+      message: `Could not write ${SPEC_GIT_DIR}/providers.yaml.`,
+    });
+  }
+  return null;
+}
+
+/**
+ * Platform-mode selection: a github.com origin defaults to GitHub; any
+ * other origin needs a declaration (TTY question or --gitlab-host). The
+ * choice persists in spec_git/providers.yaml, team-shared. Evidence
+ * providers are the official CLIs only — gh for GitHub, glab for GitLab.
+ */
+async function resolvePlatformMode(
+  options: InitOptions,
+  ctx: CommandContext,
+  root: string,
+  warnings: Diagnostic[]
+): Promise<{ outcome: PlatformOutcome; human: string[] }> {
+  const facts = await ctx.git.facts(root).catch(() => null);
+  const originUrl = facts?.originUrl ?? null;
+
+  const existing = await readProviders(root);
+  const declaredHost = existing.ok ? existing.value.gitlab?.host : undefined;
+
+  // The explicit flag already declared (or errored) before the policy
+  // write; here the persisted declaration and heuristics speak.
+  if (declaredHost !== undefined) {
+    return { outcome: { mode: 'gitlab', gitlabHost: declaredHost }, human: [] };
+  }
+
+  if (!originUrl) {
+    return { outcome: { mode: 'undecided' }, human: [] };
+  }
+  const host = originHost(originUrl);
+  if (host === 'github.com') {
+    return { outcome: { mode: 'github' }, human: ['Platform: github (default from origin)'] };
+  }
+  if (host !== null && /(^|\.)gitlab/i.test(host)) {
+    // gitlab.com or a *gitlab* self-host: declarable without asking.
+    try {
+      await writeProviders(root, { gitlab: { host, insecure_ssl: false } });
+    } catch {
+      // Non-fatal: the URL heuristic still classifies later commands.
+    }
+    return {
+      outcome: { mode: 'gitlab', gitlabHost: host },
+      human: [`Platform: gitlab (${host}) declared in ${SPEC_GIT_DIR}/providers.yaml`],
+    };
+  }
+
+  // Non-github, non-obvious host: ask on a TTY; warn otherwise.
+  if (ctx.stdinIsTTY && host !== null) {
+    const { select } = await import('@inquirer/prompts');
+    const choice = await select({
+      message: `Origin host "${host}" is not github.com — which platform is this repository on?`,
+      choices: [
+        { value: 'gitlab' },
+        { value: 'github' },
+      ],
+    });
+    if (choice === 'gitlab') {
+      try {
+        await writeProviders(root, { gitlab: { host, insecure_ssl: false } });
+      } catch {
+        // Non-fatal.
+      }
+      return {
+        outcome: { mode: 'gitlab', gitlabHost: host },
+        human: [`Platform: gitlab (${host}) declared in ${SPEC_GIT_DIR}/providers.yaml`],
+      };
+    }
+    return { outcome: { mode: 'github' }, human: ['Platform: github (user-selected)'] };
+  }
+
+  warnings.push({
+    severity: 'warning',
+    code: 'platform_undecided',
+    message: `Origin host "${host ?? 'unknown'}" is neither github.com nor a declared GitLab host.`,
+    fix: 'Re-run init with --gitlab-host <hostname>, or answer the platform question on an interactive terminal.',
+  });
+  return { outcome: { mode: 'undecided' }, human: [] };
+}
 
 interface ProtectionOutcome {
   [key: string]: unknown;
@@ -68,7 +216,7 @@ async function guardAcceptanceBypass(
   if (!originUrl) {
     return { human: ['Warning: no origin remote — cannot probe branch protection.'] };
   }
-  const repoEv = ctx.parseRepoRef(originUrl);
+  const repoEv = await ctx.parseRepoRef(originUrl);
   if (!repoEv.ok) {
     return { human: [`Warning: cannot resolve a GitHub repository from '${originUrl}' — protection not probed.`] };
   }
@@ -260,6 +408,17 @@ export async function runInit(
     };
   }
 
+  const warnings: Diagnostic[] = [];
+
+  // Platform-mode declaration is independent of the policy: it must work on
+  // re-init too (policy_exists exits before the tail of the command).
+  if (options.gitlabHost !== undefined) {
+    const declared = await declareGitlabHost(options, ctx, root, warnings);
+    if (declared !== null) {
+      return declared;
+    }
+  }
+
   const existingPolicy = await ctx.record.readPolicy(root);
   if (existingPolicy.ok && !options.force) {
     return {
@@ -293,6 +452,8 @@ export async function runInit(
     };
   }
 
+  const platform = await resolvePlatformMode(options, ctx, root, warnings);
+
   let protection: ProtectionOutcome | undefined;
   let protectionHuman: string[] = [];
   if (options.protect !== false) {
@@ -304,6 +465,8 @@ export async function runInit(
   return {
     exit: EXIT_SUCCESS,
     policy,
+    platform: platform.outcome,
+    ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),
     ...(detected !== null
       ? {
@@ -319,6 +482,7 @@ export async function runInit(
       `Created ${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
       `Required checks (${checks.length}):`,
       ...checks.map((name) => `  - ${name}`),
+      ...platform.human,
       ...(detected !== null
         ? [`Detected platform: ${detected.platform}`, ...detected.sources.map((s) => `  detected from ${s}`)]
         : []),
