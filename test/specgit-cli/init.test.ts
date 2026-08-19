@@ -98,6 +98,56 @@ describe('specgit init', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.policy).toEqual({ version: 1, required_checks: ['build', 'Test (linux)'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
+    expect(envelope.detected.fallback).toBe(false);
+  });
+
+  it('detects gitlab-ci job keys when no GitHub workflows exist', async () => {
+    fs.writeFileSync(
+      path.join(root, '.gitlab-ci.yml'),
+      'stages:\n  - build\n  - test\ninclude:\n  - local: /templates.yml\nbuild-job:\n  script: echo build\ntest-job:\n  script: echo test\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['build-job', 'test-job'] });
+    expect(envelope.detected.sources).toEqual(['.gitlab-ci.yml']);
+  });
+
+  it('reports the detected platform from the origin URL', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    // makeCtx's default facts carry a github.com origin; platform detection
+    // reads it through ctx.git.facts.
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.detected.platform).toBe('github');
+    expect(typeof envelope.detected.clis.gh).toBe('boolean');
+    expect(typeof envelope.detected.clis.glab).toBe('boolean');
+  });
+
+  it('--no-detect without --required-check exits 2 (strict legacy path)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--no-detect', '--json'], t.ctx);
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('required_check_required');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+  });
+
+  it('--force rebuilds an existing policy', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'] },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--force', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites).toEqual([
+      { policy: { version: 1, required_checks: ['New'] }, root },
+    ]);
   });
 
   it('generates the guard hooks and the git pre-push hook', async () => {
