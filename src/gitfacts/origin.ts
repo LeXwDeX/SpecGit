@@ -21,6 +21,18 @@ export function parseRepoRef(originUrl: string): Evidence<RepoRef> {
   const match = https ?? scp ?? ssh;
 
   if (!match) {
+    // A GitLab origin is a recognized-but-unsupported platform, not an
+    // unresolvable URL: the diagnostic names the actual gap.
+    const gitlabHttps = /^https:\/\/(?:[a-z0-9.-]*gitlab[a-z0-9.-]*)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
+    const gitlabScp = /^git@(?:[a-z0-9.-]*gitlab[a-z0-9.-]*):([^/]+)\/([^/]+?)(?:\.git)?$/i.exec(url);
+    const gitlabSsh = /^ssh:\/\/git@([a-z0-9.-]*gitlab[a-z0-9.-]*)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
+    if (gitlabHttps ?? gitlabScp ?? gitlabSsh) {
+      return fail(
+        'gitlab_unsupported',
+        `Origin "${truncateUrl(url)}" points at a GitLab repository; GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
+        'Point origin at a github.com repository (https or ssh), or track the GitLab/glab support roadmap in docs/gitlab-support.md.'
+      );
+    }
     return fail(
       'origin_unresolvable',
       `Origin "${truncateUrl(url)}" does not point at a github.com repository.`,

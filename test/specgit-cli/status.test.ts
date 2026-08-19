@@ -114,7 +114,7 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(envelope.errors[0].code).toBe('not_a_git_repo');
   });
 
-  it('reports an unresolvable origin without failing the run', async () => {
+  it('reports a gitlab origin as gitlab_unsupported without failing the run', async () => {
     const t = makeCtx({
       record: sampleBinding(),
       policy: samplePolicy(),
@@ -125,7 +125,7 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     const envelope = parseStdoutJson(t.io);
     const gate = envelope.gates.find((g: any) => g.id === 'origin');
     expect(gate.status).toBe('fail');
-    expect(gate.failures.map((f: any) => f.code)).toEqual(['origin_unresolvable']);
+    expect(gate.failures.map((f: any) => f.code)).toEqual(['gitlab_unsupported']);
   });
 
   it('never contacts the GitHub provider', async () => {
