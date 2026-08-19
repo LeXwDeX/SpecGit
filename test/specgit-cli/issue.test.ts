@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { DeliveryBinding } from '../../src/record/schema.js';
+import { ok } from '../../src/kernel/evidence.js';
 import { runIssue } from '../../src/cli/commands/issue.js';
 import {
   makeCtx,
@@ -244,6 +245,36 @@ describe('specgit issue: idempotent resume', () => {
     const outcome = await runIssue({ titles: ['feat: something else'] }, t.ctx);
     expect(outcome.exit).toBe(2);
     expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+  });
+
+  it('replaces a merged-delivery record instead of refusing (lifecycle)', async () => {
+    // The record's PR is merged: completed history. A new issue run must
+    // replace the record and bootstrap a fresh delivery.
+    const mergedRecord = sampleBinding({
+      delivery: 'strict-delivery-harness',
+      context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+      issues: [11, 12],
+      pr: 42,
+    });
+    const t = issueCtx({
+      facts: { branch: 'feat/77-brand-new-work' },
+      record: mergedRecord,
+      gh: {
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'merged' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'd'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11 Closes #12',
+          }),
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new work'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: brand new work']);
+    expect(t.harness.createdPrs).toHaveLength(1);
   });
 
   it('refuses numeric arguments that are not in the record', async () => {
