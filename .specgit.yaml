@@ -1,8 +1,8 @@
 version: 1
-delivery: release-idempotence-and
+delivery: prompt-agents-to
 context:
   kind: branch
-  branch: fix/45-release-idempotence-and
+  branch: feat/33-prompt-agents-to
 issues:
-  - 45
-pr: 46
+  - 33
+pr: 34
