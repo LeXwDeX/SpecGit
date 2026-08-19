@@ -128,6 +128,56 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(gate.failures.map((f: any) => f.code)).toEqual(['gitlab_unsupported']);
   });
 
+  it('fails closed (exit 3) when the policy is missing', async () => {
+    const t = makeCtx({ record: sampleBinding(), policy: 'none' });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('unknown');
+    expect(envelope.state).toBe('bound');
+    expect(envelope.errors[0].code).toBe('policy_missing');
+    const policy = envelope.gates.find((g: any) => g.id === 'policy');
+    expect(policy.status).toBe('fail');
+  });
+
+  it('fails closed (exit 3) when the policy is invalid', async () => {
+    const t = makeCtx({ record: sampleBinding(), policy: 'invalid' });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('policy_invalid');
+  });
+
+  it('fails closed (exit 3) when git cannot be spawned', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ gitAvailable: false }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('unknown');
+    expect(envelope.errors.map((e: any) => e.code)).toContain('git_unavailable');
+    const context = envelope.gates.find((g: any) => g.id === 'context');
+    expect(context.status).toBe('fail');
+    expect(context.failures.map((f: any) => f.code)).toEqual(['git_unavailable']);
+  });
+
+  it('classifies repository state through the three-tier asset taxonomy', async () => {
+    const t = makeCtx({ record: sampleBinding(), policy: samplePolicy() });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(Object.keys(envelope.assets).sort()).toEqual([
+      'authoritativeCommitted',
+      'derivedCommittedHarness',
+      'localIntegrationAssets',
+    ]);
+    expect(envelope.assets.authoritativeCommitted.paths).toContain('spec_git/policy.yaml');
+    expect(envelope.assets.derivedCommittedHarness.paths).toContain('.github/workflows/specgit-accept.yml');
+  });
+
   it('never contacts the GitHub provider', async () => {
     const t = makeCtx({ record: sampleBinding(), policy: samplePolicy() });
     await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);

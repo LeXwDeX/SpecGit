@@ -123,6 +123,17 @@ export function completenessGate(binding: DeliveryBinding): GateResult {
 }
 
 export function contextGate(binding: DeliveryBinding, facts: GitFacts): GateResult {
+  if (!facts.gitAvailable) {
+    return {
+      id: 'context',
+      status: 'fail',
+      failures: [
+        failure('git_unavailable', 'The git executable could not be spawned.', {
+          fix: 'Install git and ensure it is on PATH.',
+        }),
+      ],
+    };
+  }
   if (facts.branch === null) {
     return {
       id: 'context',
