@@ -173,10 +173,10 @@ export function contextGate(binding: DeliveryBinding, facts: GitFacts): GateResu
   return { id: 'context', status: 'pass', failures: [] };
 }
 
-export function originGate(
+export async function originGate(
   facts: GitFacts,
-  parseRepoRef: (originUrl: string) => Evidence<RepoRef>
-): { gate: GateResult; repo: string | null } {
+  parseRepoRef: (originUrl: string) => Evidence<RepoRef> | Promise<Evidence<RepoRef>>
+): Promise<{ gate: GateResult; repo: string | null }> {
   if (!facts.originUrl) {
     return {
       gate: {
@@ -191,7 +191,7 @@ export function originGate(
       repo: null,
     };
   }
-  const parsed = parseRepoRef(facts.originUrl);
+  const parsed = await parseRepoRef(facts.originUrl);
   if (!parsed.ok) {
     return {
       gate: {

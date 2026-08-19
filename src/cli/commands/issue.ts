@@ -152,7 +152,7 @@ export async function runIssue(
       ],
     };
   }
-  const repoEv = ctx.parseRepoRef(facts.originUrl);
+  const repoEv = await ctx.parseRepoRef(facts.originUrl);
   if (!repoEv.ok) {
     return passthrough(repoEv);
   }

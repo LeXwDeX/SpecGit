@@ -84,5 +84,5 @@ export interface CommandContext {
   gh: GitHubProvider;
   record: RecordPort;
   evaluate: EvaluateFn;
-  parseRepoRef(originUrl: string): Evidence<RepoRef>;
+  parseRepoRef(originUrl: string): Evidence<RepoRef> | Promise<Evidence<RepoRef>>;
 }

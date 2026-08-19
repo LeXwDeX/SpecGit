@@ -22,6 +22,7 @@ import { parseRepoRef } from '../gitfacts/origin.js';
 import { GhCliGitHubProvider } from '../github/gh-cli.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import * as recordIo from '../record/io.js';
+import { readProviders } from '../record/io.js';
 import { discoverRepoRoot } from '../record/root.js';
 import type { CommandContext } from './types.js';
 
@@ -80,6 +81,22 @@ export function createDefaultContext(): CommandContext {
   const git = new LocalGitAdapter();
   const gh = new GhCliGitHubProvider();
 
+  // Provider declarations (spec_git/providers.yaml) decide how non-github
+  // origins classify; resolved once per command context and threaded into
+  // every parseRepoRef / evaluate call site.
+  const declaredGitlabHost = async (): Promise<string | undefined> => {
+    try {
+      const rootEv = await discoverRepoRoot(process.cwd());
+      if (!rootEv.ok) return undefined;
+      const providers = await readProviders(rootEv.value);
+      return providers.ok ? providers.value.gitlab?.host : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const parseRepoRefWithProviders = async (originUrl: string) =>
+    parseRepoRef(originUrl, { gitlabHost: await declaredGitlabHost() });
+
   return {
     io: consoleIO(),
     version,
@@ -90,7 +107,8 @@ export function createDefaultContext(): CommandContext {
     git,
     gh,
     record: recordIo,
-    evaluate,
-    parseRepoRef,
+    evaluate: (async (input: Parameters<typeof evaluate>[0]) =>
+      evaluate({ ...input, gitlabHost: await declaredGitlabHost() })) as typeof evaluate,
+    parseRepoRef: parseRepoRefWithProviders as CommandContext['parseRepoRef'],
   };
 }

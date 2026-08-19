@@ -62,7 +62,7 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Co
         ],
       };
     }
-    const repoEv = ctx.parseRepoRef(facts.originUrl);
+    const repoEv = await ctx.parseRepoRef(facts.originUrl);
     if (!repoEv.ok) {
       return {
         exit: EXIT_UNKNOWN,

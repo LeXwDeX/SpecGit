@@ -64,7 +64,7 @@ export async function runStatus(
     completenessGate(record),
     contextGate(record, facts),
   ];
-  const origin = originGate(facts, ctx.parseRepoRef);
+  const origin = await originGate(facts, ctx.parseRepoRef);
   gates.push(origin.gate);
 
   const state = deriveBindingState(record);

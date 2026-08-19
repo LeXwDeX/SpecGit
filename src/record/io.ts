@@ -5,6 +5,7 @@ import YAML from 'yaml';
 
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import { PolicySchema, type Policy } from './policy.js';
+import { ProvidersSchema, type Providers } from './providers.js';
 import {
   POLICY_FILENAME,
   RECORD_FILENAME,
@@ -232,8 +233,7 @@ export async function deleteRecord(root: string): Promise<void> {
   });
 }
 
-export async function readPolicy(root: string): Promise<Evidence<Policy>> {
-  let raw: string;
+export async function readPolicy(root: string): Promise<Evidence<Policy>> {  let raw: string;
   try {
     raw = await fs.readFile(policyPath(root), 'utf-8');
   } catch (error) {
@@ -267,5 +267,51 @@ export async function writePolicy(root: string, policy: Policy): Promise<void> {
   const target = policyPath(root);
   await withFileLock(`${target}.lock`, async () => {
     await writeFileAtomically(target, YAML.stringify(policy));
+  });
+}
+
+export function providersPath(root: string): string {
+  return path.join(policyDir(root), 'providers.yaml');
+}
+
+export async function readProviders(root: string): Promise<Evidence<Providers>> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(providersPath(root), 'utf-8');
+  } catch (error) {
+    if (isMissingFile(error)) {
+      return fail(
+        'providers_missing',
+        `No provider configuration found at ${providersPath(root)}.`,
+        'Optional: declare a self-hosted GitLab host via "specgit init --gitlab-host <hostname>".'
+      );
+    }
+    throw error;
+  }
+
+  const shape = parseYamlObject(raw);
+  if (!shape.ok) {
+    return fail(
+      'providers_invalid',
+      `Provider configuration is invalid: ${shape.message}`,
+      'Recreate spec_git/providers.yaml.'
+    );
+  }
+
+  const result = ProvidersSchema.safeParse(shape.value);
+  if (!result.success) {
+    return fail(
+      'providers_invalid',
+      'Provider configuration is invalid: gitlab.host must be a bare hostname and unknown keys are rejected.',
+      'Recreate spec_git/providers.yaml.'
+    );
+  }
+  return ok(result.data);
+}
+
+export async function writeProviders(root: string, providers: Providers): Promise<void> {
+  const target = providersPath(root);
+  await withFileLock(`${target}.lock`, async () => {
+    await writeFileAtomically(target, YAML.stringify(providers));
   });
 }
