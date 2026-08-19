@@ -65,21 +65,26 @@ jobs:
           git commit -am "chore(release): v${VERSION}"
           git push --force origin changeset-release/main
           BODY="Automated version bump. Merging publishes specgit@${VERSION} to npm and tags v${VERSION}."
-          # create may fail on permissions; reuse only a PR that is OPEN
-          # (editing a closed one silently masks the failure). MERGED means
-          # this version already shipped — nothing to do.
+          # create may fail on permissions; the branch may also still carry
+          # the PREVIOUS (merged) version PR — that only means this version
+          # shipped if its tag exists. Decide by tag, never by PR state.
           if ! gh pr create --base main --head changeset-release/main \
             --title "chore(release): v${VERSION}" --body "$BODY"; then
-            STATE=$(gh pr view changeset-release/main --json state --jq .state 2>/dev/null || echo MISSING)
-            if [ "$STATE" = "MERGED" ]; then
-              echo "Version PR for v${VERSION} already merged; nothing to do."
+            if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+              echo "Tag v${VERSION} already exists; v${VERSION} already shipped. Nothing to do."
               exit 0
             fi
-            if [ "$STATE" != "OPEN" ]; then
-              echo "::error::version PR is not open (state: $STATE) and could not be created"
-              exit 1
+            STATE=$(gh pr view changeset-release/main --json state --jq .state 2>/dev/null || echo MISSING)
+            if [ "$STATE" = "OPEN" ]; then
+              gh pr edit changeset-release/main --title "chore(release): v${VERSION}" --body "$BODY"
+            else
+              # MERGED/CLOSED for an older version (tag absent): recreate.
+              gh pr create --base main --head changeset-release/main \
+                --title "chore(release): v${VERSION}" --body "$BODY" || {
+                echo "::error::version PR for v${VERSION} could not be created (state: $STATE)"
+                exit 1
+              }
             fi
-            gh pr edit changeset-release/main --title "chore(release): v${VERSION}" --body "$BODY"
           fi
           gh pr merge changeset-release/main --auto --squash --delete-branch
 
