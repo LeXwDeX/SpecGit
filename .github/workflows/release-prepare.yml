@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write # tag push + GitHub Release
+  id-token: write # npm OIDC trusted publishing
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,7 +20,9 @@ jobs:
   release:
     if: github.repository == 'LeXwDeX/SpecGit'
     runs-on: ubuntu-latest
-    # The npm automation token lives in the "NPM" environment (secret KEY).
+    # Matches the npm trusted publisher configuration (repository +
+    # workflow file + environment). The NPM environment also carries the
+    # KEY automation-token secret as a fallback credential.
     environment: NPM
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,7 +33,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20.19.0'
+          node-version: '24' # Node 24 ships npm 11.5.1+ required for OIDC trusted publishing
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
@@ -55,7 +58,6 @@ jobs:
       - name: Publish to npm
         if: steps.version.outputs.before != steps.version.outputs.after
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.KEY }}
           VERSION: ${{ steps.version.outputs.after }}
         run: |
           if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
@@ -63,7 +65,10 @@ jobs:
             exit 0
           fi
           pnpm run check:pack-version
-          npm publish --access public
+          # npm authentication via OIDC trusted publishing (id-token: write
+          # + registry-url). NODE_AUTH_TOKEN from the environment secret is
+          # unnecessary when the trusted publisher matches.
+          npm publish --access public --provenance
 
       - name: Commit version bump and push tag
         if: steps.version.outputs.before != steps.version.outputs.after
