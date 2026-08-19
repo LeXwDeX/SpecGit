@@ -107,6 +107,184 @@ describe('parseRepoRef', () => {
   });
 });
 
+// Mutation-sensitive hardening corpus for CodeQL alerts 1-4: every block
+// targets a specific regression (substring classification over the raw
+// URL, first-`@` scp splitting, unanchored/suffix host comparison,
+// polynomial regex reintroduction) and fails if it comes back.
+describe('parseRepoRef — structural host classification (security hardening)', () => {
+  const unresolvable = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('origin_unresolvable');
+  };
+  const gitlab = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gitlab_unsupported');
+  };
+
+  it('never matches github.com in userinfo (kills full-URL substring classification)', () => {
+    unresolvable('https://github.com@evil.com/o/r');
+    unresolvable('https://github.com:secret@evil.com/o/r');
+    unresolvable('https://user:github.com@evil.com/o/r');
+    unresolvable('https://git@github.com.evil.com@evil.com/o/r');
+    // userinfo on the real host is rejected too (fail-closed)
+    unresolvable('https://git@github.com/o/r');
+    unresolvable('https://oauth2@github.com/o/r');
+    unresolvable('ssh://github.com@evil.com/o/r');
+  });
+
+  it('never matches github.com or gitlab in the path', () => {
+    unresolvable('https://evil.com/github.com/o/r');
+    unresolvable('https://evil.com/some/github.com/decoy/o/r');
+    unresolvable('https://evil.com/gitlab/o/r');
+    unresolvable('https://evil.com/gitlab.com/owner/repo.git');
+    // a real github host with a decoy "gitlab" owner stays github
+    const decoy = parseRepoRef('https://github.com/gitlab/repokit');
+    expect(decoy.ok).toBe(true);
+  });
+
+  it('never matches in the query or fragment', () => {
+    unresolvable('https://evil.com/o/r?goto=github.com');
+    unresolvable('https://evil.com/o/r?gitlab=1&x=2');
+    unresolvable('https://github.com.evil.com/o/r?x=1');
+    unresolvable('ssh://git@github.com/o/r?x=1');
+    unresolvable('https://evil.com/o/r#github.com');
+    unresolvable('https://evil.com/o/r#gitlab');
+  });
+
+  it('never matches attacker-controlled host suffixes or prefixes', () => {
+    unresolvable('https://github.com.evil.com/o/r');
+    unresolvable('https://github.com.evil.com/o/r.git');
+    unresolvable('https://evil-github.com/o/r');
+    unresolvable('git@github.com.evil.com:o/r');
+    unresolvable('ssh://git@github.com.evil.com/o/r');
+    // the gitlab heuristic is host-scoped, so a spoofs-with-contains host
+    // still lands in the fail-closed gitlab diagnostic, never in github
+    gitlab('https://gitlab.com.evil.com/o/r');
+    gitlab('https://notgitlab.example.com/o/r');
+  });
+
+  it('scp userinfo cannot smuggle a host (last-@ wins, user must be git)', () => {
+    unresolvable('git@gitlab.com@github.com:o/r');
+    unresolvable('git@github.com@evil.com:o/r');
+    unresolvable('git@bob@github.com:o/r');
+    unresolvable('bob@github.com:o/r');
+    unresolvable('bob@gitlab.com:o/r');
+    unresolvable('ssh://bob@github.com/o/r');
+    unresolvable('ssh://git:password@github.com/o/r');
+  });
+
+  it('rejects explicit non-default ports on every track', () => {
+    unresolvable('https://github.com:8443/o/r');
+    unresolvable('ssh://git@github.com:22/o/r');
+    unresolvable('https://gitlab.com:8443/o/r');
+    unresolvable('https://git.ycgame.com:8443/o/r', { gitlabHost: 'git.ycgame.com' });
+    // scp syntax has no port slot: a port-looking segment breaks the
+    // two-segment owner/repo shape and stays unresolvable
+    unresolvable('git@gitlab.com:8443/o/r');
+    unresolvable('git@git.ycgame.com:8443/o/r', { gitlabHost: 'git.ycgame.com' });
+  });
+
+  it('pins the widened shapes: default https port and normalized host case', () => {
+    const r443 = parseRepoRef('https://github.com:443/o/r');
+    expect(r443.ok).toBe(true);
+    if (r443.ok) expect(r443.value).toEqual({ owner: 'o', repo: 'r' });
+
+    const mixedCase = parseRepoRef('git@GitHub.com:o/r');
+    expect(mixedCase.ok).toBe(true);
+    if (mixedCase.ok) expect(mixedCase.value).toEqual({ owner: 'o', repo: 'r' });
+
+    const upperSsh = parseRepoRef('SSH://Git@GitHub.COM/o/r');
+    expect(upperSsh.ok).toBe(true);
+
+    gitlab('ssh://git@GitLab.com/o/r');
+    gitlab('git@GitLab.example.com:o/r');
+
+    // the scp user itself stays case-sensitive on the generic tracks
+    unresolvable('Git@github.com:o/r');
+    unresolvable('GIT@gitlab.com:o/r');
+  });
+
+  it('pins path shapes per track', () => {
+    unresolvable('https://github.com');
+    unresolvable('ssh://git@github.com');
+    unresolvable('https://github.com/o//r');
+    unresolvable('https://github.com/o/r//');
+    unresolvable('https://github.com/o/r/extra');
+    unresolvable('git@github.com:o/r/');
+    unresolvable('git@github.com:/o/r');
+    unresolvable('git@github.com:');
+    unresolvable('https://github.com/o%2Fonly');
+  });
+
+  it('pins .git suffix handling', () => {
+    const doubled = parseRepoRef('https://github.com/o/r.git.git');
+    expect(doubled.ok).toBe(true);
+    if (doubled.ok) expect(doubled.value).toEqual({ owner: 'o', repo: 'r.git' });
+
+    const bare = parseRepoRef('https://github.com/o/.git');
+    expect(bare.ok).toBe(true);
+    if (bare.ok) expect(bare.value).toEqual({ owner: 'o', repo: '.git' });
+  });
+
+  it('pins declared-host matching: exact, user-tolerant, spoof-proof', () => {
+    gitlab('git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    gitlab('Git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    gitlab('git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    gitlab('ssh://git@git.ycgame.com/o/r', { gitlabHost: 'git.ycgame.com' });
+    gitlab('https://GIT.YCGAME.COM/o/r', { gitlabHost: 'GIT.YCGAME.COM' });
+    // non-github.com suffixes never match the declaration
+    unresolvable('git@git.ycgame.com.evil.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('git@sourceforge.git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    // a declared host never captures the github.com exact match
+    const githubWins = parseRepoRef('git@github.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    expect(githubWins.ok).toBe(true);
+  });
+
+  it('rejects oversized origins before any parsing', () => {
+    unresolvable(`https://github.com/o/${'a'.repeat(5000)}`);
+    unresolvable(`${'a'.repeat(5000)}:o/r`);
+  });
+
+  it('classifies long adversarial inputs within a bounded time budget', () => {
+    // Inputs sized to turn the removed polynomial GitLab regexes into
+    // multi-second backtracking (O(n^2): repeated `gitlab` literals plus a
+    // class-breaking char; ~1.4s per old regex at repeat(20_000)); the
+    // structural parser (or the length cap) must stay far inside the
+    // budget.
+    const hostile = [
+      `https://${'a'.repeat(60_000)}.com/o/r.git`,
+      `https://${'a'.repeat(30_000)}gitlab${'a'.repeat(30_000)}.com/o/r`,
+      `https://github.com/${'a'.repeat(60_000)}/${'b'.repeat(60_000)}`,
+      `git@${'a'.repeat(60_000)}.com:o/r.git`,
+      `ssh://git@${'a'.repeat(60_000)}.com/o/r`,
+      `${'a'.repeat(60_000)}:${'b'.repeat(60_000)}/c`,
+      `git@gitlab.com:${'a/'.repeat(30_000)}tail`,
+      `https://${'gitlab'.repeat(20_000)}!/o/r`,
+      `git@${'gitlab'.repeat(20_000)}!:o/r`,
+      `ssh://git@${'gitlab'.repeat(20_000)}!/o/r`,
+    ];
+    const start = performance.now();
+    for (const url of hostile) {
+      expect(parseRepoRef(url).ok).toBe(false);
+    }
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(750);
+  });
+
+  it('stays fast on sub-cap adversarial hosts (no pathological parsing)', () => {
+    const subCap = `https://${'a'.repeat(4070)}.com/o/r`;
+    const start = performance.now();
+    for (let i = 0; i < 100; i += 1) {
+      expect(parseRepoRef(subCap).ok).toBe(false);
+    }
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+});
+
 describe('parsePrUrl', () => {
   it('parses a canonical github.com PR URL', () => {
     const result = parsePrUrl('https://github.com/LeXwDeX/SpecGit/pull/42');
