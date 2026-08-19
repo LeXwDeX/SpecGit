@@ -1,5 +1,36 @@
 # specgit
 
+## 0.7.1
+
+### Patch Changes
+
+- [#51](https://github.com/LeXwDeX/SpecGit/pull/51) [`1e524f1`](https://github.com/LeXwDeX/SpecGit/commit/1e524f1aeadf3fd94d473ba8e379bbfa86ef930b) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Release idempotence decided by tag existence
+
+  The release workflow treated a MERGED version PR as "already shipped" — but
+  the `changeset-release/main` branch keeps the previous version's merged PR,
+  so the next release was silently skipped. The check now decides by tag:
+  `v<version>` already on the remote means shipped (exit 0); otherwise the
+  version PR is created (or recreated after an older merge), regardless of
+  the stale PR state.
+
+- [#49](https://github.com/LeXwDeX/SpecGit/pull/49) [`197a757`](https://github.com/LeXwDeX/SpecGit/commit/197a757339ea0afda231a546e7b6b2b04353bb0b) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Review findings addressed
+
+  - `specgit init` interactive prompts (platform select, protection confirm)
+    render to stderr, keeping the `--json` stdout contract (exactly one JSON
+    document) intact on interactive terminals.
+  - `--gitlab-host` on a github.com origin is rejected (`gitlab_host_invalid`)
+    instead of silently writing a nonsensical declaration.
+  - The wiring evaluate wrapper no longer clobbers a caller-supplied
+    `gitlabHost`; provider discovery only fills the gap.
+  - Docs updated for the platform-mode model: `--gitlab-host` in the init flag
+    table, the `platform` envelope section, and the `spec_git/providers.yaml`
+    schema in the reference.
+  - Acceptance workflow: `workflow_dispatch` runs now work (the sibling-wait
+    SHA falls back to `github.sha`); the dead bootstrap step on the hosted job
+    is removed; the CI bootstrap condition keys on the stable
+    `matrix.label == 'self-hosted-linux'` instead of the runner machine name.
+  - Tests pin the github.com-rejection branch and suffix-host spoof immunity.
+
 ## 0.7.0
 
 ### Minor Changes
