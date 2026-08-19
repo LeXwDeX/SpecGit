@@ -6,3 +6,4 @@ context:
   branch: fix/39-init-detection-skips
 issues:
   - 39
+pr: 40
