@@ -52,9 +52,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Required checks stay on hosted runners (the acceptance gate and
+          # its siblings must not depend on one self-hosted container).
           - os: ubuntu-latest
             shell: bash
             label: linux-bash
+            vitest_workers: 4
+          # Shadow entry on the project docker runner: never a required
+          # check, proves the container build before any migration.
+          - os: [self-hosted, Linux, X64]
+            shell: bash
+            label: self-hosted-linux
             vitest_workers: 4
           - os: macos-latest
             shell: bash
@@ -70,6 +78,12 @@ jobs:
         shell: ${{ matrix.shell }}
 
     steps:
+      # The docker runner image ships without git; checkout needs it.
+      - name: Bootstrap container tools (self-hosted only)
+        if: runner.name == '33.110-docker'
+        run: |
+          command -v git >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git ca-certificates curl)
+
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
