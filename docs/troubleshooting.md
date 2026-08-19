@@ -41,11 +41,20 @@ Rate-limit responses usually self-heal after the window resets.
 
 The repository has no `origin` remote, or it does not parse to a GitHub repository. Only `github.com` remotes resolve (HTTPS, SCP-style SSH, or `ssh://`). Check:
 
-```bash
+```
 git remote get-url origin
 ```
 
 Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version.
+
+### `gitlab_unsupported`
+
+The origin points at a GitLab repository (gitlab.com or a self-hosted
+`*gitlab*` host). GitLab evidence requires `glab` support, which is not
+implemented yet — see the [GitLab support roadmap](gitlab-support.md). Point
+origin at a github.com repository to use SpecGit today; the platform and
+`glab` presence are already reported by `specgit init --json` and probed by
+`specgit doctor`.
 
 ## Record and policy
 

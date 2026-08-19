@@ -26,10 +26,8 @@ describe('parseRepoRef', () => {
   });
 
   const badCases = [
-    'https://gitlab.com/owner/repo.git',
     'https://example.com/owner/repo',
     'https://notgithub.com/owner/repo',
-    'gitlab:owner/repo.git',
     'not-a-url',
     '',
     '  ',
@@ -38,6 +36,27 @@ describe('parseRepoRef', () => {
 
   it.each(badCases)('fails closed for %s', (url) => {
     const result = parseRepoRef(url);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('origin_unresolvable');
+  });
+
+  it.each([
+    'https://gitlab.com/owner/repo.git',
+    'git@gitlab.com:owner/repo.git',
+    'ssh://git@gitlab.com/owner/repo.git',
+    'https://gitlab.example.com/owner/repo.git',
+  ])('classifies %s as a GitLab origin with a dedicated diagnostic', (url) => {
+    const result = parseRepoRef(url);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gitlab_unsupported');
+    expect(result.message).toContain('GitLab');
+    expect(result.fix).toContain('github.com');
+  });
+
+  it('keeps shorthand gitlab: refs as unresolvable', () => {
+    const result = parseRepoRef('gitlab:owner/repo.git');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('origin_unresolvable');

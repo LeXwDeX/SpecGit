@@ -11,6 +11,7 @@ import type {
   GitPort,
   RecordPort,
 } from '../../src/cli/types.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
 
 export interface CapturedIO {
   stdout: string[];
@@ -372,19 +373,7 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
     gh: options.gh ?? ghProvider,
     record: recordPort,
     evaluate: (options.evaluate ?? makeEvaluate()) as CommandContext['evaluate'],
-    parseRepoRef: (originUrl: string) => {
-      const https = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(originUrl);
-      const scp = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/.exec(originUrl);
-      const match = https ?? scp;
-      if (!match) {
-        return {
-          ok: false,
-          code: 'origin_unresolvable',
-          message: `Cannot resolve GitHub repository from origin '${originUrl}'.`,
-        };
-      }
-      return { ok: true, value: { owner: match[1], repo: match[2] } };
-    },
+    parseRepoRef: parseRepoRef,
   };
 
   return { ctx, io, recordPort, gitPort, ghProvider };

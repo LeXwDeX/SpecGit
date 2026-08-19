@@ -1,8 +1,8 @@
 version: 1
-delivery: guard-acceptance-bypass
+delivery: gitlab-cli
 context:
   kind: branch
-  branch: feat/28-guard-acceptance-bypass
+  branch: feat/19-gitlab-cli
 issues:
-  - 28
-pr: 29
+  - 19
+pr: 20
