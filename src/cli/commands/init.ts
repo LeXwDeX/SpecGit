@@ -1,24 +1,29 @@
 /**
  * `specgit init` — creates `spec_git/policy.yaml` and generates the
- * delivery harness: the CI acceptance workflow and the managed prompt
- * block in the agent instruction files. Harness generation is
- * idempotent; the policy itself is write-once and never overwritten.
+ * delivery harness: the CI acceptance workflow, the opencode guard hooks,
+ * and the managed prompt block in the agent instruction files. Harness
+ * generation is idempotent; the policy itself is write-once and never
+ * overwritten.
+ *
+ * With no arguments, required-check names are auto-detected from
+ * `.github/workflows/*.{yml,yaml}` (job `name:`, falling back to the job
+ * id; the generated SpecGit Acceptance job is excluded to avoid
+ * self-reference). When no workflow exists, the policy falls back to the
+ * GitHub aggregate check name "All checks passed".
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { writeHarnessAssets, type HarnessWriteResult } from '../harness-assets.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext } from '../types.js';
+import { detectRequiredChecks } from '../detect-checks.js';
 
 export interface InitOptions {
   requiredCheck?: string[];
   json?: boolean;
 }
 
-async function promptForCheckName(ctx: CommandContext): Promise<string> {
-  const { input } = await import('@inquirer/prompts');
-  return input({ message: 'Required check name (exact GitHub Actions check name):' });
-}
+const FALLBACK_CHECK = 'All checks passed';
 
 export async function runInit(
   options: InitOptions,
@@ -27,19 +32,10 @@ export async function runInit(
   let checks = (options.requiredCheck ?? []).map((value) => value.trim());
 
   if (checks.length === 0) {
-    if (!ctx.stdinIsTTY) {
-      return {
-        exit: EXIT_USAGE,
-        errors: [
-          errorDiagnostic(
-            'required_check_required',
-            'init requires at least one required check name.',
-            { fix: 'Pass --required-check <name> (repeatable).' }
-          ),
-        ],
-      };
-    }
-    checks = [(await promptForCheckName(ctx)).trim()];
+    // No arguments: auto-detect from the repo's CI workflows; when none
+    // exist, the GitHub aggregate check is the safe fail-closed fallback.
+    const detected = await detectRequiredChecks(ctx.cwd);
+    checks = detected.length > 0 ? detected : [FALLBACK_CHECK];
   }
 
   const invalid = checks.find((value) => value.length === 0);
@@ -117,6 +113,8 @@ export async function runInit(
       `Required checks (${checks.length}):`,
       ...checks.map((name) => `  - ${name}`),
       `Created ${harness.workflow}`,
+      ...harness.hooks.map((hookPath) => `Created ${hookPath}`),
+      ...(harness.gitHook ? [`Installed git pre-push guard (${harness.gitHook})`] : []),
       ...harness.prompts.map((filename) => `Managed block refreshed in ${filename}`),
     ],
   };
