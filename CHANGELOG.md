@@ -1,5 +1,57 @@
 # specgit
 
+## 0.7.0
+
+### Minor Changes
+
+- [#42](https://github.com/LeXwDeX/SpecGit/pull/42) [`6bb6033`](https://github.com/LeXwDeX/SpecGit/commit/6bb6033c44b6abf225e2c087744f37faec151ed2) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Platform-mode model for GitHub and GitLab
+
+  Self-hosted GitLab origins (git.ycgame.com, git.corp.example, …) are no
+  longer misclassified as generic `origin_unresolvable`:
+
+  - `specgit init` resolves a platform mode: a `github.com` origin defaults
+    to GitHub; any other origin asks on an interactive terminal (GitHub or
+    GitLab) or is declared explicitly with `--gitlab-host <hostname>` (bare
+    hostname, validated against the origin host).
+  - The declaration persists in `spec_git/providers.yaml`
+    (`gitlab.host`, `gitlab.insecure_ssl` for self-signed certificates) —
+    committed to the repository, shared by the whole team.
+  - `parseRepoRef`, the acceptance evaluator, `doctor`, and `status` all
+    consult the declared host: matching origins report the dedicated
+    `gitlab_unsupported` diagnostic (the glab-provider roadmap stays in
+    docs/gitlab-support.md); everything else keeps `origin_unresolvable`.
+  - Evidence providers remain the official CLIs only — `gh` for GitHub,
+    `glab` for GitLab (once implemented); no third-party API clients.
+  - The `--json` envelope gains a `platform` section
+    (`{ mode: github | gitlab | undecided, gitlabHost? }`), and an undeclared
+    non-github origin warns `platform_undecided`.
+
+- [#34](https://github.com/LeXwDeX/SpecGit/pull/34) [`9f9e114`](https://github.com/LeXwDeX/SpecGit/commit/9f9e1148107b199d03dcbe7e3861dc0507d53eb2) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Prompt-guided duplicate check before issue creation
+
+  The managed prompt block injected by `specgit init` into `AGENTS.md` /
+  `CLAUDE.md` now instructs agents to search the tracker for similar open
+  issues before creating one (`gh issue list` / `gh search issues`), read
+  every plausible candidate (`gh issue view`), compare the WHY, and let the
+  requester decide between continuing the existing issue and creating a
+  duplicate — one line of work per WHY, never two. Existing installations
+  pick the guidance up on the next `specgit init`.
+
+### Patch Changes
+
+- [#40](https://github.com/LeXwDeX/SpecGit/pull/40) [`8358d76`](https://github.com/LeXwDeX/SpecGit/commit/8358d767149c5ed7580633fb32c85abb1c814639) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### init detection hardening
+
+  - Job names containing matrix placeholders (e.g.
+    `Unit Tests (${{ matrix.settings.name }})`) never appear in real
+    check-runs; detection now falls back to the stable job id instead of
+    writing an unmatchable name into `spec_git/policy.yaml`.
+  - `workflow_dispatch`-only workflows never run on a PR head, so their jobs
+    are excluded from detection (a workflow counts when any trigger other
+    than `workflow_dispatch` is present; YAML 1.1's boolean-`true` parsing of
+    the `on` key is handled).
+  - Release workflow: when the bot cannot create the version PR, the
+    fallback edit only reuses a PR that is still open — a closed one is now
+    a hard error instead of silently masking the failure.
+
 ## 0.6.0
 
 ### Minor Changes
