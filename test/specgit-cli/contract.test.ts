@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
 import { sanitize } from '../../src/cli/output.js';
 import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
@@ -250,10 +252,69 @@ describe('CLI contract: state/asset taxonomy (#69)', () => {
 });
 
 describe('CLI contract: cross-slice documentation locks (reserved write sets)', () => {
-  // These become real assertions when the docs/community slice lands; they are
-  // the in-code record of what this slice needs from the reserved files.
-  it.todo('docs/cli.md states ten commands and lists setup in the command table');
-  it.todo('docs/cli.md and docs/reference.md count eleven gates (sequence row included)');
-  it.todo('README.md and AGENTS.md replace the "two committed files" claim with the three-tier taxonomy');
-  it.todo('schemas/specgit templates carry the same taxonomy and command surface');
+  // The docs/community and assembler slices landed; these locks pin the
+  // documentation against drifting from the code contract.
+  const readRepoFile = (...segments: string[]) =>
+    fs.readFileSync(path.join(__dirname, '..', '..', ...segments), 'utf-8');
+
+  it('docs/cli.md states ten commands and lists setup in the command table', async () => {
+    const cli = readRepoFile('docs', 'cli.md');
+    const { COMMAND_NAMES } = await import('../../src/cli/index.js');
+    expect(cli).toContain('ten commands');
+    for (const name of COMMAND_NAMES) {
+      expect(cli, `docs/cli.md must list \`specgit ${name}\` in the command table`).toContain(`\`specgit ${name}\``);
+    }
+  });
+
+  it('docs/cli.md and docs/reference.md count eleven gates (sequence row included)', async () => {
+    const { GATE_ORDER } = await import('../../src/acceptance/evaluate.js');
+    for (const doc of [['docs', 'cli.md'], ['docs', 'reference.md']] as const) {
+      const text = readRepoFile(...doc);
+      expect(text, `${doc.join('/')} must count eleven gates`).toMatch(/eleven[- ]gates?/i);
+      for (const gate of GATE_ORDER) {
+        expect(text, `${doc.join('/')} must mention gate ${gate}`).toMatch(new RegExp(`\\b${gate}\\b`, 'i'));
+      }
+    }
+    const reference = readRepoFile('docs', 'reference.md');
+    expect(reference).toContain('| G8 sequence |');
+    expect(reference).toContain('issue_out_of_order');
+  });
+
+  it('README.md and AGENTS.md replace the "two committed files" claim with the three-tier taxonomy', () => {
+    for (const doc of ['README.md', 'AGENTS.md']) {
+      const text = readRepoFile(doc);
+      expect(text, `${doc} must not claim "two committed files"`).not.toMatch(/two committed files/);
+      expect(text, `${doc} must state the three tiers`).toMatch(/three\s+tiers/i);
+      expect(text).toMatch(/authoritative/i);
+      expect(text).toMatch(/derived/i);
+    }
+  });
+
+  it('schemas/specgit templates carry the same taxonomy and command surface', async () => {
+    const schema = readRepoFile('schemas', 'specgit', 'schema.yaml');
+    const { GATE_ORDER } = await import('../../src/acceptance/evaluate.js');
+
+    expect(schema).toMatch(/three tiers/i);
+    expect(schema).toMatch(/authoritative_committed/);
+    expect(schema).toMatch(/derived_committed_harness/);
+    expect(schema).toMatch(/local_integration_assets/);
+    expect(schema).toContain('g8_sequence');
+    expect(schema).toContain('ordered_issues');
+    expect(schema).toContain('gitlab_unsupported');
+    expect(schema).toContain('merged_delivery_not_contained');
+    expect(schema).toContain('merged_lineage_unavailable');
+    const gateLines = schema.match(/^[ \t]*- g\d+_\w+/gm) ?? [];
+    expect(gateLines.length, 'schema.yaml must list exactly the eleven gates').toBe(GATE_ORDER.length);
+    for (const gate of GATE_ORDER) {
+      expect(schema, `schema.yaml gates must include ${gate}`).toMatch(new RegExp(`- g\\d+_${gate}(?:_\\w+)?\\s`));
+    }
+
+    const policyTemplate = readRepoFile('schemas', 'specgit', 'templates', 'specgit-policy.yaml');
+    expect(policyTemplate).toContain('ordered_issues');
+
+    const { COMMAND_NAMES } = await import('../../src/cli/index.js');
+    for (const name of COMMAND_NAMES) {
+      expect(schema, `schema.yaml command surface must include ${name}`).toMatch(new RegExp(`^[ 	]*- ${name}\\b`, 'm'));
+    }
+  });
 });

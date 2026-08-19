@@ -50,7 +50,15 @@ jobs:
     # The shadow self-hosted entry is experimental: its failures must not
     # redden the run (continue-on-error is set per-matrix-entry below).
     continue-on-error: ${{ matrix.experimental }}
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Untrusted code (fork pull requests) must never execute on the
+    # self-hosted shadow runner: its runner and cache state outlive the
+    # job. Same-repo pull requests keep proving the container; every
+    # other event (push, merge_group, workflow_dispatch) checks out
+    # trusted refs.
+    if: >-
+      (matrix.label != 'self-hosted-linux') ||
+      (github.event_name != 'pull_request') ||
+      (github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       fail-fast: false
       matrix:

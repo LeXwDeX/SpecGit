@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/LeXwDeX/SpecGit/tree/main/docs
+    about: Start with the docs home, the CLI reference, and the Product Baseline v1 before opening an issue.
+  - name: Troubleshooting a failing verdict
+    url: https://github.com/LeXwDeX/SpecGit/blob/main/docs/troubleshooting.md
+    about: Every diagnostic code mapped to its cause and fix — most `specgit finish` failures are answered here.
+  - name: Support and questions
+    url: https://github.com/LeXwDeX/SpecGit/blob/main/SUPPORT.md
+    about: Where to ask what, and how to report bugs, features, and security issues.
+  - name: Security vulnerability
+    url: https://github.com/LeXwDeX/SpecGit/blob/main/SECURITY.md
+    about: Report privately — never in a public issue.

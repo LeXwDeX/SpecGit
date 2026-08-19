@@ -10,9 +10,9 @@ metadata:
 
 # specgit-finish
 
-The acceptance verdict. Ten gates evaluate live evidence: record, policy,
-context, origin, provider, issues, PR, closing refs, and required checks at
-the PR head.
+The acceptance verdict. Eleven gates evaluate live evidence: record, policy,
+completeness, context, origin, provider, issues, sequence (ordered
+deliveries), PR, closing refs, and required checks at the PR head.
 
 ## Usage
 
