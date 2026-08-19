@@ -1,8 +1,8 @@
 version: 1
-delivery: init-detection-skips
+delivery: route-key-checks
 context:
-  kind: branch
-  branch: fix/39-init-detection-skips
+  kind: worktree
+  label: specgit-wt-selfhosted
+  branch: ci/43-route-key-checks
 issues:
-  - 39
-pr: 40
+  - 43
