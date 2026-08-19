@@ -1,8 +1,7 @@
 version: 1
 delivery: sync-harness-workflow
 context:
-  kind: worktree
-  label: specgit-wt-template-sync
+  kind: branch
   branch: fix/55-sync-harness-workflow
 issues:
   - 55
