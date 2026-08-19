@@ -230,13 +230,19 @@ export class GhCliGitHubProvider implements GitHubProvider {
     const parsed = result.value as {
       number?: unknown;
       state?: unknown;
+      title?: unknown;
       pull_request?: unknown;
     };
     if (typeof parsed.number !== 'number' || (parsed.state !== 'open' && parsed.state !== 'closed')) {
       return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
     }
 
-    return ok({ number: parsed.number, state: parsed.state, pullRequest: parsed.pull_request != null });
+    return ok({
+      number: parsed.number,
+      state: parsed.state,
+      pullRequest: parsed.pull_request != null,
+      title: typeof parsed.title === 'string' ? parsed.title : undefined,
+    });
   }
 
   /** Open issue numbers via the search API (excludes PRs, newest first). */

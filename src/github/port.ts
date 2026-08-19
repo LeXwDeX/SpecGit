@@ -5,6 +5,13 @@ export interface IssueFact {
   number: number;
   state: 'open' | 'closed';
   pullRequest: boolean;
+  /**
+   * Issue title when the provider surfaces it. An exact open-issue title
+   * match is the remotely discoverable idempotency marker that lets
+   * `specgit issue` adopt an issue a previous run created but failed to
+   * record, instead of duplicating the WHY.
+   */
+  title?: string;
 }
 
 export interface PrFact {
