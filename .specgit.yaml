@@ -1,8 +1,7 @@
 version: 1
 delivery: enforce-strict-issue
 context:
-  kind: worktree
-  label: specgit-wt-enforce-issue-type
+  kind: branch
   branch: feat/21-enforce-strict-issue
 issues:
   - 21
