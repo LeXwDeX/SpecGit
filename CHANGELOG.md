@@ -1,5 +1,35 @@
 # specgit
 
+## 0.8.0
+
+### Minor Changes
+
+- [#81](https://github.com/LeXwDeX/SpecGit/pull/81) [`00bff6b`](https://github.com/LeXwDeX/SpecGit/commit/00bff6bf01997525c57513f8ee44127296e6c433) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Make `specgit init` non-destructive and governance-preserving ([#62](https://github.com/LeXwDeX/SpecGit/issues/62)).
+
+  - All validation — flag checks, `--gitlab-host` validation, `policy_exists`, and a root-writability preflight — now happens before any filesystem or remote mutation. A rejected init leaves the repository byte-identical.
+  - The harness write is error-atomic: mid-sequence failures roll every target back to its pre-write bytes and modes.
+  - Existing hooks are merged, never overwritten: `.opencode/hooks.json` user entries and unknown keys are preserved (unparseable files left untouched with a warning), and a user git `pre-push` hook keeps its content with the specgit guard appended inside managed markers. The git hook installs via `git rev-parse --git-path hooks`, so linked worktrees and `core.hooksPath` (husky/lefthook) are respected.
+  - `--protect` is now read-modify-write: existing required checks, reviews (including dismissal rules), push restrictions, admin enforcement, and rule booleans are read and preserved, with `SpecGit Acceptance` the only addition. The warned-path fix guidance no longer prints a command that would clear reviews/restrictions.
+  - Re-init contract change: `init` with an existing policy exits 2 having written and probed nothing; `--force` rebuilds the policy and refreshes the harness (managed-block drift repair now happens on `--force`).
+
+- [#81](https://github.com/LeXwDeX/SpecGit/pull/81) [`00bff6b`](https://github.com/LeXwDeX/SpecGit/commit/00bff6bf01997525c57513f8ee44127296e6c433) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Generate a portable acceptance harness for external repositories ([#63](https://github.com/LeXwDeX/SpecGit/issues/63)).
+
+  - `specgit init` now selects the workflow template by repository: the SpecGit repository itself (root package name `specgit`) keeps the local-build template; every other (adopting) repository gets a portable template that installs the published CLI at the exact running version (`specgit@<version>`, no ranges), sets up only Node at the engine floor, parameterizes the adopting repo's remote default branch, and never assumes or invokes the adopting project's toolchain, lockfile, layout, or build. The `--json` envelope reports the choice as `harness.template`.
+  - No-CI repositories: init's detection fallback now writes an empty `required_checks` list instead of the unsatisfiable aggregate name "All checks passed" (never a check-run name — it deadlocked the generated wait step and made the verdict impossible). The policy schema accepts the empty list as the no-CI policy; the SpecGit Acceptance job, enforced through branch protection, is the gate. This is a schema widening with rationale documented in `schemas/specgit/schema.yaml`.
+  - An unresolvable remote default branch falls back to `main` with a `default_branch_unresolved` warning (same fallback the protection probe already uses).
+
+### Patch Changes
+
+- [#60](https://github.com/LeXwDeX/SpecGit/pull/60) [`22b5bbd`](https://github.com/LeXwDeX/SpecGit/commit/22b5bbd1759819ad48e5222064b080f5041b0222) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Attributed timeout diagnostics (`gh_timeout`)
+
+  A `gh` call that exceeds its time budget (default 15 s) now fails with the
+  dedicated `gh_timeout` code instead of the generic `gh_transport`, and the
+  fix names the three likely causes in order — network reachability
+  (`curl -sI https://api.github.com`), a GitHub incident (githubstatus.com),
+  or a genuinely slow call — plus the knob: `SPECGIT_GH_TIMEOUT_MS`
+  (milliseconds) raises the per-call budget for every `gh` invocation SpecGit
+  spawns.
+
 ## 0.7.2
 
 ### Patch Changes
