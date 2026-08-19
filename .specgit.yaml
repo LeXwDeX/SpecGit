@@ -1,8 +1,7 @@
 version: 1
 delivery: enforce-issue-merge
 context:
-  kind: worktree
-  label: specgit-wt-ordered-issues
+  kind: branch
   branch: feat/36-enforce-issue-merge
 issues:
   - 36
