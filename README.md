@@ -42,6 +42,7 @@ specgit --version
 specgit init --required-check "Test" --required-check "Lint"
 specgit doctor                       # all probes green?
 
+# The loop
 # 3. per delivery — one command bootstraps everything
 #    (creates the issues, branches, opens the draft PR with Closes #n for
 #     every issue, writes .specgit.yaml, commits and pushes; re-run resumes)
@@ -56,22 +57,6 @@ specgit finish                       # exit 0 → merge; else fix what it names
 `specgit finish` exit `0` is the *only* definition of done. The full
 walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 [Workflow Guide](docs/workflow-guide.md).
-
-## The loop
-
-```bash
-# once per repository: declare which CI checks a delivery must pass
-specgit init --required-check "All checks passed"      # → spec_git/policy.yaml + harness
-
-# per delivery: one command — issues, branch, draft PR (Closes #n), record
-specgit issue "feat: add login" 123                    # titles create; numbers reuse
-
-# work, commit, push; the draft PR and binding already exist
-specgit pr                      # only to repair the PR binding (auto-discovers by head branch)
-
-specgit finish
-# exit 0 → accepted · exit 1 → rejected (evidence attached) · exit 3 → cannot determine
-```
 
 (Condensed in [Quick start](#quick-start) above; the
 [Workflow Guide](docs/workflow-guide.md) expands every step. `bind`,
