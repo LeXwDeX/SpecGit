@@ -93,7 +93,7 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
 
     const gh = makeGh(bootstrapRules(77));
     const result = await specgit(
-      ['issue', 'feat: strict delivery harness', 'Harden the evaluator', '--json'],
+      ['issue', 'feat: strict delivery harness', 'fix: harden the evaluator', '--json'],
       { cwd: repo.dir, env: gh.env() }
     );
 
@@ -164,7 +164,7 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
     // First run: issue creation succeeds, PR creation has no gh rule
     // (the fake refuses) — a failure between steps.
     const ghBroken = makeGh(bootstrapRules(undefined));
-    const first = await specgit(['issue', 'feat: resume flow', 'Second why', '--json'], {
+    const first = await specgit(['issue', 'feat: resume flow', 'chore: second why', '--json'], {
       cwd: repo.dir,
       env: ghBroken.env(),
     });
@@ -180,7 +180,7 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
 
     // Second run with the healed transport: same command line resumes.
     const ghWhole = makeGh(bootstrapRules(77));
-    const second = await specgit(['issue', 'feat: resume flow', 'Second why', '--json'], {
+    const second = await specgit(['issue', 'feat: resume flow', 'chore: second why', '--json'], {
       cwd: repo.dir,
       env: ghWhole.env(),
     });

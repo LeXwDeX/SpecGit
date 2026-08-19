@@ -1,8 +1,8 @@
 version: 1
-delivery: issue3
+delivery: enforce-strict-issue
 context:
   kind: branch
-  branch: feat/3-issue3
+  branch: feat/21-enforce-strict-issue
 issues:
-  - 3
-pr: 18
+  - 21
+pr: 22

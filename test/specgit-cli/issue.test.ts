@@ -93,7 +93,7 @@ describe('specgit issue: fresh bootstrap', () => {
   it('creates every title issue, derives branch/delivery, opens the draft PR, records, commits, pushes', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue(
-      { titles: ['feat: strict delivery harness', 'Harden the evaluator'] },
+      { titles: ['feat: strict delivery harness', 'fix: harden the evaluator'] },
       t.ctx
     );
 
@@ -101,6 +101,10 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.harness.createdIssues.length).toBe(2);
     expect(t.harness.createdIssues[0].title).toBe('feat: strict delivery harness');
     expect(t.harness.createdIssues[0].body).toContain('## Why');
+    expect(t.harness.createdIssues[0].body).toContain('## Why (required)');
+    expect(t.harness.createdIssues[0].body).toContain('## Scope (optional)');
+    expect(t.harness.createdIssues[0].body).toContain('## Acceptance (required)');
+    expect(t.harness.createdIssues[0].body).toContain('`specgit finish` must exit 0');
     // branch <type>/<first#>-<slug> with the type from the conventional prefix
     expect(t.harness.createdPrs.length).toBe(1);
     expect(t.harness.createdPrs[0].head).toBe('feat/11-strict-delivery-harness');
@@ -125,16 +129,62 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(outcome.human?.join('\n')).toContain('strict-delivery-harness');
   });
 
-  it('defaults the branch type to feat without a conventional prefix', async () => {
+  it('rejects a title without a type prefix as a usage error', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
-    await runIssue({ titles: ['Add login flow'] }, t.ctx);
-    expect(t.harness.createdPrs[0].head).toBe('feat/11-add-login-flow');
+    const outcome = await runIssue({ titles: ['Add login flow'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    expect(outcome.errors?.[0]?.fix).toContain('feat');
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('rejects an unknown type prefix and lists the full whitelist', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feature: add login'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    for (const type of ['security', 'deprecate', 'dogfood', 'revert', 'ci']) {
+      expect(outcome.errors?.[0]?.fix).toContain(type);
+    }
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('validates every title before creating any issue', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feat: ok first why', 'bogus second why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('rejects a non-English title as a usage error', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feat: 严格交付'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_not_english');
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
   });
 
   it('honors other conventional types (fix:)', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     await runIssue({ titles: ['fix: crash on save'] }, t.ctx);
     expect(t.harness.createdPrs[0].head).toBe('fix/11-crash-on-save');
+  });
+
+  it('accepts the extended whitelist types in branch names', async () => {
+    for (const [title, head] of [
+      ['security: harden token', 'security/11-harden-token'],
+      ['deprecate: remove old flags', 'deprecate/11-remove-old-flags'],
+      ['dogfood: use specgit itself', 'dogfood/11-use-specgit-itself'],
+    ] as const) {
+      const t = issueCtx({ facts: { branch: 'main' } });
+      const outcome = await runIssue({ titles: [title] }, t.ctx);
+      expect(outcome.exit).toBe(0);
+      expect(t.harness.createdPrs[0].head).toBe(head);
+    }
   });
 
   it('caps the slug at three ASCII words', async () => {
@@ -145,7 +195,7 @@ describe('specgit issue: fresh bootstrap', () => {
 
   it('falls back to issue<N> when the first title has no ASCII words', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
-    const outcome = await runIssue({ titles: ['严格交付'] }, t.ctx);
+    const outcome = await runIssue({ titles: ['feat: !!!'] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdPrs[0].head).toBe('feat/11-issue11');
     const written = t.recordPort.recordWrites.at(-1)?.record;
@@ -154,10 +204,10 @@ describe('specgit issue: fresh bootstrap', () => {
 
   it('reuses existing issues given as pure numbers and creates the rest', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
-    const outcome = await runIssue({ titles: ['4', 'Add telemetry'] }, t.ctx);
+    const outcome = await runIssue({ titles: ['4', 'feat: add telemetry'] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdIssues.length).toBe(1);
-    expect(t.harness.createdIssues[0].title).toBe('Add telemetry');
+    expect(t.harness.createdIssues[0].title).toBe('feat: add telemetry');
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.issues).toEqual([4, 11]);
     expect(t.harness.createdPrs[0].head).toBe('feat/4-add-telemetry');

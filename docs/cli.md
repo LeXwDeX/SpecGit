@@ -59,7 +59,7 @@ specgit issue 4 "Extend the harness"                          # reuse #4, create
 specgit issue                                                 # resume an incomplete bootstrap (no args + no record → exit 2)
 ```
 
-Each positional argument is a quoted title (a new issue is created from a Why/Scope/Acceptance template) or a pure number (an existing issue is reused). The branch `type` comes from a conventional-commit prefix on the first new title (`feat:` default; `fix:`, `chore:`, …); the slug is kebab-case from its first three ASCII words, falling back to `issue<N>` for titles without ASCII words. The PR base is the remote's default branch (`origin/HEAD`, `main` fallback).
+Each positional argument is a quoted title (a new issue is created from a required/optional template) or a pure number (an existing issue is reused). Every new title must match `<type>: <english title>`: `<type>` is validated against a fixed whitelist (`feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `style`, `build`, `ci`, `revert`, `security`, `deprecate`, `dogfood`) and the title body must be English (printable ASCII). A missing or unknown type, or a non-English title, is a usage error (exit 2) listing the valid types; all titles are validated before any issue is created. The slug is kebab-case from the first three ASCII words of the title, falling back to `issue<N>` when there are none. The PR base is the remote's default branch (`origin/HEAD`, `main` fallback).
 
 ```json
 {
