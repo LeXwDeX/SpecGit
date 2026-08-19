@@ -384,6 +384,22 @@ describe('specgit init harness generation', () => {
     expect(block.endsWith(BLOCK_END_MARKER)).toBe(true);
   });
 
+  it('guides agents to search for similar open issues before creating one', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const agents = read(AGENTS_ABS(root));
+    const block = managedPromptBlock();
+    expect(block).toContain('### Before creating an issue, check for duplicates');
+    // The search step must name the actual gh command agents should run.
+    expect(block).toContain('gh issue list');
+    // Similar candidates must be read, not just listed.
+    expect(block).toContain('gh issue view');
+    // The human decides whether a duplicate is still worth creating.
+    expect(block.toLowerCase()).toContain('ask the requester');
+    expect(agents).toContain('### Before creating an issue, check for duplicates');
+  });
+
   it('second init is idempotent: artifacts are rewritten byte-identical, policy still protected', async () => {
     const first = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
