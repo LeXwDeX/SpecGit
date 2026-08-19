@@ -11,7 +11,7 @@
  * tracked on the issue.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -22,6 +22,26 @@ import { git, rmDir } from './helpers.js';
 export { rmDir };
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * Run npm synchronously, Windows-capable: npm is npm.cmd there and .cmd
+ * spawnables require a shell (same approach as the repo's run-cli helper).
+ * With a shell, args join with spaces — quote any arg containing one.
+ */
+function runNpmSync(args: string[], cwd: string): string {
+  const isWindows = process.platform === 'win32';
+  const finalArgs = isWindows ? args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : args;
+  const res = spawnSync(isWindows ? 'npm.cmd' : 'npm', finalArgs, {
+    cwd,
+    encoding: 'utf-8',
+    shell: isWindows,
+  });
+  if (res.error) throw res.error;
+  if (res.status !== 0) {
+    throw new Error(`npm ${args.join(' ')} failed (exit ${res.status}): ${res.stderr}`);
+  }
+  return res.stdout ?? '';
+}
 
 export const EXT_OWNER = 'acme';
 export const EXT_REPO = 'unrelated-app';
@@ -73,10 +93,9 @@ export function packSpecgit(): PackedSpecgit {
 
   const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-pack-'));
   try {
-    const out = execFileSync(
-      'npm',
+    const out = runNpmSync(
       ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
-      { cwd: staging, encoding: 'utf-8' }
+      staging
     );
     // Belt and braces: tolerate any banner lines before npm's JSON array.
     const lines = out.split('\n');
@@ -154,10 +173,9 @@ export function remoteDefaultBranch(dir: string): string {
 
 /** file:// adoption install of the packed CLI; `--no-save` keeps the adopting tree clean. */
 export function npmInstallPacked(tarballPath: string, cwd: string): void {
-  execFileSync(
-    'npm',
+  runNpmSync(
     ['install', tarballPath, '--no-save', '--no-audit', '--no-fund', '--loglevel=error'],
-    { cwd, encoding: 'utf-8' }
+    cwd
   );
 }
 

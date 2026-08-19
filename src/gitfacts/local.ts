@@ -267,7 +267,9 @@ export class LocalGitAdapter implements GitPort {
     if (!raw) {
       return fail('git_hooks_failed', 'git rev-parse --git-path hooks returned an empty path.');
     }
-    return ok(path.isAbsolute(raw) ? raw : path.resolve(root, raw));
+    // git emits forward slashes even on Windows; normalize so the value
+    // matches the platform's path.join-produced expectations everywhere.
+    return ok(path.normalize(path.isAbsolute(raw) ? raw : path.resolve(root, raw)));
   }
 
   /**
