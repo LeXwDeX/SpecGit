@@ -39,9 +39,11 @@ specgit --version
 
 # 2. once per repository — declare the required CI checks and generate the
 #    harness (.github/workflows/specgit-accept.yml + the managed AGENTS.md block)
-specgit init --required-check "Test" --required-check "Lint"
+specgit init                          # auto-detects checks from your CI workflows
+specgit setup                         # install agent entry points (commands/skills)
 specgit doctor                       # all probes green?
 
+# The loop
 # 3. per delivery — one command bootstraps everything
 #    (creates the issues, branches, opens the draft PR with Closes #n for
 #     every issue, writes .specgit.yaml, commits and pushes; re-run resumes)
@@ -56,22 +58,6 @@ specgit finish                       # exit 0 → merge; else fix what it names
 `specgit finish` exit `0` is the *only* definition of done. The full
 walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 [Workflow Guide](docs/workflow-guide.md).
-
-## The loop
-
-```bash
-# once per repository: declare which CI checks a delivery must pass
-specgit init --required-check "All checks passed"      # → spec_git/policy.yaml + harness
-
-# per delivery: one command — issues, branch, draft PR (Closes #n), record
-specgit issue "feat: add login" 123                    # titles create; numbers reuse
-
-# work, commit, push; the draft PR and binding already exist
-specgit pr                      # only to repair the PR binding (auto-discovers by head branch)
-
-specgit finish
-# exit 0 → accepted · exit 1 → rejected (evidence attached) · exit 3 → cannot determine
-```
 
 (Condensed in [Quick start](#quick-start) above; the
 [Workflow Guide](docs/workflow-guide.md) expands every step. `bind`,
@@ -104,7 +90,8 @@ reality.
 | `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, record, commit, push (idempotent resume) | yes (`gh`) |
 | `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`) |
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`) |
-| `specgit init` | Creates the policy `spec_git/policy.yaml` and generates the harness (acceptance workflow + managed AGENTS block) | no |
+| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block) | no |
+| `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills for other tools (`--tool opencode \| generic \| all`) | no |
 | `specgit status` | Local evidence snapshot (record, policy, git facts, drift) | no |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, gh, policy) | gh auth |
 | `specgit bind` / `unbind` / `accept` | Machine aliases for scripts: record edits, and the same evaluation as `finish` | accept: yes (`gh`) |
