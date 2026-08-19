@@ -1,9 +1,8 @@
 version: 1
-delivery: issue67
+delivery: issue87
 context:
-  kind: branch
-  branch: feat/67-issue67
+  kind: worktree
+  label: specgit-pr-scaffold
+  branch: feat/87-issue87
 issues:
-  - 67
-  - 83
-pr: 86
+  - 87
