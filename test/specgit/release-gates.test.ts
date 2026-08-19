@@ -79,7 +79,9 @@ describe('rc-verify is a safe RC path (#71)', () => {
   });
 
   it('never publishes: every npm publish is a dry-run over a staged RC version', () => {
-    const publishes = raw.match(/^.*npm publish.*$/gm) ?? [];
+    const publishes = (raw.match(/^.*npm publish.*$/gm) ?? []).filter(
+      (line) => !line.trim().startsWith('#')
+    );
     expect(publishes.length).toBeGreaterThan(0);
     for (const line of publishes) {
       expect(line).toContain('--dry-run');
