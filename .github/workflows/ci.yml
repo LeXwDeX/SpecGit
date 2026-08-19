@@ -52,7 +52,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Linux coverage rides the project's self-hosted docker runner
+          # (label: self-hosted) — immune to hosted-pool queue meltdowns.
+          - os: [self-hosted, Linux, X64]
             shell: bash
             label: linux-bash
             vitest_workers: 4

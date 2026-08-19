@@ -3,6 +3,7 @@ name: SpecGit Acceptance
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,7 +11,9 @@ permissions:
 jobs:
   specgit-acceptance:
     name: SpecGit Acceptance
-    runs-on: ubuntu-latest
+    # Self-hosted docker runner: the acceptance gate is the critical path,
+    # it must not wait behind hosted-pool queue outages.
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
       - name: Checkout code
