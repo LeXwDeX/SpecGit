@@ -3,12 +3,14 @@
 # it (usually on the default branch). Prefer `specgit init --required-check`,
 # which refuses to overwrite an existing policy.
 #
-# required_checks: non-empty list of EXACT check-run names, matched
-# byte-for-byte against check runs reported at the PR head commit. Keep them
-# aligned with the repository's required status checks (branch protection).
-# The schema is strict: unknown keys make the policy invalid, and an empty
-# list is invalid — there is no "no required checks" mode.
+# required_checks: list of EXACT check-run names, matched byte-for-byte
+# against check runs reported at the PR head commit. Keep them aligned with
+# the repository's required status checks (branch protection). The schema is
+# strict: unknown keys make the policy invalid. An empty list is the no-CI
+# policy — the SpecGit Acceptance job itself (never listed here, to avoid
+# wait-step self-deadlock) is then the gate; prefer naming the repository's
+# real checks whenever they exist.
 
 version: 1
 required_checks:
-  - "All checks passed"
+  - build

@@ -238,6 +238,7 @@ export interface GitWriteScript {
   ) => Evidence<{ committed: boolean }>;
   pushBranch?: (branch: string) => Evidence<{ pushed: boolean }>;
   remoteDefaultBranch?: () => Evidence<string>;
+  hooksPath?: () => Evidence<string>;
 }
 
 export interface RecordingGitPort extends GitPort {
@@ -282,6 +283,12 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       // a test explicitly scripts one.
       ({ ok: false, code: 'merged_lineage_unavailable', message: 'headContains not configured in fake' })
     ),
+    hooksPath: vi.fn(async (_root: string) => {
+      return (
+        writes.hooksPath?.() ??
+        ({ ok: false, code: 'git_unavailable', message: 'hooks path not configured in fake' } as Evidence<never>)
+      );
+    }),
   };
   return port;
 }

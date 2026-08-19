@@ -8,14 +8,14 @@ You can adopt SpecGit in a repository with years of history in about five minute
 
 Look at the branch-protection settings of your base branch. Which check names are already required there? Those are your candidates for `required_checks` — the point of the policy is to make SpecGit enforce what the team already agrees "done" means.
 
-- No required checks yet? Create one aggregator check first — [GitHub Actions](actions.md) shows the `needs:`-based pattern (`All checks passed`).
+- No required checks yet? Either run `specgit init` bare (the empty no-CI policy — the `SpecGit Acceptance` job itself is the gate) or create one aggregator check first — [GitHub Actions](actions.md) shows the `needs:`-based pattern (`All checks passed`).
 - Many required checks? You can list several names in the policy, or (recommended) collapse them into one aggregator and declare one name.
 
 ### 2. Initialize the policy
 
 ```bash
 git checkout main && git pull
-specgit init --required-check "All checks passed"
+specgit init                    # auto-detects the names you inventoried above
 git add spec_git/policy.yaml && git commit -m "chore: add SpecGit policy" && git push
 ```
 

@@ -146,4 +146,40 @@ describe('LocalGitAdapter', () => {
       expect(result.code).toBe('merged_lineage_unavailable');
     });
   });
+
+  describe('hooksPath', () => {
+    it('resolves the absolute .git/hooks directory of a plain repository', async () => {
+      const result = await adapter.hooksPath(root);
+      expect(result).toEqual({
+        ok: true,
+        value: path.join(root, '.git', 'hooks'),
+      });
+    });
+
+    it('resolves a relative core.hooksPath against the repository root', async () => {
+      git(root, ['config', 'core.hooksPath', '.husky'], env);
+      const result = await adapter.hooksPath(root);
+      expect(result).toEqual({ ok: true, value: path.join(root, '.husky') });
+    });
+
+    it('resolves the shared hooks directory from inside a linked worktree', async () => {
+      const wtRoot = path.join(tempDir, 'wt-hooks');
+      git(root, ['worktree', 'add', wtRoot, '-b', 'feat/wt-hooks'], env);
+      const result = await adapter.hooksPath(wtRoot);
+      // Hooks live in the common dir (the main repository's .git), not the
+      // per-worktree gitdir: a worktree init must not fork its own guard.
+      // git canonicalizes through symlinks (e.g. /var → /private/var).
+      expect(result).toEqual({
+        ok: true,
+        value: path.join(fs.realpathSync(root), '.git', 'hooks'),
+      });
+    });
+
+    it('fails closed outside a git repository', async () => {
+      const plain = path.join(tempDir, 'plain-dir');
+      fs.mkdirSync(plain, { recursive: true });
+      const result = await adapter.hooksPath(plain);
+      expect(result.ok).toBe(false);
+    });
+  });
 });
