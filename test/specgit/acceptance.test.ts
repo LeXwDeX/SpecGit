@@ -706,6 +706,39 @@ describe('acceptance evaluator', () => {
     expect(g.failures[0].detail).toEqual({ name: 'All checks passed', conclusion: 'failure' });
   });
 
+  it('presents checks_pending as transient and retryable while staying exit 1', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed', { status: 'in_progress', conclusion: null })]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    const g = gate(verdict, 'checks');
+    expect(g.failures.map((f) => f.code)).toEqual(['checks_pending']);
+    // #68: pending is honestly labeled transient and retryable, never a
+    // repair demand, and never reclassified (factual, exit 1 preserved).
+    expect(g.failures[0].message).toMatch(/transient/i);
+    expect(g.failures[0].fix).toMatch(/again|retry/i);
+    expect(g.failures[0].fix).not.toMatch(/fix the check/i);
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+  });
+
+  it('names the maintainer-approval path when a check concluded action_required', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'action_required' })]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    const g = gate(verdict, 'checks');
+    expect(g.failures.map((f) => f.code)).toEqual(['checks_failed']);
+    // #71 diagnostics: action_required means the run never started; the
+    // honest fix is approval (bot-pushed head), not "repair the check".
+    expect(g.failures[0].message).toMatch(/action_required/);
+    expect(g.failures[0].fix).toMatch(/approv/i);
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+  });
+
   it('short-circuits in gate order G1 through G10', async () => {
     const gh = new MockGitHubProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
