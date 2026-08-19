@@ -1,8 +1,8 @@
 version: 1
-delivery: remove-openspec-promo
+delivery: sync-harness-workflow
 context:
   kind: branch
-  branch: chore/53-remove-openspec-promo
+  branch: fix/55-sync-harness-workflow
 issues:
-  - 53
-pr: 54
+  - 55
+pr: 56

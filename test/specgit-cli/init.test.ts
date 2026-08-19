@@ -9,6 +9,7 @@ import {
   BLOCK_END_MARKER,
   BLOCK_START_MARKER,
   HARNESS_WORKFLOW_PATH,
+  harnessWorkflowYaml,
   managedPromptBlock,
 } from '../../src/cli/harness-assets.js';
 import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
@@ -449,6 +450,29 @@ describe('specgit init harness generation', () => {
     expect(agents).not.toContain('\r');
 
     expect(fs.existsSync(CLAUDE_ABS(root))).toBe(false);
+  });
+
+  it('template stays in sync with this repo own workflow file (anti-drift lock)', async () => {
+    // The generated template IS this repository's acceptance workflow:
+    // when the repo file evolves (dispatch trigger, WAIT_SHA fallback…),
+    // the template source must follow, or a re-init silently regresses it.
+    // Normalize line endings: the working tree may carry CRLF on Windows.
+    const readNormalized = (p: string) => fs.readFileSync(p, 'utf-8').replace(/\r\n/g, '\n');
+    const repoWorkflow = readNormalized(
+      path.join(__dirname, '..', '..', '.github', 'workflows', 'specgit-accept.yml')
+    );
+    expect(harnessWorkflowYaml().replace(/\r\n/g, '\n')).toBe(repoWorkflow);
+  });
+
+  it('wait-for-siblings script retries transient API failures', async () => {
+    const workflow = harnessWorkflowYaml();
+    // Retry markers: bounded attempts with exponential backoff on 5xx/429.
+    expect(workflow).toContain('MAX_ATTEMPTS');
+    expect(workflow).toContain('retryAfter');
+    expect(workflow).toContain('backoff');
+    // The dispatch trigger and the SHA fallback are part of the synced evolution.
+    expect(workflow).toContain('workflow_dispatch');
+    expect(workflow).toContain('github.event.pull_request.head.sha || github.sha');
   });
 
   it('covers the human story, repair, diagnostics, granularity, and iron rules in the block', async () => {
