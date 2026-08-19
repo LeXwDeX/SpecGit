@@ -1,8 +1,7 @@
 version: 1
 delivery: init-detection-skips
 context:
-  kind: worktree
-  label: specgit-wt-detect-fix
+  kind: branch
   branch: fix/39-init-detection-skips
 issues:
   - 39
