@@ -125,16 +125,28 @@ export async function runIssue(
     return passthrough(repoEv);
   }
 
-  const existing = await ctx.record.readRecord(root);
-  if (!existing.ok && existing.code !== 'record_missing') {
-    return passthrough(existing);
+  const existingRead = await ctx.record.readRecord(root);
+  if (!existingRead.ok && existingRead.code !== 'record_missing') {
+    return passthrough(existingRead);
+  }
+
+  // A record whose PR already merged is completed history, not an active
+  // delivery: replace it instead of demanding a manual unbind. Provider
+  // failures keep the existing record (fail-closed — never guess merged).
+  let existing: Evidence<DeliveryBinding> | null = existingRead.ok ? existingRead : null;
+  if (existing && existing.value.pr !== undefined) {
+    const prEv = await ctx.gh.getPr(repoEv.value, existing.value.pr);
+    if (prEv.ok && prEv.value.state === 'merged') {
+      await ctx.record.deleteRecord(root);
+      existing = null;
+    }
   }
 
   let record: DeliveryBinding;
   let resumed = false;
   let firstTitle: string | null = null;
 
-  if (existing.ok) {
+  if (existing !== null && existing.ok) {
     // Resume: the record is the durable step marker (issues written as
     // soon as they exist; the PR appended when created).
     resumed = true;

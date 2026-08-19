@@ -127,6 +127,45 @@ describe('acceptance evaluator', () => {
     expect(verdict.warnings.map((w) => w.code)).toContain('local_head_stale');
   });
 
+  it('accepts a merged-delivery record on main instead of branch_mismatch', async () => {
+    // The record binds feat/123-login but we are on main, and the bound PR
+    // is merged: completed history, not a mismatch. The trailing gates run
+    // against the merged PR's evidence.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ state: 'merged' })),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(
+      input({ git: new StubGitPort(facts({ branch: 'main' })), gh })
+    );
+    expect(verdict.accepted).toBe(true);
+    expect(verdict.exitCode).toBe(0);
+    expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
+  });
+
+  it('keeps branch_mismatch when the bound PR is open, not merged', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ state: 'open' })),
+    });
+    const verdict = await evaluate(
+      input({ git: new StubGitPort(facts({ branch: 'main' })), gh })
+    );
+    expect(verdict.classification).toBe('rejected');
+    const context = verdict.gates.find((g) => g.id === 'context');
+    expect(context?.failures.map((f) => f.code)).toEqual(['branch_mismatch']);
+  });
+
+  it('keeps branch_mismatch when the provider cannot confirm the merge (fail-closed)', async () => {
+    const gh = new MockGitHubProvider({
+      pr: fail('gh_transport', 'network down'),
+    });
+    const verdict = await evaluate(
+      input({ git: new StubGitPort(facts({ branch: 'main' })), gh })
+    );
+    const context = verdict.gates.find((g) => g.id === 'context');
+    expect(context?.failures.map((f) => f.code)).toEqual(['branch_mismatch']);
+  });
+
   const truthTable: Array<{
     name: string;
     input: () => EvaluateInput;
@@ -511,7 +550,10 @@ describe('acceptance evaluator', () => {
       input({ git: new StubGitPort(facts({ branch: 'detached' })), gh })
     );
     expect(verdict.classification).toBe('rejected');
-    expect(gh.calls).toEqual([]);
+    // The one sanctioned early call: classifying a branch mismatch as
+    // merged-history requires exactly one getPr; everything else must not
+    // run after the deterministic failure.
+    expect(gh.calls).toEqual(['getPr:LeXwDeX/SpecGit#42']);
   });
 
   it('stops after local gates when no provider is supplied (status mode)', async () => {
