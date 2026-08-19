@@ -29,6 +29,14 @@ gh pr checks <n> --repo LeXwDeX/SpecGit
 Closing references follow the CLI contract: `Closes #N`, `Fixes #N`,
 `Resolves #N` in the PR body, one per bound issue.
 
+## Duplicate check before creation
+
+Before creating a new issue, search for similar open work (`gh issue list`,
+`gh search issues` with title keywords), read every plausible candidate
+(`gh issue view <n>`), and compare the WHY — not the wording. Same WHY:
+continue the existing issue. Close but different: say how they differ.
+Unsure: let the requester decide. One line of work per WHY, never two.
+
 ## Label vocabulary
 
 | Label | Meaning | Branch `<type>` |
