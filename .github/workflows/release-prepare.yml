@@ -41,6 +41,10 @@ jobs:
 
       - name: Consume changesets
         id: version
+        env:
+          # @changesets/changelog-github needs a token to link PRs in the
+          # generated changelog entries.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           BEFORE=$(node -p "require('./package.json').version")
           pnpm exec changeset version
