@@ -1,8 +1,7 @@
 version: 1
 delivery: issue69
 context:
-  kind: worktree
-  label: specgit-v1-wave3
+  kind: branch
   branch: feat/69-issue69
 issues:
   - 69
