@@ -1,8 +1,8 @@
 version: 1
-delivery: enforce-issue-merge
+delivery: init-detection-skips
 context:
   kind: branch
-  branch: feat/36-enforce-issue-merge
+  branch: fix/39-init-detection-skips
 issues:
-  - 36
-pr: 37
+  - 39
+pr: 40

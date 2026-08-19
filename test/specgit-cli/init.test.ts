@@ -183,8 +183,7 @@ describe('specgit init', () => {
     expect(envelope.detected.fallback).toBe(false);
   });
 
-  it('detects gitlab-ci job keys when no GitHub workflows exist', async () => {
-    fs.writeFileSync(
+  it('detects gitlab-ci job keys when no GitHub workflows exist', async () => {    fs.writeFileSync(
       path.join(root, '.gitlab-ci.yml'),
       'stages:\n  - build\n  - test\ninclude:\n  - local: /templates.yml\nbuild-job:\n  script: echo build\ntest-job:\n  script: echo test\n'
     );
@@ -194,6 +193,49 @@ describe('specgit init', () => {
     const envelope = parseStdoutJson(t.io);
     expect(envelope.policy).toEqual({ version: 1, required_checks: ['build-job', 'test-job'] });
     expect(envelope.detected.sources).toEqual(['.gitlab-ci.yml']);
+  });
+
+  it('skips matrix placeholder job names and falls back to the job id', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  unit:\n' +
+        '    name: Unit Tests (${{ matrix.settings.name }})\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '  lint:\n' +
+        '    name: Lint\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // The placeholder name never appears in real check-runs; the job id is
+    // the stable, checkable identity.
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['unit', 'Lint'] });
+  });
+
+  it('ignores workflow_dispatch-only workflows', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'manual.yml'),
+      'name: Manual\non: workflow_dispatch\njobs:\n  run:\n    runs-on: ubuntu-latest\n'
+    );
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // Dispatch-only workflows never run on a PR head, so their jobs cannot
+    // appear as check runs there.
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['test'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
   });
 
   it('reports the detected platform from the origin URL', async () => {
