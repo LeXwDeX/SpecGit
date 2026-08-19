@@ -1,14 +1,16 @@
 /**
- * Issue #63 fixture support: an UNRELATED npm repository that adopts the
- * packed SpecGit CLI.
+ * External-adoption fixture support (#63, extended by #67): UNRELATED
+ * npm repositories that adopt the packed SpecGit CLI.
  *
- * The fixture deliberately has nothing in common with the SpecGit repo:
+ * The fixtures deliberately have nothing in common with the SpecGit repo:
  * a plain npm `package.json` (no pnpm, no lockfile, no workspace, no bin),
- * a `master` default branch resolved through a real `origin/HEAD` ref, and
- * its own CI workflow whose job name the harness must wait for. Installing
- * the `npm pack` artifact via file:// is the PR-level evidence layer; the
- * post-publish layer (a real external repository's green Actions run) is
- * tracked on the issue.
+ * configurable default branches (`master` and `main` both run in the #67
+ * matrix) resolved through a real `origin/HEAD` ref, optional own CI
+ * (or none at all), a linked-worktree variant, and a pushable bare
+ * remote standing in for the GitHub origin. Installing the `npm pack`
+ * artifact via file:// is the PR-level evidence layer; the post-publish
+ * layer (a real external repository's green Actions run against the
+ * registry package) is tracked on the issue.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -28,13 +30,14 @@ const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * spawnables require a shell (same approach as the repo's run-cli helper).
  * With a shell, args join with spaces — quote any arg containing one.
  */
-function runNpmSync(args: string[], cwd: string): string {
+function runNpmSync(args: string[], cwd: string, env?: NodeJS.ProcessEnv): string {
   const isWindows = process.platform === 'win32';
   const finalArgs = isWindows ? args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : args;
   const res = spawnSync(isWindows ? 'npm.cmd' : 'npm', finalArgs, {
     cwd,
     encoding: 'utf-8',
     shell: isWindows,
+    env: env === undefined ? process.env : { ...process.env, ...env },
   });
   if (res.error) throw res.error;
   if (res.status !== 0) {
@@ -118,9 +121,21 @@ export interface ExternalRepoFixture {
   headSha: string;
 }
 
-export function makeExternalRepo(prefix: string): ExternalRepoFixture {
+/**
+ * Fixture shape dial (#67): the default branch proves the harness
+ * assumes nothing about branch names (`master` and `main` both run in
+ * the matrix), and `ci: 'none'` builds a repository with no CI of its
+ * own at all — the zero-required-checks adoption path.
+ */
+export interface ExternalRepoOptions {
+  defaultBranch?: string;
+  ci?: 'app' | 'none';
+}
+
+export function makeExternalRepo(prefix: string, options: ExternalRepoOptions = {}): ExternalRepoFixture {
+  const defaultBranch = options.defaultBranch ?? 'master';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(dir, 'init', '-b', 'master');
+  git(dir, 'init', '-b', defaultBranch);
   git(dir, 'config', 'user.name', 'External Fixture');
   git(dir, 'config', 'user.email', 'external@example.test');
   git(dir, 'config', 'commit.gpgsign', 'false');
@@ -136,34 +151,92 @@ export function makeExternalRepo(prefix: string): ExternalRepoFixture {
       2
     )}\n`
   );
-  const workflowsDir = path.join(dir, '.github', 'workflows');
-  fs.mkdirSync(workflowsDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(workflowsDir, 'app-ci.yml'),
-    [
-      'name: App CI',
-      'on: [pull_request]',
-      'jobs:',
-      '  build:',
-      '    name: Build',
-      '    runs-on: ubuntu-latest',
-      '    steps:',
-      '      - run: echo building the unrelated app',
-      '',
-    ].join('\n')
-  );
 
-  git(dir, 'add', 'package.json', '.github');
+  if (options.ci !== 'none') {
+    const workflowsDir = path.join(dir, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'app-ci.yml'),
+      [
+        'name: App CI',
+        'on: [pull_request]',
+        'jobs:',
+        '  build:',
+        '    name: Build',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - run: echo building the unrelated app',
+        '',
+      ].join('\n')
+    );
+    git(dir, 'add', 'package.json', '.github');
+  } else {
+    git(dir, 'add', 'package.json');
+  }
   git(dir, '-c', 'core.hooksPath=external-fixture-no-hooks', 'commit', '-m', 'unrelated app baseline');
   const headSha = git(dir, 'rev-parse', 'HEAD').trim();
 
-  // A genuine non-main default branch: origin/HEAD -> origin/master, exactly
-  // what `git rev-parse --abbrev-ref origin/HEAD` (the LocalGitAdapter's
-  // probe) resolves in a real clone.
-  git(dir, 'update-ref', 'refs/remotes/origin/master', headSha);
-  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master');
+  // A genuine default branch ref: origin/HEAD -> origin/<defaultBranch>,
+  // exactly what `git rev-parse --abbrev-ref origin/HEAD` (the
+  // LocalGitAdapter's probe) resolves in a real clone.
+  git(dir, 'update-ref', `refs/remotes/origin/${defaultBranch}`, headSha);
+  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${defaultBranch}`);
 
   return { dir, headSha };
+}
+
+export interface PushableExternalRepo extends ExternalRepoFixture {
+  /** Local bare remote standing in for the GitHub origin (insteadOf rewrite). */
+  bareDir: string;
+}
+
+/**
+ * An external repo whose `origin` still parses to the GitHub URL while
+ * every push lands in a local bare remote: real git transport, no
+ * network — the bootstrap's `git push` has somewhere real to go.
+ */
+export function makePushableExternalRepo(
+  prefix: string,
+  options: ExternalRepoOptions = {}
+): PushableExternalRepo {
+  const repo = makeExternalRepo(prefix, options);
+  const bareDir = `${fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}bare-`))}.git`;
+  git(repo.dir, 'init', '--bare', bareDir);
+  git(repo.dir, 'config', `url.${bareDir}.insteadOf`, EXT_ORIGIN_URL);
+  return { ...repo, bareDir };
+}
+
+export interface ExternalWorktreeFixture {
+  mainDir: string;
+  bareDir: string;
+  worktreeDir: string;
+  label: string;
+  headSha: string;
+}
+
+/**
+ * A linked-worktree adoption (#67): the unrelated app checked out as a
+ * linked worktree of its main repository — the shape a contributor
+ * uses to deliver from a worktree. The worktree sits on its own base
+ * branch (`specgit issue` requires a branch checkout, never a detached
+ * HEAD). The label is the basename the CLI records, computed from the
+ * real (symlink-resolved) path like the product does.
+ */
+export function makeExternalWorktree(
+  prefix: string,
+  options: ExternalRepoOptions = {}
+): ExternalWorktreeFixture {
+  const repo = makePushableExternalRepo(prefix, { ci: 'none', ...options });
+  const worktreeRaw = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}wt-`));
+  git(repo.dir, 'worktree', 'add', worktreeRaw, '-b', 'wt-base');
+  const worktreeDir = fs.realpathSync(worktreeRaw);
+  return {
+    mainDir: repo.dir,
+    bareDir: repo.bareDir,
+    worktreeDir,
+    label: path.basename(worktreeDir),
+    headSha: repo.headSha,
+  };
 }
 
 /** The default branch exactly as the CLI's git adapter derives it. */
@@ -171,11 +244,30 @@ export function remoteDefaultBranch(dir: string): string {
   return git(dir, 'rev-parse', '--abbrev-ref', 'origin/HEAD').trim().replace(/^origin\//, '');
 }
 
+/**
+ * An isolated npm cache for a test file's installs (#67): keeps the
+ * fixture installs out of the host user's cache while letting the
+ * file's sequential installs share one warm cache.
+ */
+export function externalNpmCache(prefix: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
 /** file:// adoption install of the packed CLI; `--no-save` keeps the adopting tree clean. */
-export function npmInstallPacked(tarballPath: string, cwd: string): void {
+export function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: string): void {
   runNpmSync(
     ['install', tarballPath, '--no-save', '--no-audit', '--no-fund', '--loglevel=error'],
-    cwd
+    cwd,
+    cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
+  );
+}
+
+/** Global install into an isolated prefix (never the host's global root). */
+export function npmInstallGlobal(tarballPath: string, prefix: string, cacheDir?: string): void {
+  runNpmSync(
+    ['install', '-g', `--prefix=${prefix}`, tarballPath, '--no-audit', '--no-fund', '--loglevel=error'],
+    prefix,
+    cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
   );
 }
 
@@ -191,9 +283,23 @@ export function runInstalledSpecgit(
   args: string[],
   env?: NodeJS.ProcessEnv
 ): InstalledCliResult {
-  const bin = path.join(dir, 'node_modules', 'specgit', 'bin', 'specgit.js');
+  return runInstalledSpecgitFrom(dir, dir, args, env);
+}
+
+/**
+ * Run the installed CLI from an arbitrary cwd while the install lives
+ * elsewhere (e.g. proving fail-closed behavior outside any git
+ * repository with the adopted package's bin).
+ */
+export function runInstalledSpecgitFrom(
+  cwd: string,
+  installDir: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv
+): InstalledCliResult {
+  const bin = path.join(installDir, 'node_modules', 'specgit', 'bin', 'specgit.js');
   const res = spawnSync(process.execPath, [bin, ...args], {
-    cwd: dir,
+    cwd,
     encoding: 'utf-8',
     env: env === undefined ? process.env : { ...process.env, ...env },
   });
