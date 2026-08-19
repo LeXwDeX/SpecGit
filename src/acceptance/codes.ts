@@ -11,6 +11,8 @@ export type SpecGitCode =
   | 'detached_head'
   | 'branch_mismatch'
   | 'worktree_mismatch'
+  | 'merged_delivery_not_contained'
+  | 'merged_lineage_unavailable'
   | 'no_origin'
   | 'origin_unresolvable'
   | 'gh_missing'
@@ -102,6 +104,16 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     kind: 'factual',
     message: 'The current checkout does not match the worktree in the delivery binding.',
     fix: 'Run from the bound worktree whose label resolves to the bound branch.',
+  },
+  merged_delivery_not_contained: {
+    kind: 'factual',
+    message: "The merged pull request's merge commit is not contained by local HEAD.",
+    fix: 'Fetch and check out the base branch that received the merge (e.g. git pull), then re-run. A rewritten local history cannot prove lineage.',
+  },
+  merged_lineage_unavailable: {
+    kind: 'evidence',
+    message: 'Merged-delivery lineage could not be established from provider and local git evidence.',
+    fix: 'git fetch the remote and pull the base branch that received the merge, then re-run so the merge commit can be verified against local HEAD.',
   },
   no_origin: {
     kind: 'factual',

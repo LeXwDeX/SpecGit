@@ -277,6 +277,11 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       port.defaultBranchCalls.push(_root);
       return writes.remoteDefaultBranch?.() ?? { ok: true, value: 'main' };
     }),
+    headContains: vi.fn(async (): Promise<Evidence<{ contained: boolean }>> =>
+      // Fail-closed default: the fake answers no lineage question unless
+      // a test explicitly scripts one.
+      ({ ok: false, code: 'merged_lineage_unavailable', message: 'headContains not configured in fake' })
+    ),
   };
   return port;
 }

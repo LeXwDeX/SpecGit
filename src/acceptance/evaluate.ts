@@ -221,15 +221,47 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       if (facts.branch !== binding!.context.branch) {
         // The record may belong to a delivery whose PR already merged —
         // running finish on main afterwards is then a completed history,
-        // not a mismatch. Verify against the PR evidence; a provider
+        // not a mismatch. Historical acceptance still requires proof that
+        // local HEAD contains the merged delivery: GitHub's
+        // merge_commit_sha is a commit on the base branch under every
+        // merge method (merge commit, squash, rebase), so containment of
+        // that one anchor in local HEAD is the lineage proof. A provider
         // failure keeps the fail-closed mismatch (never upgrades on
-        // missing evidence).
+        // missing evidence), and unresolved lineage never turns green.
         const repoForMerged = repoRefForMergedCheck(facts.originUrl, input.gitlabHost);
         if (repoForMerged && binding!.pr !== undefined && input.gh) {
           const prEv = await input.gh.getPr(repoForMerged, binding!.pr);
           if (prEv.ok && prEv.value.state === 'merged') {
-            mergedRecord = true;
             evidence.prHead = prEv.value.headSha;
+            const mergeCommitSha = prEv.value.mergeCommitSha;
+            if (!mergeCommitSha) {
+              // No anchor means no proof. The PR head is not a substitute:
+              // squash and rebase never put it on the base branch.
+              return [
+                makeFailure('merged_lineage_unavailable', {
+                  source: 'provider',
+                  pr: prEv.value.number,
+                }),
+              ];
+            }
+            const containment = await input.git.headContains(input.root.value, mergeCommitSha);
+            if (!containment.ok) {
+              return [
+                makeFailure(containment.code, {
+                  mergeCommitSha,
+                  reason: containment.message,
+                }),
+              ];
+            }
+            if (!containment.value.contained) {
+              return [
+                makeFailure('merged_delivery_not_contained', {
+                  mergeCommitSha,
+                  headSha: facts.headSha,
+                }),
+              ];
+            }
+            mergedRecord = true;
             return [];
           }
         }
