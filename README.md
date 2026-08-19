@@ -129,6 +129,17 @@ cursor, …) the portable entry points live in [`skills/`](skills/) — see
 the whole agent surface is tracked in
 [#7](https://github.com/LeXwDeX/SpecGit/issues/7).
 
+## Releasing
+
+Releases are automatic and PR-gated. A feature/fix branch carries its
+changeset (`.changeset/*.md`); merging the PR to `main` triggers the Release
+workflow: consume changesets → bump → build → `npm publish` → tag
+`v<version>` → GitHub Release. Direct pushes to `main` are blocked by the
+pre-push guard, so **every published version traces to a merged PR**.
+Prerequisite (repo admin, once): an npm **trusted publisher** bound to this
+repository + `release-prepare.yml` workflow + the `NPM` environment (OIDC,
+no long-lived token; provenance included).
+
 ## Documentation
 
 - [Documentation home](docs/README.md)
