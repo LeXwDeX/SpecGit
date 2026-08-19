@@ -11,6 +11,14 @@ export const EXIT_REJECTED = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_UNKNOWN = 3;
 
+/**
+ * Ctrl-C at an interactive prompt. The one interruption exception: it sits
+ * outside the 0/1/2/3 product contract and outside the JSON envelope —
+ * stdout stays empty (exactly-zero documents even under `--json`), the
+ * human "Interrupted." line goes to stderr.
+ */
+export const EXIT_INTERRUPTED = 130;
+
 export type EnvelopeStatus = 'ok' | 'rejected' | 'unknown' | 'error';
 
 export function statusFromExit(exit: number): EnvelopeStatus {

@@ -25,7 +25,13 @@ import { runPr } from './commands/pr.js';
 import { runStatus } from './commands/status.js';
 import { runUnbind } from './commands/unbind.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from './exit-codes.js';
-import { errorDiagnostic, finishOutcome, sanitize, type CommandOutcome } from './output.js';
+import {
+  emitInterrupted,
+  errorDiagnostic,
+  finishOutcome,
+  sanitize,
+  type CommandOutcome,
+} from './output.js';
 import type { CliIO, CommandContext } from './types.js';
 import { createDefaultContext, readPackageJson } from './wiring.js';
 
@@ -35,7 +41,12 @@ export type ContextResolution =
 
 export type ContextResolver = () => Promise<ContextResolution>;
 
-const COMMAND_NAMES = [
+/**
+ * The public command registry (#69): ten commands. `setup` is public;
+ * `bind`/`unbind`/`accept` are automation aliases. Contract tests pin this
+ * list against help output and the generated agent surface.
+ */
+export const COMMAND_NAMES = [
   'init',
   'setup',
   'issue',
@@ -108,7 +119,21 @@ export function createProgram(
         }
       },
     })
-    .option('--json', 'Output as JSON (stdout carries exactly one JSON document)');
+    .option('--json', 'Output as JSON (stdout carries exactly one JSON document)')
+    .addHelpText(
+      'after',
+      [
+        '',
+        'Environment:',
+        '  SPECGIT_GH             Path to the gh executable (default: gh on PATH).',
+        '  SPECGIT_GH_TIMEOUT_MS  Per-call gh timeout in milliseconds (default: 15000).',
+        '',
+        'Exit codes: 0 success/accepted · 1 rejected with complete evidence ·',
+        '2 usage error · 3 fail-closed unknown. Ctrl-C at an interactive prompt',
+        'exits 130 — the one interruption exception, outside the JSON envelope:',
+        'stdout stays empty and "Interrupted." goes to stderr.',
+      ].join('\n')
+    );
 
   // Commander passes (…positional, options, Command); option-only
   // commands receive just (options, Command). The last argument is
@@ -144,8 +169,7 @@ export function createProgram(
         result.exit = finishOutcome(io, name, version, outcome, json);
       } catch (error) {
         if (isPromptCancel(error)) {
-          io.stderr('Interrupted.');
-          result.exit = 130;
+          result.exit = emitInterrupted(io);
           return;
         }
         result.exit = finishOutcome(io, name, version, unexpectedOutcome(error), json);
@@ -209,7 +233,7 @@ export function createProgram(
   program
     .command('bind')
     .description(
-      'Write or update .specgit.yaml; the execution context is taken from live git'
+      'Script alias: write or update .specgit.yaml; the execution context is taken from live git'
     )
     .option('--issue <n>', 'GitHub issue number or issue URL; repeatable, merged', collect, [])
     .option('--pr <ref>', 'Pull request number or URL (replaces)')
@@ -219,7 +243,7 @@ export function createProgram(
 
   program
     .command('unbind')
-    .description('Delete .specgit.yaml')
+    .description('Script alias: delete .specgit.yaml (the policy is untouched)')
     .option('-y, --yes', 'Delete without confirmation')
     .option('--json', 'Output as JSON')
     .action(wrap('unbind', runUnbind as CommandRun));
@@ -232,7 +256,9 @@ export function createProgram(
 
   program
     .command('accept')
-    .description('Evaluate acceptance against real git, PR, and check evidence')
+    .description(
+      'Script/CI alias of finish: the same evidence verdict (automation surface)'
+    )
     .option('--json', 'Output as JSON')
     .action(wrap('accept', runAccept as CommandRun));
 

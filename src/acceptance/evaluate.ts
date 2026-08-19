@@ -30,7 +30,12 @@ export type GateId =
   | 'closing'
   | 'checks';
 
-const GATE_ORDER: GateId[] = [
+/**
+ * The gate registry (#69): eleven gates in evaluation order, `sequence`
+ * included. Contract tests pin this against help, docs, and the generated
+ * agent surface.
+ */
+export const GATE_ORDER: GateId[] = [
   'record',
   'policy',
   'completeness',

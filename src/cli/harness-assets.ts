@@ -183,6 +183,15 @@ already exists); keep manual guidance outside them.
   origin. \`specgit doctor\` probes git, repository, origin, gh, and
   policy.
 
+### The command surface
+
+- Ten commands: \`specgit init\`, \`specgit setup\`, \`specgit issue\`,
+  \`specgit pr\`, \`specgit finish\`, \`specgit bind\`, \`specgit unbind\`,
+  \`specgit status\`, \`specgit accept\`, \`specgit doctor\`.
+- \`specgit setup\` installs the agent entry points (commands for opencode,
+  portable skills for other tools); \`specgit bind\`, \`specgit unbind\`,
+  and \`specgit accept\` are automation aliases for scripts and CI.
+
 ### Before creating an issue, check for duplicates
 
 - Before running \`specgit issue\` with a new title, search the tracker for
