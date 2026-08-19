@@ -35,10 +35,26 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Probe delivery PR
+        id: probe
+        run: |
+          if [ "${{ github.event.pull_request.user.login }}" = "github-actions[bot]" ] && [ "${{ github.head_ref }}" = "changeset-release/main" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      # The release bot's version PR is not a delivery: `specgit finish` is
+      # not applicable (main may still carry the last delivery's record, so
+      # presence of .specgit.yaml proves nothing). Every human PR — including
+      # PRs from branches named changeset-release/main — must still pass the
+      # full acceptance verdict.
+      - name: Acceptance not applicable
+        if: steps.probe.outputs.skip == 'true'
+        run: 'echo "changeset version PR (no delivery record): acceptance not applicable."'
       - name: Build CLI
+        if: steps.probe.outputs.skip != 'true'
         run: pnpm run build
 
       - name: Wait for sibling checks
+        if: steps.probe.outputs.skip != 'true'
         # The verdict must see the OTHER required checks in a terminal
         # state. Sibling jobs start in parallel AND may not have registered
         # their check-runs yet, so an empty poll is not "done": wait until
