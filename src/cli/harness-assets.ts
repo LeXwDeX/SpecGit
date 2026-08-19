@@ -516,11 +516,13 @@ exit 0
 export { GUARD_SCRIPT };
 
 // Local git-layer guard: refuses direct pushes to main; deliveries must go
-// through PR + CI + specgit finish. This is the guard BODY; the managed
-// file wraps it in SPECGIT_PRE_PUSH_MARKERS so an existing user hook is
-// merged, not replaced (#62).
-const GIT_PRE_PUSH = `#!/bin/sh
-# SpecGit pre-push guard (managed by specgit init).
+// through PR + CI + specgit finish. The managed file wraps this BODY in
+// SPECGIT_PRE_PUSH_MARKERS so an existing user hook is merged, not
+// replaced (#62) — and keeps the shebang on line 1, ahead of the start
+// marker, because git on Windows execs the hook directly and cannot
+// spawn a file whose first line is a plain comment (#67 matrix,
+// windows-pwsh: "cannot spawn ... pre-push: Exec format error").
+const GIT_PRE_PUSH_BODY = `# SpecGit pre-push guard (managed by specgit init).
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "\$remote_ref" in
     refs/heads/main)
@@ -533,39 +535,56 @@ done
 exit 0
 `;
 
+// The pre-#62 unmarked install: shebang + body, no markers.
+const GIT_PRE_PUSH = `#!/bin/sh
+${GIT_PRE_PUSH_BODY}`;
+
 const PRE_PUSH_START = '# >>> specgit:start >>>';
 const PRE_PUSH_END = '# <<< specgit:end <<<';
 
+/** The marker-delimited guard region (no shebang of its own). */
+function managedPrePushRegion(): string {
+  return `${PRE_PUSH_START}\n${GIT_PRE_PUSH_BODY}${PRE_PUSH_END}\n`;
+}
+
+/** A fresh managed file: shebang line 1, then the managed region. */
 function managedPrePush(): string {
-  return `${PRE_PUSH_START}\n${GIT_PRE_PUSH}${PRE_PUSH_END}\n`;
+  return `#!/bin/sh\n${managedPrePushRegion()}`;
 }
 
 /**
  * Merge the specgit pre-push guard into existing hook content (#62:
  * merge, never overwrite). Cases, all byte-stable on re-merge:
- * - absent/empty: the managed region alone;
+ * - absent/empty: the spawnable managed file alone;
  * - the legacy unmarked specgit guard (pre-#62 installs): upgraded;
+ * - the #62 marker-first layout (shebang on line 2, unspawnable on
+ *   Windows): upgraded wholesale so the shebang becomes line 1;
  * - markers present: only the delimited region is replaced;
- * - anything else (a user hook, e.g. husky): preserved verbatim with the
- *   managed region appended after it.
+ * - anything else (a user hook, e.g. husky): preserved verbatim with
+ *   the managed region appended after it.
  */
 export function mergeGitPrePush(existing: string | null): string {
-  const managed = managedPrePush();
   if (existing === null || existing === '') {
-    return managed;
+    return managedPrePush();
   }
   if (existing === GIT_PRE_PUSH) {
     // Legacy specgit install without markers: upgrade in place.
-    return managed;
+    return managedPrePush();
   }
   const startIndex = existing.indexOf(PRE_PUSH_START);
   const endIndex = existing.indexOf(PRE_PUSH_END);
   if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+    if (startIndex === 0) {
+      // Old managed layout: the marker was line 1 and the shebang sat
+      // inside the region. Replace the whole file with the spawnable
+      // layout (the region content is otherwise identical).
+      return managedPrePush();
+    }
     const afterEnd = endIndex + PRE_PUSH_END.length;
-    return existing.slice(0, startIndex) + managed.trimEnd() + existing.slice(afterEnd);
+    return existing.slice(0, startIndex) + managedPrePushRegion().trimEnd() + existing.slice(afterEnd);
   }
   const separator = existing.endsWith('\n') ? '' : '\n';
-  return `${existing}${separator}${managed}`;
+  return `${existing}${separator}${managedPrePushRegion()}`;
 }
 
 const HOOKS_SEGMENTS = ['.opencode', 'hooks'];

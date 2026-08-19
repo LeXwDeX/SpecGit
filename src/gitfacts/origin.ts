@@ -5,6 +5,110 @@ export interface RepoRef {
   repo: string;
 }
 
+/**
+ * Bounded structural facts for a git origin URL (#83).
+ *
+ * Single pass, no regex: every step is an indexOf/slice/charCodeAt scan,
+ * so no input can trigger polynomial backtracking. Inputs are capped
+ * (URL ≤ MAX_ORIGIN_URL_LENGTH, host ≤ MAX_ORIGIN_HOST_LENGTH) and
+ * anything malformed — including caps exceeded — fails closed to null.
+ * Only the host component is ever returned; userinfo (credentials),
+ * path, query, and fragment are structurally excluded, so a token such
+ * as "github.com" reachable only through them can never pose as a host.
+ */
+export interface OriginUrlParts {
+  /** Lowercased scheme without "://" (e.g. "https"), or null for the scp-like form. */
+  scheme: string | null;
+  /** Lowercased host component, charset-validated ([a-z0-9.-]). */
+  host: string;
+  /** Explicit port digits for scheme URLs, null when absent (scp has no port). */
+  port: string | null;
+}
+
+const MAX_ORIGIN_HOST_LENGTH = 255;
+const MAX_PORT_LENGTH = 5;
+
+export function extractOriginHost(originUrl: string): OriginUrlParts | null {
+  const url = originUrl.trim().toLowerCase();
+  if (url.length === 0 || url.length > MAX_ORIGIN_URL_LENGTH) return null;
+
+  const schemeEnd = url.indexOf('://');
+  if (schemeEnd === 0) return null;
+
+  let scheme: string | null;
+  let rest: string;
+  if (schemeEnd > 0) {
+    scheme = url.slice(0, schemeEnd);
+    if (!isValidScheme(scheme)) return null;
+    rest = url.slice(schemeEnd + 3);
+  } else {
+    scheme = null;
+    rest = url;
+  }
+
+  // The authority ends at the first path/query/fragment delimiter. For
+  // the scp-like form the same scan stops before the path, leaving
+  // "host:path" (with optional userinfo) to be split on its colon below.
+  let authorityEnd = rest.length;
+  for (const delimiter of ['/', '?', '#']) {
+    const idx = rest.indexOf(delimiter);
+    if (idx >= 0 && idx < authorityEnd) authorityEnd = idx;
+  }
+  const authority = rest.slice(0, authorityEnd);
+  if (authority.length === 0) return null;
+
+  // Userinfo is everything before the last '@' — credentials, never host.
+  const at = authority.lastIndexOf('@');
+  const hostPort = at >= 0 ? authority.slice(at + 1) : authority;
+
+  let host: string;
+  let port: string | null = null;
+  const colon = hostPort.indexOf(':');
+  if (scheme === null) {
+    if (colon < 0) return null; // schemeless without "host:" is not an origin
+    host = hostPort.slice(0, colon);
+  } else if (colon >= 0) {
+    host = hostPort.slice(0, colon);
+    port = hostPort.slice(colon + 1);
+    if (port.length === 0 || port.length > MAX_PORT_LENGTH || !isAllDigits(port)) return null;
+  } else {
+    host = hostPort;
+  }
+
+  if (!isValidHost(host)) return null;
+  return { scheme, host, port };
+}
+
+function isValidScheme(scheme: string): boolean {
+  const first = scheme.charCodeAt(0);
+  if (first < 97 /* a */ || first > 122 /* z */) return false;
+  for (let i = 1; i < scheme.length; i++) {
+    const c = scheme.charCodeAt(i);
+    const ok =
+      (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 /* + */ || c === 45 /* - */ || c === 46; /* . */
+    if (!ok) return false;
+  }
+  return true;
+}
+
+function isValidHost(host: string): boolean {
+  if (host.length === 0 || host.length > MAX_ORIGIN_HOST_LENGTH) return false;
+  for (let i = 0; i < host.length; i++) {
+    const c = host.charCodeAt(i);
+    const ok = (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 46 /* . */ || c === 45; /* - */
+    if (!ok) return false;
+  }
+  return true;
+}
+
+function isAllDigits(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if (c < 48 /* 0 */ || c > 57 /* 9 */) return false;
+  }
+  return true;
+}
+
 // Origin classification is structural, never substring-based over the raw
 // URL: the host is extracted per shape (https/ssh URL, or scp-like
 // `user@host:path`) and only then compared, so `github.com` can never match
