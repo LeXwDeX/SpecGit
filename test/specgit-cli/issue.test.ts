@@ -485,6 +485,7 @@ function mergedRecordCtx(args: { gh?: GhScript } = {}) {
           headSha: 'd'.repeat(40),
           baseBranch: 'main',
           body: 'Closes #11 Closes #12',
+          mergeCommitSha: null,
         }),
       ...(args.gh ?? {}),
     },
@@ -535,6 +536,7 @@ describe('specgit issue: replacement validation is non-destructive', () => {
             headSha: 'd'.repeat(40),
             baseBranch: 'main',
             body: 'Closes #11 Closes #12',
+            mergeCommitSha: null,
           }),
       },
     });
