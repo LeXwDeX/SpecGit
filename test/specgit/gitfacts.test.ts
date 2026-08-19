@@ -168,11 +168,14 @@ describe('LocalGitAdapter', () => {
       const result = await adapter.hooksPath(wtRoot);
       // Hooks live in the common dir (the main repository's .git), not the
       // per-worktree gitdir: a worktree init must not fork its own guard.
-      // git canonicalizes through symlinks (e.g. /var → /private/var).
-      expect(result).toEqual({
-        ok: true,
-        value: path.join(fs.realpathSync(root), '.git', 'hooks'),
-      });
+      // Compare canonicalized paths: git canonicalizes symlinks (/var →
+      // /private/var on macOS) while Windows realpathSync expands 8.3 short
+      // names — both sides must land on the same physical directory.
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(fs.realpathSync(result.value)).toBe(
+        fs.realpathSync(path.join(fs.realpathSync(root), '.git', 'hooks'))
+      );
     });
 
     it('fails closed outside a git repository', async () => {
