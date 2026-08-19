@@ -52,7 +52,9 @@ jobs:
 
       - name: Pack and verify the tarball shape
         run: |
-          npm pack --json --silent > pack.json
+          # --ignore-scripts: the build already ran; letting pack run the
+          # prepare lifecycle would pollute the JSON output with build logs.
+          npm pack --json --silent --ignore-scripts > pack.json
           node --input-type=module <<'EOF'
           import { readFileSync } from 'node:fs';
           const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
