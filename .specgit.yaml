@@ -5,4 +5,3 @@ context:
   branch: ci/30-release-via-version
 issues:
   - 30
-pr: 31
