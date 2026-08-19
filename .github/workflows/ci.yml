@@ -47,6 +47,9 @@ jobs:
     name: Test (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    # The shadow self-hosted entry is experimental: its failures must not
+    # redden the run (continue-on-error is set per-matrix-entry below).
+    continue-on-error: ${{ matrix.experimental }}
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
@@ -57,20 +60,24 @@ jobs:
           - os: ubuntu-latest
             shell: bash
             label: linux-bash
+            experimental: false
             vitest_workers: 4
           # Shadow entry on the project docker runner: never a required
           # check, proves the container build before any migration.
           - os: [self-hosted, Linux, X64]
             shell: bash
             label: self-hosted-linux
+            experimental: true
             vitest_workers: 4
           - os: macos-latest
             shell: bash
             label: macos-bash
+            experimental: false
             vitest_workers: 4
           - os: windows-latest
             shell: pwsh
             label: windows-pwsh
+            experimental: false
             vitest_workers: 2
 
     defaults:
