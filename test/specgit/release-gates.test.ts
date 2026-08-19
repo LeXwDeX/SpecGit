@@ -78,12 +78,16 @@ describe('rc-verify is a safe RC path (#71)', () => {
     expect(Object.keys(parsed.on ?? {}).sort()).toEqual(['pull_request', 'workflow_dispatch']);
   });
 
-  it('never publishes: every npm publish is a dry-run', () => {
+  it('never publishes: every npm publish is a dry-run over a staged RC version', () => {
     const publishes = raw.match(/^.*npm publish.*$/gm) ?? [];
     expect(publishes.length).toBeGreaterThan(0);
     for (const line of publishes) {
       expect(line).toContain('--dry-run');
     }
+    // The dry-run target is a workspace-only RC version, so it can never
+    // collide with (or shadow) a published release.
+    expect(raw).toContain('npm pkg set');
+    expect(raw).toMatch(/-rc\.\$\{?GITHUB_RUN_ID\}?|-rc\./);
   });
 
   it('cannot mutate registry, tags, or releases', () => {
@@ -127,15 +131,17 @@ describe('guard wiring (#68)', () => {
   });
 
   it('the checked-in guard is exactly the managed template', () => {
-    const checkedIn = fs.readFileSync(
-      path.join(ROOT, '.opencode', 'hooks', 'specgit-merge-guard.sh'),
-      'utf8'
-    );
+    // Windows checkouts may convert LF to CRLF; normalize before locking.
+    const checkedIn = fs
+      .readFileSync(path.join(ROOT, '.opencode', 'hooks', 'specgit-merge-guard.sh'), 'utf8')
+      .replace(/\r\n/g, '\n');
     expect(checkedIn).toBe(GUARD_SCRIPT);
   });
 
   it('the checked-in hooks.json is exactly a fresh template install', () => {
-    const checkedIn = fs.readFileSync(path.join(ROOT, '.opencode', 'hooks.json'), 'utf8');
+    const checkedIn = fs
+      .readFileSync(path.join(ROOT, '.opencode', 'hooks.json'), 'utf8')
+      .replace(/\r\n/g, '\n');
     expect(checkedIn).toBe(mergeHooksJson(null).json);
   });
 });

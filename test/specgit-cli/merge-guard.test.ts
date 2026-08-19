@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -98,10 +98,16 @@ function runGuard(
 ): Promise<GuardResult> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn(GUARD, {
-      env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const child =
+      launchMode === 'sh'
+        ? spawn('sh', [GUARD], {
+            env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
+        : spawn(GUARD, {
+            env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
     let stderr = '';
     let stdout = '';
     const timer = setTimeout(() => {
@@ -122,16 +128,24 @@ function runGuard(
   });
 }
 
-const shAvailable = (() => {
+// POSIX runs the script directly (shebang + exec bit); Windows runs it
+// through sh when git-bash is available, and skips otherwise — the guard
+// is a POSIX-shell artifact and cannot be exec'd natively there.
+const launchMode: 'direct' | 'sh' | null = (() => {
+  const shProbe = spawnSync('sh', ['-c', 'exit 0']);
+  if (process.platform === 'win32') {
+    return shProbe.status === 0 && !shProbe.error ? 'sh' : null;
+  }
+  if (shProbe.error) return null;
   try {
     fs.accessSync(GUARD, fs.constants.X_OK);
-    return true;
+    return 'direct';
   } catch {
-    return false;
+    return 'sh';
   }
 })();
 
-const itOrSkip = shAvailable ? it : it.skip;
+const itOrSkip = launchMode ? it : it.skip;
 
 describe('merge guard diagnostics (#68)', () => {
   beforeAll(() => {
