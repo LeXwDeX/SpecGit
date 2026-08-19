@@ -1,8 +1,8 @@
 version: 1
-delivery: route-key-checks
+delivery: release-idempotence-and
 context:
-  kind: branch
-  branch: ci/43-route-key-checks
+  kind: worktree
+  label: specgit-wt-ci-polish
+  branch: fix/45-release-idempotence-and
 issues:
-  - 43
-pr: 44
+  - 45
