@@ -154,7 +154,14 @@ describe('merge guard diagnostics (#68)', () => {
   });
 
   afterAll(() => {
-    fs.rmSync(binDir, { recursive: true, force: true });
+    // The budget-expiry test leaves an orphaned `sleep` behind briefly;
+    // on Windows that races directory deletion (ENOTEMPTY). Retries make
+    // cleanup best-effort instead of a test failure.
+    try {
+      fs.rmSync(binDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      /* temp dir; the OS reclaims it */
+    }
   });
 
   itOrSkip('lets an accepted verdict through', async () => {
