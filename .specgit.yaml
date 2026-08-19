@@ -1,8 +1,8 @@
 version: 1
-delivery: remove-openspec-promo
+delivery: attributed-timeout-diagnostics
 context:
-  kind: branch
-  branch: chore/53-remove-openspec-promo
+  kind: worktree
+  label: specgit-wt-timeout
+  branch: fix/57-attributed-timeout-diagnostics
 issues:
-  - 53
-pr: 54
+  - 57
