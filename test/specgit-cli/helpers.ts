@@ -3,6 +3,7 @@ import type { Evidence } from '../../src/kernel/evidence.js';
 import type { Verdict, VerdictEvidence } from '../../src/acceptance/evaluate.js';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import type { Policy as SpecGitPolicy } from '../../src/record/policy.js';
+import type { PrFact } from '../../src/github/port.js';
 import type {
   CommandContext,
   GitFacts,
@@ -118,6 +119,10 @@ export interface RecordingGitHubProvider extends GitHubProvider {
 }
 
 export interface GhScript {
+  getPr?: (
+    repo: { owner: string; repo: string },
+    ref: number | string
+  ) => Evidence<PrFact>;
   createIssue?: (
     repo: { owner: string; repo: string },
     title: string,
@@ -153,9 +158,12 @@ export function makeGhProvider(
       calls.push('getIssue');
       return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
     }),
-    getPr: vi.fn(async () => {
-      calls.push('getPr');
-      return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
+    getPr: vi.fn(async (repo: never, ref: number | string) => {
+      calls.push(`getPr:${String(ref)}`);
+      return (
+        behavior.getPr?.(repo, ref) ??
+        ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+      );
     }),
     getCheckRuns: vi.fn(async () => {
       calls.push('getCheckRuns');

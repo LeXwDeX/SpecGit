@@ -92,6 +92,12 @@ function isEvidenceKind(code: string): boolean {
   return (CODE_INFO[code as SpecGitCode]?.kind ?? 'evidence') === 'evidence';
 }
 
+function repoRefForMergedCheck(originUrl: string | null): { owner: string; repo: string } | null {
+  if (!originUrl) return null;
+  const parsed = parseRepoRef(originUrl);
+  return parsed.ok ? parsed.value : null;
+}
+
 /**
  * Pure acceptance evaluation. States are derived per invocation, never
  * persisted. Gates short-circuit across gates and collect all failures within
@@ -181,6 +187,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     }));
 
   const factsState: { value: GitFacts | null } = { value: null };
+  let mergedRecord = false;
   const g4 =
     g3 &&
     (await runGate('context', async () => {
@@ -208,6 +215,20 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
         return [makeFailure('detached_head')];
       }
       if (facts.branch !== binding!.context.branch) {
+        // The record may belong to a delivery whose PR already merged —
+        // running finish on main afterwards is then a completed history,
+        // not a mismatch. Verify against the PR evidence; a provider
+        // failure keeps the fail-closed mismatch (never upgrades on
+        // missing evidence).
+        const repoForMerged = repoRefForMergedCheck(facts.originUrl);
+        if (repoForMerged && binding!.pr !== undefined && input.gh) {
+          const prEv = await input.gh.getPr(repoForMerged, binding!.pr);
+          if (prEv.ok && prEv.value.state === 'merged') {
+            mergedRecord = true;
+            evidence.prHead = prEv.value.headSha;
+            return [];
+          }
+        }
         return [makeFailure('branch_mismatch')];
       }
       if (binding!.context.kind === 'worktree') {
@@ -382,13 +403,19 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   const gates: GateResult[] = GATE_ORDER.map((id) => {
     const failures = results.get(id);
     if (failures === undefined) {
+      // A merged record on main has no live delivery gates left to run —
+      // mark them passed-by-history rather than skipped so the verdict is
+      // complete.
+      if (mergedRecord) {
+        return { id, status: 'pass', failures: [] };
+      }
       return { id, status: 'skipped', failures: [] };
     }
     return { id, status: failures.length > 0 ? 'fail' : 'pass', failures };
   });
 
   const allFailures = [...results.values()].flat();
-  const evaluatedAll = GATE_ORDER.every((id) => results.has(id));
+  const evaluatedAll = mergedRecord || GATE_ORDER.every((id) => results.has(id));
   const evidenceBlocked = allFailures.some((f) => isEvidenceKind(f.code));
   const classification: VerdictClassification = evidenceBlocked
     ? 'unknown'
@@ -415,6 +442,15 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   }
 
   const exitCode: 0 | 1 | 3 = classification === 'accepted' ? 0 : classification === 'rejected' ? 1 : 3;
+
+  if (mergedRecord && classification === 'accepted') {
+    warnings.push({
+      severity: 'warning',
+      code: 'record_of_merged_delivery',
+      message: 'This record belongs to a delivery whose pull request is already merged.',
+      fix: 'Run "specgit unbind --yes" to remove the completed record.',
+    });
+  }
 
   return {
     accepted: classification === 'accepted',
