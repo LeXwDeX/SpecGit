@@ -7,6 +7,13 @@
  * record and the live branch, so a failure between steps heals on the
  * next invocation with the same arguments.
  *
+ * Exactly-once discipline (issue #65): replacement arguments are
+ * validated before any destructive side effect; the record is rewritten
+ * after every issue so partial state is durable; and every remote side
+ * effect carries an idempotency marker — the record itself, an open
+ * issue's exact title, or the open PR for the head branch — so a retry
+ * adopts what already exists instead of duplicating a WHY.
+ *
  * The CLI is non-interactive: no arguments and no record is a usage
  * error (exit 2). With a record present, no arguments is a pure resume.
  */
@@ -124,6 +131,67 @@ function passthrough(failure: FailureEvidence): CommandOutcome {
   };
 }
 
+/**
+ * First title (non-numeric) argument in a consumed prefix: the argument
+ * that produced the delivery's name. Deterministic from the arguments
+ * alone, so a resumed run re-derives the same delivery and branch.
+ */
+function firstTitleArg(prefix: string[]): string | null {
+  for (const arg of prefix) {
+    if (arg && parseNumericRef(arg) === null) {
+      return arg;
+    }
+  }
+  return null;
+}
+
+function driftError(message: string): CommandOutcome {
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic('issue_resume_drift', message, {
+        fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to start a new delivery.',
+      }),
+    ],
+  };
+}
+
+function recordWriteFailure(error: unknown): CommandOutcome {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    exit: EXIT_UNKNOWN,
+    errors: [errorDiagnostic('record_write_failed', message)],
+  };
+}
+
+/**
+ * Usage validation for arguments that would create issues: non-empty and
+ * conventionally typed. Runs before any side effect so invalid arguments
+ * can never delete a record or create an issue.
+ */
+function validateArgsForCreation(args: string[]): CommandOutcome | null {
+  for (const arg of args) {
+    if (!arg && parseNumericRef(arg) === null) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [
+          errorDiagnostic('issue_title_empty', 'Issue titles must not be empty.', {
+            fix: 'Pass a non-empty quoted title, e.g. specgit issue "feat: add login".',
+          }),
+        ],
+      };
+    }
+  }
+  const invalid = validateIssueTitles(args);
+  if (invalid) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [errorDiagnostic(invalid.code, invalid.message, { fix: invalid.fix })],
+    };
+  }
+  return null;
+}
+
 export async function runIssue(
   options: IssueOptions,
   ctx: CommandContext
@@ -162,64 +230,26 @@ export async function runIssue(
     return passthrough(existingRead);
   }
 
-  // A record whose PR already merged is completed history, not an active
-  // delivery: replace it instead of demanding a manual unbind. Provider
-  // failures keep the existing record (fail-closed — never guess merged).
+  // Mergedness first (read-only): a record whose PR already merged is
+  // completed history, not an active delivery, and is replaced rather
+  // than demanding a manual unbind. Provider failures keep the existing
+  // record (fail-closed — never guess merged).
   let existing: Evidence<DeliveryBinding> | null = existingRead.ok ? existingRead : null;
+  let merged = false;
   if (existing && existing.value.pr !== undefined) {
     const prEv = await ctx.gh.getPr(repoEv.value, existing.value.pr);
-    if (prEv.ok && prEv.value.state === 'merged') {
-      await ctx.record.deleteRecord(root);
-      existing = null;
-    }
+    merged = prEv.ok && prEv.value.state === 'merged';
   }
 
-  let record: DeliveryBinding;
-  let resumed = false;
-  let firstTitle: string | null = null;
-
-  if (existing !== null && existing.ok) {
-    // Resume: the record is the durable step marker (issues written as
-    // soon as they exist; the PR appended when created).
-    resumed = true;
-    record = existing.value;
-    if (args.length > 0) {
-      if (args.length !== record.issues.length) {
-        return {
-          exit: EXIT_USAGE,
-          errors: [
-            errorDiagnostic(
-              'issue_resume_drift',
-              `This checkout already carries delivery '${record.delivery}' with ${record.issues.length} bound issue(s); the ${args.length} argument(s) do not match.`,
-              {
-                fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to start a new delivery.',
-              }
-            ),
-          ],
-        };
-      }
-      // Numeric arguments are verifiable and must be bound already. Title
-      // arguments cannot be matched against numbers post-creation; the
-      // count check above is their guard, and resume never creates.
-      for (const arg of args) {
-        const number = parseNumericRef(arg);
-        if (number !== null && !record.issues.includes(number)) {
-          return {
-            exit: EXIT_USAGE,
-            errors: [
-              errorDiagnostic(
-                'issue_resume_drift',
-                `Argument '${sanitize(arg)}' is not among the issues bound to delivery '${record.delivery}'.`,
-                {
-                  fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to start a new delivery.',
-                }
-              ),
-            ],
-          };
-        }
-      }
-    }
-  } else {
+  // Validate arguments BEFORE any destructive side effect, scoped to what
+  // those arguments would actually do:
+  //  - fresh bootstrap: every argument is validated (today's contract);
+  //  - merged-record replacement: validated before the record is deleted;
+  //  - live resume: arguments are resume keys, not titles-to-create —
+  //    only the still-unconsumed arguments of a partial record, the ones
+  //    that would create issues, are validated.
+  // Invalid or absent arguments never delete or mutate the record.
+  if (existing === null) {
     if (args.length === 0) {
       return {
         exit: EXIT_USAGE,
@@ -230,62 +260,147 @@ export async function runIssue(
         ],
       };
     }
-
-    const invalid = validateIssueTitles(args);
-    if (invalid) {
-      return {
-        exit: EXIT_USAGE,
-        errors: [errorDiagnostic(invalid.code, invalid.message, { fix: invalid.fix })],
-      };
+    const invalidFresh = validateArgsForCreation(args);
+    if (invalidFresh) {
+      return invalidFresh;
     }
+  }
 
-    const issues: number[] = [];
-    for (const arg of args) {
-      const reuseNumber = parseNumericRef(arg);
-      if (reuseNumber !== null) {
-        issues.push(reuseNumber);
-        continue;
+  // Replace a merged record only with validated replacement arguments.
+  if (existing !== null && merged && args.length > 0) {
+    const invalidReplacement = validateArgsForCreation(args);
+    if (invalidReplacement) {
+      return invalidReplacement;
+    }
+    await ctx.record.deleteRecord(root);
+    existing = null;
+  }
+
+  let record!: DeliveryBinding;
+  let resumed = false;
+  let firstTitle: string | null = null;
+  let issues: number[] = [];
+  let startIndex = 0;
+
+  if (existing !== null && existing.ok) {
+    // Resume: the record is the durable step marker, rewritten after every
+    // issue (and the PR), so a partial record carries exactly the issues
+    // that exist and the arguments map onto it positionally.
+    resumed = true;
+    record = existing.value;
+    issues = [...record.issues];
+    // Every recorded issue is a consumed argument; creation, if any,
+    // continues after them.
+    startIndex = issues.length;
+    if (args.length > 0) {
+      if (args.length < issues.length) {
+        return driftError(
+          `This checkout already carries delivery '${record.delivery}' with ${record.issues.length} bound issue(s); the ${args.length} argument(s) do not match.`
+        );
       }
-      if (!arg) {
-        return {
-          exit: EXIT_USAGE,
-          errors: [
-            errorDiagnostic('issue_title_empty', 'Issue titles must not be empty.', {
-              fix: 'Pass a non-empty quoted title, e.g. specgit issue "feat: add login".',
-            }),
-          ],
-        };
+      if (args.length === issues.length) {
+        // Numeric arguments are verifiable and must be bound already. Title
+        // arguments cannot be matched to numbers post-creation; the count
+        // check above is their guard, and a complete record never creates.
+        for (const arg of args) {
+          const number = parseNumericRef(arg);
+          if (number !== null && !record.issues.includes(number)) {
+            return driftError(
+              `Argument '${sanitize(arg)}' is not among the issues bound to delivery '${record.delivery}'.`
+            );
+          }
+        }
+      } else {
+        // Partial record (issues ⊂ args): the first issues.length
+        // arguments were consumed by the previous run — numeric ones are
+        // verified positionally — and creation continues from there.
+        for (let i = 0; i < issues.length; i += 1) {
+          const number = parseNumericRef(args[i]);
+          if (number !== null && number !== issues[i]) {
+            return driftError(
+              `Argument '${sanitize(args[i])}' is not among the issues bound to delivery '${record.delivery}'.`
+            );
+          }
+        }
+        firstTitle = firstTitleArg(args.slice(0, startIndex));
+        // The remaining arguments will create issues: validate them before
+        // any side effect.
+        const invalidRemaining = validateArgsForCreation(args.slice(startIndex));
+        if (invalidRemaining) {
+          return invalidRemaining;
+        }
       }
-      const created = await ctx.gh.createIssue(repoEv.value, arg, issueBody(arg));
-      if (!created.ok) {
-        return passthrough(created);
+    }
+  }
+
+  // Remotely discoverable idempotency marker for issue creation: an open
+  // issue whose title exactly matches a pending title argument is that
+  // argument's issue — a previous run created it but failed to record it
+  // (lost response, crash, or failed record write). Adopt it instead of
+  // duplicating the WHY. Probe failures fail closed: never guess.
+  const remaining = args.slice(startIndex);
+  const adoptable = new Map<string, number[]>();
+  if (remaining.some((arg) => parseNumericRef(arg) === null)) {
+    const openEv = await ctx.gh.getOpenIssueNumbers(repoEv.value);
+    if (!openEv.ok) {
+      return passthrough(openEv);
+    }
+    for (const n of openEv.value) {
+      const issueEv = await ctx.gh.getIssue(repoEv.value, n);
+      if (!issueEv.ok) {
+        return passthrough(issueEv);
       }
-      issues.push(created.value.number);
+      const fact = issueEv.value;
+      if (fact.state === 'open' && typeof fact.title === 'string' && fact.title) {
+        const bucket = adoptable.get(fact.title) ?? [];
+        bucket.push(fact.number);
+        adoptable.set(fact.title, bucket);
+      }
+    }
+  }
+
+  for (let i = startIndex; i < args.length; i += 1) {
+    const arg = args[i];
+    let number: number;
+    const reuseNumber = parseNumericRef(arg);
+    if (reuseNumber !== null) {
+      number = reuseNumber;
+    } else {
+      const candidate = adoptable.get(arg)?.shift();
+      if (candidate !== undefined && !issues.includes(candidate)) {
+        number = candidate;
+      } else {
+        const created = await ctx.gh.createIssue(repoEv.value, arg, issueBody(arg));
+        if (!created.ok) {
+          return passthrough(created);
+        }
+        number = created.value.number;
+      }
       if (firstTitle === null) {
         firstTitle = arg;
       }
     }
+    issues.push(number);
 
-    const firstNumber = issues[0];
-    const { type, cleanTitle } = firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat', cleanTitle: '' };
+    // Durable resumable state: rewrite the record after every issue so
+    // any failure heals on the next invocation without re-creating. The
+    // interim delivery/branch converge on the final derivation as the
+    // first title argument is consumed.
+    const { type, cleanTitle } =
+      firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat', cleanTitle: '' };
     const slug = slugifyTitle(cleanTitle);
-    const delivery = slug && isKebabId(slug) ? slug : `issue${firstNumber}`;
-    const branch = `${type}/${firstNumber}-${delivery}`;
-
+    const delivery = slug && isKebabId(slug) ? slug : `issue${issues[0]}`;
+    const branch = `${type}/${issues[0]}-${delivery}`;
     record = {
       version: 1,
       delivery,
       context: { ...contextEv.value, branch },
-      issues,
+      issues: [...issues],
     };
     try {
       await ctx.record.writeRecord(root, record);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        exit: EXIT_UNKNOWN,
-        errors: [errorDiagnostic('record_write_failed', message)],
-      };
+      return recordWriteFailure(error);
     }
   }
 
@@ -303,21 +418,46 @@ export async function runIssue(
     if (!baseEv.ok) {
       return passthrough(baseEv);
     }
-    const prTitle = firstTitle ?? `Delivery ${record.delivery}`;
-    const prBody = `${record.issues.map((n) => `Closes #${n}`).join('\n')}\n`;
-    const prEv = await ctx.gh.createDraftPr(repoEv.value, target, baseEv.value, prTitle, prBody);
-    if (!prEv.ok) {
-      return passthrough(prEv);
+    // Remotely discoverable idempotency marker for the PR: the open pull
+    // request for this head branch. A previous run may have created it but
+    // failed to record the number — adopt it instead of opening a second.
+    const listEv = await ctx.gh.listOpenPrsByHead(repoEv.value, target);
+    if (!listEv.ok) {
+      return passthrough(listEv);
     }
-    record = { ...record, pr: prEv.value.number };
+    let prNumber: number;
+    if (listEv.value.length === 1) {
+      prNumber = listEv.value[0].number;
+    } else if (listEv.value.length > 1) {
+      const listing = listEv.value
+        .map((pr) => `  #${pr.number} ${pr.title} (${pr.url})`)
+        .join('\n');
+      return {
+        exit: EXIT_UNKNOWN,
+        errors: [
+          errorDiagnostic(
+            'pr_ambiguous',
+            `Multiple open pull requests have head branch '${target}':\n${listing}`,
+            {
+              fix: 'Bind one explicitly: specgit pr <number>, then re-run specgit issue to finish the delivery.',
+            }
+          ),
+        ],
+      };
+    } else {
+      const prTitle = firstTitle ?? `Delivery ${record.delivery}`;
+      const prBody = `${record.issues.map((n) => `Closes #${n}`).join('\n')}\n`;
+      const prEv = await ctx.gh.createDraftPr(repoEv.value, target, baseEv.value, prTitle, prBody);
+      if (!prEv.ok) {
+        return passthrough(prEv);
+      }
+      prNumber = prEv.value.number;
+    }
+    record = { ...record, pr: prNumber };
     try {
       await ctx.record.writeRecord(root, record);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        exit: EXIT_UNKNOWN,
-        errors: [errorDiagnostic('record_write_failed', message)],
-      };
+      return recordWriteFailure(error);
     }
   }
 
