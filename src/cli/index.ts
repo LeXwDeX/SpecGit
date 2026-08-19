@@ -19,6 +19,7 @@ import { runBind } from './commands/bind.js';
 import { runDoctor } from './commands/doctor.js';
 import { runFinish } from './commands/finish.js';
 import { runInit } from './commands/init.js';
+import { runSetup } from './commands/setup.js';
 import { runIssue } from './commands/issue.js';
 import { runPr } from './commands/pr.js';
 import { runStatus } from './commands/status.js';
@@ -36,6 +37,7 @@ export type ContextResolver = () => Promise<ContextResolution>;
 
 const COMMAND_NAMES = [
   'init',
+  'setup',
   'issue',
   'pr',
   'finish',
@@ -159,6 +161,13 @@ export function createProgram(
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
     .option('--json', 'Output as JSON')
     .action(wrap('init', runInit as CommandRun));
+
+  program
+    .command('setup')
+    .description('Install agent entry points: commands for opencode, portable skills for other tools')
+    .option('--tool <tool>', 'opencode | generic | all (default: auto-detect)')
+    .option('--json', 'Output as JSON')
+    .action(wrap('setup', runSetup as CommandRun));
 
   program
     .command('issue')
