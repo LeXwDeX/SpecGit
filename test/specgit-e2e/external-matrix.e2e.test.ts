@@ -88,12 +88,12 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
   it(
     'doctor→init→doctor→issue(resume)→pr repair→finish, all from the packed artifact',
     { timeout: 240_000 },
-    () => {
-      const { tarballPath, version } = packSpecgit();
+    async () => {
+      const { tarballPath, version } = await packSpecgit();
       const cache = externalNpmCache('specgit-ext-matrix-cache-');
       const fixture = makePushableExternalRepo('specgit-ext-noci-', { ci: 'none' });
       cleanup.push(fixture.dir, fixture.bareDir, cache);
-      npmInstallPacked(tarballPath, fixture.dir, cache);
+      await npmInstallPacked(tarballPath, fixture.dir, cache);
 
       const xdg = makeXdg('specgit-ext-noci-xdg-');
       const env = (gh: ReturnType<typeof createFakeGh>) => gh.env({ XDG_CONFIG_HOME: xdg });
@@ -250,15 +250,15 @@ describe('e2e external matrix (#67): main + existing CI', () => {
   it(
     'init detects the adopting repo check; finish verdicts follow real CI evidence (1 rejected, then 0 accepted)',
     { timeout: 240_000 },
-    () => {
-      const { tarballPath, version } = packSpecgit();
+    async () => {
+      const { tarballPath, version } = await packSpecgit();
       const cache = externalNpmCache('specgit-ext-matrix-cache-');
       const fixture = makePushableExternalRepo('specgit-ext-mainci-', {
         defaultBranch: 'main',
         ci: 'app',
       });
       cleanup.push(fixture.dir, fixture.bareDir, cache);
-      npmInstallPacked(tarballPath, fixture.dir, cache);
+      await npmInstallPacked(tarballPath, fixture.dir, cache);
       expect(remoteDefaultBranch(fixture.dir)).toBe('main');
 
       const deliveryBranch = 'feat/7-main-ci-adoption';
@@ -358,12 +358,12 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
   it(
     'adopts through a linked worktree: init→issue→finish with worktree context',
     { timeout: 240_000 },
-    () => {
-      const { tarballPath } = packSpecgit();
+    async () => {
+      const { tarballPath } = await packSpecgit();
       const cache = externalNpmCache('specgit-ext-matrix-cache-');
       const wt = makeExternalWorktree('specgit-ext-wt-');
       cleanup.push(wt.mainDir, wt.worktreeDir, wt.bareDir, cache);
-      npmInstallPacked(tarballPath, wt.worktreeDir, cache);
+      await npmInstallPacked(tarballPath, wt.worktreeDir, cache);
 
       const init = runInstalledSpecgit(wt.worktreeDir, ['init', '--no-protect', '--json']);
       expect(init.status, init.stderr).toBe(0);

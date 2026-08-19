@@ -13,7 +13,7 @@
  * registry package) is tracked on the issue.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -26,24 +26,44 @@ export { rmDir };
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * Run npm synchronously, Windows-capable: npm is npm.cmd there and .cmd
- * spawnables require a shell (same approach as the repo's run-cli helper).
- * With a shell, args join with spaces — quote any arg containing one.
+ * Run npm, Windows-capable: npm is npm.cmd there and .cmd spawnables
+ * require a shell (same approach as the repo's run-cli helper). With a
+ * shell, args join with spaces — quote any arg containing one.
+ *
+ * Async on purpose: npm installs run 15-35s on hosted Windows runners,
+ * and a synchronous spawnSync blocks the vitest worker's event loop for
+ * the whole install. The worker then stops draining its IPC channel,
+ * the vitest main process stalls on a full named pipe, and worker RPC
+ * calls ("onTaskUpdate", fixed 60s birpc timeout in vitest 3.2.6) fail
+ * as unhandled errors that redden an otherwise green run. Keeping the
+ * event loop alive is part of the fixture's contract with the runner.
  */
-function runNpmSync(args: string[], cwd: string, env?: NodeJS.ProcessEnv): string {
+function runNpm(args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
   const isWindows = process.platform === 'win32';
   const finalArgs = isWindows ? args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : args;
-  const res = spawnSync(isWindows ? 'npm.cmd' : 'npm', finalArgs, {
-    cwd,
-    encoding: 'utf-8',
-    shell: isWindows,
-    env: env === undefined ? process.env : { ...process.env, ...env },
+  return new Promise((resolve, reject) => {
+    const child = spawn(isWindows ? 'npm.cmd' : 'npm', finalArgs, {
+      cwd,
+      shell: isWindows,
+      env: env === undefined ? process.env : { ...process.env, ...env },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf-8');
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf-8');
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`npm ${args.join(' ')} failed (exit ${code}): ${stderr}`));
+        return;
+      }
+      resolve(stdout);
+    });
   });
-  if (res.error) throw res.error;
-  if (res.status !== 0) {
-    throw new Error(`npm ${args.join(' ')} failed (exit ${res.status}): ${res.stderr}`);
-  }
-  return res.stdout ?? '';
 }
 
 export const EXT_OWNER = 'acme';
@@ -57,7 +77,7 @@ export interface PackedSpecgit {
   version: string;
 }
 
-let packed: PackedSpecgit | undefined;
+let packedPromise: Promise<PackedSpecgit> | undefined;
 
 /**
  * `npm pack` the repository once per test file, hermetically (plan N7
@@ -71,49 +91,55 @@ let packed: PackedSpecgit | undefined;
  * including the ones where `--ignore-scripts` still runs `prepare`
  * (a long-standing npm quirk observed on CI runners). The suite's
  * global setup builds exactly once before any worker starts; the pack
- * ships those bytes untouched.
+ * ships those bytes untouched. The memoized promise keeps concurrent
+ * first calls from double-packing now that the helper is async.
  */
-export function packSpecgit(): PackedSpecgit {
-  if (packed) return packed;
-  if (!fs.existsSync(path.join(PROJECT_ROOT, 'dist', 'cli', 'index.js'))) {
-    throw new Error('dist/cli/index.js is missing — run `pnpm run build` before packing.');
-  }
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-pack-stage-'));
-  const manifest = JSON.parse(
-    fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8')
-  ) as { version: string; scripts?: Record<string, string> };
-  const { scripts: _scripts, ...scriptless } = manifest;
-  fs.writeFileSync(path.join(staging, 'package.json'), `${JSON.stringify(scriptless, null, 2)}\n`);
-  for (const entry of ['dist', 'bin', 'schemas']) {
-    fs.cpSync(path.join(PROJECT_ROOT, entry), path.join(staging, entry), { recursive: true });
-  }
-  for (const doc of ['README.md', 'LICENSE']) {
-    const source = path.join(PROJECT_ROOT, doc);
-    if (fs.existsSync(source)) {
-      fs.copyFileSync(source, path.join(staging, doc));
+export function packSpecgit(): Promise<PackedSpecgit> {
+  if (packedPromise) return packedPromise;
+  packedPromise = (async () => {
+    if (!fs.existsSync(path.join(PROJECT_ROOT, 'dist', 'cli', 'index.js'))) {
+      throw new Error('dist/cli/index.js is missing — run `pnpm run build` before packing.');
     }
-  }
+    const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-pack-stage-'));
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8')
+    ) as { version: string; scripts?: Record<string, string> };
+    const { scripts: _scripts, ...scriptless } = manifest;
+    fs.writeFileSync(path.join(staging, 'package.json'), `${JSON.stringify(scriptless, null, 2)}\n`);
+    for (const entry of ['dist', 'bin', 'schemas']) {
+      fs.cpSync(path.join(PROJECT_ROOT, entry), path.join(staging, entry), { recursive: true });
+    }
+    for (const doc of ['README.md', 'LICENSE']) {
+      const source = path.join(PROJECT_ROOT, doc);
+      if (fs.existsSync(source)) {
+        fs.copyFileSync(source, path.join(staging, doc));
+      }
+    }
 
-  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-pack-'));
-  try {
-    const out = runNpmSync(
-      ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
-      staging
-    );
-    // Belt and braces: tolerate any banner lines before npm's JSON array.
-    const lines = out.split('\n');
-    const jsonStart = lines.findIndex((line) => line.trimStart().startsWith('['));
-    if (jsonStart === -1) throw new Error('npm pack returned no JSON array');
-    const entries = JSON.parse(lines.slice(jsonStart).join('\n')) as Array<{
-      filename?: string;
-    }>;
-    const filename = entries.at(-1)?.filename;
-    if (!filename) throw new Error('npm pack returned no tarball');
-    packed = { tarballPath: path.join(dest, filename), version: manifest.version };
-  } finally {
-    fs.rmSync(staging, { recursive: true, force: true });
-  }
-  return packed;
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-pack-'));
+    try {
+      const out = await runNpm(
+        ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
+        staging
+      );
+      // Belt and braces: tolerate any banner lines before npm's JSON array.
+      const lines = out.split('\n');
+      const jsonStart = lines.findIndex((line) => line.trimStart().startsWith('['));
+      if (jsonStart === -1) throw new Error('npm pack returned no JSON array');
+      const entries = JSON.parse(lines.slice(jsonStart).join('\n')) as Array<{
+        filename?: string;
+      }>;
+      const filename = entries.at(-1)?.filename;
+      if (!filename) throw new Error('npm pack returned no tarball');
+      return { tarballPath: path.join(dest, filename), version: manifest.version };
+    } catch (error) {
+      packedPromise = undefined;
+      throw error;
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
+  })();
+  return packedPromise;
 }
 
 export interface ExternalRepoFixture {
@@ -254,8 +280,8 @@ export function externalNpmCache(prefix: string): string {
 }
 
 /** file:// adoption install of the packed CLI; `--no-save` keeps the adopting tree clean. */
-export function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: string): void {
-  runNpmSync(
+export function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: string): Promise<void> {
+  return runNpm(
     ['install', tarballPath, '--no-save', '--no-audit', '--no-fund', '--loglevel=error'],
     cwd,
     cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
@@ -263,8 +289,12 @@ export function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: st
 }
 
 /** Global install into an isolated prefix (never the host's global root). */
-export function npmInstallGlobal(tarballPath: string, prefix: string, cacheDir?: string): void {
-  runNpmSync(
+export function npmInstallGlobal(
+  tarballPath: string,
+  prefix: string,
+  cacheDir?: string
+): Promise<void> {
+  return runNpm(
     ['install', '-g', `--prefix=${prefix}`, tarballPath, '--no-audit', '--no-fund', '--loglevel=error'],
     prefix,
     cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
