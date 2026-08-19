@@ -1,8 +1,10 @@
 version: 1
-delivery: attributed-timeout-diagnostics
+delivery: issue64
 context:
-  kind: branch
-  branch: fix/57-attributed-timeout-diagnostics
+  kind: worktree
+  label: specgit-v1-wave1
+  branch: feat/64-issue64
 issues:
-  - 57
-pr: 60
+  - 64
+  - 65
+  - 70
