@@ -75,7 +75,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
-          cache: 'pnpm'
+          # No dependency cache here, by design (#66): this job checks out
+          # and executes untrusted PR code (install scripts, build, the CLI
+          # under verdict), so it must never write to or restore from the
+          # repository cache (CodeQL alerts 7-9). ci.yml keeps the warm,
+          # branch-scoped cache.
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

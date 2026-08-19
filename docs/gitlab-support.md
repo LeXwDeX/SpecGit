@@ -1,23 +1,15 @@
 # GitLab (glab) Support Roadmap
 
-SpecGit derives acceptance from GitHub evidence today: issues, pull requests,
-and check runs flow exclusively through the authenticated `gh` CLI
-([the provider seam](../src/github/port.ts)). This document is the plan for
-extending the same evidence model to GitLab through the `glab` CLI.
+**v1 scope: GitHub.com only.** SpecGit derives acceptance from GitHub evidence in v1: issues, pull requests, and check runs flow exclusively through the authenticated `gh` CLI ([the provider seam](../src/github/port.ts)). This document is the plan for extending the same evidence model to GitLab through the `glab` CLI.
 
 ## Current behavior (deliberate)
 
 A GitLab origin is **recognized, not silently misread**:
 
-- `parseRepoRef` classifies `gitlab.com` / self-hosted `*gitlab*` origins
-  (https, ssh, scp-style) and fails with `gitlab_unsupported` instead of the
-  generic `origin_unresolvable` — the diagnostic names the actual gap.
-- `specgit doctor` surfaces `gitlab_unsupported` on the `origin` probe while
-  still probing `gh`, so the report shows both facts.
-- `specgit init` already classifies the platform from the origin URL
-  (`github | gitlab | unknown`, no network), reads `.gitlab-ci.yml` job keys
-  when no GitHub workflows exist, and reports `glab` presence on PATH
-  (reported only). Policy generation therefore already works for GitLab CI.
+- The platform is declared, not guessed: `specgit init --gitlab-host <hostname>` (or the interactive platform question) persists the declaration in `spec_git/providers.yaml`, committed so the team shares it. A `github.com` origin defaults to GitHub with no declaration needed.
+- `parseRepoRef` honors the declared host: a matching origin (and `gitlab.com`) fails with `gitlab_unsupported` instead of the generic `origin_unresolvable` — the diagnostic names the actual gap. Undeclared non-github origins stay `origin_unresolvable` with a `platform_undecided` warning.
+- `specgit doctor` surfaces `gitlab_unsupported` on the `origin` probe while still probing `gh`, so the report shows both facts.
+- `specgit init` already classifies the platform from the origin URL (`github | gitlab | unknown`, no network), reads `.gitlab-ci.yml` job keys when no GitHub workflows exist, and reports `glab` presence on PATH (reported only). Policy generation therefore already works for GitLab CI.
 
 ## Design principles
 
