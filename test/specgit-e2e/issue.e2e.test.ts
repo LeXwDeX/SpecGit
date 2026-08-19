@@ -75,11 +75,13 @@ function makeGh(rules: FakeGhRule[]) {
 /** Fake gh for the bootstrap: issues created as #11, #12, …; draft PR #<pr>. */
 function bootstrapRules(pr: number | undefined): FakeGhRule[] {
   return [
+    { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
     {
       match: `^api repos/${OWNER}/${REPO}/issues `,
       stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
       seq: { start: 11 },
     },
+    { match: '^pr list ', stdout: '[]' },
     ...(pr !== undefined
       ? [{ match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/${pr}\n` }]
       : []),
@@ -198,6 +200,224 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
     expect(createCalls.length).toBe(2);
     expect(readFakeGhStdin(ghWhole.logPath)).toEqual(['Closes #11\nCloses #12\n']);
     expect(git(repo.bareDir, 'rev-parse', '--verify', 'refs/heads/feat/11-resume-flow').trim()).toBe(
+      git(repo.dir, 'rev-parse', 'HEAD').trim()
+    );
+  });
+});
+
+describe('e2e issue: exactly-once across partial failures (fault injection)', () => {
+  it('adopts the remotely created issue when the creation response was lost', async () => {
+    const repo = makePushableRepo('main');
+
+    // Run 1: the fake allocates #11 remotely (seq state consumed) but
+    // exits 1 — the client sees a transport failure. The issue exists,
+    // nothing is recorded.
+    const ghLost = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues `,
+        stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
+        seq: { start: 11 },
+        exit: 1,
+      },
+    ]);
+    const first = await specgit(['issue', 'feat: phoenix flow', 'chore: second wing', '--json'], {
+      cwd: repo.dir,
+      env: ghLost.env(),
+    });
+    expect(first.exitCode).toBe(3);
+    expect(parseEnvelope(first).errors[0].code).toBe('gh_transport');
+    expect(fs.existsSync(path.join(repo.dir, '.specgit.yaml'))).toBe(false);
+
+    // Run 2: the remote reports open issue #11 with the exact title —
+    // adopt it; only the second WHY is created.
+    const ghWhole = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [{ number: 11 }] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues/11$`,
+        stdout: JSON.stringify({ number: 11, state: 'open', title: 'feat: phoenix flow' }),
+      },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues `,
+        stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
+        seq: { start: 12 },
+      },
+      { match: '^pr list ', stdout: '[]' },
+      { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
+    ]);
+    const second = await specgit(['issue', 'feat: phoenix flow', 'chore: second wing', '--json'], {
+      cwd: repo.dir,
+      env: ghWhole.env(),
+    });
+    expect(second.exitCode).toBe(0);
+    expect(parseEnvelope(second).record).toMatchObject({ issues: [11, 12], pr: 77 });
+
+    const creates = readFakeGhCalls(ghWhole.logPath).filter((args) =>
+      args.startsWith(`api repos/${OWNER}/${REPO}/issues `)
+    );
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toContain('title=chore: second wing');
+    expect(readFakeGhStdin(ghWhole.logPath)).toEqual(['Closes #11\nCloses #12\n']);
+  });
+
+  it('reconciles by title when the record write failed after creation', async () => {
+    const repo = makePushableRepo('main');
+
+    // Fault: a directory where the record lock file belongs makes every
+    // writeRecord fail — the issue is created remotely, nothing persists.
+    const lockDir = path.join(repo.dir, '.specgit.yaml.lock');
+    fs.mkdirSync(lockDir);
+    const ghCreated = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues `,
+        stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
+        seq: { start: 11 },
+      },
+    ]);
+    const first = await specgit(['issue', 'feat: durable state model', '--json'], {
+      cwd: repo.dir,
+      env: ghCreated.env(),
+    });
+    expect(first.exitCode).toBe(3);
+    expect(parseEnvelope(first).errors[0].code).toBe('record_write_failed');
+    expect(fs.existsSync(path.join(repo.dir, '.specgit.yaml'))).toBe(false);
+
+    // Heal the write path; the retry adopts #11 by its exact title and
+    // creates nothing.
+    fs.rmSync(lockDir, { recursive: true, force: true });
+    const ghHealed = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [{ number: 11 }] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues/11$`,
+        stdout: JSON.stringify({ number: 11, state: 'open', title: 'feat: durable state model' }),
+      },
+      { match: '^pr list ', stdout: '[]' },
+      { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
+    ]);
+    const second = await specgit(['issue', 'feat: durable state model', '--json'], {
+      cwd: repo.dir,
+      env: ghHealed.env(),
+    });
+    expect(second.exitCode).toBe(0);
+    expect(parseEnvelope(second).record).toMatchObject({ issues: [11], pr: 77 });
+    expect(
+      readFakeGhCalls(ghHealed.logPath).filter((args) =>
+        args.startsWith(`api repos/${OWNER}/${REPO}/issues `)
+      )
+    ).toHaveLength(0);
+  });
+
+  it('resumes from the durable partial record even when the remote title drifted', async () => {
+    const repo = makePushableRepo('main');
+
+    // Run 1: the first WHY is created and recorded; the second creation
+    // fails — a partial record with issues [11] survives on disk.
+    const ghBroken = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues .*title=feat: alpha why`,
+        stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
+        seq: { start: 11 },
+      },
+      { match: `^api repos/${OWNER}/${REPO}/issues `, exit: 1 },
+    ]);
+    const args = ['feat: alpha why', 'fix: beta why'];
+    const first = await specgit(['issue', ...args, '--json'], {
+      cwd: repo.dir,
+      env: ghBroken.env(),
+    });
+    expect(first.exitCode).toBe(3);
+    const partial = fs.readFileSync(path.join(repo.dir, '.specgit.yaml'), 'utf-8');
+    expect(partial).toContain('- 11');
+    expect(partial).not.toContain('- 12');
+    expect(git(repo.dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('main');
+
+    // Run 2: #11 was renamed remotely by a teammate. The resume must trust
+    // the durable binding for the consumed argument and only create the
+    // second WHY — reconciliation alone would duplicate the first.
+    const ghWhole = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [{ number: 11 }] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues/11$`,
+        stdout: JSON.stringify({ number: 11, state: 'open', title: 'renamed by a teammate' }),
+      },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues `,
+        stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
+        seq: { start: 12 },
+      },
+      { match: '^pr list ', stdout: '[]' },
+      { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
+    ]);
+    const second = await specgit(['issue', ...args, '--json'], {
+      cwd: repo.dir,
+      env: ghWhole.env(),
+    });
+    expect(second.exitCode).toBe(0);
+    expect(parseEnvelope(second).record).toMatchObject({ issues: [11, 12], pr: 77 });
+
+    const creates = readFakeGhCalls(ghWhole.logPath).filter((argsList) =>
+      argsList.startsWith(`api repos/${OWNER}/${REPO}/issues `)
+    );
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toContain('title=fix: beta why');
+    expect(git(repo.dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/11-alpha-why');
+    expect(readFakeGhStdin(ghWhole.logPath)).toEqual(['Closes #11\nCloses #12\n']);
+  });
+
+  it('adopts the open PR for the head branch when the PR response was lost', async () => {
+    const repo = makePushableRepo('main');
+
+    // Run 1: the issue is created and recorded; the PR is created remotely
+    // (conceptually) but the client sees a failure — no PR number recorded.
+    const ghBroken = makeGh([
+      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      {
+        match: `^api repos/${OWNER}/${REPO}/issues `,
+        stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
+        seq: { start: 11 },
+      },
+      { match: '^pr list ', stdout: '[]' },
+      { match: '^pr create --draft ', exit: 1 },
+    ]);
+    const first = await specgit(['issue', 'feat: wing repair', '--json'], {
+      cwd: repo.dir,
+      env: ghBroken.env(),
+    });
+    expect(first.exitCode).toBe(3);
+    const partial = fs.readFileSync(path.join(repo.dir, '.specgit.yaml'), 'utf-8');
+    expect(partial).toContain('- 11');
+    expect(partial).not.toMatch(/^pr:/m);
+
+    // Run 2: the remote has exactly one open PR for the head branch —
+    // adopt it; a second PR must not be created.
+    const ghWhole = makeGh([
+      {
+        match: '^pr list ',
+        stdout: JSON.stringify([
+          {
+            number: 77,
+            title: 'feat: wing repair',
+            url: `https://github.com/${OWNER}/${REPO}/pull/77`,
+          },
+        ]),
+      },
+    ]);
+    const second = await specgit(['issue', 'feat: wing repair', '--json'], {
+      cwd: repo.dir,
+      env: ghWhole.env(),
+    });
+    expect(second.exitCode).toBe(0);
+    const envelope = parseEnvelope(second);
+    expect(envelope.state).toBe('bound');
+    expect(envelope.record.pr).toBe(77);
+
+    const prCreates = [...readFakeGhCalls(ghBroken.logPath), ...readFakeGhCalls(ghWhole.logPath)].filter(
+      (argsList) => argsList.startsWith('pr create --draft')
+    );
+    expect(prCreates).toHaveLength(1);
+    expect(git(repo.bareDir, 'rev-parse', '--verify', 'refs/heads/feat/11-wing-repair').trim()).toBe(
       git(repo.dir, 'rev-parse', 'HEAD').trim()
     );
   });

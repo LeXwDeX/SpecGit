@@ -14,6 +14,7 @@ import { makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 const REPO = { owner: 'LeXwDeX', repo: 'SpecGit' };
 const SHA = 'a'.repeat(40);
+const MERGE_SHA = 'm'.repeat(40);
 
 describe('gh command resolution', () => {
   let tempDir: string;
@@ -281,6 +282,7 @@ describe('GhCliGitHubProvider', () => {
           number: 42,
           state: 'closed',
           merged_at: '2026-01-01T00:00:00Z',
+          merge_commit_sha: MERGE_SHA,
           head: { ref: 'feat/123-login', sha: SHA },
           base: { ref: 'main' },
           body: 'Closes #123',
@@ -295,6 +297,53 @@ describe('GhCliGitHubProvider', () => {
     expect(result.value.headSha).toBe(SHA);
     expect(result.value.baseBranch).toBe('main');
     expect(result.value.body).toBe('Closes #123');
+    expect(result.value.mergeCommitSha).toBe(MERGE_SHA);
+  });
+
+  it('reports mergeCommitSha null for a merged PR whose payload omits merge_commit_sha', async () => {
+    const { provider } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'closed',
+          merged_at: '2026-01-01T00:00:00Z',
+          head: { ref: 'feat/123-login', sha: SHA },
+          base: { ref: 'main' },
+          body: 'Closes #123',
+        }),
+      },
+    ]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.state).toBe('merged');
+    expect(result.value.mergeCommitSha).toBeNull();
+  });
+
+  it('mirrors the test-merge merge_commit_sha of an open PR without marking it merged', async () => {
+    // Before a merge, GitHub reports the SHA of a throwaway test merge
+    // commit; the fact mirrors the field, and only merged PRs anchor
+    // lineage on it.
+    const { provider } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'open',
+          merged_at: null,
+          merge_commit_sha: MERGE_SHA,
+          head: { ref: 'feat/123-login', sha: SHA },
+          base: { ref: 'main' },
+          body: 'Closes #123',
+        }),
+      },
+    ]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.state).toBe('open');
+    expect(result.value.mergeCommitSha).toBe(MERGE_SHA);
   });
 
   it('classifies a 404 PR lookup as pr_not_found', async () => {

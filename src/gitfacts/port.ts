@@ -50,6 +50,15 @@ export interface GitWritePort {
 
 export interface GitPort extends GitWritePort {
   facts(root: string): Promise<GitFacts>;
+  /**
+   * Whether `sha` is contained by local HEAD's history (ancestor-or-equal).
+   * Evidence discipline: a decisively resolved answer — git exit 0 means
+   * contained, exit 1 means a locally known commit that is not an
+   * ancestor — returns ok; anything that leaves the local lineage
+   * question unanswered (unknown object, git failure) fails closed for
+   * the caller to classify. Never touches the network.
+   */
+  headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>>;
 }
 
 export interface SpawnOptions {

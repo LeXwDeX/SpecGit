@@ -60,6 +60,8 @@ After writing the policy and harness, `init` probes the default branch through `
 
 The one-command bootstrap: create/reuse N issues (one issue = one independently verifiable WHY), create the branch `<type>/<first-issue#>-<slug>`, open a draft PR whose body says `Closes #n` for every issue, write `.specgit.yaml`, commit, and push. Re-running resumes: completed steps (record with issues → branch → PR → commit → push) are detected and skipped, so a failure between steps heals on the next invocation.
 
+Resume matches the arguments onto the record positionally, split by record completeness. A **partial** record (issues recorded, no PR yet) continues issue creation from the first unconsumed argument — numeric arguments for consumed positions must match the bound issues. A **complete** record (PR bound) is a finished bootstrap: re-running with no arguments or with the original arguments is a healing no-op (commit/push only), while **more arguments than bound issues is drift** — `issue_resume_drift`, exit 2, refused with zero side effects (no issue or PR probes or creates, `.specgit.yaml` left byte-identical). Fewer arguments than bound issues, and numeric arguments not among the bound issues, are drift on any record. A record whose PR already **merged** is completed history, not an active delivery: it is replaced, not resumed — replacement arguments are validated first, then the record is deleted and a fresh delivery bootstraps.
+
 ```bash
 specgit issue "feat: add login" "Harden the session model"   # two new issues, one delivery
 specgit issue 4 "Extend the harness"                          # reuse #4, create one
@@ -85,7 +87,7 @@ Each positional argument is a quoted title (a new issue is created from a requir
 }
 ```
 
-Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` (exit 2); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
+Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` (exit 2; drift is refused before any probe or create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
 
 ## `specgit finish`
 

@@ -230,13 +230,19 @@ export class GhCliGitHubProvider implements GitHubProvider {
     const parsed = result.value as {
       number?: unknown;
       state?: unknown;
+      title?: unknown;
       pull_request?: unknown;
     };
     if (typeof parsed.number !== 'number' || (parsed.state !== 'open' && parsed.state !== 'closed')) {
       return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
     }
 
-    return ok({ number: parsed.number, state: parsed.state, pullRequest: parsed.pull_request != null });
+    return ok({
+      number: parsed.number,
+      state: parsed.state,
+      pullRequest: parsed.pull_request != null,
+      title: typeof parsed.title === 'string' ? parsed.title : undefined,
+    });
   }
 
   /** Open issue numbers via the search API (excludes PRs, newest first). */
@@ -274,6 +280,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
       number?: unknown;
       state?: unknown;
       merged_at?: unknown;
+      merge_commit_sha?: unknown;
       head?: { ref?: unknown; sha?: unknown };
       base?: { ref?: unknown };
       body?: unknown;
@@ -292,6 +299,10 @@ export class GhCliGitHubProvider implements GitHubProvider {
       headSha: typeof parsed.head?.sha === 'string' ? parsed.head.sha : '',
       baseBranch: typeof parsed.base?.ref === 'string' ? parsed.base.ref : '',
       body: typeof parsed.body === 'string' ? parsed.body : '',
+      mergeCommitSha:
+        typeof parsed.merge_commit_sha === 'string' && parsed.merge_commit_sha.length > 0
+          ? parsed.merge_commit_sha
+          : null,
     });
   }
 

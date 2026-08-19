@@ -84,7 +84,7 @@ Evaluation runs gates in order. Gates short-circuit **across** gates (a failed g
 | G1 record | record exists and parses | local | `record_missing`, `record_invalid` |
 | G2 policy | policy exists and parses | local | `policy_missing`, `policy_invalid` |
 | G3 completeness | ≥1 issue, exactly 1 PR | local | `issues_empty`, `pr_missing` |
-| G4 context | record context matches live git | local git | `not_a_git_repo`, `git_unavailable`, `no_commits`, `detached_head`, `branch_mismatch`, `worktree_mismatch` |
+| G4 context | record context matches live git | local git | `not_a_git_repo`, `git_unavailable`, `no_commits`, `detached_head`, `branch_mismatch`, `merged_delivery_not_contained`, `merged_lineage_unavailable`, `worktree_mismatch` |
 | G5 origin | `origin` resolves to `owner/repo` | local git | `no_origin`, `origin_unresolvable` |
 | G6 provider | `gh` present and authenticated | gh preflight | `gh_missing`, `gh_unauthenticated`, `gh_transport` |
 | G7 issues | every bound issue exists and is an issue | gh | `issue_not_found`, `issue_is_pull_request` |
@@ -93,6 +93,10 @@ Evaluation runs gates in order. Gates short-circuit **across** gates (a failed g
 | G10 checks | every required check green at PR head | gh | `checks_missing`, `checks_pending`, `checks_failed` (per check name) |
 
 Context matching (G4): the live branch must equal `context.branch`; a detached HEAD fails outright. For `kind: worktree`, the live checkout must additionally be a linked worktree whose label resolves (in `git worktree list`) to `context.branch`.
+
+Merged-delivery lineage (G4): `branch_mismatch` has one exculpation — the bound PR is verified **merged** via `gh`, so running `finish` on the base branch afterwards is completed history, not a mismatch. Historical acceptance then requires lineage proof that local HEAD contains the PR's `merge_commit_sha` (GitHub anchors it on the base branch under every merge method — merge commit, squash, or rebase). Containment proven ⇒ the record is merged history and the context gate passes. Git's decisive *no* (both commits locally known, not an ancestor) ⇒ `merged_delivery_not_contained` (factual, exit 1 — fetch and check out the base branch that received the merge; a rewritten local history cannot prove lineage). No anchor reported, or git cannot answer (e.g. the merge commit is not a local object) ⇒ `merged_lineage_unavailable` (fail-closed, exit 3 — `git fetch` and pull the base branch, then re-run). A provider failure keeps the mismatch; unresolved lineage never turns green.
+
+Non-gate repair diagnostics: `pr_ambiguous` — `specgit pr` (auto-discovery) and `specgit issue` (PR idempotency probe) refuse when several open pull requests share the head branch, listing the candidates with the fix `specgit pr <number>` (exit 3). See the [CLI reference](cli.md) for the full command surface.
 
 Origin parsing (G5): only `github.com` remotes resolve — `https://github.com/owner/repo(.git)`, `git@github.com:owner/repo(.git)`, and `ssh://git@github.com/owner/repo(.git)`. Anything else (including other hosts) ⇒ `origin_unresolvable`. Owner/repo comparison is case-insensitive.
 

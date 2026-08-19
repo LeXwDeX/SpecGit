@@ -5,6 +5,37 @@ export interface RepoRef {
   repo: string;
 }
 
+// Origin classification is structural, never substring-based over the raw
+// URL: the host is extracted per shape (https/ssh URL, or scp-like
+// `user@host:path`) and only then compared, so `github.com` can never match
+// in userinfo, path, query, or an attacker-controlled host suffix. All
+// parsing is linear-time and front-loaded with hard length caps, so no
+// input can trigger pathological backtracking.
+const MAX_ORIGIN_URL_LENGTH = 4096;
+const MAX_HOST_LENGTH = 253;
+
+const SCHEME_PREFIX = /^([A-Za-z][A-Za-z0-9+.-]*):/;
+const HOSTNAME_CHARS = /^[a-z0-9.-]+$/;
+
+type UrlShape = {
+  kind: 'url';
+  scheme: 'https' | 'ssh';
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+  path: string;
+};
+
+type ScpShape = {
+  kind: 'scp';
+  user: string;
+  host: string;
+  path: string;
+};
+
+type OriginShape = UrlShape | ScpShape;
+
 export function parseRepoRef(
   originUrl: string,
   options: { gitlabHost?: string } = {}
@@ -17,53 +48,166 @@ export function parseRepoRef(
       'Point origin at a github.com repository.'
     );
   }
+  if (url.length > MAX_ORIGIN_URL_LENGTH) {
+    return fail(
+      'origin_unresolvable',
+      `Origin "${truncateUrl(url)}" is longer than ${MAX_ORIGIN_URL_LENGTH} characters and is rejected without classification.`,
+      'Shorten or fix the origin remote URL; real GitHub and GitLab origins are far below this limit.'
+    );
+  }
 
-  const https = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
-  const scp = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
-  const ssh = /^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
-  const match = https ?? scp ?? ssh;
+  const declaredHost = normalizeDeclaredHost(options.gitlabHost);
+  const shape = parseOriginShape(url);
+  const repo = shape ? parseOwnerRepo(shape.path, shape.kind === 'url') : null;
 
-  if (!match) {
+  if (shape && repo) {
+    if (isGitHubOrigin(shape)) {
+      return ok(repo);
+    }
     // A GitLab origin is a recognized-but-unsupported platform, not an
-    // unresolvable URL: the diagnostic names the actual gap. gitlab.com
-    // and *gitlab* hosts are detected from the URL itself; any other
-    // self-hosted host counts only when the user declared it (providers.yaml).
-    const gitlabHttps = /^https:\/\/(?:[a-z0-9.-]*gitlab[a-z0-9.-]*)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
-    const gitlabScp = /^git@(?:[a-z0-9.-]*gitlab[a-z0-9.-]*):([^/]+)\/([^/]+?)(?:\.git)?$/i.exec(url);
-    const gitlabSsh = /^ssh:\/\/git@([a-z0-9.-]*gitlab[a-z0-9.-]*)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
-    const declaredHttps = options.gitlabHost
-      ? new RegExp(`^https://${escapeRegExp(options.gitlabHost.toLowerCase())}/([^/]+)/([^/]+?)(?:\\.git)?/?$`, 'i').exec(url)
-      : null;
-    const declaredScp = options.gitlabHost
-      ? new RegExp(`^${escapeRegExp(options.gitlabHost.toLowerCase())}:([^/]+)/([^/]+?)(?:\\.git)?$`, 'i').exec(
-          url.replace(/^git@/i, '')
-        )
-      : null;
-    const declaredSsh = options.gitlabHost
-      ? new RegExp(
-          `^ssh://git@${escapeRegExp(options.gitlabHost.toLowerCase())}/([^/]+)/([^/]+?)(?:\\.git)?/?$`,
-          'i'
-        ).exec(url)
-      : null;
-    if (gitlabHttps ?? gitlabScp ?? gitlabSsh ?? declaredHttps ?? declaredScp ?? declaredSsh) {
+    // unresolvable URL: the diagnostic names the actual gap. The
+    // "gitlab" heuristic is contained to the structurally extracted host
+    // (fail-closed diagnostic either way); any other self-hosted host
+    // counts only when the user declared it (providers.yaml).
+    if (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declaredHost)) {
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a GitLab repository; GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
         'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.'
       );
     }
-    return fail(
-      'origin_unresolvable',
-      `Origin "${truncateUrl(url)}" does not point at a github.com repository.`,
-      'Point origin at a github.com repository (https or ssh), or declare a GitLab host via "specgit init --gitlab-host <hostname>".'
-    );
   }
 
-  return ok({ owner: match[1], repo: match[2] });
+  return fail(
+    'origin_unresolvable',
+    `Origin "${truncateUrl(url)}" does not point at a github.com repository.`,
+    'Point origin at a github.com repository (https or ssh), or declare a GitLab host via "specgit init --gitlab-host <hostname>".'
+  );
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function parseOriginShape(url: string): OriginShape | null {
+  const scheme = SCHEME_PREFIX.exec(url)?.[1]?.toLowerCase();
+  if (scheme === 'https' || scheme === 'ssh') {
+    return parseUrlShape(url, scheme);
+  }
+  return parseScpShape(url);
+}
+
+function parseUrlShape(url: string, scheme: 'https' | 'ssh'): UrlShape | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  // Query and fragment are attacker-controlled surfaces that never carry
+  // origin identity; their presence makes the URL unclassifiable.
+  if (parsed.search !== '' || parsed.hash !== '') {
+    return null;
+  }
+  // Non-special schemes (ssh) keep their original host casing; normalize
+  // so host comparison is exact and case-insensitive.
+  const host = parsed.hostname.toLowerCase();
+  if (!isPlausibleHostname(host)) {
+    return null;
+  }
+  return {
+    kind: 'url',
+    scheme,
+    host,
+    port: parsed.port,
+    username: parsed.username,
+    password: parsed.password,
+    path: parsed.pathname,
+  };
+}
+
+function parseScpShape(url: string): ScpShape | null {
+  const colon = url.indexOf(':');
+  if (colon <= 0) {
+    return null;
+  }
+  const authority = url.slice(0, colon);
+  const path = url.slice(colon + 1);
+  // Everything after the last `@` is the host; earlier `@` signs belong to
+  // the user part, so `git@github.com@evil.com:o/r` resolves to host
+  // evil.com and cannot smuggle github.com.
+  const at = authority.lastIndexOf('@');
+  const user = at === -1 ? '' : authority.slice(0, at);
+  const host = (at === -1 ? authority : authority.slice(at + 1)).toLowerCase();
+  if (!isPlausibleHostname(host)) {
+    return null;
+  }
+  return { kind: 'scp', user, host, path };
+}
+
+function isPlausibleHostname(host: string): boolean {
+  return host.length >= 1 && host.length <= MAX_HOST_LENGTH && HOSTNAME_CHARS.test(host);
+}
+
+function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
+  let work = path;
+  if (urlTrack) {
+    if (!work.startsWith('/')) {
+      return null;
+    }
+    work = work.slice(1);
+    if (work.endsWith('/')) {
+      work = work.slice(0, -1);
+    }
+  } else if (work.startsWith('/') || work.endsWith('/')) {
+    return null;
+  }
+  const segments = work.split('/');
+  if (segments.length !== 2 || segments[0] === '' || segments[1] === '') {
+    return null;
+  }
+  const owner = segments[0];
+  let repo = segments[1];
+  if (repo.length > 4 && repo.endsWith('.git')) {
+    repo = repo.slice(0, -4);
+  }
+  return { owner, repo };
+}
+
+// GitHub requires an exact structural host match. On the https track any
+// userinfo disqualifies; on the ssh track the user must be `git` with no
+// password (matching git's own convention); the scp track requires the
+// exact `git` user.
+function isGitHubOrigin(shape: OriginShape): boolean {
+  if (shape.kind === 'scp') {
+    return shape.user === 'git' && shape.host === 'github.com';
+  }
+  return shape.host === 'github.com' && shape.port === '' && urlUserAllowed(shape);
+}
+
+function isGitLabHeuristic(shape: OriginShape): boolean {
+  if (shape.kind === 'scp') {
+    return shape.user === 'git' && shape.host.includes('gitlab');
+  }
+  return shape.host.includes('gitlab') && shape.port === '' && urlUserAllowed(shape);
+}
+
+function isDeclaredGitLab(shape: OriginShape, declaredHost: string | undefined): boolean {
+  if (declaredHost === undefined || shape.host !== declaredHost) {
+    return false;
+  }
+  if (shape.kind === 'scp') {
+    return shape.user === '' || shape.user.toLowerCase() === 'git';
+  }
+  return shape.port === '' && urlUserAllowed(shape);
+}
+
+function urlUserAllowed(shape: UrlShape): boolean {
+  if (shape.password !== '') {
+    return false;
+  }
+  return shape.scheme === 'https' ? shape.username === '' : shape.username.toLowerCase() === 'git';
+}
+
+function normalizeDeclaredHost(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
 }
 
 export function formatRepoRef(repo: RepoRef): string {

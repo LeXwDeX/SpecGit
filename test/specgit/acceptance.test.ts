@@ -24,17 +24,35 @@ import {
   makeIssueFact,
   makePrFact,
 } from './helpers/mock-github.js';
-import { createFakeGh } from './helpers/fake-gh.js';
-import { git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
+import { createFakeGh, type FakeGhRule } from './helpers/fake-gh.js';
+import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 const POLICY: Policy = { version: 1, required_checks: ['All checks passed'] };
 const HEAD = 'b'.repeat(40);
+// GitHub's merge_commit_sha: a base-branch commit under every merge method,
+// deliberately distinct from both the local HEAD and the PR head SHA.
+const MERGE_SHA = 'm'.repeat(40);
+
+type ContainmentScript = (sha: string) => Evidence<{ contained: boolean }>;
 
 class StubGitPort implements GitPort {
-  constructor(private readonly f: GitFacts) {}
+  readonly headContainsCalls: string[] = [];
+
+  constructor(
+    private readonly f: GitFacts,
+    // Fail-closed default: a merged-record test that does not pin lineage
+    // evidence cannot accidentally pass as contained.
+    private readonly containment: ContainmentScript = () =>
+      fail('merged_lineage_unavailable', 'headContains not configured in stub')
+  ) {}
 
   async facts(): Promise<GitFacts> {
     return this.f;
+  }
+
+  async headContains(_root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {
+    this.headContainsCalls.push(sha);
+    return this.containment(sha);
   }
 
   async checkoutOrCreateBranch(): Promise<never> {
@@ -183,17 +201,18 @@ describe('acceptance evaluator', () => {
 
   it('accepts a merged-delivery record on main instead of branch_mismatch', async () => {
     // The record binds feat/123-login but we are on main, and the bound PR
-    // is merged: completed history, not a mismatch. The trailing gates run
-    // against the merged PR's evidence.
+    // is merged: completed history, not a mismatch — but only once local
+    // HEAD is proven to contain the merged delivery (the merge commit).
+    // The trailing gates run against the merged PR's evidence.
     const gh = new MockGitHubProvider({
-      pr: ok(makePrFact({ state: 'merged' })),
+      pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
-    const verdict = await evaluate(
-      input({ git: new StubGitPort(facts({ branch: 'main' })), gh })
-    );
+    const git = new StubGitPort(facts({ branch: 'main' }), () => ok({ contained: true }));
+    const verdict = await evaluate(input({ git, gh }));
     expect(verdict.accepted).toBe(true);
     expect(verdict.exitCode).toBe(0);
+    expect(git.headContainsCalls).toEqual([MERGE_SHA]);
     expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
   });
 
@@ -218,6 +237,108 @@ describe('acceptance evaluator', () => {
     );
     const context = verdict.gates.find((g) => g.id === 'context');
     expect(context?.failures.map((f) => f.code)).toEqual(['branch_mismatch']);
+  });
+
+  describe('merged-delivery lineage (issue #64)', () => {
+    // Historical acceptance must prove that local HEAD contains the actual
+    // merged delivery. GitHub reports one strategy-invariant anchor: the
+    // merge_commit_sha, which after a merge is a commit on the base branch
+    // for merge commits, squashes, and rebases alike. Containment of that
+    // anchor in local HEAD is the lineage proof.
+
+    it('contains: historical acceptance only after proving the merge commit is contained by local HEAD', async () => {
+      const gh = new MockGitHubProvider({
+        pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      });
+      // Keyed by sha: only the merge anchor resolves; asking for any other
+      // sha (e.g. the PR head) is unavailable evidence.
+      const git = new StubGitPort(facts({ branch: 'main' }), (sha) =>
+        sha === MERGE_SHA
+          ? ok({ contained: true })
+          : fail('merged_lineage_unavailable', `unexpected lineage query for ${sha}`)
+      );
+      const verdict = await evaluate(input({ git, gh }));
+      expect(verdict.classification).toBe('accepted');
+      expect(verdict.accepted).toBe(true);
+      expect(verdict.exitCode).toBe(0);
+      expect(verdict.state).toBe('accepted');
+      expect(git.headContainsCalls).toEqual([MERGE_SHA]);
+      expect(gate(verdict, 'context').status).toBe('pass');
+      expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
+    });
+
+    it('does-not-contain: rejects when the merge commit is locally known but not in HEAD history', async () => {
+      const gh = new MockGitHubProvider({
+        pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      });
+      const git = new StubGitPort(facts({ branch: 'main' }), () => ok({ contained: false }));
+      const verdict = await evaluate(input({ git, gh }));
+      expect(verdict.classification).toBe('rejected');
+      expect(verdict.accepted).toBe(false);
+      expect(verdict.exitCode).toBe(1);
+      expect(verdict.state).toBe('rejected');
+      const context = gate(verdict, 'context');
+      expect(context.status).toBe('fail');
+      expect(context.failures.map((f) => f.code)).toEqual(['merged_delivery_not_contained']);
+      expect(context.failures[0].detail).toEqual({ mergeCommitSha: MERGE_SHA, headSha: HEAD });
+      // No historical green without the proof.
+      expect(verdict.warnings.map((w) => w.code)).not.toContain('record_of_merged_delivery');
+    });
+
+    it('unavailable evidence (local): fails closed to unknown when lineage cannot be resolved', async () => {
+      const gh = new MockGitHubProvider({
+        pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      });
+      // The merge commit is unknown to the local object store (never
+      // fetched): the lineage question has no answer, so no verdict.
+      const git = new StubGitPort(facts({ branch: 'main' }), () =>
+        fail('merged_lineage_unavailable', 'not a valid object name')
+      );
+      const verdict = await evaluate(input({ git, gh }));
+      expect(verdict.classification).toBe('unknown');
+      expect(verdict.accepted).toBe(false);
+      expect(verdict.exitCode).toBe(3);
+      expect(verdict.state).toBe('bound');
+      const context = gate(verdict, 'context');
+      expect(context.failures.map((f) => f.code)).toEqual(['merged_lineage_unavailable']);
+      expect(git.headContainsCalls).toEqual([MERGE_SHA]);
+    });
+
+    it('unavailable evidence (provider): a merged PR without merge_commit_sha never falls back to the PR head', async () => {
+      // GitHub guarantees merge_commit_sha once merged; its absence is an
+      // evidence gap. The PR head is definitionally absent from the base
+      // under squash and rebase, so it can never anchor containment.
+      const gh = new MockGitHubProvider({
+        pr: ok(makePrFact({ state: 'merged', mergeCommitSha: null, headSha: 'a'.repeat(40) })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      });
+      // The stub would answer "contained" for any sha it is asked about —
+      // the evaluator must not ask, because there is no anchor to ask with.
+      const git = new StubGitPort(facts({ branch: 'main' }), () => ok({ contained: true }));
+      const verdict = await evaluate(input({ git, gh }));
+      expect(verdict.classification).toBe('unknown');
+      expect(verdict.exitCode).toBe(3);
+      expect(git.headContainsCalls).toEqual([]);
+      const context = gate(verdict, 'context');
+      expect(context.failures.map((f) => f.code)).toEqual(['merged_lineage_unavailable']);
+    });
+
+    it('keeps evidence-kind passthrough when git itself is unavailable mid-lineage', async () => {
+      const gh = new MockGitHubProvider({
+        pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+      });
+      const git = new StubGitPort(facts({ branch: 'main' }), () =>
+        fail('git_unavailable', 'The git executable could not be found.')
+      );
+      const verdict = await evaluate(input({ git, gh }));
+      expect(verdict.classification).toBe('unknown');
+      expect(verdict.exitCode).toBe(3);
+      const context = gate(verdict, 'context');
+      expect(context.failures.map((f) => f.code)).toEqual(['git_unavailable']);
+    });
   });
 
   const truthTable: Array<{
@@ -759,5 +880,167 @@ describe('acceptance evaluator evidence discipline', () => {
     } finally {
       readFileSpy.mockRestore();
     }
+  });
+});
+
+describe('merged-delivery lineage against real git (issue #64)', () => {
+  let tempDir: string;
+  let root: string;
+  let env: NodeJS.ProcessEnv;
+  const execFileAsync = promisify(execFile);
+
+  const realSpawn: GitSpawnFn & GhSpawnFn = async (command, args, options) => {
+    const resolved = resolveNodeScriptCommand(command);
+    const result = await execFileAsync(resolved.command, [...resolved.scriptArgs, ...args], {
+      timeout: options.timeoutMs,
+      maxBuffer: options.maxBuffer,
+      env: options.env,
+      cwd: options.cwd,
+    });
+    return { stdout: result.stdout, stderr: result.stderr };
+  };
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-lineage-');
+    ({ root, env } = initRepo(tempDir));
+    // The merged-record rescue resolves the repo from the local origin
+    // before asking gh about the bound PR.
+    git(root, ['remote', 'add', 'origin', 'https://github.com/LeXwDeX/SpecGit.git'], env);
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  interface DeliveryHistory {
+    headSha: string;
+    mergeCommitSha: string;
+  }
+
+  /**
+   * Builds the local aftermath of one GitHub merge strategy. The delivery
+   * branch feat/123-login carries one commit; the checked-out main branch
+   * ends up containing the merged delivery through a real merge commit,
+   * a squashed commit, or a rebased commit — the three ways GitHub lands
+   * a PR. `mergeCommitSha` is what GitHub would report as
+   * merge_commit_sha: the base-branch commit the strategy produced.
+   */
+  function landDelivery(style: 'merge' | 'squash' | 'rebase'): DeliveryHistory {
+    git(root, ['checkout', '-b', 'feat/123-login'], env);
+    const headSha = commitFile(root, 'delivery.txt', 'delivered\n', env);
+    git(root, ['checkout', 'main'], env);
+    if (style === 'merge') {
+      git(root, ['merge', '--no-ff', '-m', 'Merge pull request #42', 'feat/123-login'], env);
+    } else if (style === 'squash') {
+      git(root, ['merge', '--squash', 'feat/123-login'], env);
+      git(root, ['commit', '-m', 'add-login-flow (#42)'], env);
+    } else {
+      git(root, ['checkout', 'feat/123-login'], env);
+      git(root, ['rebase', 'main'], env);
+      git(root, ['checkout', 'main'], env);
+      git(root, ['merge', '--ff-only', 'feat/123-login'], env);
+    }
+    const mergeCommitSha = git(root, ['rev-parse', 'HEAD'], env).trim();
+    return { headSha, mergeCommitSha };
+  }
+
+  function mergedGhRules(history: DeliveryHistory, mergeCommitSha: string | null): FakeGhRule[] {
+    return [
+      { match: '^--version$', stdout: 'gh version 2.60.0\n' },
+      { match: '^auth status$', stdout: 'Logged in to github.com\n' },
+      {
+        match: '^api repos/LeXwDeX/SpecGit/issues/123$',
+        stdout: JSON.stringify({ number: 123, state: 'closed' }),
+      },
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'closed',
+          merged_at: '2026-01-02T03:04:05Z',
+          merge_commit_sha: mergeCommitSha,
+          head: { ref: 'feat/123-login', sha: history.headSha },
+          base: { ref: 'main' },
+          body: 'Closes #123',
+        }),
+      },
+      {
+        match: '^api repos/LeXwDeX/SpecGit/commits/[0-9a-f]+/check-runs',
+        stdout: JSON.stringify({
+          total_count: 1,
+          check_runs: [{ name: 'All checks passed', status: 'completed', conclusion: 'success' }],
+        }),
+      },
+    ];
+  }
+
+  async function evaluateMerged(
+    history: DeliveryHistory,
+    mergeCommitSha: string | null
+  ): Promise<{ verdict: Verdict; lineageCalls: string[][] }> {
+    const fake = createFakeGh(tempDir, mergedGhRules(history, mergeCommitSha));
+    const lineageCalls: string[][] = [];
+    const recordingSpawn: GitSpawnFn & GhSpawnFn = async (command, args, options) => {
+      if (command === 'git' && args.includes('merge-base')) {
+        lineageCalls.push(args);
+      }
+      return realSpawn(command, args, options);
+    };
+    const verdict = await evaluate({
+      root: ok(root),
+      record: ok(binding()),
+      policy: ok(POLICY),
+      git: new LocalGitAdapter({ spawnImpl: recordingSpawn }),
+      gh: new GhCliGitHubProvider({
+        env: fake.env({ PATH: `${fake.binDir}${path.delimiter}${process.env.PATH}` }),
+        spawnImpl: recordingSpawn,
+      }),
+    });
+    return { verdict, lineageCalls };
+  }
+
+  it.each(['merge', 'squash', 'rebase'] as const)(
+    'contains: accepts the merged record on main after a real %s landing',
+    async (style) => {
+      const history = landDelivery(style);
+      const { verdict, lineageCalls } = await evaluateMerged(history, history.mergeCommitSha);
+      expect(verdict.classification).toBe('accepted');
+      expect(verdict.exitCode).toBe(0);
+      expect(gate(verdict, 'context').status).toBe('pass');
+      expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
+      // The proof ran against the strategy-invariant base-branch anchor.
+      expect(lineageCalls).toEqual([
+        ['-C', root, 'merge-base', '--is-ancestor', history.mergeCommitSha, 'HEAD'],
+      ]);
+    }
+  );
+
+  it('does-not-contain: rejects when the merge commit exists locally outside HEAD history', async () => {
+    // The PR merged on a parallel local line; checked-out main predates it:
+    // the merge commit is known to the object store yet not contained.
+    git(root, ['checkout', '-b', 'feat/123-login'], env);
+    const headSha = commitFile(root, 'delivery.txt', 'delivered\n', env);
+    git(root, ['checkout', '-b', 'parallel', 'main'], env);
+    git(root, ['merge', '--no-ff', '-m', 'Merge pull request #42', 'feat/123-login'], env);
+    const mergeCommitSha = git(root, ['rev-parse', 'HEAD'], env).trim();
+    git(root, ['checkout', 'main'], env);
+
+    const { verdict } = await evaluateMerged({ headSha, mergeCommitSha }, mergeCommitSha);
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+    expect(verdict.accepted).toBe(false);
+    const context = gate(verdict, 'context');
+    expect(context.failures.map((f) => f.code)).toEqual(['merged_delivery_not_contained']);
+  });
+
+  it('unavailable evidence: fails closed when the merge commit was never fetched locally', async () => {
+    const history = landDelivery('merge');
+    const neverFetched = 'e'.repeat(40);
+    const { verdict } = await evaluateMerged(history, neverFetched);
+    expect(verdict.classification).toBe('unknown');
+    expect(verdict.exitCode).toBe(3);
+    expect(verdict.accepted).toBe(false);
+    const context = gate(verdict, 'context');
+    expect(context.failures.map((f) => f.code)).toEqual(['merged_lineage_unavailable']);
   });
 });
