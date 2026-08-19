@@ -254,12 +254,30 @@ export class LocalGitAdapter implements GitPort {
     }
   }
 
+  async hooksPath(root: string): Promise<Evidence<string>> {
+    // One probe covers the three layouts: plain repo (.git/hooks), linked
+    // worktree (the common dir's hooks), and core.hooksPath overrides
+    // (husky/lefthook). Relative results resolve against the worktree
+    // root — the CWD git would use for `-C root`.
+    const resolved = await this.write('hooks', ['-C', root, 'rev-parse', '--git-path', 'hooks']);
+    if (!resolved.ok) {
+      return resolved;
+    }
+    const raw = resolved.value.trim();
+    if (!raw) {
+      return fail('git_hooks_failed', 'git rev-parse --git-path hooks returned an empty path.');
+    }
+    // git emits forward slashes even on Windows; normalize so the value
+    // matches the platform's path.join-produced expectations everywhere.
+    return ok(path.normalize(path.isAbsolute(raw) ? raw : path.resolve(root, raw)));
+  }
+
   /**
    * Runs one write-side git invocation and maps failures to Evidence.
    * `kind` picks the stable diagnostic code (git_checkout_failed, …).
    */
   private write(
-    kind: 'checkout' | 'commit' | 'push' | 'branch',
+    kind: 'checkout' | 'commit' | 'push' | 'branch' | 'hooks',
     args: string[]
   ): Promise<Evidence<string>> {
     return this.spawn('git', args, {

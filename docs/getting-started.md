@@ -6,7 +6,7 @@ This guide takes you from zero to your first **accepted** delivery. For installa
 
 ```bash
 # one-time, per repository
-specgit init --required-check "All checks passed"
+specgit init            # auto-detects required checks (empty list when no CI exists)
 
 # per delivery: one command bootstraps issues, branch, draft PR, record
 specgit issue "feat: add login flow"
@@ -25,15 +25,18 @@ That is the entire product surface. Everything else is diagnostics and JSON. (`b
 On the repository's default branch, declare which CI check names a delivery must pass:
 
 ```bash
-specgit init --required-check "All checks passed"
+specgit init                                  # auto-detect from CI files
+specgit init --required-check "Build"         # or name them explicitly
 ```
+
+With no arguments the check names are auto-detected from the repository's CI files (GitHub workflow job names, GitLab CI job keys). A repository with no CI at all gets an empty list — the `SpecGit Acceptance` job itself (never listed in the policy) is then the gate; the usual pattern is to add an aggregator check and re-pin the name. The harness workflow is portable: it installs the published CLI and assumes nothing about this repository's stack.
 
 This creates the policy `spec_git/policy.yaml` and generates the harness: the `SpecGit Acceptance` workflow (`.github/workflows/specgit-accept.yml`, which runs `specgit finish --json` on every PR) and the managed agent block in `AGENTS.md`. Re-running `init` refreshes the harness idempotently and never touches an existing policy.
 
 ```yaml
 version: 1
 required_checks:
-  - "All checks passed"
+  - "Build"
 ```
 
 Repeat `--required-check` for additional check names. The policy is committed to the repository — it is the shared contract the whole team, and every evaluation, relies on. See [GitHub Actions](actions.md) for how to pick and wire check names.

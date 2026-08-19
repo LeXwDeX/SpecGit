@@ -146,4 +146,44 @@ describe('LocalGitAdapter', () => {
       expect(result.code).toBe('merged_lineage_unavailable');
     });
   });
+
+  describe('hooksPath', () => {
+    it('resolves the absolute .git/hooks directory of a plain repository', async () => {
+      const result = await adapter.hooksPath(root);
+      expect(result).toEqual({
+        ok: true,
+        value: path.join(root, '.git', 'hooks'),
+      });
+    });
+
+    it('resolves a relative core.hooksPath against the repository root', async () => {
+      git(root, ['config', 'core.hooksPath', '.husky'], env);
+      const result = await adapter.hooksPath(root);
+      expect(result).toEqual({ ok: true, value: path.join(root, '.husky') });
+    });
+
+    it('resolves the shared hooks directory from inside a linked worktree', async () => {
+      const wtRoot = path.join(tempDir, 'wt-hooks');
+      git(root, ['worktree', 'add', wtRoot, '-b', 'feat/wt-hooks'], env);
+      const result = await adapter.hooksPath(wtRoot);
+      // Hooks live in the common dir (the main repository's .git), not the
+      // per-worktree gitdir: a worktree init must not fork its own guard.
+      // Compare native-canonicalized paths on both sides: git canonicalizes
+      // symlinks (/var → /private/var on macOS) and emits long paths on
+      // Windows while os.tmpdir() there is the 8.3 short form — only the
+      // native realpath (GetFinalPathNameByHandle / realpath(3)) lands both
+      // sides on the same physical directory spelling.
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const canonical = (p: string) => fs.realpathSync.native(p);
+      expect(canonical(result.value)).toBe(canonical(path.join(root, '.git', 'hooks')));
+    });
+
+    it('fails closed outside a git repository', async () => {
+      const plain = path.join(tempDir, 'plain-dir');
+      fs.mkdirSync(plain, { recursive: true });
+      const result = await adapter.hooksPath(plain);
+      expect(result.ok).toBe(false);
+    });
+  });
 });

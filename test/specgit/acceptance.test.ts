@@ -70,6 +70,10 @@ class StubGitPort implements GitPort {
   async remoteDefaultBranch(): Promise<never> {
     throw new Error('write operations are not part of the evaluation contract');
   }
+
+  async hooksPath(): Promise<never> {
+    throw new Error('write operations are not part of the evaluation contract');
+  }
 }
 
 function facts(overrides: Partial<GitFacts> = {}): GitFacts {
