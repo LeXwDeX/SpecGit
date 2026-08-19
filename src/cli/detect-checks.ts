@@ -11,6 +11,8 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { parse } from 'yaml';
 
+import { extractOriginHost } from '../gitfacts/origin.js';
+
 const execFileAsync = promisify(execFile);
 
 const WORKFLOWS_DIR_SEGMENTS = ['.github', 'workflows'];
@@ -64,11 +66,44 @@ function runsOnPullRequests(parsed: unknown): boolean {
   return true;
 }
 
+const GITHUB_HOST = 'github.com';
+const GITLAB_HOST_TOKEN = 'gitlab';
+
+/**
+ * Explicit ports are accepted only in the forms tracked by #78: a port
+ * equal to the scheme default classifies like the portless form, every
+ * other explicit port fails closed to 'unknown'.
+ */
+const DEFAULT_PORT_BY_SCHEME: Record<string, string> = {
+  git: '9418',
+  http: '80',
+  https: '443',
+  ssh: '22',
+};
+
+/**
+ * Structural platform trust (#83, CodeQL alert 1): the decision reads
+ * the host component extracted by extractOriginHost — bounded, regex
+ * free, and with userinfo/path/query/fragment structurally excluded —
+ * and compares it exactly. 'github' requires the host to be literally
+ * github.com; 'gitlab' answers the same host-level heuristic predicate
+ * parseRepoRef uses for gitlab_unsupported (charset-valid host
+ * containing "gitlab"), which grants no capability because GitLab is
+ * explicitly unsupported. Anything else — spoofed suffixes such as
+ * github.com.evil.example, tokens hidden in credentials or paths,
+ * non-default ports, malformed or over-long input — fails closed to
+ * 'unknown'.
+ */
 export async function classifyPlatform(originUrl: string | null): Promise<OriginPlatform> {
-  const url = originUrl?.trim().toLowerCase() ?? '';
-  if (!url) return 'unknown';
-  if (url.includes('github.com')) return 'github';
-  if (url.includes('gitlab')) return 'gitlab';
+  if (originUrl === null) return 'unknown';
+  const parts = extractOriginHost(originUrl);
+  if (parts === null) return 'unknown';
+  if (parts.port !== null) {
+    const defaultPort = parts.scheme === null ? undefined : DEFAULT_PORT_BY_SCHEME[parts.scheme];
+    if (defaultPort === undefined || parts.port !== defaultPort) return 'unknown';
+  }
+  if (parts.host === GITHUB_HOST) return 'github';
+  if (parts.host.includes(GITLAB_HOST_TOKEN)) return 'gitlab';
   return 'unknown';
 }
 
