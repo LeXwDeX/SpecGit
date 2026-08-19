@@ -90,6 +90,87 @@ describe('GhCliGitHubProvider', () => {
     expect(readFakeGhCalls(fake.logPath)).toEqual(['--version', 'auth status']);
   });
 
+  describe('branch protection', () => {
+    it('reports an unprotected branch from a 404 as protected=false', async () => {
+      const { provider } = setup([
+        { match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$', exit: 1, stderr: 'HTTP 404: Branch not protected' },
+      ]);
+      const result = await provider.getBranchProtection(REPO, 'main');
+      expect(result).toEqual({
+        ok: true,
+        value: { protected: false, requiredChecks: [] },
+      });
+    });
+
+    it('parses required status check contexts from protection', async () => {
+      const { provider } = setup([
+        {
+          match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$',
+          stdout: JSON.stringify({
+            required_status_checks: { strict: false, contexts: ['SpecGit Acceptance'] },
+          }),
+        },
+      ]);
+      const result = await provider.getBranchProtection(REPO, 'main');
+      expect(result).toEqual({
+        ok: true,
+        value: { protected: true, requiredChecks: ['SpecGit Acceptance'] },
+      });
+    });
+
+    it('maps other lookup failures to gh_transport', async () => {
+      const { provider } = setup([
+        { match: '^api repos/LeXwDeX/SpecGit/branches/main/protection$', exit: 1, stderr: 'HTTP 403: resource not accessible' },
+      ]);
+      const result = await provider.getBranchProtection(REPO, 'main');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('gh_transport');
+    });
+
+    it('enables protection with the required check via PUT --input', async () => {
+      const { provider, fake } = setup([
+        {
+          match: '^api -X PUT repos/LeXwDeX/SpecGit/branches/main/protection',
+          stdout: JSON.stringify({
+            required_status_checks: { strict: false, contexts: ['SpecGit Acceptance'] },
+          }),
+        },
+      ]);
+      const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+      expect(result).toEqual({
+        ok: true,
+        value: { protected: true, requiredChecks: ['SpecGit Acceptance'] },
+      });
+      const calls = readFakeGhCalls(fake.logPath);
+      expect(calls[0]).toContain('-X PUT repos/LeXwDeX/SpecGit/branches/main/protection');
+      const bodies = readFakeGhStdin(fake.logPath);
+      const body = JSON.parse(bodies[0]);
+      expect(body.required_status_checks.contexts).toEqual(['SpecGit Acceptance']);
+      expect(body.enforce_admins).toBe(false);
+    });
+  });
+
+  describe('repo auto-merge', () => {
+    it('reads allow_auto_merge from the repo payload', async () => {
+      const { provider } = setup([
+        { match: '^api repos/LeXwDeX/SpecGit$', stdout: JSON.stringify({ allow_auto_merge: true }) },
+      ]);
+      const result = await provider.getRepoAutomerge(REPO);
+      expect(result).toEqual({ ok: true, value: { enabled: true } });
+    });
+
+    it('enables auto-merge via PATCH --input', async () => {
+      const { provider, fake } = setup([
+        { match: '^api -X PATCH repos/LeXwDeX/SpecGit ', stdout: JSON.stringify({ allow_auto_merge: true }) },
+      ]);
+      const result = await provider.enableRepoAutomerge(REPO);
+      expect(result).toEqual({ ok: true, value: { enabled: true } });
+      const bodies = readFakeGhStdin(fake.logPath);
+      expect(JSON.parse(bodies[0])).toEqual({ allow_auto_merge: true });
+    });
+  });
+
+
   it('fails closed with gh_missing when gh is not on PATH', async () => {
     const emptyBin = path.join(tempDir, 'empty-bin');
     fs.mkdirSync(emptyBin, { recursive: true });
