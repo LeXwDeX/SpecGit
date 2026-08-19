@@ -75,6 +75,7 @@ export interface CommandOutcome {
   record?: Record<string, unknown>;
   policy?: Policy;
   probes?: ProbeResult[];
+  detected?: Record<string, unknown>;
   human?: string[];
 }
 
@@ -99,6 +100,7 @@ export function buildEnvelope(
     ['record', outcome.record],
     ['policy', outcome.policy],
     ['probes', outcome.probes],
+    ['detected', outcome.detected],
   ];
   for (const [key, value] of optional) {
     if (value !== undefined) {
