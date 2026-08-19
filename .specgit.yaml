@@ -6,3 +6,4 @@ context:
   branch: feat/36-enforce-issue-merge
 issues:
   - 36
+pr: 37
