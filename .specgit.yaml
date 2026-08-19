@@ -1,8 +1,7 @@
 version: 1
 delivery: route-key-checks
 context:
-  kind: worktree
-  label: specgit-wt-selfhosted
+  kind: branch
   branch: ci/43-route-key-checks
 issues:
   - 43
