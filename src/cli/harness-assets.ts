@@ -390,10 +390,25 @@ case "\$command" in
           );
         }
       } catch {}
-      const child = spawn("specgit", ["finish", "--json"], {
-        shell: process.platform === "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const cp = require("child_process");
+      const isWin = process.platform === "win32";
+      // Windows: cmd.exe cannot exec an extensionless sh shim, so prefer
+      // git-bash sh when present; only then fall back to shell mode.
+      let child;
+      if (isWin) {
+        const probe = cp.spawnSync("sh", ["-c", "exit 0"]);
+        if (probe.status === 0) {
+          child = spawn("sh", ["-c", "specgit finish --json"], {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        }
+      }
+      if (!child) {
+        child = spawn("specgit", ["finish", "--json"], {
+          shell: isWin,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
       let out = "";
       let err = "";
       let expired = false;
