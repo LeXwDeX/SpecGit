@@ -1,8 +1,8 @@
 version: 1
-delivery: release-idempotence-by
+delivery: remove-openspec-promo
 context:
   kind: branch
-  branch: fix/50-release-idempotence-by
+  branch: chore/53-remove-openspec-promo
 issues:
-  - 50
-pr: 51
+  - 53
+pr: 54
