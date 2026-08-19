@@ -117,6 +117,60 @@ describe('acceptance evaluator', () => {
     expect(verdict.evidence.prHead).toBe(HEAD);
   });
 
+  it('ordered_issues rejects when a smaller open issue exists (issue_out_of_order)', async () => {
+    const gh = new MockGitHubProvider({
+      issues: {
+        122: ok(makeIssueFact({ number: 122, state: 'open' })),
+        123: ok(makeIssueFact({ number: 123 })),
+      },
+      openIssueNumbers: ok([122, 200]),
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(
+      input({
+        gh,
+        policy: ok({ version: 1, required_checks: ['All checks passed'], ordered_issues: true }),
+      })
+    );
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.exitCode).toBe(1);
+    const seq = gate(verdict, 'sequence');
+    expect(seq.status).toBe('fail');
+    expect(seq.failures[0].code).toBe('issue_out_of_order');
+    expect(JSON.stringify(seq.failures[0].detail)).toContain('122');
+  });
+
+  it('ordered_issues passes when every smaller issue is closed', async () => {
+    const gh = new MockGitHubProvider({
+      openIssueNumbers: ok([123, 200]),
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(
+      input({
+        gh,
+        policy: ok({ version: 1, required_checks: ['All checks passed'], ordered_issues: true }),
+      })
+    );
+    expect(verdict.accepted).toBe(true);
+    expect(gate(verdict, 'sequence').status).toBe('pass');
+  });
+
+  it('ordered_issues off (default) never queries open issues', async () => {
+    const gh = new MockGitHubProvider({
+      openIssueNumbers: ok([1, 2, 3]),
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(verdict.accepted).toBe(true);
+    expect(gh.calls).not.toContain('getOpenIssueNumbers:LeXwDeX/SpecGit');
+    // The gate passes vacuously: the verdict must stay complete without it.
+    const seq = verdict.gates.find((g) => g.id === 'sequence');
+    expect(seq?.status).toBe('pass');
+  });
+
   it('reports local_head_stale as a warning only, never a gate', async () => {
     const gh = new MockGitHubProvider({
       pr: ok(makePrFact({ headSha: 'c'.repeat(40) })),

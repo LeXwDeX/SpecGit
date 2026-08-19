@@ -25,6 +25,7 @@ export interface MockGitHubFixtures {
   enableBranchProtection?: Evidence<BranchProtectionFact>;
   repoAutomerge?: Evidence<RepoAutomergeFact>;
   enableRepoAutomerge?: Evidence<RepoAutomergeFact>;
+  openIssueNumbers?: Evidence<number[]>;
 }
 
 function formatRepo(repo: RepoRef): string {
@@ -48,6 +49,11 @@ export class MockGitHubProvider implements GitHubProvider {
       this.fixtures.defaultIssue?.(n) ??
       ok({ number: n, state: 'open', pullRequest: false })
     );
+  }
+
+  async getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>> {
+    this.calls.push(`getOpenIssueNumbers:${formatRepo(repo)}`);
+    return this.fixtures.openIssueNumbers ?? ok([]);
   }
 
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {

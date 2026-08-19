@@ -23,6 +23,7 @@ export type SpecGitCode =
   | 'pr_head_mismatch'
   | 'pr_repo_mismatch'
   | 'closing_refs_incomplete'
+  | 'issue_out_of_order'
   | 'checks_missing'
   | 'checks_pending'
   | 'checks_failed'
@@ -55,8 +56,7 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   },
   policy_missing: {
     kind: 'evidence',
-    message: 'No spec_git/policy.yaml found.',
-    fix: 'Run "specgit init --required-check <name>" to declare required checks.',
+    message: 'No spec_git/policy.yaml found.',    fix: 'Run "specgit init --required-check <name>" to declare required checks.',
   },
   policy_invalid: {
     kind: 'evidence',
@@ -162,6 +162,11 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     kind: 'factual',
     message: 'The PR body does not close every bound issue.',
     fix: 'Add closing keywords (e.g. "Closes #N") for each listed issue to the PR body.',
+  },
+  issue_out_of_order: {
+    kind: 'factual',
+    message: 'policy ordered_issues is on and an open issue precedes this delivery.',
+    fix: 'Deliver or close the earlier issue first, or turn off ordered_issues in spec_git/policy.yaml (a reviewed policy change).',
   },
   checks_missing: {
     kind: 'factual',
