@@ -29,8 +29,9 @@ export interface InitOptions {
   requiredCheck?: string[];
   force?: boolean;
   detect?: boolean;
-  protect?: boolean;
   /** true (--protect): enable without asking; false (--no-protect): skip probing; undefined: ask on TTY. */
+  protect?: boolean;
+  /** Bare hostname of a self-hosted GitLab instance matching the origin host. */
   gitlabHost?: string;
   json?: boolean;
 }
@@ -81,14 +82,21 @@ async function declareGitlabHost(
       ],
     };
   }
-  if (originH !== null && originH !== 'github.com' && host !== originH) {
+  if (originH !== null && host !== originH) {
     return {
       exit: EXIT_USAGE,
       errors: [
         errorDiagnostic(
           'gitlab_host_invalid',
-          `The declared host "${host}" does not match the origin host "${originH}".`,
-          { fix: `Declare the origin's own host: --gitlab-host ${originH}.` }
+          originH === 'github.com'
+            ? `The origin is already a github.com repository; declaring a GitLab host makes no sense.`
+            : `The declared host "${host}" does not match the origin host "${originH}".`,
+          {
+            fix:
+              originH === 'github.com'
+                ? 'Drop --gitlab-host: github.com origins are GitHub by default.'
+                : `Declare the origin's own host: --gitlab-host ${originH}.`,
+          }
         ),
       ],
     };
@@ -152,13 +160,17 @@ async function resolvePlatformMode(
   // Non-github, non-obvious host: ask on a TTY; warn otherwise.
   if (ctx.stdinIsTTY && host !== null) {
     const { select } = await import('@inquirer/prompts');
-    const choice = await select({
-      message: `Origin host "${host}" is not github.com — which platform is this repository on?`,
-      choices: [
-        { value: 'gitlab' },
-        { value: 'github' },
-      ],
-    });
+    // Render to stderr: --json stdout must stay exactly one JSON document.
+    const choice = await select(
+      {
+        message: `Origin host "${host}" is not github.com — which platform is this repository on?`,
+        choices: [
+          { value: 'gitlab' },
+          { value: 'github' },
+        ],
+      },
+      { output: process.stderr }
+    );
     if (choice === 'gitlab') {
       try {
         await writeProviders(root, { gitlab: { host, insecure_ssl: false } });
@@ -273,10 +285,13 @@ async function guardAcceptanceBypass(
   let confirmed = options.protect === true;
   if (!confirmed && ctx.stdinIsTTY) {
     const { confirm } = await import('@inquirer/prompts');
-    confirmed = await confirm({
-      message: `Require "${ACCEPTANCE_CHECK_NAME}" on ${branch} and enable auto-merge (blocks bypassing the acceptance gate)?`,
-      default: true,
-    });
+    confirmed = await confirm(
+      {
+        message: `Require "${ACCEPTANCE_CHECK_NAME}" on ${branch} and enable auto-merge (blocks bypassing the acceptance gate)?`,
+        default: true,
+      },
+      { output: process.stderr }
+    );
   }
 
   if (!confirmed) {

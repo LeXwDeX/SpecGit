@@ -17,12 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # The docker runner image ships without git; checkout needs it.
-      - name: Bootstrap container tools (self-hosted only)
-        if: runner.name == '33.110-docker'
-        run: |
-          command -v git >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git ca-certificates curl)
-
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_REPO: ${{ github.repository }}
-          WAIT_SHA: ${{ github.event.pull_request.head.sha }}
+          WAIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node --input-type=module <<'EOF'
           import { readFileSync } from 'node:fs';

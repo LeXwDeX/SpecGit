@@ -87,7 +87,7 @@ jobs:
     steps:
       # The docker runner image ships without git; checkout needs it.
       - name: Bootstrap container tools (self-hosted only)
-        if: runner.name == '33.110-docker'
+        if: matrix.label == 'self-hosted-linux'
         run: |
           command -v git >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git ca-certificates curl)
 
