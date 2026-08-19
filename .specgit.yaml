@@ -5,3 +5,4 @@ context:
   branch: feat/19-gitlab-cli
 issues:
   - 19
+pr: 20
