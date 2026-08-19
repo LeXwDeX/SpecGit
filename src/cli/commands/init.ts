@@ -16,10 +16,12 @@ import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { writeHarnessAssets, type HarnessWriteResult } from '../harness-assets.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext } from '../types.js';
-import { detectRequiredChecks } from '../detect-checks.js';
+import { detectInitInputs, type DetectionReport } from '../detect-checks.js';
 
 export interface InitOptions {
   requiredCheck?: string[];
+  force?: boolean;
+  detect?: boolean;
   json?: boolean;
 }
 
@@ -30,12 +32,29 @@ export async function runInit(
   ctx: CommandContext
 ): Promise<CommandOutcome> {
   let checks = (options.requiredCheck ?? []).map((value) => value.trim());
+  let detected: DetectionReport | null = null;
 
   if (checks.length === 0) {
-    // No arguments: auto-detect from the repo's CI workflows; when none
-    // exist, the GitHub aggregate check is the safe fail-closed fallback.
-    const detected = await detectRequiredChecks(ctx.cwd);
-    checks = detected.length > 0 ? detected : [FALLBACK_CHECK];
+    if (options.detect === false) {
+      // Strict legacy path: no detection, no prompt (non-interactive
+      // contract) — the caller must be explicit.
+      return {
+        exit: EXIT_USAGE,
+        errors: [
+          errorDiagnostic(
+            'required_check_required',
+            'init requires at least one required check name.',
+            { fix: 'Pass --required-check <name> (repeatable), or drop --no-detect to auto-detect.' }
+          ),
+        ],
+      };
+    }
+    // Auto-detect from the repo's CI files (GitHub workflows, GitLab CI);
+    // when none exist, the GitHub aggregate check is the safe fail-closed
+    // fallback.
+    const facts = await ctx.git.facts(ctx.cwd).catch(() => null);
+    detected = await detectInitInputs(ctx.cwd, facts?.originUrl ?? null);
+    checks = detected.requiredChecks.length > 0 ? detected.requiredChecks : [FALLBACK_CHECK];
   }
 
   const invalid = checks.find((value) => value.length === 0);
@@ -73,19 +92,19 @@ export async function runInit(
   }
 
   const existingPolicy = await ctx.record.readPolicy(root);
-  if (existingPolicy.ok) {
+  if (existingPolicy.ok && !options.force) {
     return {
       exit: EXIT_USAGE,
       errors: [
         errorDiagnostic(
           'policy_exists',
           `${SPEC_GIT_DIR}/${POLICY_FILENAME} already exists in this repository.`,
-          { fix: `Edit ${SPEC_GIT_DIR}/${POLICY_FILENAME} directly to change required checks.` }
+          { fix: `Edit ${SPEC_GIT_DIR}/${POLICY_FILENAME} directly, or re-run with --force to rebuild it.` }
         ),
       ],
     };
   }
-  if (existingPolicy.code !== 'policy_missing') {
+  if (!existingPolicy.ok && existingPolicy.code !== 'policy_missing') {
     return {
       exit: EXIT_UNKNOWN,
       errors: [
@@ -108,10 +127,23 @@ export async function runInit(
   return {
     exit: EXIT_SUCCESS,
     policy,
+    ...(detected !== null
+      ? {
+          detected: {
+            platform: detected.platform,
+            sources: detected.sources,
+            clis: detected.clis,
+            fallback: checks.length === 1 && checks[0] === FALLBACK_CHECK,
+          },
+        }
+      : {}),
     human: [
       `Created ${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
       `Required checks (${checks.length}):`,
       ...checks.map((name) => `  - ${name}`),
+      ...(detected !== null
+        ? [`Detected platform: ${detected.platform}`, ...detected.sources.map((s) => `  detected from ${s}`)]
+        : []),
       `Created ${harness.workflow}`,
       ...harness.hooks.map((hookPath) => `Created ${hookPath}`),
       ...(harness.gitHook ? [`Installed git pre-push guard (${harness.gitHook})`] : []),

@@ -159,6 +159,8 @@ export function createProgram(
     .command('init')
     .description('Create spec_git/policy.yaml with the required CI check names and generate the harness')
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
+    .option('--force', 'Rebuild spec_git/policy.yaml even when it already exists')
+    .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
     .option('--json', 'Output as JSON')
     .action(wrap('init', runInit as CommandRun));
 
