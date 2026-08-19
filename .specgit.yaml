@@ -1,8 +1,8 @@
 version: 1
-delivery: enforce-strict-issue
+delivery: guard-acceptance-bypass
 context:
-  kind: branch
-  branch: feat/21-enforce-strict-issue
+  kind: worktree
+  label: specgit-wt-guard-init
+  branch: feat/28-guard-acceptance-bypass
 issues:
-  - 21
-pr: 22
+  - 28
