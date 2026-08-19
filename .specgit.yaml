@@ -1,8 +1,8 @@
 version: 1
-delivery: address-review-findings
+delivery: release-idempotence-by
 context:
   kind: branch
-  branch: fix/48-address-review-findings
+  branch: fix/50-release-idempotence-by
 issues:
-  - 48
-pr: 49
+  - 50
+pr: 51
