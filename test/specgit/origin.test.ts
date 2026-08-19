@@ -84,6 +84,19 @@ describe('parseRepoRef', () => {
     expect(result.code).toBe('origin_unresolvable');
   });
 
+  it('a suffix-spoofing host stays unresolvable (anchored match)', () => {
+    for (const url of [
+      'git@git.ycgame.com.evil.com:o/r.git',
+      'https://git.ycgame.com.evil.com/o/r.git',
+      'ssh://git@git.ycgame.com.evil.com/o/r.git',
+    ]) {
+      const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe('origin_unresolvable');
+    }
+  });
+
   it('compares repo refs case-insensitively', () => {
     expect(sameRepoRef({ owner: 'LeXwDeX', repo: 'SpecGit' }, { owner: 'lexwdex', repo: 'specgit' })).toBe(true);
     expect(sameRepoRef({ owner: 'a', repo: 'b' }, { owner: 'a', repo: 'c' })).toBe(false);
