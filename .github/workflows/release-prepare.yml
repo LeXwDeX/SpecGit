@@ -52,10 +52,20 @@ jobs:
       - name: Open version pull request
         if: steps.pending.outputs.count != '0'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # PR #61 root cause, proven: a version branch pushed with the bare
+          # repository GITHUB_TOKEN lands as github-actions[bot], and every
+          # pull_request workflow on the version PR then completes as
+          # action_required with zero jobs — the required checks can never
+          # finish and the PR blocks forever. RELEASE_BOT_TOKEN (a PAT or
+          # GitHub App installation token with contents + pull-requests
+          # write) pushes as an actor whose events run without approval.
+          # Without it the workflow still runs, and the watchdog step below
+          # fails loudly instead of letting the PR stall silently.
+          PUSH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
           # @changesets/changelog-github needs a token to link PRs in the
           # generated changelog entries (separate from gh's GH_TOKEN).
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
         run: |
           git config user.name "specgit-release-bot"
           git config user.email "noreply@users.noreply.github.com"
@@ -63,6 +73,7 @@ jobs:
           pnpm exec changeset version
           VERSION=$(node -p "require('./package.json').version")
           git commit -am "chore(release): v${VERSION}"
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin changeset-release/main
           BODY="Automated version bump. Merging publishes specgit@${VERSION} to npm and tags v${VERSION}."
           # create may fail on permissions; the branch may also still carry
@@ -76,6 +87,10 @@ jobs:
             fi
             STATE=$(gh pr view changeset-release/main --json state --jq .state 2>/dev/null || echo MISSING)
             if [ "$STATE" = "OPEN" ]; then
+              # Explicit supersession (#71): record the rationale on the
+              # superseded proposal before retitling — never silently
+              # repurpose an open version PR.
+              gh pr comment changeset-release/main --body "Superseded: this version PR now carries v${VERSION} via the release-candidate gates (#71). Nothing was published for the earlier proposal." || true
               gh pr edit changeset-release/main --title "chore(release): v${VERSION}" --body "$BODY"
             else
               # MERGED/CLOSED for an older version (tag absent): recreate.
@@ -87,6 +102,31 @@ jobs:
             fi
           fi
           gh pr merge changeset-release/main --auto --squash --delete-branch
+
+      - name: Verify version PR workflows started (not awaiting approval)
+        if: steps.pending.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
+        run: |
+          # #71: no required workflow may end up needing undisclosed manual
+          # approval. Poll the version PR head's check-runs: action_required
+          # there means the runs were created but wait for approval (zero
+          # jobs) — the exact PR #61 failure mode. Fail loudly with the fix.
+          for i in $(seq 1 12); do
+            sleep 10
+            SHA=$(git rev-parse changeset-release/main)
+            JSON=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" 2>/dev/null || echo '{"check_runs":[]}')
+            STATE=$(printf '%s' "$JSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const runs=j.check_runs||[];if(runs.length===0){console.log('empty');return;}if(runs.some(r=>r.conclusion==='action_required')){console.log('action_required');return;}console.log('started')}catch{console.log('empty')}})")
+            echo "check-runs poll ${i}/12: ${STATE}"
+            case "$STATE" in
+              started) exit 0 ;;
+              action_required)
+                echo "::error::Required workflows on the version PR are action_required (zero jobs): the head was pushed by an actor whose events need approval (the bare github.token / github-actions[bot]). Provide RELEASE_BOT_TOKEN (a PAT or GitHub App token with contents + pull-requests write) and re-run, or approve the runs manually."
+                exit 1 ;;
+            esac
+          done
+          echo "::error::Version PR check-runs did not appear within 120s; investigate the PR checks manually."
+          exit 1
 
       # Push without pending changesets whose head is a version bump: publish.
       - name: Build
@@ -103,8 +143,9 @@ jobs:
           fi
           pnpm run check:pack-version
           # npm authentication via OIDC trusted publishing (id-token: write
-          # + registry-url): no environment binding, no token.
-          npm publish --access public
+          # + registry-url): no environment binding, no token. Provenance is
+          # explicit so the attestation cannot be silently dropped.
+          npm publish --access public --provenance
 
       - name: Tag and create GitHub Release
         if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
