@@ -187,13 +187,14 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   },
   checks_pending: {
     kind: 'factual',
-    message: 'A required check has not completed at the PR head.',
-    fix: 'Wait for the check to finish, then run "specgit accept" again.',
+    message:
+      'A required check has not completed at the PR head (transient: queued or in progress).',
+    fix: 'Pending is not failure — nothing needs repair. Wait for the check to finish, then run "specgit accept" again; re-running is safe and idempotent.',
   },
   checks_failed: {
     kind: 'factual',
     message: 'A required check failed at the PR head.',
-    fix: 'Fix the failing check, then run "specgit accept" again.',
+    fix: 'Fix the failing check, then run "specgit accept" again. A conclusion of action_required means the run never started: it is waiting for maintainer approval (typical for a bot-pushed PR head) — approve the run in the Actions tab or re-push the head from an actor with write access.',
   },
   local_head_stale: {
     kind: 'evidence',

@@ -461,11 +461,23 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
           continue;
         }
         if (run.status !== 'completed') {
-          failures.push(makeFailure('checks_pending', { name: requiredName, status: run.status }));
+          const pending = makeFailure('checks_pending', {
+            name: requiredName,
+            status: run.status,
+          });
+          // Honest diagnostics (#68): the message names the check and its
+          // live status so pending reads as a specific, transient state.
+          pending.message = `${pending.message} [check: ${requiredName}, status: ${run.status}]`;
+          failures.push(pending);
           continue;
         }
         if (run.conclusion !== 'success') {
-          failures.push(makeFailure('checks_failed', { name: requiredName, conclusion: run.conclusion }));
+          const failed = makeFailure('checks_failed', {
+            name: requiredName,
+            conclusion: run.conclusion,
+          });
+          failed.message = `${failed.message} [check: ${requiredName}, conclusion: ${run.conclusion}]`;
+          failures.push(failed);
         }
       }
       return failures;
