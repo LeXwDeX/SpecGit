@@ -11,9 +11,10 @@ permissions:
 jobs:
   specgit-acceptance:
     name: SpecGit Acceptance
-    # Self-hosted docker runner: the acceptance gate is the critical path,
-    # it must not wait behind hosted-pool queue outages.
-    runs-on: [self-hosted, Linux, X64]
+    # Hosted pool on purpose: a required check must not hinge on one
+    # self-hosted container. The shadow Test (self-hosted-linux) matrix
+    # entry in ci.yml proves the docker runner before any migration.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       # The docker runner image ships without git; checkout needs it.

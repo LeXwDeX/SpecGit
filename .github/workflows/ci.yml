@@ -52,11 +52,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux coverage rides the project's self-hosted docker runner
-          # (label: self-hosted) — immune to hosted-pool queue meltdowns.
-          - os: [self-hosted, Linux, X64]
+          # Required checks stay on hosted runners (the acceptance gate and
+          # its siblings must not depend on one self-hosted container).
+          - os: ubuntu-latest
             shell: bash
             label: linux-bash
+            vitest_workers: 4
+          # Shadow entry on the project docker runner: never a required
+          # check, proves the container build before any migration.
+          - os: [self-hosted, Linux, X64]
+            shell: bash
+            label: self-hosted-linux
             vitest_workers: 4
           - os: macos-latest
             shell: bash
