@@ -75,6 +75,20 @@ describe('release-prepare gates (#71)', () => {
     expect(openPrStep?.run).toMatch(/[Bb]atch/);
     expect(openPrStep?.run).toMatch(/[Rr]e-arm/);
   });
+
+  it('names the actual re-arm point: re-evaluated after 1.0.0 (#107)', () => {
+    // User ruling 2026-08-20: auto-merge stays armed off through the 1.0.0
+    // line; the re-arm decision is re-evaluated after 1.0.0 ships. The old
+    // condition ("as part of the deliberate 1.0.0-rc.1 cut") was satisfied
+    // by the rc.1 cut without a re-arm — leaving it in place would record a
+    // condition that already came due and went unmet.
+    const openPrStep = (parsed.jobs?.release?.steps ?? []).find((step) =>
+      (step.run ?? '').includes('changeset-release/main')
+    );
+    expect(openPrStep).toBeDefined();
+    expect(openPrStep?.run).toMatch(/re-evaluated after 1\.0\.0/i);
+    expect(openPrStep?.run).not.toMatch(/1\.0\.0-rc\.1 cut/);
+  });
 });
 
 describe('rc-verify is a safe RC path (#71)', () => {
