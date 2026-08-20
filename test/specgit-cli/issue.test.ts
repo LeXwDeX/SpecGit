@@ -26,9 +26,8 @@ interface IssueHarness {
 
 /** Remotely discoverable state for the exactly-once reconciliation probes. */
 interface ReconcileScript {
-  openIssueNumbers?: number[];
-  openIssueNumbersFail?: { code: string; message: string };
-  issueFacts?: Record<number, { title?: string; state?: 'open' | 'closed' }>;
+  openIssues?: Array<{ number: number; title?: string; body?: string }>;
+  openIssuesFail?: { code: string; message: string };
   openPrs?: Array<{ number: number; title: string; url: string }>;
   openPrsFail?: { code: string; message: string };
 }
@@ -66,22 +65,13 @@ function issueCtx(
   // Exactly-once seams: reconciliation probes and the PR idempotency marker.
   // Defaults describe an empty remote so the plain flows stay deterministic.
   const reconcile = options.reconcile ?? {};
-  gh.getOpenIssueNumbers = vi.fn(async () => {
-    gh.calls.push('getOpenIssueNumbers');
-    if (reconcile.openIssueNumbersFail) {
-      return fail<number[]>(reconcile.openIssueNumbersFail.code, reconcile.openIssueNumbersFail.message);
+  type OpenIssueScript = NonNullable<ReconcileScript['openIssues']>;
+  gh.getOpenIssues = vi.fn(async () => {
+    gh.calls.push('getOpenIssues');
+    if (reconcile.openIssuesFail) {
+      return fail<OpenIssueScript>(reconcile.openIssuesFail.code, reconcile.openIssuesFail.message);
     }
-    return ok(reconcile.openIssueNumbers ?? []);
-  });
-  gh.getIssue = vi.fn(async (_repo: unknown, n: number) => {
-    gh.calls.push(`getIssue:${n}`);
-    const fact = reconcile.issueFacts?.[n];
-    return ok({
-      number: n,
-      state: fact?.state ?? 'open',
-      pullRequest: false,
-      ...(fact?.title !== undefined ? { title: fact.title } : {}),
-    });
+    return ok(reconcile.openIssues ?? []);
   });
   gh.listOpenPrsByHead = vi.fn(async (_repo: unknown, head: string) => {
     gh.calls.push(`listOpenPrsByHead:${head}`);
@@ -692,10 +682,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     // Retry: the remote still has #11 with the exact title — adopt, never re-create.
     const healed = issueCtx({
       facts: { branch: 'main' },
-      reconcile: {
-        openIssueNumbers: [11],
-        issueFacts: { 11: { title: 'feat: alpha why' } },
-      },
+      reconcile: { openIssues: [{ number: 11, title: 'feat: alpha why' }] },
     });
     const second = await runIssue({ titles: ['feat: alpha why'] }, healed.ctx);
     expect(second.exit).toBe(0);
@@ -716,8 +703,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
         issues: [11],
       }),
       reconcile: {
-        openIssueNumbers: [11],
-        issueFacts: { 11: { title: 'renamed by a teammate' } },
+        openIssues: [{ number: 11, title: 'renamed by a teammate' }],
       },
       gh: {
         createIssue: (_repo, title, body) => {
@@ -740,11 +726,10 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     const t = issueCtx({
       facts: { branch: 'main' },
       reconcile: {
-        openIssueNumbers: [5, 11],
-        issueFacts: {
-          5: { title: 'chore: unrelated work' },
-          11: { title: 'feat: alpha why' },
-        },
+        openIssues: [
+          { number: 5, title: 'chore: unrelated work' },
+          { number: 11, title: 'feat: alpha why' },
+        ],
       },
     });
     const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
@@ -755,14 +740,11 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11]));
   });
 
-  it('does not adopt a closed issue even when the title matches', async () => {
-    const t = issueCtx({
-      facts: { branch: 'main' },
-      reconcile: {
-        openIssueNumbers: [11],
-        issueFacts: { 11: { title: 'feat: alpha why', state: 'closed' } },
-      },
-    });
+  it('never adopts an issue the open-issues evidence does not carry (closed issues are invisible)', async () => {
+    // The probe reads only open issues (the provider search pins
+    // `is:issue+is:open`); a closed issue with the same title is not
+    // evidence, so the title argument creates fresh — never binds history.
+    const t = issueCtx({ facts: { branch: 'main' }, reconcile: { openIssues: [] } });
     const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdIssues.length).toBe(1);
@@ -770,11 +752,105 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     expect(written?.issues).toEqual([11]);
   });
 
+  // The deterministic issue body specgit writes on creation — the
+  // boundary marker that disambiguates a same-title collision (#77).
+  const scaffoldBody = (title: string): string =>
+    [
+      '## Why (required)',
+      title,
+      '',
+      '## Scope (optional)',
+      '',
+      '## Acceptance (required)',
+      'The delivery pull request closes this issue; `specgit finish` must exit 0.',
+      '',
+    ].join('\n');
+
+  it('diagnoses an unresolved same-title collision instead of silently adopting (exit 2)', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'feat: alpha why', body: 'someone else typed the same title' },
+          { number: 9, title: 'feat: alpha why', body: 'another unrelated body' },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_ambiguous');
+    expect(outcome.errors?.[0]?.message).toContain('#5');
+    expect(outcome.errors?.[0]?.message).toContain('#9');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
+    // Zero side effects: ambiguity is a usage diagnostic, never a binding.
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+    expect(t.gitPort.checkoutCalls.length + t.gitPort.commitCalls.length + t.gitPort.pushCalls.length).toBe(0);
+  });
+
+  it('still diagnoses when every same-title candidate carries the scaffold body', async () => {
+    // Two specgit-created duplicates of one WHY is not resumable state to
+    // heal silently — the human decides which number is the delivery.
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'feat: alpha why', body: scaffoldBody('feat: alpha why') },
+          { number: 9, title: 'feat: alpha why', body: scaffoldBody('feat: alpha why') },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_ambiguous');
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('adopts the sole same-title candidate carrying the deterministic scaffold body (#77)', async () => {
+    // A human issue shares the title with a previously created-but-unrecorded
+    // specgit issue. The scaffold body is the boundary that proves ownership.
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'feat: alpha why', body: 'an unrelated human issue' },
+          { number: 9, title: 'feat: alpha why', body: scaffoldBody('feat: alpha why') },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([9]);
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([9]));
+  });
+
+  it('adopts beyond the first search page and stays inside the call budget (>100 open issues)', async () => {
+    // 150 open issues; the adoptable title rides #137 — beyond the old
+    // single-page blind spot. One title-carrying scan replaces the per-issue
+    // probe calls entirely (#77 trust/coverage/cost facets).
+    const openIssues = Array.from({ length: 150 }, (_, i) => ({
+      number: i + 1,
+      title: i === 136 ? 'feat: alpha why' : `chore: filler why ${i + 1}`,
+    }));
+    const t = issueCtx({ facts: { branch: 'main' }, reconcile: { openIssues } });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([137]);
+    // Call budget: exactly one title-carrying scan, zero per-issue lookups.
+    expect(t.gh.calls.filter((c) => c === 'getOpenIssues')).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => c.startsWith('getIssue:'))).toHaveLength(0);
+  });
+
   it('fails closed when the reconciliation probe cannot gather evidence', async () => {
     const t = issueCtx({
       facts: { branch: 'main' },
       reconcile: {
-        openIssueNumbersFail: { code: 'gh_unreachable', message: 'search API down' },
+        openIssuesFail: { code: 'gh_unreachable', message: 'search API down' },
       },
     });
     const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
@@ -788,7 +864,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue({ titles: ['4'] }, t.ctx);
     expect(outcome.exit).toBe(0);
-    expect(t.gh.calls).not.toContain('getOpenIssueNumbers');
+    expect(t.gh.calls).not.toContain('getOpenIssues');
     expect(t.recordPort.recordWrites.at(-1)?.record?.issues).toEqual([4]);
   });
 });
@@ -911,7 +987,7 @@ describe('specgit issue: complete-record argument drift (P1 regression)', () => 
   function creationPathCalls(calls: string[]): string[] {
     return calls.filter(
       (c) =>
-        c === 'getOpenIssueNumbers' ||
+        c === 'getOpenIssues' ||
         c.startsWith('getIssue:') ||
         c.startsWith('createIssue') ||
         c.startsWith('listOpenPrsByHead') ||
