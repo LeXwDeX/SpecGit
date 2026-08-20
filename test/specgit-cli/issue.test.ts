@@ -207,13 +207,14 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.recordPort.recordWrites.length).toBe(0);
   });
 
-  it('rejects a non-English title as a usage error', async () => {
+  it('accepts a non-ASCII title and derives the numeric fallback branch (#118)', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue({ titles: ['feat: 严格交付'] }, t.ctx);
-    expect(outcome.exit).toBe(2);
-    expect(outcome.errors?.[0]?.code).toBe('issue_title_not_english');
-    expect(t.harness.createdIssues.length).toBe(0);
-    expect(t.recordPort.recordWrites.length).toBe(0);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues).toHaveLength(1);
+    expect(t.harness.createdIssues[0].title).toBe('feat: 严格交付');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-issue11');
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('issue11');
   });
 
   it('honors other conventional types (fix:)', async () => {

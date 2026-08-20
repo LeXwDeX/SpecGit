@@ -25,6 +25,7 @@ import {
 } from '../gates.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { STATE_ASSET_TAXONOMY } from '../state-taxonomy.js';
+import { catalogFor, resolveLanguage } from '../language.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { BindingState, CommandContext, GateResult } from '../types.js';
 
@@ -63,6 +64,7 @@ export async function runStatus(
     };
   }
   const record = recordEv.value;
+  const { human: text } = catalogFor(resolveLanguage(policyEv.ok ? policyEv.value : null));
 
   const gates: GateResult[] = [
     recordGate(recordEv),
@@ -110,7 +112,7 @@ export async function runStatus(
       errors: failClosedErrors,
       assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
       human: [
-        `Delivery: ${record.delivery} (${state})`,
+        text.statusDelivery(record.delivery, state),
         ...gates.flatMap((gate) =>
           gate.failures.map(
             (failure) => `Gate ${gate.id}: ${failure.code}${failure.fix ? ` — ${failure.fix}` : ''}`
@@ -121,16 +123,16 @@ export async function runStatus(
   }
 
   const human = [
-    `Delivery: ${record.delivery} (${state})`,
-    `Context: ${
-      record.context.kind === 'worktree'
-        ? `worktree ${record.context.label} on ${record.context.branch}`
-        : `branch ${record.context.branch}`
-    }`,
-    `Issues: ${record.issues.length > 0 ? record.issues.map((n) => `#${n}`).join(', ') : '(none)'}`,
-    `PR: ${record.pr !== undefined ? record.pr : '(none)'}`,
-    `Repository: ${origin.repo ?? '(unresolved)'}`,
-    `Live branch: ${facts.branch ?? '(detached)'}`,
+    text.statusDelivery(record.delivery, state),
+    record.context.kind === 'worktree'
+      ? text.statusContextWorktree(record.context.label, record.context.branch)
+      : text.statusContextBranch(record.context.branch),
+    record.issues.length > 0
+      ? text.statusIssues(record.issues.map((n) => `#${n}`).join(', '))
+      : text.statusIssuesNone(),
+    record.pr !== undefined ? text.statusPr(record.pr) : text.statusPrNone(),
+    origin.repo !== null ? text.statusRepository(origin.repo) : text.statusRepositoryUnresolved(),
+    facts.branch !== null ? text.statusLiveBranch(facts.branch) : text.statusLiveBranchDetached(),
     'Assets: authoritative committed (spec_git/policy.yaml, spec_git/providers.yaml, .specgit.yaml) · derived committed harness (regenerate via init --force) · local integration (setup entry points)',
     ...gates.flatMap((gate) =>
       gate.failures.map(

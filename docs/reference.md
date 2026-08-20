@@ -51,6 +51,7 @@ ordered_issues: true
 | `version` | `1` | Only `1` is accepted. |
 | `required_checks` | string[] | List of non-empty check names, matched exactly. May be empty — the **no-CI policy** (`init`'s fallback when the repository has no CI files): the generated acceptance job itself, enforced through branch protection, is then the gate. |
 | `ordered_issues` | boolean | Optional, default `false`. When `true`, deliveries must merge in ascending issue order: `specgit finish` rejects (`issue_out_of_order`, exit 1) if any open issue has a number smaller than the smallest bound issue of this delivery. Close or deliver the earlier issue first. |
+| `language` | `en` \\| `zh` | Optional, default `en` (key may be absent). Presentation language of **generated** text: issue/PR body scaffolds, the init harness guidance block, success-path human prose ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). Set via `specgit init --language <lang>`; `init --force` inherits the existing value unless overridden. Unsupported values fail closed (`policy_invalid`). Never localized under any value: exit codes, `--json` field names, diagnostic `code` values, closing-reference keywords, the workflow YAML and guard scripts. Branch slugs stay ASCII: a title containing any non-ASCII character derives the numeric fallback (`feat/123-issue123`). |
 
 The policy is strict: unknown keys make it invalid. Required checks are **declared locally** and matched against check runs reported to the PR head commit — they are not read from GitHub rulesets.
 
