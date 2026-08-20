@@ -8,6 +8,7 @@ import {
   GITHUB_PROVIDER_MEMBERS,
   GhCliGitHubProvider,
   LocalGitAdapter,
+  sanitizeApiText,
 } from '../../src/index.js';
 import { MockGitHubProvider } from './helpers/mock-github.js';
 import { makeGitFacts, makeGitPort, makeGhProvider } from '../specgit-cli/helpers.js';
@@ -85,6 +86,40 @@ describe('provider port contract (#80)', () => {
     });
     it('makeGhProvider (test double)', () => {
       expectExposes(makeGhProvider(), GITHUB_PROVIDER_MEMBERS, 'makeGhProvider (test double)');
+    });
+  });
+
+  // Adapter-home pins (#113): the GitHub adapter canonically lives under
+  // src/providers/github/ (option B — neutral port, per-platform adapters),
+  // while the legacy src/github module paths and the public API remain
+  // stable aliases of that home — same class, same functions, never copies.
+  describe('the GitHub adapter home under src/providers/github (#113)', () => {
+    it('GhCliGitHubProvider canonically lives at src/providers/github/gh-cli.ts and implements the port', async () => {
+      const canonical = await import('../../src/providers/github/gh-cli.js');
+      expectExposes(
+        new canonical.GhCliGitHubProvider(),
+        GITHUB_PROVIDER_MEMBERS,
+        'GhCliGitHubProvider (src/providers/github/gh-cli.ts)'
+      );
+    });
+
+    it('the legacy src/github module paths are stable aliases of the canonical home', async () => {
+      const canonical = await import('../../src/providers/github/gh-cli.js');
+      const legacyGhCli = await import('../../src/github/gh-cli.js');
+      const canonicalProtection = await import('../../src/providers/github/protection-merge.js');
+      const legacyProtection = await import('../../src/github/protection-merge.js');
+      expect(legacyGhCli.GhCliGitHubProvider).toBe(canonical.GhCliGitHubProvider);
+      expect(legacyGhCli.sanitizeApiText).toBe(canonical.sanitizeApiText);
+      expect(legacyGhCli.resolveNodeScriptCommand).toBe(canonical.resolveNodeScriptCommand);
+      expect(legacyProtection.buildProtectionUpdateBody).toBe(
+        canonicalProtection.buildProtectionUpdateBody
+      );
+    });
+
+    it('the public API re-exports the canonical provider implementation', async () => {
+      const canonical = await import('../../src/providers/github/gh-cli.js');
+      expect(GhCliGitHubProvider).toBe(canonical.GhCliGitHubProvider);
+      expect(sanitizeApiText).toBe(canonical.sanitizeApiText);
     });
   });
 

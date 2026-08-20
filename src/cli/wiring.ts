@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import { evaluate } from '../acceptance/evaluate.js';
 import { LocalGitAdapter } from '../gitfacts/local.js';
 import { parseRepoRef } from '../gitfacts/origin.js';
-import { GhCliGitHubProvider } from '../github/gh-cli.js';
+import { GhCliGitHubProvider } from '../providers/github/gh-cli.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import * as recordIo from '../record/io.js';
 import { readProviders } from '../record/io.js';

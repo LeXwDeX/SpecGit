@@ -36,7 +36,8 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
   issues to one PR that closes them all.
 - Provider seams: git facts come from **local git** (`src/gitfacts`);
   GitHub evidence (issues, PR, checks) flows exclusively through the
-  authenticated **`gh` CLI** (`src/github`). No direct REST client, no
+  authenticated **`gh` CLI** (`src/providers/github`, port at
+  `src/github/port.ts`). No direct REST client, no
   stored or logged tokens. v1 scope is dual-platform — GitHub.com plus
   GitLab CE/Free self-managed per the version policy — and
   GitLab capability lands incrementally per the Phase-2 roadmap; today a
