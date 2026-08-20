@@ -61,6 +61,20 @@ describe('release-prepare gates (#71)', () => {
     expect(openPrStep?.run).toContain('gh pr comment');
     expect(openPrStep?.run).toMatch(/[Ss]uperseded/);
   });
+
+  it('holds the version PR open as the manual batch-decision point (#102)', () => {
+    // Batch mode: the version PR must not arm auto-merge — a human
+    // decides when the batch ships as a deliberate rc cut. The workflow
+    // comment must state the rationale and the re-arm condition so the
+    // arm-off cannot decay into an undocumented gap.
+    const openPrStep = (parsed.jobs?.release?.steps ?? []).find((step) =>
+      (step.run ?? '').includes('changeset-release/main')
+    );
+    expect(openPrStep).toBeDefined();
+    expect(openPrStep?.run).not.toContain('--auto');
+    expect(openPrStep?.run).toMatch(/[Bb]atch/);
+    expect(openPrStep?.run).toMatch(/[Rr]e-arm/);
+  });
 });
 
 describe('rc-verify is a safe RC path (#71)', () => {
