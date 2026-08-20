@@ -1,8 +1,7 @@
 version: 1
 delivery: issue102
 context:
-  kind: worktree
-  label: d1pre-armoff
+  kind: branch
   branch: feat/102-issue102
 issues:
   - 102
