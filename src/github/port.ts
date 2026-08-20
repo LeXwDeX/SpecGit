@@ -37,6 +37,13 @@ export interface CheckRunInfo {
   name: string;
   status: string;
   conclusion: string | null;
+  /**
+   * Check-run id. Re-runs keep every same-name run in the Checks API
+   * (#119); ties on started_at break by the higher id (the newer run).
+   */
+  id: number;
+  /** ISO-8601 started_at; null when GitHub reports no value (treated as oldest). */
+  startedAt: string | null;
 }
 
 /** A newly created GitHub issue: its number and canonical html URL. */
