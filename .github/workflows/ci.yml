@@ -219,6 +219,9 @@ jobs:
       - name: Type check
         run: pnpm exec tsc --noEmit
 
+      - name: Type check tests
+        run: pnpm run typecheck:test
+
       - name: Lint
         run: pnpm lint
 

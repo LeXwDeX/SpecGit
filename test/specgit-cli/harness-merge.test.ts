@@ -167,6 +167,24 @@ exit 0
     expect(mergeGitPrePush(OLD_LAYOUT_PRE_PUSH)).toBe(mergeGitPrePush(null));
   });
 
+  // #88-3: a marker-first install that later gained user content below the
+  // managed region must upgrade without destroying that trailing content.
+  // The wholesale replacement used to delete everything after the end
+  // marker (adversarially reproduced on main, W0′ 2026-08-20).
+  it('upgrades the marker-first layout while preserving trailing user content (#88-3)', () => {
+    const existing = `${OLD_LAYOUT_PRE_PUSH}\n# user-added trailing hook lines\necho "user trailer" >&2\n`;
+    const merged = mergeGitPrePush(existing);
+
+    expect(merged.startsWith('#!/bin/sh\n')).toBe(true);
+    expect(merged).toContain('# user-added trailing hook lines');
+    expect(merged).toContain('echo "user trailer" >&2');
+    expect(merged.indexOf('# <<< specgit:end <<<')).toBeLessThan(
+      merged.indexOf('# user-added trailing hook lines')
+    );
+    // The repair stays byte-stable on re-merge.
+    expect(mergeGitPrePush(merged)).toBe(merged);
+  });
+
   it('an appended region after a user hook keeps the byte-stable spawnable head', () => {
     const merged = mergeGitPrePush(USER_PRE_PUSH);
     expect(merged.startsWith('#!/bin/sh\n')).toBe(true);

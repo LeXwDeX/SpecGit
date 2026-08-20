@@ -563,7 +563,8 @@ function managedPrePush(): string {
  * - absent/empty: the spawnable managed file alone;
  * - the legacy unmarked specgit guard (pre-#62 installs): upgraded;
  * - the #62 marker-first layout (shebang on line 2, unspawnable on
- *   Windows): upgraded wholesale so the shebang becomes line 1;
+ *   Windows): rebuilt so the shebang becomes line 1, preserving any
+ *   content after the managed region (#88-3);
  * - markers present: only the delimited region is replaced;
  * - anything else (a user hook, e.g. husky): preserved verbatim with
  *   the managed region appended after it.
@@ -579,13 +580,14 @@ export function mergeGitPrePush(existing: string | null): string {
   const startIndex = existing.indexOf(PRE_PUSH_START);
   const endIndex = existing.indexOf(PRE_PUSH_END);
   if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+    const afterEnd = endIndex + PRE_PUSH_END.length;
     if (startIndex === 0) {
       // Old managed layout: the marker was line 1 and the shebang sat
-      // inside the region. Replace the whole file with the spawnable
-      // layout (the region content is otherwise identical).
-      return managedPrePush();
+      // inside the region. Rebuild in the spawnable layout, keeping any
+      // user content that trails the managed region — the wholesale
+      // replacement used to delete it (#88-3).
+      return managedPrePush().trimEnd() + existing.slice(afterEnd);
     }
-    const afterEnd = endIndex + PRE_PUSH_END.length;
     return existing.slice(0, startIndex) + managedPrePushRegion().trimEnd() + existing.slice(afterEnd);
   }
   const separator = existing.endsWith('\n') ? '' : '\n';
