@@ -18,7 +18,7 @@ import { promisify } from 'node:util';
 
 import { evaluate } from '../acceptance/evaluate.js';
 import { LocalGitAdapter } from '../gitfacts/local.js';
-import { parseRepoRef } from '../gitfacts/origin.js';
+import { parseRepoRef, requireGithubRoute } from '../gitfacts/origin.js';
 import { GhCliGitHubProvider } from '../providers/github/gh-cli.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import * as recordIo from '../record/io.js';
@@ -99,7 +99,11 @@ export function createDefaultContext(): CommandContext {
     }
   };
   const parseRepoRefWithProviders = async (originUrl: string) =>
-    parseRepoRef(originUrl, { gitlabHost: await declaredGitlabHost() });
+    // #112: the production context wires only the GitHub evidence
+    // provider (gh). An origin that resolves through the GitLab
+    // declaration fails closed at this seam — no gh-backed command ever
+    // receives a group/subgroup ref.
+    requireGithubRoute(parseRepoRef(originUrl, { gitlabHost: await declaredGitlabHost() }));
 
   return {
     io: consoleIO(),
