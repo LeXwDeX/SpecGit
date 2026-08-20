@@ -12,8 +12,12 @@
  * validated before any destructive side effect; the record is rewritten
  * after every issue so partial state is durable; and every remote side
  * effect carries an idempotency marker — the record itself, an open
- * issue's exact title, or the open PR for the head branch — so a retry
- * adopts what already exists instead of duplicating a WHY.
+ * issue's exact title (disambiguated by the deterministic scaffold body
+ * on same-title collisions, #77), or the open PR for the head branch —
+ * so a retry adopts what already exists instead of duplicating a WHY.
+ * An idempotency marker that cannot name exactly one remote object is
+ * drift the human resolves: `issue_title_ambiguous`, never a silent
+ * adoption.
  *
  * The CLI is non-interactive: no arguments and no record is a usage
  * error (exit 2). With a live record, no arguments is a pure resume; a
@@ -28,6 +32,7 @@ import { errorDiagnostic, sanitize, type CommandOutcome } from '../output.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { CommandContext, DeliveryBinding, Evidence } from '../types.js';
+import type { OpenIssueFact } from '../../github/port.js';
 
 export interface IssueOptions {
   titles?: string[];
@@ -113,6 +118,45 @@ function issueBody(title: string): string {
     'The delivery pull request closes this issue; `specgit finish` must exit 0.',
     '',
   ].join('\n');
+}
+
+/**
+ * Resolve a same-title collision (#77): an exact open-title match is
+ * adoptable only when it is unambiguous — a single candidate, or a sole
+ * candidate carrying this tool's deterministic scaffold body (the body a
+ * specgit-created issue has, which an unrelated human issue with the
+ * same title does not). Unresolvable collisions return null: the caller
+ * surfaces a usage diagnostic instead of binding an issue that could be
+ * unrelated. Never silent, never a guess.
+ */
+function disambiguateAdoption(
+  arg: string,
+  candidates: OpenIssueFact[]
+): { candidate: OpenIssueFact } | { ambiguous: true } | { create: true } {
+  if (candidates.length === 0) {
+    return { create: true };
+  }
+  const unambiguous = candidates.length === 1 ? candidates : candidates.filter((c) => c.body === issueBody(arg));
+  if (unambiguous.length === 1) {
+    return { candidate: unambiguous[0] };
+  }
+  return { ambiguous: true };
+}
+
+function adoptionAmbiguousError(arg: string, candidates: OpenIssueFact[]): CommandOutcome {
+  const listing = candidates.map((c) => `  #${c.number} ${c.title ?? arg}`).join('\n');
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issue_title_ambiguous',
+        `Multiple open issues have the title '${sanitize(arg)}':\n${listing}`,
+        {
+          fix: `Adopt one explicitly by number (specgit issue <number>), or rename the unrelated issue so titles are unique, then re-run.`,
+        }
+      ),
+    ],
+  };
 }
 
 function recordSummary(record: DeliveryBinding): Record<string, unknown> {
@@ -375,23 +419,21 @@ export async function runIssue(
   // issue whose title exactly matches a pending title argument is that
   // argument's issue — a previous run created it but failed to record it
   // (lost response, crash, or failed record write). Adopt it instead of
-  // duplicating the WHY. Probe failures fail closed: never guess.
+  // duplicating the WHY. One title-carrying scan of the open issues
+  // (#77) replaces the former per-issue probe fan-out, so the probe cost
+  // is bounded by pages, not by the open-issue count. Probe failures
+  // fail closed: never guess.
   const remaining = args.slice(startIndex);
-  const adoptable = new Map<string, number[]>();
+  const adoptable = new Map<string, OpenIssueFact[]>();
   if (remaining.some((arg) => parseNumericRef(arg) === null)) {
-    const openEv = await ctx.gh.getOpenIssueNumbers(repoEv.value);
+    const openEv = await ctx.gh.getOpenIssues(repoEv.value);
     if (!openEv.ok) {
       return passthrough(openEv);
     }
-    for (const n of openEv.value) {
-      const issueEv = await ctx.gh.getIssue(repoEv.value, n);
-      if (!issueEv.ok) {
-        return passthrough(issueEv);
-      }
-      const fact = issueEv.value;
-      if (fact.state === 'open' && typeof fact.title === 'string' && fact.title) {
+    for (const fact of openEv.value) {
+      if (typeof fact.title === 'string' && fact.title) {
         const bucket = adoptable.get(fact.title) ?? [];
-        bucket.push(fact.number);
+        bucket.push(fact);
         adoptable.set(fact.title, bucket);
       }
     }
@@ -404,9 +446,20 @@ export async function runIssue(
     if (reuseNumber !== null) {
       number = reuseNumber;
     } else {
-      const candidate = adoptable.get(arg)?.shift();
-      if (candidate !== undefined && !issues.includes(candidate)) {
-        number = candidate;
+      // Same-title adoption is disambiguated, never silent (#77): an
+      // exact title match binds only when it is unambiguous — one
+      // candidate, or a sole candidate carrying the deterministic
+      // scaffold body. An issue already bound in this run is not a
+      // candidate again; a repeated title argument creates fresh.
+      const bucket = adoptable.get(arg) ?? [];
+      const unbound = bucket.filter((c) => !issues.includes(c.number));
+      const resolved = disambiguateAdoption(arg, unbound);
+      if ('ambiguous' in resolved) {
+        return adoptionAmbiguousError(arg, unbound);
+      }
+      if ('candidate' in resolved) {
+        bucket.splice(bucket.indexOf(resolved.candidate), 1);
+        number = resolved.candidate.number;
       } else {
         const created = await ctx.gh.createIssue(repoEv.value, arg, issueBody(arg));
         if (!created.ok) {

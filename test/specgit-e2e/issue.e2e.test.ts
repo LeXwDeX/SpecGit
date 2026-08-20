@@ -238,12 +238,13 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     expect(fs.existsSync(path.join(repo.dir, '.specgit.yaml'))).toBe(false);
 
     // Run 2: the remote reports open issue #11 with the exact title —
-    // adopt it; only the second WHY is created.
+    // adopt it; only the second WHY is created. The title rides the
+    // search payload itself (#77): one title-carrying scan, no per-issue
+    // lookup.
     const ghWhole = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [{ number: 11 }] }) },
       {
-        match: `^api repos/${OWNER}/${REPO}/issues/11$`,
-        stdout: JSON.stringify({ number: 11, state: 'open', title: 'feat: phoenix flow' }),
+        match: '^api search/issues',
+        stdout: JSON.stringify({ items: [{ number: 11, title: 'feat: phoenix flow' }] }),
       },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,
@@ -295,10 +296,9 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     // creates nothing.
     fs.rmSync(lockDir, { recursive: true, force: true });
     const ghHealed = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [{ number: 11 }] }) },
       {
-        match: `^api repos/${OWNER}/${REPO}/issues/11$`,
-        stdout: JSON.stringify({ number: 11, state: 'open', title: 'feat: durable state model' }),
+        match: '^api search/issues',
+        stdout: JSON.stringify({ items: [{ number: 11, title: 'feat: durable state model' }] }),
       },
       { match: '^pr list ', stdout: '[]' },
       { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
@@ -345,10 +345,9 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     // the durable binding for the consumed argument and only create the
     // second WHY — reconciliation alone would duplicate the first.
     const ghWhole = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [{ number: 11 }] }) },
       {
-        match: `^api repos/${OWNER}/${REPO}/issues/11$`,
-        stdout: JSON.stringify({ number: 11, state: 'open', title: 'renamed by a teammate' }),
+        match: '^api search/issues',
+        stdout: JSON.stringify({ items: [{ number: 11, title: 'renamed by a teammate' }] }),
       },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,

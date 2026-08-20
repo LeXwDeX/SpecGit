@@ -50,7 +50,8 @@ to those lists member-for-member: change a port, change this page.
 | --- | --- | --- |
 | `preflight` | required | gh present and authenticated (G6). |
 | `getIssue` | required | Issue fact: state and `pullRequest` classification for every bound issue. |
-| `getOpenIssueNumbers` | required | Open-issue numbers for the ordered-issues sequencing gate. |
+| `getOpenIssueNumbers` | required | Open-issue numbers for the ordered-issues sequencing gate, derived from the complete `getOpenIssues` scan. |
+| `getOpenIssues` | required | Title-carrying open-issue facts for the bootstrap adoption probe (#77): one paginated scan (complete to exhaustion, #120 I3b) replaces the per-issue lookup fan-out, so probe cost is bounded by pages. Same-title collisions are disambiguated by the scaffold body, never silently adopted (`issue_title_ambiguous`). |
 | `getPr` | required | PR fact: state, head/base, body, `mergeCommitSha`. |
 | `getCheckRuns` | required | Check runs at the head sha (G6 evidence sufficiency). |
 | `createIssue` | required | Bootstrap create for new WHYs. |
@@ -86,7 +87,9 @@ silent skip.
 
 | Member | Fallback when absent |
 | --- | --- |
-| `IssueFact.title` (optional) | The issue is excluded from title-match adoption: `specgit issue` cannot adopt a previously created but unrecorded issue by exact open-title match and creates a new issue instead (`src/cli/commands/issue.ts`). Numeric reuse and record-based resume are unaffected. |
+| `IssueFact.title` (optional) | Informational only — gates read state and `pullRequest`; adoption matches titles on `OpenIssueFact` (via `getOpenIssues`), not here. |
+| `OpenIssueFact.title` (optional) | The issue is excluded from title-match adoption: `specgit issue` cannot adopt a previously created but unrecorded issue by exact open-title match and creates a new issue instead (`src/cli/commands/issue.ts`). Numeric reuse and record-based resume are unaffected. |
+| `OpenIssueFact.body` (optional) | The issue cannot win same-title scaffold disambiguation (#77): if a title collision has no sole scaffold-body match, adoption refuses with the `issue_title_ambiguous` usage diagnostic (exit 2) instead of binding an issue that could be unrelated. |
 
 Required-but-nullable is a different, already-covered case:
 `PrFact.mergeCommitSha` is required `string \| null`; `null` (GitHub
