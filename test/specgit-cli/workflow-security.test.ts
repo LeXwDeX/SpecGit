@@ -94,9 +94,21 @@ const assertPersistCredentialsFalse = (text: string, label: string): void => {
 const assertAcceptanceGateSemantics = (text: string, label: string): void => {
   const doc = parse(text) as Workflow;
   const on = doc.on ?? {};
-  const pullRequest = on.pull_request as { branches?: string[] } | undefined;
+  const pullRequest = on.pull_request as { branches?: string[]; types?: string[] } | undefined;
   if (!pullRequest || !Array.isArray(pullRequest.branches) || !pullRequest.branches.includes('main')) {
     throw new Error(`${label}: pull_request -> main trigger missing`);
+  }
+  // #122: a draft PR fails the verdict (pr_draft), so the draft→ready
+  // transition must re-verdict. `types` replaces the defaults, so the
+  // default activity types must be listed alongside ready_for_review.
+  const requiredTypes = ['opened', 'synchronize', 'reopened', 'ready_for_review'];
+  if (
+    !Array.isArray(pullRequest.types) ||
+    !requiredTypes.every((t) => pullRequest.types!.includes(t))
+  ) {
+    throw new Error(
+      `${label}: pull_request types must include ${requiredTypes.join(', ')} (a draft→ready transition must re-verdict)`
+    );
   }
   if (!('workflow_dispatch' in on)) {
     throw new Error(`${label}: workflow_dispatch trigger missing`);
@@ -369,6 +381,15 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   it('removing the head-ref checkout (breaking the gate) is detected', () => {
     const mutant = acceptFile.replace('          ref: ${{ github.head_ref || github.ref }}\n', '');
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow();
+  });
+
+  it('dropping ready_for_review from the accept trigger (breaking draft re-verdict) is detected', () => {
+    const mutant = acceptFile.replace(
+      '    types: [opened, synchronize, reopened, ready_for_review]\n',
+      ''
+    );
+    expect(mutant).not.toBe(acceptFile);
+    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/ready_for_review/);
   });
 
   it('re-merging the self-hosted leg into the required matrix is detected', () => {

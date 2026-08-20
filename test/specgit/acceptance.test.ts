@@ -611,6 +611,19 @@ describe('acceptance evaluator', () => {
       classification: 'rejected',
     },
     {
+      name: 'pr_draft',
+      input: () =>
+        input({
+          gh: new MockGitHubProvider({
+            pr: ok(makePrFact({ draft: true, headSha: HEAD })),
+            checkRuns: ok([makeCheckRun('All checks passed')]),
+          }),
+        }),
+      gate: 'pr',
+      code: 'pr_draft',
+      classification: 'rejected',
+    },
+    {
       name: 'pr_head_mismatch',
       input: () =>
         input({
@@ -1093,6 +1106,7 @@ describe('acceptance evaluator evidence discipline', () => {
           number: 42,
           state: 'open',
           merged_at: null,
+          draft: false,
           head: { ref: 'main', sha: headSha },
           base: { ref: 'main' },
           body: 'Closes #123',
@@ -1224,6 +1238,7 @@ describe('merged-delivery lineage against real git (issue #64)', () => {
           state: 'closed',
           merged_at: '2026-01-02T03:04:05Z',
           merge_commit_sha: mergeCommitSha,
+          draft: false,
           head: { ref: 'feat/123-login', sha: history.headSha },
           base: { ref: 'main' },
           body: 'Closes #123',
