@@ -78,6 +78,10 @@ describe('provider port contract (#80)', () => {
     it('GhCliGitHubProvider', () => {
       expectExposes(new GhCliGitHubProvider(), GITHUB_PROVIDER_MEMBERS, 'GhCliGitHubProvider');
     });
+    it('GlabProvider (#114)', async () => {
+      const glab = await import('../../src/providers/gitlab/glab-cli.js');
+      expectExposes(new glab.GlabProvider(), GITHUB_PROVIDER_MEMBERS, 'GlabProvider');
+    });
     it('MockGitHubProvider (test double)', () => {
       expectExposes(
         new MockGitHubProvider(),

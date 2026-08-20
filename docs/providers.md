@@ -113,19 +113,27 @@ reports no value) routes the merged-lineage gate to fail-closed
 ## Tracking obligations
 
 - **In-tree implementations today:** `GhCliGitHubProvider`
-  (`src/providers/github/gh-cli.ts`), `LocalGitAdapter`
+  (`src/providers/github/gh-cli.ts`), `GlabProvider`
+  (`src/providers/gitlab/glab-cli.ts`, #114 — the glab mirror, not yet
+  routed into acceptance evaluation), `LocalGitAdapter`
   (`src/gitfacts/local.ts`), `MockGitHubProvider`
   (`test/specgit/helpers/mock-github.ts`), and the recording doubles
   `makeGhProvider` / `makeGitPort`
   (`test/specgit-cli/helpers.ts`). The contract test holds all of them
   to the port shape at every run — the canonical adapter home and its
   legacy `src/github` alias modules are pinned to the same class by the
-  same test (#113).
-- **Alternate providers (glab).** The Phase-2 adapter
-  ([gitlab-support.md](gitlab-support.md)) must satisfy
-  `GITHUB_PROVIDER_MEMBERS` and extend the contract test with itself as
-  an implementer in its landing delivery; the glab method map stays
-  anchored cell-for-cell to this inventory.
+  same test (#113), and the shared CLI transport both adapters spawn
+  through lives at `src/providers/cli-spawn.ts` (#114).
+- **Alternate providers (glab).** Landed (#114):
+  `GlabProvider` satisfies `GITHUB_PROVIDER_MEMBERS`, extends the
+  contract test as an in-tree implementer, and mirrors the gh adapter's
+  failure taxonomy per platform (`glab_missing`, `glab_unauthenticated`,
+  `glab_transport` — timeout included — plus `gitlab_version_unsupported`
+  for the self-managed version window). The glab method map stays
+  anchored cell-for-cell to this inventory and the
+  [GitLab evidence ledger](evidence/gitlab-19.2.md) (row 24, all cells
+  pinned; routing GitLab evaluation through the adapter is the remaining
+  Phase-2 work).
 - **Test doubles.** Every new double declares the port type
   (`implements` or a typed literal) so drift is a compile error, and is
   added to the contract test's implementer list in the same delivery.

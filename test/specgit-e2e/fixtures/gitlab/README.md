@@ -3,8 +3,12 @@
 Redacted API response payloads recorded from a self-managed **GitLab 19.2.4 CE**
 instance on 2026-08-20, part of the GitLab evidence-gate delivery
 (#93–#100; ledger: [`docs/evidence/gitlab-19.2.md`](../../../docs/evidence/gitlab-19.2.md)).
-They are data only — no test imports them yet; the future `GlabProvider`
-adapter is to build its contract tests against these shapes.
+They are data only — no test imports them; the `GlabProvider` contract tests
+(#114, [`test/specgit/glab-provider.test.ts`](../../specgit/glab-provider.test.ts))
+build their scripted-glab payloads on these shapes (iid/state/draft/source_branch/
+sha/description, job status/allow_failure/started_at, project
+`only_allow_merge_if_pipeline_succeeds`/`path_with_namespace`, metadata
+version/revision/enterprise).
 
 ## Provenance
 

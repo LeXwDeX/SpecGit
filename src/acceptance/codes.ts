@@ -16,9 +16,13 @@ export type SpecGitCode =
   | 'no_origin'
   | 'origin_unresolvable'
   | 'gitlab_unsupported'
+  | 'gitlab_version_unsupported'
   | 'gh_missing'
   | 'gh_unauthenticated'
   | 'gh_transport'
+  | 'glab_missing'
+  | 'glab_unauthenticated'
+  | 'glab_transport'
   | 'evidence_truncated'
   | 'issue_not_found'
   | 'issue_is_pull_request'
@@ -133,6 +137,11 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     message: 'The origin remote points at a GitLab repository; GitLab evidence requires glab support, which is not implemented yet.',
     fix: 'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.',
   },
+  gitlab_version_unsupported: {
+    kind: 'evidence',
+    message: 'The self-managed GitLab version is outside the supported window (>= 19.2.4 < 19.3.0).',
+    fix: 'Upgrade within 19.2.x, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.',
+  },
   gh_missing: {
     kind: 'evidence',
     message: 'GitHub CLI (gh) is not installed or not on PATH.',
@@ -147,6 +156,21 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     kind: 'evidence',
     message: 'GitHub evidence could not be gathered.',
     fix: 'Check your network connection and gh permissions, then retry.',
+  },
+  glab_missing: {
+    kind: 'evidence',
+    message: 'GitLab CLI (glab) is not installed or not on PATH.',
+    fix: 'Install glab from https://gitlab.com/gitlab-org/cli and run "glab auth login --hostname <host>".',
+  },
+  glab_unauthenticated: {
+    kind: 'evidence',
+    message: 'GitLab CLI is not authenticated for the declared host.',
+    fix: 'Run "glab auth login --hostname <host>" to authenticate.',
+  },
+  glab_transport: {
+    kind: 'evidence',
+    message: 'GitLab evidence could not be gathered.',
+    fix: 'Check your network connection to the GitLab host and glab permissions (SPECGIT_GLAB_TIMEOUT_MS raises the per-call budget), then retry.',
   },
   evidence_truncated: {
     kind: 'evidence',

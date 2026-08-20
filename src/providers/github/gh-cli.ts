@@ -1,9 +1,12 @@
-import { execFile } from 'node:child_process';
-import * as fs from 'node:fs';
-
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import { buildProtectionUpdateBody } from './protection-merge.js';
+// Shared CLI transport (spawn seam, shebang resolution, sanitization);
+// re-exported below for import-path stability (#114 moved the transport
+// beside the adapters so the GitLab adapter shares it).
+import { defaultSpawn, sanitizeApiText, type SpawnFn, type SpawnOptions } from '../cli-spawn.js';
+export { resolveNodeScriptCommand, sanitizeApiText } from '../cli-spawn.js';
+export type { SpawnFn, SpawnOptions } from '../cli-spawn.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
@@ -44,111 +47,11 @@ const MAX_CHECK_RUN_PAGES = 10;
 const ISSUE_SEARCH_PAGE_SIZE = 100;
 /** GitHub's search API never returns more than 1000 results (10×100). */
 const MAX_ISSUE_SEARCH_PAGES = 10;
-const MAX_EMBEDDED_TEXT = 400;
 
 /** gh stderr markers that mean "not authenticated" rather than transport. */
 const AUTH_FAILURE_PATTERN = /HTTP 40[13]|Bad credentials|gh auth login|not logged in|authentication required/i;
 
 const PR_URL_PATTERN = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/;
-
-export interface SpawnOptions {
-  timeoutMs?: number;
-  maxBuffer?: number;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-  /** Body piped to the child's stdin (used by `--body-file -`). */
-  stdin?: string;
-}
-
-export type SpawnFn = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => Promise<{ stdout: string; stderr: string }>;
-
-const NODE_SHEBANG = /^#!\s*(?:\/usr\/bin\/env\s+)?node/;
-
-const shebangCache = new Map<string, boolean>();
-
-/**
- * A gh command that resolves to a Node script (#!…node shebang) cannot be
- * executed directly on Windows. Detect that case once per path and re-run it
- * through the current Node executable; native binaries are untouched.
- * Exported for tests that wrap the spawn seam and must mirror this behavior.
- */
-export function resolveNodeScriptCommand(command: string): { command: string; scriptArgs: string[] } {
-  if (command === 'gh' || command === '') return { command, scriptArgs: [] };
-  let isNodeScript: boolean;
-  const cached = shebangCache.get(command);
-  if (cached === undefined) {
-    isNodeScript = false;
-    try {
-      const fd = fs.openSync(command, 'r');
-      try {
-        const buf = Buffer.alloc(128);
-        const read = fs.readSync(fd, buf, 0, buf.length, 0);
-        isNodeScript = NODE_SHEBANG.test(buf.subarray(0, read).toString('utf-8'));
-      } finally {
-        fs.closeSync(fd);
-      }
-    } catch {
-      isNodeScript = false;
-    }
-    shebangCache.set(command, isNodeScript);
-  } else {
-    isNodeScript = cached;
-  }
-  return isNodeScript ? { command: process.execPath, scriptArgs: [command] } : { command, scriptArgs: [] };
-}
-
-const defaultSpawn: SpawnFn = (command, args, options) =>
-  new Promise((resolve, reject) => {
-    const resolved = resolveNodeScriptCommand(command);
-    const child = execFile(
-      resolved.command,
-      [...resolved.scriptArgs, ...args],
-      {
-        timeout: options.timeoutMs,
-        maxBuffer: options.maxBuffer,
-        env: options.env,
-        cwd: options.cwd,
-        encoding: 'utf-8',
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          // Mirror promisify(execFile): keep captured output on the error so
-          // the failure taxonomy can read err.stderr.
-          const withOutput = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-          withOutput.stdout = stdout;
-          withOutput.stderr = stderr;
-          reject(error);
-        } else {
-          resolve({ stdout, stderr: stderr ?? '' });
-        }
-      }
-    );
-    // A child that exits before draining stdin raises EPIPE here; the
-    // failure is already reported through the callback. stdin is always a
-    // pipe unless stdio was customized, which this transport never does.
-    if (child.stdin) {
-      child.stdin.on('error', () => {});
-      child.stdin.end(options.stdin ?? '');
-    }
-  });
-
-/**
- * API-sourced text can carry ANSI cursor controls or hostile bytes; anything
- * embedded in a diagnostic is stripped and truncated before it reaches a
- * terminal.
- */
-export function sanitizeApiText(text: string, maxLength: number = MAX_EMBEDDED_TEXT): string {
-  const stripped = text
-    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
-    .replace(/\u001b./g, '')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
-  const flat = stripped.replace(/\s+/g, ' ').trim();
-  return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
-}
 
 function isSpawnNotFoundError(error: unknown): boolean {
   return (
