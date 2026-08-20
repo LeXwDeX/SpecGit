@@ -138,7 +138,11 @@ is pinned in the [Product Baseline v1](docs/baseline-v1.md).
 ## Built for teams and agents
 
 - **Teams**: the policy is a committed contract — change required checks the
-  way you change code, aligned with branch protection. See
+  way you change code, aligned with branch protection. Generated text
+  (issue/PR scaffolds, harness guidance, human prose) follows the policy's
+  optional `language` key (`en` default, `zh` supported); the machine
+  contract — exit codes, `--json` field names, diagnostic codes — is never
+  localized ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). See
   [Team Workflow](docs/team-workflow.md) and
   [GitHub Actions guidance](docs/actions.md).
 - **AI agents**: stable commands, contractual exit codes, one JSON envelope —

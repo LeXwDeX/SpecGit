@@ -11,6 +11,7 @@ import {
   writeAgentSurface,
   type SetupTool,
 } from '../agent-surface.js';
+import { catalogFor, commandLanguage } from '../language.js';
 
 export interface SetupOptions {
   tool?: string;
@@ -31,6 +32,9 @@ export async function runSetup(
     };
   }
   const root = rootEv.value;
+
+  const language = await commandLanguage(ctx, root);
+  const { human: text } = catalogFor(language);
 
   let tool: SetupTool;
   if (options.tool !== undefined) {
@@ -54,8 +58,8 @@ export async function runSetup(
     return {
       exit: EXIT_SUCCESS,
       human: [
-        `Tool: ${result.tool}`,
-        'Installed entry points:',
+        text.setupTool(result.tool),
+        text.setupInstalled(),
         ...result.installed.map((p) => `  - ${p}`),
       ],
     };

@@ -29,8 +29,10 @@
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import { errorDiagnostic, sanitize, type CommandOutcome } from '../output.js';
+import { commandLanguage, catalogFor } from '../language.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
+import type { PolicyLanguage } from '../../record/policy.js';
 import type { CommandContext, DeliveryBinding, Evidence } from '../types.js';
 import type { OpenIssueFact } from '../../github/port.js';
 
@@ -58,7 +60,6 @@ const BRANCH_TYPES = new Set([
 ]);
 
 const CONVENTIONAL_PREFIX = /^([a-z]+):\s+(.*)$/s;
-const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
 const TYPE_LIST = [...BRANCH_TYPES].join(', ');
 
 export function parseIssueTitle(title: string): { type: string; cleanTitle: string } {
@@ -69,7 +70,7 @@ export function parseIssueTitle(title: string): { type: string; cleanTitle: stri
   return { type: 'feat', cleanTitle: title.trim() };
 }
 
-/** First usage error among the titles, or null when every title conforms. */
+/** First usage error among the titles, or null when every title conforms. Titles may be in any language (#118). */
 export function validateIssueTitles(
   args: string[]
 ): { code: string; message: string; fix: string } | null {
@@ -83,23 +84,22 @@ export function validateIssueTitles(
         fix: `Prefix the title with one of: ${TYPE_LIST}. Example: specgit issue "feat: add login".`,
       };
     }
-    if (!PRINTABLE_ASCII.test(match[2].trim())) {
-      return {
-        code: 'issue_title_not_english',
-        message: `Issue title '${sanitize(arg)}' must be English (printable ASCII).`,
-        fix: 'Rewrite the title in English — printable ASCII letters, digits, and punctuation.',
-      };
-    }
   }
   return null;
 }
 
 /**
- * Kebab slug from the first three ASCII words of the title. A title
- * without ASCII words (e.g. non-ASCII only) yields '' and the caller
- * falls back to `issue<N>` — the branch stays typeable and valid.
+ * Kebab slug from the first three ASCII words of the title (#118: the
+ * defined non-ASCII behavior). Any non-ASCII character in the title
+ * yields '' and the caller falls back to `issue<N>` — the branch stays
+ * ASCII, typeable, and valid under every language setting. A mixed
+ * title's incidental ASCII words would make a garbage slug, so the
+ * fallback is all-or-nothing on ASCII-only titles.
  */
 export function slugifyTitle(title: string): string {
+  if (!/^[\x20-\x7E]*$/.test(title)) {
+    return '';
+  }
   const words = title.match(/[A-Za-z0-9]+/g) ?? [];
   return words
     .slice(0, 3)
@@ -107,15 +107,16 @@ export function slugifyTitle(title: string): string {
     .join('-');
 }
 
-function issueBody(title: string): string {
+function issueBody(title: string, language: PolicyLanguage = 'en'): string {
+  const { scaffold } = catalogFor(language);
   return [
-    '## Why (required)',
+    scaffold.issueWhy,
     title,
     '',
-    '## Scope (optional)',
+    scaffold.issueScope,
     '',
-    '## Acceptance (required)',
-    'The delivery pull request closes this issue; `specgit finish` must exit 0.',
+    scaffold.issueAcceptance,
+    scaffold.issueAcceptanceLine,
     '',
   ].join('\n');
 }
@@ -131,12 +132,14 @@ function issueBody(title: string): string {
  */
 function disambiguateAdoption(
   arg: string,
-  candidates: OpenIssueFact[]
+  candidates: OpenIssueFact[],
+  language: PolicyLanguage
 ): { candidate: OpenIssueFact } | { ambiguous: true } | { create: true } {
   if (candidates.length === 0) {
     return { create: true };
   }
-  const unambiguous = candidates.length === 1 ? candidates : candidates.filter((c) => c.body === issueBody(arg));
+  const unambiguous =
+    candidates.length === 1 ? candidates : candidates.filter((c) => c.body === issueBody(arg, language));
   if (unambiguous.length === 1) {
     return { candidate: unambiguous[0] };
   }
@@ -273,6 +276,12 @@ export async function runIssue(
   if (!repoEv.ok) {
     return passthrough(repoEv);
   }
+
+  // Presentation language (#118): policy-driven, fail-open, never a
+  // verdict input. Resolved once; every generated body and human line
+  // below renders through it.
+  const language = await commandLanguage(ctx, root);
+  const { human } = catalogFor(language);
 
   const existingRead = await ctx.record.readRecord(root);
   if (!existingRead.ok && existingRead.code !== 'record_missing') {
@@ -453,7 +462,7 @@ export async function runIssue(
       // candidate again; a repeated title argument creates fresh.
       const bucket = adoptable.get(arg) ?? [];
       const unbound = bucket.filter((c) => !issues.includes(c.number));
-      const resolved = disambiguateAdoption(arg, unbound);
+      const resolved = disambiguateAdoption(arg, unbound, language);
       if ('ambiguous' in resolved) {
         return adoptionAmbiguousError(arg, unbound);
       }
@@ -461,7 +470,7 @@ export async function runIssue(
         bucket.splice(bucket.indexOf(resolved.candidate), 1);
         number = resolved.candidate.number;
       } else {
-        const created = await ctx.gh.createIssue(repoEv.value, arg, issueBody(arg));
+        const created = await ctx.gh.createIssue(repoEv.value, arg, issueBody(arg, language));
         if (!created.ok) {
           return passthrough(created);
         }
@@ -536,11 +545,11 @@ export async function runIssue(
         ],
       };
     } else {
-      const prTitle = firstTitle ?? `Delivery ${record.delivery}`;
+      const prTitle = firstTitle ?? human.issuePrTitleFallback(record.delivery);
       // The scaffold is written exactly once, here on the fresh-creation
       // path (no PR bound, none adoptable): resume and repair bind or
       // adopt what already exists and never rewrite a PR body (#87).
-      const prBody = renderPrScaffold(record.issues);
+      const prBody = renderPrScaffold(record.issues, language);
       const prEv = await ctx.gh.createDraftPr(repoEv.value, target, baseEv.value, prTitle, prBody);
       if (!prEv.ok) {
         return passthrough(prEv);
@@ -574,11 +583,11 @@ export async function runIssue(
     state: deriveBindingState(record),
     record: recordSummary(record),
     human: [
-      `${resumed ? 'Resumed' : 'Bootstrapped'} delivery '${record.delivery}':`,
-      `  Branch: ${target}`,
-      `  Issues: ${record.issues.map((n) => `#${n}`).join(', ')}`,
-      `  PR: #${record.pr} (draft)`,
-      `  Recorded ${RECORD_FILENAME}, committed, pushed to origin`,
+      human.issueHeader(resumed, record.delivery),
+      human.issueBranch(target),
+      human.issueIssues(record.issues.map((n) => `#${n}`).join(', ')),
+      human.issuePr(record.pr as number | string),
+      human.issueRecorded(RECORD_FILENAME),
     ],
   };
 }

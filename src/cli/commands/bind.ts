@@ -12,6 +12,7 @@ import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { coerceIssueRef, coercePrRef } from '../refs.js';
+import { catalogFor, commandLanguage } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, mergeIssueNumbers } from '../../record/schema.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
 
@@ -76,6 +77,9 @@ export async function runBind(
     };
   }
   const root = rootEv.value;
+
+  const language = await commandLanguage(ctx, root);
+  const { human: text } = catalogFor(language);
 
   const facts = await ctx.git.facts(root);
   const contextEv = resolveExecutionContext(facts);
@@ -158,18 +162,18 @@ export async function runBind(
 
   const contextLine =
     record.context.kind === 'worktree'
-      ? `Context: worktree ${record.context.label} on ${record.context.branch}`
-      : `Context: branch ${record.context.branch}`;
+      ? text.bindContextWorktree(record.context.label, record.context.branch)
+      : text.bindContextBranch(record.context.branch);
 
   return {
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
     record: summary,
     human: [
-      `Bound delivery '${record.delivery}':`,
+      text.bindHeader(record.delivery),
       `  ${contextLine}`,
-      ...(record.issues.length > 0 ? [`  Issues: ${record.issues.map((n) => `#${n}`).join(', ')}`] : []),
-      ...(record.pr !== undefined ? [`  PR: ${record.pr}`] : []),
+      ...(record.issues.length > 0 ? [text.bindIssues(record.issues.map((n) => `#${n}`).join(', '))] : []),
+      ...(record.pr !== undefined ? [text.bindPr(record.pr)] : []),
     ],
   };
 }

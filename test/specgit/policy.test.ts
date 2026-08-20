@@ -91,4 +91,24 @@ describe('policy io', () => {
     if (second.ok) return;
     expect(second.code).toBe('policy_invalid');
   });
+
+  it('round-trips language: zh (#118) and defaults to absent', async () => {
+    await writePolicy(root, { version: 1, required_checks: ['Test'], language: 'zh' });
+    const read = await readPolicy(root);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.language).toBe('zh');
+  });
+
+  it('rejects an unsupported language value (fail closed, strict schema)', async () => {
+    fs.mkdirSync(path.dirname(policyPath()), { recursive: true });
+    fs.writeFileSync(
+      policyPath(),
+      'version: 1\nrequired_checks: [a]\nlanguage: fr\n'
+    );
+    const read = await readPolicy(root);
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.code).toBe('policy_invalid');
+  });
 });
