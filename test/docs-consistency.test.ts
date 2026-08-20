@@ -42,6 +42,23 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     expect(text).toMatch(/accept-or-defer/i);
   });
 
+  it('release-gates.md carries the known CI dispositions (gate 3 record)', () => {
+    const text = read('docs', 'release-gates.md');
+
+    expect(text).toMatch(/Known CI dispositions/i);
+    // Every standing disposition outside a delivery PR's own gates: the
+    // self-hosted leg (#105), the auto-merge arm-off (#107), the GHAS
+    // dynamic-workflow exemption (#109), and the Validate Release Tracking
+    // event gate (#110).
+    for (const issue of ['#105', '#107', '#109', '#110']) {
+      expect(text, `dispositions table must track ${issue}`).toContain(issue);
+    }
+    // VRT's skip-by-design is an event gate, and the predicate names where
+    // its green is read.
+    expect(text).toMatch(/event-gated/i);
+    expect(text).toMatch(/merge_group/);
+  });
+
   it('README links the release gates', () => {
     expect(read('README.md')).toMatch(/\]\(docs\/release-gates\.md\)/);
   });
