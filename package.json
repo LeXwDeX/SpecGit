@@ -45,6 +45,7 @@
     "build": "node build.js",
     "dev": "tsc --watch",
     "dev:cli": "pnpm build && node bin/specgit.js",
+    "typecheck:test": "tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",

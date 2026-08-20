@@ -43,6 +43,7 @@ describe('specgit doctor', () => {
       gh: {
         preflight: async () => ({ ok: false, code: 'gh_unauthenticated', message: 'gh auth status failed.' }),
         getIssue: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+        getOpenIssueNumbers: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         getPr: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         getCheckRuns: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         createIssue: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
