@@ -46,11 +46,23 @@ smoke; `SPECGIT_E2E_PUBLISHED_VERSION` overrides the pinned version
 
 ## Results
 
-- Local (darwin, Node 26): `Tests 502 passed | 1 skipped` across the
-  full suite; both new files green (`9 passed | 1 skipped`).
+Snapshot of record (#88 finding 1): every count below is an actual run
+pinned to one platform and one commit. Counts quoted in issues, PRs,
+and reviews are point-in-time prose and are superseded by this section
+— this retires the drifted 502/599/600 coexistence. Refreshing means
+re-running the suite and re-pinning all three facts (count, platform,
+commit); never edit a number without its provenance.
+
+- Local (darwin arm64, Node v26.7.0) at `0eff38c` (main, PR #144):
+  full suite `Tests 797 passed | 1 skipped (798)` across `43` files;
+  the two matrix-layer files green (`external-matrix.e2e.test.ts`
+  3 passed; `install-smoke.e2e.test.ts` 6 passed | 1 opt-in skip).
 - CI: populated by the delivery PR's `Test (<label>)` checks — see the
   pull request's Checks tab for linux-bash / macos-bash / windows-pwsh
-  runs of this exact matrix.
+  runs of this exact matrix. Workflow facts since `4df0ae0`: test jobs
+  run with a 20-minute timeout (was 15), and the windows-pwsh leg
+  forces `VITEST_MAX_WORKERS=1` (was 2; linux-bash and macos-bash
+  run 4 workers).
 - Post-publish handover: enable `SPECGIT_E2E_PUBLISHED=1` on the
   registry layer and record a real external repository's green Actions
   run against the released tarball (tracked on issue #67).
