@@ -60,6 +60,7 @@ export type { LocalGitAdapterOptions } from './gitfacts/local.js';
 export {
   parseRepoRef,
   formatRepoRef,
+  requireGithubRoute,
   sameRepoRef,
   parsePrUrl,
 } from './gitfacts/origin.js';

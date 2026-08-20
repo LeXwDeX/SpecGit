@@ -3,6 +3,14 @@ import { fail, ok, type Evidence } from '../kernel/evidence.js';
 export interface RepoRef {
   owner: string;
   repo: string;
+  /**
+   * Present (value `'gitlab'`) when the ref resolved through a GitLab
+   * declaration in `spec_git/providers.yaml` (#112) — the only source of
+   * GitLab acceptance: the `*gitlab*` host heuristic never resolves a
+   * ref, so no substring match can grant capability. Absent means the
+   * default github platform.
+   */
+  platform?: 'gitlab';
 }
 
 /**
@@ -179,41 +187,53 @@ export function parseRepoRef(
   const shape = parseOriginShape(url);
   const repo = shape ? parseOwnerRepo(shape.path, shape.kind === 'url') : null;
 
-  if (shape && repo) {
-    if (isGitHubOrigin(shape)) {
-      return ok(repo);
+  if (shape && repo && isGitHubOrigin(shape)) {
+    return ok(repo);
+  }
+
+  // #112: a DECLARED host resolves through the GitLab origin grammar —
+  // group[/subgroup…]/project at depth 2–5, URL-encoded `%2F`
+  // separators included (the same grammar the projects API addresses a
+  // full path with). Acceptance flows only from the user-owned
+  // declaration; the `*gitlab*` heuristic never resolves a ref. A
+  // well-formed but deeper path fails closed under gitlab_unsupported
+  // naming the accepted bound; malformed paths fall through to the
+  // unresolvable tail.
+  if (shape && isDeclaredGitLab(shape, declared)) {
+    const gitlabRef = parseGitLabPathRef(shape);
+    if (gitlabRef === 'too-deep') {
+      return fail(
+        'gitlab_unsupported',
+        `Origin "${truncateUrl(url)}" points at a GitLab repository whose project path exceeds the accepted depth (${GITLAB_PATH_MIN_SEGMENTS}–${GITLAB_PATH_MAX_SEGMENTS} path segments).`,
+        'Move or re-clone the repository under a shallower group path; see docs/gitlab-support.md for the accepted origin grammar.'
+      );
     }
+    if (gitlabRef !== null) {
+      return ok(gitlabRef.ref);
+    }
+  } else if (shape && isGitLabHeuristic(shape)) {
     // A GitLab origin is a recognized-but-unsupported platform, not an
     // unresolvable URL: the diagnostic names the actual gap. The
     // "gitlab" heuristic is contained to the structurally extracted host
-    // (fail-closed diagnostic either way); any other self-hosted host
-    // counts only when the user declared it (providers.yaml).
-    if (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declared)) {
+    // (fail-closed diagnostic either way); without a declaration it
+    // never resolves a ref — declaring the platform (providers.yaml) is
+    // the only route to GitLab acceptance (#112).
+    if (repo) {
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a GitLab repository; GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
         'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.'
       );
     }
-  }
-
-  // Bounded diagnostic-accuracy fix (#95): a GitLab origin whose path
-  // names a nested group (group/subgroup/.../project, >= 3 segments) is
-  // a recognized-but-unsupported platform, never a misdiagnosed
-  // "unresolvable" URL with GitHub-pointing repair advice. Classification
-  // reuses the same structural host predicates (heuristic or declared),
-  // so the userinfo/suffix hardening semantics are unchanged, and a
-  // scp path whose first segment is all digits keeps the pinned
-  // port-intent fail-closed rejection (explicit ports are #78's change
-  // to make). Full nested-group parsing support is Phase-2 adapter work.
-  if (shape && !repo && (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declared))) {
-    const segments = parsePathSegments(shape.path, shape.kind === 'url');
-    const portLookingScp = shape.kind === 'scp' && segments !== null && isAllDigits(segments[0]);
-    if (segments !== null && segments.length >= 3 && !portLookingScp) {
+    // #95: a path naming a nested group (or %2F-encoded separators,
+    // #112) is still a recognized GitLab origin — never a misdiagnosed
+    // "unresolvable" URL with GitHub-pointing repair advice.
+    const gitlabRef = parseGitLabPathRef(shape);
+    if (gitlabRef !== null) {
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a nested-group GitLab repository (group/subgroup/project); nested groups are recognized, but GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
-        'Nested-group GitLab origins are recognized but unsupported until the glab provider lands; see docs/gitlab-support.md for the roadmap and the supported-version policy.'
+        'Nested-group GitLab origins are recognized but unsupported until the glab provider lands; declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the roadmap.'
       );
     }
   }
@@ -321,6 +341,82 @@ function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
   return { owner, repo };
 }
 
+// #112: the GitLab origin grammar accepted on declared hosts —
+// group[/subgroup…]/project. Depth is bounded (2–5 segments after
+// decoding) so hostile deep paths fail closed instead of classifying.
+const GITLAB_PATH_MIN_SEGMENTS = 2;
+const GITLAB_PATH_MAX_SEGMENTS = 5;
+
+type GitLabPathRef = { ref: RepoRef } | 'too-deep' | null;
+
+/**
+ * Parse a full GitLab project path off an origin shape: segments split
+ * per track, `%2F` separators decoded (any other percent-escape stays
+ * undecodable and fails closed), one `.git` suffix stripped from the
+ * project segment. Returns the platform-marked ref, `'too-deep'` for a
+ * well-formed path beyond the accepted depth, or null for every
+ * malformed shape — including the scp port-intent form (first path
+ * segment all digits), which never classifies (#95).
+ */
+function parseGitLabPathRef(shape: OriginShape): GitLabPathRef {
+  const segments = parsePathSegments(shape.path, shape.kind === 'url');
+  if (segments === null) {
+    return null;
+  }
+  if (shape.kind === 'scp' && isAllDigits(segments[0])) {
+    return null;
+  }
+  const decoded: string[] = [];
+  for (const segment of segments) {
+    const expanded = decodePercent2f(segment);
+    if (expanded === null) {
+      return null;
+    }
+    decoded.push(...expanded.split('/'));
+  }
+  if (decoded.some((segment) => segment.length === 0)) {
+    return null;
+  }
+  if (decoded.length < GITLAB_PATH_MIN_SEGMENTS) {
+    return null;
+  }
+  const project = decoded[decoded.length - 1];
+  const stripped = project.length > 4 && project.endsWith('.git') ? project.slice(0, -4) : project;
+  const ref: RepoRef = {
+    owner: decoded.slice(0, -1).join('/'),
+    repo: stripped,
+    platform: 'gitlab',
+  };
+  return decoded.length > GITLAB_PATH_MAX_SEGMENTS ? 'too-deep' : { ref };
+}
+
+/**
+ * Decode `%2F`/`%2f` inside one path segment into a `/` separator — the
+ * URL-encoded form GitLab's projects API also uses to address a full
+ * group path. Any other percent-escape (or a truncated `%`) is not
+ * decodable under this grammar and returns null (fail closed).
+ */
+function decodePercent2f(segment: string): string | null {
+  let out = '';
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i];
+    if (c !== '%') {
+      out += c;
+      continue;
+    }
+    if (i + 2 >= segment.length) {
+      return null;
+    }
+    const hex = segment.slice(i + 1, i + 3);
+    if (hex !== '2F' && hex !== '2f') {
+      return null;
+    }
+    out += '/';
+    i += 2;
+  }
+  return out;
+}
+
 // GitHub requires an exact structural host match. On the https track any
 // userinfo disqualifies; on the ssh track the user must be `git` with no
 // password (matching git's own convention); the scp track requires the
@@ -408,6 +504,27 @@ function normalizeDeclaredGitLab(value: string | undefined): DeclaredGitLab | un
 
 export function formatRepoRef(repo: RepoRef): string {
   return `${repo.owner}/${repo.repo}`;
+}
+
+/**
+ * #112: the guard for GitHub-only evidence flows. specgit gathers
+ * evidence through `gh` only today, so a ref that resolved through the
+ * GitLab declaration (the platform marker — reachable only via
+ * providers.yaml, never the substring heuristic) cannot be served on
+ * this route: fail closed as `gitlab_unsupported` with
+ * declaration-aware text — the declaration is correct, the glab
+ * provider is the missing piece. A github ref and every failure pass
+ * through unchanged.
+ */
+export function requireGithubRoute(parsed: Evidence<RepoRef>): Evidence<RepoRef> {
+  if (!parsed.ok || parsed.value.platform !== 'gitlab') {
+    return parsed;
+  }
+  return fail(
+    'gitlab_unsupported',
+    `Origin resolves through the GitLab declaration in spec_git/providers.yaml (${formatRepoRef(parsed.value)}); GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
+    'The declaration is correct; see docs/gitlab-support.md for the glab roadmap (Phase 2).'
+  );
 }
 
 export function sameRepoRef(a: RepoRef, b: RepoRef): boolean {

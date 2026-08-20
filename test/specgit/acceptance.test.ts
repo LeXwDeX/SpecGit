@@ -519,6 +519,23 @@ describe('acceptance evaluator', () => {
       classification: 'rejected',
     },
     {
+      // #112 (platform routing): a DECLARED GitLab origin resolves
+      // grammatically (nested group path accepted), and the evaluator
+      // routes on the declaration — the GitHub evidence path must not
+      // run against a group/subgroup ref, so the origin gate fails
+      // gitlab_unsupported (factual, exit 1) until the glab provider
+      // lands.
+      name: 'gitlab_unsupported (declared nested-group origin, routed)',
+      input: () =>
+        input({
+          gitlabHost: 'git.example.com',
+          git: new StubGitPort(facts({ originUrl: 'https://git.example.com/g/sg/p.git' })),
+        }),
+      gate: 'origin',
+      code: 'gitlab_unsupported',
+      classification: 'rejected',
+    },
+    {
       name: 'origin_unresolvable',
       input: () =>
         input({ git: new StubGitPort(facts({ originUrl: 'https://example.com/o/r.git' })) }),
@@ -688,6 +705,29 @@ describe('acceptance evaluator', () => {
     if (state !== undefined) {
       expect(verdict.state).toBe(state);
     }
+  });
+
+  // #112: platform routing for evaluation reads the providers.yaml
+  // declaration only. A declared GitLab origin resolves (nested-group
+  // grammar accepted), the verdict is a factual rejection, and the
+  // GitHub provider is never invoked — no gh call ever sees a
+  // group/subgroup ref.
+  it('routes a declared GitLab origin without invoking the GitHub provider (#112)', async () => {
+    const gh = new MockGitHubProvider();
+    const verdict = await evaluate(
+      input({
+        gitlabHost: 'git.example.com',
+        git: new StubGitPort(facts({ originUrl: 'https://git.example.com/g/sg/p.git' })),
+        gh,
+      })
+    );
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+    expect(gh.calls).toEqual([]);
+    const g = gate(verdict, 'origin');
+    expect(g.failures[0].code).toBe('gitlab_unsupported');
+    expect(g.failures[0].message).toContain('providers.yaml');
+    expect(g.failures[0].fix).not.toMatch(/github\.com/);
   });
 
   it('accepts a worktree-context delivery end to end', async () => {
