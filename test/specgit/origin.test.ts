@@ -4,6 +4,7 @@ import {
   formatRepoRef,
   parsePrUrl,
   parseRepoRef,
+  requireGithubRoute,
   sameRepoRef,
 } from '../../src/gitfacts/origin.js';
 
@@ -66,16 +67,19 @@ describe('parseRepoRef', () => {
     expect(result.code).toBe('origin_unresolvable');
   });
 
-  it('classifies a configured self-hosted gitlab host as gitlab_unsupported', () => {
+  // #112: a declared host resolves (the origin grammar accepts its
+  // paths); the ref carries the gitlab platform marker so gh-only
+  // consumers can route instead of handing a group path to gh.
+  it('resolves a configured self-hosted gitlab host with the gitlab platform marker (#112)', () => {
     for (const url of [
       'git@git.ycgame.com:suntao/specgit.git',
       'ssh://git@git.ycgame.com/suntao/specgit.git',
       'https://git.ycgame.com/suntao/specgit.git',
     ]) {
       const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.code).toBe('gitlab_unsupported');
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.value).toEqual({ owner: 'suntao', repo: 'specgit', platform: 'gitlab' });
     }
   });
 
@@ -132,17 +136,25 @@ describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
     expect(result.code).toBe('origin_unresolvable');
   };
 
-  it('declared-host nested origins report gitlab_unsupported on all three accepted forms', () => {
-    nestedGitlab('git@git.ycgame.com:ycgame/General-Framework-Background-Operations/main_art-ai.git', {
+  it('declared-host nested origins resolve on all three accepted forms (#112)', () => {
+    const resolves = (url: string) => {
+      const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.platform).toBe('gitlab');
+    };
+    resolves('git@git.ycgame.com:ycgame/General-Framework-Background-Operations/main_art-ai.git');
+    resolves('ssh://git@git.ycgame.com/ycgame/Operations/main_art-ai.git');
+    resolves('https://git.ycgame.com/ycgame/Operations/main_art-ai.git');
+    resolves('https://git.ycgame.com/deep/a/b/c/project.git');
+    const nested = parseRepoRef('https://git.ycgame.com/ycgame/Operations/main_art-ai.git', {
       gitlabHost: 'git.ycgame.com',
     });
-    nestedGitlab('ssh://git@git.ycgame.com/ycgame/Operations/main_art-ai.git', {
-      gitlabHost: 'git.ycgame.com',
-    });
-    nestedGitlab('https://git.ycgame.com/ycgame/Operations/main_art-ai.git', {
-      gitlabHost: 'git.ycgame.com',
-    });
-    nestedGitlab('https://git.ycgame.com/deep/a/b/c/project.git', { gitlabHost: 'git.ycgame.com' });
+    expect(nested.ok).toBe(true);
+    if (nested.ok) {
+      expect(nested.value.owner).toBe('ycgame/Operations');
+      expect(nested.value.repo).toBe('main_art-ai');
+    }
   });
 
   it('heuristic gitlab hosts classify nested origins the same way', () => {
@@ -210,9 +222,10 @@ describe('parseRepoRef — explicit-port origin classification (#78)', () => {
     gitlab('https://gitlab.com:443/o/r');
     gitlab('ssh://git@gitlab.com:22/o/r');
     gitlab('https://gitlab.example.com:443/o/r');
-    // declared GitLab hosts with a portless declaration: default ports in.
-    gitlab('https://git.example.com:443/o/r', { gitlabHost: 'git.example.com' });
-    gitlab('ssh://git@git.example.com:22/o/r', { gitlabHost: 'git.example.com' });
+    // declared GitLab hosts with a portless declaration: default ports in;
+    // #112 — the declaration resolves the ref (platform gitlab).
+    resolves('https://git.example.com:443/o/r', { gitlabHost: 'git.example.com' });
+    resolves('ssh://git@git.example.com:22/o/r', { gitlabHost: 'git.example.com' });
   });
 
   it('non-default ports stay fail-closed without a port declaration (:8443 undeclared still rejected)', () => {
@@ -229,20 +242,20 @@ describe('parseRepoRef — explicit-port origin classification (#78)', () => {
     unresolvable('ssh://git@github.com:22x/o/r');
   });
 
-  it('a declared non-default port classifies only its exact host:port', () => {
-    gitlab('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:8443' });
-    gitlab('ssh://git@git.example.com:2222/o/r', { gitlabHost: 'git.example.com:2222' });
+  it('a declared non-default port resolves only its exact host:port (#112)', () => {
+    resolves('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:8443' });
+    resolves('ssh://git@git.example.com:2222/o/r', { gitlabHost: 'git.example.com:2222' });
     // the portless origin is a different effective port: fail closed
     unresolvable('https://git.example.com/o/r', { gitlabHost: 'git.example.com:8443' });
     unresolvable('https://git.example.com:443/o/r', { gitlabHost: 'git.example.com:8443' });
     // declaring a scheme default accepts the portless form of that scheme only
-    gitlab('https://git.example.com/o/r', { gitlabHost: 'git.example.com:443' });
-    gitlab('ssh://git@git.example.com/o/r', { gitlabHost: 'git.example.com:22' });
+    resolves('https://git.example.com/o/r', { gitlabHost: 'git.example.com:443' });
+    resolves('ssh://git@git.example.com/o/r', { gitlabHost: 'git.example.com:22' });
     unresolvable('https://git.example.com/o/r', { gitlabHost: 'git.example.com:2222' });
     // scp implies the ssh default port: a :22 (or portless) declaration
     // matches, any other declared port does not
-    gitlab('git@git.example.com:o/r', { gitlabHost: 'git.example.com' });
-    gitlab('git@git.example.com:o/r', { gitlabHost: 'git.example.com:22' });
+    resolves('git@git.example.com:o/r', { gitlabHost: 'git.example.com' });
+    resolves('git@git.example.com:o/r', { gitlabHost: 'git.example.com:22' });
     unresolvable('git@git.example.com:o/r', { gitlabHost: 'git.example.com:8443' });
     unresolvable('git@git.example.com:o/r', { gitlabHost: 'git.example.com:443' });
     // a declared host:port never captures other hosts
@@ -262,9 +275,9 @@ describe('parseRepoRef — explicit-port origin classification (#78)', () => {
     unresolvable('https://git@github.com:443/o/r');
     // the github.com exact match wins over any declaration
     resolves('ssh://git@github.com:22/o/r', { gitlabHost: 'git.example.com:22' });
-    // nested-group paths on port-bearing declared hosts keep #95 behavior
-    gitlab('https://git.example.com:8443/g/s/p.git', { gitlabHost: 'git.example.com:8443' });
-    gitlab('ssh://git@git.example.com:22/g/s/p.git', { gitlabHost: 'git.example.com' });
+    // nested-group paths on port-bearing declared hosts resolve (#112)
+    resolves('https://git.example.com:8443/g/s/p.git', { gitlabHost: 'git.example.com:8443' });
+    resolves('ssh://git@git.example.com:22/g/s/p.git', { gitlabHost: 'git.example.com' });
   });
 
   it('malformed declarations never match (fail closed)', () => {
@@ -272,6 +285,170 @@ describe('parseRepoRef — explicit-port origin classification (#78)', () => {
     unresolvable('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:' });
     unresolvable('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:8443:9' });
     unresolvable('https://git.example.com/o/r', { gitlabHost: 'git example.com' });
+  });
+});
+
+// #112: on a DECLARED host (spec_git/providers.yaml), the origin grammar
+// accepts group[/subgroup…]/project paths at depth 2–5, including
+// URL-encoded %2F separator forms; the ref carries platform 'gitlab' so
+// consumers route by the declaration (never the substring heuristic —
+// heuristic *gitlab* hosts gain no acceptance). Deeper paths and other
+// percent-escapes fail closed; the GitHub truth table is untouched.
+describe('parseRepoRef — nested-group acceptance on declared hosts (#112)', () => {
+  const resolves = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return null;
+    return result.value;
+  };
+  const gitlab = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gitlab_unsupported');
+  };
+  const unresolvable = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('origin_unresolvable');
+  };
+  const declared = { gitlabHost: 'git.example.com' } as const;
+
+  it('accepts group/subgroup/project at every depth 2–5 on all three forms', () => {
+    expect(resolves('https://git.example.com/g/p.git', declared)).toEqual({
+      owner: 'g',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+    expect(resolves('git@git.example.com:g/sg/p.git', declared)).toEqual({
+      owner: 'g/sg',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+    expect(resolves('ssh://git@git.example.com/g/sg/p.git', declared)).toEqual({
+      owner: 'g/sg',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+    expect(resolves('https://git.example.com/g/sg/sub/p.git', declared)).toEqual({
+      owner: 'g/sg/sub',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+    expect(resolves('git@git.example.com:g/sg/sub/deep/p.git', declared)).toEqual({
+      owner: 'g/sg/sub/deep',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+    // trailing slash on the url track and no .git suffix both resolve
+    expect(resolves('https://git.example.com/g/sg/p/', declared)).toEqual({
+      owner: 'g/sg',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+  });
+
+  it('decodes %2F separators (both letter cases) to the same refs', () => {
+    expect(resolves('https://git.example.com/group%2Fsubgroup%2Fproject.git', declared)).toEqual({
+      owner: 'group/subgroup',
+      repo: 'project',
+      platform: 'gitlab',
+    });
+    expect(resolves('ssh://git@git.example.com/a%2fb%2fc.git', declared)).toEqual({
+      owner: 'a/b',
+      repo: 'c',
+      platform: 'gitlab',
+    });
+    expect(resolves('git@git.example.com:g%2Fs%2Fp.git', declared)).toEqual({
+      owner: 'g/s',
+      repo: 'p',
+      platform: 'gitlab',
+    });
+    // literal and encoded separators mix freely
+    expect(resolves('https://git.example.com/group/sub%2Fproject.git', declared)).toEqual({
+      owner: 'group/sub',
+      repo: 'project',
+      platform: 'gitlab',
+    });
+  });
+
+  it('depth > 5 on a declared host fails closed as gitlab_unsupported naming the bound', () => {
+    const result = parseRepoRef('https://git.example.com/a/b/c/d/e/f.git', declared);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gitlab_unsupported');
+    expect(result.message).toContain('depth');
+    expect(result.fix).not.toMatch(/github\.com/);
+  });
+
+  it('declared hosts never accept other percent-escapes or malformed paths', () => {
+    // a non-%2F escape anywhere in the path never classifies
+    unresolvable('https://git.example.com/g/p%20q.git', declared);
+    unresolvable('https://git.example.com/g%252Fs/p.git', declared);
+    // %2F decoding that yields empty segments is malformed
+    unresolvable('https://git.example.com/g%2F%2Fp.git', declared);
+    unresolvable('https://git.example.com/%2Fp.git', declared);
+    // depth 1 is not a project path
+    unresolvable('https://git.example.com/g.git', declared);
+    // scp port-intent shape stays rejected (first segment all digits)
+    unresolvable('git@git.example.com:8443/g/s/p.git', declared);
+  });
+
+  it('heuristic *gitlab* hosts never gain acceptance at any depth', () => {
+    gitlab('https://gitlab.com/g/p.git');
+    gitlab('git@gitlab.com:g/sg/p.git');
+    gitlab('https://gitlab.com/a/b/c/d/e/f/g/h.git');
+    // %2F forms on a heuristic host classify gitlab_unsupported (nested),
+    // never unresolvable-with-github-advice and never ok
+    gitlab('https://gitlab.example.com/g%2Fs%2Fp.git');
+  });
+
+  it('undeclared hosts keep origin_unresolvable including %2F forms', () => {
+    unresolvable('https://git.undeclared.com/g/sg/p.git', declared);
+    unresolvable('https://git.undeclared.com/g%2Fsg%2Fp.git', declared);
+    unresolvable('git@git.undeclared.com:g%2Fs%2Fp.git', declared);
+  });
+
+  it('github keeps the pinned grammar: no nested paths, no %2F decoding, no platform field', () => {
+    unresolvable('https://github.com/g/sg/p.git');
+    unresolvable('https://github.com/o%2Fr.git');
+    const plain = parseRepoRef('https://github.com/o/r');
+    expect(plain.ok).toBe(true);
+    if (plain.ok) expect(plain.value.platform).toBeUndefined();
+  });
+
+  it('the spoof corpus stays closed on the declared nested grammar', () => {
+    unresolvable('git@git.example.com.evil.com:g/sg/p.git', declared);
+    unresolvable('https://git.example.com.evil.com/g%2Fs%2Fp.git', declared);
+    unresolvable('ssh://bob@git.example.com/g/sg/p.git', declared);
+    unresolvable('https://git@git.example.com/g/p.git', declared);
+    unresolvable('ssh://git:pw@git.example.com/g/p.git', declared);
+    unresolvable('https://git.example.com/g/s/p.git?goto=github.com', declared);
+  });
+
+  it('port rules compose with the nested grammar', () => {
+    expect(
+      resolves('https://git.example.com:8443/g/sg/p.git', { gitlabHost: 'git.example.com:8443' })
+    ).toEqual({ owner: 'g/sg', repo: 'p', platform: 'gitlab' });
+    expect(
+      resolves('ssh://git@git.example.com:22/g/sg/p.git', { gitlabHost: 'git.example.com' })
+    ).toEqual({ owner: 'g/sg', repo: 'p', platform: 'gitlab' });
+    // portless declaration still rejects the non-default port
+    unresolvable('https://git.example.com:8443/g/sg/p.git', declared);
+  });
+
+  it('.git strips once, only from the project segment', () => {
+    expect(resolves('https://git.example.com/g/sg/p.git.git', declared)).toEqual({
+      owner: 'g/sg',
+      repo: 'p.git',
+      platform: 'gitlab',
+    });
+    expect(resolves('git@git.example.com:g/sg/.git', declared)).toEqual({
+      owner: 'g/sg',
+      repo: '.git',
+      platform: 'gitlab',
+    });
   });
 });
 
@@ -398,18 +575,24 @@ describe('parseRepoRef — structural host classification (security hardening)',
     if (bare.ok) expect(bare.value).toEqual({ owner: 'o', repo: '.git' });
   });
 
-  it('pins declared-host matching: exact, user-tolerant, spoof-proof', () => {
-    gitlab('git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    gitlab('Git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    gitlab('git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    gitlab('ssh://git@git.ycgame.com/o/r', { gitlabHost: 'git.ycgame.com' });
-    gitlab('https://GIT.YCGAME.COM/o/r', { gitlabHost: 'GIT.YCGAME.COM' });
+  it('pins declared-host matching: exact, user-tolerant, spoof-proof (#112 resolves)', () => {
+    const resolves = (url: string, options?: { gitlabHost?: string }) => {
+      const result = parseRepoRef(url, options);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.platform).toBe('gitlab');
+    };
+    resolves('git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    resolves('Git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    resolves('git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    resolves('ssh://git@git.ycgame.com/o/r', { gitlabHost: 'git.ycgame.com' });
+    resolves('https://GIT.YCGAME.COM/o/r', { gitlabHost: 'GIT.YCGAME.COM' });
     // non-github.com suffixes never match the declaration
     unresolvable('git@git.ycgame.com.evil.com:o/r', { gitlabHost: 'git.ycgame.com' });
     unresolvable('git@sourceforge.git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
     // a declared host never captures the github.com exact match
     const githubWins = parseRepoRef('git@github.com:o/r', { gitlabHost: 'git.ycgame.com' });
     expect(githubWins.ok).toBe(true);
+    if (githubWins.ok) expect(githubWins.value.platform).toBeUndefined();
   });
 
   it('rejects oversized origins before any parsing', () => {
@@ -450,6 +633,39 @@ describe('parseRepoRef — structural host classification (security hardening)',
       expect(parseRepoRef(subCap).ok).toBe(false);
     }
     expect(performance.now() - start).toBeLessThan(500);
+  });
+});
+
+// #112: the shared guard for GitHub-only evidence flows (the production
+// CLI wiring and the evaluator's origin gate). A ref that resolved
+// through the GitLab declaration can never be served through gh — fail
+// closed with declaration-aware text instead of handing gh a
+// group/subgroup ref.
+describe('requireGithubRoute — GitHub-only consumers route on the platform marker (#112)', () => {
+  it('passes a github ref through unchanged', () => {
+    const parsed = parseRepoRef('https://github.com/o/r');
+    expect(requireGithubRoute(parsed)).toEqual(parsed);
+  });
+
+  it('fails a declared-gitlab ref closed as gitlab_unsupported with declaration-aware text', () => {
+    const parsed = parseRepoRef('https://git.example.com/g/sg/p.git', {
+      gitlabHost: 'git.example.com',
+    });
+    expect(parsed.ok).toBe(true);
+    const routed = requireGithubRoute(parsed);
+    expect(routed.ok).toBe(false);
+    if (routed.ok) return;
+    expect(routed.code).toBe('gitlab_unsupported');
+    expect(routed.message).toContain('providers.yaml');
+    expect(routed.message).toContain('g/sg/p');
+    expect(routed.fix).not.toMatch(/github\.com/);
+  });
+
+  it('passes failures through unchanged (heuristic and unresolvable)', () => {
+    const heuristic = parseRepoRef('https://gitlab.com/o/r.git');
+    expect(requireGithubRoute(heuristic)).toEqual(heuristic);
+    const unresolvable = parseRepoRef('https://example.com/o/r.git');
+    expect(requireGithubRoute(unresolvable)).toEqual(unresolvable);
   });
 });
 
