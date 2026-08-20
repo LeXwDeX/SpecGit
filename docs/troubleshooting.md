@@ -50,7 +50,7 @@ attributes the three likely causes in order:
 
 ### `no_origin` / `origin_unresolvable`
 
-The repository has no `origin` remote, or it does not parse to a GitHub repository. Only `github.com` remotes resolve (HTTPS, SCP-style SSH, or `ssh://`). Check:
+The repository has no `origin` remote, or it does not parse to a GitHub repository. Only `github.com` remotes resolve (HTTPS, SCP-style SSH, or `ssh://`), each also with its scheme-default port spelled out (`https://github.com:443/…`, `ssh://git@github.com:22/…`). Any other explicit port fails closed unless the GitLab declaration names it (next entry). Check:
 
 ```
 git remote get-url origin
@@ -58,14 +58,19 @@ git remote get-url origin
 
 Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version — for a GitLab repository, declare the host (next entry) to get the dedicated diagnostic.
 
-### `gitlab_unsupported` (exit 3)
+### `gitlab_unsupported` (exit 1)
 
 The origin points at a GitLab repository — `gitlab.com`, a selfhosted host
 declared in `spec_git/providers.yaml` (created by `specgit init
---gitlab-host <hostname>` or the interactive platform question), or a
+--gitlab-host <hostname>` — or `<hostname>:<port>` when the instance uses a
+non-default port — or the interactive platform question), or a
 `*gitlab*` host — including **nested-group** paths (`group/subgroup/project`,
 any depth ≥ 2), which are recognized and reported with this code rather than
-misdiagnosed as `origin_unresolvable` (#95). GitLab evidence requires `glab`
+misdiagnosed as `origin_unresolvable` (#95). The classification is decisive:
+the origin evidence is complete and says the platform is GitLab, so the
+verdict is rejected with exit 1 (the same factual class as
+`origin_unresolvable` — the dedicated code names the actual gap instead of
+GitHub-pointing advice). GitLab evidence requires `glab`
 support, which is not implemented yet — see the
 [GitLab support roadmap](gitlab-support.md). The planned support range is
 precise and fail-closed: self-managed **GitLab CE/Free `>= 19.2.4 < 19.3.0`**

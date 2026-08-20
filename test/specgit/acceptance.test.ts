@@ -475,9 +475,21 @@ describe('acceptance evaluator', () => {
       classification: 'rejected',
     },
     {
-      name: 'origin_unresolvable',
+      // 88-6 (g5 folding): a GitLab origin surfaces through the gate set
+      // as its own origin-gate failure form — the evaluator reports the
+      // classification parseRepoRef actually made, not a folded
+      // origin_unresolvable with GitHub-pointing advice.
+      name: 'gitlab_unsupported',
       input: () =>
         input({ git: new StubGitPort(facts({ originUrl: 'https://gitlab.com/o/r.git' })) }),
+      gate: 'origin',
+      code: 'gitlab_unsupported',
+      classification: 'rejected',
+    },
+    {
+      name: 'origin_unresolvable',
+      input: () =>
+        input({ git: new StubGitPort(facts({ originUrl: 'https://example.com/o/r.git' })) }),
       gate: 'origin',
       code: 'origin_unresolvable',
       classification: 'rejected',

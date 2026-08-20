@@ -71,6 +71,9 @@ export function extractOriginHost(originUrl: string): OriginUrlParts | null {
     host = hostPort.slice(0, colon);
     port = hostPort.slice(colon + 1);
     if (port.length === 0 || port.length > MAX_PORT_LENGTH || !isAllDigits(port)) return null;
+    // Mirror WHATWG URL normalization ("022" is port 22) so every
+    // consumer of the seam answers the same port question the same way.
+    port = port.replace(/^0+(?=\d)/, '');
   } else {
     host = hostPort;
   }
@@ -121,6 +124,18 @@ const MAX_HOST_LENGTH = 253;
 const SCHEME_PREFIX = /^([A-Za-z][A-Za-z0-9+.-]*):/;
 const HOSTNAME_CHARS = /^[a-z0-9.-]+$/;
 
+// #78: the only explicit ports that classify are (a) the scheme default
+// (443 https, 22 ssh) on any accepted host, and (b) a non-default port
+// that the GitLab declaration itself names (host:port). Every other
+// explicit port keeps the fail-closed rejection.
+const DEFAULT_PORTS: Record<'https' | 'ssh', string> = { https: '443', ssh: '22' };
+
+/** A declared self-hosted GitLab endpoint: bare host, optional port. */
+interface DeclaredGitLab {
+  host: string;
+  port: string | null;
+}
+
 type UrlShape = {
   kind: 'url';
   scheme: 'https' | 'ssh';
@@ -160,7 +175,7 @@ export function parseRepoRef(
     );
   }
 
-  const declaredHost = normalizeDeclaredHost(options.gitlabHost);
+  const declared = normalizeDeclaredGitLab(options.gitlabHost);
   const shape = parseOriginShape(url);
   const repo = shape ? parseOwnerRepo(shape.path, shape.kind === 'url') : null;
 
@@ -173,7 +188,7 @@ export function parseRepoRef(
     // "gitlab" heuristic is contained to the structurally extracted host
     // (fail-closed diagnostic either way); any other self-hosted host
     // counts only when the user declared it (providers.yaml).
-    if (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declaredHost)) {
+    if (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declared)) {
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a GitLab repository; GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
@@ -191,7 +206,7 @@ export function parseRepoRef(
   // scp path whose first segment is all digits keeps the pinned
   // port-intent fail-closed rejection (explicit ports are #78's change
   // to make). Full nested-group parsing support is Phase-2 adapter work.
-  if (shape && !repo && (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declaredHost))) {
+  if (shape && !repo && (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declared))) {
     const segments = parsePathSegments(shape.path, shape.kind === 'url');
     const portLookingScp = shape.kind === 'scp' && segments !== null && isAllDigits(segments[0]);
     if (segments !== null && segments.length >= 3 && !portLookingScp) {
@@ -309,29 +324,59 @@ function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
 // GitHub requires an exact structural host match. On the https track any
 // userinfo disqualifies; on the ssh track the user must be `git` with no
 // password (matching git's own convention); the scp track requires the
-// exact `git` user.
+// exact `git` user. Ports (#78): only the scheme default classifies —
+// github.com never accepts a declared non-default port.
 function isGitHubOrigin(shape: OriginShape): boolean {
   if (shape.kind === 'scp') {
     return shape.user === 'git' && shape.host === 'github.com';
   }
-  return shape.host === 'github.com' && shape.port === '' && urlUserAllowed(shape);
+  return shape.host === 'github.com' && urlPortAccepted(shape, null) && urlUserAllowed(shape);
 }
 
 function isGitLabHeuristic(shape: OriginShape): boolean {
   if (shape.kind === 'scp') {
     return shape.user === 'git' && shape.host.includes('gitlab');
   }
-  return shape.host.includes('gitlab') && shape.port === '' && urlUserAllowed(shape);
+  return shape.host.includes('gitlab') && urlPortAccepted(shape, null) && urlUserAllowed(shape);
 }
 
-function isDeclaredGitLab(shape: OriginShape, declaredHost: string | undefined): boolean {
-  if (declaredHost === undefined || shape.host !== declaredHost) {
+function isDeclaredGitLab(shape: OriginShape, declared: DeclaredGitLab | undefined): boolean {
+  if (declared === undefined || shape.host !== declared.host) {
     return false;
   }
   if (shape.kind === 'scp') {
-    return shape.user === '' || shape.user.toLowerCase() === 'git';
+    // scp carries no port slot: it implies the ssh default, so only a
+    // portless (or :22) declaration matches.
+    return (
+      (shape.user === '' || shape.user.toLowerCase() === 'git') &&
+      portMatches(effectivePort(shape), declared.port, DEFAULT_PORTS.ssh)
+    );
   }
-  return shape.port === '' && urlUserAllowed(shape);
+  return urlPortAccepted(shape, declared.port) && urlUserAllowed(shape);
+}
+
+/**
+ * The port a shape effectively connects on: the explicit digits when
+ * present, else the scheme default (WHATWG URL parsing already strips an
+ * explicit scheme default and scp has no port slot — it is ssh:22).
+ */
+function effectivePort(shape: OriginShape): string {
+  if (shape.kind === 'scp') return DEFAULT_PORTS.ssh;
+  return shape.port === '' ? DEFAULT_PORTS[shape.scheme] : shape.port;
+}
+
+/** URL-track port rule: default in, non-default only when declared. */
+function urlPortAccepted(shape: UrlShape, declaredPort: string | null): boolean {
+  return portMatches(effectivePort(shape), declaredPort, DEFAULT_PORTS[shape.scheme]);
+}
+
+/**
+ * A port classifies when it equals the declared port (an explicit
+ * host:port declaration matches only that port) or, without one, the
+ * scheme default.
+ */
+function portMatches(port: string, declaredPort: string | null, schemeDefault: string): boolean {
+  return declaredPort !== null ? port === declaredPort : port === schemeDefault;
 }
 
 function urlUserAllowed(shape: UrlShape): boolean {
@@ -341,9 +386,24 @@ function urlUserAllowed(shape: UrlShape): boolean {
   return shape.scheme === 'https' ? shape.username === '' : shape.username.toLowerCase() === 'git';
 }
 
-function normalizeDeclaredHost(value: string | undefined): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  return normalized ? normalized : undefined;
+/**
+ * Parse a declared GitLab endpoint: `host` or `host:port` (the #78
+ * declaration grammar; the port names the non-default port origins may
+ * use). Malformed declarations never match — classification stays
+ * fail-closed rather than guessing what was meant.
+ */
+function normalizeDeclaredGitLab(value: string | undefined): DeclaredGitLab | undefined {
+  const raw = value?.trim().toLowerCase();
+  if (!raw) return undefined;
+  const colon = raw.indexOf(':');
+  if (colon === -1) {
+    return isPlausibleHostname(raw) ? { host: raw, port: null } : undefined;
+  }
+  const host = raw.slice(0, colon);
+  const port = raw.slice(colon + 1);
+  if (!isPlausibleHostname(host)) return undefined;
+  if (!/^\d{1,5}$/.test(port)) return undefined;
+  return { host, port };
 }
 
 export function formatRepoRef(repo: RepoRef): string {

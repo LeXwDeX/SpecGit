@@ -83,13 +83,17 @@ export function createDefaultContext(): CommandContext {
 
   // Provider declarations (spec_git/providers.yaml) decide how non-github
   // origins classify; resolved once per command context and threaded into
-  // every parseRepoRef / evaluate call site.
+  // every parseRepoRef / evaluate call site. The declaration grammar is
+  // `host` or `host:port` (#78): a declared non-default port classifies
+  // only origins that use exactly that port.
   const declaredGitlabHost = async (): Promise<string | undefined> => {
     try {
       const rootEv = await discoverRepoRoot(process.cwd());
       if (!rootEv.ok) return undefined;
       const providers = await readProviders(rootEv.value);
-      return providers.ok ? providers.value.gitlab?.host : undefined;
+      if (!providers.ok || providers.value.gitlab === undefined) return undefined;
+      const { host, port } = providers.value.gitlab;
+      return port !== undefined ? `${host}:${port}` : host;
     } catch {
       return undefined;
     }

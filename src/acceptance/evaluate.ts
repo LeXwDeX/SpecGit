@@ -320,7 +320,11 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
         input.gitlabHost !== undefined ? { gitlabHost: input.gitlabHost } : {}
       );
       if (!parsed.ok) {
-        return [makeFailure('origin_unresolvable')];
+        // 88-6 (g5 folding): the origin gate reports the classification
+        // that was actually made — a GitLab origin fails as
+        // gitlab_unsupported (factual, exit 1), never folded into
+        // origin_unresolvable with GitHub-pointing advice.
+        return [makeFailure(parsed.code === 'gitlab_unsupported' ? 'gitlab_unsupported' : 'origin_unresolvable')];
       }
       repoRef = parsed.value;
       evidence.repo = formatRepoRef(parsed.value);
