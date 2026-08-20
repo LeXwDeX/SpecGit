@@ -1,8 +1,8 @@
 version: 1
-delivery: issue113
+delivery: issue105
 context:
-  kind: branch
-  branch: feat/113-issue113
+  kind: worktree
+  label: w2-105-retire
+  branch: feat/105-issue105
 issues:
-  - 113
-pr: 135
+  - 105
