@@ -585,6 +585,25 @@ export async function runInit(
   if (selection.warning !== undefined) {
     warnings.push(selection.warning);
   }
+  // Detection trust boundary (#121): workflows whose triggers include no
+  // PR trigger can never report check runs on a PR head. Their jobs are
+  // excluded from the policy; init warns so the exclusion is visible and
+  // the fix names the legitimate repair paths.
+  if (detected !== null && detected.nonPrWorkflows.length > 0) {
+    warnings.push({
+      severity: 'warning',
+      code: 'checks_not_pr_visible',
+      message:
+        'These workflows never run on a pull request head, so their jobs cannot ' +
+        `become required checks: ${detected.nonPrWorkflows.join(', ')}.`,
+      fix:
+        'Detected checks are suggestions until proven on a PR head. If a job does ' +
+        'report on PR heads (e.g. through another workflow), name it explicitly with ' +
+        '--required-check; after CI changes, re-run init --force to re-detect — ' +
+        'correcting a policy that was wrong at birth is the required repair, not a ' +
+        'weakening.',
+    });
+  }
 
   // The git hook goes where git actually runs hooks from: worktree and
   // core.hooksPath aware. When git cannot answer, fall back to the legacy
@@ -648,6 +667,7 @@ export async function runInit(
           detected: {
             platform: detected.platform,
             sources: detected.sources,
+            nonPrWorkflows: detected.nonPrWorkflows,
             clis: detected.clis,
             fallback: checks.length === 0,
           },
@@ -659,7 +679,13 @@ export async function runInit(
       ...checks.map((name) => `  - ${name}`),
       ...platform.human,
       ...(detected !== null
-        ? [`Detected platform: ${detected.platform}`, ...detected.sources.map((s) => `  detected from ${s}`)]
+        ? [
+            `Detected platform: ${detected.platform}`,
+            ...detected.sources.map((s) => `  detected from ${s}`),
+            ...detected.nonPrWorkflows.map(
+              (s) => `  skipped, never runs on a PR head: ${s}`
+            ),
+          ]
         : []),
       `Created ${harness.workflow}`,
       ...harness.hooks.map((hookPath) => `Created ${hookPath}`),

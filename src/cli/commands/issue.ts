@@ -16,7 +16,10 @@
  * adopts what already exists instead of duplicating a WHY.
  *
  * The CLI is non-interactive: no arguments and no record is a usage
- * error (exit 2). With a record present, no arguments is a pure resume.
+ * error (exit 2). With a live record, no arguments is a pure resume; a
+ * record whose PR merged is completed history — no-args resume is a
+ * usage error naming the way forward, and validated replacement
+ * arguments re-bootstrap in its place (#75).
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
@@ -235,12 +238,35 @@ export async function runIssue(
   // Mergedness first (read-only): a record whose PR already merged is
   // completed history, not an active delivery, and is replaced rather
   // than demanding a manual unbind. Provider failures keep the existing
-  // record (fail-closed — never guess merged).
+  // record (fail-closed — never guess merged): resuming on a guess of
+  // "not merged" could re-push the branch GitHub deleted on merge (#75).
   let existing: Evidence<DeliveryBinding> | null = existingRead.ok ? existingRead : null;
   let merged = false;
   if (existing && existing.value.pr !== undefined) {
     const prEv = await ctx.gh.getPr(repoEv.value, existing.value.pr);
-    merged = prEv.ok && prEv.value.state === 'merged';
+    if (!prEv.ok) {
+      return passthrough(prEv);
+    }
+    merged = prEv.value.state === 'merged';
+  }
+
+  // A merged record has nothing to resume: no-args resume would re-run
+  // the branch/commit/push steps and resurrect the head branch GitHub
+  // auto-deleted on merge. End the lifecycle decision before any side
+  // effect, naming the way forward (#75).
+  if (existing !== null && merged && args.length === 0) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'issue_delivery_merged',
+          `Delivery '${existing.value.delivery}' is already merged (PR #${existing.value.pr}); there is nothing to resume.`,
+          {
+            fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why", or run "specgit unbind --yes" to clear the merged record.',
+          }
+        ),
+      ],
+    };
   }
 
   // Validate arguments BEFORE any destructive side effect, scoped to what
