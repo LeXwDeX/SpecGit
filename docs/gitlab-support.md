@@ -37,7 +37,7 @@ A GitLab origin is **recognized, not silently misread**:
 
 ### Phase 2 — GlabProvider method map
 
-Interface decision recorded (option B — neutral provider port with internal per-platform adapters), **not implemented**; `GitHubProvider` keeps its current shape and #80 compatibility (the [port-compatibility policy](providers.md)) until that slice lands. The full 12-method map, anchored cell by cell in the ledger (row 24):
+Interface decision recorded (option B — neutral provider port with internal per-platform adapters), **not implemented**; `GitHubProvider` keeps its current shape and #80 compatibility (the [port-compatibility policy](providers.md)) until that slice lands. The per-platform adapter home exists since #113: the GitHub adapter lives at `src/providers/github/` (legacy `src/github/gh-cli.ts` / `protection-merge.ts` paths are stable aliases), so a future `GlabProvider` lands beside it as `src/providers/gitlab/`. The full 12-method map, anchored cell by cell in the ledger (row 24):
 
 | GitHubProvider method | GitLab equivalent (19.2, Free tier) |
 | --- | --- |

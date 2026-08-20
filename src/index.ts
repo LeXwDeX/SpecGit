@@ -78,8 +78,8 @@ export type {
   RepoAutomergeFact,
 } from './github/port.js';
 export { GITHUB_PROVIDER_MEMBERS } from './github/port.js';
-export { GhCliGitHubProvider, sanitizeApiText } from './github/gh-cli.js';
-export type { GhCliGitHubProviderOptions } from './github/gh-cli.js';
+export { GhCliGitHubProvider, sanitizeApiText } from './providers/github/gh-cli.js';
+export type { GhCliGitHubProviderOptions } from './providers/github/gh-cli.js';
 export { parseClosingRefs } from './github/closing-refs.js';
 
 export { CODE_INFO } from './acceptance/codes.js';
