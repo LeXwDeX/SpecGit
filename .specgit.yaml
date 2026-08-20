@@ -1,8 +1,7 @@
 version: 1
 delivery: issue88
 context:
-  kind: worktree
-  label: w2-884
+  kind: branch
   branch: feat/88-issue88
 issues:
   - 88
