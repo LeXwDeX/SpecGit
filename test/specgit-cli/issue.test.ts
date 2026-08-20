@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
+import type { PrSummary } from '../../src/github/port.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
 import { runIssue } from '../../src/cli/commands/issue.js';
 import {
@@ -68,7 +69,7 @@ function issueCtx(
   gh.getOpenIssueNumbers = vi.fn(async () => {
     gh.calls.push('getOpenIssueNumbers');
     if (reconcile.openIssueNumbersFail) {
-      return fail(reconcile.openIssueNumbersFail.code, reconcile.openIssueNumbersFail.message);
+      return fail<number[]>(reconcile.openIssueNumbersFail.code, reconcile.openIssueNumbersFail.message);
     }
     return ok(reconcile.openIssueNumbers ?? []);
   });
@@ -85,7 +86,7 @@ function issueCtx(
   gh.listOpenPrsByHead = vi.fn(async (_repo: unknown, head: string) => {
     gh.calls.push(`listOpenPrsByHead:${head}`);
     if (reconcile.openPrsFail) {
-      return fail(reconcile.openPrsFail.code, reconcile.openPrsFail.message);
+      return fail<PrSummary[]>(reconcile.openPrsFail.code, reconcile.openPrsFail.message);
     }
     return ok(reconcile.openPrs ?? []);
   });
