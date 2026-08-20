@@ -1,3 +1,4 @@
+---
 "specgit": patch
 ---
 
