@@ -418,6 +418,7 @@ describe('specgit issue: idempotent resume', () => {
             baseBranch: 'main',
             body: 'Closes #11\n',
             mergeCommitSha: null,
+            draft: false,
           }),
       },
     });
