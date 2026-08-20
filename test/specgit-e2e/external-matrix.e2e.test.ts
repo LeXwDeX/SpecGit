@@ -192,6 +192,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
             number: 9,
             state: 'open',
             merged_at: null,
+            draft: false,
             head: { ref: deliveryBranch, sha: 'a'.repeat(40) },
             base: { ref: 'master' },
             body: 'Closes #11\n',
