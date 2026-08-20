@@ -1,8 +1,7 @@
 version: 1
 delivery: issue73
 context:
-  kind: worktree
-  label: specgit-v1-rc
+  kind: branch
   branch: feat/73-issue73
 issues:
   - 73
