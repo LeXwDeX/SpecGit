@@ -307,8 +307,8 @@ export function externalNpmCache(prefix: string): string {
 }
 
 /** file:// adoption install of the packed CLI; `--no-save` keeps the adopting tree clean. */
-export function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: string): Promise<void> {
-  return runNpm(
+export async function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: string): Promise<void> {
+  await runNpm(
     ['install', tarballPath, '--no-save', '--no-audit', '--no-fund', '--loglevel=error'],
     cwd,
     cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
@@ -316,12 +316,12 @@ export function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: st
 }
 
 /** Global install into an isolated prefix (never the host's global root). */
-export function npmInstallGlobal(
+export async function npmInstallGlobal(
   tarballPath: string,
   prefix: string,
   cacheDir?: string
 ): Promise<void> {
-  return runNpm(
+  await runNpm(
     ['install', '-g', `--prefix=${prefix}`, tarballPath, '--no-audit', '--no-fund', '--loglevel=error'],
     prefix,
     cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
