@@ -466,7 +466,12 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   const g9 =
     g8 &&
     (await runGate('closing', () => {
-      const closed = parseClosingRefs(currentPrFact()!.body);
+      // #115 (grammar parameterization): the dialect follows the origin's
+      // platform marker (#112) — a GitLab-declared origin parses closing
+      // references with GitLab's default pattern, everything else with the
+      // GitHub grammar. Gate vocabulary is unchanged either way.
+      const dialect = repoRef!.platform === 'gitlab' ? 'gitlab' : 'github';
+      const closed = parseClosingRefs(currentPrFact()!.body, dialect);
       const missing = binding!.issues.filter((n) => !closed.has(n));
       if (missing.length > 0) {
         return [makeFailure('closing_refs_incomplete', { missing })];
