@@ -346,11 +346,19 @@ export class GhCliGitHubProvider implements GitHubProvider {
       }
 
       for (const run of parsed.check_runs) {
-        const item = run as { name?: unknown; status?: unknown; conclusion?: unknown };
+        const item = run as {
+          name?: unknown;
+          status?: unknown;
+          conclusion?: unknown;
+          id?: unknown;
+          started_at?: unknown;
+        };
         runs.push({
           name: typeof item.name === 'string' ? item.name : '',
           status: typeof item.status === 'string' ? item.status : '',
           conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
+          id: typeof item.id === 'number' ? item.id : 0,
+          startedAt: typeof item.started_at === 'string' ? item.started_at : null,
         });
       }
 

@@ -555,7 +555,7 @@ describe('GhCliGitHubProvider', () => {
     }));
     const pageTwo = [
       { name: 'All checks passed', status: 'completed', conclusion: 'success' },
-      { name: 'Test', status: 'in_progress', conclusion: null },
+      { name: 'Test', status: 'in_progress', conclusion: null, id: 7, started_at: '2026-08-20T14:00:00Z' },
     ];
     const { provider } = setup([
       {
@@ -571,8 +571,22 @@ describe('GhCliGitHubProvider', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toHaveLength(102);
-    expect(result.value[100]).toEqual({ name: 'All checks passed', status: 'completed', conclusion: 'success' });
-    expect(result.value[101]).toEqual({ name: 'Test', status: 'in_progress', conclusion: null });
+    // #119: id and started_at ride along for truth-run selection; absent
+    // fields fail safe (id 0, startedAt null = oldest).
+    expect(result.value[100]).toEqual({
+      name: 'All checks passed',
+      status: 'completed',
+      conclusion: 'success',
+      id: 0,
+      startedAt: null,
+    });
+    expect(result.value[101]).toEqual({
+      name: 'Test',
+      status: 'in_progress',
+      conclusion: null,
+      id: 7,
+      startedAt: '2026-08-20T14:00:00Z',
+    });
   });
 
   it('fails closed with gh_transport on unparsable check-run JSON', async () => {

@@ -145,7 +145,19 @@ jobs:
           const deadline = Date.now() + 15 * 60 * 1000;
           while (Date.now() < deadline) {
             const payload = await fetchJsonWithRetry();
-            const byName = new Map(payload.check_runs.map((r) => [r.name, r.status]));
+            // #119: re-runs keep every same-name run; terminality is
+            // decided on the truth run — latest started_at, ties broken
+            // by the higher check-run id (docs/reference.md) — never on
+            // response position.
+            const truth = new Map();
+            for (const r of payload.check_runs) {
+              const cur = truth.get(r.name);
+              const later = cur === undefined
+                || (r.started_at || '') > (cur.started_at || '')
+                || ((r.started_at || '') === (cur.started_at || '') && (r.id || 0) > (cur.id || 0));
+              if (later) truth.set(r.name, r);
+            }
+            const byName = new Map([...truth].map(([name, r]) => [name, r.status]));
             const missing = required.filter((n) => !terminalHas(byName, n));
             if (missing.length === 0) {
               console.log('All required checks are in a terminal state.');

@@ -10,7 +10,7 @@ import {
   sameRepoRef,
   type RepoRef,
 } from '../gitfacts/origin.js';
-import type { GitHubProvider, PrFact } from '../github/port.js';
+import type { CheckRunInfo, GitHubProvider, PrFact } from '../github/port.js';
 import { parseClosingRefs } from '../github/closing-refs.js';
 import { CODE_INFO, type SpecGitCode } from './codes.js';
 
@@ -105,6 +105,28 @@ function repoRefForMergedCheck(originUrl: string | null, gitlabHost?: string): {
   if (!originUrl) return null;
   const parsed = parseRepoRef(originUrl, gitlabHost !== undefined ? { gitlabHost } : {});
   return parsed.ok ? parsed.value : null;
+}
+
+/**
+ * #119: the truth run for a check name — the run with the latest
+ * started_at, ties broken by the higher check-run id. Re-runs keep every
+ * same-name run in the Checks API and response position is never
+ * evidence (the product decision docs/reference.md states once).
+ */
+function truthRun(runs: CheckRunInfo[], name: string): CheckRunInfo | undefined {
+  let best: CheckRunInfo | undefined;
+  for (const run of runs) {
+    if (run.name !== name) continue;
+    if (best === undefined || isLaterRun(run, best)) best = run;
+  }
+  return best;
+}
+
+function isLaterRun(a: CheckRunInfo, b: CheckRunInfo): boolean {
+  const keyA = a.startedAt ?? '';
+  const keyB = b.startedAt ?? '';
+  if (keyA !== keyB) return keyA > keyB;
+  return a.id > b.id;
 }
 
 /**
@@ -460,7 +482,11 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       }
       const failures: GateFailure[] = [];
       for (const requiredName of policy!.required_checks) {
-        const run = runs.value.find((r) => r.name === requiredName);
+        // #119: re-runs keep every same-name run in the Checks API. The
+        // truth run is the latest by started_at, ties broken by the
+        // higher check-run id (docs/reference.md, Checks G11); response
+        // position is never evidence.
+        const run = truthRun(runs.value, requiredName);
         if (!run) {
           failures.push(makeFailure('checks_missing', { name: requiredName }));
           continue;

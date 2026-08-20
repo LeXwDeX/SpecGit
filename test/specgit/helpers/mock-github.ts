@@ -134,5 +134,5 @@ export function makeIssueFact(overrides: Partial<IssueFact> & { number: number }
 }
 
 export function makeCheckRun(name: string, overrides: Partial<CheckRunInfo> = {}): CheckRunInfo {
-  return { name, status: 'completed', conclusion: 'success', ...overrides };
+  return { name, status: 'completed', conclusion: 'success', id: 0, startedAt: null, ...overrides };
 }

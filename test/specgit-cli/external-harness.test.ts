@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import * as path from 'node:path';
 import { parse } from 'yaml';
 
@@ -18,6 +19,7 @@ import {
   writeExternalHarnessWorkflow,
 } from '../../src/cli/external-harness.js';
 import { ACCEPTANCE_CHECK_NAME, HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-assets.js';
+import { createFakeGh } from '../specgit/helpers/fake-gh.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const INPUT = { defaultBranch: 'master', version: '1.2.3' } as const;
@@ -108,6 +110,114 @@ describe('external acceptance harness template', () => {
     }
     for (const defaultBranch of ['', '   ', 'feature x']) {
       expect(() => externalAcceptanceWorkflowYaml({ defaultBranch, version: '1.2.3' }), defaultBranch).toThrow();
+    }
+  });
+});
+
+describe('external wait step truth-run semantics (#119)', () => {
+  /**
+   * Re-runs keep every same-name run in the Checks API. The generated
+   * wait step must decide terminality on the truth run — latest by
+   * started_at, ties broken by the higher check-run id (the decision
+   * docs/reference.md states once for verdict and wait step alike) —
+   * never on response position (last-wins) . The script is executed
+   * verbatim through the fake gh seam, from a minimal adopting layout.
+   */
+  const SIBLING = 'Sibling Check';
+  const RULE_SHA = 'a'.repeat(40);
+
+  function waitScript(): string {
+    const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+    };
+    const step = parsed.jobs['specgit-acceptance'].steps.find(
+      (s) => s.name === 'Wait for sibling checks'
+    );
+    const match = /<<'EOF'\n([\s\S]*)\nEOF/.exec(step?.run ?? '');
+    if (!match) throw new Error('wait step does not carry a quoted heredoc script');
+    return match[1];
+  }
+
+  function makeAdoptingLayout(dir: string): void {
+    fs.mkdirSync(path.join(dir, 'spec_git'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'spec_git', 'policy.yaml'),
+      `version: 1\nrequired_checks:\n  - ${SIBLING}\n`,
+      'utf-8'
+    );
+    // The script resolves `yaml` from the adopting repo's node_modules.
+    fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+    fs.symlinkSync(
+      path.resolve(__dirname, '..', '..', 'node_modules', 'yaml'),
+      path.join(dir, 'node_modules', 'yaml'),
+      'dir'
+    );
+  }
+
+  function runWait(checkRuns: unknown[]): SpawnSyncReturns<string> {
+    const dir = makeTempDir('specgit-wait-truth-');
+    makeAdoptingLayout(dir);
+    const gh = createFakeGh(dir, [
+      { match: '^--version$', stdout: 'gh version 2.60.0-fixture\n' },
+      {
+        match: '^api repos/.*/commits/[0-9a-f]+/check-runs',
+        stdout: JSON.stringify({ total_count: checkRuns.length, check_runs: checkRuns }),
+      },
+    ]);
+    try {
+      return spawnSync(process.execPath, ['--input-type=module'], {
+        cwd: dir,
+        input: waitScript(),
+        encoding: 'utf-8',
+        timeout: 15_000,
+        env: gh.env({
+          WAIT_REPO: 'fixture/adopting',
+          WAIT_SHA: RULE_SHA,
+        }),
+      });
+    } finally {
+      rmDir(dir);
+    }
+  }
+
+  it('waits while only the truth run is in flight (old-green/new-red)', { timeout: 30_000 }, () => {
+    // Latest-by-started_at run is in_progress; the older run is completed.
+    // Last-wins-by-position would read the older terminal run and exit 0.
+    const wait = runWait([
+      { name: SIBLING, status: 'in_progress', conclusion: null, started_at: '2026-08-20T14:00:00Z', id: 2 },
+      { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T13:00:00Z', id: 1 },
+    ]);
+    expect(wait.stdout).toContain(`Waiting for: ${SIBLING}`);
+    expect(wait.stdout).not.toContain('All required checks are in a terminal state.');
+    expect(wait.status).not.toBe(0);
+  });
+
+  it('stops waiting once the truth run is terminal (old-red/new-green)', { timeout: 30_000 }, () => {
+    // Latest-by-started_at run is completed; the older run is still
+    // in_progress. Last-wins-by-position would read the older run and
+    // wait on evidence the truth run already superseded.
+    const wait = runWait([
+      { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T14:00:00Z', id: 2 },
+      { name: SIBLING, status: 'in_progress', conclusion: null, started_at: '2026-08-20T13:00:00Z', id: 1 },
+    ]);
+    expect(wait.status, wait.stderr).toBe(0);
+    expect(wait.stdout).toContain('All required checks are in a terminal state.');
+  });
+
+  it('breaks started_at ties by the higher check-run id, order-independent', { timeout: 30_000 }, () => {
+    for (const runs of [
+      [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T14:00:00Z', id: 11 },
+        { name: SIBLING, status: 'in_progress', conclusion: null, started_at: '2026-08-20T14:00:00Z', id: 1 },
+      ],
+      [
+        { name: SIBLING, status: 'in_progress', conclusion: null, started_at: '2026-08-20T14:00:00Z', id: 1 },
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T14:00:00Z', id: 11 },
+      ],
+    ]) {
+      const wait = runWait(runs);
+      expect(wait.status, wait.stderr).toBe(0);
+      expect(wait.stdout).toContain('All required checks are in a terminal state.');
     }
   });
 });
