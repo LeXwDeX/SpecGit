@@ -692,9 +692,33 @@ export async function runInit(
     return legacyGitHooksDir(repoRoot);
   };
 
+  // #117: the platform resolves BEFORE the harness write — GitLab mode
+  // changes what the harness is (no GitHub Actions workflow; a GitLab
+  // CI harness template is future work, tracked in
+  // docs/gitlab-support.md). The declaration persists first so
+  // resolvePlatformMode reads the declaration this run just validated.
+  if (declaredEndpoint !== null) {
+    await persistGitlabHost(declaredEndpoint.host, declaredEndpoint.port, root, warnings);
+  }
+
+  const platform = await resolvePlatformMode(options, ctx, root, warnings);
+  const gitlabMode = platform.outcome.mode === 'gitlab';
+  if (gitlabMode) {
+    warnings.push({
+      severity: 'warning',
+      code: 'gitlab_harness_pending',
+      message:
+        'The GitLab CI harness template is not generated yet; a GitHub Actions workflow would be wrong-platform output here — carry your own .gitlab-ci.yml.',
+      fix: 'Its top-level job keys become the required checks (detect from the file or pass --required-check); see docs/gitlab-support.md.',
+    });
+  }
+
   let harness: HarnessWriteResult;
   try {
-    harness = await writeHarnessAssets(root, { resolveHooksDir, workflowYaml: selection.yaml });
+    harness = await writeHarnessAssets(root, {
+      resolveHooksDir,
+      workflowYaml: gitlabMode ? null : selection.yaml,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -717,12 +741,6 @@ export async function runInit(
     };
   }
 
-  if (declaredEndpoint !== null) {
-    await persistGitlabHost(declaredEndpoint.host, declaredEndpoint.port, root, warnings);
-  }
-
-  const platform = await resolvePlatformMode(options, ctx, root, warnings);
-
   let protection: ProtectionOutcome | undefined;
   let protectionHuman: string[] = [];
   if (options.protect !== false) {
@@ -734,7 +752,7 @@ export async function runInit(
   return {
     exit: EXIT_SUCCESS,
     policy,
-    harness: { template: selection.template },
+    harness: { template: gitlabMode ? 'gitlab-pending' : selection.template },
     platform: platform.outcome,
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),

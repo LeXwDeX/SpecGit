@@ -4,7 +4,7 @@ import {
   formatRepoRef,
   parsePrUrl,
   parseRepoRef,
-  requireGithubRoute,
+
   sameRepoRef,
 } from '../../src/gitfacts/origin.js';
 
@@ -637,37 +637,13 @@ describe('parseRepoRef — structural host classification (security hardening)',
 });
 
 // #112: the shared guard for GitHub-only evidence flows (the production
-// CLI wiring and the evaluator's origin gate). A ref that resolved
-// through the GitLab declaration can never be served through gh — fail
-// closed with declaration-aware text instead of handing gh a
-// group/subgroup ref.
-describe('requireGithubRoute — GitHub-only consumers route on the platform marker (#112)', () => {
-  it('passes a github ref through unchanged', () => {
-    const parsed = parseRepoRef('https://github.com/o/r');
-    expect(requireGithubRoute(parsed)).toEqual(parsed);
-  });
-
-  it('fails a declared-gitlab ref closed as gitlab_unsupported with declaration-aware text', () => {
-    const parsed = parseRepoRef('https://git.example.com/g/sg/p.git', {
-      gitlabHost: 'git.example.com',
-    });
-    expect(parsed.ok).toBe(true);
-    const routed = requireGithubRoute(parsed);
-    expect(routed.ok).toBe(false);
-    if (routed.ok) return;
-    expect(routed.code).toBe('gitlab_unsupported');
-    expect(routed.message).toContain('providers.yaml');
-    expect(routed.message).toContain('g/sg/p');
-    expect(routed.fix).not.toMatch(/github\.com/);
-  });
-
-  it('passes failures through unchanged (heuristic and unresolvable)', () => {
-    const heuristic = parseRepoRef('https://gitlab.com/o/r.git');
-    expect(requireGithubRoute(heuristic)).toEqual(heuristic);
-    const unresolvable = parseRepoRef('https://example.com/o/r.git');
-    expect(requireGithubRoute(unresolvable)).toEqual(unresolvable);
-  });
-});
+// #117: the GitHub-only route guard (requireGithubRoute, #112) retired —
+// evaluation and the gh-backed commands now route through the platform
+// routing provider (src/providers/routing.ts), which dispatches on the
+// platform marker so a group/subgroup ref never reaches the gh adapter.
+// The routing behavior is pinned by test/specgit/routing-provider.test.ts
+// and the #117 e2e; the parse-level gitlab_unsupported shapes (undeclared
+// host, too-deep path) are pinned above.
 
 describe('parsePrUrl', () => {
   it('parses a canonical github.com PR URL', () => {

@@ -519,23 +519,12 @@ describe('acceptance evaluator', () => {
       classification: 'rejected',
     },
     {
-      // #112 (platform routing): a DECLARED GitLab origin resolves
-      // grammatically (nested group path accepted), and the evaluator
-      // routes on the declaration — the GitHub evidence path must not
-      // run against a group/subgroup ref, so the origin gate fails
-      // gitlab_unsupported (factual, exit 1) until the glab provider
-      // lands.
-      name: 'gitlab_unsupported (declared nested-group origin, routed)',
-      input: () =>
-        input({
-          gitlabHost: 'git.example.com',
-          git: new StubGitPort(facts({ originUrl: 'https://git.example.com/g/sg/p.git' })),
-        }),
-      gate: 'origin',
-      code: 'gitlab_unsupported',
-      classification: 'rejected',
-    },
-    {
+      // #117 (platform routing): a DECLARED GitLab origin resolves
+      // grammatically (nested group path accepted) and now ROUTES — the
+      // origin gate passes the platform-marked ref to the (neutral)
+      // provider input instead of failing closed. The undeclared-host
+      // and too-deep shapes still fail gitlab_unsupported at parse
+      // level (the case two rows up).
       name: 'origin_unresolvable',
       input: () =>
         input({ git: new StubGitPort(facts({ originUrl: 'https://example.com/o/r.git' })) }),
@@ -707,13 +696,24 @@ describe('acceptance evaluator', () => {
     }
   });
 
-  // #112: platform routing for evaluation reads the providers.yaml
+  // #117: platform routing for evaluation reads the providers.yaml
   // declaration only. A declared GitLab origin resolves (nested-group
-  // grammar accepted), the verdict is a factual rejection, and the
-  // GitHub provider is never invoked — no gh call ever sees a
-  // group/subgroup ref.
-  it('routes a declared GitLab origin without invoking the GitHub provider (#112)', async () => {
-    const gh = new MockGitHubProvider();
+  // grammar accepted) and the evaluation runs end to end through the
+  // (neutral) provider input — the closing gate parses the MR body with
+  // the GitLab dialect, proven by a gerund form the GitHub grammar
+  // cannot match. This is the evaluator seam the production routing
+  // provider feeds glab into.
+  it('evaluates a declared GitLab origin through the provider with the GitLab closing dialect (#117)', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(
+        makePrFact({
+          headBranch: 'feat/123-login',
+          headSha: HEAD,
+          body: 'Implementing #123',
+        })
+      ),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
     const verdict = await evaluate(
       input({
         gitlabHost: 'git.example.com',
@@ -721,13 +721,35 @@ describe('acceptance evaluator', () => {
         gh,
       })
     );
+    expect(verdict.classification).toBe('accepted');
+    expect(verdict.exitCode).toBe(0);
+    expect(verdict.evidence.repo).toBe('g/sg/p');
+    expect(gh.calls.length).toBeGreaterThan(0);
+    const origin = gate(verdict, 'origin');
+    expect(origin.status).toBe('pass');
+    const closing = gate(verdict, 'closing');
+    expect(closing.status).toBe('pass');
+  });
+
+  // The same body under a github.com origin must NOT close the issue:
+  // the dialect follows the platform marker, and the GitHub grammar
+  // does not know the gerund form — the mirror proof of the routing.
+  it('a gerund closing form does not close a GitHub-grammar delivery (#117 mirror)', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(
+        makePrFact({
+          headBranch: 'feat/123-login',
+          headSha: HEAD,
+          body: 'Implementing #123',
+        })
+      ),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(input({ gh }));
     expect(verdict.classification).toBe('rejected');
-    expect(verdict.exitCode).toBe(1);
-    expect(gh.calls).toEqual([]);
-    const g = gate(verdict, 'origin');
-    expect(g.failures[0].code).toBe('gitlab_unsupported');
-    expect(g.failures[0].message).toContain('providers.yaml');
-    expect(g.failures[0].fix).not.toMatch(/github\.com/);
+    const closing = gate(verdict, 'closing');
+    expect(closing.status).toBe('fail');
+    expect(closing.failures.map((f) => f.code)).toContain('closing_refs_incomplete');
   });
 
   it('accepts a worktree-context delivery end to end', async () => {

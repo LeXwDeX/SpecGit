@@ -5,7 +5,11 @@
  * - record IO and root discovery   → `src/record/**`
  * - local git facts                → `src/gitfacts/**` (LocalGitAdapter,
  *                                    parseRepoRef)
- * - GitHub seam                    → `src/github/**` (GhCliGitHubProvider)
+ * - forge evidence                 → `src/providers/**`: one routing
+ *                                    provider (#117) dispatching per call
+ *                                    to the gh adapter (GitHub refs) or
+ *                                    the glab adapter (refs resolved
+ *                                    through the GitLab declaration)
  * - acceptance evaluation          → `src/acceptance/**` (evaluate)
  *
  * `--help` and `--version` work without touching any of this beyond the
@@ -18,11 +22,13 @@ import { promisify } from 'node:util';
 
 import { evaluate } from '../acceptance/evaluate.js';
 import { LocalGitAdapter } from '../gitfacts/local.js';
-import { parseRepoRef, requireGithubRoute } from '../gitfacts/origin.js';
+import { parseRepoRef } from '../gitfacts/origin.js';
 import { GhCliGitHubProvider } from '../providers/github/gh-cli.js';
+import { GlabProvider } from '../providers/gitlab/glab-cli.js';
+import { PlatformRoutingProvider } from '../providers/routing.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import * as recordIo from '../record/io.js';
-import { readProviders } from '../record/io.js';
+import { readPolicy, readProviders } from '../record/io.js';
 import { discoverRepoRoot } from '../record/root.js';
 import type { CommandContext } from './types.js';
 
@@ -98,12 +104,51 @@ export function createDefaultContext(): CommandContext {
       return undefined;
     }
   };
+
+  // The policy's required_checks (#116): the glab adapter's verified
+  // pipeline-gate intersection reads the policy names, so the delegate is
+  // constructed with them. Without a readable policy there is nothing to
+  // verify — the adapter reports `[]` and never fabricates an intersection.
+  const policyRequiredChecks = async (): Promise<string[] | undefined> => {
+    try {
+      const rootEv = await discoverRepoRoot(process.cwd());
+      if (!rootEv.ok) return undefined;
+      const policy = await readPolicy(rootEv.value);
+      return policy.ok ? policy.value.required_checks : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const routingProvider = new PlatformRoutingProvider({
+    github: gh,
+    gitlab: async () =>
+      new GlabProvider({
+        hostname: await declaredGitlabHost(),
+        requiredChecks: await policyRequiredChecks(),
+      }),
+    originPlatform: async () => {
+      const gitlabHost = await declaredGitlabHost();
+      if (gitlabHost === undefined) return 'github';
+      try {
+        const rootEv = await discoverRepoRoot(process.cwd());
+        if (!rootEv.ok) return 'undecided';
+        const facts = await git.facts(rootEv.value);
+        if (facts.originUrl === null) return 'undecided';
+        const parsed = parseRepoRef(facts.originUrl, { gitlabHost });
+        if (!parsed.ok) return 'undecided';
+        return parsed.value.platform === 'gitlab' ? 'gitlab' : 'github';
+      } catch {
+        return 'undecided';
+      }
+    },
+  });
+
   const parseRepoRefWithProviders = async (originUrl: string) =>
-    // #112: the production context wires only the GitHub evidence
-    // provider (gh). An origin that resolves through the GitLab
-    // declaration fails closed at this seam — no gh-backed command ever
-    // receives a group/subgroup ref.
-    requireGithubRoute(parseRepoRef(originUrl, { gitlabHost: await declaredGitlabHost() }));
+    // #117: the parse result carries the platform marker; commands hand
+    // repo refs to the (routing) provider, which dispatches per marker —
+    // a GitLab-declared origin reaches glab, never the gh adapter.
+    parseRepoRef(originUrl, { gitlabHost: await declaredGitlabHost() });
 
   return {
     io: consoleIO(),
@@ -113,7 +158,7 @@ export function createDefaultContext(): CommandContext {
     discoverRoot: discoverRepoRoot,
     probeGitBinary,
     git,
-    gh,
+    gh: routingProvider,
     record: recordIo,
     evaluate: (async (input: Parameters<typeof evaluate>[0]) =>
       evaluate(

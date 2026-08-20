@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import {
   makeCtx,
   makeGitFacts,
@@ -126,6 +127,25 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     const gate = envelope.gates.find((g: any) => g.id === 'origin');
     expect(gate.status).toBe('fail');
     expect(gate.failures.map((f: any) => f.code)).toEqual(['gitlab_unsupported']);
+  });
+
+  // #117 (provider routing): a DECLARED GitLab origin resolves through
+  // the nested-group grammar — the origin gate passes and the evidence
+  // repo carries the full group path.
+  it('passes the origin gate for a declared GitLab origin (#117)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'https://git.example.com/g/sg/p.git' }),
+      parseRepoRef: (url: string) =>
+        parseRepoRef(url, { gitlabHost: 'git.example.com' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const gate = envelope.gates.find((g: any) => g.id === 'origin');
+    expect(gate.status).toBe('pass');
+    expect(envelope.evidence.repo).toBe('g/sg/p');
   });
 
   it('fails closed (exit 3) when the policy is missing', async () => {

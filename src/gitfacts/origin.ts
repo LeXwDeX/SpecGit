@@ -506,27 +506,6 @@ export function formatRepoRef(repo: RepoRef): string {
   return `${repo.owner}/${repo.repo}`;
 }
 
-/**
- * #112: the guard for GitHub-only evidence flows. specgit gathers
- * evidence through `gh` only today, so a ref that resolved through the
- * GitLab declaration (the platform marker — reachable only via
- * providers.yaml, never the substring heuristic) cannot be served on
- * this route: fail closed as `gitlab_unsupported` with
- * declaration-aware text — the declaration is correct, the glab
- * provider is the missing piece. A github ref and every failure pass
- * through unchanged.
- */
-export function requireGithubRoute(parsed: Evidence<RepoRef>): Evidence<RepoRef> {
-  if (!parsed.ok || parsed.value.platform !== 'gitlab') {
-    return parsed;
-  }
-  return fail(
-    'gitlab_unsupported',
-    `Origin resolves through the GitLab declaration in spec_git/providers.yaml (${formatRepoRef(parsed.value)}); GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
-    'The declaration is correct; see docs/gitlab-support.md for the glab roadmap (Phase 2).'
-  );
-}
-
 export function sameRepoRef(a: RepoRef, b: RepoRef): boolean {
   return a.owner.toLowerCase() === b.owner.toLowerCase() && a.repo.toLowerCase() === b.repo.toLowerCase();
 }
