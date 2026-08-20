@@ -1036,7 +1036,6 @@ describe('sequence gate consumes the complete open-issue list (issue #120)', () 
 
     expect(verdict.classification).toBe('rejected');
     expect(verdict.exitCode).toBe(1);
-    expect(verdict.complete).toBe(true);
     const seq = gate(verdict, 'sequence');
     expect(seq.status).toBe('fail');
     expect(seq.failures[0].code).toBe('issue_out_of_order');

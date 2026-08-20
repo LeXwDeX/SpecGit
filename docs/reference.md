@@ -90,10 +90,10 @@ Evaluation runs **eleven gates** in order. Gates short-circuit **across** gates 
 | G5 origin | `origin` resolves to `owner/repo` | local git | `no_origin`, `origin_unresolvable`, `gitlab_unsupported` |
 | G6 provider | `gh` present and authenticated | gh preflight | `gh_missing`, `gh_unauthenticated`, `gh_transport` |
 | G7 issues | every bound issue exists and is an issue | gh | `issue_not_found`, `issue_is_pull_request` |
-| G8 sequence | issue merge order (when `ordered_issues: true`) | gh | `issue_out_of_order` |
+| G8 sequence | issue merge order (when `ordered_issues: true`) | gh | `issue_out_of_order`, `evidence_truncated` |
 | G9 pr | PR exists, not closed-unmerged, head branch matches context, same repo | gh | `pr_not_found`, `pr_closed_unmerged`, `pr_head_mismatch`, `pr_repo_mismatch` |
 | G10 closing refs | PR body closes every bound issue | parsed PR body | `closing_refs_incomplete` |
-| G11 checks | every required check green at PR head | gh | `checks_missing`, `checks_pending`, `checks_failed` (per check name) |
+| G11 checks | every required check green at PR head | gh | `checks_missing`, `checks_pending`, `checks_failed` (per check name), `evidence_truncated` |
 
 Context matching (G4): the live branch must equal `context.branch`; a detached HEAD fails outright. For `kind: worktree`, the live checkout must additionally be a linked worktree whose label resolves (in `git worktree list`) to `context.branch`.
 
@@ -101,7 +101,7 @@ Merged-delivery lineage (G4): `branch_mismatch` has one exculpation — the boun
 
 Non-gate repair diagnostics: `pr_ambiguous` — `specgit pr` (auto-discovery) and `specgit issue` (PR idempotency probe) refuse when several open pull requests share the head branch, listing the candidates with the fix `specgit pr <number>` (exit 3). See the [CLI reference](cli.md) for the full command surface.
 
-Sequence (G8): evaluated only when `policy.ordered_issues` is `true`; otherwise the gate passes vacuously. When on, a delivery whose smallest bound issue has a smaller-numbered **open** issue ahead of it fails with `issue_out_of_order` (exit 1) — deliver or close the earlier issue first.
+Sequence (G8): evaluated only when `policy.ordered_issues` is `true`; otherwise the gate passes vacuously. When on, a delivery whose smallest bound issue has a smaller-numbered **open** issue ahead of it fails with `issue_out_of_order` (exit 1) — deliver or close the earlier issue first. The gate consumes the **complete** open-issue list (#120): the provider pages the issue search to exhaustion, and a truncation signal fails `evidence_truncated` (exit 3) instead of letting an earlier issue hide beyond page 1.
 
 Closing refs (G10) and the draft scaffold: `specgit issue` writes the PR body once, at draft creation — a deterministic scaffold whose `Closes #n` lines for the bound issues come first, followed by advisory Why / What changed / Evidence / Checklist sections. The placeholders are never gates: G10 parses closing references only, so any body that closes every bound issue passes, scaffold or hand-written. No SpecGit command edits an existing PR body (resume and `specgit pr` repair bind or adopt as-is), and the adopting repository's own pull-request templates are never read.
 
@@ -114,6 +114,7 @@ Additional evidence rules:
 - Local HEAD ≠ PR head SHA ⇒ informational `local_head_stale` warning only. Acceptance is about the PR.
 - A dirty working tree is reported in evidence; it is never a gate.
 - Any evidence failure or unknown ⇒ verdict `unknown`, exit 3 — unless all evidence was gathered and ≥1 gate failed ⇒ `rejected`, exit 1.
+- Evidence completeness (#120, I3b): list-shaped evidence inputs are exhausted or the verdict is `unknown`. The open-issue search and check-run pagination run to exhaustion; a truncation signal — GitHub `incomplete_results: true`, or a pagination cap reached on a full page (GitHub search never returns more than 1000 results) — fails `evidence_truncated` (exit 3). A silently partial list is never consumed by a verdict or by issue adoption. (`specgit pr` discovery uses a bounded probe whose zero/one/several refusal semantics are fail-safe under truncation: ≥2 matches always refuse with the candidate list.)
 
 ## Closing references (G10)
 
@@ -145,7 +146,7 @@ All remote evidence flows through the `gh` CLI — no other endpoint selection e
 
 - `gh` not found ⇒ `gh_missing`; `gh auth status` failing ⇒ `gh_unauthenticated` (remediation text is shown; tokens are never read or printed).
 - The `gh` executable is resolved per invocation: an explicit internal override, then `SPECGIT_GH`, then `gh` on `PATH`. Each call gets a hard timeout — `SPECGIT_GH_TIMEOUT_MS` when set, `15000` ms by default — plus response-size caps, array-form arguments, and JSON-only handling. Strings returned by the API are sanitized (control characters stripped, values truncated) before any terminal rendering.
-- HTTP 404 ⇒ `issue_not_found` / `pr_not_found`; other transport failures and timeouts ⇒ `gh_transport`. Every failure is evidence; none of them pass acceptance, and there is no silent fallback.
+- HTTP 404 ⇒ `issue_not_found` / `pr_not_found`; other transport failures and timeouts ⇒ `gh_transport`. Truncation of a list-shaped response (`incomplete_results: true`, a pagination cap hit on a full page) ⇒ `evidence_truncated`. Every failure is evidence; none of them pass acceptance, and there is no silent fallback.
 - The seam is injectable: tests run against a mock provider (and `SPECGIT_GH` can point at a scripted `gh`), so acceptance logic is verifiable offline.
 
 ## State and assets

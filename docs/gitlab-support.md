@@ -25,7 +25,7 @@ A GitLab origin is **recognized, not silently misread**:
 
 1. **Mirror the seam, do not fork the gates.** Acceptance evaluation (record → policy → completeness → context → origin → provider → issues → pr → closing → checks) is platform-agnostic. Only evidence *collection* is platform-specific.
 2. **One CLI per platform, authenticated, no tokens in state or logs.** GitHub evidence flows through `gh`; GitLab evidence will flow through `glab`. No direct REST clients.
-3. **Fail-closed carries over.** Missing glab, unauthenticated glab, an out-of-range server version, or an unreachable GitLab yields `unknown`, never `accepted`.
+3. **Fail-closed carries over.** Missing glab, unauthenticated glab, an out-of-range server version, or an unreachable GitLab yields `unknown`, never `accepted`. That includes the evidence-completeness rule (#120): every `rel="next"` continuation must run to exhaustion, and a full page without a usable `rel="next"` link — or a continuation that errors mid-list — fails closed (`evidence_truncated`, exit 3) exactly like `gh` today; a silently partial list is never consumed. The `getOpenIssueNumbers` and `getCheckRuns` cells in the method map below are planned under this rule from day one.
 4. **Free-tier primitives only, honestly reported.** Ultimate-only status checks (`only_allow_merge_if_all_status_checks_passed`) are excluded forever (ledger row 22); `requiredChecks` reports the verified pipeline-gate intersection instead of fabricating GitHub semantics (ledger rows 7/20).
 
 ## Phases
