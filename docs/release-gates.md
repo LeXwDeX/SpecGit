@@ -27,7 +27,7 @@ workflow and agent surface) — see the growth discipline in §5.
 | **I0 exit-code contract** | Every command exits `0` (success / accepted), `1` (rejected, with complete evidence), `2` (usage error), `3` (fail-closed unknown — no verdict possible), or `130` (interrupt; outside the `--json` envelope). `1` vs `3` is contractual. | Any run with incomplete evidence exiting `1`, or reporting `accepted` on a non-zero exit, on any provider port. | Holds; exit-1 "complete evidence" is bounded by I3b below |
 | **I1 binding closure** | One issue carries one independently verifiable WHY; one delivery binds N issues to one PR whose closing references close them all; a delivery is done if and only if `specgit finish` exits `0`. | An accepted delivery whose merge leaves a bound issue open, or closes an issue that was never bound. | Holds (forward direction enforced; stance decisions tracked via the growth discipline) |
 | **I2 real evidence** | Every gate reads live git and forge facts — branch state, the PR, check runs, issue state; the record is a claim, never truth. | Any gate outcome decided by the record file where live evidence disagrees. | Holds |
-| **I3 fail-closed, both branches** | **I3a (errors):** any failure to gather evidence degrades the verdict to `unknown` / exit `3`, never `accepted`. **I3b (silent incompleteness):** every list-shaped evidence input is paginated to exhaustion or signals truncation and degrades the verdict to exit `3` — a truncated list is unknown evidence, not a pass. | Missing or truncated evidence producing exit `1` ("complete evidence") or `accepted`. | I3a implemented and e2e-pinned; **I3b is being implemented by [#120](https://github.com/LeXwDeX/SpecGit/issues/120)** |
+| **I3 fail-closed, both branches** | **I3a (errors):** any failure to gather evidence degrades the verdict to `unknown` / exit `3`, never `accepted`. **I3b (silent incompleteness):** every list-shaped evidence input is paginated to exhaustion or signals truncation and degrades the verdict to exit `3` — a truncated list is unknown evidence, not a pass. | Missing or truncated evidence producing exit `1` ("complete evidence") or `accepted`. | I3a implemented and e2e-pinned; I3b implemented by [#120](https://github.com/LeXwDeX/SpecGit/issues/120) via [#133](https://github.com/LeXwDeX/SpecGit/pull/133) (merged `7d83c7ea`, 2026-08-20; `evidence_truncated` pinned in `test/specgit/acceptance.test.ts`) |
 | **I4 idempotent resume** | Re-running any bootstrap/resume command converges on the same delivery — same issues, branch, PR, and record — without duplication. | A resume that forks a second PR or branch for one delivery, or resurrects a merged one, or adopts an unrelated same-title issue. | Holds in the happy path; post-merge no-args resurrection closed by [#75](https://github.com/LeXwDeX/SpecGit/issues/75) (merged record → `issue_delivery_merged` exit 2, mergedness probe fails closed); same-title adoption corner closed by [#77](https://github.com/LeXwDeX/SpecGit/issues/77) via [#140](https://github.com/LeXwDeX/SpecGit/pull/140) (one title-carrying exhaustive scan, scaffold-body disambiguation, `issue_title_ambiguous` exit 2 on unresolved collisions) |
 | **I5 single-record state** | Persistent state is exactly the three file tiers — authoritative committed files (the policy `spec_git/policy.yaml` and the record `.specgit.yaml`), the derived committed harness, and local integration assets; a conflicting or unparseable record fails closed with diagnostics. | State that lives outside the tiers, or a record conflict silently resolved. | Holds |
 
@@ -41,10 +41,10 @@ into the row.
 
 | Blocker | Red-line it closes | Evidence (paste on closure) |
 | --- | --- | --- |
-| [#119 — unify duplicate check-run semantics](https://github.com/LeXwDeX/SpecGit/issues/119) | Re-run with old-green/new-red: the verdict, the wait step, and the docs each read a different same-name run; acceptance over stale evidence. | _open_ — PR link + merged SHA (+ Actions run URL if runtime-pinned) |
-| [#120 — fail closed on silently truncated evidence lists (I3b)](https://github.com/LeXwDeX/SpecGit/issues/120) | >100-item evidence lists truncate silently today; the sequence gate and issue adoption can false-pass on a partial list. | _open_ — PR link + test names pinning paginate-or-exit-3 |
+| [#119 — unify duplicate check-run semantics](https://github.com/LeXwDeX/SpecGit/issues/119) | Re-run with old-green/new-red: the verdict, the wait step, and the docs each read a different same-name run; acceptance over stale evidence. | Closed by [#132](https://github.com/LeXwDeX/SpecGit/pull/132), merged `7955aad90cadeddf2e5e34c10f922c27d4983136` (2026-08-20) |
+| [#120 — fail closed on silently truncated evidence lists (I3b)](https://github.com/LeXwDeX/SpecGit/issues/120) | >100-item evidence lists truncate silently today; the sequence gate and issue adoption can false-pass on a partial list. | Closed by [#133](https://github.com/LeXwDeX/SpecGit/pull/133), merged `7d83c7eaff76b461f6f7bfb81da6049884fbd461` (2026-08-20); pinned by `test/specgit/acceptance.test.ts` — "sequence gate degrades to unknown (exit 3) when the open-issue list is truncated (#120, I3b)" and "checks gate degrades to unknown (exit 3) when the check-run list is truncated (#120, I3b)" |
 | [#121 — init detection trust boundary](https://github.com/LeXwDeX/SpecGit/issues/121) | Push-filtered and scheduled workflows are detected as required PR checks → permanent `checks_missing`; the "never weaken policy" iron rule then blocks the only correct repair — a stillborn harness. | Closed by [#130](https://github.com/LeXwDeX/SpecGit/pull/130): classification trigger-inclusion (`pull_request`/`pull_request_target` only), init warning `checks_not_pr_visible` + `detected.nonPrWorkflows` (pinned by init tests "classifies by PR trigger … #121"); repair path in [cli.md](cli.md) (detection trust boundary), [reference.md](reference.md) (wrong at birth vs weakening), [troubleshooting.md](troubleshooting.md) (`checks_missing`) |
-| [#122 — draft PR state is a verdict dimension](https://github.com/LeXwDeX/SpecGit/issues/122) | A draft PR (platform-level unmergeable) can be accepted as done and never re-verdicts on ready-for-review. | _open_ — PR link + updated gate table in [reference.md](reference.md) |
+| [#122 — draft PR state is a verdict dimension](https://github.com/LeXwDeX/SpecGit/issues/122) | A draft PR (platform-level unmergeable) can be accepted as done and never re-verdicts on ready-for-review. | Closed by [#131](https://github.com/LeXwDeX/SpecGit/pull/131), merged `1df9b3867d9f7a4d9195e0edac6691757a14a81d` (2026-08-20); gate table updated in [reference.md](reference.md) (`pr_draft`, workflow re-verdicts on `ready_for_review`) |
 
 ## 3. The GA five gates — the only completion vocabulary
 
@@ -109,6 +109,21 @@ neither gets an explicit **accept-or-defer** ruling before work starts — growt
 is chosen, not accumulated. First exercised:
 [#118](https://github.com/LeXwDeX/SpecGit/issues/118) (scaffolding language
 configurability) — ruled deferred-to-last, 2026-08-20.
+
+Deferred past 1.0.0 (evergreen loop probe list):
+
+- **Bootstrap chain-order hardening** — the `specgit issue` bootstrap creates
+  the draft PR before the first record commit/push, so a fresh worktree
+  bootstrap without a pre-pushed branch fails PR creation (`gh_transport`,
+  "No commits between…"), and the record lands in `kind: worktree` form that
+  CI-side acceptance (branch-by-name checkout) must convert to `kind: branch`.
+  Recurred in W1/W2 units (#139, #146) and again in the #118 final wave; the
+  documented remedy (push, re-run — it resumes) works. The hardening — commit
+  and push the record before draft-PR creation, and derive `kind` from the
+  live execution context — is **deferred post-1.0.0** (user-approved final-wave
+  scope: deliver #118, record the defer, never widen the final wave). Re-probe
+  in the evergreen loop: every fresh bootstrap that needs the manual remedy is
+  evidence to re-open the hardening ticket.
 
 ## 6. Known CI dispositions
 

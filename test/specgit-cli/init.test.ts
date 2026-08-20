@@ -988,3 +988,121 @@ describe('specgit init hook merging', () => {
     expect(envelope.warnings?.some((w: { code: string }) => w.code === 'hooks_json_unmerged')).toBe(true);
   });
 });
+
+describe('specgit init --language (#118)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-lang-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('writes language: zh into the policy and renders the harness guidance in zh', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      version: 1,
+      required_checks: ['Test'],
+      language: 'zh',
+    });
+    const agents = read(AGENTS_ABS(root));
+    expect(agents.startsWith(BLOCK_START_MARKER)).toBe(true);
+    expect(agents).toContain('交付');
+    expect(agents).toContain('specgit issue');
+    expect(agents.endsWith(BLOCK_END_MARKER + '\n')).toBe(true);
+  });
+
+  it('writes no language key for the default (en)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      version: 1,
+      required_checks: ['Test'],
+    });
+  });
+
+  it('the acceptance workflow is byte-identical under every language (machine artifact)', async () => {
+    const enRoot = makeTempDir('specgit-init-lang-en-');
+    try {
+      const zh = makeCtx({ root: { ok: true, value: root } });
+      const en = makeCtx({ root: { ok: true, value: enRoot } });
+      await runCliWith(
+        ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--no-protect'],
+        zh.ctx
+      );
+      await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect'], en.ctx);
+      // Adopting repos get the external template; the pin is that the
+      // language never changes the workflow bytes.
+      expect(read(WORKFLOW_ABS(root))).toBe(read(WORKFLOW_ABS(enRoot)));
+      expect(read(WORKFLOW_ABS(root))).not.toBe('');
+    } finally {
+      rmDir(enRoot);
+    }
+  });
+
+  it('rejects an unsupported --language value as a usage error with zero writes', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'fr', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('language_invalid');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(path.join(root, SPEC_GIT_DIR, POLICY_FILENAME))).toBe(false);
+  });
+
+  it('--force preserves the existing policy language when no --language is passed', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'], language: 'zh' },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      version: 1,
+      required_checks: ['Test'],
+      language: 'zh',
+    });
+    expect(read(AGENTS_ABS(root))).toContain('交付');
+  });
+
+  it('an explicit --language overrides the existing policy language on --force', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'], language: 'zh' },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--language', 'en', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      version: 1,
+      required_checks: ['Test'],
+    });
+  });
+
+  it('renders the human summary in the policy language', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--no-protect'],
+      t.ctx
+    );
+    expect(stdoutText(t.io)).toContain('已创建 spec_git/policy.yaml');
+    expect(stdoutText(t.io)).toContain('必需检查');
+  });
+});

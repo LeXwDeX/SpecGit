@@ -11,6 +11,7 @@ import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import { deriveBindingState } from '../gates.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { coercePrRef } from '../refs.js';
+import { catalogFor, commandLanguage } from '../language.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
 
 export interface PrOptions {
@@ -33,6 +34,9 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Co
     };
   }
   const root = rootEv.value;
+
+  const language = await commandLanguage(ctx, root);
+  const { human } = catalogFor(language);
 
   const existing = await ctx.record.readRecord(root);
   if (!existing.ok) {
@@ -141,8 +145,8 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Co
       pr: record.pr,
     },
     human: [
-      `Bound PR #${record.pr} to delivery '${record.delivery}':`,
-      `  Issues: ${record.issues.map((n) => `#${n}`).join(', ')}`,
+      human.prBound(record.pr as number | string, record.delivery),
+      human.prIssues(record.issues.map((n) => `#${n}`).join(', ')),
     ],
   };
 }

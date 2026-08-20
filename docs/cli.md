@@ -48,6 +48,25 @@ The distinction between `1` and `3` is contractual: `1` means the evidence was g
 
 These are the only SpecGit-specific environment inputs. Standard `NO_COLOR`/`CI` detection also applies. No tokens are ever read from the environment — authentication is your existing `gh` (or, for the GitLab adapter, `glab`) session.
 
+## Language configuration
+
+Generated text is language-configurable ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)); the machine contract is not. The optional `language` key in `spec_git/policy.yaml` selects the language of **generated** text — `en` (default; the key may be absent) or `zh`:
+
+- the issue-body scaffold and the draft-PR body scaffold written by `specgit issue` (the closing references `Closes #n` stay English — they are provider grammar, not prose);
+- the managed guidance block `specgit init` injects into `AGENTS.md` / `CLAUDE.md`;
+- success-path human prose on stderr (`specgit issue` / `pr` / `bind` / `unbind` / `status` / `setup` / `init` summaries, the `finish` headline).
+
+Set it at init time (`specgit init --language zh`) or edit the policy in a reviewed PR; `init --force` inherits the existing policy's language unless `--language` overrides it. An unsupported value fails closed (`policy_invalid`) — the strict policy schema lists the supported values in its diagnostic. The supported set is exactly `en`, `zh`; adding a language is a catalog addition in `src/i18n/language.ts`, not a policy-format change.
+
+Branch names stay ASCII under every language. The slug derivation is defined for any title: an ASCII-only title keeps the first-three-words kebab slug; any title containing non-ASCII characters falls back to the numeric form — issue #123 bootstraps branch `feat/123-issue123` (delivery `issue123`).
+
+**Never localized, under every configuration** (the machine contract):
+
+- exit codes (`0`/`1`/`2`/`3`/`130`) and `--json` envelope field names;
+- diagnostic `code` values — and, in 1.0.0, diagnostic prose (`message`/`fix`, warnings, gate and doctor probe lines): the evidence vocabulary stays greppable and locale-independent;
+- the closing-reference keywords (`Closes #n`);
+- generated machine artifacts: the acceptance workflow YAML, the guard hook scripts, and conventional-commit messages.
+
 ## `specgit init`
 
 Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates the delivery harness. Initialization is non-destructive:
@@ -72,6 +91,7 @@ specgit init --required-check build --required-check test    # repeatable
 | --- | --- |
 | `--required-check <name>` | A CI check name every delivery must pass (the exact check-run name). Repeatable. Omitted: names are auto-detected from CI files; a repository with no CI at all gets an empty list — the acceptance job itself, enforced through branch protection, is then the gate (a fallback name the harness cannot produce would deadlock the wait step). |
 | `--gitlab-host <hostname>` | Declare the origin's platform as GitLab on a self-hosted instance (bare hostname, or `host:port` when the instance uses a non-default port; must match the origin endpoint; rejected for github.com origins). Persists to `spec_git/providers.yaml`. |
+| `--language <lang>` | Language of generated text: `en` \| `zh` (default `en`). Persists to the policy's `language` key (non-default only); renders the managed guidance block and the run's human summary. Rejected before any write on unsupported values (`language_invalid`, exit 2). See [Language configuration](#language-configuration). |
 | `--protect` | Enable branch protection + auto-merge without asking. |
 | `--no-protect` | Skip the protection probe and warning entirely. |
 

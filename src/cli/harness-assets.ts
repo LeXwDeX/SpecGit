@@ -28,6 +28,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import type { PolicyLanguage } from '../record/policy.js';
+
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
 export const HARNESS_WORKFLOW_PATH = HARNESS_WORKFLOW_SEGMENTS.join('/');
@@ -176,7 +178,75 @@ jobs:
 `;
 }
 
-export function managedPromptBlock(): string {
+/**
+ * The managed guidance block (#118: language-aware). `en` is the
+ * pre-#118 text byte-for-byte; `zh` is its Chinese counterpart. The
+ * markers are identical in every language; command literals
+ * (`specgit ...`, `spec_git/policy.yaml`) stay verbatim so the guidance
+ * stays copy-pasteable. Generated machine artifacts — the workflow YAML,
+ * the guard scripts — are never localized.
+ */
+export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
+  if (language === 'zh') {
+    return `${BLOCK_START_MARKER}
+## SpecGit 交付工具链
+
+由 \`specgit init\` 托管。标记之间的内容会在每次 init 写入工具链时重新生成
+（全新 init，或策略已存在时的 \`--force\`）；手工指引请放在标记之外。
+
+### 交付故事
+
+- 用 \`specgit issue <标题或编号>...\` 开始：它会创建或复用议题、建分支、
+  开一个预填确定性骨架的草稿拉取请求（每个绑定议题一行 \`Closes #n\`，
+  随后是 为什么 / 变更内容 / 证据 / 清单 各节），并写入 \`.specgit.yaml\`。
+  重复执行会恢复现场；它是幂等的。
+- 在交付过程中填写骨架各节。占位内容仅是建议——关闭引用是正文里唯一的
+  门槛。PR 正文只在创建时写入一次；任何 SpecGit 命令都不会修改已存在的
+  PR 正文，也从不读取仓库自己的 PR 模板。
+- 用 \`specgit finish\` 收尾：裁决来自真实的 git、PR 与 CI 证据。退出码
+  0 是唯一的"完成"。
+
+### 修复与诊断
+
+- \`specgit pr\` 修复拉取请求绑定：不带参数时按当前头分支自动发现拉取
+  请求，找不到时报错并给出修复办法，找到多个时列出并拒绝。
+- \`specgit status\` 只展示本地证据：记录、状态、漂移、origin。
+  \`specgit doctor\` 探测 git、仓库、origin、gh 与策略。
+
+### 命令面
+
+- 十个命令：\`specgit init\`、\`specgit setup\`、\`specgit issue\`、
+  \`specgit pr\`、\`specgit finish\`、\`specgit bind\`、\`specgit unbind\`、
+  \`specgit status\`、\`specgit accept\`、\`specgit doctor\`。
+- \`specgit setup\` 安装代理入口（opencode 的命令、其他工具的可移植
+  skill）；\`specgit bind\`、\`specgit unbind\`、\`specgit accept\` 是面向
+  脚本与 CI 的自动化别名。
+
+### 建议题之前，先查重
+
+- 用新标题运行 \`specgit issue\` 之前，先在 tracker 里搜索相近的在办
+  工作：用标题关键词做 \`gh issue list\`（状态、标签、检索词用
+  \`gh search issues\`）。
+- 打开并阅读每一个疑似候选（\`gh issue view <n>\`）——比较 WHY 本身，
+  而不是措辞。
+- 若某个候选覆盖了同一个 WHY，继续那个议题而不是新建；若相近但不同，
+  说明差别在哪里。
+- 拿不准时，请提出请求的人决定是继续已有议题还是接受重复。一个团队
+  一个 WHY 只走一条工作线，绝不两条。
+
+### 议题粒度
+
+一个议题 = 一个可独立验证的 WHY。若一个交付物无法凭自身证据验证，
+先拆分再绑定。
+
+### 铁律
+
+- \`specgit finish\` 退出码非 0：绝不请求合并。修交付，不修门槛。
+- 绝不为了通过裁决而削弱 \`spec_git/policy.yaml\`。
+- \`--json\` 是唯一的解析面：stdout 恰好是一个 JSON 文档；绝不抓取
+  人读输出。
+${BLOCK_END_MARKER}`;
+  }
   return `${BLOCK_START_MARKER}
 ## SpecGit delivery harness
 
@@ -643,6 +713,12 @@ export interface HarnessWriteOptions {
    * platform-neutral asset is still written.
    */
   workflowYaml?: string | null;
+  /**
+   * Guidance language (#118): the managed prompt block renders in the
+   * policy's language. Defaults to `en`; the workflow YAML and guard
+   * scripts are machine artifacts and never localize.
+   */
+  language?: PolicyLanguage;
 }
 
 async function readIfExists(target: string): Promise<string | null> {
@@ -695,7 +771,7 @@ export async function writeHarnessAssets(
   const warnings: Array<{ code: string; message: string }> = [];
 
   // ---- Plan phase (reads + pure transforms; no writes yet) ----
-  const block = managedPromptBlock();
+  const block = managedPromptBlock(options.language);
   const planned: PlannedWrite[] = [];
   const prompts: string[] = [];
 

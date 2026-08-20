@@ -45,9 +45,11 @@ import {
 import { externalAcceptanceWorkflowYaml } from '../external-harness.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
+import { catalogFor, type HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext } from '../types.js';
 import { detectInitInputs, type DetectionReport } from '../detect-checks.js';
 import { extractOriginHost } from '../../gitfacts/origin.js';
+import { POLICY_LANGUAGES, type PolicyLanguage } from '../../record/policy.js';
 import type { BranchProtectionFact } from '../../github/port.js';
 import { readProviders, writeProviders } from '../../record/io.js';
 
@@ -59,6 +61,8 @@ export interface InitOptions {
   protect?: boolean;
   /** Bare hostname of a self-hosted GitLab instance matching the origin host. */
   gitlabHost?: string;
+  /** Presentation language of generated text (#118): en | zh. */
+  language?: string;
   json?: boolean;
 }
 
@@ -251,6 +255,25 @@ function declaredEndpointName(host: string, port: string | null): string {
 }
 
 /**
+ * Effective generated-text language (#118): an explicit --language wins
+ * (already validated); otherwise a --force rebuild inherits the existing
+ * policy's language; otherwise the default. Written into the policy only
+ * when it differs from the default, so default policies stay minimal.
+ */
+function resolveInitLanguage(
+  options: InitOptions,
+  existingLanguage: PolicyLanguage | undefined
+): PolicyLanguage {
+  if (options.language !== undefined) {
+    const match = POLICY_LANGUAGES.find((value) => value === options.language);
+    if (match !== undefined) {
+      return match;
+    }
+  }
+  return existingLanguage ?? 'en';
+}
+
+/**
  * Platform-mode selection: a github.com origin defaults to GitHub; any
  * other origin needs a declaration (TTY question or --gitlab-host). The
  * choice persists in spec_git/providers.yaml, team-shared. Evidence
@@ -260,7 +283,8 @@ async function resolvePlatformMode(
   options: InitOptions,
   ctx: CommandContext,
   root: string,
-  warnings: Diagnostic[]
+  warnings: Diagnostic[],
+  text: HumanText
 ): Promise<{ outcome: PlatformOutcome; human: string[] }> {
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
@@ -289,7 +313,7 @@ async function resolvePlatformMode(
   // gitlab heuristics never capture non-default ports either; those
   // endpoints need an explicit host(:port) declaration.
   if (endpoint !== null && endpoint.host === 'github.com' && endpointUsesDefaultPort(endpoint)) {
-    return { outcome: { mode: 'github' }, human: ['Platform: github (default from origin)'] };
+    return { outcome: { mode: 'github' }, human: [text.initPlatformGithubDefault()] };
   }
   if (
     endpoint !== null &&
@@ -305,7 +329,7 @@ async function resolvePlatformMode(
     }
     return {
       outcome: { mode: 'gitlab', gitlabHost: endpoint.host },
-      human: [`Platform: gitlab (${endpoint.host}) declared in ${SPEC_GIT_DIR}/providers.yaml`],
+      human: [text.initPlatformGitlab(endpoint.host, `${SPEC_GIT_DIR}/providers.yaml`)],
     };
   }
 
@@ -338,11 +362,11 @@ async function resolvePlatformMode(
       return {
         outcome: { mode: 'gitlab', gitlabHost: declaredEndpointName(endpoint.host, port) },
         human: [
-          `Platform: gitlab (${declaredEndpointName(endpoint.host, port)}) declared in ${SPEC_GIT_DIR}/providers.yaml`,
+          text.initPlatformGitlab(declaredEndpointName(endpoint.host, port), `${SPEC_GIT_DIR}/providers.yaml`),
         ],
       };
     }
-    return { outcome: { mode: 'github' }, human: ['Platform: github (user-selected)'] };
+    return { outcome: { mode: 'github' }, human: [text.initPlatformGithubUser()] };
   }
 
   warnings.push({
@@ -390,7 +414,8 @@ const PROTECT_FIX = (branch: string) =>
 async function guardAcceptanceBypass(
   options: InitOptions,
   ctx: CommandContext,
-  root: string
+  root: string,
+  text: HumanText
 ): Promise<{ outcome?: ProtectionOutcome; human: string[] }> {
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
@@ -522,8 +547,8 @@ async function guardAcceptanceBypass(
       action: 'protected',
     },
     human: [
-      `Branch protection: ${branch} now requires "${ACCEPTANCE_CHECK_NAME}"`,
-      `Auto-merge: ${automergeFinal ? 'enabled' : 'already on'}`,
+      text.initProtectionRequired(branch, ACCEPTANCE_CHECK_NAME),
+      text.initAutomerge(automergeFinal),
     ],
   };
 }
@@ -571,6 +596,23 @@ export async function runInit(
           'required_check_invalid',
           'Required check names must be non-empty.',
           { fix: 'Pass the exact check name as it appears in check-runs, e.g. --required-check build.' }
+        ),
+      ],
+    };
+  }
+
+  // #62 validation phase: the --language value is input validation, so an
+  // unsupported value rejects before any filesystem or remote mutation.
+  if (options.language !== undefined && !POLICY_LANGUAGES.includes(options.language as PolicyLanguage)) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'language_invalid',
+          `Language "${options.language}" is not supported for generated text.`,
+          {
+            fix: `Pass one of: ${POLICY_LANGUAGES.join(', ')} (default en), e.g. --language zh.`,
+          }
         ),
       ],
     };
@@ -701,7 +743,17 @@ export async function runInit(
     await persistGitlabHost(declaredEndpoint.host, declaredEndpoint.port, root, warnings);
   }
 
-  const platform = await resolvePlatformMode(options, ctx, root, warnings);
+  // #118: the effective generated-text language — explicit --language,
+  // else the existing policy's language on --force, else the default.
+  // Renders the harness guidance block and this run's human summary; the
+  // policy persists it (non-default only) so the whole harness speaks it.
+  const language = resolveInitLanguage(
+    options,
+    existingPolicy.ok ? existingPolicy.value.language : undefined
+  );
+  const { human: text } = catalogFor(language);
+
+  const platform = await resolvePlatformMode(options, ctx, root, warnings, text);
   const gitlabMode = platform.outcome.mode === 'gitlab';
   if (gitlabMode) {
     warnings.push({
@@ -718,6 +770,7 @@ export async function runInit(
     harness = await writeHarnessAssets(root, {
       resolveHooksDir,
       workflowYaml: gitlabMode ? null : selection.yaml,
+      language,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -730,7 +783,11 @@ export async function runInit(
     warnings.push({ severity: 'warning', ...warning });
   }
 
-  const policy = { version: 1 as const, required_checks: checks };
+  const policy = {
+    version: 1 as const,
+    required_checks: checks,
+    ...(language !== 'en' ? { language } : {}),
+  };
   try {
     await ctx.record.writePolicy(root, policy);
   } catch (error) {
@@ -744,7 +801,7 @@ export async function runInit(
   let protection: ProtectionOutcome | undefined;
   let protectionHuman: string[] = [];
   if (options.protect !== false) {
-    const guarded = await guardAcceptanceBypass(options, ctx, root);
+    const guarded = await guardAcceptanceBypass(options, ctx, root, text);
     protection = guarded.outcome;
     protectionHuman = guarded.human;
   }
@@ -768,23 +825,23 @@ export async function runInit(
         }
       : {}),
     human: [
-      `Created ${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
-      `Required checks (${checks.length}):`,
-      ...checks.map((name) => `  - ${name}`),
+      text.initCreatedPolicy(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`),
+      text.initRequiredChecks(checks.length),
+      ...checks.map((name) => text.initCheck(name)),
       ...platform.human,
       ...(detected !== null
         ? [
-            `Detected platform: ${detected.platform}`,
-            ...detected.sources.map((s) => `  detected from ${s}`),
+            text.initDetectedPlatform(detected.platform),
+            ...detected.sources.map((s) => text.initDetectedSource(s)),
             ...detected.nonPrWorkflows.map(
               (s) => `  skipped, never runs on a PR head: ${s}`
             ),
           ]
         : []),
-      `Created ${harness.workflow}`,
-      ...harness.hooks.map((hookPath) => `Created ${hookPath}`),
-      ...(harness.gitHook ? [`Installed git pre-push guard (${harness.gitHook})`] : []),
-      ...harness.prompts.map((filename) => `Managed block refreshed in ${filename}`),
+      text.initCreatedHook(harness.workflow),
+      ...harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)),
+      ...(harness.gitHook ? [text.initGitHook(harness.gitHook)] : []),
+      ...harness.prompts.map((filename) => text.initManagedRefreshed(filename)),
       ...protectionHuman,
     ],
   };

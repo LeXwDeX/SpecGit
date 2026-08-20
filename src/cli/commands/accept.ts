@@ -11,6 +11,7 @@
 
 import { EXIT_UNKNOWN } from '../exit-codes.js';
 import { errorDiagnostic, sanitize, type CommandOutcome } from '../output.js';
+import { catalogFor, resolveLanguage } from '../language.js';
 import type { CommandContext, Evidence } from '../types.js';
 
 export interface AcceptOptions {
@@ -36,16 +37,15 @@ export async function runAccept(
 
   const verdict = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
 
+  // Success-path headline follows the policy language (#118); the
+  // per-gate failure lines are diagnostic evidence and stay English.
+  const { human: text } = catalogFor(resolveLanguage(policy.ok ? policy.value : null));
   const headline =
     verdict.classification === 'accepted'
-      ? `Accepted: delivery '${verdict.evidence.delivery ?? '(unknown)'}'${
-          verdict.evidence.pr !== null ? ` (PR ${verdict.evidence.pr})` : ''
-        }.`
+      ? text.finishAccepted(verdict.evidence.delivery ?? '(unknown)', verdict.evidence.pr)
       : verdict.classification === 'rejected'
-        ? `Rejected: delivery '${verdict.evidence.delivery ?? '(unknown)'}' failed acceptance.`
-        : `Cannot determine acceptance${
-            verdict.evidence.delivery ? ` for delivery '${verdict.evidence.delivery}'` : ''
-          }.`;
+        ? text.finishRejected(verdict.evidence.delivery ?? '(unknown)')
+        : text.finishUnknown(verdict.evidence.delivery ?? null);
 
   const failureLines = verdict.gates.flatMap((gate) =>
     gate.failures.map(

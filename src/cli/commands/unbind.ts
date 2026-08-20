@@ -5,6 +5,7 @@
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { RECORD_FILENAME, type CommandContext } from '../types.js';
+import { catalogFor, commandLanguage } from '../language.js';
 
 export interface UnbindOptions {
   yes?: boolean;
@@ -28,6 +29,9 @@ export async function runUnbind(
     };
   }
   const root = rootEv.value;
+
+  const language = await commandLanguage(ctx, root);
+  const { human } = catalogFor(language);
 
   const existing = await ctx.record.readRecord(root);
   if (!existing.ok) {
@@ -65,7 +69,7 @@ export async function runUnbind(
       };
     }
     if (!(await promptForConfirmation(ctx))) {
-      return { exit: EXIT_SUCCESS, human: ['Unbind aborted; record kept.'] };
+      return { exit: EXIT_SUCCESS, human: [human.unbindAborted()] };
     }
   }
 
@@ -82,6 +86,6 @@ export async function runUnbind(
   return {
     exit: EXIT_SUCCESS,
     state: 'unbound',
-    human: [`Removed ${RECORD_FILENAME}.`],
+    human: [human.unbindRemoved(RECORD_FILENAME)],
   };
 }
