@@ -1,8 +1,9 @@
 version: 1
-delivery: issue77
+delivery: issue114
 context:
-  kind: branch
-  branch: feat/77-issue77
+  kind: worktree
+  label: w2-s3
+  branch: feat/114-issue114
 issues:
-  - 77
-pr: 140
+  - 114
+pr: 143
