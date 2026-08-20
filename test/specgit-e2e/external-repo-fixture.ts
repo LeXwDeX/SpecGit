@@ -26,9 +26,107 @@ export { rmDir };
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * Run npm, Windows-capable: npm is npm.cmd there and .cmd spawnables
- * require a shell (same approach as the repo's run-cli helper). With a
- * shell, args join with spaces — quote any arg containing one.
+ * npm's `bin/npm-cli.js` resolved against the running Node runtime —
+ * the #88 finding 4 (88-4) quoting hardening: invoking npm as
+ * `node npm-cli.js …` passes arguments as argv, so no Windows shell
+ * (cmd.exe, pwsh, or anything else) ever re-parses or re-quotes them.
+ *
+ * Candidate layouts, in order:
+ * 1. `<node dir>/node_modules/npm/…` — Windows installers, setup-node,
+ *    nvm-windows, volta;
+ * 2. `<node dir>/../lib/node_modules/npm/…` — POSIX tarball/source,
+ *    nvm, system installs;
+ * 3. an `npm` found on PATH that IS npm-cli.js after symlink
+ *    resolution (POSIX layouts symlink the JS entry directly — e.g.
+ *    Homebrew, where npm lives in a separate prefix from the node keg).
+ *
+ * `undefined` means no layout matched; the caller falls back to the
+ * legacy shell spawn.
+ */
+export function resolveNpmCli(): string | undefined {
+  const nodeDir = path.dirname(process.execPath);
+  const candidates = [
+    path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const names = process.platform === 'win32' ? ['npm.cmd', 'npm'] : ['npm'];
+  for (const name of names) {
+    const found = findOnPath(name);
+    if (!found) continue;
+    try {
+      const real = fs.realpathSync(found);
+      if (path.basename(real) === 'npm-cli.js') return real;
+    } catch {
+      // Unresolvable symlink — try the next candidate.
+    }
+  }
+  return undefined;
+}
+
+function findOnPath(name: string): string | undefined {
+  const pathValue = process.env.PATH ?? process.env.Path ?? '';
+  const extensions =
+    process.platform === 'win32'
+      ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').map((ext) => ext.toLowerCase())
+      : [''];
+  for (const dir of pathValue.split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of extensions) {
+      const candidate = path.join(dir, name.endsWith(ext.toUpperCase()) ? name : `${name}${ext}`);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+/** The spawn plan `runNpm` executes. */
+export interface NpmInvocation {
+  command: string;
+  args: string[];
+  shell: boolean;
+  /** True when the hardened shell-free path (npm-cli.js via Node) is in use. */
+  resolved: boolean;
+}
+
+/** The legacy Windows quoting, pinned verbatim: only whitespace is
+ *  wrapped in plain double quotes (cmd.exe dialect). Kept solely as
+ *  the fallback when `resolveNpmCli` finds no npm-cli.js. */
+export function quoteForWindowsShell(arg: string): string {
+  return /\s/.test(arg) ? `"${arg}"` : arg;
+}
+
+/**
+ * Build npm's spawn plan. Prefers the shell-free path (arguments as
+ * argv, `shell: false` on every platform); falls back to the legacy
+ * `npm`/`npm.cmd` spawn, shell-enabled on win32 with
+ * `quoteForWindowsShell`, when npm-cli.js cannot be resolved. Pass
+ * `npmCli: null` to force the legacy branch (tests).
+ */
+export function npmInvocation(
+  args: string[],
+  npmCli: string | null | undefined = resolveNpmCli()
+): NpmInvocation {
+  if (npmCli) {
+    return { command: process.execPath, args: [npmCli, ...args], shell: false, resolved: true };
+  }
+  const isWindows = process.platform === 'win32';
+  return {
+    command: isWindows ? 'npm.cmd' : 'npm',
+    args: isWindows ? args.map(quoteForWindowsShell) : args,
+    shell: isWindows,
+    resolved: false,
+  };
+}
+
+/**
+ * Run npm — shell-free wherever npm-cli.js resolves (#88 finding 4):
+ * arguments travel as argv, immune to per-shell quoting dialects
+ * whether the fixture runs under the CI pwsh wrapper or is copied by
+ * hand into any other Windows shell. The legacy shell spawn survives
+ * only as the unresolvable-layout fallback.
  *
  * Async on purpose: npm installs run 15-35s on hosted Windows runners,
  * and a synchronous spawnSync blocks the vitest worker's event loop for
@@ -38,13 +136,12 @@ const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * as unhandled errors that redden an otherwise green run. Keeping the
  * event loop alive is part of the fixture's contract with the runner.
  */
-function runNpm(args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
-  const isWindows = process.platform === 'win32';
-  const finalArgs = isWindows ? args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : args;
+export function runNpm(args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
+  const plan = npmInvocation(args);
   return new Promise((resolve, reject) => {
-    const child = spawn(isWindows ? 'npm.cmd' : 'npm', finalArgs, {
+    const child = spawn(plan.command, plan.args, {
       cwd,
-      shell: isWindows,
+      shell: plan.shell,
       env: env === undefined ? process.env : { ...process.env, ...env },
     });
     let stdout = '';
