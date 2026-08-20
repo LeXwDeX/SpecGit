@@ -735,7 +735,7 @@ describe('GlabProvider#getCheckRuns', () => {
     );
   }
 
-  it('chains pipelines-by-sha into per-pipeline jobs without include_retried (rows 15/16)', async () => {
+  it('chains pipelines-by-sha into per-pipeline jobs without include_retried (rows 15/16/17, #116)', async () => {
     const { provider, fake } = setup([
       {
         match: `pipelines\\?sha=${SHA}&per_page=100&page=1$`,
@@ -754,11 +754,14 @@ describe('GlabProvider#getCheckRuns', () => {
     const result = await provider.getCheckRuns(REPO, SHA);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    // #116 mapping (ledger rows 16/17/26): final states complete the
+    // run — success/'success', failed/'failure' carrying the platform
+    // allow_failure boolean — while `skipped` is absent (intentionally
+    // not run: no evidence object at all) and running stays pending.
     expect(result.value).toEqual([
-      { name: 'build', status: 'success', conclusion: 'success', id: 7, startedAt: '2026-08-20T14:00:00Z' },
-      { name: 'test', status: 'failed', conclusion: 'failure', id: 8, startedAt: '2026-08-20T14:01:00Z' },
+      { name: 'build', status: 'completed', conclusion: 'success', id: 7, startedAt: '2026-08-20T14:00:00Z' },
+      { name: 'test', status: 'completed', conclusion: 'failure', allowFailure: true, id: 8, startedAt: '2026-08-20T14:01:00Z' },
       { name: 'deploy', status: 'running', conclusion: null, id: 9, startedAt: '2026-08-20T14:02:00Z' },
-      { name: 'scan', status: 'skipped', conclusion: null, id: 10, startedAt: null },
     ]);
     const calls = readFakeGlabCalls(fake.logPath);
     expect(calls).toEqual([
@@ -768,6 +771,63 @@ describe('GlabProvider#getCheckRuns', () => {
     for (const call of calls) {
       expect(call).not.toContain('include_retried');
     }
+  });
+
+  it('maps the whole job-status vocabulary to check-run truth (#116, ledger row 26)', async () => {
+    // The status vocabulary is the closed list pinned at v19.2.4-ee
+    // (doc/api/jobs.md "Job status values") plus fail-closed handling
+    // of anything unknown. Final states complete the run; every other
+    // status stays pending (the gate reads non-completed as pending);
+    // `skipped` produces no check-run at all.
+    const { provider } = setup([
+      {
+        match: `pipelines\\?sha=${SHA}&per_page=100&page=1$`,
+        stdout: JSON.stringify([{ id: 1, sha: SHA, ref: 'main', status: 'success' }]),
+      },
+      {
+        match: 'pipelines/1/jobs\\?per_page=100&page=1$',
+        stdout: JSON.stringify([
+          { id: 1, name: 'ok-soft', status: 'success', allow_failure: true, started_at: '2026-08-20T14:00:00Z' },
+          { id: 2, name: 'hard-fail', status: 'failed', allow_failure: false, started_at: '2026-08-20T14:01:00Z' },
+          { id: 3, name: 'aborted', status: 'canceled', allow_failure: false, started_at: '2026-08-20T14:02:00Z' },
+          { id: 4, name: 'aborted-soft', status: 'canceled', allow_failure: true, started_at: '2026-08-20T14:03:00Z' },
+          { id: 5, name: 'never-ran', status: 'manual', allow_failure: false, started_at: null },
+          { id: 6, name: 'not-started', status: 'scheduled', allow_failure: false, started_at: null },
+          { id: 7, name: 'born', status: 'created', allow_failure: false, started_at: null },
+          { id: 8, name: 'waiting', status: 'waiting_for_resource', allow_failure: false, started_at: null },
+          { id: 9, name: 'callback', status: 'waiting_for_callback', allow_failure: false, started_at: null },
+          { id: 10, name: 'winding-down', status: 'canceling', allow_failure: false, started_at: '2026-08-20T14:04:00Z' },
+          { id: 11, name: 'queued', status: 'pending', allow_failure: false, started_at: null },
+          { id: 12, name: 'prep', status: 'preparing', allow_failure: false, started_at: null },
+          { id: 13, name: 'busy', status: 'running', allow_failure: false, started_at: '2026-08-20T14:05:00Z' },
+          { id: 14, name: 'gone', status: 'skipped', allow_failure: false, started_at: null },
+          { id: 15, name: 'mystery', status: 'something-new', allow_failure: false, started_at: null },
+        ]),
+      },
+    ]);
+    const result = await provider.getCheckRuns(REPO, SHA);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual([
+      { name: 'ok-soft', status: 'completed', conclusion: 'success', allowFailure: true, id: 1, startedAt: '2026-08-20T14:00:00Z' },
+      { name: 'hard-fail', status: 'completed', conclusion: 'failure', id: 2, startedAt: '2026-08-20T14:01:00Z' },
+      { name: 'aborted', status: 'completed', conclusion: 'cancelled', id: 3, startedAt: '2026-08-20T14:02:00Z' },
+      // canceled + allow_failure stays gate-failing: row 17 launders
+      // failure only, and the flag rides along as job-level truth.
+      { name: 'aborted-soft', status: 'completed', conclusion: 'cancelled', allowFailure: true, id: 4, startedAt: '2026-08-20T14:03:00Z' },
+      { name: 'never-ran', status: 'manual', conclusion: null, id: 5, startedAt: null },
+      { name: 'not-started', status: 'scheduled', conclusion: null, id: 6, startedAt: null },
+      { name: 'born', status: 'created', conclusion: null, id: 7, startedAt: null },
+      { name: 'waiting', status: 'waiting_for_resource', conclusion: null, id: 8, startedAt: null },
+      { name: 'callback', status: 'waiting_for_callback', conclusion: null, id: 9, startedAt: null },
+      { name: 'winding-down', status: 'canceling', conclusion: null, id: 10, startedAt: '2026-08-20T14:04:00Z' },
+      { name: 'queued', status: 'pending', conclusion: null, id: 11, startedAt: null },
+      { name: 'prep', status: 'preparing', conclusion: null, id: 12, startedAt: null },
+      { name: 'busy', status: 'running', conclusion: null, id: 13, startedAt: '2026-08-20T14:05:00Z' },
+      // 'gone' (skipped) is absent; 'mystery' (unknown status) is
+      // pending, never a pass.
+      { name: 'mystery', status: 'something-new', conclusion: null, id: 15, startedAt: null },
+    ]);
   });
 
   it('collects jobs from every pipeline for the sha across job pages (>100 jobs)', async () => {
@@ -1316,6 +1376,244 @@ describe('GlabProvider branch protection', () => {
     if (result.ok) return;
     expect(result.code).toBe('glab_transport');
     expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
+  });
+});
+
+describe('GlabProvider requiredChecks — the verified pipeline-gate intersection (#116)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-glab-required-checks-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  const POLICY_CHECKS = ['build', 'lint', 'SpecGit Acceptance'];
+
+  function projectJson(gate: boolean): string {
+    return JSON.stringify({
+      id: 1278,
+      path_with_namespace: 'group/subgroup/project',
+      only_allow_merge_if_pipeline_succeeds: gate,
+    });
+  }
+
+  function setup(
+    rules: FakeGlabRule[],
+    options: { requiredChecks?: readonly string[] } = {}
+  ) {
+    const fake = createFakeGlab(tempDir, rules);
+    const provider = new GlabProvider({
+      hostname: HOST,
+      env: fake.env(),
+      ...(options.requiredChecks === undefined ? {} : { requiredChecks: options.requiredChecks }),
+    });
+    return { fake, provider };
+  }
+
+  it('reports the policy ∩ latest-ref-pipeline job names when the gate is on (rows 7/25)', async () => {
+    const { provider, fake } = setup(
+      [
+        {
+          match: `protected_branches/main$`,
+          stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+        },
+        { match: `projects/${PROJECT_ID}$`, stdout: projectJson(true) },
+        {
+          match: `pipelines\\?ref=main&per_page=1&page=1$`,
+          stdout: JSON.stringify([{ id: 29614, sha: SHA, ref: 'main', status: 'success' }]),
+        },
+        {
+          match: 'pipelines/29614/jobs\\?per_page=100&page=1$',
+          stdout: JSON.stringify([
+            { id: 7, name: 'build', status: 'success', allow_failure: false },
+            { id: 8, name: 'test:unit', status: 'failed', allow_failure: true },
+            { id: 9, name: 'deploy', status: 'manual', allow_failure: false },
+          ]),
+        },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.getBranchProtection(REPO, 'main');
+    // Verification is existence in the pipeline's job set — any status,
+    // including a manual job that has not run; unverified names (lint,
+    // SpecGit Acceptance) are never fabricated.
+    expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: ['build'] } });
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?ref=main&per_page=1&page=1`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines/29614/jobs?per_page=100&page=1`,
+    ]);
+    for (const call of readFakeGlabCalls(fake.logPath)) {
+      expect(call).not.toContain('include_retried');
+    }
+  });
+
+  it('gate off ⇒ requiredChecks [] and no pipeline reads at all (row 7)', async () => {
+    const { provider, fake } = setup(
+      [
+        {
+          match: `protected_branches/main$`,
+          stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+        },
+        { match: `projects/${PROJECT_ID}$`, stdout: projectJson(false) },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.getBranchProtection(REPO, 'main');
+    expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}`,
+    ]);
+  });
+
+  it('gate on but no pipeline for the ref ⇒ nothing verified ⇒ requiredChecks []', async () => {
+    const { provider } = setup(
+      [
+        {
+          match: `protected_branches/main$`,
+          stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+        },
+        { match: `projects/${PROJECT_ID}$`, stdout: projectJson(true) },
+        { match: `pipelines\\?ref=main&per_page=1&page=1$`, stdout: '[]' },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.getBranchProtection(REPO, 'main');
+    expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
+  });
+
+  it('without the policy list injected there is nothing to verify: [] and no gate read (#116)', async () => {
+    // The intersection is policy-dependent: a caller without policy
+    // context (none routes to glab until #117) gets the honest empty
+    // list — the S3 behavior is pinned unchanged, no fabricated names.
+    const { provider, fake } = setup([
+      {
+        match: `protected_branches/main$`,
+        stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+      },
+    ]);
+    const result = await provider.getBranchProtection(REPO, 'main');
+    expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
+    ]);
+  });
+
+  it('URL-encodes the ref for slash-carrying delivery branches', async () => {
+    const { provider, fake } = setup(
+      [
+        { match: `protected_branches/feat%2F116-x$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+        { match: `projects/${PROJECT_ID}$`, stdout: projectJson(true) },
+        {
+          match: `pipelines\\?ref=feat%2F116-x&per_page=1&page=1$`,
+          stdout: JSON.stringify([{ id: 31, sha: SHA, ref: 'feat/116-x', status: 'success' }]),
+        },
+        {
+          match: 'pipelines/31/jobs\\?per_page=100&page=1$',
+          stdout: JSON.stringify([{ id: 1, name: 'build', status: 'success', allow_failure: false }]),
+        },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.getBranchProtection(REPO, 'feat/116-x');
+    expect(result).toEqual({ ok: true, value: { protected: false, requiredChecks: ['build'] } });
+    expect(
+      readFakeGlabCalls(fake.logPath).some((c) => c.includes('pipelines?ref=feat%2F116-x'))
+    ).toBe(true);
+  });
+
+  it('enableBranchProtection returns the verified intersection after enabling', async () => {
+    const { provider, fake } = setup(
+      [
+        { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+        {
+          match: `-X PATCH projects/${PROJECT_ID} `,
+          stdout: projectJson(true),
+        },
+        {
+          match: `-X POST projects/${PROJECT_ID}/protected_branches `,
+          stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+        },
+        { match: `projects/${PROJECT_ID}$`, stdout: projectJson(true) },
+        {
+          match: `pipelines\\?ref=main&per_page=1&page=1$`,
+          stdout: JSON.stringify([{ id: 29614, sha: SHA, ref: 'main', status: 'success' }]),
+        },
+        {
+          match: 'pipelines/29614/jobs\\?per_page=100&page=1$',
+          stdout: JSON.stringify([
+            { id: 7, name: 'build', status: 'success', allow_failure: false },
+            { id: 8, name: 'SpecGit Acceptance', status: 'success', allow_failure: false },
+          ]),
+        },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+    expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: ['build', 'SpecGit Acceptance'] } });
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
+      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+      `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/protected_branches -f name=main -f push_access_level=40 -f merge_access_level=40 -f unprotect_access_level=40`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?ref=main&per_page=1&page=1`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines/29614/jobs?per_page=100&page=1`,
+    ]);
+  });
+
+  it('fails closed on a renamed project instead of silently rebinding (row 5)', async () => {
+    const { provider } = setup(
+      [
+        {
+          match: `protected_branches/main$`,
+          stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+        },
+        {
+          match: `projects/${PROJECT_ID}$`,
+          stdout: JSON.stringify({
+            id: 1278,
+            path_with_namespace: 'group/subgroup/renamed',
+            only_allow_merge_if_pipeline_succeeds: true,
+          }),
+        },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.getBranchProtection(REPO, 'main');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(result.message).toMatch(/renamed or moved/);
+  });
+
+  it('paginates the witness job list to exhaustion and fails closed at the cap (I3b)', async () => {
+    const fullPage = JSON.stringify(
+      Array.from({ length: 100 }, (_, i) => ({ id: i + 1, name: `job-${i}`, status: 'success', allow_failure: false }))
+    );
+    const { provider } = setup(
+      [
+        {
+          match: `protected_branches/main$`,
+          stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+        },
+        { match: `projects/${PROJECT_ID}$`, stdout: projectJson(true) },
+        {
+          match: `pipelines\\?ref=main&per_page=1&page=1$`,
+          stdout: JSON.stringify([{ id: 1, sha: SHA, ref: 'main', status: 'success' }]),
+        },
+        { match: 'pipelines/1/jobs', stdout: fullPage },
+      ],
+      { requiredChecks: POLICY_CHECKS }
+    );
+    const result = await provider.getBranchProtection(REPO, 'main');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
   });
 });
 

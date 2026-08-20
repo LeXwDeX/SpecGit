@@ -45,6 +45,14 @@ export interface CheckRunInfo {
   status: string;
   conclusion: string | null;
   /**
+   * GitLab `allow_failure: true` (#116, ledger row 17): the job fact
+   * keeps its truthful `conclusion: 'failure'`, and the checks gate
+   * passes the run per pipeline semantics — a failed `allow_failure`
+   * job keeps the pipeline green. Only failure is affected; every
+   * other conclusion still fails. The GitHub adapter never sets it.
+   */
+  allowFailure?: boolean;
+  /**
    * Check-run id. Re-runs keep every same-name run in the Checks API
    * (#119); ties on started_at break by the higher id (the newer run).
    */

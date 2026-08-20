@@ -104,6 +104,16 @@ export interface GlabProviderOptions {
   hostname?: string;
   glabCommand?: string;
   spawnImpl?: SpawnFn;
+  /**
+   * The policy's `required_checks` (`spec_git/policy.yaml`), injected
+   * by the caller that holds the policy (#116). `BranchProtectionFact
+   * .requiredChecks` reports the verified intersection of this list
+   * with the CI job names of the branch's latest pipeline when the
+   * pipeline gate is on (ledger rows 7/25); off ⇒ `[]`. Absent ⇒ `[]`:
+   * without the policy there is nothing to verify, and no gate read
+   * happens — the intersection is never fabricated (row 20).
+   */
+  requiredChecks?: readonly string[];
 }
 
 type RunOutcome =
@@ -117,6 +127,7 @@ export class GlabProvider implements GitHubProvider {
   private readonly hostname: string | undefined;
   private readonly explicitGlabCommand: string | undefined;
   private readonly spawn: SpawnFn;
+  private readonly requiredChecks: readonly string[] | undefined;
 
   constructor(options: GlabProviderOptions = {}) {
     this.env = options.env;
@@ -126,6 +137,7 @@ export class GlabProvider implements GitHubProvider {
     this.hostname = options.hostname;
     this.explicitGlabCommand = options.glabCommand;
     this.spawn = options.spawnImpl ?? defaultSpawn;
+    this.requiredChecks = options.requiredChecks;
   }
 
   /**
@@ -324,9 +336,14 @@ export class GlabProvider implements GitHubProvider {
   /**
    * Pipelines for the sha, then per-pipeline jobs (the sha→pipelines→jobs
    * chain, row 15). Retried jobs stay omitted (`include_retried` never
-   * passed, row 16) so latest-attempt semantics are native. Conclusion
-   * mapping is the plain platform truth; gate semantics (allow_failure,
-   * skipped/manual) are #116.
+   * passed, row 16) so latest-attempt semantics are native. The #116
+   * mapping (ledger rows 16/17/26): final states complete the run —
+   * success/'success', failed/'failure' with the platform
+   * `allow_failure` boolean carried as job-level truth, canceled/
+   * 'cancelled' (gate-failing, §8.4.2); `skipped` jobs produce no
+   * check-run at all (intentionally not run ⇒ absent); every other
+   * status stays non-completed ⇒ the gate reads it as pending
+   * (manual included: it never ran).
    */
   async getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
@@ -358,12 +375,27 @@ export class GlabProvider implements GitHubProvider {
           status?: unknown;
           id?: unknown;
           started_at?: unknown;
+          allow_failure?: unknown;
         };
+        const jobStatus = typeof item.status === 'string' ? item.status : '';
+        // Decided #116: skipped ⇒ absent — the job was intentionally
+        // not run, so it contributes no evidence object.
+        if (jobStatus === 'skipped') continue;
         runs.push({
           name: typeof item.name === 'string' ? item.name : '',
-          status: typeof item.status === 'string' ? item.status : '',
+          status:
+            jobStatus === 'success' || jobStatus === 'failed' || jobStatus === 'canceled'
+              ? 'completed'
+              : jobStatus,
           conclusion:
-            item.status === 'success' ? 'success' : item.status === 'failed' ? 'failure' : null,
+            jobStatus === 'success'
+              ? 'success'
+              : jobStatus === 'failed'
+                ? 'failure'
+                : jobStatus === 'canceled'
+                  ? 'cancelled'
+                  : null,
+          ...(item.allow_failure === true ? { allowFailure: true } : {}),
           id: typeof item.id === 'number' ? item.id : 0,
           startedAt: typeof item.started_at === 'string' ? item.started_at : null,
         });
@@ -484,9 +516,13 @@ export class GlabProvider implements GitHubProvider {
 
   /**
    * Protection truth = existence of the branch in protected_branches
-   * (row 20). `requiredChecks` stays honestly empty: GitLab has no
-   * required-contexts primitive at the Free tier — the verified
-   * pipeline-gate intersection lands with #116 and is never fabricated.
+   * (row 20); `requiredChecks` truth = the pipeline gate (row 7): the
+   * verified intersection of the injected policy list with the CI job
+   * names of the branch's latest pipeline when
+   * `only_allow_merge_if_pipeline_succeeds` is on; off ⇒ `[]` (the
+   * init warning carries the enable guidance). Never fabricated, and
+   * the Ultimate-only status-checks primitive is never touched
+   * (row 22).
    */
   async getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>> {
     if (!branch.trim()) {
@@ -496,10 +532,14 @@ export class GlabProvider implements GitHubProvider {
     if (!payloadEv.ok) {
       return payloadEv;
     }
-    if (payloadEv.value === null) {
-      return ok({ protected: false, requiredChecks: [] });
+    if (this.requiredChecks === undefined) {
+      return ok({ protected: payloadEv.value !== null, requiredChecks: [] });
     }
-    return ok({ protected: true, requiredChecks: [] });
+    const checksEv = await this.pipelineGateChecks(repo, branch);
+    if (!checksEv.ok) {
+      return checksEv;
+    }
+    return ok({ protected: payloadEv.value !== null, requiredChecks: checksEv.value });
   }
 
   /**
@@ -548,7 +588,75 @@ export class GlabProvider implements GitHubProvider {
         return parsedEv;
       }
     }
-    return ok({ protected: true, requiredChecks: [] });
+    if (this.requiredChecks === undefined) {
+      return ok({ protected: true, requiredChecks: [] });
+    }
+    // Post-state read: the gate is now on by construction, and the
+    // intersection reflects the branch's live pipeline, not the PATCH
+    // echo.
+    const checksEv = await this.pipelineGateChecks(repo, branch);
+    if (!checksEv.ok) {
+      return checksEv;
+    }
+    return ok({ protected: true, requiredChecks: checksEv.value });
+  }
+
+  /**
+   * The verified pipeline-gate intersection (rows 7/25, #116): read the
+   * project gate (identity-verified, row 5); on ⇒ take the latest
+   * pipeline for the ref (`order_by` id `desc` default — the first
+   * entry of page 1), read its jobs to exhaustion, and keep the policy
+   * names that exist as job names — any status counts (verification is
+   * existence in CI, not success). Off or no pipeline ⇒ `[]`.
+   */
+  private async pipelineGateChecks(
+    repo: RepoRef,
+    branch: string
+  ): Promise<Evidence<string[]>> {
+    const projectEv = await this.runApi(`projects/${this.projectPath(repo)}`);
+    if (!projectEv.ok) {
+      return projectEv;
+    }
+    const payload = projectEv.value as {
+      only_allow_merge_if_pipeline_succeeds?: unknown;
+      path_with_namespace?: unknown;
+    };
+    const identityEv = this.verifyProjectIdentity(payload, repo);
+    if (!identityEv.ok) {
+      return identityEv;
+    }
+    if (payload.only_allow_merge_if_pipeline_succeeds !== true) {
+      return ok([]);
+    }
+    const latestEv = await this.runApi(
+      `projects/${this.projectPath(repo)}/pipelines?ref=${encodeURIComponent(branch)}&per_page=1&page=1`
+    );
+    if (!latestEv.ok) {
+      return latestEv;
+    }
+    if (!Array.isArray(latestEv.value)) {
+      return fail('glab_transport', 'GitLab returned an unexpected pipeline-list payload.');
+    }
+    const pipelineId = (latestEv.value[0] as { id?: unknown } | undefined)?.id;
+    if (typeof pipelineId !== 'number') {
+      return ok([]);
+    }
+    const jobsEv = await this.paginateList(
+      (page) =>
+        `projects/${this.projectPath(repo)}/pipelines/${pipelineId}/jobs?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+      'pipeline-job-list'
+    );
+    if (!jobsEv.ok) {
+      return jobsEv;
+    }
+    const names = new Set<string>();
+    for (const job of jobsEv.value) {
+      const name = (job as { name?: unknown }).name;
+      if (typeof name === 'string' && name) {
+        names.add(name);
+      }
+    }
+    return ok(this.requiredChecks!.filter((name) => names.has(name)));
   }
 
   /**
