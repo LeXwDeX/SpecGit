@@ -10,7 +10,7 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 
 | Dimension | v1 baseline |
 | --- | --- |
-| Hosted forge | **GitHub.com only.** Origins must parse to `github.com` (HTTPS, SCP-style SSH, `ssh://`). A GitLab host declared in `spec_git/providers.yaml` fails closed with the dedicated `gitlab_unsupported`; everything else fails `origin_unresolvable`. GitLab is a roadmap, not a feature ([gitlab-support.md](gitlab-support.md)). |
+| Hosted forge | **GitHub.com plus GitLab CE/Free self-managed** — the v1 scope is dual-platform per the version policy, and GitLab capability lands incrementally per the Phase-2 roadmap ([gitlab-support.md](gitlab-support.md)). Today origins parsing to `github.com` (HTTPS, SCP-style SSH, `ssh://`) are served through `gh`; a GitLab host declared in `spec_git/providers.yaml` fails closed with the dedicated `gitlab_unsupported` until the Phase-2 provider lands; everything else fails `origin_unresolvable`. |
 | GitHub access | Exclusively the authenticated `gh` CLI. No direct REST client, no stored or logged tokens. |
 | Git | Required; local facts come from the git binary (`src/gitfacts` seam). Linked worktrees and `core.hooksPath` setups are first-class. |
 | Runtime | Node.js ≥ 20.19 (the `specgit` CLI is an npm package). |
