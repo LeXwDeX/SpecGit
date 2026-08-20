@@ -97,7 +97,7 @@ superseding one requires an explicit edit with rationale):
 | GA-1 tracker empty | `gh issue list --state open` = 0 at commit `________` |
 | GA-2 zero review residue | disposition map at `________` |
 | GA-3 no undisposed red in CI | CI rollup run `________` |
-| GA-4 rc dogfood (nested-group GitLab) | `specgit finish` exit 0, PR/run `________` |
+| GA-4 rc dogfood (nested-group GitLab) | `specgit finish` exit 0 — delivered by [#117](https://github.com/LeXwDeX/SpecGit/pull/146): real delivery on `git.ycgame.com` 19.2.4 CE, project depth 3 (`group/subgroup/project`), issue #1 / MR !1 bound, head `9839d096d2d229b3f3a14ccbaa1a7e2dc716baee`, local verdict exit 0 all eleven gates green AND a second CI-side finish exit 0 through the FU-5 read-only project access token; full record: [docs/evidence/gitlab-dogfood-117.md](evidence/gitlab-dogfood-117.md) (probe deleted and verified after archival) |
 | GA-5 evidence archived | this table complete |
 | Gate-7 | acceptance `workflow_dispatch` run on tag `v1.0.0`: `________` |
 
