@@ -10,6 +10,7 @@ import type {
   GitHubProvider,
   IssueCreation,
   IssueFact,
+  OpenIssueFact,
   PrCreation,
   PrFact,
   PrSummary,
@@ -262,15 +263,16 @@ export class GhCliGitHubProvider implements GitHubProvider {
   }
 
   /**
-   * Open issue numbers via the search API (excludes PRs, newest first).
-   * Evidence-completeness rule (#120, I3b): the list is paginated to
-   * exhaustion, and any truncation signal — GitHub's own
+   * Every open issue as a title-carrying fact via the search API
+   * (excludes PRs, newest first) — the one probe the adoption path reads
+   * (#77). Evidence-completeness rule (#120, I3b): the list is paginated
+   * to exhaustion, and any truncation signal — GitHub's own
    * `incomplete_results: true` or the 1000-result search cap reached with
    * a full page — fails closed with `evidence_truncated` (exit 3) instead
    * of returning a silently partial list.
    */
-  async getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>> {
-    const numbers = new Set<number>();
+  async getOpenIssues(repo: RepoRef): Promise<Evidence<OpenIssueFact[]>> {
+    const byNumber = new Map<number, OpenIssueFact>();
     for (let page = 1; page <= MAX_ISSUE_SEARCH_PAGES; page += 1) {
       const endpoint =
         `search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+is:open` +
@@ -291,14 +293,20 @@ export class GhCliGitHubProvider implements GitHubProvider {
       }
       for (const item of parsed.items) {
         const number = (item as { number?: unknown }).number;
-        if (typeof number === 'number') {
-          // Deduplicate: a page-boundary shift between calls (an issue
-          // opened mid-pagination) can repeat an entry across pages.
-          numbers.add(number);
-        }
+        if (typeof number !== 'number') continue;
+        // Deduplicate: a page-boundary shift between calls (an issue
+        // opened mid-pagination) can repeat an entry across pages.
+        if (byNumber.has(number)) continue;
+        const title = (item as { title?: unknown }).title;
+        const body = (item as { body?: unknown }).body;
+        byNumber.set(number, {
+          number,
+          ...(typeof title === 'string' && title ? { title } : {}),
+          ...(typeof body === 'string' ? { body } : {}),
+        });
       }
       if (parsed.items.length < ISSUE_SEARCH_PAGE_SIZE) {
-        return ok([...numbers]);
+        return ok([...byNumber.values()]);
       }
     }
     return fail(
@@ -306,6 +314,19 @@ export class GhCliGitHubProvider implements GitHubProvider {
       `GitHub's issue search caps at ${MAX_ISSUE_SEARCH_PAGES * ISSUE_SEARCH_PAGE_SIZE} results; ` +
         'the open-issue list may be truncated.'
     );
+  }
+
+  /**
+   * Open-issue numbers for the ordered-issues sequencing gate, derived
+   * from the same complete title-carrying scan as `getOpenIssues` — one
+   * completeness contract, one pagination implementation.
+   */
+  async getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>> {
+    const issues = await this.getOpenIssues(repo);
+    if (!issues.ok) {
+      return issues;
+    }
+    return ok(issues.value.map((fact) => fact.number));
   }
 
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {

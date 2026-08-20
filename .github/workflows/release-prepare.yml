@@ -111,9 +111,10 @@ jobs:
           # It stays open as the manual batch-decision point — a human
           # decides when the batch (nine-issue fixes plus GitLab
           # evidence) ships as a deliberate rc cut.
-          # Re-arm condition: restore auto-merge arming on the version
-          # PR as part of the deliberate 1.0.0-rc.1 cut, once the batch
-          # is ready to ship.
+          # Re-arm condition (#107, user ruling 2026-08-20): auto-merge
+          # stays armed off through the 1.0.0 line — every version PR is
+          # the manual batch-decision point; the re-arm decision is
+          # re-evaluated after 1.0.0 ships.
 
       - name: Verify version PR workflows started (not awaiting approval)
         if: steps.pending.outputs.count != '0'

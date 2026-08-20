@@ -28,7 +28,7 @@ workflow and agent surface) — see the growth discipline in §5.
 | **I1 binding closure** | One issue carries one independently verifiable WHY; one delivery binds N issues to one PR whose closing references close them all; a delivery is done if and only if `specgit finish` exits `0`. | An accepted delivery whose merge leaves a bound issue open, or closes an issue that was never bound. | Holds (forward direction enforced; stance decisions tracked via the growth discipline) |
 | **I2 real evidence** | Every gate reads live git and forge facts — branch state, the PR, check runs, issue state; the record is a claim, never truth. | Any gate outcome decided by the record file where live evidence disagrees. | Holds |
 | **I3 fail-closed, both branches** | **I3a (errors):** any failure to gather evidence degrades the verdict to `unknown` / exit `3`, never `accepted`. **I3b (silent incompleteness):** every list-shaped evidence input is paginated to exhaustion or signals truncation and degrades the verdict to exit `3` — a truncated list is unknown evidence, not a pass. | Missing or truncated evidence producing exit `1` ("complete evidence") or `accepted`. | I3a implemented and e2e-pinned; **I3b is being implemented by [#120](https://github.com/LeXwDeX/SpecGit/issues/120)** |
-| **I4 idempotent resume** | Re-running any bootstrap/resume command converges on the same delivery — same issues, branch, PR, and record — without duplication. | A resume that forks a second PR or branch for one delivery, or resurrects a merged one. | Holds in the happy path; post-merge no-args resurrection closed by [#75](https://github.com/LeXwDeX/SpecGit/issues/75) (merged record → `issue_delivery_merged` exit 2, mergedness probe fails closed); known corner under repair: [#77](https://github.com/LeXwDeX/SpecGit/issues/77) (same-title adoption) |
+| **I4 idempotent resume** | Re-running any bootstrap/resume command converges on the same delivery — same issues, branch, PR, and record — without duplication. | A resume that forks a second PR or branch for one delivery, or resurrects a merged one, or adopts an unrelated same-title issue. | Holds in the happy path; post-merge no-args resurrection closed by [#75](https://github.com/LeXwDeX/SpecGit/issues/75) (merged record → `issue_delivery_merged` exit 2, mergedness probe fails closed); same-title adoption corner closed by [#77](https://github.com/LeXwDeX/SpecGit/issues/77) via [#140](https://github.com/LeXwDeX/SpecGit/pull/140) (one title-carrying exhaustive scan, scaffold-body disambiguation, `issue_title_ambiguous` exit 2 on unresolved collisions) |
 | **I5 single-record state** | Persistent state is exactly the three file tiers — authoritative committed files (the policy `spec_git/policy.yaml` and the record `.specgit.yaml`), the derived committed harness, and local integration assets; a conflicting or unparseable record fails closed with diagnostics. | State that lives outside the tiers, or a record conflict silently resolved. | Holds |
 
 ## 2. Red-line closure checklist (1.0 blockers)
@@ -109,3 +109,21 @@ neither gets an explicit **accept-or-defer** ruling before work starts — growt
 is chosen, not accumulated. First exercised:
 [#118](https://github.com/LeXwDeX/SpecGit/issues/118) (scaffolding language
 configurability) — ruled deferred-to-last, 2026-08-20.
+
+## 6. Known CI dispositions
+
+Gate 3 requires every red or semantics-ambiguous check — green-by-skip
+included — to carry an owner and a recorded disposition; this table is that
+record for the checks that live outside a delivery PR's own gates. A row
+leaves the table only when its disposition resolves (the check turns green
+and stays green, or the exemption is lifted) — never by silent edit. The
+Nix job's path-filter skip is self-documenting in-workflow (the
+`required-checks` job prints it; green-when-run proven by
+[#85](https://github.com/LeXwDeX/SpecGit/issues/85)).
+
+| Check | Where it shows | Disposition (owner · terms) |
+| --- | --- | --- |
+| `Test (self-hosted-linux)` | CI · main pushes (retired 2026-08-21) | **Retired** at the W2 retirement line ([#105](https://github.com/LeXwDeX/SpecGit/issues/105), PR #138): never green since introduction — every run crashed at job initialization inside the runner container (infrastructure-side; [W1 diagnosis](https://github.com/LeXwDeX/SpecGit/issues/105#issuecomment-5356816362)) — and the last five consecutive `main` runs stayed red through `15ce8ef`. The leg is removed from `ci.yml` (re-introduction requires repairing the runner first and updating the structural pin in `test/specgit-cli/workflow-security.test.ts`); evidence on the issue. Row kept as the gate-3 record of the resolved disposition. |
+| Version-PR auto-merge | Release workflow | Armed off ([#102](https://github.com/LeXwDeX/SpecGit/pull/102)): zero `--auto` occurrences on main; every version PR is the manual batch-decision point. The re-arm decision is re-evaluated after 1.0.0 ships (user ruling 2026-08-20; [#107](https://github.com/LeXwDeX/SpecGit/issues/107)). |
+| GitHub Advanced Security (dynamic) | PR branches only, never main | Exempt-with-rationale ([#109](https://github.com/LeXwDeX/SpecGit/issues/109)): GitHub-side GHAS agent whose session creation fails on a provider model-entitlement 400 (`claude-opus-4.6`), not repo-fixable, not a required check; optional owner escalations recorded on the issue. |
+| `Validate Release Tracking` | CI | Event-gated: runs only on `pull_request` and `merge_group` — never on `push` or `workflow_dispatch` — so it is skipped on main-push runs **by design**. Its green predicate is read on the delivery or version PR / merge-group run at the threshold, never on a bare main-push run. When it runs it is green either way: with changed `.changeset/*.md` it validates them (`changeset status --since=origin/main`); without changes it reports the normal release cadence ([#110](https://github.com/LeXwDeX/SpecGit/issues/110)). |

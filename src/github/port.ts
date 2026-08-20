@@ -59,6 +59,21 @@ export interface IssueCreation {
   url: string;
 }
 
+/**
+ * One open issue as surfaced by the title-carrying open-issue scan. The
+ * title is the remotely discoverable idempotency marker for `specgit
+ * issue` adoption (#77); the body, when the provider surfaces it, is the
+ * boundary that disambiguates a same-title collision — an issue this
+ * tool created carries the deterministic scaffold body.
+ */
+export interface OpenIssueFact {
+  number: number;
+  /** Non-empty when the provider surfaces it; absent titles never match. */
+  title?: string;
+  /** Issue body when the provider surfaces it; absent bodies never win scaffold disambiguation. */
+  body?: string;
+}
+
 /** A newly created draft pull request: its number and canonical URL. */
 export interface PrCreation {
   number: number;
@@ -94,6 +109,15 @@ export interface GitHubProvider {
    * partial list.
    */
   getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>>;
+  /**
+   * Every open issue as a title-carrying fact (#77): the one probe the
+   * bootstrap adoption path reads — a single paginated search replaces
+   * the former per-issue `getIssue` fan-out, so probe cost is bounded by
+   * pages, not by open-issue count. Same completeness contract as
+   * `getOpenIssueNumbers` (#120, I3b): `ok` means exhausted, truncation
+   * fails (`evidence_truncated`).
+   */
+  getOpenIssues(repo: RepoRef): Promise<Evidence<OpenIssueFact[]>>;
   getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>>;
   /**
    * Check runs reported for a commit. Completeness contract (#120, I3b):
@@ -133,6 +157,7 @@ const GITHUB_PROVIDER_MEMBER_FLAGS = {
   preflight: true,
   getIssue: true,
   getOpenIssueNumbers: true,
+  getOpenIssues: true,
   getPr: true,
   getCheckRuns: true,
   createIssue: true,
