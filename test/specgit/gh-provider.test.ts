@@ -392,6 +392,7 @@ describe('GhCliGitHubProvider', () => {
           state: 'closed',
           merged_at: '2026-01-01T00:00:00Z',
           merge_commit_sha: MERGE_SHA,
+          draft: false,
           head: { ref: 'feat/123-login', sha: SHA },
           base: { ref: 'main' },
           body: 'Closes #123',
@@ -417,6 +418,7 @@ describe('GhCliGitHubProvider', () => {
           number: 42,
           state: 'closed',
           merged_at: '2026-01-01T00:00:00Z',
+          draft: false,
           head: { ref: 'feat/123-login', sha: SHA },
           base: { ref: 'main' },
           body: 'Closes #123',
@@ -442,6 +444,7 @@ describe('GhCliGitHubProvider', () => {
           state: 'open',
           merged_at: null,
           merge_commit_sha: MERGE_SHA,
+          draft: false,
           head: { ref: 'feat/123-login', sha: SHA },
           base: { ref: 'main' },
           body: 'Closes #123',
@@ -453,6 +456,72 @@ describe('GhCliGitHubProvider', () => {
     if (!result.ok) return;
     expect(result.value.state).toBe('open');
     expect(result.value.mergeCommitSha).toBe(MERGE_SHA);
+  });
+
+  it('collects the draft flag of an open draft PR', async () => {
+    const { provider } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'open',
+          merged_at: null,
+          draft: true,
+          head: { ref: 'feat/123-login', sha: SHA },
+          base: { ref: 'main' },
+          body: 'Closes #123',
+        }),
+      },
+    ]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.state).toBe('open');
+    expect(result.value.draft).toBe(true);
+  });
+
+  it('collects draft false for a ready-for-review PR', async () => {
+    const { provider } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'open',
+          merged_at: null,
+          draft: false,
+          head: { ref: 'feat/123-login', sha: SHA },
+          base: { ref: 'main' },
+          body: 'Closes #123',
+        }),
+      },
+    ]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.draft).toBe(false);
+  });
+
+  it('fails closed when the PR payload omits the draft flag', async () => {
+    // GitHub always reports draft on pull request payloads; an answer
+    // without it is a transport anomaly. The verdict must never guess
+    // "not a draft" (I0: exit 0 over unmergeable state).
+    const { provider } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'open',
+          merged_at: null,
+          head: { ref: 'feat/123-login', sha: SHA },
+          base: { ref: 'main' },
+          body: 'Closes #123',
+        }),
+      },
+    ]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
   });
 
   it('classifies a 404 PR lookup as pr_not_found', async () => {

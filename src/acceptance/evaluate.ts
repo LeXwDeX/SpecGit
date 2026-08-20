@@ -428,6 +428,11 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       if (pr.value.state === 'closed') {
         failures.push(makeFailure('pr_closed_unmerged', { pr: pr.value.number }));
       }
+      // A draft is a platform-level unmergeable state that never
+      // auto-transitions: green checks over a draft are still not done.
+      if (pr.value.draft) {
+        failures.push(makeFailure('pr_draft', { pr: pr.value.number }));
+      }
       if (pr.value.headBranch !== binding!.context.branch) {
         failures.push(
           makeFailure('pr_head_mismatch', {

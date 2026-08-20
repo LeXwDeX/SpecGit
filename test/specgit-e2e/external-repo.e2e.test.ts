@@ -104,6 +104,7 @@ describe('e2e external repository adoption (#63)', () => {
             number: 9,
             state: 'open',
             merged_at: null,
+            draft: false,
             head: { ref: 'master', sha: fixture.headSha },
             base: { ref: 'master' },
             body: 'Closes #7',
