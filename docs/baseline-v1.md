@@ -56,6 +56,7 @@ Verdicts and delivery states are derived per invocation and never persisted.
 - Eleven ordered gates: record → policy → completeness → context → origin → provider → issues → sequence → pr → closing → checks ([gate table](reference.md#gates)).
 - **Transient semantics:** `checks_pending` is `factual` and exits `1` — a complete verdict saying "CI has not finished". It is transient and retryable: wait, re-run `specgit finish`. It is never reclassified, never exit `3`.
 - Acceptance is fail-closed: ungatherable evidence ⇒ `unknown` (exit 3), never `accepted`. A delivery is done **iff** `specgit finish` exits `0`.
+- **Fail-closed has two branches** (#120): fail closed on **errors** (evidence cannot be gathered ⇒ `unknown`) and fail closed on **silent incompleteness** — every list-shaped evidence input (open issues, check runs) is either paginated to exhaustion or signals truncation, and a truncation signal degrades the verdict to `unknown` (`evidence_truncated`, exit 3), never a complete-evidence exit `1`. A truncated list is not evidence.
 
 ## Compatibility
 

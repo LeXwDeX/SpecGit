@@ -129,7 +129,7 @@ Each positional argument is a quoted title (a new issue is created from a requir
 }
 ```
 
-Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments or `specgit unbind --yes`) (exit 2; drift and merged-refusal happen before any probe or create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport` — including the mergedness probe on a PR-bound record, which fails closed and keeps the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
+Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments or `specgit unbind --yes`) (exit 2; drift and merged-refusal happen before any probe or create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`, `evidence_truncated` — including the mergedness probe on a PR-bound record, which fails closed and keeps the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
 
 ## `specgit finish`
 

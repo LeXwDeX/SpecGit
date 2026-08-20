@@ -19,6 +19,7 @@ export type SpecGitCode =
   | 'gh_missing'
   | 'gh_unauthenticated'
   | 'gh_transport'
+  | 'evidence_truncated'
   | 'issue_not_found'
   | 'issue_is_pull_request'
   | 'pr_not_found'
@@ -146,6 +147,11 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     kind: 'evidence',
     message: 'GitHub evidence could not be gathered.',
     fix: 'Check your network connection and gh permissions, then retry.',
+  },
+  evidence_truncated: {
+    kind: 'evidence',
+    message: 'A list-shaped evidence input was silently truncated; the verdict cannot be complete.',
+    fix: 'This is a completeness guard, not a delivery defect: the repository exceeds a provider list window (e.g. more than 1000 open issues via GitHub search). Narrow the list — deliver or close issues — and re-run.',
   },
   issue_not_found: {
     kind: 'factual',
