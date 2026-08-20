@@ -22,6 +22,7 @@ export type SpecGitCode =
   | 'issue_is_pull_request'
   | 'pr_not_found'
   | 'pr_closed_unmerged'
+  | 'pr_draft'
   | 'pr_head_mismatch'
   | 'pr_repo_mismatch'
   | 'closing_refs_incomplete'
@@ -159,6 +160,11 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     kind: 'factual',
     message: 'The bound pull request is closed without being merged.',
     fix: 'Bind a pull request that is open or merged.',
+  },
+  pr_draft: {
+    kind: 'factual',
+    message: 'The bound pull request is still a draft.',
+    fix: 'Mark the pull request ready for review — a draft is not done.',
   },
   pr_head_mismatch: {
     kind: 'factual',

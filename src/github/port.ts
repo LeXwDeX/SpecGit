@@ -22,6 +22,13 @@ export interface PrFact {
   baseBranch: string;
   body: string;
   /**
+   * Whether the pull request is a draft. A draft is a platform-level
+   * unmergeable state that never auto-transitions, so it is a verdict
+   * dimension: the PR gate fails a draft with `pr_draft` even when every
+   * other gate is green. Never true for merged or closed pull requests.
+   */
+  draft: boolean;
+  /**
    * GitHub's merge_commit_sha. Once a PR is merged this is a commit on
    * the base branch under every merge method — the merge commit, the
    * squashed commit, or the commit the base was updated to by a rebase —

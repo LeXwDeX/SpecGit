@@ -294,11 +294,16 @@ export class GhCliGitHubProvider implements GitHubProvider {
       state?: unknown;
       merged_at?: unknown;
       merge_commit_sha?: unknown;
+      draft?: unknown;
       head?: { ref?: unknown; sha?: unknown };
       base?: { ref?: unknown };
       body?: unknown;
     };
-    if (typeof parsed.number !== 'number' || (parsed.state !== 'open' && parsed.state !== 'closed')) {
+    if (
+      typeof parsed.number !== 'number' ||
+      (parsed.state !== 'open' && parsed.state !== 'closed') ||
+      typeof parsed.draft !== 'boolean'
+    ) {
       return fail('gh_transport', 'GitHub returned an unexpected pull request payload.');
     }
 
@@ -316,6 +321,7 @@ export class GhCliGitHubProvider implements GitHubProvider {
         typeof parsed.merge_commit_sha === 'string' && parsed.merge_commit_sha.length > 0
           ? parsed.merge_commit_sha
           : null,
+      draft: parsed.draft,
     });
   }
 

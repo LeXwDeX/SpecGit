@@ -44,6 +44,10 @@ export function harnessWorkflowYaml(): string {
 on:
   pull_request:
     branches: [main]
+    # A draft PR fails the verdict (pr_draft), so the draft→ready
+    # transition must re-verdict. Listing types replaces the defaults,
+    # so the default activity types are listed alongside.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
