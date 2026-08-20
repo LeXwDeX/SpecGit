@@ -114,8 +114,10 @@ reports no value) routes the merged-lineage gate to fail-closed
 
 - **In-tree implementations today:** `GhCliGitHubProvider`
   (`src/providers/github/gh-cli.ts`), `GlabProvider`
-  (`src/providers/gitlab/glab-cli.ts`, #114 — the glab mirror, not yet
-  routed into acceptance evaluation), `LocalGitAdapter`
+  (`src/providers/gitlab/glab-cli.ts`, #114 — the glab mirror),
+  `PlatformRoutingProvider` (`src/providers/routing.ts`, #117 — the
+  production composition's single provider, dispatching per call to the
+  gh or glab adapter on the ref's platform marker), `LocalGitAdapter`
   (`src/gitfacts/local.ts`), `MockGitHubProvider`
   (`test/specgit/helpers/mock-github.ts`), and the recording doubles
   `makeGhProvider` / `makeGitPort`
@@ -132,8 +134,11 @@ reports no value) routes the merged-lineage gate to fail-closed
   for the self-managed version window). The glab method map stays
   anchored cell-for-cell to this inventory and the
   [GitLab evidence ledger](evidence/gitlab-19.2.md) (row 24, all cells
-  pinned; routing GitLab evaluation through the adapter is the remaining
-  Phase-2 work).
+  pinned). Routed since #117: the production context evaluates GitLab
+  declarations through `PlatformRoutingProvider` → `GlabProvider` (the
+  GitHub-only route guard `requireGithubRoute` retired with it — the
+  invariant "no gh call ever sees a group/subgroup ref" now lives in the
+  router's dispatch, pinned by `test/specgit/routing-provider.test.ts`).
 - **Test doubles.** Every new double declares the port type
   (`implements` or a typed literal) so drift is a compile error, and is
   added to the contract test's implementer list in the same delivery.

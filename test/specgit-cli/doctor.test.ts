@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
+import { fail } from '../../src/kernel/evidence.js';
 import {
   makeCtx,
+  makeGhProvider,
   makeGitFacts,
   parseStdoutJson,
   samplePolicy,
@@ -86,7 +89,7 @@ describe('specgit doctor', () => {
     expect(probe.ok).toBe(false);
   });
 
-  it('reports a GitLab origin with gitlab_unsupported and still probes gh', async () => {
+  it('reports an undeclared gitlab.com origin as gitlab_unsupported and still probes gh', async () => {
     const t = makeCtx({
       policy: samplePolicy(),
       facts: makeGitFacts({ originUrl: 'https://gitlab.com/owner/repo.git' }),
@@ -99,5 +102,33 @@ describe('specgit doctor', () => {
     expect(probe.code).toBe('gitlab_unsupported');
     const ghPresent = envelope.probes.find((p: any) => p.name === 'gh_present');
     expect(ghPresent.ok).toBe(true);
+  });
+
+  // #117 (provider routing): a DECLARED GitLab origin resolves through
+  // the platform marker — the origin probe passes with the nested-group
+  // ref — and the provider probes report the glab CLI's evidence codes
+  // through the same envelope keys.
+  it('passes the origin probe for a declared GitLab origin and maps glab probe codes', async () => {
+    const t = makeCtx({
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'https://git.example.com/g/sg/p.git' }),
+      parseRepoRef: (url: string) =>
+        parseRepoRef(url, { gitlabHost: 'git.example.com' }),
+      gh: makeGhProvider({
+        preflight: fail('glab_missing', 'GitLab CLI (glab) is not installed or not on PATH.'),
+      }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    const origin = envelope.probes.find((p: any) => p.name === 'origin');
+    expect(origin.ok).toBe(true);
+    expect(origin.detail).toBe('g/sg/p');
+    const ghPresent = envelope.probes.find((p: any) => p.name === 'gh_present');
+    expect(ghPresent.ok).toBe(false);
+    expect(ghPresent.code).toBe('glab_missing');
+    const ghAuthenticated = envelope.probes.find((p: any) => p.name === 'gh_authenticated');
+    expect(ghAuthenticated.ok).toBe(false);
+    expect(ghAuthenticated.code).toBe('glab_missing');
   });
 });

@@ -372,6 +372,8 @@ export interface CtxOptions {
   stdinIsTTY?: boolean;
   gh?: GitHubProvider;
   gitWrites?: GitWriteScript;
+  /** Overrides the production parseRepoRef (e.g. with a GitLab declaration). */
+  parseRepoRef?: CommandContext['parseRepoRef'];
 }
 
 export interface TestCtx {
@@ -404,7 +406,7 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
     gh: options.gh ?? ghProvider,
     record: recordPort,
     evaluate: (options.evaluate ?? makeEvaluate()) as CommandContext['evaluate'],
-    parseRepoRef: parseRepoRef,
+    parseRepoRef: options.parseRepoRef ?? parseRepoRef,
   };
 
   return { ctx, io, recordPort, gitPort, ghProvider };

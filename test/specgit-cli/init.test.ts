@@ -182,6 +182,35 @@ describe('specgit init', () => {
     );
   });
 
+  // #117: a GitHub Actions workflow is wrong-platform output for a
+  // GitLab repository — init on gitlab mode writes every platform-neutral
+  // harness asset (managed blocks, hooks) but NOT the workflow, reports
+  // the pending GitLab harness honestly, and points at .gitlab-ci.yml.
+  it('--gitlab-host skips the GitHub Actions workflow and warns gitlab_harness_pending (#117)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(envelope.harness).toEqual({ template: 'gitlab-pending' });
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'gitlab_harness_pending'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.message).toContain('.gitlab-ci.yml');
+    // Platform-neutral harness assets still land: the managed prompt
+    // block in AGENTS.md.
+    expect(read(AGENTS_ABS(root))).toContain(BLOCK_START_MARKER);
+  });
+
   it('--gitlab-host validates the host against the origin (bare hostname, must match)', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },

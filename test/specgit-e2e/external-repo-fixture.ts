@@ -356,6 +356,86 @@ export function makePushableExternalRepo(
   return { ...repo, bareDir };
 }
 
+// ---------------------------------------------------------------------------
+// GitLab variant (#117): the same adoption shape on a nested-group
+// self-managed origin. The recorded evidence payloads
+// (test/specgit-e2e/fixtures/gitlab/, GitLab 19.2.4 CE on
+// git.ycgame.com) drive the offline fake-glab rule tables — the e2e
+// clones those payload SHAPES and pins the local delivery state (shas,
+// branches, iids) onto them, exactly like the #114 contract tests.
+// ---------------------------------------------------------------------------
+
+/** The recorded instance host (public delivery record; ledger row 6). */
+export const GITLAB_HOST = 'git.ycgame.com';
+/** Synthetic nested-group project path (depth 3 — the #95 reproducer shape). */
+export const GITLAB_GROUP_PATH = 'specgit-evidence/probe';
+export const GITLAB_PROJECT = 'app';
+export const GITLAB_ORIGIN_URL = `https://${GITLAB_HOST}/${GITLAB_GROUP_PATH}/${GITLAB_PROJECT}.git`;
+/** The .gitlab-ci.yml job key init detects as the required check. */
+export const GITLAB_CHECK = 'build-app';
+
+const GITLAB_CI_YAML = [
+  `${GITLAB_CHECK}:`,
+  '  stage: build',
+  '  script:',
+  '    - echo building the unrelated app',
+  '',
+].join('\n');
+
+export interface GitlabExternalRepoFixture {
+  dir: string;
+  /** Local bare remote standing in for the GitLab origin (insteadOf rewrite). */
+  bareDir: string;
+  headSha: string;
+}
+
+/**
+ * An UNRELATED npm repository on a nested-group GitLab origin (declared
+ * platform, real git transport through a local bare remote, its own
+ * `.gitlab-ci.yml` job — nothing the harness may lean on but the CI file
+ * init detects). Offline: no network call ever leaves the fake glab.
+ */
+export function makeGitlabExternalRepo(prefix: string): GitlabExternalRepoFixture {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(dir, 'init', '-b', 'main');
+  git(dir, 'config', 'user.name', 'External Fixture');
+  git(dir, 'config', 'user.email', 'external@example.test');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  git(dir, 'remote', 'add', 'origin', GITLAB_ORIGIN_URL);
+
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    `${JSON.stringify(
+      { name: GITLAB_PROJECT, version: '0.1.0', private: true, engines: { node: '>=20.19' } },
+      null,
+      2
+    )}\n`
+  );
+  fs.writeFileSync(path.join(dir, '.gitlab-ci.yml'), GITLAB_CI_YAML);
+
+  git(dir, 'add', 'package.json', '.gitlab-ci.yml');
+  git(dir, '-c', 'core.hooksPath=external-fixture-no-hooks', 'commit', '-m', 'unrelated app baseline');
+  const headSha = git(dir, 'rev-parse', 'HEAD').trim();
+
+  git(dir, 'update-ref', 'refs/remotes/origin/main', headSha);
+  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+
+  const bareDir = `${fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}bare-`))}.git`;
+  git(dir, 'init', '--bare', bareDir);
+  git(dir, 'config', `url.${bareDir}.insteadOf`, GITLAB_ORIGIN_URL);
+
+  return { dir, bareDir, headSha };
+}
+
+/**
+ * A PATH containing git and the fake glab ONLY — no gh can ever be
+ * reached (real or fake): a routing regression fails closed as
+ * gh_missing instead of touching a real GitHub account.
+ */
+export function gitAndGlabOnlyPath(gitBinDir: string, glabBinDir: string): string {
+  return `${glabBinDir}${path.delimiter}${gitBinDir}`;
+}
+
 export interface ExternalWorktreeFixture {
   mainDir: string;
   bareDir: string;

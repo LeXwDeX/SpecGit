@@ -7,7 +7,6 @@ import {
   formatRepoRef,
   parsePrUrl,
   parseRepoRef,
-  requireGithubRoute,
   sameRepoRef,
   type RepoRef,
 } from '../gitfacts/origin.js';
@@ -327,20 +326,13 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
         // origin_unresolvable with GitHub-pointing advice.
         return [makeFailure(parsed.code === 'gitlab_unsupported' ? 'gitlab_unsupported' : 'origin_unresolvable')];
       }
-      // #112 (platform routing): the origin resolved through the
+      // #117 (provider routing): the origin resolved through the
       // providers.yaml GitLab declaration (platform marker on the ref —
-      // the substring heuristic never resolves one). Evaluation evidence
-      // flows through gh only today, so the GitLab route fails closed
-      // here, factually: the declaration and the nested-group grammar
-      // are accepted, the glab provider is not implemented yet. No gh
-      // call ever sees a group/subgroup ref.
-      const routedEv = requireGithubRoute(parsed);
-      if (!routedEv.ok) {
-        const routed = makeFailure(routedEv.code);
-        routed.message = routedEv.message;
-        routed.fix = routedEv.fix;
-        return [routed];
-      }
+      // the substring heuristic never resolves one). The declaration
+      // and the nested-group grammar are accepted; evaluation evidence
+      // flows through the neutral provider input, which the production
+      // composition routes to glab for platform-marked refs (the
+      // closing gate below already parses per the platform dialect).
       repoRef = parsed.value;
       evidence.repo = formatRepoRef(parsed.value);
       return [];
