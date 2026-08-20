@@ -56,15 +56,22 @@ The repository has no `origin` remote, or it does not parse to a GitHub reposito
 git remote get-url origin
 ```
 
-Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version.
+Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version — for a GitLab repository, declare the host (next entry) to get the dedicated diagnostic.
 
 ### `gitlab_unsupported` (exit 3)
 
-The origin points at a GitLab repository — `gitlab.com`, or a self-hosted host
+The origin points at a GitLab repository — `gitlab.com`, a selfhosted host
 declared in `spec_git/providers.yaml` (created by `specgit init
---gitlab-host <hostname>` or the interactive platform question). GitLab
-evidence requires `glab` support, which is not implemented in v1 — see the
-[GitLab support roadmap](gitlab-support.md). The declaration is honored
+--gitlab-host <hostname>` or the interactive platform question), or a
+`*gitlab*` host — including **nested-group** paths (`group/subgroup/project`,
+any depth ≥ 2), which are recognized and reported with this code rather than
+misdiagnosed as `origin_unresolvable` (#95). GitLab evidence requires `glab`
+support, which is not implemented yet — see the
+[GitLab support roadmap](gitlab-support.md). The planned support range is
+precise and fail-closed: self-managed **GitLab CE/Free `>= 19.2.4 < 19.3.0`**
+(anything outside ⇒ planned `gitlab_version_unsupported`, exit 3), GitLab.com
+via capability probing, and **glab ≥ 1.113.0**; every claim is pinned in the
+[evidence ledger](evidence/gitlab-19.2.md). The declaration is honored
 diagnostically: matching origins fail with this dedicated code instead of the
 generic `origin_unresolvable`, and `specgit init --json` / `specgit doctor`
 report the platform and `glab` presence. Point origin at a github.com
