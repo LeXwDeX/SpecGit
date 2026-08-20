@@ -5,7 +5,8 @@ name: Release
 #
 # 1. push to main with pending changesets -> open (or force-update) the
 #    branch changeset-release/main carrying the consumed bump commit
-#    "chore(release): v<version>" as a PR with auto-merge enabled.
+#    "chore(release): v<version>" as a PR held open as the manual
+#    batch-decision point (auto-merge armed off, #102).
 # 2. that PR merges (SpecGit Acceptance passes via its no-record skip
 #    path) -> push to main with no pending changesets and a head commit
 #    matching "chore(release): v" -> publish to npm, tag, GitHub Release.
@@ -106,7 +107,13 @@ jobs:
               }
             fi
           fi
-          gh pr merge changeset-release/main --auto --squash --delete-branch
+          # Batch mode (#102): do not arm auto-merge on the version PR.
+          # It stays open as the manual batch-decision point — a human
+          # decides when the batch (nine-issue fixes plus GitLab
+          # evidence) ships as a deliberate rc cut.
+          # Re-arm condition: restore auto-merge arming on the version
+          # PR as part of the deliberate 1.0.0-rc.1 cut, once the batch
+          # is ready to ship.
 
       - name: Verify version PR workflows started (not awaiting approval)
         if: steps.pending.outputs.count != '0'
