@@ -527,12 +527,19 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
           continue;
         }
         if (run.conclusion !== 'success') {
-          const failed = makeFailure('checks_failed', {
-            name: requiredName,
-            conclusion: run.conclusion,
-          });
-          failed.message = `${failed.message} [check: ${requiredName}, conclusion: ${run.conclusion}]`;
-          failures.push(failed);
+          // #116 (D-4″, ledger row 17): a failed `allow_failure` job
+          // keeps the pipeline green. The fact above still reports the
+          // truthful failure — the gate verdict follows the pipeline,
+          // and only failure is affected: every other conclusion
+          // (cancelled, timed out, …) still fails, allowed or not.
+          if (!(run.conclusion === 'failure' && run.allowFailure === true)) {
+            const failed = makeFailure('checks_failed', {
+              name: requiredName,
+              conclusion: run.conclusion,
+            });
+            failed.message = `${failed.message} [check: ${requiredName}, conclusion: ${run.conclusion}]`;
+            failures.push(failed);
+          }
         }
       }
       return failures;

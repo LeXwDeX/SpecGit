@@ -952,6 +952,72 @@ describe('acceptance evaluator', () => {
     }
   });
 
+  it('passes a failed allowFailure run per pipeline semantics while the fact keeps job-level truth (#116)', async () => {
+    // D-4″ (ledger row 17): a failed `allow_failure` job keeps the
+    // pipeline green. The check-run fact still reports conclusion
+    // 'failure' — evidence never lies — but the gate verdict follows
+    // the pipeline: the run passes.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure', allowFailure: true })]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(gate(verdict, 'checks').status).toBe('pass');
+    expect(verdict.accepted).toBe(true);
+    expect(verdict.exitCode).toBe(0);
+  });
+
+  it('allowFailure launders only failure — a canceled allowed run still fails (#116)', async () => {
+    // Row 17 covers exactly "failed but allowed to fail". A canceled
+    // allow_failure run carries a different conclusion and fails the
+    // gate like any other non-success.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'cancelled', allowFailure: true })]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    const g = gate(verdict, 'checks');
+    expect(g.failures.map((f) => f.code)).toEqual(['checks_failed']);
+    expect(g.failures[0].detail).toEqual({ name: 'All checks passed', conclusion: 'cancelled' });
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+  });
+
+  it('a hard failure without allowFailure still fails the gate (#116)', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure', allowFailure: false })]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(gate(verdict, 'checks').status).toBe('fail');
+    expect(verdict.classification).toBe('rejected');
+  });
+
+  it('applies allowFailure to the truth run only (old-soft/new-hard, #119 × #116)', async () => {
+    // The truth run is the latest same-name run; its own allowFailure
+    // flag decides. An older allowed failure never launders a newer
+    // hard failure of the same name.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([
+        makeCheckRun('All checks passed', {
+          conclusion: 'failure',
+          allowFailure: true,
+          startedAt: '2026-08-20T13:00:00Z',
+          id: 1,
+        }),
+        makeCheckRun('All checks passed', {
+          conclusion: 'failure',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 2,
+        }),
+      ]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(gate(verdict, 'checks').failures.map((f) => f.code)).toEqual(['checks_failed']);
+    expect(verdict.classification).toBe('rejected');
+  });
+
   it('short-circuits in gate order G1 through G10', async () => {
     const gh = new MockGitHubProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
