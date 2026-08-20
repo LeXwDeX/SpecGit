@@ -177,13 +177,17 @@ verified (dry-run publish, tarball inspection) without accidentally shipping
 the final version. Direct pushes to `main` are blocked by the pre-push guard,
 so **every published version traces to a merged PR**. Prerequisite (repo
 admin, once): an npm **trusted publisher** bound to this repository and the
-Release workflow's OIDC token.
+Release workflow's OIDC token. What counts as done for a major release is
+defined in [docs/release-gates.md](docs/release-gates.md) — the invariant
+core, the red-line closure list, and the evidence archive.
 
 ## Documentation
 
 - [Documentation home](docs/README.md)
 - [Getting Started](docs/getting-started.md) · [Installation](docs/installation.md)
 - [Product Baseline v1](docs/baseline-v1.md) — the versioned public contract
+- [Release Gates](docs/release-gates.md) — the authoritative 1.0.0 completion
+  vocabulary, invariant core, and evidence protocol
 - [Concepts](docs/concepts.md) · [Overview](docs/overview.md)
 - [CLI Reference](docs/cli.md) · [Reference (schemas, gates, codes)](docs/reference.md)
 - [GitHub Actions usage & security](docs/actions.md)

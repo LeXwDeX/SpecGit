@@ -3,9 +3,9 @@
 
 ## WHY
 
-Closes #123
-<!-- Replace #123 with the bound issue number(s), one "Closes #n" line each.
-     Required: the acceptance gate fails `closing_refs_incomplete` without
+Closes #<issue-number>
+<!-- Replace <issue-number> with the bound issue number(s), one "Closes #n" line
+     each. Required: the acceptance gate fails `closing_refs_incomplete` without
      them. -->
 
 One sentence per issue: the independently verifiable need this delivery
