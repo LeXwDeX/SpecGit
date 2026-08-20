@@ -739,6 +739,122 @@ describe('acceptance evaluator', () => {
     expect(verdict.exitCode).toBe(1);
   });
 
+  it('reads the latest-by-started_at run as the truth run (old-green/new-red, #119)', async () => {
+    // Re-runs keep every same-name run in the Checks API. The truth run
+    // is the latest by started_at (docs/reference.md, Checks G11): an
+    // old green followed by a new red must fail, whatever the array order.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([
+        makeCheckRun('All checks passed', {
+          conclusion: 'success',
+          startedAt: '2026-08-20T13:00:00Z',
+          id: 1,
+        }),
+        makeCheckRun('All checks passed', {
+          conclusion: 'failure',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 2,
+        }),
+      ]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    const g = gate(verdict, 'checks');
+    expect(g.failures.map((f) => f.code)).toEqual(['checks_failed']);
+    expect(g.failures[0].detail).toEqual({ name: 'All checks passed', conclusion: 'failure' });
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+  });
+
+  it('accepts when the latest-by-started_at run is green (old-red/new-green, #119)', async () => {
+    // First-match would read the stale red run and reject a delivery
+    // whose latest evidence is green: position in the response is not
+    // evidence, started_at is.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([
+        makeCheckRun('All checks passed', {
+          conclusion: 'failure',
+          startedAt: '2026-08-20T13:00:00Z',
+          id: 1,
+        }),
+        makeCheckRun('All checks passed', {
+          conclusion: 'success',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 2,
+        }),
+      ]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(gate(verdict, 'checks').status).toBe('pass');
+    expect(verdict.accepted).toBe(true);
+  });
+
+  it('reports checks_pending when only the truth run is still in flight (#119)', async () => {
+    // The older run is completed green, the latest-by-started_at run is
+    // in_progress: the honest verdict is pending (transient, retryable),
+    // never acceptance on stale evidence.
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([
+        makeCheckRun('All checks passed', {
+          conclusion: 'success',
+          startedAt: '2026-08-20T13:00:00Z',
+          id: 1,
+        }),
+        makeCheckRun('All checks passed', {
+          status: 'in_progress',
+          conclusion: null,
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 2,
+        }),
+      ]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    const g = gate(verdict, 'checks');
+    expect(g.failures.map((f) => f.code)).toEqual(['checks_pending']);
+    expect(verdict.classification).toBe('rejected');
+  });
+
+  it('breaks started_at ties by the higher check-run id, order-independent (#119)', async () => {
+    // Same started_at across re-runs: the higher id is the newer run.
+    // Both array orders must accept — the tiebreak never trusts position.
+    for (const runs of [
+      [
+        makeCheckRun('All checks passed', {
+          conclusion: 'failure',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 1,
+        }),
+        makeCheckRun('All checks passed', {
+          conclusion: 'success',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 11,
+        }),
+      ],
+      [
+        makeCheckRun('All checks passed', {
+          conclusion: 'success',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 11,
+        }),
+        makeCheckRun('All checks passed', {
+          conclusion: 'failure',
+          startedAt: '2026-08-20T14:00:00Z',
+          id: 1,
+        }),
+      ],
+    ]) {
+      const gh = new MockGitHubProvider({
+        pr: ok(makePrFact({ headSha: HEAD })),
+        checkRuns: ok(runs),
+      });
+      const verdict = await evaluate(input({ gh }));
+      expect(gate(verdict, 'checks').status).toBe('pass');
+      expect(verdict.accepted).toBe(true);
+    }
+  });
+
   it('short-circuits in gate order G1 through G10', async () => {
     const gh = new MockGitHubProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
