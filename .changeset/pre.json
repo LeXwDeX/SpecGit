@@ -1,0 +1,15 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "specgit": "0.7.2"
+  },
+  "changesets": [
+    "cli-state-contract",
+    "init-non-destructive",
+    "keen-pumas-wait",
+    "portable-acceptance-harness",
+    "pr-body-scaffold",
+    "v1.0-major"
+  ]
+}
