@@ -48,7 +48,7 @@ Interface decision recorded (option B — neutral provider port with internal pe
 | `getCheckRuns` | pipelines by `sha` → per-pipeline jobs, `rel="next"` continuation (rows 15/16) |
 | `createIssue` | `glab api projects/:id/issues -f …` |
 | `createDraftPr` | `glab api projects/:id/merge_requests` with `Draft: <title>` (rows 6/18 — `glab mr create` has no structured-output flag) |
-| `listOpenPrsByHead` | MR list filtered by source branch (parameter anchor pending — ledger row 24) |
+| `listOpenPrsByHead` | MR list filtered by source branch (`source_branch` list parameter, pinned FU-4 — ledger row 24) |
 | `getBranchProtection` | `GET projects/:id/protected_branches/:name` (Free basic fields, row 20) |
 | `enableBranchProtection` | protect default branch (integer access levels) + set `only_allow_merge_if_pipeline_succeeds` (rows 7/20) |
 | `getRepoAutomerge` | read `only_allow_merge_if_pipeline_succeeds` from project JSON (row 7) |
