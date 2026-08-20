@@ -962,6 +962,107 @@ describe('GhCliGitHubProvider evidence completeness (issue #120, I3b)', () => {
     expect(result.value).toHaveLength(100);
   });
 
+  function searchFactPage(
+    items: Array<{ number: number; title?: string; body?: string | null }>,
+    overrides: Record<string, unknown> = {}
+  ): string {
+    return JSON.stringify({
+      total_count: items.length,
+      incomplete_results: false,
+      items,
+      ...overrides,
+    });
+  }
+
+  it('getOpenIssues paginates to exhaustion carrying titles and bodies, open issues only', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      number: 101 + i,
+      title: `chore: filler ${101 + i}`,
+      body: 'filler body',
+    }));
+    const page2 = [
+      { number: 9, title: 'feat: alpha why', body: 'unrelated human body' },
+      { number: 42, title: 'feat: alpha why', body: null },
+    ];
+    const { provider, fake } = setup([
+      { match: 'search/issues.*page=2', stdout: searchFactPage(page2) },
+      { match: 'search/issues', stdout: searchFactPage(page1) },
+    ]);
+    const result = await provider.getOpenIssues(REPO);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(102);
+    expect(result.value.find((f) => f.number === 9)).toEqual({
+      number: 9,
+      title: 'feat: alpha why',
+      body: 'unrelated human body',
+    });
+    // A null body is absence, never a string — and never a scaffold match.
+    expect(result.value.find((f) => f.number === 42)).toEqual({
+      number: 42,
+      title: 'feat: alpha why',
+    });
+    const searchCalls = readFakeGhCalls(fake.logPath).filter((c) => c.includes('search/issues'));
+    expect(searchCalls).toHaveLength(2);
+    // The query pins the adoption boundary: issues, open state only — a
+    // closed same-title issue is invisible to adoption by construction.
+    expect(searchCalls[0]).toContain('is:issue+is:open');
+  });
+
+  it('getOpenIssues fails closed (evidence_truncated) on GitHub incomplete_results', async () => {
+    const { provider } = setup([
+      {
+        match: 'search/issues',
+        stdout: searchFactPage([{ number: 1, title: 'x' }], {
+          incomplete_results: true,
+          total_count: 5000,
+        }),
+      },
+    ]);
+    const result = await provider.getOpenIssues(REPO);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+  });
+
+  it('getOpenIssues fails closed at the search-result cap instead of silently truncating', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => ({
+      number: 101 + i,
+      title: `chore: filler ${101 + i}`,
+    }));
+    const { provider, fake } = setup([{ match: 'search/issues', stdout: searchFactPage(full) }]);
+    const result = await provider.getOpenIssues(REPO);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+    expect(readFakeGhCalls(fake.logPath).filter((c) => c.includes('search/issues'))).toHaveLength(10);
+  });
+
+  it('getOpenIssues pins the probe call budget: a 250-issue scan is 3 search calls, zero per-issue GETs (#77)', async () => {
+    const page = (from: number) =>
+      Array.from({ length: 100 }, (_, i) => ({
+        number: from + i,
+        title: `chore: filler ${from + i}`,
+      }));
+    const last = Array.from({ length: 50 }, (_, i) => ({
+      number: 201 + i,
+      title: `chore: filler ${201 + i}`,
+    }));
+    const { provider, fake } = setup([
+      { match: 'search/issues.*page=3', stdout: searchFactPage(last) },
+      { match: 'search/issues.*page=2', stdout: searchFactPage(page(101)) },
+      { match: 'search/issues', stdout: searchFactPage(page(1)) },
+    ]);
+    const result = await provider.getOpenIssues(REPO);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(250);
+    const calls = readFakeGhCalls(fake.logPath);
+    // Budget: exactly one call per 100-issue page — no per-issue lookups.
+    expect(calls.filter((c) => c.includes('search/issues'))).toHaveLength(3);
+    expect(calls.filter((c) => /api repos\/LeXwDeX\/SpecGit\/issues\/\d/.test(c))).toHaveLength(0);
+  });
+
   it('getCheckRuns fails closed when the page cap is reached with full pages', async () => {
     const { provider, fake } = setup([{ match: 'check-runs', stdout: checkRunPage(100) }]);
     const result = await provider.getCheckRuns(REPO, SHA);

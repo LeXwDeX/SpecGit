@@ -3,7 +3,7 @@ import type { Evidence } from '../../src/kernel/evidence.js';
 import type { Verdict, VerdictEvidence } from '../../src/acceptance/evaluate.js';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import type { Policy as SpecGitPolicy } from '../../src/record/policy.js';
-import type { PrFact } from '../../src/github/port.js';
+import type { OpenIssueFact, PrFact } from '../../src/github/port.js';
 import type {
   CommandContext,
   GitFacts,
@@ -125,6 +125,7 @@ export interface GhScript {
     ref: number | string
   ) => Evidence<PrFact>;
   getOpenIssueNumbers?: (repo: { owner: string; repo: string }) => Evidence<number[]>;
+  getOpenIssues?: (repo: { owner: string; repo: string }) => Evidence<OpenIssueFact[]>;
   createIssue?: (
     repo: { owner: string; repo: string },
     title: string,
@@ -170,6 +171,14 @@ export function makeGhProvider(
         behavior.getOpenIssueNumbers?.(repo) ??
         // Empty remote by default: no open issues to adopt.
         ({ ok: true, value: [] } as Evidence<number[]>)
+      );
+    }),
+    getOpenIssues: vi.fn(async (repo: never) => {
+      calls.push(`getOpenIssues:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+      return (
+        behavior.getOpenIssues?.(repo) ??
+        // Empty remote by default: no open issues to adopt.
+        ({ ok: true, value: [] } as Evidence<OpenIssueFact[]>)
       );
     }),
     getPr: vi.fn(async (repo: never, ref: number | string) => {
