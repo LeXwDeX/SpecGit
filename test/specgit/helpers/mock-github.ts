@@ -124,6 +124,7 @@ export function makePrFact(overrides: Partial<PrFact> = {}): PrFact {
     baseBranch: 'main',
     body: 'Closes #123',
     mergeCommitSha: null,
+    draft: false,
     ...overrides,
   };
 }

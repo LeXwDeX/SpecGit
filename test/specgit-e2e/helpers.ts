@@ -105,6 +105,7 @@ export interface PrShape {
   body: string;
   state?: 'open' | 'closed';
   mergedAt?: string | null;
+  draft?: boolean;
 }
 
 export function prJson(pr: PrShape): string {
@@ -112,6 +113,7 @@ export function prJson(pr: PrShape): string {
     number: pr.number,
     state: pr.state ?? 'open',
     merged_at: pr.mergedAt ?? null,
+    draft: pr.draft ?? false,
     head: { ref: pr.branch, sha: pr.sha },
     base: { ref: 'main' },
     body: pr.body,

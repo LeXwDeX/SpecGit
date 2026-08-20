@@ -377,6 +377,7 @@ describe('specgit issue: idempotent resume', () => {
             baseBranch: 'main',
             body: 'Closes #11 Closes #12',
             mergeCommitSha: null,
+            draft: false,
           }),
       },
     });
@@ -494,6 +495,7 @@ function mergedRecordCtx(args: { gh?: GhScript } = {}) {
           baseBranch: 'main',
           body: 'Closes #11 Closes #12',
           mergeCommitSha: null,
+          draft: false,
         }),
       ...(args.gh ?? {}),
     },
@@ -545,6 +547,7 @@ describe('specgit issue: replacement validation is non-destructive', () => {
             baseBranch: 'main',
             body: 'Closes #11 Closes #12',
             mergeCommitSha: null,
+            draft: false,
           }),
       },
     });
@@ -824,6 +827,7 @@ describe('specgit issue: complete-record argument drift (P1 regression)', () => 
             baseBranch: 'main',
             body: 'Closes #11\nCloses #12\n',
             mergeCommitSha: null,
+            draft: false,
           }),
       },
     });
