@@ -62,6 +62,17 @@ list. Nothing outside it counts as "done for 1.0.0".
 5. **Evidence archived** — every condition above is met with
    **archived evidence** per §4 (the archive table there is the record).
 
+First exercised by gate 3: the `Test (self-hosted-linux)` leg, retired
+2026-08-21 at the W2 retirement line
+([#105](https://github.com/LeXwDeX/SpecGit/issues/105)) — never green
+since introduction (every run crashed at job initialization inside the
+runner container, an infrastructure-side failure per the
+[W1 diagnosis](https://github.com/LeXwDeX/SpecGit/issues/105#issuecomment-5356816362)),
+so self-hosted coverage is not part of the release matrix. Disposition
+and run evidence: the issue; the retirement is pinned structurally by
+`test/specgit-cli/workflow-security.test.ts` (no job on the self-hosted
+pool, no self-hosted matrix entry in `ci.yml`).
+
 ## 4. Evidence protocol and the gate-7 binding
 
 Every condition names where its proof lives before it can be claimed:
