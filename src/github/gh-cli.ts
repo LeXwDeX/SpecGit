@@ -40,6 +40,9 @@ function readEnvTimeoutMs(env: NodeJS.ProcessEnv): number | null {
 const DEFAULT_MAX_BUFFER = 4 * 1024 * 1024;
 const CHECK_RUN_PAGE_SIZE = 100;
 const MAX_CHECK_RUN_PAGES = 10;
+const ISSUE_SEARCH_PAGE_SIZE = 100;
+/** GitHub's search API never returns more than 1000 results (10×100). */
+const MAX_ISSUE_SEARCH_PAGES = 10;
 const MAX_EMBEDDED_TEXT = 400;
 
 /** gh stderr markers that mean "not authenticated" rather than transport. */
@@ -258,20 +261,51 @@ export class GhCliGitHubProvider implements GitHubProvider {
     });
   }
 
-  /** Open issue numbers via the search API (excludes PRs, newest first). */
+  /**
+   * Open issue numbers via the search API (excludes PRs, newest first).
+   * Evidence-completeness rule (#120, I3b): the list is paginated to
+   * exhaustion, and any truncation signal — GitHub's own
+   * `incomplete_results: true` or the 1000-result search cap reached with
+   * a full page — fails closed with `evidence_truncated` (exit 3) instead
+   * of returning a silently partial list.
+   */
   async getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>> {
-    const endpoint =
-      `search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+is:open` +
-      `&per_page=100`;
-    const result = await this.runApi(endpoint, 'search');
-    if (!result.ok) {
-      return result;
+    const numbers = new Set<number>();
+    for (let page = 1; page <= MAX_ISSUE_SEARCH_PAGES; page += 1) {
+      const endpoint =
+        `search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+is:open` +
+        `&per_page=${ISSUE_SEARCH_PAGE_SIZE}&page=${page}`;
+      const result = await this.runApi(endpoint, 'search');
+      if (!result.ok) {
+        return result;
+      }
+      const parsed = result.value as { items?: unknown; incomplete_results?: unknown };
+      if (!Array.isArray(parsed.items)) {
+        return fail('gh_transport', 'GitHub returned an unexpected issue-search payload.');
+      }
+      if (parsed.incomplete_results === true) {
+        return fail(
+          'evidence_truncated',
+          'GitHub reports the open-issue search as incomplete; the list may be missing issues.'
+        );
+      }
+      for (const item of parsed.items) {
+        const number = (item as { number?: unknown }).number;
+        if (typeof number === 'number') {
+          // Deduplicate: a page-boundary shift between calls (an issue
+          // opened mid-pagination) can repeat an entry across pages.
+          numbers.add(number);
+        }
+      }
+      if (parsed.items.length < ISSUE_SEARCH_PAGE_SIZE) {
+        return ok([...numbers]);
+      }
     }
-    const parsed = result.value as { items?: unknown };
-    if (!Array.isArray(parsed.items)) {
-      return fail('gh_transport', 'GitHub returned an unexpected issue-search payload.');
-    }
-    return ok(parsed.items.map((i) => (i as { number?: unknown }).number).filter((n): n is number => typeof n === 'number'));
+    return fail(
+      'evidence_truncated',
+      `GitHub's issue search caps at ${MAX_ISSUE_SEARCH_PAGES * ISSUE_SEARCH_PAGE_SIZE} results; ` +
+        'the open-issue list may be truncated.'
+    );
   }
 
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {
@@ -363,11 +397,17 @@ export class GhCliGitHubProvider implements GitHubProvider {
       }
 
       if (parsed.check_runs.length < CHECK_RUN_PAGE_SIZE) {
-        break;
+        return ok(runs);
       }
     }
-
-    return ok(runs);
+    // Evidence-completeness rule (#120, I3b): the page cap was reached
+    // with a full page — more runs may exist beyond it. Never return a
+    // silently partial list; fail closed instead.
+    return fail(
+      'evidence_truncated',
+      `Check-run pagination hit its cap (${MAX_CHECK_RUN_PAGES * CHECK_RUN_PAGE_SIZE} runs); ` +
+        'the check-run list may be truncated.'
+    );
   }
 
   async createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>> {

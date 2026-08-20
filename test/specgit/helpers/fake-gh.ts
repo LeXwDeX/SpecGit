@@ -62,9 +62,25 @@ function finish(stdinText) {
     stdout = stdout.split('%SEQ%').join(String(rule.seq.start + (rule.seq.step || 1) * n));
   }
   function respond() {
-    if (stdout) process.stdout.write(stdout);
-    if (rule.stderr) process.stderr.write(rule.stderr);
-    process.exit(typeof rule.exit === 'number' ? rule.exit : 0);
+    const exitCode = typeof rule.exit === 'number' ? rule.exit : 0;
+    // Exit only after every write is flushed to the OS: process.exit can
+    // drop pipe-buffered output mid-write, and larger payloads (e.g. a
+    // 100-entry check-run page, ~13 KB) lose their tail exactly when the
+    // parent has not drained the pipe yet (#120 CI macos flake).
+    const writes = [];
+    if (stdout) writes.push(function (done) { process.stdout.write(stdout, done); });
+    if (rule.stderr) writes.push(function (done) { process.stderr.write(rule.stderr, done); });
+    if (writes.length === 0) {
+      process.exit(exitCode);
+      return;
+    }
+    let remaining = writes.length;
+    for (const write of writes) {
+      write(function () {
+        remaining -= 1;
+        if (remaining === 0) process.exit(exitCode);
+      });
+    }
   }
   if (rule.delayMs && rule.delayMs > 0) {
     setTimeout(respond, rule.delayMs);
