@@ -57,8 +57,7 @@ jobs:
   specgit-acceptance:
     name: SpecGit Acceptance
     # Hosted pool on purpose: a required check must not hinge on one
-    # self-hosted container. A shadow self-hosted job in ci.yml
-    # proves the docker runner before any migration.
+    # self-hosted container.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

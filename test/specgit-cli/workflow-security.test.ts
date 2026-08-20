@@ -130,59 +130,40 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
   }
 };
 
-const normalizeExpr = (expression: string): string => expression.replace(/\s+/g, '');
-
-const SELF_HOSTED_JOB_IF =
-  "github.event_name!='pull_request'||github.event.pull_request.head.repo.full_name==github.repository";
-
 const REQUIRED_MATRIX_LABELS = ['linux-bash', 'macos-bash', 'windows-pwsh'];
 
-// The self-hosted shadow runner outlives any single job; fork pull-request
-// code must never execute on it. Same-repo pull requests keep proving the
-// container; push, merge_group, and dispatch check out trusted refs.
-//
-// The shadow leg is a SEPARATE job (#69), not a matrix entry: entries of
-// test_matrix cannot fail independently of the required "Test (<label>)"
-// check names, and a queued/broken self-hosted leg would wedge every gate
-// that needs test_matrix. The split job is never required (policy.yaml
-// names hosted checks only), is no job's dependency, and its failures
-// never redden the run (continue-on-error: true).
-const assertSelfHostedShadowJob = (text: string, label: string): void => {
+// #105: the self-hosted shadow leg is RETIRED (W2 retirement line,
+// 2026-08-21). It was never green — every execution since introduction
+// crashed at job initialization with zero steps run (the runner
+// container cannot create its tool-cache directory; infrastructure-side,
+// not repo-fixable per the W1 diagnosis on the issue), and the repair
+// window closed without a runner-owner fix. Self-hosted coverage is not
+// part of the release matrix; re-introducing self-hosted execution
+// requires repairing the runner infrastructure first and updating this
+// invariant with a recorded rationale on the tracker.
+const assertNoSelfHostedExecution = (text: string, label: string): void => {
   const jobs = (parse(text) as Workflow).jobs ?? {};
   const matrixJob = jobs.test_matrix;
   if (!matrixJob) {
     throw new Error(`${label}: test_matrix job missing`);
   }
-  const labels = (matrixJob.strategy?.matrix?.include ?? []).map((entry) => String(entry.label));
-  if (labels.includes('self-hosted-linux')) {
-    throw new Error(`${label}: self-hosted leg must not ride the required test_matrix`);
+  const entries = matrixJob.strategy?.matrix?.include ?? [];
+  const labels = entries.map((entry) => String(entry.label));
+  for (const entry of entries) {
+    const os = Array.isArray(entry.os) ? entry.os : [entry.os];
+    if (os.includes('self-hosted') || String(entry.label) === 'self-hosted-linux') {
+      throw new Error(`${label}: self-hosted entry must not ride the required test_matrix (retired; #105)`);
+    }
   }
   for (const required of REQUIRED_MATRIX_LABELS) {
     if (!labels.includes(required)) {
       throw new Error(`${label}: required matrix label missing: ${required}`);
     }
   }
-  const shadow = jobs.test_selfhosted;
-  if (!shadow) {
-    throw new Error(`${label}: test_selfhosted shadow job missing`);
-  }
-  if (shadow.name !== 'Test (self-hosted-linux)') {
-    throw new Error(`${label}: shadow job must keep the name "Test (self-hosted-linux)", got ${String(shadow.name)}`);
-  }
-  const runsOn = Array.isArray(shadow['runs-on']) ? shadow['runs-on'] : [shadow['runs-on']];
-  if (!runsOn.includes('self-hosted')) {
-    throw new Error(`${label}: shadow job must run on the self-hosted pool`);
-  }
-  if (shadow['continue-on-error'] !== true) {
-    throw new Error(`${label}: shadow job must set continue-on-error: true (experimental leg must not redden the run)`);
-  }
-  const jobIf = shadow.if;
-  if (typeof jobIf !== 'string' || normalizeExpr(jobIf) !== SELF_HOSTED_JOB_IF) {
-    throw new Error(`${label}: shadow job not fork-guarded with the github-only guard (job if: ${String(jobIf)})`);
-  }
   for (const [jobId, job] of Object.entries(jobs)) {
-    if ((job.needs ?? []).includes('test_selfhosted')) {
-      throw new Error(`${label}: job "${jobId}" must not depend on the experimental shadow job`);
+    const runsOn = Array.isArray(job['runs-on']) ? job['runs-on'] : [job['runs-on']];
+    if (runsOn.includes('self-hosted')) {
+      throw new Error(`${label}: job "${jobId}" runs on the retired self-hosted pool (#105)`);
     }
   }
 };
@@ -317,8 +298,8 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     assertAcceptanceGateSemantics(acceptTemplate, 'harnessWorkflowYaml()');
   });
 
-  it('ci.yml keeps the experimental self-hosted leg split out of the required matrix', () => {
-    assertSelfHostedShadowJob(ciFile, 'ci.yml');
+  it('ci.yml executes no self-hosted legs (retired shadow job; #105)', () => {
+    assertNoSelfHostedExecution(ciFile, 'ci.yml');
   });
 
   it('every job-level if uses only job-level-legal contexts (github, needs, vars, inputs)', () => {
@@ -411,46 +392,32 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertSelfHostedShadowJob(mutant, 'mutant')).toThrow(/must not ride/);
+    expect(() => assertNoSelfHostedExecution(mutant, 'mutant')).toThrow(/must not ride/);
   });
 
-  it('dropping the github-only fork guard from the shadow job is detected', () => {
-    const guardBlock = [
-      '    if: >-',
-      "      github.event_name != 'pull_request' ||",
-      '      github.event.pull_request.head.repo.full_name == github.repository',
-      '',
-    ].join('\n');
-    const mutant = ciFile.replace(guardBlock, '    if: true\n');
-    expect(mutant).not.toBe(ciFile);
-    expect(() => assertSelfHostedShadowJob(mutant, 'mutant')).toThrow(/fork-guarded/);
-  });
-
-  it('hardening the shadow job back into a required gate is detected', () => {
-    const mutant = ciFile.replace('    continue-on-error: true\n', '');
-    expect(mutant).not.toBe(ciFile);
-    expect(() => assertSelfHostedShadowJob(mutant, 'mutant')).toThrow(/continue-on-error/);
-    const dependant = ciFile.replace(
-      '    needs: [test_matrix, lint, nix-flake-validate]',
-      '    needs: [test_matrix, lint, nix-flake-validate, test_selfhosted]',
+  it('re-adding the retired self-hosted shadow job is detected (#105)', () => {
+    const mutant = ciFile.replace(
+      '  test_pr_required:',
+      [
+        '  test_selfhosted:',
+        '    name: Test (self-hosted-linux)',
+        '    runs-on: [self-hosted, Linux, X64]',
+        '    continue-on-error: true',
+        '    steps:',
+        '      - name: Checkout code',
+        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
+        '  test_pr_required:',
+      ].join('\n'),
     );
-    expect(dependant).not.toBe(ciFile);
-    expect(() => assertSelfHostedShadowJob(dependant, 'mutant')).toThrow(/must not depend/);
+    expect(mutant).not.toBe(ciFile);
+    expect(() => assertNoSelfHostedExecution(mutant, 'mutant')).toThrow(/retired self-hosted pool/);
   });
 
   it('the rejected 50d9ea9 shape — matrix context in a job-level if — is detected', () => {
-    const guardBlock = [
-      '    if: >-',
-      "      github.event_name != 'pull_request' ||",
-      '      github.event.pull_request.head.repo.full_name == github.repository',
-    ].join('\n');
-    const rejected = [
-      '    if: >-',
-      "      (matrix.label != 'self-hosted-linux') ||",
-      "      (github.event_name != 'pull_request') ||",
-      '      (github.event.pull_request.head.repo.full_name == github.repository)',
-    ].join('\n');
-    const matrixMutant = ciFile.replace(guardBlock, rejected);
+    const matrixMutant = ciFile.replace(
+      "    if: needs.changes.outputs.nix == 'true'",
+      "    if: matrix.label != 'self-hosted-linux'",
+    );
     expect(matrixMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(matrixMutant, 'mutant')).toThrow(/matrix/);
     const envMutant = ciFile.replace(

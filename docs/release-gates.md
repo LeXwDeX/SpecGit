@@ -62,6 +62,17 @@ list. Nothing outside it counts as "done for 1.0.0".
 5. **Evidence archived** — every condition above is met with
    **archived evidence** per §4 (the archive table there is the record).
 
+First exercised by gate 3: the `Test (self-hosted-linux)` leg, retired
+2026-08-21 at the W2 retirement line
+([#105](https://github.com/LeXwDeX/SpecGit/issues/105)) — never green
+since introduction (every run crashed at job initialization inside the
+runner container, an infrastructure-side failure per the
+[W1 diagnosis](https://github.com/LeXwDeX/SpecGit/issues/105#issuecomment-5356816362)),
+so self-hosted coverage is not part of the release matrix. Disposition
+and run evidence: the issue; the retirement is pinned structurally by
+`test/specgit-cli/workflow-security.test.ts` (no job on the self-hosted
+pool, no self-hosted matrix entry in `ci.yml`).
+
 ## 4. Evidence protocol and the gate-7 binding
 
 Every condition names where its proof lives before it can be claimed:
@@ -112,7 +123,7 @@ Nix job's path-filter skip is self-documenting in-workflow (the
 
 | Check | Where it shows | Disposition (owner · terms) |
 | --- | --- | --- |
-| `Test (self-hosted-linux)` | CI · main pushes | Red on main runs. Infrastructure-side root cause and manual runner-container actions recorded on [#105](https://github.com/LeXwDeX/SpecGit/issues/105); terms: retirement line = end of W2 without two consecutive green main runs of this leg. |
+| `Test (self-hosted-linux)` | CI · main pushes (retired 2026-08-21) | **Retired** at the W2 retirement line ([#105](https://github.com/LeXwDeX/SpecGit/issues/105), PR #138): never green since introduction — every run crashed at job initialization inside the runner container (infrastructure-side; [W1 diagnosis](https://github.com/LeXwDeX/SpecGit/issues/105#issuecomment-5356816362)) — and the last five consecutive `main` runs stayed red through `15ce8ef`. The leg is removed from `ci.yml` (re-introduction requires repairing the runner first and updating the structural pin in `test/specgit-cli/workflow-security.test.ts`); evidence on the issue. Row kept as the gate-3 record of the resolved disposition. |
 | Version-PR auto-merge | Release workflow | Armed off ([#102](https://github.com/LeXwDeX/SpecGit/pull/102)): zero `--auto` occurrences on main; every version PR is the manual batch-decision point. The re-arm decision is re-evaluated after 1.0.0 ships (user ruling 2026-08-20; [#107](https://github.com/LeXwDeX/SpecGit/issues/107)). |
 | GitHub Advanced Security (dynamic) | PR branches only, never main | Exempt-with-rationale ([#109](https://github.com/LeXwDeX/SpecGit/issues/109)): GitHub-side GHAS agent whose session creation fails on a provider model-entitlement 400 (`claude-opus-4.6`), not repo-fixable, not a required check; optional owner escalations recorded on the issue. |
 | `Validate Release Tracking` | CI | Event-gated: runs only on `pull_request` and `merge_group` — never on `push` or `workflow_dispatch` — so it is skipped on main-push runs **by design**. Its green predicate is read on the delivery or version PR / merge-group run at the threshold, never on a bare main-push run. When it runs it is green either way: with changed `.changeset/*.md` it validates them (`changeset status --since=origin/main`); without changes it reports the normal release cadence ([#110](https://github.com/LeXwDeX/SpecGit/issues/110)). |
