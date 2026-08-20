@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
+import type { PrSummary } from '../../src/github/port.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
 import { runIssue } from '../../src/cli/commands/issue.js';
 import {
@@ -68,7 +69,7 @@ function issueCtx(
   gh.getOpenIssueNumbers = vi.fn(async () => {
     gh.calls.push('getOpenIssueNumbers');
     if (reconcile.openIssueNumbersFail) {
-      return fail(reconcile.openIssueNumbersFail.code, reconcile.openIssueNumbersFail.message);
+      return fail<number[]>(reconcile.openIssueNumbersFail.code, reconcile.openIssueNumbersFail.message);
     }
     return ok(reconcile.openIssueNumbers ?? []);
   });
@@ -85,7 +86,7 @@ function issueCtx(
   gh.listOpenPrsByHead = vi.fn(async (_repo: unknown, head: string) => {
     gh.calls.push(`listOpenPrsByHead:${head}`);
     if (reconcile.openPrsFail) {
-      return fail(reconcile.openPrsFail.code, reconcile.openPrsFail.message);
+      return fail<PrSummary[]>(reconcile.openPrsFail.code, reconcile.openPrsFail.message);
     }
     return ok(reconcile.openPrs ?? []);
   });
@@ -395,7 +396,7 @@ describe('specgit issue: idempotent resume', () => {
     expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
   });
 
-  it('is a healing no-op when the record is complete', async () => {
+  it('is a healing no-op when the record is complete and its PR is live', async () => {
     const t = issueCtx({
       facts: { branch: 'feat/11-x' },
       record: sampleBinding({
@@ -404,6 +405,20 @@ describe('specgit issue: idempotent resume', () => {
         issues: [11],
         pr: 42,
       }),
+      gh: {
+        // A complete record is only healable once its PR is proven live
+        // (not merged): the mergedness probe is part of the resume.
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/11-x',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11\n',
+            mergeCommitSha: null,
+          }),
+      },
     });
     const outcome = await runIssue({ titles: [] }, t.ctx);
     expect(outcome.exit).toBe(0);
@@ -517,12 +532,23 @@ describe('specgit issue: replacement validation is non-destructive', () => {
     expect(t.recordPort.deletes).toEqual([]);
   });
 
-  it('keeps the merged record when no replacement arguments are given', async () => {
+  it('refuses a no-args resume of a merged delivery instead of resurrecting it (lifecycle)', async () => {
+    // #75: the record's PR is merged — completed history. No-args resume
+    // must never re-create, commit, or push the branch GitHub deleted on
+    // merge; the decision is a usage diagnostic naming the way forward.
     const t = mergedRecordCtx();
     const outcome = await runIssue({ titles: [] }, t.ctx);
-    expect(outcome.exit).toBe(0);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit unbind --yes');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
     expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
     expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
   });
 
   it('deletes the merged record only after replacement arguments validate', async () => {
@@ -551,6 +577,53 @@ describe('specgit issue: replacement validation is non-destructive', () => {
     expect(outcome.exit).toBe(0);
     expect(t.recordPort.deletes).toEqual(['/repo']);
     expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: brand new work']);
+  });
+});
+
+describe('specgit issue: mergedness probe fails closed (provider failure)', () => {
+  function prProbeFailsCtx() {
+    return issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: sampleBinding({
+        delivery: 'strict-delivery-harness',
+        context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () => fail('gh_transport', 'GitHub CLI failed: network down'),
+      },
+    });
+  }
+
+  it('keeps the record and refuses to resume when the probe fails (no args)', async () => {
+    // Fail-closed: without the PR fact, resume would guess "not merged"
+    // and could re-push a merged delivery's branch. Exit 3, record kept,
+    // no git side effects (#75).
+    const t = prProbeFailsCtx();
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+
+  it('keeps the record when the probe fails with replacement arguments present', async () => {
+    // Replacement requires proof of merge; resume requires proof of life.
+    // Neither is knowable — the record survives untouched, nothing is
+    // created, and the provider error surfaces verbatim.
+    const t = prProbeFailsCtx();
+    const outcome = await runIssue({ titles: ['feat: next why'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
   });
 });
 

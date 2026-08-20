@@ -1,4 +1,4 @@
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import type { Evidence } from '../../src/kernel/evidence.js';
 import type { Verdict, VerdictEvidence } from '../../src/acceptance/evaluate.js';
 import type { DeliveryBinding } from '../../src/record/schema.js';
@@ -124,6 +124,7 @@ export interface GhScript {
     repo: { owner: string; repo: string },
     ref: number | string
   ) => Evidence<PrFact>;
+  getOpenIssueNumbers?: (repo: { owner: string; repo: string }) => Evidence<number[]>;
   createIssue?: (
     repo: { owner: string; repo: string },
     title: string,
@@ -164,10 +165,12 @@ export function makeGhProvider(
       calls.push('getIssue');
       return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
     }),
-    getOpenIssueNumbers: vi.fn(async () => {
-      calls.push('getOpenIssueNumbers');
+    getOpenIssueNumbers: vi.fn(async (repo: never) => {
+      calls.push(`getOpenIssueNumbers:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
       return (
-        behavior.openIssueNumbers ?? ({ ok: true, value: [] } as Evidence<number[]>)
+        behavior.getOpenIssueNumbers?.(repo) ??
+        // Empty remote by default: no open issues to adopt.
+        ({ ok: true, value: [] } as Evidence<number[]>)
       );
     }),
     getPr: vi.fn(async (repo: never, ref: number | string) => {
@@ -270,20 +273,21 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
     checkoutOrCreateBranch: vi.fn(async (_root: string, branch: string) => {
       port.checkoutCalls.push(branch);
       return (
-        writes.checkoutOrCreateBranch?.(branch) ?? { ok: true, value: { branch, created: true } }
+        writes.checkoutOrCreateBranch?.(branch) ??
+        ({ ok: true, value: { branch, created: true } } as Evidence<{ branch: string; created: boolean }>)
       );
     }),
     commitFile: vi.fn(async (_root: string, relativePath: string, message: string) => {
       port.commitCalls.push({ path: relativePath, message });
-      return writes.commitFile?.(relativePath, message) ?? { ok: true, value: { committed: true } };
+      return writes.commitFile?.(relativePath, message) ?? ({ ok: true, value: { committed: true } } as Evidence<{ committed: boolean }>);
     }),
     pushBranch: vi.fn(async (_root: string, branch: string) => {
       port.pushCalls.push(branch);
-      return writes.pushBranch?.(branch) ?? { ok: true, value: { pushed: true } };
+      return writes.pushBranch?.(branch) ?? ({ ok: true, value: { pushed: true } } as Evidence<{ pushed: boolean }>);
     }),
     remoteDefaultBranch: vi.fn(async (_root: string) => {
       port.defaultBranchCalls.push(_root);
-      return writes.remoteDefaultBranch?.() ?? { ok: true, value: 'main' };
+      return writes.remoteDefaultBranch?.() ?? ({ ok: true, value: 'main' } as Evidence<string>);
     }),
     headContains: vi.fn(async (): Promise<Evidence<{ contained: boolean }>> =>
       // Fail-closed default: the fake answers no lineage question unless
@@ -386,8 +390,8 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
     version: '0.0.0-test',
     cwd: options.cwd ?? '/repo',
     stdinIsTTY: options.stdinIsTTY ?? false,
-    discoverRoot: vi.fn(async () => options.root ?? { ok: true, value: '/repo' }),
-    probeGitBinary: vi.fn(async () => ({ ok: true, value: 'git version 2.39.0' })),
+    discoverRoot: vi.fn(async () => options.root ?? ({ ok: true, value: '/repo' } as Evidence<string>)),
+    probeGitBinary: vi.fn(async () => ({ ok: true, value: 'git version 2.39.0' } as Evidence<string>)),
     git: gitPort,
     gh: options.gh ?? ghProvider,
     record: recordPort,

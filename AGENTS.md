@@ -47,7 +47,7 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
 ## Build, test, lint
 
 - Build: `pnpm run build`
-- Typecheck: `pnpm exec tsc --noEmit`
+- Typecheck: `pnpm exec tsc --noEmit` (src) plus `pnpm run typecheck:test` (test tree)
 - Lint: `pnpm run lint` (ESLint over `src/`)
 - Tests: `pnpm test` (Vitest, single run)
 - Node ≥ 20.19; pnpm is the only package manager.

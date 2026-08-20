@@ -23,7 +23,8 @@ Per slice, in order:
    test fails again, re-apply it. A test that never failed without the fix
    proves nothing.
 4. **Targeted checks** — run the slice's focused tests plus
-   `pnpm exec tsc --noEmit`. The full gate set runs at PR time.
+   `pnpm exec tsc --noEmit` and `pnpm run typecheck:test`. The full gate
+   set runs at PR time.
 
 ## Branch and binding
 
@@ -43,7 +44,7 @@ One PR per delivery, targeting `main`. Merge is blocked until every gate is
 green at the PR head commit:
 
 - red-green test suite (`pnpm test`)
-- `pnpm exec tsc --noEmit`
+- `pnpm exec tsc --noEmit` and `pnpm run typecheck:test` (test tree)
 - `pnpm run lint`
 - CI green — every check named in `spec_git/policy.yaml`
 
