@@ -796,6 +796,124 @@ describe('GhCliGitHubProvider#createDraftPr', () => {
   });
 });
 
+describe('GhCliGitHubProvider evidence completeness (issue #120, I3b)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-completeness-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(
+    rules: FakeGhRule[],
+    providerOptions: { timeoutMs?: number; maxBuffer?: number; env?: NodeJS.ProcessEnv } = {}
+  ) {
+    const fake = createFakeGh(tempDir, rules);
+    const { env: extraEnv, ...rest } = providerOptions;
+    const provider = new GhCliGitHubProvider({ env: fake.env(extraEnv), ...rest });
+    return { fake, provider };
+  }
+
+  function searchPage(numbers: number[], overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      total_count: numbers.length,
+      incomplete_results: false,
+      items: numbers.map((n) => ({ number: n })),
+      ...overrides,
+    });
+  }
+
+  function checkRunPage(count: number): string {
+    return JSON.stringify({
+      total_count: count,
+      check_runs: Array.from({ length: count }, (_, i) => ({
+        name: `check-${i}`,
+        status: 'completed',
+        conclusion: 'success',
+        id: i + 1,
+        started_at: '2026-08-20T00:00:00Z',
+      })),
+    });
+  }
+
+  it('getOpenIssueNumbers paginates to exhaustion and returns the complete list', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => 101 + i);
+    const { provider, fake } = setup([
+      // Page-specific rules must precede the generic one: first match wins.
+      { match: 'search/issues.*page=2', stdout: searchPage([42, 250]) },
+      { match: 'search/issues', stdout: searchPage(page1) },
+    ]);
+    const result = await provider.getOpenIssueNumbers(REPO);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect([...result.value].sort((a, b) => a - b)).toEqual([42, ...page1, 250]);
+    const searchCalls = readFakeGhCalls(fake.logPath).filter((c) => c.includes('search/issues'));
+    expect(searchCalls).toHaveLength(2);
+    expect(searchCalls[0]).toContain('page=1');
+    expect(searchCalls[1]).toContain('page=2');
+  });
+
+  it('getOpenIssueNumbers fails closed (evidence_truncated) on GitHub incomplete_results', async () => {
+    const { provider } = setup([
+      {
+        match: 'search/issues',
+        stdout: searchPage([1, 2], { incomplete_results: true, total_count: 5000 }),
+      },
+    ]);
+    const result = await provider.getOpenIssueNumbers(REPO);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+  });
+
+  it('getOpenIssueNumbers fails closed at the search-result cap instead of silently truncating', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => 101 + i);
+    const { provider, fake } = setup([{ match: 'search/issues', stdout: searchPage(full) }]);
+    const result = await provider.getOpenIssueNumbers(REPO);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+    // The cap is 10 pages of 100; an 11th call must never be attempted.
+    expect(readFakeGhCalls(fake.logPath).filter((c) => c.includes('search/issues'))).toHaveLength(10);
+  });
+
+  it('getOpenIssueNumbers deduplicates a page-boundary shift between calls', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => 1 + i);
+    const { provider } = setup([
+      // #100 re-appears on page 2 (a shift between calls): one issue, once.
+      { match: 'search/issues.*page=2', stdout: searchPage([100]) },
+      { match: 'search/issues', stdout: searchPage(page1) },
+    ]);
+    const result = await provider.getOpenIssueNumbers(REPO);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(100);
+  });
+
+  it('getCheckRuns fails closed when the page cap is reached with full pages', async () => {
+    const { provider, fake } = setup([{ match: 'check-runs', stdout: checkRunPage(100) }]);
+    const result = await provider.getCheckRuns(REPO, SHA);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+    expect(readFakeGhCalls(fake.logPath).filter((c) => c.includes('check-runs'))).toHaveLength(10);
+  });
+
+  it('getCheckRuns exhausts pages below the cap and returns every run', async () => {
+    const { provider } = setup([
+      { match: 'check-runs.*page=2', stdout: checkRunPage(3) },
+      { match: 'check-runs', stdout: checkRunPage(100) },
+    ]);
+    const result = await provider.getCheckRuns(REPO, SHA);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(103);
+  });
+});
+
 describe('GhCliGitHubProvider#listOpenPrsByHead', () => {
   let tempDir: string;
 

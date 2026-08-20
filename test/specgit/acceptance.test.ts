@@ -193,6 +193,38 @@ describe('acceptance evaluator', () => {
     expect(seq?.status).toBe('pass');
   });
 
+  it('sequence gate degrades to unknown (exit 3) when the open-issue list is truncated (#120, I3b)', async () => {
+    const gh = new MockGitHubProvider({
+      openIssueNumbers: fail('evidence_truncated', 'GitHub reported incomplete search results.'),
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(
+      input({
+        gh,
+        policy: ok({ version: 1, required_checks: ['All checks passed'], ordered_issues: true }),
+      })
+    );
+    expect(verdict.classification).toBe('unknown');
+    expect(verdict.exitCode).toBe(3);
+    const seq = gate(verdict, 'sequence');
+    expect(seq.status).toBe('fail');
+    expect(seq.failures[0].code).toBe('evidence_truncated');
+  });
+
+  it('checks gate degrades to unknown (exit 3) when the check-run list is truncated (#120, I3b)', async () => {
+    const gh = new MockGitHubProvider({
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: fail('evidence_truncated', 'Check-run pagination hit its cap.'),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(verdict.classification).toBe('unknown');
+    expect(verdict.exitCode).toBe(3);
+    const checks = gate(verdict, 'checks');
+    expect(checks.status).toBe('fail');
+    expect(checks.failures[0].code).toBe('evidence_truncated');
+  });
+
   it('reports local_head_stale as a warning only, never a gate', async () => {
     const gh = new MockGitHubProvider({
       pr: ok(makePrFact({ headSha: 'c'.repeat(40) })),
@@ -928,6 +960,87 @@ describe('acceptance evaluator', () => {
       'issue_is_pull_request',
       'issue_not_found',
     ]);
+  });
+});
+
+describe('sequence gate consumes the complete open-issue list (issue #120)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-seq-complete-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function searchPage(numbers: number[], overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      total_count: numbers.length,
+      incomplete_results: false,
+      items: numbers.map((n) => ({ number: n })),
+      ...overrides,
+    });
+  }
+
+  it('an earlier open issue on page 2 rejects the delivery instead of false-accepting', async () => {
+    // >100 open issues: page 1 holds 151..250 (nothing precedes the bound
+    // issue #150); the truth — open issue #42 — lives on page 2. A provider
+    // that stops after one page hands the sequence gate an invisible list
+    // and the verdict can exit 0 over a violated ordered_issues policy.
+    const page1 = Array.from({ length: 100 }, (_, i) => 151 + i);
+    const fake = createFakeGh(tempDir, [
+      { match: '^--version$', stdout: 'gh version 2.60.0\n' },
+      { match: '^auth status$', stdout: 'Logged in to github.com\n' },
+      {
+        match: '^api repos/LeXwDeX/SpecGit/issues/150$',
+        stdout: JSON.stringify({ number: 150, state: 'open' }),
+      },
+      { match: 'search/issues.*page=2', stdout: searchPage([42]) },
+      { match: 'search/issues', stdout: searchPage(page1) },
+      {
+        match: '^api repos/LeXwDeX/SpecGit/pulls/42$',
+        stdout: JSON.stringify({
+          number: 42,
+          state: 'open',
+          merged_at: null,
+          head: { ref: 'feat/123-login', sha: HEAD },
+          base: { ref: 'main' },
+          body: 'Closes #150',
+        }),
+      },
+      {
+        match: 'check-runs',
+        stdout: JSON.stringify({
+          total_count: 1,
+          check_runs: [
+            {
+              name: 'All checks passed',
+              status: 'completed',
+              conclusion: 'success',
+              id: 1,
+              started_at: '2026-08-20T00:00:00Z',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const verdict = await evaluate(
+      input({
+        record: ok(binding({ issues: [150] })),
+        policy: ok({ version: 1, required_checks: ['All checks passed'], ordered_issues: true }),
+        gh: new GhCliGitHubProvider({ env: fake.env() }),
+      })
+    );
+
+    expect(verdict.classification).toBe('rejected');
+    expect(verdict.exitCode).toBe(1);
+    expect(verdict.complete).toBe(true);
+    const seq = gate(verdict, 'sequence');
+    expect(seq.status).toBe('fail');
+    expect(seq.failures[0].code).toBe('issue_out_of_order');
+    expect(JSON.stringify(seq.failures[0].detail)).toContain('42');
   });
 });
 
