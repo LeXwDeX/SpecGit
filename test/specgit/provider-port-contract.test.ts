@@ -63,23 +63,29 @@ describe('provider port contract (#80)', () => {
     );
   });
 
-  it('every in-tree GitPort implementation exposes every GitPort member', () => {
-    expectExposes(new LocalGitAdapter(), GIT_PORT_MEMBERS, 'LocalGitAdapter');
-    expectExposes(makeGitPort(makeGitFacts()), GIT_PORT_MEMBERS, 'makeGitPort (test double)');
+  describe('every in-tree GitPort implementation exposes every GitPort member', () => {
+    it('LocalGitAdapter', () => {
+      expectExposes(new LocalGitAdapter(), GIT_PORT_MEMBERS, 'LocalGitAdapter');
+    });
+    it('makeGitPort (test double)', () => {
+      expectExposes(makeGitPort(makeGitFacts()), GIT_PORT_MEMBERS, 'makeGitPort (test double)');
+    });
   });
 
-  it('every in-tree GitHubProvider implementation exposes every GitHubProvider member', () => {
-    expectExposes(new GhCliGitHubProvider(), GITHUB_PROVIDER_MEMBERS, 'GhCliGitHubProvider');
-    expectExposes(
-      new MockGitHubProvider(),
-      GITHUB_PROVIDER_MEMBERS,
-      'MockGitHubProvider (test double)'
-    );
-    expectExposes(
-      makeGhProvider(),
-      GITHUB_PROVIDER_MEMBERS,
-      'makeGhProvider (test double)'
-    );
+  describe('every in-tree GitHubProvider implementation exposes every GitHubProvider member', () => {
+    it('GhCliGitHubProvider', () => {
+      expectExposes(new GhCliGitHubProvider(), GITHUB_PROVIDER_MEMBERS, 'GhCliGitHubProvider');
+    });
+    it('MockGitHubProvider (test double)', () => {
+      expectExposes(
+        new MockGitHubProvider(),
+        GITHUB_PROVIDER_MEMBERS,
+        'MockGitHubProvider (test double)'
+      );
+    });
+    it('makeGhProvider (test double)', () => {
+      expectExposes(makeGhProvider(), GITHUB_PROVIDER_MEMBERS, 'makeGhProvider (test double)');
+    });
   });
 
   it('the port-compatibility policy documents every port member', () => {
