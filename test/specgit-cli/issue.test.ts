@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
+import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
 import { runIssue } from '../../src/cli/commands/issue.js';
 import {
   makeCtx,
@@ -160,7 +161,13 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.harness.createdPrs[0].head).toBe('feat/11-strict-delivery-harness');
     expect(t.harness.createdPrs[0].base).toBe('main');
     expect(t.harness.createdPrs[0].title).toBe('feat: strict delivery harness');
-    expect(t.harness.createdPrs[0].body).toBe('Closes #11\nCloses #12\n');
+    // #87: the draft body is the deterministic scaffold — closing refs
+    // for every bound issue first, then the advisory sections.
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11, 12]));
+    for (const section of ['## Why', '## What changed', '## Evidence', '## Checklist']) {
+      expect(t.harness.createdPrs[0].body).toContain(section);
+    }
+    expect(t.harness.createdPrs[0].body.startsWith('Closes #11\nCloses #12\n')).toBe(true);
 
     expect(t.gitPort.checkoutCalls).toEqual(['feat/11-strict-delivery-harness']);
     expect(t.gitPort.commitCalls.length).toBe(1);
@@ -261,7 +268,7 @@ describe('specgit issue: fresh bootstrap', () => {
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.issues).toEqual([4, 11]);
     expect(t.harness.createdPrs[0].head).toBe('feat/4-add-telemetry');
-    expect(t.harness.createdPrs[0].body).toBe('Closes #4\nCloses #11\n');
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([4, 11]));
   });
 
   it('checks out and creates the delivery branch when not on it', async () => {
@@ -321,7 +328,7 @@ describe('specgit issue: idempotent resume', () => {
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdIssues.length).toBe(0);
     expect(t.harness.createdPrs.length).toBe(1);
-    expect(t.harness.createdPrs[0].body).toBe('Closes #11\nCloses #12\n');
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11, 12]));
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.pr).toBe(42);
     expect(outcome.human?.join('\n').toLowerCase()).toContain('resumed');
@@ -593,7 +600,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     expect(healed.harness.createdIssues.map((i) => i.title)).toEqual(['fix: beta why']);
     const written = healed.recordPort.recordWrites.at(-1)?.record;
     expect(written?.issues).toEqual([11, 12]);
-    expect(healed.harness.createdPrs[0].body).toBe('Closes #11\nCloses #12\n');
+    expect(healed.harness.createdPrs[0].body).toBe(renderPrScaffold([11, 12]));
   });
 
   it('reconciles a remotely created issue by title when the record write failed (lost durability)', async () => {
@@ -668,7 +675,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     expect(t.harness.createdIssues.length).toBe(0);
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.issues).toEqual([11]);
-    expect(t.harness.createdPrs[0].body).toBe('Closes #11\n');
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11]));
   });
 
   it('does not adopt a closed issue even when the title matches', async () => {
