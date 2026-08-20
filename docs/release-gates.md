@@ -98,3 +98,21 @@ neither gets an explicit **accept-or-defer** ruling before work starts — growt
 is chosen, not accumulated. First exercised:
 [#118](https://github.com/LeXwDeX/SpecGit/issues/118) (scaffolding language
 configurability) — ruled deferred-to-last, 2026-08-20.
+
+## 6. Known CI dispositions
+
+Gate 3 requires every red or semantics-ambiguous check — green-by-skip
+included — to carry an owner and a recorded disposition; this table is that
+record for the checks that live outside a delivery PR's own gates. A row
+leaves the table only when its disposition resolves (the check turns green
+and stays green, or the exemption is lifted) — never by silent edit. The
+Nix job's path-filter skip is self-documenting in-workflow (the
+`required-checks` job prints it; green-when-run proven by
+[#85](https://github.com/LeXwDeX/SpecGit/issues/85)).
+
+| Check | Where it shows | Disposition (owner · terms) |
+| --- | --- | --- |
+| `Test (self-hosted-linux)` | CI · main pushes | Red on main runs. Infrastructure-side root cause and manual runner-container actions recorded on [#105](https://github.com/LeXwDeX/SpecGit/issues/105); terms: retirement line = end of W2 without two consecutive green main runs of this leg. |
+| Version-PR auto-merge | Release workflow | Armed off ([#102](https://github.com/LeXwDeX/SpecGit/pull/102)): zero `--auto` occurrences on main; every version PR is the manual batch-decision point. The re-arm decision is re-evaluated after 1.0.0 ships (user ruling 2026-08-20; [#107](https://github.com/LeXwDeX/SpecGit/issues/107)). |
+| GitHub Advanced Security (dynamic) | PR branches only, never main | Exempt-with-rationale ([#109](https://github.com/LeXwDeX/SpecGit/issues/109)): GitHub-side GHAS agent whose session creation fails on a provider model-entitlement 400 (`claude-opus-4.6`), not repo-fixable, not a required check; optional owner escalations recorded on the issue. |
+| `Validate Release Tracking` | CI | Event-gated: runs only on `pull_request` and `merge_group` — never on `push` or `workflow_dispatch` — so it is skipped on main-push runs **by design**. Its green predicate is read on the delivery or version PR / merge-group run at the threshold, never on a bare main-push run. When it runs it is green either way: with changed `.changeset/*.md` it validates them (`changeset status --since=origin/main`); without changes it reports the normal release cadence ([#110](https://github.com/LeXwDeX/SpecGit/issues/110)). |
