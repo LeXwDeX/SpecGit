@@ -31,6 +31,8 @@ export interface DetectionReport {
   platform: OriginPlatform;
   requiredChecks: string[];
   sources: string[];
+  /** Workflow files with jobs that never run on a PR head (#121) — reported so init can warn. */
+  nonPrWorkflows: string[];
   clis: { gh: boolean; glab: boolean };
 }
 
@@ -50,20 +52,34 @@ function jobName(id: string, job: unknown): string | null {
 }
 
 /**
- * Workflows that cannot run on a PR head (dispatch-only) never register
- * check runs there, so their jobs must not become required checks.
+ * The detection trust boundary (#121): detected checks are suggestions
+ * until proven on a PR head. A workflow's jobs can become required-check
+ * candidates only if the workflow's triggers include a PR trigger —
+ * `pull_request` or `pull_request_target` are the only triggers that
+ * report check runs on a PR head. push (filtered or not), schedule,
+ * workflow_dispatch, and every other trigger never do; classifying by
+ * "not dispatch" would arm a stillborn policy (permanent checks_missing).
+ * An omitted `on` key keeps GitHub's default triggers (push AND
+ * pull_request), so it stays a candidate.
  * YAML 1.1 parses the bare key `on` as boolean true — both shapes are read.
  */
+const PR_TRIGGERS = new Set(['pull_request', 'pull_request_target']);
+
 function runsOnPullRequests(parsed: unknown): boolean {
   const record = parsed as { on?: unknown; true?: unknown } | null;
   const on = record?.on ?? record?.true;
-  if (on === undefined) return true; // implicit push/PR per GitHub defaults
-  if (typeof on === 'string') return on !== 'workflow_dispatch';
-  if (Array.isArray(on)) return on.some((trigger) => trigger !== 'workflow_dispatch');
-  if (typeof on === 'object' && on !== null) {
-    return Object.keys(on).some((trigger) => trigger !== 'workflow_dispatch');
+  if (on === undefined) return true; // implicit push/pull_request per GitHub defaults
+  let triggers: string[];
+  if (typeof on === 'string') {
+    triggers = [on];
+  } else if (Array.isArray(on)) {
+    triggers = on.filter((trigger): trigger is string => typeof trigger === 'string');
+  } else if (typeof on === 'object' && on !== null) {
+    triggers = Object.keys(on);
+  } else {
+    return false;
   }
-  return true;
+  return triggers.some((trigger) => PR_TRIGGERS.has(trigger));
 }
 
 const GITHUB_HOST = 'github.com';
@@ -116,7 +132,11 @@ async function probeCli(binary: string): Promise<boolean> {
   }
 }
 
-async function detectGithubChecks(root: string, sources: string[]): Promise<string[]> {
+async function detectGithubChecks(
+  root: string,
+  sources: string[],
+  nonPrWorkflows: string[]
+): Promise<string[]> {
   const dir = path.join(root, ...WORKFLOWS_DIR_SEGMENTS);
   let entries: string[];
   try {
@@ -136,7 +156,12 @@ async function detectGithubChecks(root: string, sources: string[]): Promise<stri
     }
     const jobs = (parsed as WorkflowJobsShape | null)?.jobs;
     if (typeof jobs !== 'object' || jobs === null) continue;
-    if (!runsOnPullRequests(parsed)) continue;
+    if (!runsOnPullRequests(parsed)) {
+      // #121: jobs in a workflow with no PR trigger can never report on a
+      // PR head — excluded from the policy, surfaced for the init warning.
+      nonPrWorkflows.push(`.github/workflows/${entry}`);
+      continue;
+    }
     sources.push(`.github/workflows/${entry}`);
     for (const [id, job] of Object.entries(jobs)) {
       const name = jobName(id, job);
@@ -177,13 +202,15 @@ export async function detectInitInputs(
 ): Promise<DetectionReport> {
   const platform = await classifyPlatform(originUrl);
   const sources: string[] = [];
-  const github = await detectGithubChecks(root, sources);
+  const nonPrWorkflows: string[] = [];
+  const github = await detectGithubChecks(root, sources, nonPrWorkflows);
   const gitlab = github.length > 0 ? [] : await detectGitlabChecks(root, sources);
   const [gh, glab] = await Promise.all([probeCli('gh'), probeCli('glab')]);
   return {
     platform,
     requiredChecks: [...github, ...gitlab],
     sources,
+    nonPrWorkflows,
     clis: { gh, glab },
   };
 }
