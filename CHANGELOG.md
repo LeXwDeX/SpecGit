@@ -1,5 +1,531 @@
 # specgit
 
+## 1.0.0-rc.2
+
+### Minor Changes
+
+- [#147](https://github.com/LeXwDeX/SpecGit/pull/147) [`9626786`](https://github.com/LeXwDeX/SpecGit/commit/9626786da3650af77ff8e118862fa0a493913321) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Language configuration for generated text ([#118](https://github.com/LeXwDeX/SpecGit/issues/118))
+
+  `spec_git/policy.yaml` gains an optional `language` key (`en` default, `zh`
+  supported; set with `specgit init --language zh`) that selects the language of
+  generated text: the issue-body and draft-PR body scaffolds written by
+  `specgit issue`, the managed guidance block injected by `specgit init`, and
+  success-path human prose on stderr. `init --force` inherits the existing
+  policy's language unless `--language` overrides; unsupported values fail
+  closed (`policy_invalid` / `language_invalid`) with the supported set named.
+
+  Branch-slug derivation is now defined for non-ASCII titles under every
+  language: any title containing non-ASCII characters derives the numeric
+  fallback — issue [#123](https://github.com/LeXwDeX/SpecGit/issues/123) bootstraps branch `feat/123-issue123` (delivery
+  `issue123`); the former `issue_title_not_english` rejection is gone. ASCII
+  titles keep the first-three-words kebab slug.
+
+  The machine contract is never localized, pinned by tests: exit codes,
+  `--json` envelope field names, and diagnostic `code` values stay
+  English/ASCII in every configuration (and, in 1.0.0, so does diagnostic
+  prose — message/fix/warnings, gate and doctor probe lines); closing-reference
+  keywords (`Closes #n`), the acceptance workflow YAML, and the guard scripts
+  are untouched by the language key. Documented in README, docs/cli.md,
+  docs/reference.md, and docs/baseline-v1.md.
+
+  Rides along (docs): release-gates §2 evidence backfill for [#119](https://github.com/LeXwDeX/SpecGit/issues/119)/[#120](https://github.com/LeXwDeX/SpecGit/issues/120)/[#122](https://github.com/LeXwDeX/SpecGit/issues/122)
+  and the §1 I3b status cell (E-1), and the §5 defer ruling for the bootstrap
+  chain-order hardening (E-3, post-1.0.0 evergreen probe).
+
+### Patch Changes
+
+- [#139](https://github.com/LeXwDeX/SpecGit/pull/139) [`7650217`](https://github.com/LeXwDeX/SpecGit/commit/765021722ac5cde0054a29beac75f622dff100ac) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### CI dispositions recorded; auto-merge re-arm re-scoped to after 1.0.0
+
+  Adds the "Known CI dispositions" section to `docs/release-gates.md` — the
+  gate-3 record for checks that live outside a delivery PR's own gates: the
+  self-hosted-linux leg ([#105](https://github.com/LeXwDeX/SpecGit/issues/105), retirement line), the version-PR auto-merge
+  arm-off ([#107](https://github.com/LeXwDeX/SpecGit/issues/107)), the GHAS dynamic-workflow exemption ([#109](https://github.com/LeXwDeX/SpecGit/issues/109)), and Validate
+  Release Tracking's event-gate semantics ([#110](https://github.com/LeXwDeX/SpecGit/issues/110): runs only on `pull_request`
+  and `merge_group`, skipped on main-push runs by design; its green predicate
+  is read on the PR or merge-group run at the threshold). The re-arm comment
+  in `release-prepare.yml` now names the actual decision — re-evaluated after
+  1.0.0 ships (user ruling 2026-08-20) — replacing the satisfied-but-unmet
+  rc.1 condition. Both changes are pinned red-first in
+  `test/specgit/release-gates.test.ts` and `test/docs-consistency.test.ts`.
+
+- [#133](https://github.com/LeXwDeX/SpecGit/pull/133) [`7d83c7e`](https://github.com/LeXwDeX/SpecGit/commit/7d83c7eaff76b461f6f7bfb81da6049884fbd461) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Evidence-completeness rule I3b: fail closed on silently truncated evidence lists ([#120](https://github.com/LeXwDeX/SpecGit/issues/120))
+
+  Closes [#120](https://github.com/LeXwDeX/SpecGit/issues/120). The fail-closed promise had one branch implemented — errors
+  (ungatherable evidence ⇒ exit 3) — and one unwritten: silent
+  incompleteness. `getOpenIssueNumbers` fetched a single search page of 100
+  while the same provider paginated `getCheckRuns`: with `ordered_issues:
+true` and more than 100 open issues, an earlier open issue on page 2 was
+  invisible to the sequence gate and a delivery could exit 0 over a
+  violated policy; same-title adoption missed adoptable issues beyond
+  page 1.
+
+  - The rule is now contract, written as the second fail-closed branch in
+    [docs/baseline-v1.md](../docs/baseline-v1.md): every list-shaped
+    evidence input is paginated to exhaustion or signals truncation, and a
+    truncation signal degrades the verdict to `unknown`
+    (`evidence_truncated`, exit 3) — never a complete-evidence exit 1.
+  - `getOpenIssueNumbers` pages the issue search to exhaustion
+    (per_page=100, deduplicated across page-boundary shifts);
+    `incomplete_results: true` and the 1000-result search cap (10 full
+    pages) fail `evidence_truncated`. `getCheckRuns` now signals
+    truncation at its 10-page cap instead of returning a possibly partial
+    list. The sequence gate and issue adoption consume the complete list
+    through the same seam; the provider port documents the completeness
+    contract (`ok` means exhausted).
+  - `specgit pr` discovery stays as-is, disclosed: its bounded probe
+    refuses on zero/several matches, so truncation cannot flip an outcome
+    (≥2 always refuses with the candidate list).
+  - The GitLab provider plan's `rel="next"` continuation
+    ([docs/gitlab-support.md](../docs/gitlab-support.md)) is confirmed to
+    carry the same rule from day one: continuation to exhaustion, full
+    page without a usable link ⇒ `evidence_truncated`, exit 3.
+  - TDD: a >100-issues scripted-provider fixture pins the sequence gate's
+    false pass before the fix (red: 5 failed / 115 passed) and the correct
+    complete-evidence rejection after; revert-verified (src/ reverted ⇒
+    the same 5 reds return). Gates table, sequence semantics, provider
+    seam rules, and `issue` diagnostics updated in docs.
+
+- [#144](https://github.com/LeXwDeX/SpecGit/pull/144) [`0eff38c`](https://github.com/LeXwDeX/SpecGit/commit/0eff38cb7516eee8637b28cf6414ebbcf4def216) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### GitLab checks-gate semantics: allow_failure truth and the Free-tier requiredChecks ([#116](https://github.com/LeXwDeX/SpecGit/issues/116))
+
+  Decided per D-4″ (job-level truth + pipeline-level verdict) and pinned by
+  new ledger rows 25/26 (`docs/evidence/gitlab-19.2.md`, anchored at
+  `v19.2.4-ee`):
+
+  - `CheckRunInfo.allowFailure?` (provider port): a GitLab `allow_failure`
+    job reports its truthful `conclusion: 'failure'` with the platform
+    boolean, and the checks gate passes the run per pipeline semantics —
+    a failed `allow_failure` job keeps the pipeline green (ledger row 17).
+    Failure only: every other conclusion (cancelled, …) still fails,
+    allowed or not. The GitHub adapter never sets the flag, so GitHub
+    verdicts are byte-for-byte unchanged.
+  - `GlabProvider#getCheckRuns` maps the full job-status vocabulary
+    (pinned "Job status values" list): final states complete the run
+    (`success`/'success', `failed`/'failure', `canceled`/'cancelled'),
+    `skipped` jobs contribute no check-run at all (intentionally not run —
+    a required name reads `checks_missing`), `manual` and every other
+    non-final status stay pending (fail-closed). Retried jobs stay omitted
+    (`include_retried` never passed, row 16).
+  - `GlabProvider` gains a `requiredChecks` constructor option (the
+    policy's list): `getBranchProtection`/`enableBranchProtection` now
+    report the **verified pipeline-gate intersection** — the policy names
+    that exist as CI job names of the branch's latest pipeline
+    (`?ref=` filter, `order_by` id `desc` default — row 25) when
+    `only_allow_merge_if_pipeline_succeeds` is on; off ⇒ `[]`. The
+    Ultimate-only status-checks primitive is never touched (row 22), and
+    without the policy injected the list stays honestly empty.
+  - Open sub-mappings resolved in the ledger: `manual`⇒pending,
+    `skipped`⇒absent (rationale recorded); the `WIP:`-prefix deferral is
+    re-affirmed.
+  - Unit tests pin the whole mapping table (allow_failure / retry /
+    locked / skipped) and the intersection (gate on/off, no pipeline,
+    slash-ref encoding, rename fail-closed, witness pagination I3b);
+    existing GitHub checks-gate tests are unchanged and green.
+
+  Not routed: evaluation still runs the gh path (`gitlab_unsupported`
+  guard) until [#117](https://github.com/LeXwDeX/SpecGit/issues/117).
+
+- [#146](https://github.com/LeXwDeX/SpecGit/pull/146) [`8f89a63`](https://github.com/LeXwDeX/SpecGit/commit/8f89a630343a8058feee5a1c815a1163a0e1b664) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### GitLab evaluation routing, e2e variant, and the nested-group dogfood ([#117](https://github.com/LeXwDeX/SpecGit/issues/117))
+
+  The Phase-2 routing slice: a declared GitLab origin is now SERVED, not
+  just recognized.
+
+  - New `PlatformRoutingProvider` (`src/providers/routing.ts`) at the
+    production composition (`src/cli/wiring.ts`): one provider for the
+    commands, dispatching every call on the ref's platform marker ([#112](https://github.com/LeXwDeX/SpecGit/issues/112))
+    — GitLab-declared refs to `GlabProvider` (constructed lazily with the
+    declared hostname and the policy's `required_checks`, per [#116](https://github.com/LeXwDeX/SpecGit/issues/116)),
+    everything else to the gh adapter. `preflight()` follows the delivery
+    origin's resolved platform. The [#112](https://github.com/LeXwDeX/SpecGit/issues/112) invariant "no gh call ever sees
+    a group/subgroup ref" moves from the retired `requireGithubRoute`
+    guard into the dispatch (pinned by
+    `test/specgit/routing-provider.test.ts` and the offline e2e's
+    git-and-glab-only PATH).
+  - `specgit finish` on a declared GitLab origin evaluates all eleven
+    gates through glab (the origin gate passes the platform-marked ref;
+    the closing gate already parses the GitLab dialect since [#115](https://github.com/LeXwDeX/SpecGit/issues/115)).
+    Undeclared `gitlab`-looking hosts and too-deep paths still fail
+    `gitlab_unsupported` at parse level.
+  - `specgit init` on gitlab mode writes every platform-neutral harness
+    asset but NO GitHub Actions workflow (`gitlab_harness_pending`
+    warning; `harness: { template: 'gitlab-pending' }`) — the repo
+    carries its own `.gitlab-ci.yml`, whose top-level job keys init
+    detects as required checks.
+  - `specgit doctor`'s provider probes follow the platform (envelope keys
+    `gh_present`/`gh_authenticated` stay; `glab_missing` /
+    `glab_unauthenticated` map onto them).
+  - e2e: `external-repo-fixture.ts` gains the GitLab variant
+    (`makeGitlabExternalRepo` — nested-group origin, pushable bare
+    remote, own `.gitlab-ci.yml`); `gitlab-delivery.e2e.test.ts` proves
+    the full delivery story offline on recorded payload shapes from
+    `test/specgit-e2e/fixtures/gitlab/` (init → issue/MR bootstrap with
+    the `Draft: ` prefix and the deterministic scaffold → finish exit 0,
+    all gates green, zero gh reachable).
+  - Dogfood evidence (GA gate 4): a real nested-group delivery on
+    git.ycgame.com 19.2.4 CE with `specgit finish` exit 0 — archived in
+    [docs/release-gates.md](../docs/release-gates.md) GA-4 and
+    [docs/evidence/gitlab-19.2.md](../docs/evidence/gitlab-19.2.md);
+    FU-5 (read-only project access token) applied as the CI-side glab
+    credential.
+  - GitHub-side zero regression: the GitHub paths are byte-unaffected
+    (router dispatch is a no-op for github refs; gh tests unchanged).
+
+- [#143](https://github.com/LeXwDeX/SpecGit/pull/143) [`0124770`](https://github.com/LeXwDeX/SpecGit/commit/0124770d319fe846541f497cd631cbbb56ee843b) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### GlabProvider: the 12-method GitLab mirror ([#114](https://github.com/LeXwDeX/SpecGit/issues/114))
+
+  Implements `GlabProvider` (`src/providers/gitlab/glab-cli.ts`) — the
+  second `GitHubProvider` adapter, mirroring the gh adapter method-for-method
+  through the `glab` CLI: per-host auth (`glab auth status --hostname`), every
+  api call host-scoped, `SPECGIT_GLAB`/`SPECGIT_GLAB_TIMEOUT_MS` honored
+  (timeout ⇒ `glab_transport`, exit 3), version discovery via
+  `glab api /metadata` with the `>= 19.2.4 < 19.3.0` self-managed window
+  (`gitlab_version_unsupported` outside; GitLab.com never version-pinned),
+  offset pagination to exhaustion with the I3b completeness guard
+  (`evidence_truncated` at the cap), `createDraftPr` via the REST create with
+  the `Draft: ` title prefix and `iid`/`web_url` JSON mapping (zero stdout
+  scraping), `listOpenPrsByHead` via the MR-list `source_branch` filter
+  (pinned FU-4, ledger row 24 — all 12 map cells now anchored), project
+  identity verified by `path_with_namespace` against rename redirects (row 5),
+  and tokens never read, stored, or logged. Read endpoints plus exactly the
+  four documented write endpoints (issues, merge_requests,
+  protected_branches, project PATCH). The shared CLI transport (spawn seam,
+  shebang resolution, sanitization) moved to
+  `src/providers/cli-spawn.ts`; the GitHub adapter re-exports it unchanged.
+  Scripted-glab contract tests mirror `gh-provider.test.ts` across all
+  methods (success / unauthenticated / timeout / bad JSON / pagination >100),
+  and the provider contract test pins the adapter to
+  `GITHUB_PROVIDER_MEMBERS`. Not routed: evaluation stays gh-only until the
+  Phase-2 routing slices ([#115](https://github.com/LeXwDeX/SpecGit/issues/115)/[#116](https://github.com/LeXwDeX/SpecGit/issues/116)) — the `gitlab_unsupported` guard holds.
+
+- [#130](https://github.com/LeXwDeX/SpecGit/pull/130) [`824d5f8`](https://github.com/LeXwDeX/SpecGit/commit/824d5f8afd01ef168272c5eb9ac64f454bebe6a7) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### init detection trust boundary: only PR-triggered workflows become required checks ([#121](https://github.com/LeXwDeX/SpecGit/issues/121))
+
+  Closes [#121](https://github.com/LeXwDeX/SpecGit/issues/121). The required-checks detection predicate classified any
+  non-`workflow_dispatch` workflow as PR-running, so push-triggered deploy
+  workflows with branch filters and scheduled jobs landed in
+  `policy.required_checks` at `specgit init`. Those checks never report on a
+  PR head — permanent `checks_missing`, every delivery exits 1 forever — and
+  the "never weaken the policy" iron rule made the only correct repair a
+  forbidden act. Stillborn harness for affected repo classes.
+
+  - `src/cli/detect-checks.ts`: classification is trigger-inclusion now — a
+    workflow contributes required-check candidates only when its triggers
+    include `pull_request` or `pull_request_target` (both report check runs
+    on a PR head). An omitted `on` key keeps GitHub's default triggers
+    (push and pull_request) and still qualifies. Push (filtered or not),
+    schedule, dispatch, and every other trigger never qualify.
+  - `specgit init` warns (`checks_not_pr_visible`) when workflows with jobs
+    but no PR trigger exist, lists them in `detected.nonPrWorkflows`, and
+    the fix text names the legitimate repairs: explicit `--required-check`
+    for a job that genuinely reports on PR heads, and `init --force`
+    re-detection after CI changes.
+  - Iron rule re-worded in the docs to distinguish **weakening a true
+    policy** (forbidden) from **correcting a wrong-at-birth one**
+    (required): docs/cli.md (detection trust boundary), docs/reference.md
+    (wrong at birth vs weakening), docs/troubleshooting.md (`checks_missing`
+    structural cause), docs/baseline-v1.md (non-goal wording).
+  - TDD: init fixture with push-filtered + schedule + `pull_request`
+    workflows pins the classification, the warning, and the envelope;
+    `pull_request_target` and trigger-less workflows pinned as qualifying;
+    dispatch-only workflows now surface in `nonPrWorkflows` too.
+
+- [#145](https://github.com/LeXwDeX/SpecGit/pull/145) [`e5d6233`](https://github.com/LeXwDeX/SpecGit/commit/e5d6233258a65bf06daec895c6a5b66c8912550c) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Matrix results snapshot re-pinned to an actual run ([#88](https://github.com/LeXwDeX/SpecGit/issues/88) finding 1, 88-1)
+
+  `test/specgit-e2e/MATRIX.md` 'Results' is now the snapshot of record:
+  every count is an actual suite run pinned to one platform and one
+  commit — Local (darwin arm64, Node v26.7.0) at `0eff38c`: `Tests 797
+passed | 1 skipped (798)` across `43` files, matrix-layer files
+  `external-matrix` 3 passed and `install-smoke` 6 passed | 1 opt-in
+  skip. This retires the drifted 502/599/600 counts that coexisted in
+  docs and delivery prose since Wave 4A; the refresh rule is re-run and
+  re-pin all three facts (count, platform, commit). The CI note now
+  records the workflow facts since `4df0ae0`: 20-minute test-job timeout
+  (was 15) and windows-pwsh `VITEST_MAX_WORKERS=1` (was 2; linux/macos
+  run 4). Findings 4 and 6 of [#88](https://github.com/LeXwDeX/SpecGit/issues/88) shipped earlier ([#137](https://github.com/LeXwDeX/SpecGit/issues/137), [#134](https://github.com/LeXwDeX/SpecGit/issues/134)).
+
+- [#142](https://github.com/LeXwDeX/SpecGit/pull/142) [`d8a5fb3`](https://github.com/LeXwDeX/SpecGit/commit/d8a5fb3ba95f91baa2e06fe6aada0d12ed314ef8) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Merged-lineage anchor validation ([#76](https://github.com/LeXwDeX/SpecGit/issues/76))
+
+  Closes [#76](https://github.com/LeXwDeX/SpecGit/issues/76). The merged-delivery lineage gate passed the provider's
+  `merge_commit_sha` to `git merge-base --is-ancestor` as any non-empty
+  string. GitHub normally reports a hex object id, but nothing enforced
+  that: a malformed value rode git's opaque exit-128 path to fail closed
+  with an unclassified error, and a ref-like value (`origin/main`) was
+  resolved by git as a ref — silently accepted as a lineage anchor.
+
+  - `GitPort.headContains` now validates the anchor as a full hex object
+    id (40 hex chars for sha1 repositories, 64 for sha256) before any git
+    invocation. A non-hex anchor — empty, whitespace, padded,
+    ref-like, abbreviated, wrong length — fails closed as
+    `merged_lineage_unavailable` without invoking git, so the diagnostic
+    is classified at the port, not recovered from a git error.
+  - Containment behavior is unchanged for valid anchors: exit 0 remains
+    contained, exit 1 remains a decisive not-contained, unknown objects
+    still fail closed.
+  - Port-level tests pin both directions: 40- and 64-hex anchors reach
+    git unchanged (spawn-spy asserts the exact `merge-base` argv), and
+    the malformed matrix (empty, whitespace, ref-like, abbreviated,
+    39/41/63/65-length) is rejected with zero git invocations; a
+    real-repository regression proves `origin/main` is never resolved as
+    a ref.
+
+- [#136](https://github.com/LeXwDeX/SpecGit/pull/136) [`e75739a`](https://github.com/LeXwDeX/SpecGit/commit/e75739ac35571e1d595254d41e391bf4269ba0c3) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Nested-group origins on declared hosts resolve; platform routing reads providers.yaml ([#112](https://github.com/LeXwDeX/SpecGit/issues/112))
+
+  Closes [#112](https://github.com/LeXwDeX/SpecGit/issues/112). rc.1 correctly classified nested-group GitLab origins as
+  `gitlab_unsupported` ([#95](https://github.com/LeXwDeX/SpecGit/issues/95)) — a diagnostic, not capability. The GA gate
+  needs `specgit finish` exit 0 on a real nested-group GitLab delivery,
+  which starts with the origin grammar accepting depth-2-plus paths on
+  declared hosts and platform selection routing through the committed
+  `spec_git/providers.yaml` declaration.
+
+  - `src/gitfacts/origin.ts`: on a **declared** host (and only there —
+    the `*gitlab*` substring heuristic never resolves a ref, so no
+    substring match grants capability), `parseRepoRef` now accepts
+    `group[/subgroup…]/project` paths at depth 2–5, URL-encoded `%2F`
+    separators included (both letter cases; any other percent-escape
+    fails closed), on all three origin forms (https, ssh URL, scp-like).
+    The resolved ref carries the full group path as its owner plus a
+    `gitlab` platform marker — reachable solely through the declaration.
+    A well-formed path deeper than 5 segments fails closed as
+    `gitlab_unsupported` naming the bound; malformed paths, depth-1
+    paths, and the scp port-intent shape keep `origin_unresolvable`.
+    The GitHub three-form truth table is pinned unchanged (no nested
+    paths, no `%2F` decoding on `github.com`).
+  - Platform routing ([#100](https://github.com/LeXwDeX/SpecGit/issues/100) selection rule, seam implemented): the new
+    `requireGithubRoute` guard is the one seam decision — a ref marked
+    `gitlab` fails closed `gitlab_unsupported` with declaration-aware
+    text (factual, exit 1: the declaration and grammar are accepted, the
+    glab provider is not implemented yet). The evaluator's origin gate
+    (G5) and the production CLI wiring (every gh-backed command: `issue`,
+    `pr`, `finish`, `status`, `doctor`, `init`) route through it, so no
+    `gh` call ever sees a group/subgroup ref; `classifyPlatform` stays
+    diagnostics-only.
+  - Docs: `docs/reference.md` G5 paragraph documents the accepted forms
+    and the routing rule; `docs/gitlab-support.md` current-behavior and
+    Phase-2 selection-rule sections updated; `docs/cli.md` platform-mode
+    paragraph aligned; evidence ledger row 4 updated from live-cell-only
+    to grammar-implemented (API-side `%2F` addressing stays with the
+    glab adapter slice).
+  - TDD: origin grammar truth table (depth 2–5 × three forms, `%2F`
+    decode, depth bound, escape rejection, heuristic/undeclared/github
+    pins, spoof corpus) and evaluator routing pins (origin gate failure,
+    provider never invoked) — red-first with mutation revert-checks
+    recorded (decode removal and depth-bound removal re-redden the
+    origin suite; routing removal re-reddens the evaluator suite).
+
+- [#127](https://github.com/LeXwDeX/SpecGit/pull/127) [`99d5e73`](https://github.com/LeXwDeX/SpecGit/commit/99d5e7300514eee96d6c9441612ace42ac382479) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### CI: drop the deprecated magic-nix-cache step from Nix Flake Validation
+
+  Removes the pinned `DeterminateSystems/magic-nix-cache-action@…# v14` step
+  from the `nix-flake-validate` job in `.github/workflows/ci.yml` ([#85](https://github.com/LeXwDeX/SpecGit/issues/85), W0′
+  decision: repair option). magic-nix-cache is deprecated upstream and its
+  FlakeHub registration path fails intermittently from external decay,
+  red-noising Nix-touching runs without any product regression (observed on
+  main run [32313535281](https://github.com/LeXwDeX/SpecGit/actions/runs/32313535281);
+  green again by luck on run 32349155015). The job now builds cold on the
+  ephemeral runner store — `nix build`'s sandboxed pnpm fetch needs no cache
+  backend, and `spec_git/policy.yaml` is untouched.
+
+  `test/ci-workflows.test.ts` pins the repair: no workflow may reference
+  magic-nix-cache again (red-first: the pin failed on the pre-change tree).
+
+- [#134](https://github.com/LeXwDeX/SpecGit/pull/134) [`efe3b72`](https://github.com/LeXwDeX/SpecGit/commit/efe3b7225e7d73cde96d74f3342cb83d6069597c) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Explicit-port origin classification: default ports in, non-default declared ([#78](https://github.com/LeXwDeX/SpecGit/issues/78))
+
+  Closes [#78](https://github.com/LeXwDeX/SpecGit/issues/78) (absorbing facets 2 and 6 of [#88](https://github.com/LeXwDeX/SpecGit/issues/88) per the W1′ wave anchor).
+  Legitimate remotes such as `ssh://git@github.com:22/owner/repo.git` failed
+  with `origin_unresolvable`; explicit ports equal to the scheme default now
+  classify identically to the portless form, without reopening the spoofing
+  surface (userinfo, path, query, host-suffix).
+
+  - `src/gitfacts/origin.ts`: the port rule is one seam decision — a shape's
+    effective port (explicit digits, else the scheme default: 443 https,
+    22 ssh; scp is implicitly ssh:22) classifies when it equals the scheme
+    default, or exactly the port a GitLab declaration names. github.com and
+    the `*gitlab*` heuristic never accept non-default ports; a declaration
+    may (`--gitlab-host host:port`, persisted as `gitlab.port`), and then
+    only that exact host:port classifies. Leading-zero ports normalize with
+    WHATWG URL semantics (`:022` is 22); ports 0/65536+/non-digit never
+    classify. `extractOriginHost` mirrors the same normalization so the
+    whole seam answers one port question one way.
+  - 88-6 (g5 folding): the evaluator's origin gate now reports
+    `gitlab_unsupported` under its own code (factual, exit 1 — complete
+    evidence saying the platform is GitLab) instead of folding every
+    failure into `origin_unresolvable` with GitHub-pointing advice;
+    `docs/troubleshooting.md`'s stale "(exit 3)" claim aligned to the
+    implemented contract.
+  - 88-2 (init seam): `specgit init`'s regex host extractor is replaced by
+    the structural `extractOriginHost` seam — the host never carries
+    userinfo or port digits, the explicit port is captured separately — so
+    `ssh://git@github.com:22/...` platform-resolves to github and
+    `--gitlab-host` validates host and port against the origin endpoint
+    (both directions, with the fix naming the `host:port` grammar). The
+    TTY-question path persists the port for non-default-port origins.
+  - TDD: port truth table + spoof corpus in `test/specgit/origin.test.ts`
+    (default ports in, `:8443` undeclared still rejected, declared
+    host:port exact-match, malformed declarations fail closed), evaluator
+    case `gitlab_unsupported` in `test/specgit/acceptance.test.ts`, init
+    tests for the seam and declaration grammar; every slice red-first with
+    a mutation revert-check recorded in the PR.
+
+- [#135](https://github.com/LeXwDeX/SpecGit/pull/135) [`15ce8ef`](https://github.com/LeXwDeX/SpecGit/commit/15ce8efc41c48f828a09fd481f853420db886b3d) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Provider adapter home: src/providers/github (zero-behavior move)
+
+  Translates the GitHub adapter to the neutral per-platform home ([#113](https://github.com/LeXwDeX/SpecGit/issues/113),
+  Phase-2 entry of the GitLab roadmap). `src/github/gh-cli.ts` and
+  `src/github/protection-merge.ts` move verbatim to
+  `src/providers/github/` (the only edit inside the moved files is three
+  relative import specifiers); `src/github/port.ts` — the `GitHubProvider`
+  port and its fact types — stays where the [#80](https://github.com/LeXwDeX/SpecGit/issues/80) compatibility policy pins
+  it.
+
+  - **Zero regression by construction:** the legacy `src/github/gh-cli.ts`
+    and `src/github/protection-merge.ts` paths remain as stable alias
+    modules (`export *` from the canonical home), so the existing GitHub
+    suite passes **without editing a single test file** — verified as
+    identical counts before and after (651 passed | 1 skipped).
+  - **Production imports repointed:** `src/index.ts` and `src/cli/wiring.ts`
+    now import `GhCliGitHubProvider` from the canonical home; the public
+    API surface is unchanged (same exported names, same types).
+  - **Contract tests extended ([#80](https://github.com/LeXwDeX/SpecGit/issues/80)):** the provider-port contract test now
+    pins the canonical home — `GhCliGitHubProvider` implements
+    `GITHUB_PROVIDER_MEMBERS` from `src/providers/github/gh-cli.ts`, the
+    legacy alias modules re-export the _same_ class and functions (identity,
+    never copies), and the public API re-exports the canonical
+    implementation.
+
+- [#129](https://github.com/LeXwDeX/SpecGit/pull/129) [`d99b09a`](https://github.com/LeXwDeX/SpecGit/commit/d99b09a522ee8b3a6603046a00eb9d36be6b05ec) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Provider port-compatibility contract committed: policy, inventories, contract tests, full port vocabulary
+
+  Keeps the provider ports compatible as the seams evolve ([#80](https://github.com/LeXwDeX/SpecGit/issues/80)). The two TS
+  seams behind the provider contract — `GitPort` (`src/gitfacts/port.ts`) and
+  `GitHubProvider` (`src/github/port.ts`) — now carry a written compatibility
+  policy (`docs/providers.md`): required-versus-optional member rules (ports
+  have only required members; optional members exist only on evidence facts
+  and must define their fallback — `IssueFact.title`'s adoption fallback is
+  pinned), a three-step deprecation path, and tracking obligations for the
+  future glab adapter and every test double.
+
+  - **Member inventories live beside the ports** (`GIT_PORT_MEMBERS`,
+    `GITHUB_PROVIDER_MEMBERS`) and are compile-checked with
+    `satisfies Record<keyof <Port>, true>`: port and inventory cannot drift
+    in either direction under `tsc`.
+  - **Contract tests** (`test/specgit/provider-port-contract.test.ts`) hold
+    every in-tree implementation to the same port shape —
+    `GhCliGitHubProvider`, `LocalGitAdapter`, `MockGitHubProvider`,
+    `makeGhProvider`, `makeGitPort` — one assertion per implementer for full
+    red attribution, plus a doc-sync test pinning `docs/providers.md`'s
+    inventory tables to the exported lists member-for-member.
+  - **Deliberate proof (recorded in PR [#129](https://github.com/LeXwDeX/SpecGit/issues/129))**: temporarily adding the
+    required member `__contractProbe()` to both ports went red everywhere it
+    must — `tsc` at every src implementer and both inventory checks (6
+    errors); after propagating the probe into the inventories, the contract
+    test went red naming all five implementers plus its own fixture and the
+    doc-sync (7/9). Reverted; all green.
+  - **Real drift found and fixed on first run**: `makeGhProvider`
+    (`test/specgit-cli/helpers.ts`) was missing `getOpenIssueNumbers` —
+    invisible until now because no gate typechecks `test/`. The double now
+    implements it (scriptable via `openIssueNumbers`, default `ok([])`,
+    matching `MockGitHubProvider`).
+  - **Export completion**: the public API (`src/index.ts`) now carries the
+    full port vocabulary — the stable port names `GitPort`/`GitHubProvider`
+    plus `GitWritePort`, `BranchCheckout`, `BranchProtectionFact`,
+    `RepoAutomergeFact`, and both member inventories — so an alternate
+    provider can be written against the public API alone.
+
+- [#123](https://github.com/LeXwDeX/SpecGit/pull/123) [`f484b76`](https://github.com/LeXwDeX/SpecGit/commit/f484b76b7ae9f731fa27c81a4bd3641a338f87f5) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Release gates committed: invariant core, red-line closure list, GA completion vocabulary
+
+  Documents the 1.0.0 definition of done in `docs/release-gates.md` ([#108](https://github.com/LeXwDeX/SpecGit/issues/108)),
+  superseding the session-local release-order plan. The document carries the
+  provider-neutral, falsifiable invariant core I0–I5 (I3a implemented; I3b in
+  flight via [#120](https://github.com/LeXwDeX/SpecGit/issues/120)), the red-line closure checklist for the four 1.0 blockers
+  ([#119](https://github.com/LeXwDeX/SpecGit/issues/119) duplicate check-run semantics, [#120](https://github.com/LeXwDeX/SpecGit/issues/120) evidence completeness, [#121](https://github.com/LeXwDeX/SpecGit/issues/121) detection
+  trust boundary, [#122](https://github.com/LeXwDeX/SpecGit/issues/122) draft verdict dimension) with evidence slots, the GA five
+  gates as the only authoritative completion vocabulary (G-FINAL subsumed), the
+  gate-7 protocol (`workflow_dispatch` acceptance run on the release tag, run
+  URL archived), and the growth discipline (every ticket cites an invariant or a
+  seam; otherwise an explicit accept-or-defer — first exercised by [#118](https://github.com/LeXwDeX/SpecGit/issues/118),
+  deferred-to-last).
+
+  Riding the same slice, per the wave brief:
+
+  - **F-1 micro docs fix**: `AGENTS.md` and `docs/baseline-v1.md` no longer
+    assert a GitHub-only v1 scope; both now carry the incremental dual-platform
+    narrative ratified in `docs/gitlab-support.md` (D-1=A).
+  - **PR template time bomb defused**: `.github/PULL_REQUEST_TEMPLATE.md` no
+    longer carries the literal `Closes [#123](https://github.com/LeXwDeX/SpecGit/issues/123)` — the placeholder is now
+    `Closes #<issue-number>`, so an unedited template can never auto-close a
+    real issue.
+  - `test/docs-consistency.test.ts` pins all of the above (red-first: all four
+    assertions failed on the pre-change tree).
+
+- [#140](https://github.com/LeXwDeX/SpecGit/pull/140) [`61833f4`](https://github.com/LeXwDeX/SpecGit/commit/61833f4ccb93f87925bdb79afb634d7d0212ce90) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Same-title adoption: title-carrying scan, scaffold disambiguation, bounded probe cost ([#77](https://github.com/LeXwDeX/SpecGit/issues/77))
+
+  Closes [#77](https://github.com/LeXwDeX/SpecGit/issues/77). The bootstrap adoption probe — the remotely discoverable
+  idempotency marker that lets `specgit issue` adopt an issue a previous
+  run created but failed to record — had three defects in one mechanism:
+  **trust** (an unrelated pre-existing open issue with the same title was
+  silently adopted and bound), **coverage** (adoption read titles through
+  a per-issue `getIssue` fan-out over the open list), and **cost** (every
+  bootstrap with a pending title argument cost O(open issues) provider
+  calls). The completeness face (paginate-or-exit-3 across all list
+  consumers) landed with [#120](https://github.com/LeXwDeX/SpecGit/issues/120); this delivery closes the adoption face.
+
+  - New required port member `getOpenIssues` (`OpenIssueFact`: number,
+    optional title/body): one paginated title-carrying search — complete
+    to exhaustion under the [#120](https://github.com/LeXwDeX/SpecGit/issues/120) I3b contract, `evidence_truncated` on
+    `incomplete_results` or the 1000-result cap — replaces the per-issue
+    fan-out. `getOpenIssueNumbers` derives from the same scan: one
+    pagination implementation, one completeness contract. Probe cost is
+    bounded by pages, not open-issue count; a provider-level call-budget
+    test pins it (250 open issues ⇒ 3 search calls, zero per-issue GETs).
+  - Same-title collisions are disambiguated, never silently adopted: a
+    single exact-title open match is adopted; multiple matches resolve to
+    a sole candidate carrying the deterministic scaffold body this tool
+    writes (the boundary an unrelated human issue does not carry); an
+    unresolvable collision is the new usage diagnostic
+    `issue_title_ambiguous` (exit 2) listing every candidate, with the fix
+    to adopt explicitly by number — zero side effects, never a guess.
+  - Fail-closed behavior is unchanged and pinned: probe failures pass
+    through (exit 3), numeric-only arguments skip the probe, closed
+    issues are invisible by construction (the search pins
+    `is:issue+is:open`).
+  - TDD: red first — disambiguation, >100-open-issues adoption beyond the
+    first page, and budget pins failed against the silent-`.shift()`
+    probe (12 red), then green via the seam change; the existing
+    exactly-once fault-injection suite (lost durability, title drift,
+    PR adoption, zero-side-effect drift refusals) migrated to the new
+    seam and passes unchanged in behavior.
+
+- [#138](https://github.com/LeXwDeX/SpecGit/pull/138) [`a61780e`](https://github.com/LeXwDeX/SpecGit/commit/a61780ed08df13d3c2255f896bff9c9729617b76) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### CI: retire the never-green self-hosted-linux test leg ([#105](https://github.com/LeXwDeX/SpecGit/issues/105))
+
+  Removes the experimental `test_selfhosted` shadow job
+  (`continue-on-error: true`) from `.github/workflows/ci.yml`. The leg was
+  never green: every execution since introduction crashed at job
+  initialization with zero steps run — the runner container cannot create
+  its tool-cache directory (`/home/runner/work/_tool`, permission denied) —
+  an infrastructure-side failure no repository change can influence
+  ([W1 diagnosis](https://github.com/LeXwDeX/SpecGit/issues/105#issuecomment-5356816362)).
+  The GA-1 retirement line (end of W2, user ruling 2026-08-20) was reached
+  with the last five consecutive `main` runs red on the leg (through
+  `15ce8ef`), so self-hosted coverage leaves the release matrix with the
+  rationale recorded on the issue and referenced from
+  [docs/release-gates.md](../docs/release-gates.md) §3. Required checks are
+  untouched — hosted `linux-bash`/`macos-bash`/`windows-pwsh` legs stay,
+  `spec_git/policy.yaml` unchanged.
+
+  `test/specgit-cli/workflow-security.test.ts` pins the retirement
+  red-first: no job may run on the self-hosted pool and no matrix entry may
+  carry the self-hosted label or runner (the pin failed on the pre-change
+  tree).
+
+- [#126](https://github.com/LeXwDeX/SpecGit/pull/126) [`97056da`](https://github.com/LeXwDeX/SpecGit/commit/97056da796a56f0eb696b47aabf123f4f524c8af) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Test tree under typecheck; pre-push upgrade keeps trailing user content
+
+  - `tsconfig.test.json` brings the test tree under `tsc` with the same
+    strictness as `src/` ([#79](https://github.com/LeXwDeX/SpecGit/issues/79)): `pnpm run typecheck:test` visits every test
+    file, the CI "Lint & Type Check" job runs it alongside
+    `tsc --noEmit`, and the pre-existing backlog (mock `Evidence` widening,
+    a missing `getOpenIssueNumbers` fake, two e2e fixture signatures) is
+    fixed in the same change — zero product-semantics changes.
+  - Fixing 88-3 of [#88](https://github.com/LeXwDeX/SpecGit/issues/88): `mergeGitPrePush` no longer deletes user content
+    that follows `# <<< specgit:end <<<` when upgrading the marker-first
+    pre-push layout to the spawnable layout — the rebuild keeps everything
+    after the managed region and stays byte-stable on re-merge
+    (adversarially reproduced on main by W0′; repro landed beside the
+    existing coverage in `test/specgit-cli/harness-merge.test.ts`).
+
 ## 1.0.0-rc.1
 
 ### Patch Changes

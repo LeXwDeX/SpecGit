@@ -5,12 +5,30 @@
     "specgit": "0.7.2"
   },
   "changesets": [
+    "ci-dispositions",
     "cli-state-contract",
+    "evidence-completeness",
+    "gitlab-checks-gate-semantics",
+    "gitlab-evaluation-routing",
     "gitlab-evidence-gates",
+    "glab-provider-method-mirror",
+    "init-detection-trust-boundary",
     "init-non-destructive",
     "keen-pumas-wait",
+    "language-configuration",
+    "matrix-results-snapshot-repin",
+    "merged-lineage-anchor-validation",
+    "nested-group-declared-origins",
+    "nix-cache-drop",
+    "origin-port-classification",
     "portable-acceptance-harness",
     "pr-body-scaffold",
-    "v1.0-major"
+    "provider-adapter-home",
+    "provider-port-contract",
+    "release-gates-docs",
+    "same-title-adoption-disambiguation",
+    "self-hosted-retirement",
+    "v1.0-major",
+    "w1-test-tree-typecheck"
   ]
 }
