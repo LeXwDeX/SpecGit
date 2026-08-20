@@ -1,8 +1,7 @@
 version: 1
 delivery: issue107
 context:
-  kind: worktree
-  label: w2-gates
+  kind: branch
   branch: feat/107-issue107
 issues:
   - 107
