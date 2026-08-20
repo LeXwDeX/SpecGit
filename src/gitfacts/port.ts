@@ -69,6 +69,29 @@ export interface GitPort extends GitWritePort {
   headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>>;
 }
 
+/**
+ * Member inventory of `GitPort` (read side plus the inherited
+ * `GitWritePort` write side). The `satisfies Record<keyof GitPort, true>`
+ * check fails compilation when the port and this inventory drift apart in
+ * either direction — a required member added to the port must be
+ * reflected here, in every implementation, and in the compatibility
+ * policy in one delivery (#80). Docs and contract tests read this list;
+ * there is no second copy.
+ */
+const GIT_PORT_MEMBER_FLAGS = {
+  facts: true,
+  headContains: true,
+  checkoutOrCreateBranch: true,
+  commitFile: true,
+  pushBranch: true,
+  remoteDefaultBranch: true,
+  hooksPath: true,
+} as const satisfies Record<keyof GitPort, true>;
+
+export const GIT_PORT_MEMBERS: readonly (keyof GitPort)[] = Object.freeze(
+  Object.keys(GIT_PORT_MEMBER_FLAGS) as Array<keyof GitPort>
+);
+
 export interface SpawnOptions {
   timeoutMs?: number;
   maxBuffer?: number;

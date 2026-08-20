@@ -140,6 +140,7 @@ export interface GhScript {
     repo: { owner: string; repo: string },
     head: string
   ) => Evidence<Array<{ number: number; title: string; url: string }>>;
+  openIssueNumbers?: Evidence<number[]>;
   branchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
   enableBranchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
   repoAutomerge?: Evidence<{ enabled: boolean }>;
@@ -162,6 +163,12 @@ export function makeGhProvider(
     getIssue: vi.fn(async () => {
       calls.push('getIssue');
       return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
+    }),
+    getOpenIssueNumbers: vi.fn(async () => {
+      calls.push('getOpenIssueNumbers');
+      return (
+        behavior.openIssueNumbers ?? ({ ok: true, value: [] } as Evidence<number[]>)
+      );
     }),
     getPr: vi.fn(async (repo: never, ref: number | string) => {
       calls.push(`getPr:${String(ref)}`);

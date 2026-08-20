@@ -190,6 +190,8 @@ core, the red-line closure list, and the evidence archive.
   vocabulary, invariant core, and evidence protocol
 - [Concepts](docs/concepts.md) · [Overview](docs/overview.md)
 - [CLI Reference](docs/cli.md) · [Reference (schemas, gates, codes)](docs/reference.md)
+- [Provider Ports](docs/providers.md) — the provider-seam compatibility policy
+  (`GitPort`, `GitHubProvider`, their inventories and deprecation path)
 - [GitHub Actions usage & security](docs/actions.md)
 - [Examples & Recipes](docs/examples.md) · [Existing Projects](docs/existing-projects.md) (adoption & uninstall)
 - [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) · [Glossary](docs/glossary.md)
