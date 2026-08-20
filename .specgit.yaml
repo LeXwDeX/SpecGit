@@ -1,8 +1,7 @@
 version: 1
 delivery: issue106
 context:
-  kind: worktree
-  label: w0-docs
+  kind: branch
   branch: feat/106-issue106
 issues:
   - 106
