@@ -80,6 +80,8 @@ export type {
 export { GITHUB_PROVIDER_MEMBERS } from './github/port.js';
 export { GhCliGitHubProvider, sanitizeApiText } from './providers/github/gh-cli.js';
 export type { GhCliGitHubProviderOptions } from './providers/github/gh-cli.js';
+export { GlabProvider, versionInWindow } from './providers/gitlab/glab-cli.js';
+export type { GlabProviderOptions } from './providers/gitlab/glab-cli.js';
 export { parseClosingRefs } from './github/closing-refs.js';
 
 export { CODE_INFO } from './acceptance/codes.js';
