@@ -44,7 +44,12 @@ jobs:
       - name: Count pending changesets
         id: pending
         run: |
-          COUNT=$(ls .changeset/*.md 2>/dev/null | grep -v 'README' | wc -l | tr -d ' ')
+          # Pre-mode aware: changesets consumed into a prerelease are
+          # recorded in .changeset/pre.json and STAY on disk (they are
+          # re-applied on `changeset pre exit`). They are not pending.
+          # Count only changesets pre.json does not list; without pre.json
+          # this is identical to counting every non-README *.md.
+          COUNT=$(node -e "const fs=require('fs');let consumed=[];try{consumed=JSON.parse(fs.readFileSync('.changeset/pre.json','utf8')).changesets||[]}catch{};let files=[];try{files=fs.readdirSync('.changeset')}catch{};const pending=files.filter(f=>f.endsWith('.md')&&f!=='README.md').map(f=>f.replace(/\.md$/,'')).filter(id=>!consumed.includes(id));console.log(pending.length)")
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Pending changesets: $COUNT"
 
@@ -142,10 +147,14 @@ jobs:
             exit 0
           fi
           pnpm run check:pack-version
+          # Dist tag: while in prerelease mode (.changeset/pre.json) publish
+          # under its tag (rc) so `latest` stays on the stable line — the
+          # same rule `changeset publish` applies. Outside pre mode: latest.
+          DIST_TAG=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('.changeset/pre.json','utf8')).tag||'latest')}catch{console.log('latest')}")
           # npm authentication via OIDC trusted publishing (id-token: write
           # + registry-url): no environment binding, no token. Provenance is
           # explicit so the attestation cannot be silently dropped.
-          npm publish --access public --provenance
+          npm publish --access public --provenance --tag "$DIST_TAG"
 
       - name: Tag and create GitHub Release
         if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
@@ -164,5 +173,9 @@ jobs:
             echo "Release ${TAG} already exists; skipping."
             exit 0
           fi
-          gh release create "${TAG}" --generate-notes --title "${TAG}" \
+          # Prerelease versions (any -suffix) must not displace the stable
+          # "Latest" rollup on the releases page.
+          PRERELEASE=""
+          if [ "${VERSION#*-}" != "$VERSION" ]; then PRERELEASE="--prerelease"; fi
+          gh release create "${TAG}" --generate-notes --title "${TAG}" ${PRERELEASE} \
             --notes "Automated release from merged changesets. npm: https://www.npmjs.com/package/specgit/v/${VERSION}"
