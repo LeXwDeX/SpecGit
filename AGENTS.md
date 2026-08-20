@@ -37,10 +37,12 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
 - Provider seams: git facts come from **local git** (`src/gitfacts`);
   GitHub evidence (issues, PR, checks) flows exclusively through the
   authenticated **`gh` CLI** (`src/github`). No direct REST client, no
-  stored or logged tokens. v1 delivers GitHub.com only: a GitLab host
-  declared via `specgit init --gitlab-host` is a declaration-diagnostics
-  seam (`gitlab_unsupported`), not a provider — see
-  [docs/gitlab-support.md](docs/gitlab-support.md).
+  stored or logged tokens. v1 scope is dual-platform — GitHub.com plus
+  GitLab CE/Free self-managed per the version policy — and
+  GitLab capability lands incrementally per the Phase-2 roadmap; today a
+  GitLab host declared via `specgit init --gitlab-host` is a
+  declaration-diagnostics seam (`gitlab_unsupported`), not yet a
+  provider — see [docs/gitlab-support.md](docs/gitlab-support.md).
 
 ## Build, test, lint
 
