@@ -107,6 +107,70 @@ describe('parseRepoRef', () => {
   });
 });
 
+// #95: a nested-group GitLab origin (depth >= 2 subgroups, >= 3 path
+// segments) is a recognized-but-unsupported platform — never a
+// misdiagnosed "unresolvable" URL carrying GitHub-pointing repair
+// advice. Reproduction: forge.example.com declared in providers.yaml with a
+// three-segment scp origin reported origin_unresolvable on 0.7.1/0.7.2.
+describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
+  const nestedGitlab = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gitlab_unsupported');
+    expect(result.message).toContain('nested-group');
+    expect(result.fix).not.toMatch(/github\.com/);
+  };
+  const unresolvable = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('origin_unresolvable');
+  };
+
+  it('declared-host nested origins report gitlab_unsupported on all three accepted forms', () => {
+    nestedGitlab('git@forge.example.com:example-group/example-subgroup/sample-project.git', {
+      gitlabHost: 'forge.example.com',
+    });
+    nestedGitlab('ssh://git@forge.example.com/example-group/Operations/sample-project.git', {
+      gitlabHost: 'forge.example.com',
+    });
+    nestedGitlab('https://forge.example.com/example-group/Operations/sample-project.git', {
+      gitlabHost: 'forge.example.com',
+    });
+    nestedGitlab('https://forge.example.com/deep/a/b/c/project.git', { gitlabHost: 'forge.example.com' });
+  });
+
+  it('heuristic gitlab hosts classify nested origins the same way', () => {
+    nestedGitlab('git@gitlab.com:group/subgroup/project.git');
+    nestedGitlab('https://gitlab.com/group/subgroup/project');
+    nestedGitlab('ssh://git@gitlab.example.com/group/sub/project.git');
+  });
+
+  it('github hosts and undeclared hosts keep origin_unresolvable for nested paths', () => {
+    unresolvable('https://github.com/a/b/c.git');
+    unresolvable('git@github.com:a/b/c.git');
+    unresolvable('https://example.com/a/b/c.git');
+    unresolvable('https://git.undeclared.com/a/b/c.git', { gitlabHost: 'forge.example.com' });
+  });
+
+  it('malformed paths on declared GitLab hosts keep origin_unresolvable', () => {
+    unresolvable('git@forge.example.com:only.git', { gitlabHost: 'forge.example.com' });
+    unresolvable('git@forge.example.com:a//b.git', { gitlabHost: 'forge.example.com' });
+    unresolvable('https://forge.example.com/', { gitlabHost: 'forge.example.com' });
+  });
+
+  it('the spoofing and port corpus stays intact for nested paths', () => {
+    // suffix-spoofed declared host: structural host match fails
+    unresolvable('git@forge.example.com.evil.com:a/b/c.git', { gitlabHost: 'forge.example.com' });
+    unresolvable('https://forge.example.com.evil.com/a/b/c.git', { gitlabHost: 'forge.example.com' });
+    // userinfo smuggling on the real host is still rejected (fail-closed)
+    unresolvable('ssh://bob@forge.example.com/a/b/c.git', { gitlabHost: 'forge.example.com' });
+    // explicit ports keep today's fail-closed rejection (#78 owns that change)
+    unresolvable('https://forge.example.com:8443/a/b/c.git', { gitlabHost: 'forge.example.com' });
+  });
+});
+
 // Mutation-sensitive hardening corpus for CodeQL alerts 1-4: every block
 // targets a specific regression (substring classification over the raw
 // URL, first-`@` scp splitting, unanchored/suffix host comparison,
