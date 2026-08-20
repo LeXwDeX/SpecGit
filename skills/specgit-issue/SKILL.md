@@ -35,6 +35,10 @@ specgit issue 42                   # reuse an existing issue
 ## Rules
 
 - Run it from the repository root; context comes from live git.
+- Fill in the scaffold sections as you deliver; placeholders are advisory,
+  never gates. Keep the closing references intact.
+- The PR body is written once at creation; no SpecGit command edits it
+  afterwards, and the repository's own PR template is never read.
 - After bootstrap, work the TDD loop on the branch; finish with
   `specgit finish`.
 - If it fails mid-chain, re-run the same command — completed steps are
