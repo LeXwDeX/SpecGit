@@ -67,9 +67,9 @@ gitlab:
 | Field | Type | Rule |
 | --- | --- | --- |
 | `gitlab.host` | string | Bare hostname (no scheme/path); must match the origin host when declared from `init`. |
-| `gitlab.insecure_ssl` | boolean | Default `false`. Reserved for the glab roadmap (self-signed certificates). |
+| `gitlab.insecure_ssl` | boolean | Default `false`. Per-host TLS-skip for the declared host only (self-signed certificates), via glab's host-scoped mechanism when the GitLab adapter lands — never global, never logged. The exact glab flag/config key is not yet pinned from gitlab-org/cli, so the setting stays inert until then (see the [evidence ledger](evidence/gitlab-19.2.md)). |
 
-A declared host changes origin classification: matching origins report `gitlab_unsupported` (dedicated diagnostic) instead of `origin_unresolvable`. Strict schema: unknown keys are rejected.
+A declared host changes origin classification: matching origins report `gitlab_unsupported` (dedicated diagnostic) instead of `origin_unresolvable` — including **nested-group** paths (`group/subgroup/project`, any depth ≥ 2). The self-managed support policy is version-qualified: CE/Free `>= 19.2.4 < 19.3.0`, fail-closed outside ([GitLab support roadmap](gitlab-support.md)). Strict schema: unknown keys are rejected.
 
 ## Root discovery
 
@@ -103,7 +103,7 @@ Sequence (G8): evaluated only when `policy.ordered_issues` is `true`; otherwise 
 
 Closing refs (G10) and the draft scaffold: `specgit issue` writes the PR body once, at draft creation — a deterministic scaffold whose `Closes #n` lines for the bound issues come first, followed by advisory Why / What changed / Evidence / Checklist sections. The placeholders are never gates: G10 parses closing references only, so any body that closes every bound issue passes, scaffold or hand-written. No SpecGit command edits an existing PR body (resume and `specgit pr` repair bind or adopt as-is), and the adopting repository's own pull-request templates are never read.
 
-Origin parsing (G5): only `github.com` remotes resolve — `https://github.com/owner/repo(.git)`, `git@github.com:owner/repo(.git)`, and `ssh://git@github.com/owner/repo(.git)`. A GitLab host declared in `spec_git/providers.yaml` (see above) reports `gitlab_unsupported`; anything else ⇒ `origin_unresolvable`. Owner/repo comparison is case-insensitive.
+Origin parsing (G5): only `github.com` remotes resolve — `https://github.com/owner/repo(.git)`, `git@github.com:owner/repo(.git)`, and `ssh://git@github.com/owner/repo(.git)`. A GitLab host declared in `spec_git/providers.yaml` (see above), a `gitlab.com`/`*gitlab*` host, and nested-group GitLab paths (`group/subgroup/project`) on those hosts report `gitlab_unsupported`; anything else ⇒ `origin_unresolvable` (fix text is platform-neutral). Owner/repo comparison is case-insensitive.
 
 Checks (G11): evaluated at the **PR head SHA**, never the local HEAD. Per name: no check run with that name ⇒ `checks_missing`; runs exist but not all completed ⇒ `checks_pending`; any completed run conclusion is not success ⇒ `checks_failed`. All failing names are enumerated in one verdict. `checks_pending` is classified `factual` (exit 1): the evidence is complete and says "not yet" — it is a **transient, retryable** non-acceptance, not a defect. Wait for CI to finish and re-run `specgit finish`.
 
