@@ -20,7 +20,7 @@ function makeRouter(originPlatform: 'github' | 'gitlab' | 'undecided') {
   let constructions = 0;
   const router = new PlatformRoutingProvider({
     github,
-    gitlab: () => {
+    gitlab: async () => {
       constructions += 1;
       return gitlab;
     },
@@ -96,7 +96,7 @@ describe('PlatformRoutingProvider (#117)', () => {
     const github = new MockGitHubProvider();
     const router = new PlatformRoutingProvider({
       github,
-      gitlab: () => new MockGitHubProvider(),
+      gitlab: async () => new MockGitHubProvider(),
       originPlatform: async () => {
         resolutions += 1;
         return 'github';
