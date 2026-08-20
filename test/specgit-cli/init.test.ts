@@ -215,6 +215,97 @@ describe('specgit init', () => {
     expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
   });
 
+  // #78 + 88-2: the origin-host seam captures host and port structurally,
+  // so explicit-port origins platform-resolve and host:port declarations
+  // validate against the origin's effective port.
+  it('an ssh origin with the default port classifies github without a declaration (#78 seam)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'ssh://git@github.com:22/LeXwDeX/SpecGit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'github' });
+    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'platform_undecided')).toBeFalsy();
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+  });
+
+  it('--gitlab-host host:port declares the platform and persists the port (#78 declaration grammar)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example:8443/o/r.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example:8443', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'git.corp.example:8443' });
+    const providers = fs.readFileSync(path.join(root, 'spec_git', 'providers.yaml'), 'utf-8');
+    expect(providers).toContain('git.corp.example');
+    expect(providers).toMatch(/port: ['"]?8443/);
+  });
+
+  it('--gitlab-host validates the declared port against the origin port (both directions)', async () => {
+    // Port declared, portless origin: the declaration must name the port
+    // the origin actually uses.
+    const portless = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example/o/r.git' }),
+    });
+    const withPort = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example:8443', '--json'],
+      portless.ctx
+    );
+    expect(withPort).toBe(EXIT_USAGE);
+    expect(parseStdoutJson(portless.io).errors[0].code).toBe('gitlab_host_invalid');
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+
+    // Portless declaration, non-default port on the origin: the fix must
+    // teach the host:port grammar.
+    const ported = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example:8443/o/r.git' }),
+    });
+    const withoutPort = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example', '--json'],
+      ported.ctx
+    );
+    expect(withoutPort).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(ported.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+    expect(envelope.errors[0].fix ?? envelope.errors[0].message).toContain('git.corp.example:8443');
+  });
+
+  it('--gitlab-host rejects a malformed port in the declaration', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example:8443/o/r.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example:84x3', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+  });
+
   it('github.com origin defaults to github mode without asking', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },

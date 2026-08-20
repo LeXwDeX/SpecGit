@@ -16,6 +16,10 @@ describe('parseRepoRef', () => {
     ['git@github.com:owner/repo', { owner: 'owner', repo: 'repo' }],
     ['ssh://git@github.com/owner/repo.git', { owner: 'owner', repo: 'repo' }],
     ['ssh://git@github.com/owner/repo', { owner: 'owner', repo: 'repo' }],
+    // #78: an explicit port equal to the scheme default classifies like
+    // the portless form (the https :443 case is pinned below in the
+    // widened-shapes test; the ssh :22 case needs the port rules).
+    ['ssh://git@github.com:22/owner/repo.git', { owner: 'owner', repo: 'repo' }],
   ];
 
   it.each(goodCases)('parses %s', (url, expected) => {
@@ -171,6 +175,106 @@ describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
   });
 });
 
+// #78: explicit-port origin classification. An explicit port equal to
+// the scheme default (443 for https, 22 for ssh) classifies identically
+// to the portless form for github.com and GitLab hosts (heuristic or
+// declared); every other explicit port stays fail-closed rejected unless
+// the declaration itself names it (host:port). The spoofing surface
+// (userinfo, path, query, host-suffix) must not reopen.
+describe('parseRepoRef — explicit-port origin classification (#78)', () => {
+  const resolves = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(true);
+  };
+  const gitlab = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gitlab_unsupported');
+  };
+  const unresolvable = (url: string, options?: { gitlabHost?: string }) => {
+    const result = parseRepoRef(url, options);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('origin_unresolvable');
+  };
+
+  it('default ports classify identically to the portless form (truth table)', () => {
+    // github.com: both URL tracks accept their scheme default explicitly.
+    resolves('https://github.com:443/o/r');
+    resolves('ssh://git@github.com:22/o/r');
+    // WHATWG URL normalization strips leading zeros: :022 is the default
+    // port, not a distinct classification input.
+    resolves('ssh://git@github.com:022/o/r');
+    // heuristic GitLab hosts: same rule, surfaced as gitlab_unsupported.
+    gitlab('https://gitlab.com:443/o/r');
+    gitlab('ssh://git@gitlab.com:22/o/r');
+    gitlab('https://gitlab.example.com:443/o/r');
+    // declared GitLab hosts with a portless declaration: default ports in.
+    gitlab('https://git.example.com:443/o/r', { gitlabHost: 'git.example.com' });
+    gitlab('ssh://git@git.example.com:22/o/r', { gitlabHost: 'git.example.com' });
+  });
+
+  it('non-default ports stay fail-closed without a port declaration (:8443 undeclared still rejected)', () => {
+    unresolvable('https://github.com:8443/o/r');
+    unresolvable('ssh://git@github.com:2222/o/r');
+    unresolvable('https://gitlab.com:8443/o/r');
+    // a portless declaration names the host, not a non-default port
+    unresolvable('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com' });
+    unresolvable('ssh://git@git.example.com:2222/o/r', { gitlabHost: 'git.example.com' });
+    // degenerate ports never classify (0 is not a scheme default; the
+    // others fail URL parsing outright)
+    unresolvable('ssh://git@github.com:0/o/r');
+    unresolvable('ssh://git@github.com:65536/o/r');
+    unresolvable('ssh://git@github.com:22x/o/r');
+  });
+
+  it('a declared non-default port classifies only its exact host:port', () => {
+    gitlab('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:8443' });
+    gitlab('ssh://git@git.example.com:2222/o/r', { gitlabHost: 'git.example.com:2222' });
+    // the portless origin is a different effective port: fail closed
+    unresolvable('https://git.example.com/o/r', { gitlabHost: 'git.example.com:8443' });
+    unresolvable('https://git.example.com:443/o/r', { gitlabHost: 'git.example.com:8443' });
+    // declaring a scheme default accepts the portless form of that scheme only
+    gitlab('https://git.example.com/o/r', { gitlabHost: 'git.example.com:443' });
+    gitlab('ssh://git@git.example.com/o/r', { gitlabHost: 'git.example.com:22' });
+    unresolvable('https://git.example.com/o/r', { gitlabHost: 'git.example.com:2222' });
+    // scp implies the ssh default port: a :22 (or portless) declaration
+    // matches, any other declared port does not
+    gitlab('git@git.example.com:o/r', { gitlabHost: 'git.example.com' });
+    gitlab('git@git.example.com:o/r', { gitlabHost: 'git.example.com:22' });
+    unresolvable('git@git.example.com:o/r', { gitlabHost: 'git.example.com:8443' });
+    unresolvable('git@git.example.com:o/r', { gitlabHost: 'git.example.com:443' });
+    // a declared host:port never captures other hosts
+    unresolvable('https://other.example.com:8443/o/r', { gitlabHost: 'git.example.com:8443' });
+  });
+
+  it('port-bearing origins keep the spoof corpus semantics', () => {
+    // a default port on a spoofed suffix is still a spoofed suffix
+    unresolvable('ssh://git@github.com.evil.com:22/o/r');
+    unresolvable('https://github.com.evil.com:443/o/r');
+    unresolvable('ssh://git@git.example.com.evil.com:2222/o/r', {
+      gitlabHost: 'git.example.com:2222',
+    });
+    // userinfo smuggling with a default port stays rejected (fail-closed)
+    unresolvable('ssh://bob@github.com:22/o/r');
+    unresolvable('ssh://git:pw@github.com:22/o/r');
+    unresolvable('https://git@github.com:443/o/r');
+    // the github.com exact match wins over any declaration
+    resolves('ssh://git@github.com:22/o/r', { gitlabHost: 'git.example.com:22' });
+    // nested-group paths on port-bearing declared hosts keep #95 behavior
+    gitlab('https://git.example.com:8443/g/s/p.git', { gitlabHost: 'git.example.com:8443' });
+    gitlab('ssh://git@git.example.com:22/g/s/p.git', { gitlabHost: 'git.example.com' });
+  });
+
+  it('malformed declarations never match (fail closed)', () => {
+    unresolvable('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:84x3' });
+    unresolvable('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:' });
+    unresolvable('https://git.example.com:8443/o/r', { gitlabHost: 'git.example.com:8443:9' });
+    unresolvable('https://git.example.com/o/r', { gitlabHost: 'git example.com' });
+  });
+});
+
 // Mutation-sensitive hardening corpus for CodeQL alerts 1-4: every block
 // targets a specific regression (substring classification over the raw
 // URL, first-`@` scp splitting, unanchored/suffix host comparison,
@@ -243,7 +347,7 @@ describe('parseRepoRef — structural host classification (security hardening)',
 
   it('rejects explicit non-default ports on every track', () => {
     unresolvable('https://github.com:8443/o/r');
-    unresolvable('ssh://git@github.com:22/o/r');
+    unresolvable('ssh://git@github.com:2222/o/r');
     unresolvable('https://gitlab.com:8443/o/r');
     unresolvable('https://git.ycgame.com:8443/o/r', { gitlabHost: 'git.ycgame.com' });
     // scp syntax has no port slot: a port-looking segment breaks the
