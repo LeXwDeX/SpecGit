@@ -27,6 +27,8 @@ troubleshooting at the end.
 
 **I want the exact schemas and gate table.** [Reference](reference.md) documents `.specgit.yaml`, `spec_git/policy.yaml`, the eleven gates, and every diagnostic code.
 
+**I'm implementing or extending a provider seam.** [Provider Ports](providers.md) is the port-compatibility policy: the `GitPort` and `GitHubProvider` inventories, required-versus-optional rules, the deprecation path, and the obligations for alternate providers (glab) and test doubles.
+
 **I want the versioned product contract.** [Product Baseline v1](baseline-v1.md) fixes the supported platforms, the ten commands, state and assets, compatibility, non-goals, and the deprecation policy.
 
 **I run GitHub Actions.** [GitHub Actions](actions.md) defines how check names are chosen, how required checks are wired, and the security guidance for workflows.

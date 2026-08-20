@@ -149,6 +149,7 @@ All remote evidence flows through the `gh` CLI — no other endpoint selection e
 - The `gh` executable is resolved per invocation: an explicit internal override, then `SPECGIT_GH`, then `gh` on `PATH`. Each call gets a hard timeout — `SPECGIT_GH_TIMEOUT_MS` when set, `15000` ms by default — plus response-size caps, array-form arguments, and JSON-only handling. Strings returned by the API are sanitized (control characters stripped, values truncated) before any terminal rendering.
 - HTTP 404 ⇒ `issue_not_found` / `pr_not_found`; other transport failures and timeouts ⇒ `gh_transport`. Every failure is evidence; none of them pass acceptance, and there is no silent fallback.
 - The seam is injectable: tests run against a mock provider (and `SPECGIT_GH` can point at a scripted `gh`), so acceptance logic is verifiable offline.
+- How the port itself evolves — required-versus-optional member rules, the deprecation path, and the tracking obligations for alternate providers and test doubles — is the committed [port-compatibility policy](providers.md).
 
 ## State and assets
 
