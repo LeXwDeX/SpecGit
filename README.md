@@ -65,8 +65,10 @@ specgit doctor                       # all probes green?
 
 # The loop
 # 3. per delivery — one command bootstraps everything
-#    (creates the issues, branches, opens the draft PR with Closes #n for
-#     every issue, writes .specgit.yaml, commits and pushes; re-run resumes)
+#    (creates the issues, branches, opens the draft PR pre-filled with a
+#     deterministic scaffold — the Closes #n line for every issue plus
+#     Why / What changed / Evidence / Checklist — writes .specgit.yaml,
+#     commits and pushes; re-run resumes)
 specgit issue "feat: add login" "Harden the session model"
 
 # 4. work, push; CI runs on the PR — including the SpecGit Acceptance job

@@ -69,9 +69,14 @@ already exists); keep manual guidance outside them.
 ### The delivery story
 
 - Start with `specgit issue <title-or-number>...`: it creates or reuses
-  the issues, branches, opens the draft pull request that closes every
-  bound issue, and writes `.specgit.yaml`. Re-running resumes; it is
-  idempotent.
+  the issues, branches, opens the draft pull request pre-filled with a
+  deterministic scaffold (the `Closes #n` line for every bound issue,
+  then Why / What changed / Evidence / Checklist sections), and writes
+  `.specgit.yaml`. Re-running resumes; it is idempotent.
+- Fill in the scaffold sections as you deliver. Its placeholders are
+  advisory — the closing references are the only body gate. The PR body
+  is written once at creation; no SpecGit command edits an existing PR
+  body, and the repository's own pull-request template is never read.
 - Finish with `specgit finish`: the verdict, derived from real git, PR,
   and CI evidence. Exit code 0 is the only "done".
 
