@@ -43,8 +43,10 @@ The distinction between `1` and `3` is contractual: `1` means the evidence was g
 | --- | --- |
 | `SPECGIT_GH` | Path to the `gh` executable used for all GitHub evidence. Resolved per invocation; defaults to `gh` on `PATH`. Useful for testing against a scripted `gh`. |
 | `SPECGIT_GH_TIMEOUT_MS` | Per-call timeout for `gh` invocations, in milliseconds. Defaults to `15000` (15 s). Raise it on slow networks; the timeout is what turns a hung call into `gh_transport` (exit 3). |
+| `SPECGIT_GLAB` | Path to the `glab` executable used by the GitLab provider adapter (#114). Resolved per invocation; defaults to `glab` on `PATH`. Useful for testing against a scripted `glab`. |
+| `SPECGIT_GLAB_TIMEOUT_MS` | Per-call timeout for `glab` invocations, in milliseconds. Defaults to `15000` (15 s). A timeout is `glab_transport` (exit 3). |
 
-These are the only SpecGit-specific environment inputs. Standard `NO_COLOR`/`CI` detection also applies. No tokens are ever read from the environment — authentication is your existing `gh` session.
+These are the only SpecGit-specific environment inputs. Standard `NO_COLOR`/`CI` detection also applies. No tokens are ever read from the environment — authentication is your existing `gh` (or, for the GitLab adapter, `glab`) session.
 
 ## `specgit init`
 
