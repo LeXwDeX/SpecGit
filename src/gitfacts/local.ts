@@ -15,6 +15,9 @@ const GIT_WRITE_TIMEOUT_MS = 60_000;
 const GIT_WRITE_MAX_BUFFER = 4 * 1024 * 1024;
 const MAX_EMBEDDED_TEXT = 400;
 
+/** A full git object id: 40 hex chars (sha1) or 64 (sha256), lowercase. */
+const HEX_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 const defaultSpawn: SpawnFn = async (command, args, options) => {
   const { stdout, stderr } = await execFileAsync(command, args, {
     timeout: options.timeoutMs,
@@ -221,6 +224,19 @@ export class LocalGitAdapter implements GitPort {
   }
 
   async headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {
+    // The anchor is provider-derived text; only a full hex object id may
+    // reach git. Anything else — empty, padded, ref-like, abbreviated —
+    // would either ride git's opaque exit-128 path or be resolved as a
+    // ref instead of rejected as an object id (#76), so it is classified
+    // here without invoking git at all.
+    if (!HEX_OBJECT_ID.test(sha)) {
+      const shown = sanitizeGitText(sha);
+      return fail(
+        'merged_lineage_unavailable',
+        `The merged-delivery anchor '${shown}' is not a hex object id (40 or 64 hex chars); local git was not invoked.`,
+        'The merge anchor arrived malformed from the provider evidence; a ref-like or empty anchor is never resolved by local git. Re-run once the pull request reports a valid merge commit sha.'
+      );
+    }
     try {
       await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
         timeoutMs: GIT_PROBE_TIMEOUT_MS,
