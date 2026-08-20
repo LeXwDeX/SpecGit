@@ -6,6 +6,7 @@
   },
   "changesets": [
     "cli-state-contract",
+    "gitlab-evidence-gates",
     "init-non-destructive",
     "keen-pumas-wait",
     "portable-acceptance-harness",
