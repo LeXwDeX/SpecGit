@@ -26,7 +26,9 @@ specgit issue 42                   # reuse an existing issue
 1. Creates (or reuses) the issues — one issue = one independently verifiable
    WHY.
 2. Creates and checks out the delivery branch.
-3. Opens a draft PR whose body closes every bound issue (`Closes #n`).
+3. Opens a draft PR pre-filled with a deterministic scaffold: the
+   `Closes #n` line for every bound issue first, then Why / What changed /
+   Evidence / Checklist sections.
 4. Writes `.specgit.yaml` (issues[] + pr) and commits it.
 5. Pushes the branch.
 

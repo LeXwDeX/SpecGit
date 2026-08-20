@@ -2,10 +2,11 @@
  * `specgit issue [<title-or-number> ...]` — the one-command delivery
  * bootstrap: create/reuse N issues (one issue = one independently
  * verifiable WHY), create the branch `<type>/<first#>-<slug>`, open a
- * draft PR whose body closes every issue, write `.specgit.yaml`, commit
- * and push. Re-runs resume: every completed step is detected from the
- * record and the live branch, so a failure between steps heals on the
- * next invocation with the same arguments.
+ * draft PR whose body is the deterministic scaffold rendered from the
+ * bound issues (#87), write `.specgit.yaml`, commit and push. Re-runs
+ * resume: every completed step is detected from the record and the live
+ * branch, so a failure between steps heals on the next invocation with
+ * the same arguments.
  *
  * Exactly-once discipline (issue #65): replacement arguments are
  * validated before any destructive side effect; the record is rewritten
@@ -21,6 +22,7 @@
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import { errorDiagnostic, sanitize, type CommandOutcome } from '../output.js';
+import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { CommandContext, DeliveryBinding, Evidence } from '../types.js';
 
@@ -456,7 +458,10 @@ export async function runIssue(
       };
     } else {
       const prTitle = firstTitle ?? `Delivery ${record.delivery}`;
-      const prBody = `${record.issues.map((n) => `Closes #${n}`).join('\n')}\n`;
+      // The scaffold is written exactly once, here on the fresh-creation
+      // path (no PR bound, none adoptable): resume and repair bind or
+      // adopt what already exists and never rewrite a PR body (#87).
+      const prBody = renderPrScaffold(record.issues);
       const prEv = await ctx.gh.createDraftPr(repoEv.value, target, baseEv.value, prTitle, prBody);
       if (!prEv.ok) {
         return passthrough(prEv);

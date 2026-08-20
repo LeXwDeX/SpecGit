@@ -16,6 +16,12 @@
  * The post-publish layer — a real external repository's green Actions run
  * against the registry-published package — is tracked on the issue; it
  * cannot be produced before the release exists.
+ *
+ * Issue #87 — the same adoption layer proves draft-PR scaffold
+ * ownership: the adopting repository carries its own pull-request
+ * templates at every GitHub discovery location, yet `specgit issue`
+ * generates its deterministic scaffold without reading, echoing, or
+ * mutating them.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -28,20 +34,24 @@ import { parse } from 'yaml';
 import {
   externalAcceptanceWorkflowYaml,
 } from '../../src/cli/external-harness.js';
+import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
 import { ACCEPTANCE_CHECK_NAME, HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-assets.js';
 import { createFakeGh, type FakeGhRule } from '../specgit/helpers/fake-gh.js';
 import {
   EXT_CHECK,
   EXT_ORIGIN_URL,
   EXT_OWNER,
+  EXT_PR_TEMPLATE,
   EXT_REPO,
   makeExternalRepo,
+  makePushableExternalRepo,
   npmInstallPacked,
   packSpecgit,
   remoteDefaultBranch,
   rmDir,
   runInstalledSpecgit,
 } from './external-repo-fixture.js';
+import { readFakeGhStdin } from './helpers.js';
 
 interface WorkflowStep {
   name?: string;
@@ -183,6 +193,80 @@ describe('e2e external repository adoption (#63)', () => {
       expect(envelope.verdict.classification).toBe('accepted');
       expect(envelope.verdict.evidence.branch).toBe('master');
       expect(fs.existsSync(path.join(fixture.dir, '.specgit.yaml'))).toBe(true);
+    }
+  );
+});
+
+describe('e2e external repository adoption (#87): scaffold vs PR templates', () => {
+  const cleanup: string[] = [];
+
+  afterAll(() => {
+    for (const dir of cleanup) rmDir(dir);
+  });
+
+  it(
+    'generates the deterministic draft-PR scaffold while the adopting repo keeps its own PR templates',
+    { timeout: 240_000 },
+    async () => {
+      const { tarballPath } = await packSpecgit();
+      const fixture = makePushableExternalRepo('specgit-external-scaffold-', { prTemplate: true });
+      cleanup.push(fixture.dir, fixture.bareDir);
+
+      await npmInstallPacked(tarballPath, fixture.dir);
+
+      // Fake gh with its artifacts OUTSIDE the adopting tree, so the
+      // bootstrap's record commit sees a clean working tree.
+      const ghDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-scaffold-gh-'));
+      cleanup.push(ghDir);
+      const gh = createFakeGh(ghDir, [
+        { match: '^--version$', stdout: 'gh version 2.60.0-external-fixture\n' },
+        { match: '^auth status', stdout: 'Logged in to github.com as external-fixture\n' },
+        { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+        {
+          match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues `,
+          stdout: `{"number":%SEQ%,"html_url":"https://github.com/${EXT_OWNER}/${EXT_REPO}/issues/%SEQ%"}`,
+          seq: { start: 7 },
+        },
+        { match: '^pr list ', stdout: '[]' },
+        {
+          match: '^pr create --draft ',
+          stdout: `https://github.com/${EXT_OWNER}/${EXT_REPO}/pull/31\n`,
+        },
+      ] satisfies FakeGhRule[]);
+      const env = gh.env({ GH_TOKEN: 'external-fixture-token' });
+
+      const result = runInstalledSpecgit(fixture.dir, ['issue', 'feat: adopt the scaffold', '--json'], env);
+      expect(result.status, result.stderr).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.status).toBe('ok');
+      expect(envelope.record).toMatchObject({ issues: [7], pr: 31 });
+
+      // The draft body is exactly the deterministic scaffold for the
+      // bound issue — rendered by the packed (installed) CLI, compared
+      // against the source renderer.
+      const createdBody = readFakeGhStdin(gh.logPath)[0];
+      expect(createdBody).toBe(renderPrScaffold([7]));
+
+      // Template ownership: none of the adopting repo's template decoys
+      // (including its `Closes #123` placeholder) leaked into the body…
+      expect(createdBody).not.toContain('Adopting repo PR template');
+      expect(createdBody).not.toContain('Closes #123');
+      // …and every template file is still on disk, byte-identical.
+      for (const rel of [
+        '.github/PULL_REQUEST_TEMPLATE.md',
+        'PULL_REQUEST_TEMPLATE.md',
+        'docs/PULL_REQUEST_TEMPLATE.md',
+      ]) {
+        expect(fs.readFileSync(path.join(fixture.dir, ...rel.split('/')), 'utf-8')).toBe(EXT_PR_TEMPLATE);
+      }
+
+      // The delivery really pushed: the bare origin carries the branch.
+      const branch = envelope.record.context.branch;
+      const listed = spawnSync('git', [
+        '-C', fixture.bareDir,
+        'rev-parse', '--verify', `refs/heads/${branch}`,
+      ], { encoding: 'utf-8' });
+      expect(listed.status, listed.stderr).toBe(0);
     }
   );
 });

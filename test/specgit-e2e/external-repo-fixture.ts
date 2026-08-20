@@ -152,11 +152,29 @@ export interface ExternalRepoFixture {
  * assumes nothing about branch names (`master` and `main` both run in
  * the matrix), and `ci: 'none'` builds a repository with no CI of its
  * own at all — the zero-required-checks adoption path.
+ *
+ * `prTemplate: true` (#87) additionally commits the adopting
+ * repository's OWN pull-request templates at every location GitHub
+ * discovers them (`.github/`, repo root, `docs/`). The decoy content
+ * carries a `Closes #123` placeholder — the exact trap a scaffold
+ * mimic could fall into — so any test can prove the SpecGit scaffold
+ * is generated without reading, echoing, or mutating these files.
  */
 export interface ExternalRepoOptions {
   defaultBranch?: string;
   ci?: 'app' | 'none';
+  prTemplate?: boolean;
 }
+
+/** Byte-stable decoy body for the adopting repo's PR templates (#87). */
+export const EXT_PR_TEMPLATE = [
+  '## Adopting repo PR template',
+  '',
+  'This line must never leak into a specgit-created PR body.',
+  '',
+  'Closes #123',
+  '',
+].join('\n');
 
 export function makeExternalRepo(prefix: string, options: ExternalRepoOptions = {}): ExternalRepoFixture {
   const defaultBranch = options.defaultBranch ?? 'master';
@@ -198,6 +216,15 @@ export function makeExternalRepo(prefix: string, options: ExternalRepoOptions = 
     git(dir, 'add', 'package.json', '.github');
   } else {
     git(dir, 'add', 'package.json');
+  }
+
+  if (options.prTemplate) {
+    for (const rel of ['.github/PULL_REQUEST_TEMPLATE.md', 'PULL_REQUEST_TEMPLATE.md', 'docs/PULL_REQUEST_TEMPLATE.md']) {
+      const target = path.join(dir, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, EXT_PR_TEMPLATE);
+      git(dir, 'add', rel);
+    }
   }
   git(dir, '-c', 'core.hooksPath=external-fixture-no-hooks', 'commit', '-m', 'unrelated app baseline');
   const headSha = git(dir, 'rev-parse', 'HEAD').trim();
