@@ -10,7 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import * as path from 'node:path';
 import { parse } from 'yaml';
 
@@ -154,7 +154,7 @@ describe('external wait step truth-run semantics (#119)', () => {
     );
   }
 
-  function runWait(checkRuns: unknown[]): ReturnType<typeof spawnSync> {
+  function runWait(checkRuns: unknown[]): SpawnSyncReturns<string> {
     const dir = makeTempDir('specgit-wait-truth-');
     makeAdoptingLayout(dir);
     const gh = createFakeGh(dir, [
