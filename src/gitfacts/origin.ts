@@ -182,6 +182,27 @@ export function parseRepoRef(
     }
   }
 
+  // Bounded diagnostic-accuracy fix (#95): a GitLab origin whose path
+  // names a nested group (group/subgroup/.../project, >= 3 segments) is
+  // a recognized-but-unsupported platform, never a misdiagnosed
+  // "unresolvable" URL with GitHub-pointing repair advice. Classification
+  // reuses the same structural host predicates (heuristic or declared),
+  // so the userinfo/suffix hardening semantics are unchanged, and a
+  // scp path whose first segment is all digits keeps the pinned
+  // port-intent fail-closed rejection (explicit ports are #78's change
+  // to make). Full nested-group parsing support is Phase-2 adapter work.
+  if (shape && !repo && (isGitLabHeuristic(shape) || isDeclaredGitLab(shape, declaredHost))) {
+    const segments = parsePathSegments(shape.path, shape.kind === 'url');
+    const portLookingScp = shape.kind === 'scp' && segments !== null && isAllDigits(segments[0]);
+    if (segments !== null && segments.length >= 3 && !portLookingScp) {
+      return fail(
+        'gitlab_unsupported',
+        `Origin "${truncateUrl(url)}" points at a nested-group GitLab repository (group/subgroup/project); nested groups are recognized, but GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
+        'Nested-group GitLab origins are recognized but unsupported until the glab provider lands; see docs/gitlab-support.md for the roadmap and the supported-version policy.'
+      );
+    }
+  }
+
   return fail(
     'origin_unresolvable',
     `Origin "${truncateUrl(url)}" does not point at a github.com repository.`,
@@ -249,7 +270,13 @@ function isPlausibleHostname(host: string): boolean {
   return host.length >= 1 && host.length <= MAX_HOST_LENGTH && HOSTNAME_CHARS.test(host);
 }
 
-function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
+/**
+ * Non-empty path segments of an origin shape, or null when the path is
+ * malformed for its track (missing/extra leading slash, empty segment).
+ * The url track carries a leading "/" (and may trail one); the scp track
+ * carries neither.
+ */
+function parsePathSegments(path: string, urlTrack: boolean): string[] | null {
   let work = path;
   if (urlTrack) {
     if (!work.startsWith('/')) {
@@ -263,7 +290,12 @@ function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
     return null;
   }
   const segments = work.split('/');
-  if (segments.length !== 2 || segments[0] === '' || segments[1] === '') {
+  return segments.includes('') ? null : segments;
+}
+
+function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
+  const segments = parsePathSegments(path, urlTrack);
+  if (segments === null || segments.length !== 2) {
     return null;
   }
   const owner = segments[0];
