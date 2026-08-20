@@ -147,6 +147,84 @@ describe('LocalGitAdapter', () => {
     });
   });
 
+  describe('anchor validation (issue #76)', () => {
+    const HEX40 = 'a1b2c3d4'.padEnd(40, '0');
+    const HEX64 = 'e5f6a7b8'.padEnd(64, '0');
+
+    /** Spawn spy: records every git invocation; success means exit 0. */
+    function spyAdapter() {
+      const gitArgs: string[][] = [];
+      const spawnImpl = async (_command: string, args: string[]) => {
+        gitArgs.push(args);
+        return { stdout: '', stderr: '' };
+      };
+      return { spy: new LocalGitAdapter({ spawnImpl }), gitArgs };
+    }
+
+    it('passes full-length hex anchors (40 and 64) through to git unchanged', async () => {
+      const { spy, gitArgs } = spyAdapter();
+      await expect(spy.headContains(root, HEX40)).resolves.toEqual({
+        ok: true,
+        value: { contained: true },
+      });
+      await expect(spy.headContains(root, HEX64)).resolves.toEqual({
+        ok: true,
+        value: { contained: true },
+      });
+      expect(gitArgs).toEqual([
+        ['-C', root, 'merge-base', '--is-ancestor', HEX40, 'HEAD'],
+        ['-C', root, 'merge-base', '--is-ancestor', HEX64, 'HEAD'],
+      ]);
+    });
+
+    it('rejects empty and whitespace anchors without invoking git', async () => {
+      const { spy, gitArgs } = spyAdapter();
+      for (const anchor of ['', '   ', `  ${HEX40}  `]) {
+        const result = await spy.headContains(root, anchor);
+        expect(result.ok).toBe(false);
+        if (result.ok) continue;
+        expect(result.code).toBe('merged_lineage_unavailable');
+      }
+      expect(gitArgs).toEqual([]);
+    });
+
+    it('rejects ref-like and malformed anchors without invoking git', async () => {
+      const { spy, gitArgs } = spyAdapter();
+      const anchors = [
+        'origin/main',
+        'HEAD~1',
+        'refs/heads/main',
+        'abc123', // abbreviated sha: git would resolve it as an abbreviation
+        'g'.repeat(40), // right length, not hex
+        'a'.repeat(39), // one short of a sha1 object id
+        'a'.repeat(41),
+        'a'.repeat(63), // one short of a sha256 object id
+        'a'.repeat(65),
+      ];
+      for (const anchor of anchors) {
+        const result = await spy.headContains(root, anchor);
+        expect(result.ok, `anchor ${anchor}`).toBe(false);
+        if (result.ok) continue;
+        expect(result.code, `anchor ${anchor}`).toBe('merged_lineage_unavailable');
+      }
+      expect(gitArgs).toEqual([]);
+    });
+
+    it('never resolves a ref-like anchor as a ref on a real repository', async () => {
+      // Before #76, `git merge-base --is-ancestor origin/main HEAD` exits 0
+      // and the ref is silently accepted as a lineage anchor — so the repo
+      // must actually carry a resolvable origin/main that HEAD contains.
+      const bareOrigin = path.join(tempDir, 'origin.git');
+      git(tempDir, ['clone', '--bare', '-b', 'main', root, bareOrigin], env);
+      git(root, ['remote', 'add', 'origin', bareOrigin], env);
+      git(root, ['fetch', 'origin'], env);
+      const result = await adapter.headContains(root, 'origin/main');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe('merged_lineage_unavailable');
+    });
+  });
+
   describe('hooksPath', () => {
     it('resolves the absolute .git/hooks directory of a plain repository', async () => {
       const result = await adapter.hooksPath(root);

@@ -60,6 +60,10 @@ export interface GitPort extends GitWritePort {
   facts(root: string): Promise<GitFacts>;
   /**
    * Whether `sha` is contained by local HEAD's history (ancestor-or-equal).
+   * The anchor must be a full hex object id — 40 hex chars (sha1) or 64
+   * (sha256); anything else (empty, padded, ref-like, abbreviated) fails
+   * closed as `merged_lineage_unavailable` without invoking git (#76), so
+   * a malformed provider value is classified, never resolved as a ref.
    * Evidence discipline: a decisively resolved answer — git exit 0 means
    * contained, exit 1 means a locally known commit that is not an
    * ancestor — returns ok; anything that leaves the local lineage

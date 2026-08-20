@@ -37,7 +37,7 @@ to those lists member-for-member: change a port, change this page.
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `facts` | required | Read side: repo, toplevel, branch, HEAD sha, dirty state, worktree layout, origin URL, upstream drift, git availability. Feeds the context and drift gates. |
-| `headContains` | required | Ancestor-or-equal containment of a sha in local HEAD history; proves merged-delivery lineage (G4). Fails closed when lineage is unresolvable. |
+| `headContains` | required | Ancestor-or-equal containment of a full hex object id (40 or 64 hex chars) in local HEAD history; proves merged-delivery lineage (G4). A non-hex anchor (empty, padded, ref-like, abbreviated) fails closed as `merged_lineage_unavailable` without invoking git (#76); containment behavior is unchanged for valid anchors. |
 | `checkoutOrCreateBranch` | required | Bootstrap write: check out the delivery branch, creating it from HEAD when absent. |
 | `commitFile` | required | Bootstrap write: pathspec-limited commit of one state file; unchanged file is a successful no-op (idempotent bootstrap). |
 | `pushBranch` | required | Bootstrap write: push the delivery branch with upstream (`git push -u`). |
