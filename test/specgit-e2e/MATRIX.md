@@ -37,9 +37,10 @@ smoke; `SPECGIT_E2E_PUBLISHED_VERSION` overrides the pinned version
 - **Node**: exercises the declared floor in CI (`20.19.0` on every
   `test_matrix` entry); `engines: >=20.19.0` in every fixture manifest.
 - **OS/shell**: the two files are picked up by vitest unconditionally,
-  so they run on `linux-bash`, `macos-bash`, and `windows-pwsh`
-  (required checks) plus the non-blocking `self-hosted-linux` shadow
-  leg. No CI workflow edits were needed or made.
+  so they run on the required `linux-bash`, `macos-bash`, and
+  `windows-pwsh` legs (the experimental `self-hosted-linux` shadow leg
+  was retired in #105 before this matrix ran there). No CI workflow
+  edits were needed or made.
 - **Package manager**: adopting repos are plain npm with no lockfile;
   installs use isolated `npm_config_cache` temp dirs.
 
