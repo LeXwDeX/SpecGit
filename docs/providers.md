@@ -11,9 +11,10 @@ seam](reference.md#github-provider-seam)):
   `LocalGitAdapter` (`src/gitfacts/local.ts`).
 - **`GitHubProvider`** (`src/github/port.ts`) — GitHub evidence and
   mutations, implemented for production by `GhCliGitHubProvider`
-  (`src/github/gh-cli.ts`). The [GitLab (glab)
-  roadmap](gitlab-support.md) will implement this port shape as a second
-  adapter.
+  (`src/providers/github/gh-cli.ts`, the per-platform adapter home since
+  #113; `src/github/gh-cli.ts` remains a stable alias module). The
+  [GitLab (glab) roadmap](gitlab-support.md) will implement this port
+  shape as a second adapter.
 
 The full port vocabulary is exported from the public API
 (`src/index.ts`), including the stable port names `GitPort` and
@@ -109,12 +110,14 @@ reports no value) routes the merged-lineage gate to fail-closed
 ## Tracking obligations
 
 - **In-tree implementations today:** `GhCliGitHubProvider`
-  (`src/github/gh-cli.ts`), `LocalGitAdapter`
+  (`src/providers/github/gh-cli.ts`), `LocalGitAdapter`
   (`src/gitfacts/local.ts`), `MockGitHubProvider`
   (`test/specgit/helpers/mock-github.ts`), and the recording doubles
   `makeGhProvider` / `makeGitPort`
   (`test/specgit-cli/helpers.ts`). The contract test holds all of them
-  to the port shape at every run.
+  to the port shape at every run — the canonical adapter home and its
+  legacy `src/github` alias modules are pinned to the same class by the
+  same test (#113).
 - **Alternate providers (glab).** The Phase-2 adapter
   ([gitlab-support.md](gitlab-support.md)) must satisfy
   `GITHUB_PROVIDER_MEMBERS` and extend the contract test with itself as
