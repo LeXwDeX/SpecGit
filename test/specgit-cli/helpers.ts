@@ -141,7 +141,6 @@ export interface GhScript {
     repo: { owner: string; repo: string },
     head: string
   ) => Evidence<Array<{ number: number; title: string; url: string }>>;
-  openIssueNumbers?: Evidence<number[]>;
   branchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
   enableBranchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
   repoAutomerge?: Evidence<{ enabled: boolean }>;
