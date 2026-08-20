@@ -15,6 +15,7 @@ export type SpecGitCode =
   | 'merged_lineage_unavailable'
   | 'no_origin'
   | 'origin_unresolvable'
+  | 'gitlab_unsupported'
   | 'gh_missing'
   | 'gh_unauthenticated'
   | 'gh_transport'
@@ -126,6 +127,11 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     kind: 'factual',
     message: 'The origin remote does not resolve to a github.com repository.',
     fix: 'Point origin at a github.com repository (https or ssh).',
+  },
+  gitlab_unsupported: {
+    kind: 'factual',
+    message: 'The origin remote points at a GitLab repository; GitLab evidence requires glab support, which is not implemented yet.',
+    fix: 'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.',
   },
   gh_missing: {
     kind: 'evidence',
