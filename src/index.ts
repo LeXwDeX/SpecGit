@@ -46,7 +46,15 @@ export {
 
 export { discoverRepoRoot } from './record/root.js';
 
-export type { GitFacts, GitPort, SpawnFn, SpawnOptions } from './gitfacts/port.js';
+export type {
+  GitFacts,
+  GitPort,
+  GitWritePort,
+  SpawnFn,
+  SpawnOptions,
+  BranchCheckout,
+} from './gitfacts/port.js';
+export { GIT_PORT_MEMBERS } from './gitfacts/port.js';
 export { LocalGitAdapter } from './gitfacts/local.js';
 export type { LocalGitAdapterOptions } from './gitfacts/local.js';
 export {
@@ -65,7 +73,10 @@ export type {
   IssueCreation,
   PrCreation,
   PrSummary,
+  BranchProtectionFact,
+  RepoAutomergeFact,
 } from './github/port.js';
+export { GITHUB_PROVIDER_MEMBERS } from './github/port.js';
 export { GhCliGitHubProvider, sanitizeApiText } from './github/gh-cli.js';
 export type { GhCliGitHubProviderOptions } from './github/gh-cli.js';
 export { parseClosingRefs } from './github/closing-refs.js';

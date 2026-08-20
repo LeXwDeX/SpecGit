@@ -101,3 +101,30 @@ export interface GitHubProvider {
   getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
   enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
 }
+
+/**
+ * Member inventory of `GitHubProvider`. The `satisfies Record<keyof
+ * GitHubProvider, true>` check fails compilation when the port and this
+ * inventory drift apart in either direction — a required member added to
+ * the port must be reflected here, in every implementation (including the
+ * future glab adapter), and in the compatibility policy in one delivery
+ * (#80). Docs and contract tests read this list; there is no second copy.
+ */
+const GITHUB_PROVIDER_MEMBER_FLAGS = {
+  preflight: true,
+  getIssue: true,
+  getOpenIssueNumbers: true,
+  getPr: true,
+  getCheckRuns: true,
+  createIssue: true,
+  createDraftPr: true,
+  listOpenPrsByHead: true,
+  getBranchProtection: true,
+  enableBranchProtection: true,
+  getRepoAutomerge: true,
+  enableRepoAutomerge: true,
+} as const satisfies Record<keyof GitHubProvider, true>;
+
+export const GITHUB_PROVIDER_MEMBERS: readonly (keyof GitHubProvider)[] = Object.freeze(
+  Object.keys(GITHUB_PROVIDER_MEMBER_FLAGS) as Array<keyof GitHubProvider>
+);
