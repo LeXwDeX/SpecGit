@@ -1,6 +1,6 @@
 # GitLab (glab) Support Roadmap
 
-**v1 scope: GitHub.com only.** SpecGit derives acceptance from GitHub evidence in v1: issues, pull requests, and check runs flow exclusively through the authenticated `gh` CLI ([the provider seam](../src/github/port.ts)). This document is the version-qualified plan for extending the same evidence model to GitLab through the `glab` CLI. Every behavioral claim below is pinned in the committed [GitLab 19.2 evidence ledger](evidence/gitlab-19.2.md) — claims without a ledger anchor are rejected on review (#94, #100).
+**v1 scope: GitHub.com plus GitLab CE/Free self-managed per the version policy below; GitLab capability lands incrementally per the Phase-2 roadmap.** SpecGit derives acceptance from GitHub evidence in v1: issues, pull requests, and check runs flow exclusively through the authenticated `gh` CLI ([the provider seam](../src/github/port.ts)). This document is the version-qualified plan for extending the same evidence model to GitLab through the `glab` CLI. Every behavioral claim below is pinned in the committed [GitLab 19.2 evidence ledger](evidence/gitlab-19.2.md) — claims without a ledger anchor are rejected on review (#94, #100).
 
 ## Current behavior (deliberate)
 
@@ -13,7 +13,7 @@ A GitLab origin is **recognized, not silently misread**:
 
 ## Supported-version policy (self-managed)
 
-- **Self-managed GitLab is supported at exactly `>= 19.2.4 < 19.3.0`, CE/Free tier** (#94). The known-good anchor is the `v19.2.4-ee` release tag (tagged 2026-08-14, commit `85f4a2d9`). Any version outside the range fails closed: planned diagnostic `gitlab_version_unsupported`, exit 3, fix text pointing here and to upgrading within 19.2.x. Versions `>= 19.3.0` also fail closed until a rebaseline delivery widens the range — the range moves only through explicit rebaseline deliveries, never silent drift.
+- **Self-managed GitLab is supported at exactly `>= 19.2.4 < 19.3.0`, CE/Free tier** (#98). The known-good anchor is the `v19.2.4-ee` release tag (tagged 2026-08-14, commit `85f4a2d9`). Any version outside the range fails closed: planned diagnostic `gitlab_version_unsupported`, exit 3, fix text pointing here and to upgrading within 19.2.x. Versions `>= 19.3.0` also fail closed until a rebaseline delivery widens the range — the range moves only through explicit rebaseline deliveries, never silent drift.
 - **The `-ee`/`-ce` suffix is a release-channel marker, not semver pre-release semantics**: naive semver ordering ranks `19.2.4-ee < 19.2.4`, which is wrong. Version comparison strips the suffix first, then compares the `x.y.z` triple (ledger rule 4).
 - **Version discovery uses the authenticated metadata endpoint** (`glab api /metadata`): no unauthenticated version channel is documented at the pinned tag (ledger row 3). `metadata.enterprise` is informational only — never a gate input.
 - **GitLab.com (SaaS) is in scope and is judged by capability probing, never version pinning** (#93): the instance auto-upgrades, so a pinned self-managed range cannot apply. The evidence path probes every API surface the delivery depends on with read-only calls; any probe failure ⇒ verdict `unknown` (planned `gitlab_capability_missing`, exit 3). Missing evidence is UNKNOWN = a blocked path, never an inferred capability.
