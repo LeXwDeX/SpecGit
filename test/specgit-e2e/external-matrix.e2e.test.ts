@@ -181,9 +181,22 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
       ).toBe(true);
 
       // Resume: the same command against the completed record binds
-      // without creating anything.
+      // without creating anything. The mergedness probe (#75) is part of
+      // resuming a PR-bound record, so the fake gh answers for PR #9:
+      // live (open, unmerged) → the resume converges, creating nothing.
       const ghResume = makeGh('specgit-ext-noci-ghresume-', [
         { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+        {
+          match: `^api repos/${EXT_OWNER}/${EXT_REPO}/pulls/9$`,
+          stdout: JSON.stringify({
+            number: 9,
+            state: 'open',
+            merged_at: null,
+            head: { ref: deliveryBranch, sha: 'a'.repeat(40) },
+            base: { ref: 'master' },
+            body: 'Closes #11\n',
+          }),
+        },
       ]);
       const resume = runInstalledSpecgit(
         fixture.dir,
