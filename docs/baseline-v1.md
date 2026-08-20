@@ -69,7 +69,7 @@ Verdicts and delivery states are derived per invocation and never persisted.
 - No direct REST clients, no token storage, no telemetry.
 - No spec-artifact or task-list inputs — evidence is git + GitHub only.
 - No cross-platform deliveries (one delivery, one platform, one PR).
-- No weakening of `spec_git/policy.yaml` to pass a verdict, ever.
+- No weakening of `spec_git/policy.yaml` to pass a verdict, ever — weakening a policy that was right at birth is forbidden; correcting one that was wrong at birth (e.g. a detected check that never runs on PR heads) is required, via `init --force` re-detection or a reviewed edit.
 
 ## Deprecation policy
 

@@ -54,6 +54,8 @@ ordered_issues: true
 
 The policy is strict: unknown keys make it invalid. Required checks are **declared locally** and matched against check runs reported to the PR head commit — they are not read from GitHub rulesets.
 
+**Wrong at birth vs weakening.** Never weaken a policy that was right at birth: removing or renaming a check to make a failing verdict pass is forbidden. A policy that was **wrong at birth** — most commonly a check name that can never report on a PR head, such as a push-filtered or scheduled workflow armed by an over-broad detection ([#121](https://github.com/LeXwDeX/SpecGit/issues/121)) — must be corrected: re-run `specgit init --force` to re-detect under the PR-trigger trust boundary (only `pull_request` / `pull_request_target` workflows are candidates; `init` warns `checks_not_pr_visible` when others exist), or edit the list in a reviewed PR. Correcting a false policy is the required repair, not a weakening.
+
 ## `spec_git/providers.yaml` — platform declarations
 
 Optional; created by `specgit init --gitlab-host <hostname>` (or the interactive platform question). Committed to the repository so the team shares one declaration.

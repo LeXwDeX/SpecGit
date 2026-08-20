@@ -337,6 +337,80 @@ describe('specgit init', () => {
     // appear as check runs there.
     expect(envelope.policy).toEqual({ version: 1, required_checks: ['test'] });
     expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
+    // #121: dispatch-only is one shape of "never reports on a PR head" —
+    // reported, not silently dropped.
+    expect(envelope.detected.nonPrWorkflows).toEqual(['.github/workflows/manual.yml']);
+  });
+
+  it('classifies by PR trigger: push-filtered and schedule workflows never become required checks (#121)', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    // Push-triggered deploy with a branch filter: runs on main pushes
+    // only, never on a PR head — the stillborn-policy shape from #121.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'deploy.yml'),
+      'name: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n'
+    );
+    // Scheduled nightly: tied to cron, never to a PR.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'nightly.yml'),
+      'name: Nightly\non:\n  schedule:\n    - cron: "0 3 * * *"\njobs:\n  nightly:\n    runs-on: ubuntu-latest\n'
+    );
+    // PR-triggered CI (a push trigger alongside pull_request is fine: the
+    // PR trigger is what makes the jobs observable at a PR head).
+    fs.writeFileSync(
+      path.join(workflowsDir, 'verify.yml'),
+      'name: Verify\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // Only the PR-triggered workflow's jobs are required-check candidates.
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['build'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/verify.yml']);
+    // The never-on-PR workflows are reported, not silently dropped.
+    expect(envelope.detected.nonPrWorkflows).toEqual([
+      '.github/workflows/deploy.yml',
+      '.github/workflows/nightly.yml',
+    ]);
+    // init warns: those jobs can never report on a PR head, and the fix
+    // names the legitimate repair path for a wrong-at-birth policy.
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'checks_not_pr_visible'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.message).toContain('.github/workflows/deploy.yml');
+    expect(warning.message).toContain('.github/workflows/nightly.yml');
+    expect(warning.fix).toContain('--required-check');
+    expect(warning.fix).toContain('--force');
+  });
+
+  it('pull_request_target and trigger-less workflows qualify; no warning when nothing is skipped (#121)', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    // pull_request_target runs for PR events too: its check runs report on
+    // the PR head, so its jobs stay required-check candidates.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'guard.yml'),
+      'name: Guard\non: pull_request_target\njobs:\n  guard:\n    runs-on: ubuntu-latest\n'
+    );
+    // No `on:` at all: GitHub's default triggers are push AND
+    // pull_request, so the workflow does run on PR heads.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'default.yml'),
+      'name: Default\njobs:\n  checks:\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['checks', 'guard'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/default.yml', '.github/workflows/guard.yml']);
+    expect(envelope.detected.nonPrWorkflows).toEqual([]);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_not_pr_visible')
+    ).toBe(false);
   });
 
   it('reports the detected platform from the origin URL', async () => {

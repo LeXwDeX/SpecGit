@@ -177,6 +177,8 @@ gh api repos/<owner>/<repo>/commits/<pr-head-sha>/check-runs --jq '.check_runs[]
 
 against `required_checks`. Fix the policy or the workflow's job `name:` — see the aggregator pattern in [GitHub Actions](actions.md).
 
+One structural cause needs the **policy** repaired, not the workflow: a check from a workflow that never runs on PR heads (push-only, branch-filtered, or scheduled). Only workflows whose triggers include `pull_request` or `pull_request_target` report check runs on a PR head, so such a name can never go green — every delivery would fail `checks_missing` forever. Fix it with `specgit init --force` (re-detects under the PR-trigger trust boundary; `init` warns `checks_not_pr_visible` when such workflows exist) or a reviewed policy edit. Correcting a policy that was wrong at birth is the required repair, not a weakening — see [Reference](reference.md).
+
 ### `checks_pending` (exit 1 — transient)
 
 Check runs exist but haven't all completed. This is a **transient, retryable**
