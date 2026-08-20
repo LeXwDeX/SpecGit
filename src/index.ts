@@ -60,7 +60,6 @@ export type { LocalGitAdapterOptions } from './gitfacts/local.js';
 export {
   parseRepoRef,
   formatRepoRef,
-  requireGithubRoute,
   sameRepoRef,
   parsePrUrl,
 } from './gitfacts/origin.js';
@@ -82,6 +81,7 @@ export { GhCliGitHubProvider, sanitizeApiText } from './providers/github/gh-cli.
 export type { GhCliGitHubProviderOptions } from './providers/github/gh-cli.js';
 export { GlabProvider, versionInWindow } from './providers/gitlab/glab-cli.js';
 export type { GlabProviderOptions } from './providers/gitlab/glab-cli.js';
+export { PlatformRoutingProvider } from './providers/routing.js';
 export { parseClosingRefs } from './github/closing-refs.js';
 
 export { CODE_INFO } from './acceptance/codes.js';

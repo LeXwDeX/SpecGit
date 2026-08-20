@@ -49,12 +49,16 @@ export async function runDoctor(
     probes.push({ name: 'origin', ok: false, code: rootEv.code });
   }
 
+  // #117 (provider routing): the provider probes follow the delivery
+  // platform — gh on a GitHub origin, glab on a GitLab-declared one (the
+  // routing provider decides; the envelope keys stay stable). The
+  // "present" split therefore knows both CLIs' missing codes.
   const preflight = await ctx.gh.preflight();
   if (preflight.ok) {
     probes.push({ name: 'gh_present', ok: true });
     probes.push({ name: 'gh_authenticated', ok: true });
   } else {
-    const present = preflight.code !== 'gh_missing';
+    const present = preflight.code !== 'gh_missing' && preflight.code !== 'glab_missing';
     probes.push(
       present
         ? { name: 'gh_present', ok: true }

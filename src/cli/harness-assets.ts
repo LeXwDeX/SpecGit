@@ -637,9 +637,12 @@ export interface HarnessWriteOptions {
    * self-hosted template (the SpecGit repository's own workflow);
    * `specgit init` passes the portable external template for adopting
    * repositories. Either way the write is planned and rolled back
-   * atomically with the rest of the harness.
+   * atomically with the rest of the harness. `null` (#117: GitLab
+   * platform mode) skips the workflow write entirely — a GitHub Actions
+   * workflow is wrong-platform output for a GitLab repository; every
+   * platform-neutral asset is still written.
    */
-  workflowYaml?: string;
+  workflowYaml?: string | null;
 }
 
 async function readIfExists(target: string): Promise<string | null> {
@@ -696,11 +699,13 @@ export async function writeHarnessAssets(
   const planned: PlannedWrite[] = [];
   const prompts: string[] = [];
 
-  planned.push({
-    target: path.join(root, ...HARNESS_WORKFLOW_SEGMENTS),
-    content: options.workflowYaml ?? harnessWorkflowYaml(),
-    mode: 0o644,
-  });
+  if (options.workflowYaml !== null) {
+    planned.push({
+      target: path.join(root, ...HARNESS_WORKFLOW_SEGMENTS),
+      content: options.workflowYaml ?? harnessWorkflowYaml(),
+      mode: 0o644,
+    });
+  }
 
   for (const filename of [AGENTS_FILENAME, CLAUDE_FILENAME]) {
     const target = path.join(root, filename);
