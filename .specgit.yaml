@@ -1,8 +1,15 @@
 version: 1
-delivery: issue73
+delivery: issue93
 context:
-  kind: branch
-  branch: feat/73-issue73
+  kind: worktree
+  label: specgit-gitlab-gates
+  branch: feat/93-issue93
 issues:
-  - 73
-pr: 90
+  - 93
+  - 94
+  - 95
+  - 96
+  - 97
+  - 98
+  - 99
+  - 100
