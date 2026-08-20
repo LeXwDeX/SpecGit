@@ -56,6 +56,7 @@ describe('provider port contract (#80)', () => {
         'getCheckRuns',
         'getIssue',
         'getOpenIssueNumbers',
+        'getOpenIssues',
         'getPr',
         'getRepoAutomerge',
         'listOpenPrsByHead',
