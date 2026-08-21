@@ -781,6 +781,32 @@ describe('specgit init harness generation', () => {
     expect(agents).toContain('### Before creating an issue, check for duplicates');
   });
 
+  // #176 (audit P-10): the agent contract lives only in the SpecGit source
+  // repo, so adopter agents never saw it. The essentials ship inside the
+  // managed block and are regenerated deterministically by init --force.
+  it('ships the agent-contract essentials in the managed block (#176)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const block = managedPromptBlock();
+    expect(block).toContain('### Agent contract essentials');
+    // The one rule: only the verdict declares completion.
+    expect(block.toLowerCase()).toContain('a delivery is done if and only if');
+    expect(block.toLowerCase()).toContain('never declare completion');
+    // Exit-code semantics: 1 vs 3 is contractual, exit 3 is never success.
+    expect(block).toContain('Branch on exit codes');
+    expect(block).toContain('specgit doctor');
+    expect(block.toLowerCase()).toContain('never present exit `3` as success');
+    // PR & checks discipline.
+    expect(block).toContain('Closes #n');
+    expect(block.toLowerCase()).toContain('never\n  bypass or reconfig a required check');
+    // Hard prohibition: tokens never leave the authenticated CLI session.
+    expect(block.toLowerCase()).toContain('never read, log, or pass around tokens');
+    // The written AGENTS.md carries the essentials; init --force is the
+    // deterministic regeneration path (byte-stable, verified above).
+    expect(read(AGENTS_ABS(root))).toContain('### Agent contract essentials');
+  });
+
   it('re-init with an existing policy rejects before writing: drift stays, no probes', async () => {
     const first = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
