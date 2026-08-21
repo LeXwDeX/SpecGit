@@ -556,6 +556,19 @@ export async function runIssue(
       }
       prNumber = prEv.value.number;
     }
+    // Traceability edge issue→branch (#160): the moment the PR binding is
+    // first established, every bound issue gets the branch and PR as a
+    // comment. `record.pr` below is the persisted exactly-once marker —
+    // a comment failure fails closed *before* the number lands in the
+    // record, so a re-run re-enters this block (fresh or adopt path) and
+    // posts it; a completed binding never comments again.
+    const commentBody = human.issueTraceabilityComment(target, prNumber);
+    for (const issueNumber of record.issues) {
+      const commentEv = await ctx.gh.addIssueComment(repoEv.value, issueNumber, commentBody);
+      if (!commentEv.ok) {
+        return passthrough(commentEv);
+      }
+    }
     record = { ...record, pr: prNumber };
     try {
       await ctx.record.writeRecord(root, record);

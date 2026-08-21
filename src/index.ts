@@ -72,6 +72,7 @@ export type {
   CheckRunInfo,
   IssueCreation,
   PrCreation,
+  IssueCommentCreation,
   PrSummary,
   BranchProtectionFact,
   RepoAutomergeFact,

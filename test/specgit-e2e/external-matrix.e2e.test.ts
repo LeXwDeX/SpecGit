@@ -401,6 +401,10 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
           match: '^pr create --draft ',
           stdout: `https://github.com/${EXT_OWNER}/${EXT_REPO}/pull/9\n`,
         },
+        {
+          match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues/[0-9]+/comments `,
+          stdout: `{"html_url":"https://github.com/${EXT_OWNER}/${EXT_REPO}/issues/x#issuecomment-1"}`,
+        },
       ]);
       const bootstrap = runInstalledSpecgit(
         wt.worktreeDir,

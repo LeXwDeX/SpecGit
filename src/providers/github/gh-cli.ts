@@ -12,6 +12,7 @@ import type {
   CheckRunInfo,
   GitHubProvider,
   IssueCreation,
+  IssueCommentCreation,
   IssueFact,
   OpenIssueFact,
   PrCreation,
@@ -360,6 +361,38 @@ export class GhCliGitHubProvider implements GitHubProvider {
       return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
     }
     return ok({ number: issue.number, url: issue.html_url });
+  }
+
+  async addIssueComment(
+    repo: RepoRef,
+    issue: number,
+    body: string
+  ): Promise<Evidence<IssueCommentCreation>> {
+    if (!Number.isInteger(issue) || issue <= 0) {
+      return fail('gh_transport', 'Cannot comment on an issue without a positive number.');
+    }
+    if (!body.trim()) {
+      return fail('gh_transport', 'Cannot post an empty issue comment.');
+    }
+
+    const result = await this.runCreateGh([
+      'api',
+      `repos/${repo.owner}/${repo.repo}/issues/${issue}/comments`,
+      '-f',
+      `body=${body}`,
+    ]);
+    if (!result.ok) {
+      return result;
+    }
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const comment = parsed.value as { html_url?: unknown };
+    if (typeof comment.html_url !== 'string' || !comment.html_url) {
+      return fail('gh_transport', 'GitHub returned an unexpected issue-comment payload.');
+    }
+    return ok({ url: comment.html_url });
   }
 
   /**

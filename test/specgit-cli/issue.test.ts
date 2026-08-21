@@ -22,6 +22,7 @@ import {
 interface IssueHarness {
   createdIssues: Array<{ title: string; body: string }>;
   createdPrs: Array<{ head: string; base: string; title: string; body: string }>;
+  issueComments: Array<{ issue: number; body: string }>;
 }
 
 /** Remotely discoverable state for the exactly-once reconciliation probes. */
@@ -41,8 +42,15 @@ function issueCtx(
     reconcile?: ReconcileScript;
   } = {}
 ) {
-  const harness: IssueHarness = { createdIssues: [], createdPrs: [] };
+  const harness: IssueHarness = { createdIssues: [], createdPrs: [], issueComments: [] };
   const gh = makeGhProvider({
+    addIssueComment: (_repo, issue, body) => {
+      harness.issueComments.push({ issue, body });
+      return {
+        ok: true,
+        value: { url: `https://github.com/LeXwDeX/SpecGit/issues/${issue}#issuecomment-1` },
+      };
+    },
     createIssue: (_repo, title, body) => {
       harness.createdIssues.push({ title, body });
       return {
@@ -164,6 +172,16 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.gitPort.commitCalls.length).toBe(1);
     expect(t.gitPort.commitCalls[0].path).toBe('.specgit.yaml');
     expect(t.gitPort.pushCalls).toEqual(['feat/11-strict-delivery-harness']);
+
+    // Traceability edge issue→branch (#160): every bound issue gets the
+    // delivery branch and PR as a comment, exactly once per binding.
+    expect(t.harness.issueComments).toEqual([
+      { issue: 11, body: expect.stringContaining('`feat/11-strict-delivery-harness`') },
+      { issue: 12, body: expect.stringContaining('`feat/11-strict-delivery-harness`') },
+    ]);
+    for (const c of t.harness.issueComments) {
+      expect(c.body).toContain('#42');
+    }
 
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written).toMatchObject({
@@ -336,6 +354,37 @@ describe('specgit issue: idempotent resume', () => {
     expect(t.harness.createdIssues.length).toBe(0);
   });
 
+  it('does not re-comment issues when the record already carries the PR binding', async () => {
+    // record.pr is the persisted exactly-once marker for the traceability
+    // comment (#160): a completed binding must stay quiet on re-runs.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: sampleBinding({
+        delivery: 'strict-delivery-harness',
+        context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        // Complete-record resume probes the PR's mergedness first.
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11\nCloses #12\n',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.issueComments).toEqual([]);
+  });
+
   it('refuses argument drift on resume (different count)', async () => {
     const t = issueCtx({
       facts: { branch: 'feat/11-strict-delivery-harness' },
@@ -471,6 +520,28 @@ describe('specgit issue: fail-closed write steps', () => {
     expect(outcome.exit).toBe(3);
     expect(outcome.errors?.[0]?.code).toBe('git_push_failed');
     expect(t.recordPort.recordWrites.at(-1)?.record?.pr).toBe(42);
+  });
+
+  it('comment failure fails closed before record.pr is written (re-runnable)', async () => {
+    // The traceability comment is part of the binding, not a decoration
+    // (#160): if it cannot be posted, the PR number must not land in the
+    // record — a re-run then re-enters the adopt path and posts it.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      gh: {
+        addIssueComment: () => ({
+          ok: false as const,
+          code: 'gh_transport',
+          message: 'gh issue comment failed: network',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.pr).toBeUndefined();
   });
 
   it('missing origin exits 3', async () => {
