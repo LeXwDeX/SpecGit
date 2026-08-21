@@ -7,7 +7,13 @@
 
 import { CODE_INFO, type SpecGitCode } from '../../acceptance/codes.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
-import { errorDiagnostic, type DoctorOutcome, type ProbeResult } from '../output.js';
+import {
+  errorDiagnostic,
+  humanBuilder,
+  probeLine,
+  type DoctorOutcome,
+  type ProbeResult,
+} from '../output.js';
 import type { CommandContext } from '../types.js';
 
 export interface DoctorOptions {
@@ -110,10 +116,6 @@ export async function runDoctor(
             { fix: fixFor(probe.code) }
           )
         ),
-    human: probes.map((probe) =>
-      probe.ok
-        ? `ok    ${probe.name}${probe.detail ? ` — ${probe.detail}` : ''}`
-        : `FAIL  ${probe.name}${probe.code ? ` (${probe.code})` : ''}`
-    ),
+    human: humanBuilder(probes.map(probeLine)).build(),
   };
 }

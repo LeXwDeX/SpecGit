@@ -28,8 +28,9 @@ import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from './exit-codes.js';
 import {
   emitInterrupted,
   errorDiagnostic,
+  errorLine,
   finishOutcome,
-  sanitize,
+  humanBuilder,
   type CommandOutcome,
 } from './output.js';
 import type { CliIO, CommandContext } from './types.js';
@@ -71,7 +72,7 @@ function unexpectedOutcome(error: unknown): CommandOutcome {
   return {
     exit: EXIT_UNKNOWN,
     errors: [errorDiagnostic('unexpected_error', message)],
-    human: [`Error: ${sanitize(message)}`],
+    human: humanBuilder().line(errorLine(message)).build(),
   };
 }
 

@@ -4,7 +4,7 @@
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type SetupOutcome } from '../output.js';
+import { bulletItem, errorDiagnostic, humanBuilder, type SetupOutcome } from '../output.js';
 import type { CommandContext } from '../types.js';
 import {
   detectSetupTool,
@@ -63,11 +63,11 @@ export async function runSetup(
         tool: result.tool,
         installed: result.installed,
       },
-      human: [
-        text.setupTool(result.tool),
-        text.setupInstalled(),
-        ...result.installed.map((p) => `  - ${p}`),
-      ],
+      human: humanBuilder()
+        .line(text.setupTool(result.tool))
+        .line(text.setupInstalled())
+        .append(result.installed.map(bulletItem))
+        .build(),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

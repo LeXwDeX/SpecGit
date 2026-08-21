@@ -11,7 +11,7 @@ import {
   writeHarnessAssets,
   type HarnessWriteResult,
 } from '../harness-assets.js';
-import { errorDiagnostic, type InitOutcome } from '../output.js';
+import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
@@ -112,6 +112,25 @@ export function buildInitOutcome(args: {
     protectionHuman,
     text,
   } = args;
+  const builder = humanBuilder()
+    .line(text.initCreatedPolicy(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`))
+    .line(text.initRequiredChecks(checks.length))
+    .append(checks.map((name) => text.initCheck(name)))
+    .append(platform.human);
+  if (detected !== null) {
+    builder
+      .line(text.initDetectedPlatform(detected.platform))
+      .append(detected.sources.map((s) => text.initDetectedSource(s)))
+      .append(
+        detected.nonPrWorkflows.map((s) => detailLine(`skipped, never runs on a PR head: ${s}`))
+      );
+  }
+  builder
+    .line(text.initCreatedHook(harness.workflow))
+    .append(harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)))
+    .append(harness.gitHook ? [text.initGitHook(harness.gitHook)] : [])
+    .append(harness.prompts.map((filename) => text.initManagedRefreshed(filename)))
+    .append(protectionHuman);
   return {
     exit: EXIT_SUCCESS,
     policy,
@@ -130,25 +149,6 @@ export function buildInitOutcome(args: {
           },
         }
       : {}),
-    human: [
-      text.initCreatedPolicy(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`),
-      text.initRequiredChecks(checks.length),
-      ...checks.map((name) => text.initCheck(name)),
-      ...platform.human,
-      ...(detected !== null
-        ? [
-            text.initDetectedPlatform(detected.platform),
-            ...detected.sources.map((s) => text.initDetectedSource(s)),
-            ...detected.nonPrWorkflows.map(
-              (s) => `  skipped, never runs on a PR head: ${s}`
-            ),
-          ]
-        : []),
-      text.initCreatedHook(harness.workflow),
-      ...harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)),
-      ...(harness.gitHook ? [text.initGitHook(harness.gitHook)] : []),
-      ...harness.prompts.map((filename) => text.initManagedRefreshed(filename)),
-      ...protectionHuman,
-    ],
+    human: builder.build(),
   };
 }

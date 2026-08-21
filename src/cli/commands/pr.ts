@@ -10,7 +10,7 @@
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import { CODE_INFO } from '../../acceptance/codes.js';
 import { deriveBindingState } from '../gates.js';
-import { errorDiagnostic, type PrOutcome } from '../output.js';
+import { errorDiagnostic, humanBuilder, issueList, type PrOutcome } from '../output.js';
 import { coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
@@ -99,7 +99,7 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
             { fix: CODE_INFO.pr_not_found.fix }
           ),
         ],
-        human: [`No open pull request has head branch '${head}'.`],
+        human: humanBuilder().line(`No open pull request has head branch '${head}'.`).build(),
       };
     }
     if (candidates.length > 1) {
@@ -113,11 +113,11 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
             { fix: 'Bind one explicitly: specgit pr <number>.' }
           ),
         ],
-        human: [
-          `Multiple open pull requests have head branch '${head}':`,
-          listing,
-          'Bind one explicitly: specgit pr <number>.',
-        ],
+        human: humanBuilder()
+          .line(`Multiple open pull requests have head branch '${head}':`)
+          .line(listing)
+          .line('Bind one explicitly: specgit pr <number>.')
+          .build(),
       };
     }
     record = bindPr(record, candidates[0].number);
@@ -143,9 +143,9 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
       issues: record.issues,
       pr: record.pr,
     },
-    human: [
-      human.prBound(record.pr as number | string, record.delivery),
-      human.prIssues(record.issues.map((n) => `#${n}`).join(', ')),
-    ],
+    human: humanBuilder()
+      .line(human.prBound(record.pr as number | string, record.delivery))
+      .line(human.prIssues(issueList(record.issues)))
+      .build(),
   };
 }
