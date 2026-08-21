@@ -8,6 +8,7 @@
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
+import { CODE_INFO } from '../../acceptance/codes.js';
 import { deriveBindingState } from '../gates.js';
 import { errorDiagnostic, type PrOutcome } from '../output.js';
 import { coercePrRef } from '../refs.js';
@@ -95,9 +96,7 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
           errorDiagnostic(
             'pr_not_found',
             `No open pull request has head branch '${head}'.`,
-            {
-              fix: 'Push the branch and open a draft PR (re-running "specgit issue" resumes the bootstrap), then rerun "specgit pr".',
-            }
+            { fix: CODE_INFO.pr_not_found.fix }
           ),
         ],
         human: [`No open pull request has head branch '${head}'.`],

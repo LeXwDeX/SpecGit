@@ -190,7 +190,7 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   pr_not_found: {
     kind: 'factual',
     message: 'The bound pull request does not exist on GitHub.',
-    fix: 'Bind the correct pull request number or URL.',
+    fix: 'Bind the correct pull request explicitly with "specgit pr <number>", or run "specgit issue" to open a pull request if none exists yet.',
   },
   pr_closed_unmerged: {
     kind: 'factual',
