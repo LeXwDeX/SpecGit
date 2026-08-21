@@ -200,6 +200,7 @@ bound to this repository and the Release workflow's OIDC token.
 - [Documentation home](docs/README.md)
 - [Getting Started](docs/getting-started.md) · [Installation](docs/installation.md)
 - [Product Baseline v1](docs/baseline-v1.md) — the versioned public contract
+- [Release gates](docs/release-gates.md) — the invariants and evidence protocol for shipping
 - [GitLab support](docs/gitlab-support.md) — platforms, version window, evidence ledger
 - [Concepts](docs/concepts.md) · [Overview](docs/overview.md)
 - [CLI Reference](docs/cli.md) · [Reference (schemas, gates, codes)](docs/reference.md)
