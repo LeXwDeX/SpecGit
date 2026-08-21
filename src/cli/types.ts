@@ -24,6 +24,7 @@ export type { GitFacts, GitPort } from '../gitfacts/port.js';
 export type { RepoRef } from '../gitfacts/origin.js';
 
 export type {
+  ForgeProvider,
   GitHubProvider,
   IssueFact,
   PrFact,
@@ -44,7 +45,7 @@ import type { DeliveryBinding } from '../record/schema.js';
 import type { Policy } from '../record/policy.js';
 import type { GitPort } from '../gitfacts/port.js';
 import type { RepoRef } from '../gitfacts/origin.js';
-import type { GitHubProvider } from '../github/port.js';
+import type { ForgeProvider } from '../github/port.js';
 import type { EvaluateInput, Verdict } from '../acceptance/evaluate.js';
 
 // -----------------------------------------------------------------------------
@@ -81,7 +82,7 @@ export interface CommandContext {
   discoverRoot(cwd: string): Promise<Evidence<string>>;
   probeGitBinary(): Promise<Evidence<string>>;
   git: GitPort;
-  gh: GitHubProvider;
+  gh: ForgeProvider;
   record: RecordPort;
   evaluate: EvaluateFn;
   parseRepoRef(originUrl: string): Evidence<RepoRef> | Promise<Evidence<RepoRef>>;

@@ -10,7 +10,7 @@ import {
   sameRepoRef,
   type RepoRef,
 } from '../gitfacts/origin.js';
-import type { CheckRunInfo, GitHubProvider, PrFact } from '../github/port.js';
+import type { CheckRunInfo, ForgeProvider, PrFact } from '../github/port.js';
 import { parseClosingRefs } from '../github/closing-refs.js';
 import { CODE_INFO, type SpecGitCode } from './codes.js';
 
@@ -92,7 +92,7 @@ export interface EvaluateInput {
   record: Evidence<DeliveryBinding>;
   policy: Evidence<Policy>;
   git: GitPort;
-  gh?: GitHubProvider;
+  gh?: ForgeProvider;
   /** Declared self-hosted GitLab host (spec_git/providers.yaml), if any. */
   gitlabHost?: string;
 }
