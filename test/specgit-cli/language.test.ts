@@ -215,6 +215,29 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     // Still no closing references introduced by the guidance.
     expect(parseClosingRefs(zh).size).toBe(0);
   });
+
+  it('both languages carry the agent-contract essentials with verbatim machine literals (#176)', () => {
+    const en = managedPromptBlock('en');
+    const zh = managedPromptBlock('zh');
+    // Each language renders its own essentials section.
+    expect(en).toContain('### Agent contract essentials');
+    expect(zh).toContain('### 代理契约要点');
+    for (const block of [en, zh]) {
+      // The one rule names the verdict as the only completion signal.
+      expect(block).toContain('specgit finish');
+      // Exit-code semantics route exit 3 to the environment repair loop.
+      expect(block).toContain('specgit doctor');
+      // Command and closing-ref literals are machine contract: never
+      // localized.
+      expect(block).toContain('Closes #n');
+      expect(block).toContain('gh');
+      expect(block).toContain('glab');
+      expect(block).toContain('spec_git/policy.yaml');
+    }
+    // The essentials are prose, not closing grammar, in either language.
+    expect(parseClosingRefs(zh).size).toBe(0);
+    expect(parseClosingRefs(en).size).toBe(0);
+  });
 });
 
 describe('#118 language: success-path human prose follows policy.language', () => {
