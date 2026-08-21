@@ -3,13 +3,26 @@ import type { Evidence } from '../../src/kernel/evidence.js';
 import type { Verdict, VerdictEvidence } from '../../src/acceptance/evaluate.js';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import type { Policy as SpecGitPolicy } from '../../src/record/policy.js';
-import type { OpenIssueFact, PrFact } from '../../src/github/port.js';
+import type {
+  BranchProtectionFact,
+  CheckRunInfo,
+  IssueCommentCreation,
+  IssueCreation,
+  IssueFact,
+  OpenIssueFact,
+  PrCreation,
+  PrFact,
+  PrSummary,
+  RepoAutomergeFact,
+} from '../../src/github/port.js';
+import type { BranchCheckout } from '../../src/gitfacts/port.js';
 import type {
   CommandContext,
   ForgeProvider,
   GitFacts,
   GitPort,
   RecordPort,
+  RepoRef,
 } from '../../src/cli/types.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
 
@@ -120,37 +133,23 @@ export interface RecordingForgeProvider extends ForgeProvider {
 }
 
 export interface GhScript {
-  getPr?: (
-    repo: { owner: string; repo: string },
-    ref: number | string
-  ) => Evidence<PrFact>;
-  getOpenIssueNumbers?: (repo: { owner: string; repo: string }) => Evidence<number[]>;
-  getOpenIssues?: (repo: { owner: string; repo: string }) => Evidence<OpenIssueFact[]>;
-  createIssue?: (
-    repo: { owner: string; repo: string },
-    title: string,
-    body: string
-  ) => Evidence<{ number: number; url: string }>;
+  getPr?: (repo: RepoRef, ref: number | string) => Evidence<PrFact>;
+  getOpenIssueNumbers?: (repo: RepoRef) => Evidence<number[]>;
+  getOpenIssues?: (repo: RepoRef) => Evidence<OpenIssueFact[]>;
+  createIssue?: (repo: RepoRef, title: string, body: string) => Evidence<IssueCreation>;
   createDraftPr?: (
-    repo: { owner: string; repo: string },
+    repo: RepoRef,
     head: string,
     base: string,
     title: string,
     body: string
-  ) => Evidence<{ number: number; url: string }>;
-  listOpenPrsByHead?: (
-    repo: { owner: string; repo: string },
-    head: string
-  ) => Evidence<Array<{ number: number; title: string; url: string }>>;
-  addIssueComment?: (
-    repo: { owner: string; repo: string },
-    issue: number,
-    body: string
-  ) => Evidence<{ url: string }>;
-  branchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
-  enableBranchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
-  repoAutomerge?: Evidence<{ enabled: boolean }>;
-  enableRepoAutomerge?: Evidence<{ enabled: boolean }>;
+  ) => Evidence<PrCreation>;
+  listOpenPrsByHead?: (repo: RepoRef, head: string) => Evidence<PrSummary[]>;
+  addIssueComment?: (repo: RepoRef, issue: number, body: string) => Evidence<IssueCommentCreation>;
+  branchProtection?: Evidence<BranchProtectionFact>;
+  enableBranchProtection?: Evidence<BranchProtectionFact>;
+  repoAutomerge?: Evidence<RepoAutomergeFact>;
+  enableRepoAutomerge?: Evidence<RepoAutomergeFact>;
 }
 
 export function makeGhProvider(
@@ -160,111 +159,109 @@ export function makeGhProvider(
 ): RecordingForgeProvider {
   const calls: string[] = [];
   const preflight = behavior.preflight ?? { ok: true, value: { authenticated: true } };
+  // Every method carries the port's real signature (parameters and return
+  // type alike), so drift between this double and `ForgeProvider` fails
+  // typecheck instead of hiding behind casts (#178).
   return {
     calls,
     preflight: vi.fn(async () => {
       calls.push('preflight');
       return preflight;
     }),
-    getIssue: vi.fn(async () => {
+    getIssue: vi.fn(async (_repo: RepoRef, _n: number): Promise<Evidence<IssueFact>> => {
       calls.push('getIssue');
-      return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
+      return { ok: false, code: 'gh_transport', message: 'not configured in fake' };
     }),
-    getOpenIssueNumbers: vi.fn(async (repo: never) => {
-      calls.push(`getOpenIssueNumbers:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+    getOpenIssueNumbers: vi.fn(async (repo: RepoRef): Promise<Evidence<number[]>> => {
+      calls.push(`getOpenIssueNumbers:${repo.owner}/${repo.repo}`);
       return (
         behavior.getOpenIssueNumbers?.(repo) ??
         // Empty remote by default: no open issues to adopt.
-        ({ ok: true, value: [] } as Evidence<number[]>)
+        { ok: true, value: [] }
       );
     }),
-    getOpenIssues: vi.fn(async (repo: never) => {
-      calls.push(`getOpenIssues:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+    getOpenIssues: vi.fn(async (repo: RepoRef): Promise<Evidence<OpenIssueFact[]>> => {
+      calls.push(`getOpenIssues:${repo.owner}/${repo.repo}`);
       return (
         behavior.getOpenIssues?.(repo) ??
         // Empty remote by default: no open issues to adopt.
-        ({ ok: true, value: [] } as Evidence<OpenIssueFact[]>)
+        { ok: true, value: [] }
       );
     }),
-    getPr: vi.fn(async (repo: never, ref: number | string) => {
+    getPr: vi.fn(async (repo: RepoRef, ref: number | string): Promise<Evidence<PrFact>> => {
       calls.push(`getPr:${String(ref)}`);
       return (
         behavior.getPr?.(repo, ref) ??
-        ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+        { ok: false, code: 'gh_transport', message: 'not configured in fake' }
       );
     }),
-    getCheckRuns: vi.fn(async () => {
+    getCheckRuns: vi.fn(async (_repo: RepoRef, _sha: string): Promise<Evidence<CheckRunInfo[]>> => {
       calls.push('getCheckRuns');
-      return { ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>;
+      return { ok: false, code: 'gh_transport', message: 'not configured in fake' };
     }),
-    createIssue: vi.fn(async (repo: never, title: string, body: string) => {
+    createIssue: vi.fn(async (repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>> => {
       calls.push(`createIssue:${title}`);
       return (
         behavior.createIssue?.(repo, title, body) ??
-        ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+        { ok: false, code: 'gh_transport', message: 'not configured in fake' }
       );
     }),
     createDraftPr: vi.fn(
-      async (repo: never, head: string, base: string, title: string, body: string) => {
+      async (repo: RepoRef, head: string, base: string, title: string, body: string): Promise<Evidence<PrCreation>> => {
         calls.push(`createDraftPr:${head}`);
         return (
           behavior.createDraftPr?.(repo, head, base, title, body) ??
-          ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+          { ok: false, code: 'gh_transport', message: 'not configured in fake' }
         );
       }
     ),
-    listOpenPrsByHead: vi.fn(async (repo: never, head: string) => {
+    listOpenPrsByHead: vi.fn(async (repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>> => {
       calls.push(`listOpenPrsByHead:${head}`);
       return (
         behavior.listOpenPrsByHead?.(repo, head) ??
-        ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+        { ok: false, code: 'gh_transport', message: 'not configured in fake' }
       );
     }),
-    addIssueComment: vi.fn(async (repo: never, issue: number, body: string) => {
+    addIssueComment: vi.fn(async (repo: RepoRef, issue: number, body: string): Promise<Evidence<IssueCommentCreation>> => {
       calls.push(`addIssueComment:${issue}`);
       return (
         behavior.addIssueComment?.(repo, issue, body) ??
-        ({
-          ok: true,
-          value: { url: `https://github.com/fake/issues/${issue}#comment` },
-        } as Evidence<never>)
+        { ok: true, value: { url: `https://github.com/fake/issues/${issue}#comment` } }
       );
     }),
-    getBranchProtection: vi.fn(async (repo: never, branch: string) => {
-      calls.push(`getBranchProtection:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}:${branch}`);
+    getBranchProtection: vi.fn(async (repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>> => {
+      calls.push(`getBranchProtection:${repo.owner}/${repo.repo}:${branch}`);
       return (
         behavior.branchProtection ??
-        ({ ok: true, value: { protected: false, requiredChecks: [] } } as Evidence<never>)
+        { ok: true, value: { protected: false, requiredChecks: [] } }
       );
     }),
-    enableBranchProtection: vi.fn(async (repo: never, branch: string, requiredCheck: string) => {
-      calls.push(`enableBranchProtection:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}:${branch}:${requiredCheck}`);
+    enableBranchProtection: vi.fn(async (repo: RepoRef, branch: string, requiredCheck: string): Promise<Evidence<BranchProtectionFact>> => {
+      calls.push(`enableBranchProtection:${repo.owner}/${repo.repo}:${branch}:${requiredCheck}`);
       return (
         behavior.enableBranchProtection ??
-        ({ ok: true, value: { protected: true, requiredChecks: [requiredCheck] } } as Evidence<never>)
+        { ok: true, value: { protected: true, requiredChecks: [requiredCheck] } }
       );
     }),
-    getRepoAutomerge: vi.fn(async (repo: never) => {
-      calls.push(`getRepoAutomerge:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+    getRepoAutomerge: vi.fn(async (repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> => {
+      calls.push(`getRepoAutomerge:${repo.owner}/${repo.repo}`);
       return (
         behavior.repoAutomerge ??
-        ({ ok: true, value: { enabled: false } } as Evidence<never>)
+        { ok: true, value: { enabled: false } }
       );
     }),
-    enableRepoAutomerge: vi.fn(async (repo: never) => {
-      calls.push(`enableRepoAutomerge:${(repo as { owner: string; repo: string }).owner}/${(repo as { owner: string; repo: string }).repo}`);
+    enableRepoAutomerge: vi.fn(async (repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> => {
+      calls.push(`enableRepoAutomerge:${repo.owner}/${repo.repo}`);
       return (
         behavior.enableRepoAutomerge ??
-        ({ ok: true, value: { enabled: true } } as Evidence<never>)
+        { ok: true, value: { enabled: true } }
       );
     }),
   };
 }
 
 export interface GitWriteScript {
-  checkoutOrCreateBranch?: (
-    branch: string
-  ) => Evidence<{ branch: string; created: boolean }>;
+  checkoutOrCreateBranch?: (branch: string) => Evidence<BranchCheckout>;
   commitFile?: (
     relativePath: string,
     message: string
@@ -293,34 +290,31 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       port.factsCalls.push(root);
       return facts;
     }),
-    checkoutOrCreateBranch: vi.fn(async (_root: string, branch: string) => {
+    checkoutOrCreateBranch: vi.fn(async (_root: string, branch: string): Promise<Evidence<BranchCheckout>> => {
       port.checkoutCalls.push(branch);
-      return (
-        writes.checkoutOrCreateBranch?.(branch) ??
-        ({ ok: true, value: { branch, created: true } } as Evidence<{ branch: string; created: boolean }>)
-      );
+      return writes.checkoutOrCreateBranch?.(branch) ?? { ok: true, value: { branch, created: true } };
     }),
-    commitFile: vi.fn(async (_root: string, relativePath: string, message: string) => {
+    commitFile: vi.fn(async (_root: string, relativePath: string, message: string): Promise<Evidence<{ committed: boolean }>> => {
       port.commitCalls.push({ path: relativePath, message });
-      return writes.commitFile?.(relativePath, message) ?? ({ ok: true, value: { committed: true } } as Evidence<{ committed: boolean }>);
+      return writes.commitFile?.(relativePath, message) ?? { ok: true, value: { committed: true } };
     }),
-    pushBranch: vi.fn(async (_root: string, branch: string) => {
+    pushBranch: vi.fn(async (_root: string, branch: string): Promise<Evidence<{ pushed: boolean }>> => {
       port.pushCalls.push(branch);
-      return writes.pushBranch?.(branch) ?? ({ ok: true, value: { pushed: true } } as Evidence<{ pushed: boolean }>);
+      return writes.pushBranch?.(branch) ?? { ok: true, value: { pushed: true } };
     }),
-    remoteDefaultBranch: vi.fn(async (_root: string) => {
+    remoteDefaultBranch: vi.fn(async (_root: string): Promise<Evidence<string>> => {
       port.defaultBranchCalls.push(_root);
-      return writes.remoteDefaultBranch?.() ?? ({ ok: true, value: 'main' } as Evidence<string>);
+      return writes.remoteDefaultBranch?.() ?? { ok: true, value: 'main' };
     }),
     headContains: vi.fn(async (): Promise<Evidence<{ contained: boolean }>> =>
       // Fail-closed default: the fake answers no lineage question unless
       // a test explicitly scripts one.
       ({ ok: false, code: 'merged_lineage_unavailable', message: 'headContains not configured in fake' })
     ),
-    hooksPath: vi.fn(async (_root: string) => {
+    hooksPath: vi.fn(async (_root: string): Promise<Evidence<string>> => {
       return (
         writes.hooksPath?.() ??
-        ({ ok: false, code: 'git_unavailable', message: 'hooks path not configured in fake' } as Evidence<never>)
+        { ok: false, code: 'git_unavailable', message: 'hooks path not configured in fake' }
       );
     }),
   };
@@ -415,8 +409,8 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
     version: '0.0.0-test',
     cwd: options.cwd ?? '/repo',
     stdinIsTTY: options.stdinIsTTY ?? false,
-    discoverRoot: vi.fn(async () => options.root ?? ({ ok: true, value: '/repo' } as Evidence<string>)),
-    probeGitBinary: vi.fn(async () => ({ ok: true, value: 'git version 2.39.0' } as Evidence<string>)),
+    discoverRoot: vi.fn(async (): Promise<Evidence<string>> => options.root ?? { ok: true, value: '/repo' }),
+    probeGitBinary: vi.fn(async (): Promise<Evidence<string>> => ({ ok: true, value: 'git version 2.39.0' })),
     git: gitPort,
     gh: options.gh ?? ghProvider,
     record: recordPort,
