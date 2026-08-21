@@ -269,7 +269,11 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     expect(readFakeGhStdin(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
   });
 
-  it('reconciles by title when the record write failed after creation', async () => {
+  // Two full bootstraps (fault + heal) with real git work each; the global
+  // 10s budget intermittently overruns on the slower windows-pwsh runner
+  // (observed 2026-08-21, runs 32438687376/32438704880) — neighbors with
+  // one bootstrap pass at 2.7–5.9s there.
+  it('reconciles by title when the record write failed after creation', { timeout: 30_000 }, async () => {
     const repo = makePushableRepo('main');
 
     // Fault: a directory where the record lock file belongs makes every

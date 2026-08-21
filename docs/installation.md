@@ -4,14 +4,22 @@
 
 - **Node.js 20.19.0 or higher** — check with `node --version`
 - **git** — SpecGit verifies deliveries against a real repository; it will not run outside one
-- **GitHub CLI (`gh`)** — required for acceptance. Install and authenticate:
+- **GitHub CLI (`gh`)** — required for GitHub acceptance. Install and authenticate:
 
 ```bash
 gh auth login
 gh auth status        # should report you signed in to github.com
 ```
 
-`gh` is the provider seam: SpecGit reads issues, pull requests, and check runs through it. No tokens are read, echoed, or persisted by SpecGit itself — it relies on your existing `gh` authentication.
+- **GitLab CLI (`glab`)** — required only when the repository lives on a declared
+  self-managed GitLab host (>= 1.113.0; per-host auth):
+
+```bash
+glab auth login --hostname git.example.com
+glab auth status --hostname git.example.com
+```
+
+The forge CLI is the provider seam: SpecGit reads issues, pull requests, and check runs through `gh` (GitHub) or `glab` (GitLab). No tokens are read, echoed, or persisted by SpecGit itself — it relies on your existing authentication.
 
 ## Install
 
@@ -26,7 +34,7 @@ specgit --version
 specgit doctor --json
 ```
 
-`doctor` probes, in order: git is available, you are inside a git repository, `origin` parses to a GitHub repository, `gh` is present and authenticated, and `spec_git/policy.yaml` exists. Exit `0` means every probe passed; exit `3` reports which probe failed and how to fix it. This is the fastest way to diagnose a new setup.
+`doctor` probes, in order: git is available, you are inside a git repository, `origin` parses to a forge repository (or a declared GitLab host), the matching forge CLI is present and authenticated, and `spec_git/policy.yaml` exists. Exit `0` means every probe passed; exit `3` reports which probe failed and how to fix it. This is the fastest way to diagnose a new setup.
 
 ## Initialize a project
 

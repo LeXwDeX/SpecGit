@@ -1,6 +1,6 @@
 # Overview
 
-**SpecGit is an acceptance gate for deliveries.** One delivery = one execution context (a branch or worktree) + one or more GitHub issues + one pull request + required CI checks. SpecGit derives the verdict from the real evidence and fails closed.
+**SpecGit is an acceptance gate for deliveries.** One delivery = one execution context (a branch or worktree) + one or more forge issues (GitHub or GitLab) + one pull request + required CI checks. SpecGit derives the verdict from the real evidence and fails closed.
 
 The whole idea in one line: **if git, the PR, and the checks can prove it, it's accepted.**
 
