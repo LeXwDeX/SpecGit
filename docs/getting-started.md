@@ -106,4 +106,4 @@ SpecGit's entire footprint is three tiers of files:
 | Derived harness | `AGENTS.md` / `CLAUDE.md` managed block | The generated agent contract between the `specgit` markers | Yes |
 | Local integration | `.opencode/hooks.json`, `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`, `setup` entry points | Machine-local wiring, merged non-destructively | Your choice |
 
-There are no artifact folders, no stores, no caches, and nothing persisted outside these files plus the git and GitHub facts they point at. Verdicts are never stored — they are computed on every run. The full normative table is in [Reference](reference.md#state-and-assets).
+There are no artifact folders, no stores, no caches, and nothing persisted outside these files plus the git and forge facts they point at. Verdicts are never stored — they are computed on every run. The full normative table is in [Reference](reference.md#state-and-assets).

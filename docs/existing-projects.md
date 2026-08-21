@@ -1,6 +1,6 @@
 # Using SpecGit in an Existing Project
 
-You can adopt SpecGit in a repository with years of history in about five minutes, and you never have to touch the past. SpecGit adds a small, well-bounded footprint — two authoritative files, a derived harness, and local hook wiring — and reads everything else from the git and GitHub you already have.
+You can adopt SpecGit in a repository with years of history in about five minutes, and you never have to touch the past. SpecGit adds a small, well-bounded footprint — two authoritative files, a derived harness, and local hook wiring — and reads everything else from the git and forge accounts you already have.
 
 ## Adopt in four steps
 

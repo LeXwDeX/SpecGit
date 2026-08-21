@@ -24,7 +24,7 @@ Every delivery is one aggregate, declared in a single record file (`.specgit.yam
 | Pull request | Exactly one PR that merges the delivery | record → GitHub |
 | Required checks | CI check names that must pass at the PR head | policy → GitHub |
 
-The record declares; git and GitHub substantiate. Acceptance means every part was verified against the real thing.
+The record declares; git and the forge substantiate. Acceptance means every part was verified against the real thing.
 
 ### One PR may close N issues
 

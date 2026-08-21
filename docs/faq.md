@@ -19,7 +19,7 @@ Two: `spec_git/policy.yaml` (from `init`) and `.specgit.yaml` (from `bind`). Bot
 ## Model questions
 
 **Why no spec files, task lists, or artifacts at all?**
-Because acceptance that comes from artifacts is self-declared: whoever finishes checking boxes gets to say "done." SpecGit defines "done" as a fact about git and GitHub. How you plan the work is up to you; SpecGit only verifies the delivery.
+Because acceptance that comes from artifacts is self-declared: whoever finishes checking boxes gets to say "done." SpecGit defines "done" as a fact about git and the forge (GitHub or GitLab). How you plan the work is up to you; SpecGit only verifies the delivery.
 
 **Can one delivery close many issues?**
 Yes — `issues` is a list, and the PR body must close each one (`Closes #123`, `Fixes #124`, …). One PR may close N issues. One delivery binds at most one PR.

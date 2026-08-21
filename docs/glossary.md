@@ -46,9 +46,9 @@ Every SpecGit term in one place. Terms are grouped by topic, then alphabetized.
 
 ## Tooling
 
-**Provider seam** — The injectable boundary through which SpecGit talks to GitHub. The only real transport is the `gh` CLI; tests use a mock.
+**Provider seam** — The injectable boundary through which SpecGit talks to the forge: GitHub through `gh`, a declared GitLab host through `glab`. Tests use a mock.
 
-**`gh`** — GitHub's official CLI. SpecGit requires it for acceptance: preflight, then `gh api` for issues, the PR, and check runs. Auth comes from your existing `gh auth login`.
+**`gh`** — GitHub's official CLI. SpecGit requires it for GitHub acceptance: preflight, then `gh api` for issues, the PR, and check runs. Auth comes from your existing `gh auth login`; GitLab deliveries use `glab` the same way (per-host auth).
 
 **`--json`** — Global flag: stdout becomes exactly one JSON document (the envelope), human text goes to stderr.
 
