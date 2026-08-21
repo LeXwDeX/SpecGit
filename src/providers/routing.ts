@@ -6,10 +6,13 @@ import type { ForgeProvider } from '../github/port.js';
  * provider; this one dispatches per call. A ref resolved through the
  * GitLab declaration carries the `platform: 'gitlab'` marker (#112 —
  * reachable only via providers.yaml, never the substring heuristic) and
- * every repo-carrying call on it flows to the glab delegate; every other
- * ref flows to the github delegate. The #112 invariant — no gh call ever
- * sees a group/subgroup ref — holds by construction: the github delegate
- * is behind the dispatch, not beside it.
+ * every repo-carrying call on it flows to the glab delegate; refs marked
+ * `'github'` flow to the github delegate. Since #186 the marker is a
+ * required union and the dispatch is an exhaustive switch with a `never`
+ * default, so a third platform is a compile error until handled here.
+ * The #112 invariant — no gh call ever sees a group/subgroup ref — holds
+ * by construction: the github delegate is behind the dispatch, not beside
+ * it.
  *
  * `preflight` carries no ref, so it follows the delivery origin: the
  * injected resolver classifies the origin once (cached for the process
@@ -50,9 +53,19 @@ export class PlatformRoutingProvider implements ForgeProvider {
   }
 
   private forRepo(repo: RepoRef): Promise<ForgeProvider> {
-    return repo.platform === 'gitlab'
-      ? (this.gitlabPromise ??= this.createGitlab())
-      : Promise.resolve(this.github);
+    // #186: dispatch matches every member of the platform union; the
+    // `never` default makes a new platform a compile error until it is
+    // routed, never a silent github fallback.
+    switch (repo.platform) {
+      case 'gitlab':
+        return (this.gitlabPromise ??= this.createGitlab());
+      case 'github':
+        return Promise.resolve(this.github);
+      default: {
+        const unhandled: never = repo.platform;
+        return Promise.reject(new Error(`Unhandled platform: ${String(unhandled)}`));
+      }
+    }
   }
 
   private async forOrigin(): Promise<ForgeProvider> {
