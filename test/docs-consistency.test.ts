@@ -75,6 +75,40 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     }
   });
 
+  it('docs/gitlab-support.md carries the version-window rebaseline SOP (#181)', () => {
+    const text = read('docs', 'gitlab-support.md');
+
+    // The SOP section exists and names the procedure.
+    expect(text).toMatch(/## Rebaseline SOP/);
+
+    // Which constants change in a rebaseline delivery.
+    expect(text).toContain('VERSION_WINDOW_MIN');
+    expect(text).toContain('VERSION_WINDOW_MAX_EXCLUSIVE');
+
+    // Triggers: new releases and the fail-closed diagnostic report.
+    expect(text).toMatch(/gitlab_version_unsupported/);
+
+    // Which dogfood evidence must be recaptured — the SOP names the
+    // evidence artifacts under docs/evidence/ it produces.
+    expect(text).toMatch(/docs\/evidence\//);
+    expect(text).toMatch(/ledger/i);
+
+    // Which tests must pass: the regression matrix names the port contract
+    // and the offline GitLab delivery e2e.
+    expect(text).toContain('provider-port-contract.test.ts');
+    expect(text).toContain('gitlab-delivery.e2e.test.ts');
+  });
+
+  it('the rebaseline SOP does not itself move the window or the glab floor (#181)', () => {
+    const src = read('src', 'providers', 'gitlab', 'glab-cli.ts');
+    expect(src).toContain('VERSION_WINDOW_MIN = [19, 2, 4]');
+    expect(src).toContain('VERSION_WINDOW_MAX_EXCLUSIVE = [19, 3, 0]');
+
+    const docs = read('docs', 'gitlab-support.md');
+    expect(docs).toMatch(/>= 19\.2\.4 < 19\.3\.0/);
+    expect(docs).toMatch(/glab floor.*1\.113\.0/i);
+  });
+
   it('the PR template carries no literal issue number that could auto-close a real issue', () => {
     const template = read('.github', 'PULL_REQUEST_TEMPLATE.md');
     expect(template).not.toMatch(/#[0-9]+\b/);

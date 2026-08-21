@@ -13,13 +13,38 @@ A GitLab origin is **recognized, not silently misread**:
 
 ## Supported-version policy (self-managed)
 
-- **Self-managed GitLab is supported at exactly `>= 19.2.4 < 19.3.0`, CE/Free tier** (#98). The known-good anchor is the `v19.2.4-ee` release tag (tagged 2026-08-14, commit `85f4a2d9`). Any version outside the range fails closed: planned diagnostic `gitlab_version_unsupported`, exit 3, fix text pointing here and to upgrading within 19.2.x. Versions `>= 19.3.0` also fail closed until a rebaseline delivery widens the range — the range moves only through explicit rebaseline deliveries, never silent drift.
+- **Self-managed GitLab is supported at exactly `>= 19.2.4 < 19.3.0`, CE/Free tier** (#98). The known-good anchor is the `v19.2.4-ee` release tag (tagged 2026-08-14, commit `85f4a2d9`). Any version outside the range fails closed: planned diagnostic `gitlab_version_unsupported`, exit 3, fix text pointing here and to upgrading within 19.2.x. Versions `>= 19.3.0` also fail closed until a rebaseline delivery widens the range — the range moves only through explicit rebaseline deliveries, never silent drift (procedure: [Rebaseline SOP](#rebaseline-sop-moving-the-version-window)).
 - **The `-ee`/`-ce` suffix is a release-channel marker, not semver pre-release semantics**: naive semver ordering ranks `19.2.4-ee < 19.2.4`, which is wrong. Version comparison strips the suffix first, then compares the `x.y.z` triple (ledger rule 4).
 - **Version discovery uses the authenticated metadata endpoint** (`glab api /metadata`): no unauthenticated version channel is documented at the pinned tag (ledger row 3). `metadata.enterprise` is informational only — never a gate input.
 - **GitLab.com (SaaS) is in scope and is judged by capability probing, never version pinning** (#93): the instance auto-upgrades, so a pinned self-managed range cannot apply. The evidence path probes every API surface the delivery depends on with read-only calls; any probe failure ⇒ verdict `unknown` (planned `gitlab_capability_missing`, exit 3). Missing evidence is UNKNOWN = a blocked path, never an inferred capability.
 - **glab floor: 1.113.0**, pinned from gitlab-org/cli tag `v1.113.0` (commit `d6288130`). The floor rises to 1.114.0 only if implementation depends on same-host SSH capability, with a cited gitlab-org/cli reference — decided before the first implementation slice. glab authenticates per host (`glab auth status --hostname <host>`; remediation `glab auth login --hostname <host>`; ledger row 8).
 - **Implemented environment contract** (#114, mirroring `SPECGIT_GH`/`SPECGIT_GH_TIMEOUT_MS`): `SPECGIT_GLAB` (glab executable path, default PATH) and `SPECGIT_GLAB_TIMEOUT_MS` (default 15000; timeout ⇒ `glab_transport`, exit 3).
 - **`gitlab.insecure_ssl` is per-host**: `true` in `spec_git/providers.yaml` skips TLS verification for that declared host only — never global, never logged; `false`/absent = full verification. The exact glab host-scoped mechanism is not yet pinned from gitlab-org/cli, so enabling it stays a blocked path until pinned (ledger, open unknowns).
+
+## Rebaseline SOP (moving the version window)
+
+The window above is hard-coded by design and moves **only** through an explicit rebaseline delivery — an ordinary SpecGit delivery: one issue, one branch, one PR/MR, done if and only if `specgit finish` exits 0 (#181, audit finding A-4). Every new self-managed GitLab release or version-diagnostic report follows this procedure; no ad-hoc archaeology, no silent drift.
+
+**Triggers**
+
+- A new self-managed GitLab release enters the team's upgrade horizon — a minor release the team intends to run, or a patch release the team wants admitted into the window.
+- A user reports `gitlab_version_unsupported` (exit 3) from any SpecGit command against a declared GitLab origin: their instance version sits outside the supported range, and the diagnostic's fix text points here.
+
+**Steps**
+
+1. **Issue.** File a single rebaseline issue naming the target version (e.g. "rebaseline the GitLab window to >= 19.x.y < 19.(x+1).0") and its trigger — the new release or the `gitlab_version_unsupported` report. One issue = one independently verifiable WHY; do not bundle unrelated work.
+2. **Constants.** Change exactly two constants in `src/providers/gitlab/glab-cli.ts`: `VERSION_WINDOW_MIN` and `VERSION_WINDOW_MAX_EXCLUSIVE`, plus the window string carried in the `gitlab_version_unsupported` fix text in the same file. Nothing else moves: the glab floor (1.113.0) rises only under the condition stated in the policy above, and the `-ee`/`-ce` suffix-stripping comparison (ledger rule 4) never changes.
+3. **Evidence recapture.** On an instance running the new target version, recapture the dogfood evidence and commit the artifacts under `docs/evidence/` — the SOP's produced artifacts, named:
+   - a new ledger file `docs/evidence/gitlab-<major>.<minor>.md` in the shape of [gitlab-19.2.md](evidence/gitlab-19.2.md): the metadata cell (authenticated `glab api /metadata` — version, revision, `enterprise` informational only), the known-good anchor (release tag + commit), and the re-verified rows the window affects (metadata chain rows 1–3 minimum);
+   - refreshed recorded payload fixtures under `test/specgit-e2e/fixtures/gitlab/` whenever a recorded shape changed at the new version;
+   - a dogfood witness file in the shape of [gitlab-dogfood-117.md](evidence/gitlab-dogfood-117.md): one real probe delivery on the new version whose `specgit finish` exited 0.
+4. **Docs sync.** In the same delivery, update every committed surface that states the window: this document's policy bullet and non-goal, row 5 of the new ledger, `docs/baseline-v1.md`, the dual-platform scope paragraph of `AGENTS.md`, and `README.md`/`docs/cli.md` wherever they quote the range. The machine contract — diagnostic `code`s, exit codes, `--json` fields — is never renumbered or localized.
+5. **Regression matrix.** The delivery must land green end to end: `pnpm exec tsc --noEmit`, `pnpm run typecheck:test`, `pnpm run lint`, `pnpm test` — specifically the provider port contract (`test/specgit/provider-port-contract.test.ts`), the scripted-glab adapter contract tests, and the offline delivery e2e (`test/specgit-e2e/gitlab-delivery.e2e.test.ts`) — plus a live smoke on the new-version instance: `specgit doctor` with the origin probe green, and one full probe delivery ending in `specgit finish` exit 0.
+6. **Release notes.** The PR body and the CHANGELOG entry state the old and new window, the known-good anchor tag and commit of the new release, and link the new ledger file under `docs/evidence/`.
+
+**Automation proposal (not implemented)**
+
+A scheduled CI job could periodically poll the declared instance's metadata (`glab api /metadata`) or the upstream GitLab release feed, and when the reported version leaves the supported window, open a pre-filled rebaseline issue and a draft PR proposing the constant bump. This is a proposal only — no CI job edits the constants itself: the window moves only through the delivery above, so a proposed bump still runs the full evidence recapture (step 3) and regression matrix (step 5) before `specgit finish` can exit 0.
 
 ## Design principles
 
