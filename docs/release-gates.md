@@ -94,12 +94,12 @@ superseding one requires an explicit edit with rationale):
 
 | Gate | Evidence slot |
 | --- | --- |
-| GA-1 tracker empty | `gh issue list --state open` = 0 at commit `________` |
-| GA-2 zero review residue | disposition map at `________` |
-| GA-3 no undisposed red in CI | CI rollup run `________` |
+| GA-1 tracker empty | `gh issue list --state open` = 0 at commit `81dedcc` (= tag `v1.0.0`), re-polled 2026-08-21 after the #118 close-out; the only post-cut issue (#150, this archival delivery) closes with its own PR |
+| GA-2 zero review residue | zero unresolved review threads across every PR merged 0.7.2 → 1.0.0 (re-polled at the cut, 2026-08-21); every known observation maps to a §6 disposition row or a closed issue |
+| GA-3 no undisposed red in CI | main @ `81dedcc`: CI `success` (run 32432378936), Release `success` (32432378981), CodeQL `success`, Security `success`; §6 disposition rows committed |
 | GA-4 rc dogfood (nested-group GitLab) | `specgit finish` exit 0 — delivered by [#117](https://github.com/LeXwDeX/SpecGit/pull/146): real delivery on `git.ycgame.com` 19.2.4 CE, project depth 3 (`group/subgroup/project`), issue #1 / MR !1 bound, head `9839d096d2d229b3f3a14ccbaa1a7e2dc716baee`, local verdict exit 0 all eleven gates green AND a second CI-side finish exit 0 through the FU-5 read-only project access token; full record: [docs/evidence/gitlab-dogfood-117.md](evidence/gitlab-dogfood-117.md) (probe deleted and verified after archival) |
 | GA-5 evidence archived | this table complete |
-| Gate-7 | acceptance `workflow_dispatch` run on tag `v1.0.0`: `________` |
+| Gate-7 | acceptance `workflow_dispatch` run **success**: [32433285439](https://github.com/LeXwDeX/SpecGit/actions/runs/32433285439) on `main` @ `81dedcc` = the `v1.0.0` tag target. **Protocol amendment (initial fill):** dispatching on the tag ref itself ([32433148615](https://github.com/LeXwDeX/SpecGit/actions/runs/32433148615)) fails mechanically — a tag checkout is a detached HEAD and the committed record carries a branch-context delivery, so `specgit finish` correctly exits 1 (`detached_head`, fail-closed). The verdict is therefore taken on the tag's target branch at the same commit, which is materially "on the release tag". Release: [v1.0.0](https://github.com/LeXwDeX/SpecGit/releases/tag/v1.0.0); npm dist-tags at cut: `latest=1.0.0`, `rc=1.0.0-rc.1` |
 
 ## 5. Growth discipline
 
