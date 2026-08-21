@@ -9,9 +9,12 @@
  *
  * Exit codes follow the normative table: 0 when the record and the policy
  * are locally valid and git facts could be gathered; 2 usage; 3 fail-closed
- * (not a git repo, git unavailable, or the record/policy is missing or
- * invalid). Factual mismatches (branch mismatch, drift, unresolved origin)
- * are reported through failing gates without failing the run.
+ * (not a git repo, git unavailable, or the record/policy is invalid). One
+ * pre-binding exception (#175): a MISSING record is the normal state before
+ * `specgit issue` — a fully determinable, healthy snapshot — so it exits 0
+ * with state `unbound` instead of the fail-closed unknown. Factual
+ * mismatches (branch mismatch, drift, unresolved origin) are reported
+ * through failing gates without failing the run.
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
@@ -27,7 +30,7 @@ import { errorDiagnostic, type CommandOutcome } from '../output.js';
 import { STATE_ASSET_TAXONOMY } from '../state-taxonomy.js';
 import { catalogFor, resolveLanguage } from '../language.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
-import type { BindingState, CommandContext, GateResult } from '../types.js';
+import type { CommandContext, GateResult } from '../types.js';
 
 export interface StatusOptions {
   json?: boolean;
@@ -53,10 +56,31 @@ export async function runStatus(
   ]);
 
   if (!recordEv.ok) {
-    const state: BindingState = recordEv.code === 'record_missing' ? 'unbound' : 'unknown';
+    if (recordEv.code === 'record_missing') {
+      // Pre-binding is a determinable, healthy state, not a fail-closed
+      // unknown (#175): exit 0, state `unbound`, the record gate still
+      // reports `record_missing`, and the next step rides a warning.
+      const { human: text } = catalogFor(resolveLanguage(policyEv.ok ? policyEv.value : null));
+      return {
+        exit: EXIT_SUCCESS,
+        state: 'unbound',
+        gates: [recordGate(recordEv)],
+        evidence: { root, branch: facts.branch },
+        warnings: [
+          {
+            severity: 'warning',
+            code: recordEv.code,
+            message: recordEv.message,
+            ...(recordEv.fix !== undefined ? { fix: recordEv.fix } : {}),
+          },
+        ],
+        assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
+        human: [text.statusUnbound()],
+      };
+    }
     return {
       exit: EXIT_UNKNOWN,
-      state,
+      state: 'unknown',
       gates: [recordGate(recordEv)],
       errors: [
         errorDiagnostic(recordEv.code, recordEv.message, recordEv.fix ? { fix: recordEv.fix } : {}),

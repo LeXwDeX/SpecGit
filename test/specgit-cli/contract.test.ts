@@ -50,8 +50,9 @@ describe('CLI contract: JSON envelope', () => {
     expect(env2.exit).toBe(EXIT_USAGE);
     expect(env2.status).toBe('error');
 
-    // exit 3 — fail-closed unknown path (record missing)
-    const t3 = makeCtx();
+    // exit 3 — fail-closed unknown path (record invalid; since #175 a merely
+    // MISSING record is status' healthy pre-binding state, exit 0)
+    const t3 = makeCtx({ record: 'invalid' });
     const code3 = await runCliWith(['node', 'specgit', 'status', '--json'], t3.ctx);
     expect(code3).toBe(EXIT_UNKNOWN);
     const env3 = parseStdoutJson(t3.io);

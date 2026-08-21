@@ -89,14 +89,22 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(gate.failures.map((f: any) => f.code)).toEqual(['worktree_mismatch']);
   });
 
-  it('fails closed (exit 3) when the record is missing', async () => {
+  // #175: a missing record is the normal pre-binding state, not a
+  // fail-closed unknown — exit 0 with state `unbound`, the record gate
+  // still reports `record_missing`, and the fix rides a warning.
+  it('reports the pre-binding state (exit 0, state unbound) when the record is missing (#175)', async () => {
     const t = makeCtx({ policy: samplePolicy() });
     const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
-    expect(code).toBe(EXIT_UNKNOWN);
+    expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.status).toBe('unknown');
+    expect(envelope.status).toBe('ok');
     expect(envelope.state).toBe('unbound');
-    expect(envelope.errors[0].code).toBe('record_missing');
+    expect(envelope.exit).toBe(EXIT_SUCCESS);
+    const record = envelope.gates.find((g: any) => g.id === 'record');
+    expect(record.status).toBe('fail');
+    expect(record.failures.map((f: any) => f.code)).toEqual(['record_missing']);
+    expect(envelope.warnings?.[0]?.code).toBe('record_missing');
+    expect(envelope.errors ?? []).toEqual([]);
   });
 
   it('fails closed (exit 3) when the record is invalid', async () => {
@@ -104,6 +112,8 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
     expect(code).toBe(EXIT_UNKNOWN);
     const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('unknown');
+    expect(envelope.state).toBe('unknown');
     expect(envelope.errors[0].code).toBe('record_invalid');
   });
 
