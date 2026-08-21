@@ -92,10 +92,14 @@ describe('shared line formatters (#190)', () => {
     expect(errorLine('bad\u0007char')).toBe('Error: badchar');
   });
 
-  it('warningLine keeps the message verbatim (no sanitizing rewrite)', () => {
+  it('warningLine sanitizes the message like errorLine (#215)', () => {
+    // Clean inputs keep their exact bytes; hostile inputs are cleaned the
+    // same way errorLine cleans them — the surface is symmetric.
     expect(warningLine('no origin remote — cannot probe branch protection.')).toBe(
       'Warning: no origin remote — cannot probe branch protection.'
     );
+    expect(warningLine('bad\u0007char')).toBe('Warning: badchar');
+    expect(warningLine('\u001b[31mred\u001b[0m')).toBe('Warning: red');
   });
 
   it('probeLine renders ok and failing probes in their locked shapes', () => {
@@ -109,6 +113,12 @@ describe('shared line formatters (#190)', () => {
     expect(gateFailureLine('record', 'record_invalid')).toBe('Gate record: record_invalid');
     expect(gateFailureLine('origin', 'origin_unresolved', 'Add an origin remote.')).toBe(
       'Gate origin: origin_unresolved — Add an origin remote.'
+    );
+  });
+
+  it('gateFailureLine sanitizes its dynamic fields like errorLine (#215)', () => {
+    expect(gateFailureLine('context', 'branch_mismatch\u0007', 'Check out \u001b[2Mmain.')).toBe(
+      'Gate context: branch_mismatch — Check out main.'
     );
   });
 

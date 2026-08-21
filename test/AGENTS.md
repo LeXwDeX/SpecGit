@@ -13,7 +13,7 @@ Applies to tests under `test/`.
 
 - `test/specgit/` — focused unit/integration tests for the domain ports and
   adapters (`record`, `gitfacts`, `github`, `acceptance`). Uses deterministic
-  fakes (`helpers/temp-repo.ts`, `helpers/mock-github.ts`, `helpers/fake-gh.ts`).
+  fakes (`helpers/temp-repo.ts`, `helpers/mock-forge.ts`, `helpers/fake-gh.ts`).
 - `test/specgit-cli/` — focused tests for the `specgit` CLI command functions
   with injected ports.
 - `test/specgit-e2e/` — end-to-end acceptance tests that run the real built CLI

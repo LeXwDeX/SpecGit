@@ -142,8 +142,8 @@ reports no value) routes the merged-lineage gate to fail-closed
   `PlatformRoutingProvider` (`src/providers/routing.ts`, #117 — the
   production composition's single provider, dispatching per call to the
   gh or glab adapter on the ref's platform marker), `LocalGitAdapter`
-  (`src/gitfacts/local.ts`), `MockGitHubProvider`
-  (`test/specgit/helpers/mock-github.ts`), and the recording doubles
+  (`src/gitfacts/local.ts`), `MockForgeProvider`
+  (`test/specgit/helpers/mock-forge.ts`), and the recording doubles
   `makeGhProvider` / `makeGitPort`
   (`test/specgit-cli/helpers.ts`). The contract test holds all of them
   to the port shape at every run — the canonical adapter home and its

@@ -13,7 +13,7 @@ import {
   LocalGitAdapter,
   sanitizeApiText,
 } from '../../src/index.js';
-import { MockGitHubProvider } from './helpers/mock-github.js';
+import { MockForgeProvider } from './helpers/mock-forge.js';
 import { makeGitFacts, makeGitPort, makeGhProvider } from '../specgit-cli/helpers.js';
 
 // Port-contract pins (#80): every in-tree implementation — production
@@ -161,7 +161,7 @@ describe('provider port contract (#80)', () => {
             originPlatform: async () => 'github',
           }),
         ],
-        ['MockGitHubProvider (test double)', new MockGitHubProvider()],
+        ['MockForgeProvider (test double)', new MockForgeProvider()],
         ['makeGhProvider (test double)', makeGhProvider()],
       ];
       for (const [label, instance] of implementations) {
@@ -181,11 +181,11 @@ describe('provider port contract (#80)', () => {
         'PlatformRoutingProvider'
       );
     });
-    it('MockGitHubProvider (test double)', () => {
+    it('MockForgeProvider (test double)', () => {
       expectExposes(
-        new MockGitHubProvider(),
+        new MockForgeProvider(),
         FORGE_PROVIDER_MEMBERS,
-        'MockGitHubProvider (test double)'
+        'MockForgeProvider (test double)'
       );
     });
     it('makeGhProvider (test double)', () => {

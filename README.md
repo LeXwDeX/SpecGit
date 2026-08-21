@@ -144,6 +144,8 @@ Every command supports `--json` (one JSON document on stdout, human text on
 stderr). Exit-code contract: `0` accepted/success · `1` rejected with complete
 evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C
 interruption exception (no envelope — see the [CLI reference](docs/cli.md)).
+One documented exception: `specgit status` reports a missing record as the
+healthy pre-binding state — exit `0` with state `unbound` (#175).
 Environment inputs: `SPECGIT_GH` / `SPECGIT_GH_TIMEOUT_MS` and
 `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` (executable path and per-call
 timeout per forge CLI, defaults: `gh`/`glab` on PATH, 15 s). Requirements:
