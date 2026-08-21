@@ -1,0 +1,154 @@
+/**
+ * Mutation phase of `specgit init`: the harness write (error-atomic) and
+ * the policy write, plus the final success envelope assembly. Local
+ * writes happen first, remote mutation (branch protection) last and only
+ * when explicitly requested.
+ */
+
+import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
+import {
+  legacyGitHooksDir,
+  writeHarnessAssets,
+  type HarnessWriteResult,
+} from '../harness-assets.js';
+import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import type { Diagnostic } from '../../kernel/diagnostics.js';
+import type { HumanText } from '../language.js';
+import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
+import type { DetectionReport } from '../detect-checks.js';
+import type { PolicyLanguage } from '../../record/policy.js';
+import type { PlatformOutcome } from './init-platform.js';
+import type { ProtectionOutcome } from './init-protection.js';
+
+export interface HarnessAndPolicyWrite {
+  harness: HarnessWriteResult;
+  policy: Policy;
+}
+
+/**
+ * Write the harness (workflow, hooks, managed prompt block — merged with
+ * existing hooks, rolled back on failure) and then the policy. The git
+ * hook goes where git actually runs hooks from: worktree and
+ * core.hooksPath aware, with a legacy `.git/hooks` fallback; when neither
+ * resolves, the git hook is skipped.
+ */
+export async function writeHarnessAndPolicy(args: {
+  root: string;
+  ctx: CommandContext;
+  checks: string[];
+  language: PolicyLanguage;
+  /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
+  workflowYaml: string | null;
+  warnings: Diagnostic[];
+}): Promise<CommandOutcome | HarnessAndPolicyWrite> {
+  const { root, ctx, checks, language, workflowYaml, warnings } = args;
+
+  const resolveHooksDir = async (repoRoot: string): Promise<string | null> => {
+    const hooksEv = await ctx.git.hooksPath(repoRoot);
+    if (hooksEv.ok) {
+      return hooksEv.value;
+    }
+    return legacyGitHooksDir(repoRoot);
+  };
+
+  let harness: HarnessWriteResult;
+  try {
+    harness = await writeHarnessAssets(root, {
+      resolveHooksDir,
+      workflowYaml,
+      language,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [errorDiagnostic('harness_write_failed', message)],
+    };
+  }
+  for (const warning of harness.warnings) {
+    warnings.push({ severity: 'warning', ...warning });
+  }
+
+  const policy: Policy = {
+    version: 1 as const,
+    required_checks: checks,
+    ...(language !== 'en' ? { language } : {}),
+  };
+  try {
+    await ctx.record.writePolicy(root, policy);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [errorDiagnostic('policy_write_failed', message)],
+    };
+  }
+
+  return { harness, policy };
+}
+
+/** Assemble the success envelope and human summary for a completed init. */
+export function buildInitOutcome(args: {
+  checks: string[];
+  detected: DetectionReport | null;
+  platform: { outcome: PlatformOutcome; human: string[] };
+  harness: HarnessWriteResult;
+  policy: Policy;
+  template: string;
+  warnings: Diagnostic[];
+  protection: ProtectionOutcome | undefined;
+  protectionHuman: string[];
+  text: HumanText;
+}): CommandOutcome {
+  const {
+    checks,
+    detected,
+    platform,
+    harness,
+    policy,
+    template,
+    warnings,
+    protection,
+    protectionHuman,
+    text,
+  } = args;
+  return {
+    exit: EXIT_SUCCESS,
+    policy,
+    harness: { template },
+    platform: platform.outcome,
+    ...(warnings.length > 0 ? { warnings } : {}),
+    ...(protection !== undefined ? { protection } : {}),
+    ...(detected !== null
+      ? {
+          detected: {
+            platform: detected.platform,
+            sources: detected.sources,
+            nonPrWorkflows: detected.nonPrWorkflows,
+            clis: detected.clis,
+            fallback: checks.length === 0,
+          },
+        }
+      : {}),
+    human: [
+      text.initCreatedPolicy(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`),
+      text.initRequiredChecks(checks.length),
+      ...checks.map((name) => text.initCheck(name)),
+      ...platform.human,
+      ...(detected !== null
+        ? [
+            text.initDetectedPlatform(detected.platform),
+            ...detected.sources.map((s) => text.initDetectedSource(s)),
+            ...detected.nonPrWorkflows.map(
+              (s) => `  skipped, never runs on a PR head: ${s}`
+            ),
+          ]
+        : []),
+      text.initCreatedHook(harness.workflow),
+      ...harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)),
+      ...(harness.gitHook ? [text.initGitHook(harness.gitHook)] : []),
+      ...harness.prompts.map((filename) => text.initManagedRefreshed(filename)),
+      ...protectionHuman,
+    ],
+  };
+}
