@@ -15,6 +15,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { ISSUE_TYPE_LIST } from './commands/issue.js';
+
 export type SetupTool = 'opencode' | 'generic' | 'all';
 
 const ISSUE_COMMAND = `---
@@ -94,6 +96,8 @@ specgit issue "<title>"                 # create one issue and start
 specgit issue "<title A>" "<title B>"   # N issues, one delivery
 specgit issue 42                        # reuse an existing issue
 \`\`\`
+
+New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 
 ## What it does (idempotent; re-run resumes)
 

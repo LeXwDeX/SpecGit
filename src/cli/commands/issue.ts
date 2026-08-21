@@ -41,8 +41,14 @@ export interface IssueOptions {
   json?: boolean;
 }
 
-/** Conventional-commit types accepted as the `<type>` of the branch name. */
-const BRANCH_TYPES = new Set([
+/**
+ * Conventional-commit types accepted as the `<type>` of the branch
+ * name. The single source of truth (#174): the validator below, the
+ * `specgit issue --help` text, the usage-error fix, and the
+ * specgit-issue skill all render from this list, so the documented
+ * set and the enforced set cannot drift.
+ */
+export const ISSUE_TITLE_TYPES = [
   'feat',
   'fix',
   'refactor',
@@ -57,10 +63,12 @@ const BRANCH_TYPES = new Set([
   'security',
   'deprecate',
   'dogfood',
-]);
+] as const;
+
+const BRANCH_TYPES = new Set<string>(ISSUE_TITLE_TYPES);
 
 const CONVENTIONAL_PREFIX = /^([a-z]+):\s+(.*)$/s;
-const TYPE_LIST = [...BRANCH_TYPES].join(', ');
+export const ISSUE_TYPE_LIST = ISSUE_TITLE_TYPES.join(', ');
 
 export function parseIssueTitle(title: string): { type: string; cleanTitle: string } {
   const match = CONVENTIONAL_PREFIX.exec(title.trim());
@@ -81,7 +89,7 @@ export function validateIssueTitles(
       return {
         code: 'issue_type_invalid',
         message: `Issue title '${sanitize(arg)}' must start with a known <type>: prefix.`,
-        fix: `Prefix the title with one of: ${TYPE_LIST}. Example: specgit issue "feat: add login".`,
+        fix: `Prefix the title with one of: ${ISSUE_TYPE_LIST}. Example: specgit issue "feat: add login".`,
       };
     }
   }
