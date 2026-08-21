@@ -73,15 +73,27 @@ function makeGh(rules: FakeGhRule[]) {
   return createFakeGh(fakeDir, rules);
 }
 
+/**
+ * Traceability comment rule (#160): posted once per bound issue on every
+ * rule table whose bootstrap reaches the PR binding. The URL is
+ * deliberately constant — the e2e pins the call, not the payload.
+ */
+const COMMENT_RULE: FakeGhRule = {
+  match: `^api repos/${OWNER}/${REPO}/issues/[0-9]+/comments `,
+  stdout: `{"html_url":"https://github.com/${OWNER}/${REPO}/issues/11#issuecomment-1"}`,
+};
+
 /** Fake gh for the bootstrap: issues created as #11, #12, …; draft PR #<pr>. */
-function bootstrapRules(pr: number | undefined): FakeGhRule[] {
-  return [
+function bootstrapRules(pr: number | undefined): FakeGhRule[] {  return [
     { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
     {
       match: `^api repos/${OWNER}/${REPO}/issues `,
       stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
       seq: { start: 11 },
     },
+    // Traceability comment (#160): posted once per bound issue. The fake's
+    // URL is deliberately constant — the e2e pins the call, not the payload.
+    COMMENT_RULE,
     { match: '^pr list ', stdout: '[]' },
     ...(pr !== undefined
       ? [{ match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/${pr}\n` }]
@@ -129,6 +141,16 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
     for (const section of ['## Why', '## What changed', '## Evidence', '## Checklist']) {
       expect(createdBody).toContain(section);
     }
+
+    // Traceability edge issue→branch (#160): every bound issue received
+    // the delivery branch and PR number as a comment, exactly once each.
+    const comments = readFakeGhCalls(gh.logPath).filter((args) =>
+      args.startsWith(`api repos/${OWNER}/${REPO}/issues/`)
+    );
+    expect(comments).toEqual([
+      `api repos/${OWNER}/${REPO}/issues/11/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft pull request #77).`,
+      `api repos/${OWNER}/${REPO}/issues/12/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft pull request #77).`,
+    ]);
 
     // Simulate the merge: PR merged, issues closed by GitHub, checks
     // green at the (pushed) head commit — finish must accept. The PR
@@ -253,6 +275,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
       },
       { match: '^pr list ', stdout: '[]' },
       { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
+      COMMENT_RULE,
     ]);
     const second = await specgit(['issue', 'feat: phoenix flow', 'chore: second wing', '--json'], {
       cwd: repo.dir,
@@ -306,6 +329,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
       },
       { match: '^pr list ', stdout: '[]' },
       { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
+      COMMENT_RULE,
     ]);
     const second = await specgit(['issue', 'feat: durable state model', '--json'], {
       cwd: repo.dir,
@@ -360,6 +384,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
       },
       { match: '^pr list ', stdout: '[]' },
       { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
+      COMMENT_RULE,
     ]);
     const second = await specgit(['issue', ...args, '--json'], {
       cwd: repo.dir,
@@ -414,6 +439,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
           },
         ]),
       },
+      COMMENT_RULE,
     ]);
     const second = await specgit(['issue', 'feat: wing repair', '--json'], {
       cwd: repo.dir,

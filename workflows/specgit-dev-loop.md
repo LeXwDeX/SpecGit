@@ -71,3 +71,21 @@ the brief is approved, do not push decisions upward again.
   environment, then re-run.
 
 Human merge happens **after** `finish` exits `0` — never instead of it.
+
+## Merge method and lifecycle (the traceability triple)
+
+The delivery triple — branch ↔ issues ↔ PR — must stay mutually navigable
+after the merge, so the merge method is pinned:
+
+- **Merge commit only.** Squash and rebase merges are disabled at the
+  repository level: squash collapses the branch topology and makes the
+  delivery commits untraceable to their branch (the `fix/155` duplicate
+  delivery escaped notice exactly because squash hid it).
+- **Auto-delete the branch.** `delete_branch_on_merge` is on: once the PR
+  merges, the delivery branch is deleted by GitHub; its commits remain
+  reachable through the merge commit.
+- **Issues close via the scaffold.** The `Closes #n` closing references
+  the bootstrap wrote close every bound issue at merge time.
+- **Issue-side link.** The bootstrap comments the delivery branch and PR
+  number on every bound issue (#160), so the triple is navigable from
+  the issue side too — including while the PR is still open.

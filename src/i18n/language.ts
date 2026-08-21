@@ -69,6 +69,7 @@ export interface HumanText {
   issuePr(pr: number | string): string;
   issueRecorded(filename: string): string;
   issuePrTitleFallback(delivery: string): string;
+  issueTraceabilityComment(branch: string, pr: number | string): string;
   // pr
   prBound(pr: number | string, delivery: string): string;
   prIssues(list: string): string;
@@ -162,6 +163,8 @@ const EN_HUMAN: HumanText = {
   issuePr: (pr) => `  PR: #${pr} (draft)`,
   issueRecorded: (filename) => `  Recorded ${filename}, committed, pushed to origin`,
   issuePrTitleFallback: (delivery) => `Delivery ${delivery}`,
+  issueTraceabilityComment: (branch, pr) =>
+    `SpecGit delivery branch: \`${branch}\` (draft pull request #${pr}).`,
   prBound: (pr, delivery) => `Bound PR #${pr} to delivery '${delivery}':`,
   prIssues: (list) => `  Issues: ${list}`,
   bindHeader: (delivery) => `Bound delivery '${delivery}':`,
@@ -212,6 +215,8 @@ const ZH_HUMAN: HumanText = {
   issuePr: (pr) => `  PR：#${pr}（草稿）`,
   issueRecorded: (filename) => `  已记录 ${filename}，已提交并推送到 origin`,
   issuePrTitleFallback: (delivery) => `交付 ${delivery}`,
+  issueTraceabilityComment: (branch, pr) =>
+    `SpecGit 交付分支：\`${branch}\`（草稿拉取请求 #${pr}）。`,
   prBound: (pr, delivery) => `已将 PR #${pr} 绑定到交付 '${delivery}'：`,
   prIssues: (list) => `  议题：${list}`,
   bindHeader: (delivery) => `已绑定交付 '${delivery}'：`,

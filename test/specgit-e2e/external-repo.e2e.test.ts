@@ -233,6 +233,10 @@ describe('e2e external repository adoption (#87): scaffold vs PR templates', () 
           match: '^pr create --draft ',
           stdout: `https://github.com/${EXT_OWNER}/${EXT_REPO}/pull/31\n`,
         },
+        {
+          match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues/[0-9]+/comments `,
+          stdout: `{"html_url":"https://github.com/${EXT_OWNER}/${EXT_REPO}/issues/x#issuecomment-1"}`,
+        },
       ] satisfies FakeGhRule[]);
       const env = gh.env({ GH_TOKEN: 'external-fixture-token' });
 
