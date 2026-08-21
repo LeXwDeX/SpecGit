@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CODE_INFO } from '../../src/acceptance/codes.js';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
@@ -131,5 +132,87 @@ describe('specgit doctor', () => {
     const ghAuthenticated = envelope.probes.find((p: any) => p.name === 'gh_authenticated');
     expect(ghAuthenticated.ok).toBe(false);
     expect(ghAuthenticated.code).toBe('glab_missing');
+  });
+
+  // #166: a failing probe's diagnostic must carry the `fix` string from the
+  // codes catalogue (src/acceptance/codes.ts), so an agent consuming the
+  // --json envelope gets a machine-readable remedy, not just a code.
+  describe('failing probes surface catalogue fix hints (#166)', () => {
+    it('attaches the gh_unauthenticated fix to the --json error', async () => {
+      const t = makeCtx({
+        policy: samplePolicy(),
+        gh: {
+          preflight: async () => ({ ok: false, code: 'gh_unauthenticated', message: 'gh auth status failed.' }),
+          getIssue: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          getOpenIssueNumbers: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          getOpenIssues: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          getPr: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          getCheckRuns: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          createIssue: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          createDraftPr: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          listOpenPrsByHead: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          addIssueComment: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          getBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          enableBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          getRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          enableRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+        },
+      });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_UNKNOWN);
+      const envelope = parseStdoutJson(t.io);
+      const error = envelope.errors.find((e: any) => e.code === 'gh_unauthenticated');
+      expect(error).toBeDefined();
+      expect(error.fix).toBe(CODE_INFO.gh_unauthenticated.fix);
+    });
+
+    it('attaches the policy_missing fix to the --json error', async () => {
+      const t = makeCtx();
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_UNKNOWN);
+      const envelope = parseStdoutJson(t.io);
+      const error = envelope.errors.find((e: any) => e.code === 'policy_missing');
+      expect(error).toBeDefined();
+      expect(error.fix).toBe(CODE_INFO.policy_missing.fix);
+    });
+
+    it('attaches the not_a_git_repo fix to the --json error', async () => {
+      const t = makeCtx({
+        root: { ok: false, code: 'not_a_git_repo', message: 'Not a git repository.' },
+        policy: samplePolicy(),
+      });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_UNKNOWN);
+      const envelope = parseStdoutJson(t.io);
+      const error = envelope.errors.find((e: any) => e.code === 'not_a_git_repo');
+      expect(error).toBeDefined();
+      expect(error.fix).toBe(CODE_INFO.not_a_git_repo.fix);
+    });
+
+    it('attaches the glab_missing fix to the --json error', async () => {
+      const t = makeCtx({
+        policy: samplePolicy(),
+        facts: makeGitFacts({ originUrl: 'https://git.example.com/g/sg/p.git' }),
+        parseRepoRef: (url: string) =>
+          parseRepoRef(url, { gitlabHost: 'git.example.com' }),
+        gh: makeGhProvider({
+          preflight: fail('glab_missing', 'GitLab CLI (glab) is not installed or not on PATH.'),
+        }),
+      });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_UNKNOWN);
+      const envelope = parseStdoutJson(t.io);
+      const error = envelope.errors.find((e: any) => e.code === 'glab_missing');
+      expect(error).toBeDefined();
+      expect(error.fix).toBe(CODE_INFO.glab_missing.fix);
+    });
+
+    it('leaves doctor exit-code semantics unchanged', async () => {
+      const t = makeCtx({ policy: samplePolicy() });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.errors ?? []).toEqual([]);
+    });
   });
 });
