@@ -12,7 +12,7 @@ import {
 } from './helpers/fake-gh.js';
 import { makeTempDir, rmDir } from './helpers/temp-repo.js';
 
-const REPO = { owner: 'LeXwDeX', repo: 'SpecGit' };
+const REPO = { owner: 'LeXwDeX', repo: 'SpecGit', platform: 'github' } as const;
 const SHA = 'a'.repeat(40);
 const MERGE_SHA = 'm'.repeat(40);
 

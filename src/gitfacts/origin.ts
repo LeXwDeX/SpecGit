@@ -4,13 +4,15 @@ export interface RepoRef {
   owner: string;
   repo: string;
   /**
-   * Present (value `'gitlab'`) when the ref resolved through a GitLab
-   * declaration in `spec_git/providers.yaml` (#112) — the only source of
-   * GitLab acceptance: the `*gitlab*` host heuristic never resolves a
-   * ref, so no substring match can grant capability. Absent means the
-   * default github platform.
+   * The platform the ref resolved under (#186). `'gitlab'` only when the
+   * ref resolved through a GitLab declaration in `spec_git/providers.yaml`
+   * (#112) — the only source of GitLab acceptance: the `*gitlab*` host
+   * heuristic never resolves a ref, so no substring match can grant
+   * capability. Every other accepted ref (github.com origins) carries
+   * `'github'` explicitly: the parse layer always fills the marker, so
+   * consumers dispatch on a required union instead of an implied default.
    */
-  platform?: 'gitlab';
+  platform: 'github' | 'gitlab';
 }
 
 /**
@@ -338,7 +340,7 @@ function parseOwnerRepo(path: string, urlTrack: boolean): RepoRef | null {
   if (repo.length > 4 && repo.endsWith('.git')) {
     repo = repo.slice(0, -4);
   }
-  return { owner, repo };
+  return { owner, repo, platform: 'github' };
 }
 
 // #112: the GitLab origin grammar accepted on declared hosts —
@@ -519,7 +521,7 @@ export function parsePrUrl(url: string): Evidence<{ repo: RepoRef; pr: number }>
       'Bind the PR by number or a full https://github.com/<owner>/<repo>/pull/<n> URL.'
     );
   }
-  return ok({ repo: { owner: match[1], repo: match[2] }, pr: Number(match[3]) });
+  return ok({ repo: { owner: match[1], repo: match[2], platform: 'github' }, pr: Number(match[3]) });
 }
 
 function truncateUrl(value: string): string {

@@ -11,7 +11,7 @@ import { MockGitHubProvider } from './helpers/mock-github.js';
 // invariant ("no gh call ever sees a group/subgroup ref") is preserved
 // by construction while GitLab deliveries route to glab.
 
-const githubRef: RepoRef = { owner: 'acme', repo: 'app' };
+const githubRef: RepoRef = { owner: 'acme', repo: 'app', platform: 'github' };
 const gitlabRef: RepoRef = { owner: 'group/subgroup', repo: 'app', platform: 'gitlab' };
 
 function makeRouter(originPlatform: 'github' | 'gitlab' | 'undecided') {
