@@ -3,7 +3,7 @@ import type { RepoRef } from '../../../src/gitfacts/origin.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
-  GitHubProvider,
+  ForgeProvider,
   IssueCommentCreation,
   IssueCreation,
   IssueFact,
@@ -36,7 +36,7 @@ function formatRepo(repo: RepoRef): string {
   return `${repo.owner}/${repo.repo}`;
 }
 
-export class MockGitHubProvider implements GitHubProvider {
+export class MockGitHubProvider implements ForgeProvider {
   readonly calls: string[] = [];
 
   constructor(private readonly fixtures: MockGitHubFixtures = {}) {}
