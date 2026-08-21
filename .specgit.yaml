@@ -5,3 +5,4 @@ context:
   branch: chore/238-add-v1-2
 issues:
   - 238
+pr: 239
