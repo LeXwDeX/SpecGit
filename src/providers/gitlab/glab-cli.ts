@@ -4,7 +4,7 @@ import { defaultSpawn, sanitizeApiText, type SpawnFn, type SpawnOptions } from '
 import type {
   BranchProtectionFact,
   CheckRunInfo,
-  GitHubProvider,
+  ForgeProvider,
   IssueCreation,
   IssueCommentCreation,
   IssueFact,
@@ -121,7 +121,7 @@ type RunOutcome =
   | { ok: true; value: { stdout: string; stderr: string } }
   | { ok: false; code: string; message: string; fix?: string; exitCode?: number };
 
-export class GlabProvider implements GitHubProvider {
+export class GlabProvider implements ForgeProvider {
   private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly timeoutMs: number;
   private readonly maxBuffer: number;

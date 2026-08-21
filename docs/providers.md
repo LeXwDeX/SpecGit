@@ -9,24 +9,28 @@ seam](reference.md#github-provider-seam)):
 - **`GitPort`** (`src/gitfacts/port.ts`) — local git facts and the
   delivery-bootstrap write operations, implemented for production by
   `LocalGitAdapter` (`src/gitfacts/local.ts`).
-- **`GitHubProvider`** (`src/github/port.ts`) — GitHub evidence and
-  mutations, implemented for production by `GhCliGitHubProvider`
+- **`ForgeProvider`** (`src/github/port.ts`) — platform-neutral forge
+  evidence and mutations (#169; the pre-#169 name `GitHubProvider` stays
+  importable as a compatibility type alias), implemented for production by
+  `GhCliGitHubProvider`
   (`src/providers/github/gh-cli.ts`, the per-platform adapter home since
-  #113; `src/github/gh-cli.ts` remains a stable alias module). The
-  [GitLab (glab) roadmap](gitlab-support.md) will implement this port
-  shape as a second adapter.
+  #113; `src/github/gh-cli.ts` remains a deprecated alias module) and by
+  `GlabProvider` (`src/providers/gitlab/glab-cli.ts`, #114 — the
+  [GitLab (glab) adapter](gitlab-support.md)).
 
 The full port vocabulary is exported from the public API
 (`src/index.ts`), including the stable port names `GitPort` and
-`GitHubProvider`, their auxiliary types (`GitWritePort`,
+`ForgeProvider` (the pre-#169 name `GitHubProvider` stays exported as a
+`@deprecated` compatibility alias), their auxiliary types (`GitWritePort`,
 `BranchCheckout`, `BranchProtectionFact`, `RepoAutomergeFact`), and the
-member inventories `GIT_PORT_MEMBERS` / `GITHUB_PROVIDER_MEMBERS`. This
-document is the compatibility policy for how those ports evolve (#80).
+member inventories `GIT_PORT_MEMBERS` / `FORGE_PROVIDER_MEMBERS`
+(`GITHUB_PROVIDER_MEMBERS` remains as the deprecated alias of the latter).
+This document is the compatibility policy for how those ports evolve (#80).
 
 ## Port inventory
 
 Both inventories live beside their interfaces as
-`GIT_PORT_MEMBERS` / `GITHUB_PROVIDER_MEMBERS`, compile-checked with
+`GIT_PORT_MEMBERS` / `FORGE_PROVIDER_MEMBERS`, compile-checked with
 `satisfies Record<keyof <Port>, true>` so port and inventory cannot
 drift apart silently. The contract test
 (`test/specgit/provider-port-contract.test.ts`) pins this page's tables
@@ -44,7 +48,7 @@ to those lists member-for-member: change a port, change this page.
 | `remoteDefaultBranch` | required | `origin/HEAD` for the PR base; falls back to `main`. |
 | `hooksPath` | required | The hooks directory git will actually use (linked-worktree and `core.hooksPath` aware) for guard installation. |
 
-### GitHubProvider (src/github/port.ts)
+### ForgeProvider (src/github/port.ts)
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |
@@ -124,11 +128,11 @@ reports no value) routes the merged-lineage gate to fail-closed
   `makeGhProvider` / `makeGitPort`
   (`test/specgit-cli/helpers.ts`). The contract test holds all of them
   to the port shape at every run — the canonical adapter home and its
-  legacy `src/github` alias modules are pinned to the same class by the
-  same test (#113), and the shared CLI transport both adapters spawn
+  deprecated `src/github` alias modules (#170) are pinned to the same
+  class by the same test (#113), and the shared CLI transport both adapters spawn
   through lives at `src/providers/cli-spawn.ts` (#114).
 - **Alternate providers (glab).** Landed (#114):
-  `GlabProvider` satisfies `GITHUB_PROVIDER_MEMBERS`, extends the
+  `GlabProvider` satisfies `FORGE_PROVIDER_MEMBERS`, extends the
   contract test as an in-tree implementer, and mirrors the gh adapter's
   failure taxonomy per platform (`glab_missing`, `glab_unauthenticated`,
   `glab_transport` — timeout included — plus `gitlab_version_unsupported`

@@ -6,8 +6,8 @@ import type { Policy as SpecGitPolicy } from '../../src/record/policy.js';
 import type { OpenIssueFact, PrFact } from '../../src/github/port.js';
 import type {
   CommandContext,
+  ForgeProvider,
   GitFacts,
-  GitHubProvider,
   GitPort,
   RecordPort,
 } from '../../src/cli/types.js';
@@ -115,7 +115,7 @@ export function makeRecordPort(state: MemoryRecordState = {}): MemoryRecordPort 
   return port;
 }
 
-export interface RecordingGitHubProvider extends GitHubProvider {
+export interface RecordingForgeProvider extends ForgeProvider {
   calls: string[];
 }
 
@@ -157,7 +157,7 @@ export function makeGhProvider(
   behavior: {
     preflight?: Evidence<{ authenticated: boolean }>;
   } & GhScript = {}
-): RecordingGitHubProvider {
+): RecordingForgeProvider {
   const calls: string[] = [];
   const preflight = behavior.preflight ?? { ok: true, value: { authenticated: true } };
   return {
@@ -359,7 +359,7 @@ export interface EvaluateCall {
   record: Evidence<DeliveryBinding>;
   policy: Evidence<SpecGitPolicy>;
   git: GitPort;
-  gh?: GitHubProvider;
+  gh?: ForgeProvider;
 }
 
 export function makeEvaluate(verdict?: Verdict): ((input: EvaluateCall) => Promise<Verdict>) & {
@@ -385,7 +385,7 @@ export interface CtxOptions {
   root?: Evidence<string>;
   cwd?: string;
   stdinIsTTY?: boolean;
-  gh?: GitHubProvider;
+  gh?: ForgeProvider;
   gitWrites?: GitWriteScript;
   /** Overrides the production parseRepoRef (e.g. with a GitLab declaration). */
   parseRepoRef?: CommandContext['parseRepoRef'];
@@ -396,7 +396,7 @@ export interface TestCtx {
   io: CapturedIO & { writeOut: CommandContext['io'] };
   recordPort: MemoryRecordPort;
   gitPort: ReturnType<typeof makeGitPort>;
-  ghProvider: RecordingGitHubProvider;
+  ghProvider: RecordingForgeProvider;
 }
 
 export function makeCtx(options: CtxOptions = {}): TestCtx {

@@ -111,7 +111,15 @@ export interface RepoAutomergeFact {
   enabled: boolean;
 }
 
-export interface GitHubProvider {
+/**
+ * The platform-neutral provider port (#169): forge evidence and mutations
+ * for whichever platform the origin declares — implemented today by the
+ * gh adapter (`GhCliGitHubProvider`), the glab adapter (`GlabProvider`),
+ * and the per-call dispatcher (`PlatformRoutingProvider`). The historical
+ * name `GitHubProvider` contradicted the dual-platform reality; it stays
+ * importable as the compatibility alias below.
+ */
+export interface ForgeProvider {
   preflight(): Promise<Evidence<{ authenticated: boolean }>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
   /**
@@ -172,14 +180,14 @@ export interface GitHubProvider {
 }
 
 /**
- * Member inventory of `GitHubProvider`. The `satisfies Record<keyof
- * GitHubProvider, true>` check fails compilation when the port and this
+ * Member inventory of `ForgeProvider`. The `satisfies Record<keyof
+ * ForgeProvider, true>` check fails compilation when the port and this
  * inventory drift apart in either direction — a required member added to
  * the port must be reflected here, in every implementation (including the
- * future glab adapter), and in the compatibility policy in one delivery
+ * glab adapter), and in the compatibility policy in one delivery
  * (#80). Docs and contract tests read this list; there is no second copy.
  */
-const GITHUB_PROVIDER_MEMBER_FLAGS = {
+const FORGE_PROVIDER_MEMBER_FLAGS = {
   preflight: true,
   getIssue: true,
   getOpenIssueNumbers: true,
@@ -194,8 +202,26 @@ const GITHUB_PROVIDER_MEMBER_FLAGS = {
   enableBranchProtection: true,
   getRepoAutomerge: true,
   enableRepoAutomerge: true,
-} as const satisfies Record<keyof GitHubProvider, true>;
+} as const satisfies Record<keyof ForgeProvider, true>;
 
-export const GITHUB_PROVIDER_MEMBERS: readonly (keyof GitHubProvider)[] = Object.freeze(
-  Object.keys(GITHUB_PROVIDER_MEMBER_FLAGS) as Array<keyof GitHubProvider>
+export const FORGE_PROVIDER_MEMBERS: readonly (keyof ForgeProvider)[] = Object.freeze(
+  Object.keys(FORGE_PROVIDER_MEMBER_FLAGS) as Array<keyof ForgeProvider>
 );
+
+/**
+ * Compatibility alias of the pre-#169 port name (#169): external consumers
+ * importing `GitHubProvider` keep compiling unchanged. In-tree code uses
+ * `ForgeProvider`; removal follows the deprecation path in
+ * docs/providers.md.
+ *
+ * @deprecated Use {@link ForgeProvider}.
+ */
+export type GitHubProvider = ForgeProvider;
+
+/**
+ * Compatibility alias of the pre-#169 inventory name (#169): the exact
+ * same frozen list as {@link FORGE_PROVIDER_MEMBERS}, never a copy.
+ *
+ * @deprecated Use {@link FORGE_PROVIDER_MEMBERS}.
+ */
+export const GITHUB_PROVIDER_MEMBERS = FORGE_PROVIDER_MEMBERS;
