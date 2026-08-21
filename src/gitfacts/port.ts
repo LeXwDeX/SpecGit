@@ -96,15 +96,6 @@ export const GIT_PORT_MEMBERS: readonly (keyof GitPort)[] = Object.freeze(
   Object.keys(GIT_PORT_MEMBER_FLAGS) as Array<keyof GitPort>
 );
 
-export interface SpawnOptions {
-  timeoutMs?: number;
-  maxBuffer?: number;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-}
-
-export type SpawnFn = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => Promise<{ stdout: string; stderr: string }>;
+// The spawn contract lives once in the kernel (#185); this seam consumes
+// it and re-exports it for import-path stability.
+export type { SpawnFn, SpawnOptions } from '../kernel/spawn.js';
