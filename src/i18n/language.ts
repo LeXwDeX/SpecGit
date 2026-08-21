@@ -94,6 +94,7 @@ export interface HumanText {
   statusRepositoryUnresolved(): string;
   statusLiveBranch(branch: string): string;
   statusLiveBranchDetached(): string;
+  statusUnbound(): string;
   // setup
   setupTool(tool: string): string;
   setupInstalled(): string;
@@ -185,6 +186,8 @@ const EN_HUMAN: HumanText = {
   statusRepositoryUnresolved: () => 'Repository: (unresolved)',
   statusLiveBranch: (branch) => `Live branch: ${branch}`,
   statusLiveBranchDetached: () => 'Live branch: (detached)',
+  statusUnbound: () =>
+    'Not bound: no delivery record (.specgit.yaml) exists yet — the normal pre-binding state. Run "specgit issue" to start a delivery.',
   setupTool: (tool) => `Tool: ${tool}`,
   setupInstalled: () => 'Installed entry points:',
   initCreatedPolicy: (path) => `Created ${path}`,
@@ -237,6 +240,8 @@ const ZH_HUMAN: HumanText = {
   statusRepositoryUnresolved: () => '仓库：（未解析）',
   statusLiveBranch: (branch) => `当前分支：${branch}`,
   statusLiveBranchDetached: () => '当前分支：（分离头指针）',
+  statusUnbound: () =>
+    '尚未绑定：还没有交付记录（.specgit.yaml）——这是引导前的正常状态。运行 "specgit issue" 开始交付。',
   setupTool: (tool) => `工具：${tool}`,
   setupInstalled: () => '已安装入口：',
   initCreatedPolicy: (path) => `已创建 ${path}`,

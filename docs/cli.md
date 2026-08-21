@@ -26,7 +26,7 @@ Plus `--version` and `--help` (exit 0; usage errors exit 2).
 | `0` | Success / **accepted** (all gates passed with evidence) |
 | `1` | **Rejected** with complete evidence (all evidence gathered, ≥1 gate failed) |
 | `2` | Usage error (bad flags, invalid arguments) |
-| `3` | Fail-closed **unknown** — evidence could not be gathered: record/policy missing or invalid, provider missing or unauthenticated, transport failure, not a git repository |
+| `3` | Fail-closed **unknown** — evidence could not be gathered: record/policy missing or invalid, provider missing or unauthenticated, transport failure, not a git repository. One documented exception: `specgit status` reports a *missing* record as the healthy pre-binding state — exit `0` with state `unbound` (#175); only an *invalid* record fails closed there. |
 | `130` | **Interruption exception** — Ctrl-C (SIGINT) during an interactive prompt. The process prints `Interrupted.` to stderr and exits 130. |
 
 The distinction between `1` and `3` is contractual: `1` means the evidence was gathered and says no; `3` means no verdict is possible. Automation should treat them differently.
@@ -218,9 +218,19 @@ Normative exit table:
 | Condition | Exit |
 | --- | --- |
 | The status snapshot was computed (record present and valid) | `0` |
+| The record is missing (`record_missing`) — the normal **pre-binding** state before `specgit issue`; reported with state `unbound` and a warning pointing at the next step (#175) | `0` |
 | Usage error | `2` |
 | Not a git repository / git unavailable (`not_a_git_repo`, `git_unavailable`) | `3` |
-| Record missing (`record_missing`; reported with state `unbound`) or invalid (`record_invalid`) | `3` |
+| Record invalid (`record_invalid`) | `3` |
+
+The pre-binding split (#175): a missing record is a fully determinable,
+healthy state — "no delivery bound yet" — so `status` answers it with exit
+`0`, envelope `status: "ok"`, `state: "unbound"`, a failing `record` gate
+(`record_missing`), and a warning carrying the fix (run `specgit issue`).
+Genuine evidence failures — `record_invalid`, `policy_missing`,
+`policy_invalid`, `git_unavailable`, `not_a_git_repo` — still fail closed
+with exit `3` and envelope `status: "unknown"`, so the pre-binding case and
+a true unknown stay distinguishable on both the exit code and the state.
 
 Policy and context problems discovered along the way (`policy_missing`, `policy_invalid`, `branch_mismatch`, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
 
