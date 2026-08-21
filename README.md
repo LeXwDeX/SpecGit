@@ -189,13 +189,17 @@ the consumed version bump — the manual batch-decision point. Merging *that*
 PR lands `chore(release): v<version>` on `main`, which builds, verifies the
 packed version, and publishes to npm via **OIDC trusted publishing** (no
 long-lived token, no environment secret; provenance included), then tags
-`v<version>` and creates the GitHub Release. Each step is idempotent —
-decided by tag and npm existence — so replays never double-publish, and
-release candidates can be verified (dry-run publish, tarball inspection)
-without accidentally shipping the final version. Direct pushes to `main`
-are blocked by the pre-push guard, so **every published version traces to a
-merged PR**. Prerequisite (repo admin, once): an npm **trusted publisher**
-bound to this repository and the Release workflow's OIDC token.
+`v<version>` and creates the GitHub Release. The publish gate is registry
+evidence — no pending changesets and `package.json`'s version absent from npm
+— so the merge strategy never decides whether a release ships, and a failed
+publish can be retried from the workflow's manual dispatch. Each step is
+idempotent — decided by tag and npm existence — so replays never
+double-publish, and release candidates can be verified (dry-run publish,
+tarball inspection) without accidentally shipping the final version. Direct
+pushes to `main` are blocked by the pre-push guard, so **every published
+version traces to a merged PR**. Prerequisite (repo admin, once): an npm
+**trusted publisher** bound to this repository and the Release workflow's
+OIDC token.
 
 ## Documentation
 

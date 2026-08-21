@@ -84,6 +84,6 @@ Verdicts and delivery states are derived per invocation and never persisted.
 Releases are automatic, PR-gated, and OIDC-based ([release-prepare.yml](../.github/workflows/release-prepare.yml)):
 
 1. A feature/fix PR carries its changeset (`.changeset/*.md`); merging to `main` opens (or force-updates) the **version PR** `changeset-release/main` with the consumed bump.
-2. Merging the version PR lands `chore(release): v<version>` on `main`, which builds, verifies the packed version, and publishes to npm via **OIDC trusted publishing** (no token, no environment secret) with provenance.
+2. Merging the version PR lands `chore(release): v<version>` on `main`, which builds, verifies the packed version, and publishes to npm via **OIDC trusted publishing** (no token, no environment secret) with provenance. The publish gate is registry evidence — no pending changesets and `package.json`'s version absent from npm — not the head commit message, so the merge strategy cannot suppress a release; `workflow_dispatch` is the manual retry entry point.
 3. The tag `v<version>` and the GitHub Release follow; every step is idempotent, decided by tag/npm existence — a replay never double-publishes.
 4. Direct pushes to `main` are refused by the pre-push guard, so **every published version traces to a merged PR**. Release candidates are verified without accidental final publish via dry-runs (`npm publish --dry-run`, tarball inspection) and the tag-based idempotence above.
