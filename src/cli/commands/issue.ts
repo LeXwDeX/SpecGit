@@ -543,8 +543,11 @@ function validateResumeArgs(
  * any failure heals on the next invocation without re-creating. The
  * interim delivery/branch converge on the final derivation as the first
  * title argument is consumed.
+ *
+ * Exported for the #216 guard test: the function proves its own null-record
+ * precondition with an explicit runtime guard instead of a type assertion.
  */
-async function createOrAdoptIssues(deps: {
+export async function createOrAdoptIssues(deps: {
   ctx: CommandContext;
   root: string;
   repo: RepoRef;
@@ -638,7 +641,21 @@ async function createOrAdoptIssues(deps: {
     }
   }
 
-  return { record: record as DeliveryBinding, firstTitle };
+  // #216: the loop above assigns `record` on every iteration, so it stays
+  // null only when no iteration ran (no unconsumed arguments). runIssue's
+  // pre-validation makes that path unreachable in production — but this
+  // function proves the precondition explicitly instead of asserting it.
+  if (record === null) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic('issue_args_required', 'specgit issue needs at least one issue.', {
+          fix: 'Pass one or more quoted issue titles to create, or existing issue numbers to reuse, e.g. specgit issue "feat: add login".',
+        }),
+      ],
+    };
+  }
+  return { record, firstTitle };
 }
 
 /**

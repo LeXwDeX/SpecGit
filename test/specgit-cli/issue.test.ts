@@ -9,7 +9,9 @@ import type { DeliveryBinding } from '../../src/record/schema.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
 import type { PrSummary } from '../../src/github/port.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
-import { runIssue } from '../../src/cli/commands/issue.js';
+import { createOrAdoptIssues, runIssue } from '../../src/cli/commands/issue.js';
+import { EXIT_USAGE } from '../../src/cli/exit-codes.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import {
   makeCtx,
   makeGitFacts,
@@ -1139,5 +1141,35 @@ describe('specgit issue: complete-record argument drift (P1 regression)', () => 
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.issues).toEqual([11, 12]);
     expect(written?.pr).toBe(42);
+  });
+});
+
+describe('createOrAdoptIssues explicit null guard (#216)', () => {
+  it('fails closed with a usage diagnostic instead of casting a null record', async () => {
+    // Unreachable through runIssue (absent arguments are refused before
+    // the loop, and a resume always carries a live record) — but the
+    // function itself must prove it, not assert it. A null record with
+    // nothing consumed returns an error diagnostic, never a cast.
+    const t = makeCtx();
+    const repoEv = parseRepoRef('https://github.com/LeXwDeX/SpecGit.git');
+    if (!repoEv.ok) {
+      throw new Error('test setup: the GitHub origin must parse');
+    }
+    const outcome = await createOrAdoptIssues({
+      ctx: t.ctx,
+      root: '/repo',
+      repo: repoEv.value,
+      language: 'en',
+      context: { kind: 'branch', branch: 'feat/1-guard' },
+      record: null,
+      args: [],
+      startIndex: 0,
+      firstTitle: null,
+    });
+    expect('exit' in outcome).toBe(true);
+    if ('exit' in outcome) {
+      expect(outcome.exit).toBe(EXIT_USAGE);
+      expect(outcome.errors?.[0]?.code).toBe('issue_args_required');
+    }
   });
 });
