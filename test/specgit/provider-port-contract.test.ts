@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   GIT_PORT_MEMBERS,
+  FORGE_PROVIDER_MEMBERS,
   GITHUB_PROVIDER_MEMBERS,
   GhCliGitHubProvider,
   LocalGitAdapter,
@@ -34,7 +35,7 @@ function expectExposes(instance: object, members: readonly string[], label: stri
 describe('provider port contract (#80)', () => {
   it('exports the member inventories for both ports', () => {
     expect(Array.isArray(GIT_PORT_MEMBERS)).toBe(true);
-    expect(Array.isArray(GITHUB_PROVIDER_MEMBERS)).toBe(true);
+    expect(Array.isArray(FORGE_PROVIDER_MEMBERS)).toBe(true);
     expect([...GIT_PORT_MEMBERS].sort()).toEqual(
       [
         'checkoutOrCreateBranch',
@@ -46,7 +47,7 @@ describe('provider port contract (#80)', () => {
         'remoteDefaultBranch',
       ].sort()
     );
-    expect([...GITHUB_PROVIDER_MEMBERS].sort()).toEqual(
+    expect([...FORGE_PROVIDER_MEMBERS].sort()).toEqual(
       [
         'addIssueComment',
         'createDraftPr',
@@ -66,6 +67,15 @@ describe('provider port contract (#80)', () => {
     );
   });
 
+  it('the pre-#169 names stay importable as aliases of the neutral ones (#169)', () => {
+    // Same frozen list, never a copy: external consumers importing the
+    // historical `GITHUB_PROVIDER_MEMBERS` see exactly the neutral
+    // inventory, and the type alias keeps `GitHubProvider` assignable.
+    expect(GITHUB_PROVIDER_MEMBERS).toBe(FORGE_PROVIDER_MEMBERS);
+    const port = read('src', 'github', 'port.ts');
+    expect(port).toContain('export type GitHubProvider = ForgeProvider;');
+  });
+
   describe('every in-tree GitPort implementation exposes every GitPort member', () => {
     it('LocalGitAdapter', () => {
       expectExposes(new LocalGitAdapter(), GIT_PORT_MEMBERS, 'LocalGitAdapter');
@@ -75,13 +85,13 @@ describe('provider port contract (#80)', () => {
     });
   });
 
-  describe('every in-tree GitHubProvider implementation exposes every GitHubProvider member', () => {
+  describe('every in-tree ForgeProvider implementation exposes every ForgeProvider member (#169)', () => {
     it('GhCliGitHubProvider', () => {
-      expectExposes(new GhCliGitHubProvider(), GITHUB_PROVIDER_MEMBERS, 'GhCliGitHubProvider');
+      expectExposes(new GhCliGitHubProvider(), FORGE_PROVIDER_MEMBERS, 'GhCliGitHubProvider');
     });
     it('GlabProvider (#114)', async () => {
       const glab = await import('../../src/providers/gitlab/glab-cli.js');
-      expectExposes(new glab.GlabProvider(), GITHUB_PROVIDER_MEMBERS, 'GlabProvider');
+      expectExposes(new glab.GlabProvider(), FORGE_PROVIDER_MEMBERS, 'GlabProvider');
     });
     it('PlatformRoutingProvider (#117)', async () => {
       const routing = await import('../../src/providers/routing.js');
@@ -91,19 +101,19 @@ describe('provider port contract (#80)', () => {
           gitlab: async () => new GhCliGitHubProvider(),
           originPlatform: async () => 'github',
         }),
-        GITHUB_PROVIDER_MEMBERS,
+        FORGE_PROVIDER_MEMBERS,
         'PlatformRoutingProvider'
       );
     });
     it('MockGitHubProvider (test double)', () => {
       expectExposes(
         new MockGitHubProvider(),
-        GITHUB_PROVIDER_MEMBERS,
+        FORGE_PROVIDER_MEMBERS,
         'MockGitHubProvider (test double)'
       );
     });
     it('makeGhProvider (test double)', () => {
-      expectExposes(makeGhProvider(), GITHUB_PROVIDER_MEMBERS, 'makeGhProvider (test double)');
+      expectExposes(makeGhProvider(), FORGE_PROVIDER_MEMBERS, 'makeGhProvider (test double)');
     });
   });
 
@@ -116,7 +126,7 @@ describe('provider port contract (#80)', () => {
       const canonical = await import('../../src/providers/github/gh-cli.js');
       expectExposes(
         new canonical.GhCliGitHubProvider(),
-        GITHUB_PROVIDER_MEMBERS,
+        FORGE_PROVIDER_MEMBERS,
         'GhCliGitHubProvider (src/providers/github/gh-cli.ts)'
       );
     });
@@ -132,6 +142,27 @@ describe('provider port contract (#80)', () => {
       expect(legacyProtection.buildProtectionUpdateBody).toBe(
         canonicalProtection.buildProtectionUpdateBody
       );
+    });
+
+    it('the legacy alias modules are marked @deprecated toward their canonical home (#170)', () => {
+      // src/github keeps exactly two roles: the canonical port definition
+      // (port.ts) and deprecated alias modules for the adapter home under
+      // src/providers/github/. The aliases stay importable (referential
+      // equality pinned above) until their removal lands as its own
+      // delivery; until then every alias header names both facts.
+      const ghCliAlias = read('src', 'github', 'gh-cli.ts');
+      const protectionAlias = read('src', 'github', 'protection-merge.ts');
+      expect(ghCliAlias).toContain('@deprecated');
+      expect(ghCliAlias).toContain('src/providers/github/gh-cli.ts');
+      expect(protectionAlias).toContain('@deprecated');
+      expect(protectionAlias).toContain('src/providers/github/protection-merge.ts');
+    });
+
+    it('CONTRIBUTING.md states the canonical home and the alias removal intent (#170)', () => {
+      const contributing = read('CONTRIBUTING.md');
+      expect(contributing).toContain('src/providers/github/');
+      expect(contributing).toContain('src/github');
+      expect(contributing).toMatch(/deprecated/i);
     });
 
     it('the public API re-exports the canonical provider implementation', async () => {
@@ -159,8 +190,8 @@ describe('provider port contract (#80)', () => {
     };
 
     expect(sectionMembers(/^### GitPort /).sort()).toEqual([...GIT_PORT_MEMBERS].sort());
-    expect(sectionMembers(/^### GitHubProvider /).sort()).toEqual(
-      [...GITHUB_PROVIDER_MEMBERS].sort()
+    expect(sectionMembers(/^### ForgeProvider /).sort()).toEqual(
+      [...FORGE_PROVIDER_MEMBERS].sort()
     );
   });
 
@@ -174,13 +205,16 @@ describe('provider port contract (#80)', () => {
   it('the public API carries the full port vocabulary', () => {
     const api = read('src', 'index.ts');
     for (const name of [
-      'GitHubProvider',
+      'ForgeProvider',
       'GitPort',
       'GitWritePort',
       'BranchCheckout',
       'BranchProtectionFact',
       'RepoAutomergeFact',
       'GIT_PORT_MEMBERS',
+      'FORGE_PROVIDER_MEMBERS',
+      // The pre-#169 names remain exported as compatibility aliases (#169).
+      'GitHubProvider',
       'GITHUB_PROVIDER_MEMBERS',
     ]) {
       expect(api, `src/index.ts must export ${name}`).toMatch(new RegExp(`\\b${name}\\b`));

@@ -63,6 +63,27 @@ This repo dogfoods SpecGit — you will use it to change it:
   authenticated `gh` CLI; nothing logs credentials.
 - **Style:** ESLint is the arbiter; otherwise follow the surrounding code.
 
+## Provider module layout (#170)
+
+Two directories share the word "github" and each has exactly one role:
+
+- **`src/github/`** is the canonical home of the platform-neutral provider
+  port — `port.ts` defines `ForgeProvider` (#169) and its member inventory.
+  Its only other files, `gh-cli.ts` and `protection-merge.ts`, are
+  `@deprecated` alias modules that re-export the canonical GitHub adapter;
+  they never contain implementation.
+- **`src/providers/github/`** is the canonical home of the GitHub adapter
+  (`GhCliGitHubProvider`, #113), beside the glab adapter under
+  `src/providers/gitlab/` and the shared transport `cli-spawn.ts`.
+
+Migration intent: new code imports the adapter from
+`src/providers/github/`, never through the `src/github` aliases. The aliases
+stay importable — the contract test
+(`test/specgit/provider-port-contract.test.ts`) pins their referential
+equality and their `@deprecated` headers — until a dedicated delivery
+removes them, following the deprecation path in
+[docs/providers.md](docs/providers.md).
+
 ## Reporting bugs and security issues
 
 - Bugs and feature requests: use the issue templates

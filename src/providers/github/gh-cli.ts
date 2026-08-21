@@ -10,7 +10,7 @@ export type { SpawnFn, SpawnOptions } from '../cli-spawn.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
-  GitHubProvider,
+  ForgeProvider,
   IssueCreation,
   IssueCommentCreation,
   IssueFact,
@@ -83,7 +83,7 @@ type CallKind = 'issue' | 'pr' | 'checks' | 'search';
  * responses, no silent fallback. All failures are evidence — none of them
  * pass acceptance.
  */
-export class GhCliGitHubProvider implements GitHubProvider {
+export class GhCliGitHubProvider implements ForgeProvider {
   private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly timeoutMs: number;
   private readonly maxBuffer: number;
