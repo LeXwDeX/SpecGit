@@ -1,15 +1,8 @@
 version: 1
-delivery: remove-remaining-evidence
+delivery: add-v1-1
 context:
   kind: branch
-  branch: test/213-remove-remaining-evidence
+  branch: chore/222-add-v1-1
 issues:
-  - 213
-  - 214
-  - 215
-  - 216
-  - 217
-  - 218
-  - 219
-  - 220
-pr: 221
+  - 222
+pr: 223
