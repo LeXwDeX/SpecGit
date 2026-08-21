@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import {
   GIT_PORT_MEMBERS,
   FORGE_PROVIDER_MEMBERS,
+  FORGE_READ_PORT_MEMBERS,
+  FORGE_ADMIN_PORT_MEMBERS,
   GITHUB_PROVIDER_MEMBERS,
   GhCliGitHubProvider,
   LocalGitAdapter,
@@ -76,6 +78,58 @@ describe('provider port contract (#80)', () => {
     expect(port).toContain('export type GitHubProvider = ForgeProvider;');
   });
 
+  describe('the read/admin surface split (#180)', () => {
+    it('exports the two surface inventories that compose the port', () => {
+      expect(Array.isArray(FORGE_READ_PORT_MEMBERS)).toBe(true);
+      expect(Array.isArray(FORGE_ADMIN_PORT_MEMBERS)).toBe(true);
+      expect([...FORGE_READ_PORT_MEMBERS].sort()).toEqual(
+        [
+          'addIssueComment',
+          'createDraftPr',
+          'createIssue',
+          'getCheckRuns',
+          'getIssue',
+          'getOpenIssueNumbers',
+          'getOpenIssues',
+          'getPr',
+          'listOpenPrsByHead',
+          'preflight',
+        ].sort()
+      );
+      expect([...FORGE_ADMIN_PORT_MEMBERS].sort()).toEqual(
+        [
+          'enableBranchProtection',
+          'enableRepoAutomerge',
+          'getBranchProtection',
+          'getRepoAutomerge',
+        ].sort()
+      );
+    });
+
+    it('the surfaces are disjoint and compose exactly into ForgeProvider', () => {
+      const overlap = FORGE_READ_PORT_MEMBERS.filter((member) =>
+        FORGE_ADMIN_PORT_MEMBERS.includes(member as never)
+      );
+      expect(overlap).toEqual([]);
+      expect(
+        [...FORGE_READ_PORT_MEMBERS, ...FORGE_ADMIN_PORT_MEMBERS].sort()
+      ).toEqual([...FORGE_PROVIDER_MEMBERS].sort());
+    });
+
+    it('the port composes the two surfaces by declaration', () => {
+      const port = read('src', 'github', 'port.ts');
+      expect(port).toContain('export interface ForgeReadPort');
+      expect(port).toContain('export interface ForgeAdminPort');
+      expect(port).toContain('export interface ForgeProvider extends ForgeReadPort, ForgeAdminPort');
+    });
+
+    it('the surface inventories are frozen single-source lists', () => {
+      expect(Object.isFrozen(FORGE_READ_PORT_MEMBERS)).toBe(true);
+      expect(Object.isFrozen(FORGE_ADMIN_PORT_MEMBERS)).toBe(true);
+      expect(Object.isFrozen(FORGE_PROVIDER_MEMBERS)).toBe(true);
+    });
+  });
+
   describe('every in-tree GitPort implementation exposes every GitPort member', () => {
     it('LocalGitAdapter', () => {
       expectExposes(new LocalGitAdapter(), GIT_PORT_MEMBERS, 'LocalGitAdapter');
@@ -92,6 +146,28 @@ describe('provider port contract (#80)', () => {
     it('GlabProvider (#114)', async () => {
       const glab = await import('../../src/providers/gitlab/glab-cli.js');
       expectExposes(new glab.GlabProvider(), FORGE_PROVIDER_MEMBERS, 'GlabProvider');
+    });
+    it('every implementation exposes each surface separately (#180)', async () => {
+      const glab = await import('../../src/providers/gitlab/glab-cli.js');
+      const routing = await import('../../src/providers/routing.js');
+      const implementations: Array<[string, object]> = [
+        ['GhCliGitHubProvider', new GhCliGitHubProvider()],
+        ['GlabProvider', new glab.GlabProvider()],
+        [
+          'PlatformRoutingProvider',
+          new routing.PlatformRoutingProvider({
+            github: new GhCliGitHubProvider(),
+            gitlab: async () => new GhCliGitHubProvider(),
+            originPlatform: async () => 'github',
+          }),
+        ],
+        ['MockGitHubProvider (test double)', new MockGitHubProvider()],
+        ['makeGhProvider (test double)', makeGhProvider()],
+      ];
+      for (const [label, instance] of implementations) {
+        expectExposes(instance, FORGE_READ_PORT_MEMBERS, `${label} read surface`);
+        expectExposes(instance, FORGE_ADMIN_PORT_MEMBERS, `${label} admin surface`);
+      }
     });
     it('PlatformRoutingProvider (#117)', async () => {
       const routing = await import('../../src/providers/routing.js');
@@ -190,9 +266,17 @@ describe('provider port contract (#80)', () => {
     };
 
     expect(sectionMembers(/^### GitPort /).sort()).toEqual([...GIT_PORT_MEMBERS].sort());
-    expect(sectionMembers(/^### ForgeProvider /).sort()).toEqual(
-      [...FORGE_PROVIDER_MEMBERS].sort()
+    // #180: the policy documents the two surfaces that compose ForgeProvider.
+    expect(sectionMembers(/^### ForgeReadPort /).sort()).toEqual(
+      [...FORGE_READ_PORT_MEMBERS].sort()
     );
+    expect(sectionMembers(/^### ForgeAdminPort /).sort()).toEqual(
+      [...FORGE_ADMIN_PORT_MEMBERS].sort()
+    );
+    // The composed port keeps its own section, naming the composition.
+    expect(doc).toMatch(/^### ForgeProvider /m);
+    expect(doc).toContain('ForgeReadPort');
+    expect(doc).toContain('ForgeAdminPort');
   });
 
   it('the policy pins the optional-evidence fallback for IssueFact.title', () => {
@@ -206,6 +290,10 @@ describe('provider port contract (#80)', () => {
     const api = read('src', 'index.ts');
     for (const name of [
       'ForgeProvider',
+      // The #180 surfaces: the composed port documents its read and admin
+      // halves, each with its own compile-checked inventory.
+      'ForgeReadPort',
+      'ForgeAdminPort',
       'GitPort',
       'GitWritePort',
       'BranchCheckout',
@@ -213,6 +301,8 @@ describe('provider port contract (#80)', () => {
       'RepoAutomergeFact',
       'GIT_PORT_MEMBERS',
       'FORGE_PROVIDER_MEMBERS',
+      'FORGE_READ_PORT_MEMBERS',
+      'FORGE_ADMIN_PORT_MEMBERS',
       // The pre-#169 names remain exported as compatibility aliases (#169).
       'GitHubProvider',
       'GITHUB_PROVIDER_MEMBERS',

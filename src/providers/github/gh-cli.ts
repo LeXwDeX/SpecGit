@@ -81,7 +81,8 @@ type CallKind = 'issue' | 'pr' | 'checks' | 'search';
  * The only real GitHub transport: the `gh` CLI. Detection → auth → invoke;
  * array execFile args only, hard timeout, response size cap, JSON-only
  * responses, no silent fallback. All failures are evidence — none of them
- * pass acceptance.
+ * pass acceptance. Implements both port surfaces (#180): the read surface
+ * (`ForgeReadPort`) and the admin surface (`ForgeAdminPort`).
  */
 export class GhCliGitHubProvider implements ForgeProvider {
   private readonly env: NodeJS.ProcessEnv | undefined;

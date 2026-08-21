@@ -11,8 +11,11 @@ seam](reference.md#github-provider-seam)):
   `LocalGitAdapter` (`src/gitfacts/local.ts`).
 - **`ForgeProvider`** (`src/github/port.ts`) — platform-neutral forge
   evidence and mutations (#169; the pre-#169 name `GitHubProvider` stays
-  importable as a compatibility type alias), implemented for production by
-  `GhCliGitHubProvider`
+  importable as a compatibility type alias), composed since #180 of two
+  surfaces — the read surface `ForgeReadPort` (evidence collection and
+  delivery-lifecycle operations) and the admin surface `ForgeAdminPort`
+  (branch-protection and auto-merge administration) — implemented for
+  production by `GhCliGitHubProvider`
   (`src/providers/github/gh-cli.ts`, the per-platform adapter home since
   #113; `src/github/gh-cli.ts` remains a deprecated alias module) and by
   `GlabProvider` (`src/providers/gitlab/glab-cli.ts`, #114 — the
@@ -20,11 +23,14 @@ seam](reference.md#github-provider-seam)):
 
 The full port vocabulary is exported from the public API
 (`src/index.ts`), including the stable port names `GitPort` and
-`ForgeProvider` (the pre-#169 name `GitHubProvider` stays exported as a
+`ForgeProvider` plus its two #180 surfaces `ForgeReadPort` /
+`ForgeAdminPort` (the pre-#169 name `GitHubProvider` stays exported as a
 `@deprecated` compatibility alias), their auxiliary types (`GitWritePort`,
 `BranchCheckout`, `BranchProtectionFact`, `RepoAutomergeFact`), and the
-member inventories `GIT_PORT_MEMBERS` / `FORGE_PROVIDER_MEMBERS`
-(`GITHUB_PROVIDER_MEMBERS` remains as the deprecated alias of the latter).
+member inventories `GIT_PORT_MEMBERS` / `FORGE_PROVIDER_MEMBERS` with the
+surface inventories `FORGE_READ_PORT_MEMBERS` / `FORGE_ADMIN_PORT_MEMBERS`
+(`GITHUB_PROVIDER_MEMBERS` remains as the deprecated alias of
+`FORGE_PROVIDER_MEMBERS`).
 This document is the compatibility policy for how those ports evolve (#80).
 
 ## Port inventory
@@ -48,7 +54,7 @@ to those lists member-for-member: change a port, change this page.
 | `remoteDefaultBranch` | required | `origin/HEAD` for the PR base; falls back to `main`. |
 | `hooksPath` | required | The hooks directory git will actually use (linked-worktree and `core.hooksPath` aware) for guard installation. |
 
-### ForgeProvider (src/github/port.ts)
+### ForgeReadPort (src/github/port.ts)
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |
@@ -62,16 +68,29 @@ to those lists member-for-member: change a port, change this page.
 | `createDraftPr` | required | Bootstrap draft PR that closes every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
 | `addIssueComment` | required | Traceability edge issue→branch (#160): the bootstrap posts the delivery branch and PR on every bound issue when the PR binding is first established; `record.pr` is the exactly-once marker. |
+
+### ForgeAdminPort (src/github/port.ts)
+
+| Member | Kind | Evidence role |
+| --- | --- | --- |
 | `getBranchProtection` | required | Protection state and required checks for the guarded-merge story. |
 | `enableBranchProtection` | required | Turn on the required-check gate on the base branch. |
 | `getRepoAutomerge` | required | Repository auto-merge setting. |
 | `enableRepoAutomerge` | required | Turn on repository auto-merge. |
 
-Every port member is **required** today. There are no optional port
-members: each method feeds a gate or bootstrap decision that cannot
-proceed without an answer, and each returns an `Evidence` envelope so a
-runtime failure is classified evidence that fails closed — never a
-silent skip.
+### ForgeProvider (src/github/port.ts)
+
+`ForgeProvider` is the composition `ForgeReadPort & ForgeAdminPort`
+(#180): every in-tree implementation implements the composed port, and
+every member of both surfaces is **required** today. There are no
+optional port members: each method feeds a gate or bootstrap decision
+that cannot proceed without an answer, and each returns an `Evidence`
+envelope so a runtime failure is classified evidence that fails closed —
+never a silent skip. The split is the seam for partial platform support:
+a future platform whose gate paths never consume admin evidence can
+implement `ForgeReadPort` alone, without the branch-protection and
+auto-merge administration — today both shipped platforms (gh and glab)
+satisfy both surfaces, exactly as before the split.
 
 ## Required-versus-optional rules
 
