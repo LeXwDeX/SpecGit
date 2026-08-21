@@ -10,7 +10,7 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type BindOutcome } from '../output.js';
 import { coerceIssueRef, coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, mergeIssueNumbers } from '../../record/schema.js';
@@ -26,7 +26,7 @@ export interface BindOptions {
 export async function runBind(
   options: BindOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<BindOutcome> {
   const hasBindingFlag =
     (options.issue !== undefined && options.issue.length > 0) ||
     options.pr !== undefined ||

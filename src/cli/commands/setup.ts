@@ -4,7 +4,7 @@
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type SetupOutcome } from '../output.js';
 import type { CommandContext } from '../types.js';
 import {
   detectSetupTool,
@@ -23,7 +23,7 @@ const TOOLS: ReadonlySet<string> = new Set(['opencode', 'generic', 'all']);
 export async function runSetup(
   options: SetupOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<SetupOutcome> {
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return {

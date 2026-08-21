@@ -11,7 +11,7 @@ import {
   writeHarnessAssets,
   type HarnessWriteResult,
 } from '../harness-assets.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
@@ -40,7 +40,7 @@ export async function writeHarnessAndPolicy(args: {
   /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
   workflowYaml: string | null;
   warnings: Diagnostic[];
-}): Promise<CommandOutcome | HarnessAndPolicyWrite> {
+}): Promise<InitOutcome | HarnessAndPolicyWrite> {
   const { root, ctx, checks, language, workflowYaml, warnings } = args;
 
   const resolveHooksDir = async (repoRoot: string): Promise<string | null> => {
@@ -99,7 +99,7 @@ export function buildInitOutcome(args: {
   protection: ProtectionOutcome | undefined;
   protectionHuman: string[];
   text: HumanText;
-}): CommandOutcome {
+}): InitOutcome {
   const {
     checks,
     detected,

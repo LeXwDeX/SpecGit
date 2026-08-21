@@ -35,7 +35,7 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
-import { errorDiagnostic, sanitize, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, sanitize, type IssueOutcome } from '../output.js';
 import { commandLanguage, catalogFor } from '../language.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
@@ -161,7 +161,7 @@ function disambiguateAdoption(
   return { ambiguous: true };
 }
 
-function adoptionAmbiguousError(arg: string, candidates: OpenIssueFact[]): CommandOutcome {
+function adoptionAmbiguousError(arg: string, candidates: OpenIssueFact[]): IssueOutcome {
   const listing = candidates.map((c) => `  #${c.number} ${c.title ?? arg}`).join('\n');
   return {
     exit: EXIT_USAGE,
@@ -189,7 +189,7 @@ function recordSummary(record: DeliveryBinding): Record<string, unknown> {
 
 type FailureEvidence = Extract<Evidence<unknown>, { ok: false }>;
 
-function passthrough(failure: FailureEvidence): CommandOutcome {
+function passthrough(failure: FailureEvidence): IssueOutcome {
   return {
     exit: EXIT_UNKNOWN,
     errors: [
@@ -212,7 +212,7 @@ function firstTitleArg(prefix: string[]): string | null {
   return null;
 }
 
-function driftError(message: string): CommandOutcome {
+function driftError(message: string): IssueOutcome {
   return {
     exit: EXIT_USAGE,
     errors: [
@@ -223,7 +223,7 @@ function driftError(message: string): CommandOutcome {
   };
 }
 
-function recordWriteFailure(error: unknown): CommandOutcome {
+function recordWriteFailure(error: unknown): IssueOutcome {
   const message = error instanceof Error ? error.message : String(error);
   return {
     exit: EXIT_UNKNOWN,
@@ -236,7 +236,7 @@ function recordWriteFailure(error: unknown): CommandOutcome {
  * conventionally typed. Runs before any side effect so invalid arguments
  * can never delete a record or create an issue.
  */
-function validateArgsForCreation(args: string[]): CommandOutcome | null {
+function validateArgsForCreation(args: string[]): IssueOutcome | null {
   for (const arg of args) {
     if (!arg && parseNumericRef(arg) === null) {
       return {
@@ -262,7 +262,7 @@ function validateArgsForCreation(args: string[]): CommandOutcome | null {
 export async function runIssue(
   options: IssueOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<IssueOutcome> {
   const args = (options.titles ?? []).map((value) => value.trim());
 
   const rootEv = await ctx.discoverRoot(ctx.cwd);
@@ -444,7 +444,7 @@ async function resolveMergedRecord(
   ctx: CommandContext,
   repo: RepoRef,
   existing: Evidence<DeliveryBinding> | null
-): Promise<CommandOutcome | { existing: Evidence<DeliveryBinding> | null; merged: boolean }> {
+): Promise<IssueOutcome | { existing: Evidence<DeliveryBinding> | null; merged: boolean }> {
   if (existing === null || !existing.ok || existing.value.pr === undefined) {
     return { existing, merged: false };
   }
@@ -456,7 +456,7 @@ async function resolveMergedRecord(
 }
 
 /** The no-args refusal for a record whose PR already merged (#75). */
-function mergedDeliveryError(record: DeliveryBinding): CommandOutcome {
+function mergedDeliveryError(record: DeliveryBinding): IssueOutcome {
   return {
     exit: EXIT_USAGE,
     errors: [
@@ -481,7 +481,7 @@ function mergedDeliveryError(record: DeliveryBinding): CommandOutcome {
 function validateResumeArgs(
   record: DeliveryBinding,
   args: string[]
-): CommandOutcome | { startIndex: number; firstTitle: string | null } {
+): IssueOutcome | { startIndex: number; firstTitle: string | null } {
   const issues = [...record.issues];
   if (args.length === 0) {
     return { startIndex: issues.length, firstTitle: null };
@@ -554,7 +554,7 @@ async function createOrAdoptIssues(deps: {
   args: string[];
   startIndex: number;
   firstTitle: string | null;
-}): Promise<CommandOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
+}): Promise<IssueOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
   const { ctx, root, repo, language, context } = deps;
   const issues = deps.record !== null ? [...deps.record.issues] : [];
   let record: DeliveryBinding | null = deps.record;
@@ -658,7 +658,7 @@ async function bindPullRequest(deps: {
   record: DeliveryBinding;
   branch: string;
   firstTitle: string | null;
-}): Promise<CommandOutcome | { record: DeliveryBinding }> {
+}): Promise<IssueOutcome | { record: DeliveryBinding }> {
   const { ctx, root, repo, language, human, branch, firstTitle } = deps;
   let record = deps.record;
 

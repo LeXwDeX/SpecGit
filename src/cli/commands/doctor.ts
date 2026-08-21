@@ -7,7 +7,7 @@
 
 import { CODE_INFO, type SpecGitCode } from '../../acceptance/codes.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
-import { errorDiagnostic, type CommandOutcome, type ProbeResult } from '../output.js';
+import { errorDiagnostic, type DoctorOutcome, type ProbeResult } from '../output.js';
 import type { CommandContext } from '../types.js';
 
 export interface DoctorOptions {
@@ -28,7 +28,7 @@ function fixFor(code: string | undefined): string | undefined {
 export async function runDoctor(
   _options: DoctorOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<DoctorOutcome> {
   const probes: ProbeResult[] = [];
 
   const gitProbe = await ctx.probeGitBinary();

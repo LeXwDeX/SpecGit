@@ -38,7 +38,7 @@
  */
 
 import { EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import { catalogFor } from '../language.js';
 import type { CommandContext } from '../types.js';
@@ -69,7 +69,7 @@ async function runValidationPhase(
   ctx: CommandContext,
   root: string
 ): Promise<
-  | CommandOutcome
+  | InitOutcome
   | {
       declaredEndpoint: { host: string; port: string | null } | null;
       existingPolicy: Awaited<ReturnType<CommandContext['record']['readPolicy']>>;
@@ -107,7 +107,7 @@ async function runValidationPhase(
 export async function runInit(
   options: InitOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<InitOutcome> {
   // ---- Detection and input validation (#62: before any mutation). ----
   const resolved = await detectAndValidateChecks(options, ctx);
   if ('exit' in resolved) return resolved;
