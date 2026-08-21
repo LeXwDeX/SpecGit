@@ -7,7 +7,7 @@
  */
 
 import { EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { SPEC_GIT_DIR, type CommandContext } from '../types.js';
@@ -68,7 +68,7 @@ export function declaredEndpointName(host: string, port: string | null): string 
 
 /**
  * Validate an explicit --gitlab-host declaration WITHOUT writing
- * (#62: validation precedes every mutation). Returns a CommandOutcome on
+ * (#62: validation precedes every mutation). Returns an InitOutcome on
  * usage error, or the normalized declaration (host plus optional port)
  * to persist later. The declaration must match the origin endpoint:
  * same host, and the declared port (or scheme default when portless)
@@ -78,7 +78,7 @@ export async function validateGitlabHost(
   options: InitOptions,
   ctx: CommandContext,
   root: string
-): Promise<CommandOutcome | { host: string; port: string | null }> {
+): Promise<InitOutcome | { host: string; port: string | null }> {
   const raw = options.gitlabHost!.trim().toLowerCase();
   const facts = await ctx.git.facts(root).catch(() => null);
   const origin = facts?.originUrl ? originEndpoint(facts.originUrl) : null;

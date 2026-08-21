@@ -10,7 +10,7 @@
  */
 
 import { EXIT_UNKNOWN } from '../exit-codes.js';
-import { errorDiagnostic, sanitize, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, sanitize, type AcceptOutcome } from '../output.js';
 import { catalogFor, resolveLanguage } from '../language.js';
 import type { CommandContext, Evidence } from '../types.js';
 
@@ -21,7 +21,7 @@ export interface AcceptOptions {
 export async function runAccept(
   _options: AcceptOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<AcceptOutcome> {
   const root: Evidence<string> = await ctx.discoverRoot(ctx.cwd);
   if (!root.ok) {
     return {

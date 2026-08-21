@@ -66,24 +66,89 @@ export interface ProbeResult {
   detail?: string;
 }
 
-export interface CommandOutcome {
+/**
+ * Per-command outcome model (#179): every command declares exactly the
+ * envelope fields it emits as its own subtype; the base carries the fields
+ * common to all commands. `CommandOutcome` is the structural union the
+ * envelope builders consume — a command returning its own subtype can no
+ * longer set a field that does not belong to it.
+ */
+export interface OutcomeBase {
   exit: number;
-  state?: BindingState;
-  verdict?: Verdict;
-  gates?: GateResult[];
-  evidence?: Record<string, unknown>;
   errors?: Diagnostic[];
   warnings?: Diagnostic[];
-  record?: Record<string, unknown>;
-  policy?: Policy;
-  probes?: ProbeResult[];
-  detected?: Record<string, unknown>;
-  protection?: Record<string, unknown>;
-  platform?: Record<string, unknown>;
-  harness?: Record<string, unknown>;
-  assets?: Record<string, unknown>;
   human?: string[];
 }
+
+/** `specgit accept` / `specgit finish`: the verdict and its binding state. */
+export interface AcceptOutcome extends OutcomeBase {
+  state?: BindingState;
+  verdict?: Verdict;
+}
+
+/** `specgit finish` delegates to the accept evaluation; same shape. */
+export type FinishOutcome = AcceptOutcome;
+
+/** `specgit bind`: the written record plus the derived binding state. */
+export interface BindOutcome extends OutcomeBase {
+  state?: BindingState;
+  record?: Record<string, unknown>;
+}
+
+/** `specgit unbind`: the record is gone, the state is `unbound`. */
+export interface UnbindOutcome extends OutcomeBase {
+  state?: BindingState;
+}
+
+/** `specgit issue`: the bootstrapped record plus the derived binding state. */
+export interface IssueOutcome extends OutcomeBase {
+  state?: BindingState;
+  record?: Record<string, unknown>;
+}
+
+/** `specgit pr`: the repaired record plus the derived binding state. */
+export interface PrOutcome extends OutcomeBase {
+  state?: BindingState;
+  record?: Record<string, unknown>;
+}
+
+/** `specgit status`: local evidence — gates, context, the asset taxonomy. */
+export interface StatusOutcome extends OutcomeBase {
+  state?: BindingState;
+  gates?: GateResult[];
+  evidence?: Record<string, unknown>;
+  assets?: Record<string, unknown>;
+}
+
+/** `specgit doctor`: the environment probes and nothing else. */
+export interface DoctorOutcome extends OutcomeBase {
+  probes?: ProbeResult[];
+}
+
+/** `specgit setup`: the installed agent-surface asset set (#168). */
+export interface SetupOutcome extends OutcomeBase {
+  assets?: Record<string, unknown>;
+}
+
+/** `specgit init`: policy, harness, platform, detection, protection. */
+export interface InitOutcome extends OutcomeBase {
+  policy?: Policy;
+  harness?: Record<string, unknown>;
+  platform?: Record<string, unknown>;
+  protection?: Record<string, unknown>;
+  detected?: Record<string, unknown>;
+}
+
+export type CommandOutcome =
+  | AcceptOutcome
+  | BindOutcome
+  | UnbindOutcome
+  | IssueOutcome
+  | PrOutcome
+  | StatusOutcome
+  | DoctorOutcome
+  | SetupOutcome
+  | InitOutcome;
 
 export function buildEnvelope(
   command: string,
@@ -97,22 +162,23 @@ export function buildEnvelope(
     status: statusFromExit(outcome.exit),
     exit: outcome.exit,
   };
-  const optional: Array<[string, unknown]> = [
-    ['state', outcome.state],
-    ['verdict', outcome.verdict],
-    ['gates', outcome.gates],
-    ['evidence', outcome.evidence],
-    ['errors', outcome.errors],
-    ['warnings', outcome.warnings],
-    ['record', outcome.record],
-    ['policy', outcome.policy],
-    ['probes', outcome.probes],
-    ['detected', outcome.detected],
-    ['protection', outcome.protection],
-    ['platform', outcome.platform],
-    ['harness', outcome.harness],
-    ['assets', outcome.assets],
-  ];
+  // Optional fields are read through `in` narrowing (#179): each key exists
+  // only on the subtypes that emit it, and the envelope order matches the
+  // documented shape exactly.
+  const optional: Array<[string, unknown]> = [];
+  if ('state' in outcome) optional.push(['state', outcome.state]);
+  if ('verdict' in outcome) optional.push(['verdict', outcome.verdict]);
+  if ('gates' in outcome) optional.push(['gates', outcome.gates]);
+  if ('evidence' in outcome) optional.push(['evidence', outcome.evidence]);
+  optional.push(['errors', outcome.errors], ['warnings', outcome.warnings]);
+  if ('record' in outcome) optional.push(['record', outcome.record]);
+  if ('policy' in outcome) optional.push(['policy', outcome.policy]);
+  if ('probes' in outcome) optional.push(['probes', outcome.probes]);
+  if ('detected' in outcome) optional.push(['detected', outcome.detected]);
+  if ('protection' in outcome) optional.push(['protection', outcome.protection]);
+  if ('platform' in outcome) optional.push(['platform', outcome.platform]);
+  if ('harness' in outcome) optional.push(['harness', outcome.harness]);
+  if ('assets' in outcome) optional.push(['assets', outcome.assets]);
   for (const [key, value] of optional) {
     if (value !== undefined) {
       envelope[key] = value;

@@ -9,7 +9,7 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import { deriveBindingState } from '../gates.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type PrOutcome } from '../output.js';
 import { coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
@@ -23,7 +23,7 @@ function bindPr(record: DeliveryBinding, pr: number | string): DeliveryBinding {
   return { ...record, pr };
 }
 
-export async function runPr(options: PrOptions, ctx: CommandContext): Promise<CommandOutcome> {
+export async function runPr(options: PrOptions, ctx: CommandContext): Promise<PrOutcome> {
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return {
