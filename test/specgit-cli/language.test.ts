@@ -21,6 +21,7 @@ import { ok } from '../../src/kernel/evidence.js';
 import { parseClosingRefs } from '../../src/github/closing-refs.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
 import { slugifyTitle, runIssue } from '../../src/cli/commands/issue.js';
+import { catalogFor } from '../../src/i18n/language.js';
 import {
   BLOCK_END_MARKER,
   BLOCK_START_MARKER,
@@ -129,7 +130,7 @@ describe('#118 language: branch slug for non-ASCII titles', () => {
     const outcome = await runIssue({ titles: ['feat: 中文标题'] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(harness.createdPrs[0].head).toBe('feat/77-issue77');
-    expect(harness.createdIssues[0].body).toContain('## Why (required)');
+    expect(harness.createdIssues[0].body).toContain('## Why\n');
   });
 });
 
@@ -138,10 +139,10 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     const t = zhCtx();
     await runIssue({ titles: ['feat: 添加登录功能'] }, t.ctx);
     const body = t.harness.createdIssues[0].body;
-    expect(body).toContain('## 为什么（必填）');
+    expect(body).toContain('## 为什么\n');
     expect(body).toContain('feat: 添加登录功能');
-    expect(body).toContain('## 范围（选填）');
-    expect(body).toContain('## 验收（必填）');
+    expect(body).toContain('## 范围\n');
+    expect(body).toContain('## 验收\n');
     expect(body).toContain('`specgit finish`');
   });
 
@@ -149,7 +150,7 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     const harness: IssueHarness = { createdIssues: [], createdPrs: [] };
     const t = makeCtx({ policy: 'none', gh: issueGh(harness) });
     await runIssue({ titles: ['feat: add login'] }, t.ctx);
-    expect(harness.createdIssues[0].body).toContain('## Why (required)');
+    expect(harness.createdIssues[0].body).toContain('## Why\n');
   });
 
   it('renders the PR scaffold sections in the policy language', async () => {
@@ -284,6 +285,24 @@ describe('#118 language: the machine contract never localizes', () => {
     for (const run of runs) {
       expect(run.envelope.errors[0].code).toMatch(/^[\x20-\x7E]+$/);
       expect(run.envelope.errors[0].message).toMatch(/^[\x20-\x7E]+$/);
+    }
+  });
+
+  it('scaffolded issue headings carry no parenthesized required/optional markers, in every locale (#155)', () => {
+    // The markers are authoring meta-information with no machine semantics;
+    // kept in headings they leak verbatim into created issues (observed on
+    // #152) and get copied downstream by LLM authors. Pin: every scaffold
+    // heading, in every catalog, is marker-free.
+    for (const language of ['en', 'zh'] as const) {
+      const { scaffold } = catalogFor(language);
+      const headings = [
+        scaffold.issueWhy,
+        scaffold.issueScope,
+        scaffold.issueAcceptance,
+      ];
+      for (const heading of headings) {
+        expect(heading, `${language}: ${heading}`).toMatch(/^## [^(（]+$/);
+      }
     }
   });
 
