@@ -10,7 +10,7 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 
 | Dimension | v1 baseline |
 | --- | --- |
-| Hosted forge | **GitHub.com plus GitLab CE/Free self-managed** — the v1 scope is dual-platform per the version policy, and GitLab capability lands incrementally per the Phase-2 roadmap ([gitlab-support.md](gitlab-support.md)). Today origins parsing to `github.com` (HTTPS, SCP-style SSH, `ssh://`) are served through `gh`; a GitLab host declared in `spec_git/providers.yaml` fails closed with the dedicated `gitlab_unsupported` until the Phase-2 provider lands; everything else fails `origin_unresolvable`. |
+| Hosted forge | **GitHub.com plus GitLab CE/Free self-managed** — the v1 scope is dual-platform per the version policy; GitLab capability landed incrementally per the Phase-2 roadmap and is fully shipped since 1.0.0 ([gitlab-support.md](gitlab-support.md)). Origins parsing to `github.com` (HTTPS, SCP-style SSH, `ssh://`) are served through `gh`; a GitLab host declared in `spec_git/providers.yaml` is served through the `glab` provider (self-managed support window `>= 19.2.4 < 19.3.0`, CE/Free); everything else fails `origin_unresolvable`. |
 | GitHub access | Exclusively the authenticated `gh` CLI. No direct REST client, no stored or logged tokens. |
 | Git | Required; local facts come from the git binary (`src/gitfacts` seam). Linked worktrees and `core.hooksPath` setups are first-class. |
 | Runtime | Node.js ≥ 20.19 (the `specgit` CLI is an npm package). |
