@@ -27,7 +27,7 @@ troubleshooting at the end.
 
 **I want the exact schemas and gate table.** [Reference](reference.md) documents `.specgit.yaml`, `spec_git/policy.yaml`, the eleven gates, and every diagnostic code.
 
-**I'm implementing or extending a provider seam.** [Provider Ports](providers.md) is the port-compatibility policy: the `GitPort` and `ForgeProvider` inventories, required-versus-optional rules, the deprecation path, and the obligations for alternate providers (glab) and test doubles.
+**I'm implementing or extending a provider seam.** [Provider Ports](providers.md) is the port-compatibility policy: the `GitPort` and `ForgeProvider` inventories — `ForgeProvider` composed of the `ForgeReadPort` and `ForgeAdminPort` surfaces — required-versus-optional rules, the deprecation path, and the obligations for alternate providers (glab) and test doubles.
 
 **I want the versioned product contract.** [Product Baseline v1](baseline-v1.md) fixes the supported platforms, the ten commands, state and assets, compatibility, non-goals, and the deprecation policy.
 

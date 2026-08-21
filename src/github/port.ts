@@ -112,14 +112,14 @@ export interface RepoAutomergeFact {
 }
 
 /**
- * The platform-neutral provider port (#169): forge evidence and mutations
- * for whichever platform the origin declares — implemented today by the
- * gh adapter (`GhCliGitHubProvider`), the glab adapter (`GlabProvider`),
- * and the per-call dispatcher (`PlatformRoutingProvider`). The historical
- * name `GitHubProvider` contradicted the dual-platform reality; it stays
- * importable as the compatibility alias below.
+ * The read surface of the forge port (#180): evidence collection plus the
+ * delivery-lifecycle mutations (issues, pull requests, check runs,
+ * comments). This is the surface a platform needs to participate in
+ * evidence gathering and delivery bootstrap — repository administration
+ * lives on {@link ForgeAdminPort}, so a future platform whose gate paths
+ * never consume admin evidence can implement this surface alone.
  */
-export interface ForgeProvider {
+export interface ForgeReadPort {
   preflight(): Promise<Evidence<{ authenticated: boolean }>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
   /**
@@ -169,6 +169,16 @@ export interface ForgeProvider {
     issue: number,
     body: string
   ): Promise<Evidence<IssueCommentCreation>>;
+}
+
+/**
+ * The admin surface of the forge port (#180): repository administration —
+ * branch protection and auto-merge configuration, consumed by the
+ * guarded-merge story (`specgit init` / `doctor`). These members change
+ * repository settings rather than gather delivery evidence, which is why
+ * they live apart from {@link ForgeReadPort}.
+ */
+export interface ForgeAdminPort {
   getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>>;
   enableBranchProtection(
     repo: RepoRef,
@@ -180,14 +190,29 @@ export interface ForgeProvider {
 }
 
 /**
- * Member inventory of `ForgeProvider`. The `satisfies Record<keyof
- * ForgeProvider, true>` check fails compilation when the port and this
- * inventory drift apart in either direction — a required member added to
- * the port must be reflected here, in every implementation (including the
- * glab adapter), and in the compatibility policy in one delivery
- * (#80). Docs and contract tests read this list; there is no second copy.
+ * The platform-neutral provider port (#169): forge evidence and mutations
+ * for whichever platform the origin declares — implemented today by the
+ * gh adapter (`GhCliGitHubProvider`), the glab adapter (`GlabProvider`),
+ * and the per-call dispatcher (`PlatformRoutingProvider`). The historical
+ * name `GitHubProvider` contradicted the dual-platform reality; it stays
+ * importable as the compatibility alias below.
+ *
+ * Since #180 the port is the composition of two surfaces: the read
+ * surface ({@link ForgeReadPort}) and the admin surface
+ * ({@link ForgeAdminPort}). Every member is still required on both
+ * surfaces today — the split is the seam that lets a future platform
+ * implement the read surface alone once no gate in its path consumes
+ * admin evidence; the intersection type keeps every existing consumer
+ * (`implements ForgeProvider`) compiling unchanged.
  */
-const FORGE_PROVIDER_MEMBER_FLAGS = {
+export interface ForgeProvider extends ForgeReadPort, ForgeAdminPort {}
+
+/**
+ * Member inventory of `ForgeReadPort` (#180). The `satisfies
+ * Record<keyof ForgeReadPort, true>` check fails compilation when the
+ * read surface and this inventory drift apart in either direction.
+ */
+const FORGE_READ_PORT_MEMBER_FLAGS = {
   preflight: true,
   getIssue: true,
   getOpenIssueNumbers: true,
@@ -198,10 +223,41 @@ const FORGE_PROVIDER_MEMBER_FLAGS = {
   createDraftPr: true,
   listOpenPrsByHead: true,
   addIssueComment: true,
+} as const satisfies Record<keyof ForgeReadPort, true>;
+
+export const FORGE_READ_PORT_MEMBERS: readonly (keyof ForgeReadPort)[] = Object.freeze(
+  Object.keys(FORGE_READ_PORT_MEMBER_FLAGS) as Array<keyof ForgeReadPort>
+);
+
+/**
+ * Member inventory of `ForgeAdminPort` (#180). The `satisfies
+ * Record<keyof ForgeAdminPort, true>` check fails compilation when the
+ * admin surface and this inventory drift apart in either direction.
+ */
+const FORGE_ADMIN_PORT_MEMBER_FLAGS = {
   getBranchProtection: true,
   enableBranchProtection: true,
   getRepoAutomerge: true,
   enableRepoAutomerge: true,
+} as const satisfies Record<keyof ForgeAdminPort, true>;
+
+export const FORGE_ADMIN_PORT_MEMBERS: readonly (keyof ForgeAdminPort)[] = Object.freeze(
+  Object.keys(FORGE_ADMIN_PORT_MEMBER_FLAGS) as Array<keyof ForgeAdminPort>
+);
+
+/**
+ * Member inventory of the composed `ForgeProvider` (#180): derived from
+ * the two surface inventories, never a second copy — the `satisfies
+ * Record<keyof ForgeProvider, true>` check fails compilation when the
+ * port and this inventory drift apart in either direction, so a required
+ * member added to either surface must be reflected here, in every
+ * implementation (including the glab adapter), and in the compatibility
+ * policy in one delivery (#80). Docs and contract tests read this list;
+ * there is no second copy.
+ */
+const FORGE_PROVIDER_MEMBER_FLAGS = {
+  ...FORGE_READ_PORT_MEMBER_FLAGS,
+  ...FORGE_ADMIN_PORT_MEMBER_FLAGS,
 } as const satisfies Record<keyof ForgeProvider, true>;
 
 export const FORGE_PROVIDER_MEMBERS: readonly (keyof ForgeProvider)[] = Object.freeze(
