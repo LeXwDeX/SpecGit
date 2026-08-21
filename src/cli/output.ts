@@ -254,12 +254,12 @@ export function errorLine(message: string): string {
 }
 
 /**
- * Warning line for human summaries. Verbatim on purpose: these messages are
- * authored by SpecGit itself (init protection probes), and the diagnostic
- * warning surface in `finishOutcome` owns its own sanitizing render.
+ * Warning line for human summaries (#215): sanitized like `errorLine` —
+ * every formatter that interpolates runtime-sourced text goes through the
+ * same terminal guard, no exceptions by provenance.
  */
 export function warningLine(message: string): string {
-  return `Warning: ${message}`;
+  return `Warning: ${sanitize(message)}`;
 }
 
 /** One doctor probe line: `ok    <name> — <detail>` or `FAIL  <name> (<code>)`. */
@@ -269,9 +269,12 @@ export function probeLine(probe: ProbeResult): string {
     : `FAIL  ${probe.name}${probe.code ? ` (${probe.code})` : ''}`;
 }
 
-/** The status-surface gate failure: `Gate <id>: <code>[ — <fix>]`. */
+/**
+ * The status-surface gate failure: `Gate <id>: <code>[ — <fix>]` (#215:
+ * code and fix are runtime-sourced, so both pass the terminal guard).
+ */
 export function gateFailureLine(gateId: string, code: string, fix?: string): string {
-  return `Gate ${gateId}: ${code}${fix ? ` — ${fix}` : ''}`;
+  return `Gate ${gateId}: ${sanitize(code)}${fix ? ` — ${sanitize(fix)}` : ''}`;
 }
 
 /** The accept/finish-surface gate failure: `  <id>: <code>[ — <fix>]` (fix sanitized). */

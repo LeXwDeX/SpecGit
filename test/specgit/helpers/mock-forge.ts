@@ -1,3 +1,13 @@
+/**
+ * The platform-neutral forge test double (#169 naming, #219 rename).
+ *
+ * Implements `ForgeProvider` — the port both the gh and the glab
+ * adapters realize — so the same fixture-driven double can stand in for
+ * either delegate (see routing-provider.test.ts, where it plays both
+ * sides of the platform routing seam). The class name names the seam,
+ * not one platform.
+ */
+
 import { fail, ok, type Evidence } from '../../../src/kernel/evidence.js';
 import type { RepoRef } from '../../../src/gitfacts/origin.js';
 import type {
@@ -14,7 +24,7 @@ import type {
   RepoAutomergeFact,
 } from '../../../src/github/port.js';
 
-export interface MockGitHubFixtures {
+export interface MockForgeFixtures {
   preflight?: Evidence<{ authenticated: boolean }>;
   issues?: Record<number, Evidence<IssueFact>>;
   defaultIssue?: (n: number) => Evidence<IssueFact>;
@@ -36,10 +46,10 @@ function formatRepo(repo: RepoRef): string {
   return `${repo.owner}/${repo.repo}`;
 }
 
-export class MockGitHubProvider implements ForgeProvider {
+export class MockForgeProvider implements ForgeProvider {
   readonly calls: string[] = [];
 
-  constructor(private readonly fixtures: MockGitHubFixtures = {}) {}
+  constructor(private readonly fixtures: MockForgeFixtures = {}) {}
 
   async preflight(): Promise<Evidence<{ authenticated: boolean }>> {
     this.calls.push('preflight');

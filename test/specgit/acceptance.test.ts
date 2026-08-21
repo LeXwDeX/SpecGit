@@ -19,11 +19,11 @@ import {
   type Verdict,
 } from '../../src/acceptance/evaluate.js';
 import {
-  MockGitHubProvider,
+  MockForgeProvider,
   makeCheckRun,
   makeIssueFact,
   makePrFact,
-} from './helpers/mock-github.js';
+} from './helpers/mock-forge.js';
 import { createFakeGh, type FakeGhRule } from './helpers/fake-gh.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
@@ -110,7 +110,7 @@ function input(overrides: Partial<EvaluateInput> = {}): EvaluateInput {
     record: ok(binding()),
     policy: ok(POLICY),
     git: new StubGitPort(facts()),
-    gh: new MockGitHubProvider({
+    gh: new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     }),
@@ -140,7 +140,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('ordered_issues rejects when a smaller open issue exists (issue_out_of_order)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       issues: {
         122: ok(makeIssueFact({ number: 122, state: 'open' })),
         123: ok(makeIssueFact({ number: 123 })),
@@ -164,7 +164,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('ordered_issues passes when every smaller issue is closed', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       openIssueNumbers: ok([123, 200]),
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
@@ -180,7 +180,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('ordered_issues off (default) never queries open issues', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       openIssueNumbers: ok([1, 2, 3]),
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
@@ -194,7 +194,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('sequence gate degrades to unknown (exit 3) when the open-issue list is truncated (#120, I3b)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       openIssueNumbers: fail('evidence_truncated', 'GitHub reported incomplete search results.'),
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
@@ -213,7 +213,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('checks gate degrades to unknown (exit 3) when the check-run list is truncated (#120, I3b)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: fail('evidence_truncated', 'Check-run pagination hit its cap.'),
     });
@@ -226,7 +226,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('reports local_head_stale as a warning only, never a gate', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: 'c'.repeat(40) })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
@@ -240,7 +240,7 @@ describe('acceptance evaluator', () => {
     // is merged: completed history, not a mismatch — but only once local
     // HEAD is proven to contain the merged delivery (the merge commit).
     // The trailing gates run against the merged PR's evidence.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
@@ -253,7 +253,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('keeps branch_mismatch when the bound PR is open, not merged', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ state: 'open' })),
     });
     const verdict = await evaluate(
@@ -265,7 +265,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('keeps branch_mismatch when the provider cannot confirm the merge (fail-closed)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: fail('gh_transport', 'network down'),
     });
     const verdict = await evaluate(
@@ -283,7 +283,7 @@ describe('acceptance evaluator', () => {
     // anchor in local HEAD is the lineage proof.
 
     it('contains: historical acceptance only after proving the merge commit is contained by local HEAD', async () => {
-      const gh = new MockGitHubProvider({
+      const gh = new MockForgeProvider({
         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
         checkRuns: ok([makeCheckRun('All checks passed')]),
       });
@@ -305,7 +305,7 @@ describe('acceptance evaluator', () => {
     });
 
     it('does-not-contain: rejects when the merge commit is locally known but not in HEAD history', async () => {
-      const gh = new MockGitHubProvider({
+      const gh = new MockForgeProvider({
         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
         checkRuns: ok([makeCheckRun('All checks passed')]),
       });
@@ -324,7 +324,7 @@ describe('acceptance evaluator', () => {
     });
 
     it('unavailable evidence (local): fails closed to unknown when lineage cannot be resolved', async () => {
-      const gh = new MockGitHubProvider({
+      const gh = new MockForgeProvider({
         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
         checkRuns: ok([makeCheckRun('All checks passed')]),
       });
@@ -347,7 +347,7 @@ describe('acceptance evaluator', () => {
       // GitHub guarantees merge_commit_sha once merged; its absence is an
       // evidence gap. The PR head is definitionally absent from the base
       // under squash and rebase, so it can never anchor containment.
-      const gh = new MockGitHubProvider({
+      const gh = new MockForgeProvider({
         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: null, headSha: 'a'.repeat(40) })),
         checkRuns: ok([makeCheckRun('All checks passed')]),
       });
@@ -363,7 +363,7 @@ describe('acceptance evaluator', () => {
     });
 
     it('keeps evidence-kind passthrough when git itself is unavailable mid-lineage', async () => {
-      const gh = new MockGitHubProvider({
+      const gh = new MockForgeProvider({
         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
       });
       const git = new StubGitPort(facts({ branch: 'main' }), () =>
@@ -536,7 +536,7 @@ describe('acceptance evaluator', () => {
       name: 'gh_missing',
       input: () =>
         input({
-          gh: new MockGitHubProvider({ preflight: fail('gh_missing', 'gh not installed.') }),
+          gh: new MockForgeProvider({ preflight: fail('gh_missing', 'gh not installed.') }),
         }),
       gate: 'provider',
       code: 'gh_missing',
@@ -546,7 +546,7 @@ describe('acceptance evaluator', () => {
       name: 'gh_unauthenticated',
       input: () =>
         input({
-          gh: new MockGitHubProvider({ preflight: fail('gh_unauthenticated', 'Not logged in.') }),
+          gh: new MockForgeProvider({ preflight: fail('gh_unauthenticated', 'Not logged in.') }),
         }),
       gate: 'provider',
       code: 'gh_unauthenticated',
@@ -556,7 +556,7 @@ describe('acceptance evaluator', () => {
       name: 'gh_transport (preflight)',
       input: () =>
         input({
-          gh: new MockGitHubProvider({ preflight: fail('gh_transport', 'boom') }),
+          gh: new MockForgeProvider({ preflight: fail('gh_transport', 'boom') }),
         }),
       gate: 'provider',
       code: 'gh_transport',
@@ -566,7 +566,7 @@ describe('acceptance evaluator', () => {
       name: 'issue_not_found',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             issues: { 123: fail('issue_not_found', 'Issue #123 not found.') },
             pr: ok(makePrFact({ headSha: HEAD })),
             checkRuns: ok([makeCheckRun('All checks passed')]),
@@ -580,7 +580,7 @@ describe('acceptance evaluator', () => {
       name: 'issue_is_pull_request',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             issues: { 123: ok(makeIssueFact({ number: 123, pullRequest: true })) },
             pr: ok(makePrFact({ headSha: HEAD })),
             checkRuns: ok([makeCheckRun('All checks passed')]),
@@ -594,7 +594,7 @@ describe('acceptance evaluator', () => {
       name: 'gh_transport (issue lookup)',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             issues: { 123: fail('gh_transport', 'network down') },
           }),
         }),
@@ -606,7 +606,7 @@ describe('acceptance evaluator', () => {
       name: 'pr_not_found',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             pr: fail('pr_not_found', 'PR 42 not found.'),
             checkRuns: ok([makeCheckRun('All checks passed')]),
           }),
@@ -619,7 +619,7 @@ describe('acceptance evaluator', () => {
       name: 'pr_closed_unmerged',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             pr: ok(makePrFact({ state: 'closed', headSha: HEAD })),
             checkRuns: ok([makeCheckRun('All checks passed')]),
           }),
@@ -632,7 +632,7 @@ describe('acceptance evaluator', () => {
       name: 'pr_draft',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             pr: ok(makePrFact({ draft: true, headSha: HEAD })),
             checkRuns: ok([makeCheckRun('All checks passed')]),
           }),
@@ -645,7 +645,7 @@ describe('acceptance evaluator', () => {
       name: 'pr_head_mismatch',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             pr: ok(makePrFact({ headBranch: 'some-other-branch', headSha: HEAD })),
             checkRuns: ok([makeCheckRun('All checks passed')]),
           }),
@@ -659,7 +659,7 @@ describe('acceptance evaluator', () => {
       input: () =>
         input({
           record: ok(binding({ pr: 'https://github.com/other/repo/pull/42' })),
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             pr: ok(makePrFact({ headSha: HEAD })),
             checkRuns: ok([makeCheckRun('All checks passed')]),
           }),
@@ -672,7 +672,7 @@ describe('acceptance evaluator', () => {
       name: 'gh_transport (check runs)',
       input: () =>
         input({
-          gh: new MockGitHubProvider({
+          gh: new MockForgeProvider({
             pr: ok(makePrFact({ headSha: HEAD })),
             checkRuns: fail('gh_transport', 'network down'),
           }),
@@ -704,7 +704,7 @@ describe('acceptance evaluator', () => {
   // cannot match. This is the evaluator seam the production routing
   // provider feeds glab into.
   it('evaluates a declared GitLab origin through the provider with the GitLab closing dialect (#117)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(
         makePrFact({
           headBranch: 'feat/123-login',
@@ -735,7 +735,7 @@ describe('acceptance evaluator', () => {
   // the dialect follows the platform marker, and the GitHub grammar
   // does not know the gerund form — the mirror proof of the routing.
   it('a gerund closing form does not close a GitHub-grammar delivery (#117 mirror)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(
         makePrFact({
           headBranch: 'feat/123-login',
@@ -772,7 +772,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('closing_refs_incomplete lists exactly the missing issue numbers', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD, body: 'Closes #123' })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
@@ -788,7 +788,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('enumerates every failing required check name in one gate', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([
         makeCheckRun('Test', { status: 'in_progress', conclusion: null }),
@@ -815,7 +815,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('reports checks_failed with the failing conclusion', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure' })]),
     });
@@ -826,7 +826,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('presents checks_pending as transient and retryable while staying exit 1', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed', { status: 'in_progress', conclusion: null })]),
     });
@@ -843,7 +843,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('names the maintainer-approval path when a check concluded action_required', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'action_required' })]),
     });
@@ -862,7 +862,7 @@ describe('acceptance evaluator', () => {
     // Re-runs keep every same-name run in the Checks API. The truth run
     // is the latest by started_at (docs/reference.md, Checks G11): an
     // old green followed by a new red must fail, whatever the array order.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([
         makeCheckRun('All checks passed', {
@@ -889,7 +889,7 @@ describe('acceptance evaluator', () => {
     // First-match would read the stale red run and reject a delivery
     // whose latest evidence is green: position in the response is not
     // evidence, started_at is.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([
         makeCheckRun('All checks passed', {
@@ -913,7 +913,7 @@ describe('acceptance evaluator', () => {
     // The older run is completed green, the latest-by-started_at run is
     // in_progress: the honest verdict is pending (transient, retryable),
     // never acceptance on stale evidence.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([
         makeCheckRun('All checks passed', {
@@ -964,7 +964,7 @@ describe('acceptance evaluator', () => {
         }),
       ],
     ]) {
-      const gh = new MockGitHubProvider({
+      const gh = new MockForgeProvider({
         pr: ok(makePrFact({ headSha: HEAD })),
         checkRuns: ok(runs),
       });
@@ -979,7 +979,7 @@ describe('acceptance evaluator', () => {
     // pipeline green. The check-run fact still reports conclusion
     // 'failure' — evidence never lies — but the gate verdict follows
     // the pipeline: the run passes.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure', allowFailure: true })]),
     });
@@ -993,7 +993,7 @@ describe('acceptance evaluator', () => {
     // Row 17 covers exactly "failed but allowed to fail". A canceled
     // allow_failure run carries a different conclusion and fails the
     // gate like any other non-success.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'cancelled', allowFailure: true })]),
     });
@@ -1006,7 +1006,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('a hard failure without allowFailure still fails the gate (#116)', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure', allowFailure: false })]),
     });
@@ -1019,7 +1019,7 @@ describe('acceptance evaluator', () => {
     // The truth run is the latest same-name run; its own allowFailure
     // flag decides. An older allowed failure never launders a newer
     // hard failure of the same name.
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([
         makeCheckRun('All checks passed', {
@@ -1041,7 +1041,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('short-circuits in gate order G1 through G10', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
@@ -1055,7 +1055,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('stops calling the provider once a deterministic gate fails', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
@@ -1085,7 +1085,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('resolves a PR URL ref matching origin and queries by number', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
@@ -1097,7 +1097,7 @@ describe('acceptance evaluator', () => {
   });
 
   it('collects all failing issues within the issues gate', async () => {
-    const gh = new MockGitHubProvider({
+    const gh = new MockForgeProvider({
       issues: {
         123: fail('issue_not_found', 'Issue #123 not found.'),
         124: ok(makeIssueFact({ number: 124, pullRequest: true })),
