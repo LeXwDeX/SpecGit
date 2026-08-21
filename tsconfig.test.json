@@ -5,7 +5,9 @@
     "noEmit": true,
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "allowJs": true,
+    "checkJs": true
   },
   "include": ["src/**/*", "test/**/*", "vitest.setup.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist", "coverage"]
