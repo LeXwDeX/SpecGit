@@ -16,6 +16,26 @@ export interface FakeGlab {
   env(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 }
 
+/**
+ * GitLab's real method routing for the endpoints this double serves
+ * (#234). The double is a routing oracle, not just a request matcher: a
+ * call hitting a known path with an unrouted verb gets GitLab's shaped
+ * 404 instead of a rule match — the class of bug that let #229 (PATCH
+ * on the PUT-only edit-project endpoint) sail through CI. More specific
+ * patterns first; unmatched paths fall through to the scripted rules.
+ */
+const GITLAB_API_ROUTES: Array<{ pattern: string; methods: string[] }> = [
+  { pattern: '^projects/[^/]+/issues/\\d+/notes$', methods: ['POST'] },
+  { pattern: '^projects/[^/]+/issues/\\d+$', methods: ['GET'] },
+  { pattern: '^projects/[^/]+/issues$', methods: ['GET', 'POST'] },
+  { pattern: '^projects/[^/]+/merge_requests/[^/]+$', methods: ['GET'] },
+  { pattern: '^projects/[^/]+/merge_requests$', methods: ['GET', 'POST'] },
+  { pattern: '^projects/[^/]+/protected_branches/[^/]+$', methods: ['GET'] },
+  { pattern: '^projects/[^/]+/protected_branches$', methods: ['GET', 'POST'] },
+  { pattern: '^projects/[^/]+/pipelines(/.*)?$', methods: ['GET'] },
+  { pattern: '^projects/[^/]+$', methods: ['GET', 'PUT'] },
+];
+
 // Same scripted-recorder contract as fake-gh.ts, with glab's own env
 // names (FAKE_GLAB_CONFIG / SPECGIT_GLAB) so a scripted glab never
 // collides with a scripted gh in the same environment.
@@ -29,6 +49,7 @@ const readsStdin = inputIdx !== -1 && argv[inputIdx + 1] === '-';
 function finish(stdinText) {
   const record = readsStdin ? { args, stdin: stdinText } : { args };
   fs.appendFileSync(cfg.logPath, JSON.stringify(record) + '\\n');
+  checkRouting();
   const rule = cfg.rules.find((r) => new RegExp(r.match).test(args));
   if (!rule) {
     process.stderr.write('fake glab: no rule matched: ' + args);
@@ -65,6 +86,32 @@ if (readsStdin) {
 } else {
   finish('');
 }
+function checkRouting() {
+  if (argv[0] !== 'api') return;
+  let method = 'GET';
+  let endpoint = null;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '-X' || a === '--hostname' || a === '--input') {
+      if (a === '-X') method = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('-')) continue;
+    if (endpoint === null) endpoint = a;
+  }
+  if (endpoint === null) return;
+  const routePath = endpoint.split('?')[0];
+  for (const route of cfg.routes) {
+    if (!new RegExp(route.pattern).test(routePath)) continue;
+    if (route.methods.indexOf(method) === -1) {
+      process.stdout.write('{"error":"404 Not Found"}\\n');
+      process.stderr.write('glab: HTTP 404\\n');
+      process.exit(1);
+    }
+    return;
+  }
+}
 `;
 
 export function createFakeGlab(tempDir: string, rules: FakeGlabRule[]): FakeGlab {
@@ -72,7 +119,7 @@ export function createFakeGlab(tempDir: string, rules: FakeGlabRule[]): FakeGlab
   fs.mkdirSync(binDir, { recursive: true });
   const configPath = path.join(tempDir, 'fake-glab-config.json');
   const logPath = path.join(tempDir, 'fake-glab-calls.jsonl');
-  fs.writeFileSync(configPath, JSON.stringify({ rules, logPath }));
+  fs.writeFileSync(configPath, JSON.stringify({ rules, routes: GITLAB_API_ROUTES, logPath }));
 
   const recorderPath = path.join(binDir, 'fake-glab.cjs');
   fs.writeFileSync(recorderPath, `#!/usr/bin/env node\n${FAKE_GLAB_SCRIPT}`);
