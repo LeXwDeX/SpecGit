@@ -738,7 +738,7 @@ describe('GlabProvider#getCheckRuns', () => {
   it('chains pipelines-by-sha into per-pipeline jobs without include_retried (rows 15/16/17, #116)', async () => {
     const { provider, fake } = setup([
       {
-        match: `pipelines\\?sha=${SHA}&per_page=100&page=1$`,
+        match: `pipelines\\?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1$`,
         stdout: JSON.stringify([{ id: 29614, iid: 342, sha: SHA, ref: 'main', status: 'failed' }]),
       },
       {
@@ -765,7 +765,7 @@ describe('GlabProvider#getCheckRuns', () => {
     ]);
     const calls = readFakeGlabCalls(fake.logPath);
     expect(calls).toEqual([
-      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?sha=${SHA}&per_page=100&page=1`,
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1`,
       `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines/29614/jobs?per_page=100&page=1`,
     ]);
     for (const call of calls) {
@@ -781,7 +781,7 @@ describe('GlabProvider#getCheckRuns', () => {
     // `skipped` produces no check-run at all.
     const { provider } = setup([
       {
-        match: `pipelines\\?sha=${SHA}&per_page=100&page=1$`,
+        match: `pipelines\\?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1$`,
         stdout: JSON.stringify([{ id: 1, sha: SHA, ref: 'main', status: 'success' }]),
       },
       {
@@ -858,6 +858,64 @@ describe('GlabProvider#getCheckRuns', () => {
     ]);
     const result = await provider.getCheckRuns(REPO, SHA);
     expect(result).toEqual({ ok: true, value: [] });
+  });
+
+  it('bounds the pipeline listing: newest-first by updated_at, one bounded page (#187)', async () => {
+    // #187: the listing is bounded by recency — `order_by=updated_at`
+    // `sort=desc`, one page of limit + 1 — so the job pages fetched no
+    // longer scale with the sha's total pipeline history. Exactly one
+    // list call happens, and every listed pipeline contributes its jobs.
+    const pipelines = Array.from({ length: 10 }, (_, i) => ({
+      id: 100 + i,
+      sha: SHA,
+      status: 'success',
+      updated_at: `2026-08-20T1${i}:00:00Z`,
+    }));
+    const { provider, fake } = setup([
+      {
+        match: `pipelines\\?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1$`,
+        stdout: JSON.stringify(pipelines),
+      },
+      { match: 'pipelines/\\d+/jobs', stdout: JSON.stringify([
+        { id: 1, name: 'job', status: 'success', allow_failure: false, started_at: '2026-08-20T14:00:00Z' },
+      ]) },
+    ]);
+    const result = await provider.getCheckRuns(REPO, SHA);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(10);
+    const calls = readFakeGlabCalls(fake.logPath);
+    const listCalls = calls.filter((c) => c.includes(`pipelines?sha=${SHA}`));
+    expect(listCalls).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1`,
+    ]);
+    expect(calls.filter((c) => c.includes('/jobs'))).toHaveLength(10);
+  });
+
+  it('fails closed (evidence_truncated) when the sha has more pipelines than the fetch limit (#187)', async () => {
+    // Fail-closed completeness (#187): the bounded listing asks for
+    // limit + 1 — an overflow proves the pipeline set continues, and a
+    // silently partial job evidence set is never consumed: the verdict
+    // is unknown, never a pass.
+    const pipelines = Array.from({ length: 11 }, (_, i) => ({
+      id: 200 + i,
+      sha: SHA,
+      status: 'success',
+      updated_at: `2026-08-20T1${i % 10}:00:00Z`,
+    }));
+    const { provider, fake } = setup([
+      {
+        match: `pipelines\\?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1$`,
+        stdout: JSON.stringify(pipelines),
+      },
+      { match: 'pipelines/\\d+/jobs', stdout: '[]' },
+    ]);
+    const result = await provider.getCheckRuns(REPO, SHA);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+    // No job pages are fetched for a truncated pipeline set.
+    expect(readFakeGlabCalls(fake.logPath).filter((c) => c.includes('/jobs'))).toHaveLength(0);
   });
 
   it('rejects an invalid sha without invoking glab', async () => {

@@ -41,6 +41,14 @@ const DEFAULT_MAX_BUFFER = 4 * 1024 * 1024;
 const LIST_PAGE_SIZE = 100;
 /** Completeness guard: pagination beyond this cap fails closed. */
 const MAX_LIST_PAGES = 10;
+/**
+ * The checks-gate pipeline bound (#187): the newest pipelines by
+ * `updated_at` for the sha — job pages fetched no longer scale with the
+ * sha's total pipeline history. The listing asks for limit + 1 so an
+ * overflow proves the set continues and fails closed instead of reading
+ * a silently partial pipeline set.
+ */
+const PIPELINE_FETCH_LIMIT = 10;
 /** MR discovery window for PR repair — same bound as the gh adapter. */
 const MR_LIST_LIMIT = 30;
 
@@ -342,7 +350,11 @@ export class GlabProvider implements ForgeProvider {
 
   /**
    * Pipelines for the sha, then per-pipeline jobs (the sha→pipelines→jobs
-   * chain, row 15). Retried jobs stay omitted (`include_retried` never
+   * chain, row 15). The pipeline listing is bounded by recency (#187):
+   * `order_by=updated_at`, `sort=desc`, one page of
+   * `PIPELINE_FETCH_LIMIT + 1` — an overflow fails closed
+   * (`evidence_truncated`), so the bound never turns missing evidence
+   * into a pass. Retried jobs stay omitted (`include_retried` never
    * passed, row 16) so latest-attempt semantics are native. The #116
    * mapping (ledger rows 16/17/26): final states complete the run —
    * success/'success', failed/'failure' with the platform
@@ -356,16 +368,23 @@ export class GlabProvider implements ForgeProvider {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
       return fail('glab_transport', 'Cannot query pipelines without a valid commit SHA.');
     }
-    const pipelinesEv = await this.paginateList(
-      (page) =>
-        `projects/${this.projectPath(repo)}/pipelines?sha=${sha}&per_page=${LIST_PAGE_SIZE}&page=${page}`,
-      'pipeline-list'
+    const listEv = await this.runApi(
+      `projects/${this.projectPath(repo)}/pipelines?sha=${sha}&order_by=updated_at&sort=desc&per_page=${PIPELINE_FETCH_LIMIT + 1}&page=1`
     );
-    if (!pipelinesEv.ok) {
-      return pipelinesEv;
+    if (!listEv.ok) {
+      return listEv;
+    }
+    if (!Array.isArray(listEv.value)) {
+      return fail('glab_transport', 'GitLab returned an unexpected pipeline-list payload.');
+    }
+    if (listEv.value.length > PIPELINE_FETCH_LIMIT) {
+      return fail(
+        'evidence_truncated',
+        `pipeline-list returned more than the ${PIPELINE_FETCH_LIMIT} most recent pipelines for this sha; the job evidence would be incomplete.`
+      );
     }
     const runs: CheckRunInfo[] = [];
-    for (const entry of pipelinesEv.value) {
+    for (const entry of listEv.value) {
       const pipelineId = (entry as { id?: unknown }).id;
       if (typeof pipelineId !== 'number') continue;
       const jobsEv = await this.paginateList(
