@@ -3,8 +3,8 @@
  * repository, from templates embedded in the CLI binary. Complements
  * `init` (which lays the harness); setup tailors per-tool triggers:
  *
- * - `opencode`  → `.opencode/command/specgit-{issue,finish}.md`
- * - `generic`   → `.agents/skills/specgit-{issue,finish}/SKILL.md`
+ * - `opencode`  → `.opencode/command/specgit-{issue,finish,doctor,pr,status}.md`
+ * - `generic`   → `.agents/skills/specgit-{issue,finish,doctor,pr,status}/SKILL.md`
  *   (portable SKILL.md frontmatter, discoverable by codex / pi-agent /
  *   cursor and any harness that scans skill directories)
  *
@@ -172,14 +172,223 @@ specgit finish --json
 - \`--json\` is the only parse surface.
 `;
 
+// #165: exit 3 is the one verdict outcome an agent cannot fix by editing
+// the delivery — the skill below installs the probe-driven repair loop.
+const DOCTOR_COMMAND = `---
+description: Diagnose the SpecGit environment probes and drive the exit-3 repair loop
+---
+
+# /specgit-doctor
+
+Thin trigger for the exit-3 diagnostic loop. The canonical behavior lives in
+the AGENTS.md SpecGit block; this command only launches it.
+
+## Steps
+
+1. Run from the repo root:
+
+   \`\`\`bash
+   specgit doctor --json
+   \`\`\`
+
+2. Read \`probes[]\`: every failing probe carries a \`code\` (git, repo,
+   origin, gh/glab presence and auth, policy).
+3. Fix exactly what the failing probe names, then re-run
+   \`specgit doctor --json\` until exit 0.
+4. Return to the verdict: \`specgit finish --json\`. Exit 3 is environment,
+   never delivery — do not edit the record or the policy to work around it.
+5. \`--json\` is the only parse surface.
+`;
+
+const PR_COMMAND = `---
+description: Repair the SpecGit PR binding — auto-discover by head branch or bind explicitly
+---
+
+# /specgit-pr
+
+Thin trigger for PR-binding repair. The canonical behavior lives in the
+AGENTS.md SpecGit block; this command only launches it.
+
+## Steps
+
+1. Run from the delivery branch:
+
+   \`\`\`bash
+   specgit pr --json
+   \`\`\`
+
+2. Branch on the result:
+   - \`exit 0\` → the record's PR binding is repaired; resume the delivery.
+   - \`pr_not_found\` → push the branch (re-running \`specgit issue\`
+     resumes the bootstrap), then rerun this command.
+   - \`pr_ambiguous\` → several open PRs share the head branch; bind one
+     explicitly: \`specgit pr <number>\`.
+3. \`specgit pr\` owns the PR binding; never hand-edit \`.specgit.yaml\`.
+   \`--json\` is the only parse surface.
+`;
+
+const STATUS_COMMAND = `---
+description: Show local SpecGit evidence — record, delivery state, drift, origin
+---
+
+# /specgit-status
+
+Thin trigger for local evidence. The canonical behavior lives in the
+AGENTS.md SpecGit block; this command only launches it.
+
+## Steps
+
+1. Run from the repo root:
+
+   \`\`\`bash
+   specgit status --json
+   \`\`\`
+
+2. Read \`state\` and \`record\` from the envelope: local evidence only —
+   record, drift, origin. Platform evidence (issues, PR, checks) belongs
+   to \`specgit finish\`.
+3. No record → bootstrap with \`specgit issue\`. On \`exit 3\` read
+   \`errors[].fix\`. Never hand-edit \`.specgit.yaml\`.
+`;
+
+const DOCTOR_SKILL = `---
+name: specgit-doctor
+description: Resolve a SpecGit exit 3 — run the doctor probes, apply each fix, re-run until the verdict can run again.
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+license: MIT
+metadata:
+  author: specgit
+---
+
+# specgit-doctor
+
+The exit-3 diagnostic loop. Exit code 3 means no verdict was possible — the
+environment, not the delivery, is broken. Retrying \`finish\` blindly will
+never pass; the probes tell you what to fix.
+
+## When to use
+
+\`specgit finish --json\` exited \`3\` (unknown). The \`errors[].code\` names
+the failing gate; the loop below resolves it.
+
+## Steps
+
+1. Run the probes from the repository root:
+
+   \`\`\`bash
+   specgit doctor --json
+   \`\`\`
+
+2. Read \`probes[]\`: each failing probe carries a \`code\` — git binary,
+   repository, origin, gh/glab presence and auth, policy.
+3. Apply the fix the failing probe names:
+   - \`git\` missing → install the git binary or fix PATH.
+   - \`repo\` → run from the repository root.
+   - \`no_origin\` / origin parse → configure a parseable origin remote.
+   - \`gh_missing\` / \`glab_missing\` → install the platform CLI.
+   - gh/glab auth → \`gh auth login\` (or \`glab auth login\`).
+   - \`policy\` missing → run \`specgit init\`.
+4. Re-run \`specgit doctor --json\` until exit 0.
+5. Return to the verdict: \`specgit finish --json\`.
+
+## Rules
+
+- Exit 3 is environment, never delivery: never edit the record or the
+  policy to work around a probe.
+- \`--json\` is the only parse surface — parse the envelope, never
+  human-readable lines.
+- Do not loop on \`finish\` itself; always go through the probes first.
+`;
+
+const PR_SKILL = `---
+name: specgit-pr
+description: Repair the SpecGit PR binding — auto-discover the pull request by head branch, or bind an explicit number.
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+license: MIT
+metadata:
+  author: specgit
+---
+
+# specgit-pr
+
+Repairs the record's PR binding without touching issues or the branch.
+
+## Usage
+
+\`\`\`bash
+specgit pr              # auto-discover the PR for this head branch
+specgit pr 123          # bind an explicit number (no platform round-trip)
+\`\`\`
+
+## Steps
+
+1. Run from the delivery branch:
+
+   \`\`\`bash
+   specgit pr --json
+   \`\`\`
+
+2. Branch on the result:
+   - \`exit 0\` → the binding is repaired; resume the delivery.
+   - \`pr_not_found\` → push the branch and re-run \`specgit issue\` to
+     resume the bootstrap, then rerun this command.
+   - \`pr_ambiguous\` → several open PRs share the head branch; bind one
+     explicitly: \`specgit pr <number>\`.
+
+## Rules
+
+- \`specgit pr\` owns the PR binding; never hand-edit \`.specgit.yaml\`.
+- \`--json\` is the only parse surface.
+`;
+
+const STATUS_SKILL = `---
+name: specgit-status
+description: Show local SpecGit evidence — record, delivery state, drift, origin — without contacting the platform.
+allowed-tools: Bash(specgit:*), Bash(git:*)
+license: MIT
+metadata:
+  author: specgit
+---
+
+# specgit-status
+
+Local evidence only: the record, the delivery state, drift, and the origin.
+Platform evidence (issues, PR, checks) belongs to \`specgit finish\`.
+
+## Usage
+
+\`\`\`bash
+specgit status --json
+\`\`\`
+
+## Steps
+
+1. Run from the repository root.
+2. Read \`state\` and \`record\` from the envelope: use them to see what is
+   bound and what drifted before touching anything.
+3. No record → bootstrap with \`specgit issue\`. On \`exit 3\` read
+   \`errors[].fix\`.
+
+## Rules
+
+- Never hand-edit \`.specgit.yaml\`; repairs go through the commands.
+- \`--json\` is the only parse surface.
+`;
+
 const OPENCODE_COMMANDS: Record<string, string> = {
   'specgit-issue.md': ISSUE_COMMAND,
   'specgit-finish.md': FINISH_COMMAND,
+  'specgit-doctor.md': DOCTOR_COMMAND,
+  'specgit-pr.md': PR_COMMAND,
+  'specgit-status.md': STATUS_COMMAND,
 };
 
 const GENERIC_SKILLS: Record<string, string> = {
   ['specgit-issue/SKILL.md']: ISSUE_SKILL,
   ['specgit-finish/SKILL.md']: FINISH_SKILL,
+  ['specgit-doctor/SKILL.md']: DOCTOR_SKILL,
+  ['specgit-pr/SKILL.md']: PR_SKILL,
+  ['specgit-status/SKILL.md']: STATUS_SKILL,
 };
 
 export interface SetupWriteResult {

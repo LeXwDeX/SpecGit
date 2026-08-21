@@ -38,8 +38,11 @@ describe('specgit setup', () => {
     gitInit(tempDir);
     const result = await writeAgentSurface(tempDir, 'generic');
     expect(result.installed.sort()).toEqual([
+      '.agents/skills/specgit-doctor/SKILL.md',
       '.agents/skills/specgit-finish/SKILL.md',
       '.agents/skills/specgit-issue/SKILL.md',
+      '.agents/skills/specgit-pr/SKILL.md',
+      '.agents/skills/specgit-status/SKILL.md',
     ]);
     const skill = fs.readFileSync(
       path.join(tempDir, '.agents', 'skills', 'specgit-issue', 'SKILL.md'),
@@ -53,8 +56,11 @@ describe('specgit setup', () => {
     gitInit(tempDir);
     const result = await writeAgentSurface(tempDir, 'opencode');
     expect(result.installed.sort()).toEqual([
+      '.opencode/command/specgit-doctor.md',
       '.opencode/command/specgit-finish.md',
       '.opencode/command/specgit-issue.md',
+      '.opencode/command/specgit-pr.md',
+      '.opencode/command/specgit-status.md',
     ]);
     const cmd = fs.readFileSync(
       path.join(tempDir, '.opencode', 'command', 'specgit-finish.md'),
@@ -63,12 +69,40 @@ describe('specgit setup', () => {
     expect(cmd).toContain('specgit finish --json');
   });
 
+  // #164: a broken binding or an unknown verdict must have an installed
+  // path — setup installs doctor, pr, and status alongside issue/finish.
+  it('installs doctor, pr, and status entry points on both surfaces', async () => {
+    gitInit(tempDir);
+    await writeAgentSurface(tempDir, 'all');
+    const doctorSkill = fs.readFileSync(
+      path.join(tempDir, '.agents', 'skills', 'specgit-doctor', 'SKILL.md'),
+      'utf-8'
+    );
+    expect(doctorSkill).toContain('name: specgit-doctor');
+    expect(doctorSkill).toContain('specgit doctor --json');
+    const doctorCmd = fs.readFileSync(
+      path.join(tempDir, '.opencode', 'command', 'specgit-doctor.md'),
+      'utf-8'
+    );
+    expect(doctorCmd).toContain('specgit doctor --json');
+    const prSkill = fs.readFileSync(
+      path.join(tempDir, '.agents', 'skills', 'specgit-pr', 'SKILL.md'),
+      'utf-8'
+    );
+    expect(prSkill).toContain('name: specgit-pr');
+    const statusCmd = fs.readFileSync(
+      path.join(tempDir, '.opencode', 'command', 'specgit-status.md'),
+      'utf-8'
+    );
+    expect(statusCmd).toContain('specgit status --json');
+  });
+
   it('installs both surfaces for all and is idempotent', async () => {
     gitInit(tempDir);
     const first = await writeAgentSurface(tempDir, 'all');
-    expect(first.installed).toHaveLength(4);
+    expect(first.installed).toHaveLength(10);
     const second = await writeAgentSurface(tempDir, 'all');
-    expect(second.installed).toHaveLength(4);
+    expect(second.installed).toHaveLength(10);
     const file = path.join(tempDir, '.opencode', 'command', 'specgit-issue.md');
     expect(fs.readFileSync(file, 'utf-8')).toEqual(fs.readFileSync(file, 'utf-8'));
   });
