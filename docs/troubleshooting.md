@@ -88,6 +88,12 @@ repository to use SpecGit today.
 
 No `.specgit.yaml` at the repository root. Bootstrap first: `specgit issue "<type>: <title>" <n>`.
 
+Since #175, `specgit status` treats this as the normal pre-binding state:
+exit `0` with state `unbound` and a warning carrying the fix — not the
+fail-closed exit `3`. Every other command (`finish`, `accept`, `pr`, …)
+still fails closed on it, because they cannot evaluate a delivery that has
+not been bound.
+
 ### `record_invalid`
 
 The record failed validation. Read the message — it names the field. Typical causes: `version` is not `1`; `delivery` is not kebab-case; `context.kind` is neither `branch` nor `worktree`; `issues` contains non-positive numbers; a worktree `label` is a local path. Fix the named field; `specgit bind` rewrites the file safely.

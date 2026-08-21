@@ -23,8 +23,9 @@ specgit status --json
 1. Run from the repository root.
 2. Read `state` and `record` from the envelope: use them to see what is
    bound and what drifted before touching anything.
-3. No record → bootstrap with `specgit issue`. On `exit 3` read
-   `errors[].fix`.
+3. No record is not an error: `state: "unbound"` with exit `0` is the normal
+   pre-binding state (#175) — bootstrap with `specgit issue`. On `exit 3` a
+   genuine evidence failure happened; read `errors[].fix`.
 
 ## Rules
 
