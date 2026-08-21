@@ -201,6 +201,20 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     expect(parseClosingRefs(zh).size).toBe(0);
     expect(parseClosingRefs(en).size).toBe(0);
   });
+
+  it('both languages carry the draft-to-ready fix path with verbatim commands (#163)', () => {
+    const en = managedPromptBlock('en');
+    const zh = managedPromptBlock('zh');
+    for (const block of [en, zh]) {
+      expect(block).toContain('pr_draft');
+      // Command literals are machine contract: never localized.
+      expect(block).toContain('gh pr ready');
+      expect(block).toContain('glab mr update');
+      expect(block).toContain('--ready');
+    }
+    // Still no closing references introduced by the guidance.
+    expect(parseClosingRefs(zh).size).toBe(0);
+  });
 });
 
 describe('#118 language: success-path human prose follows policy.language', () => {

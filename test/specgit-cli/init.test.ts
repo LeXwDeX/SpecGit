@@ -746,6 +746,25 @@ describe('specgit init harness generation', () => {
     expect(block.endsWith(BLOCK_END_MARKER)).toBe(true);
   });
 
+  // #163 (audit P-4): agents hitting `pr_draft` need the in-context recovery
+  // path — the block states a draft PR always fails and names the command
+  // that marks it ready, before the finish guidance in the delivery story.
+  it('states the draft-to-ready fix path before the finish guidance (#163)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const block = managedPromptBlock();
+    expect(block).toContain('pr_draft');
+    // Both platform commands are named so the fix is copy-pasteable.
+    expect(block).toContain('gh pr ready');
+    expect(block).toContain('glab mr update');
+    expect(block).toContain('--ready');
+    // The fix path lands before the finish guidance in the delivery story.
+    expect(block.indexOf('pr_draft')).toBeLessThan(block.indexOf('Finish with `specgit finish`'));
+    // The written AGENTS.md carries the same guidance.
+    expect(read(AGENTS_ABS(root))).toContain('gh pr ready');
+  });
+
   it('guides agents to search for similar open issues before creating one', async () => {
     const t = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
@@ -810,6 +829,9 @@ describe('specgit init harness generation', () => {
     expect(code).toBe(EXIT_SUCCESS);
     expect(read(WORKFLOW_ABS(root))).toBe(workflowAfterFirst);
     expect(read(AGENTS_ABS(root))).toBe(`${agentsAfterFirst.slice(0, agentsAfterFirst.indexOf(BLOCK_END_MARKER) + BLOCK_END_MARKER.length)}${markerTail}`);
+    // #163 anti-drift: the regenerated block carries the draft-to-ready
+    // fix path deterministically.
+    expect(read(AGENTS_ABS(root))).toContain('gh pr ready');
     expect(second.recordPort.policyWrites).toEqual([
       { root, policy: { version: 1, required_checks: ['Test'] } },
     ]);
