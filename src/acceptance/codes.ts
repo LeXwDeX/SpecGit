@@ -200,7 +200,7 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   pr_draft: {
     kind: 'factual',
     message: 'The bound pull request is still a draft.',
-    fix: 'Mark the pull request ready for review — a draft is not done.',
+    fix: 'Mark the pull request ready for review, then run "specgit accept" again: GitHub "gh pr ready <number>", GitLab "glab mr update <number> --ready". A draft is not done.',
   },
   pr_head_mismatch: {
     kind: 'factual',

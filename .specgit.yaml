@@ -1,8 +1,8 @@
 version: 1
-delivery: complete-the-traceability
+delivery: issue162
 context:
   kind: branch
-  branch: feat/160-complete-the-traceability
+  branch: feat/162-issue162
 issues:
-  - 160
-pr: 161
+  - 162
+pr: 191
