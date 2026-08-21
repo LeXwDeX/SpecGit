@@ -17,9 +17,11 @@ export default tseslint.config(
           ],
         },
       ],
-      // Disable rules that need broader cleanup - focus on critical issues only
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_' },
+      ],
       'no-empty': 'off',
       'prefer-const': 'off',
     },

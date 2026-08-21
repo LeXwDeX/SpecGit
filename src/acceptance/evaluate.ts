@@ -185,7 +185,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   const binding: DeliveryBinding | null = input.record.ok ? input.record.value : null;
   const policy: Policy | null = input.policy.ok ? input.policy.value : null;
 
-  const g1 = await runGate('record', () => {
+  const recordOk = await runGate('record', () => {
     if (!input.record.ok) {
       return [makeFailure(input.record.code)];
     }
@@ -195,8 +195,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     return [];
   });
 
-  const g2 =
-    g1 &&
+  const policyOk =
+    recordOk &&
     (await runGate('policy', () => {
       if (!policy) {
         return [makeFailure((input.policy as { ok: false; code: string }).code)];
@@ -204,8 +204,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return [];
     }));
 
-  const g3 =
-    g2 &&
+  const completenessOk =
+    policyOk &&
     (await runGate('completeness', () => {
       const failures: GateFailure[] = [];
       if (!binding || binding.issues.length === 0) {
@@ -219,8 +219,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
 
   const factsState: { value: GitFacts | null } = { value: null };
   let mergedRecord = false;
-  const g4 =
-    g3 &&
+  const contextOk =
+    completenessOk &&
     (await runGate('context', async () => {
       if (!input.root.ok) {
         return [makeFailure(input.root.code)];
@@ -308,8 +308,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     }));
 
   let repoRef: RepoRef | null = null;
-  const g5 =
-    g4 &&
+  const originOk =
+    contextOk &&
     (await runGate('origin', () => {
       const facts = factsState.value;
       if (!facts || facts.originUrl === null) {
@@ -320,7 +320,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
         input.gitlabHost !== undefined ? { gitlabHost: input.gitlabHost } : {}
       );
       if (!parsed.ok) {
-        // 88-6 (g5 folding): the origin gate reports the classification
+        // 88-6 (origin gate folding): the origin gate reports the classification
         // that was actually made — a GitLab origin fails as
         // gitlab_unsupported (factual, exit 1), never folded into
         // origin_unresolvable with GitHub-pointing advice.
@@ -339,9 +339,9 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     }));
 
   const gh = input.gh;
-  const ready = g5 && binding !== null && policy !== null && repoRef !== null;
+  const ready = originOk && binding !== null && policy !== null && repoRef !== null;
 
-  const g6 =
+  const providerOk =
     ready &&
     gh !== undefined &&
     (await runGate('provider', async () => {
@@ -352,8 +352,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return [];
     }));
 
-  const g7 =
-    g6 &&
+  const issuesOk =
+    providerOk &&
     (await runGate('issues', async () => {
       const failures: GateFailure[] = [];
       for (const issueNumber of binding!.issues) {
@@ -376,11 +376,11 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   const prState: { fact: PrFact | null } = { fact: null };
   const currentPrFact = (): PrFact | null => prState.fact;
 
-  // G7.5 sequencing: with ordered_issues on, no open issue may precede the
+  // Sequence gate: with ordered_issues on, no open issue may precede the
   // delivery's smallest bound issue — deliveries merge in ascending issue
   // order. Off (the default), the gate passes without any provider call so
   // the verdict stays complete.
-  const sequencingOn = g7 && policy !== null && policy.ordered_issues === true;
+  const sequencingOn = issuesOk && policy !== null && policy.ordered_issues === true;
   if (sequencingOn) {
     await runGate('sequence', async () => {
       const open = await gh!.getOpenIssueNumbers(repoRef!);
@@ -399,12 +399,12 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       }
       return [];
     });
-  } else if (g7) {
+  } else if (issuesOk) {
     results.set('sequence', []);
   }
 
-  const g8 =
-    g7 &&
+  const prOk =
+    issuesOk &&
     (await runGate('pr', async () => {
       let queryRef: number | string;
       const bound = binding!.pr!;
@@ -455,8 +455,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return failures;
     }));
 
-  const g9 =
-    g8 &&
+  const closingOk =
+    prOk &&
     (await runGate('closing', () => {
       // #115 (grammar parameterization): the dialect follows the origin's
       // platform marker (#112) — a GitLab-declared origin parses closing
@@ -471,11 +471,11 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return [];
     }));
 
-  const prFactValue = g8 ? currentPrFact() : null;
+  const prFactValue = prOk ? currentPrFact() : null;
   const factsValue = factsState.value;
 
   if (
-    g9 &&
+    closingOk &&
     factsValue !== null &&
     factsValue.headSha !== null &&
     prFactValue !== null &&
@@ -490,7 +490,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     });
   }
 
-  if (g9 && gh !== undefined) {
+  if (closingOk && gh !== undefined) {
     await runGate('checks', async () => {
       const runs = await gh.getCheckRuns(repoRef!, prFactValue!.headSha);
       if (!runs.ok) {
