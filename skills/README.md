@@ -20,5 +20,5 @@ ln -s "$PWD/skills/specgit-finish" ~/.agents/skills/specgit-finish
 
 The AGENTS.md block installed by `specgit init` remains the canonical
 behavior source; skills only provide discovery entry points and stay
-deliberately thin. A guided `specgit setup` installer is tracked in
-[#7](https://github.com/LeXwDeX/SpecGit/issues/7).
+deliberately thin. A guided `specgit setup` installer shipped with
+[#7](https://github.com/LeXwDeX/SpecGit/issues/7) (`--tool opencode | generic | all`).

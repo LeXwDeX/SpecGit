@@ -16,7 +16,7 @@ Normative rules for AI agents operating on a SpecGit project. Everything here is
 Corollaries:
 
 - Never declare completion from task lists, file states, test runs you performed yourself, or the record alone. Only the verdict counts.
-- Never edit `.specgit.yaml` or `spec_git/policy.yaml` to flip a failing verdict. Those files describe the delivery; the gates verify it against git and GitHub.
+- Never edit `.specgit.yaml` or `spec_git/policy.yaml` to flip a failing verdict. Those files describe the delivery; the gates verify it against git and the forge (GitHub or GitLab).
 - Treat exit `1` and exit `3` differently. Exit `1`: the evidence is complete — fix what the gates named. Exit `3`: evidence is missing — fix record, policy, git, or `gh` first (run `specgit doctor --json`).
 - A verdict is a fact about the moment it was computed. If the PR, checks, or branch change afterwards, re-run `finish` before relying on it.
 
@@ -42,5 +42,5 @@ Corollaries:
 
 - Do not run `finish`/`accept` and present exit `3` (`unknown`) as success or as "probably fine."
 - Do not modify git state to satisfy context gates while on the wrong branch without the user's explicit instruction (the fix is to check out the delivery branch).
-- Do not read, log, or pass around tokens. GitHub evidence flows through the user's existing `gh` session only.
+- Do not read, log, or pass around tokens. Forge evidence flows through the user's existing authenticated CLI session only - `gh` for GitHub, `glab` for a declared GitLab host.
 - Do not add `--required-check` entries unilaterally; the policy is the team's contract.
