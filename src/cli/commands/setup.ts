@@ -57,6 +57,12 @@ export async function runSetup(
     const result = await writeAgentSurface(root, tool);
     return {
       exit: EXIT_SUCCESS,
+      // #168: the installed asset set is structured data — expose it on the
+      // machine surface instead of leaving agents to scrape the prose.
+      assets: {
+        tool: result.tool,
+        installed: result.installed,
+      },
       human: [
         text.setupTool(result.tool),
         text.setupInstalled(),
