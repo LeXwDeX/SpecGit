@@ -217,7 +217,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return failures;
     }));
 
-  const factsState: { value: GitFacts | null } = { value: null };
+  let facts: GitFacts | null = null;
   let mergedRecord = false;
   const contextOk =
     completenessOk &&
@@ -225,27 +225,27 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       if (!input.root.ok) {
         return [makeFailure(input.root.code)];
       }
-      factsState.value = await input.git.facts(input.root.value);
-      const facts = factsState.value;
-      if (!facts.gitAvailable) {
+      facts = await input.git.facts(input.root.value);
+      const factsSnapshot = facts;
+      if (!factsSnapshot.gitAvailable) {
         return [makeFailure('git_unavailable')];
       }
-      if (!facts.repo) {
+      if (!factsSnapshot.repo) {
         return [makeFailure('not_a_git_repo')];
       }
-      if (facts.headSha === null) {
+      if (factsSnapshot.headSha === null) {
         return [makeFailure('no_commits')];
       }
 
-      evidence.branch = facts.branch;
-      evidence.headSha = facts.headSha;
-      evidence.dirty = facts.dirty;
-      evidence.upstreamDrift = facts.upstreamDrift;
+      evidence.branch = factsSnapshot.branch;
+      evidence.headSha = factsSnapshot.headSha;
+      evidence.dirty = factsSnapshot.dirty;
+      evidence.upstreamDrift = factsSnapshot.upstreamDrift;
 
-      if (facts.branch === null) {
+      if (factsSnapshot.branch === null) {
         return [makeFailure('detached_head')];
       }
-      if (facts.branch !== binding!.context.branch) {
+      if (factsSnapshot.branch !== binding!.context.branch) {
         // The record may belong to a delivery whose PR already merged —
         // running finish on main afterwards is then a completed history,
         // not a mismatch. Historical acceptance still requires proof that
@@ -255,7 +255,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
         // that one anchor in local HEAD is the lineage proof. A provider
         // failure keeps the fail-closed mismatch (never upgrades on
         // missing evidence), and unresolved lineage never turns green.
-        const repoForMerged = repoRefForMergedCheck(facts.originUrl, input.gitlabHost);
+        const repoForMerged = repoRefForMergedCheck(factsSnapshot.originUrl, input.gitlabHost);
         if (repoForMerged && binding!.pr !== undefined && input.gh) {
           const prEv = await input.gh.getPr(repoForMerged, binding!.pr);
           if (prEv.ok && prEv.value.state === 'merged') {
@@ -284,7 +284,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
               return [
                 makeFailure('merged_delivery_not_contained', {
                   mergeCommitSha,
-                  headSha: facts.headSha,
+                  headSha: factsSnapshot.headSha,
                 }),
               ];
             }
@@ -296,10 +296,10 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       }
       if (binding!.context.kind === 'worktree') {
         const expectedLabel = binding!.context.label;
-        if (facts.isLinkedWorktree !== true || facts.worktreeLabel !== expectedLabel) {
+        if (factsSnapshot.isLinkedWorktree !== true || factsSnapshot.worktreeLabel !== expectedLabel) {
           return [makeFailure('worktree_mismatch')];
         }
-        const entry = facts.worktrees.find((w) => w.label === expectedLabel);
+        const entry = factsSnapshot.worktrees.find((w) => w.label === expectedLabel);
         if (!entry || entry.branch !== binding!.context.branch) {
           return [makeFailure('worktree_mismatch')];
         }
@@ -311,7 +311,6 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   const originOk =
     contextOk &&
     (await runGate('origin', () => {
-      const facts = factsState.value;
       if (!facts || facts.originUrl === null) {
         return [makeFailure('no_origin')];
       }
@@ -373,8 +372,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return failures;
     }));
 
-  const prState: { fact: PrFact | null } = { fact: null };
-  const currentPrFact = (): PrFact | null => prState.fact;
+  let prFact: PrFact | null = null;
 
   // Sequence gate: with ordered_issues on, no open issue may precede the
   // delivery's smallest bound issue — deliveries merge in ascending issue
@@ -431,23 +429,24 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       if (!pr.ok) {
         return [makeFailure(pr.code === 'pr_not_found' ? 'pr_not_found' : pr.code, { pr: bound })];
       }
-      prState.fact = pr.value;
-      evidence.pr = pr.value.number;
-      evidence.prHead = pr.value.headSha || null;
+      prFact = pr.value;
+      const fact = pr.value;
+      evidence.pr = fact.number;
+      evidence.prHead = fact.headSha || null;
 
       const failures: GateFailure[] = [];
-      if (pr.value.state === 'closed') {
-        failures.push(makeFailure('pr_closed_unmerged', { pr: pr.value.number }));
+      if (fact.state === 'closed') {
+        failures.push(makeFailure('pr_closed_unmerged', { pr: fact.number }));
       }
       // A draft is a platform-level unmergeable state that never
       // auto-transitions: green checks over a draft are still not done.
-      if (pr.value.draft) {
-        failures.push(makeFailure('pr_draft', { pr: pr.value.number }));
+      if (fact.draft) {
+        failures.push(makeFailure('pr_draft', { pr: fact.number }));
       }
-      if (pr.value.headBranch !== binding!.context.branch) {
+      if (fact.headBranch !== binding!.context.branch) {
         failures.push(
           makeFailure('pr_head_mismatch', {
-            prHead: pr.value.headBranch,
+            prHead: fact.headBranch,
             boundBranch: binding!.context.branch,
           })
         );
@@ -463,7 +462,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       // references with GitLab's default pattern, everything else with the
       // GitHub grammar. Gate vocabulary is unchanged either way.
       const dialect = repoRef!.platform === 'gitlab' ? 'gitlab' : 'github';
-      const closed = parseClosingRefs(currentPrFact()!.body, dialect);
+      const closed = parseClosingRefs(prFact!.body, dialect);
       const missing = binding!.issues.filter((n) => !closed.has(n));
       if (missing.length > 0) {
         return [makeFailure('closing_refs_incomplete', { missing })];
@@ -471,8 +470,11 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       return [];
     }));
 
-  const prFactValue = prOk ? currentPrFact() : null;
-  const factsValue = factsState.value;
+  // The gate closures above assign `prFact` and `facts` when they run;
+  // control-flow analysis cannot see assignments inside nested functions,
+  // so these top-level reads widen back to the declared types by assertion.
+  const prFactValue = (prOk ? prFact : null) as PrFact | null;
+  const factsValue = facts as GitFacts | null;
 
   if (
     closingOk &&
