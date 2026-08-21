@@ -203,6 +203,9 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
 - 在交付过程中填写骨架各节。占位内容仅是建议——关闭引用是正文里唯一的
   门槛。PR 正文只在创建时写入一次；任何 SpecGit 命令都不会修改已存在的
   PR 正文，也从不读取仓库自己的 PR 模板。
+- 草稿拉取请求恒使裁决失败（\`pr_draft\`）：在 \`specgit finish\` 之前，
+  先把它标为可评审——GitHub 用 \`gh pr ready <number>\`，GitLab 用
+  \`glab mr update <number> --ready\`。
 - 用 \`specgit finish\` 收尾：裁决来自真实的 git、PR 与 CI 证据。退出码
   0 是唯一的"完成"。
 
@@ -265,6 +268,9 @@ already exists); keep manual guidance outside them.
   advisory — the closing references are the only body gate. The PR body
   is written once at creation; no SpecGit command edits an existing PR
   body, and the repository's own pull-request template is never read.
+- A draft pull request always fails the verdict (\`pr_draft\`): before
+  \`specgit finish\`, mark it ready for review — \`gh pr ready <number>\`
+  on GitHub, \`glab mr update <number> --ready\` on GitLab.
 - Finish with \`specgit finish\`: the verdict, derived from real git, PR,
   and CI evidence. Exit code 0 is the only "done".
 

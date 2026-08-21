@@ -92,6 +92,9 @@ already exists); keep manual guidance outside them.
   advisory — the closing references are the only body gate. The PR body
   is written once at creation; no SpecGit command edits an existing PR
   body, and the repository's own pull-request template is never read.
+- A draft pull request always fails the verdict (`pr_draft`): before
+  `specgit finish`, mark it ready for review — `gh pr ready <number>`
+  on GitHub, `glab mr update <number> --ready` on GitLab.
 - Finish with `specgit finish`: the verdict, derived from real git, PR,
   and CI evidence. Exit code 0 is the only "done".
 
