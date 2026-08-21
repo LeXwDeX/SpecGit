@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { CODE_INFO } from '../../src/acceptance/codes.js';
 import { runPr } from '../../src/cli/commands/pr.js';
 import {
   makeCtx,
@@ -53,6 +54,16 @@ describe('specgit pr: auto-discovery', () => {
     expect(outcome.errors?.[0]?.code).toBe('pr_not_found');
     expect(outcome.errors?.[0]?.fix).toBeTruthy();
     expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('zero candidates sources its fix verbatim from the code catalogue', async () => {
+    const t = prCtx({ gh: { listOpenPrsByHead: () => prList([]) } });
+    const outcome = await runPr({}, t.ctx);
+
+    const catalogFix = CODE_INFO.pr_not_found.fix;
+    expect(catalogFix).toBeTruthy();
+    expect(outcome.errors?.[0]?.fix).toBe(catalogFix);
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr');
   });
 
   it('multiple candidates refuses and lists them', async () => {
