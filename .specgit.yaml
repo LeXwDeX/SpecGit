@@ -1,8 +1,8 @@
 version: 1
-delivery: issue118
+delivery: archive-the-1
 context:
   kind: branch
-  branch: feat/118-issue118
+  branch: docs/150-archive-the-1
 issues:
-  - 118
-pr: 147
+  - 150
+pr: 151
