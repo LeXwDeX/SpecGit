@@ -4,7 +4,7 @@ import {
   formatRepoRef,
   parsePrUrl,
   parseRepoRef,
-
+  type RepoRef,
   sameRepoRef,
 } from '../../src/gitfacts/origin.js';
 
@@ -27,7 +27,9 @@ describe('parseRepoRef', () => {
     const result = parseRepoRef(url);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toEqual(expected);
+    // #186: github refs carry the explicit platform marker — the parse
+    // layer always fills it, so routing can match exhaustively.
+    expect(result.value).toEqual({ ...expected, platform: 'github' });
   });
 
   const badCases = [
@@ -106,12 +108,38 @@ describe('parseRepoRef', () => {
   });
 
   it('compares repo refs case-insensitively', () => {
-    expect(sameRepoRef({ owner: 'LeXwDeX', repo: 'SpecGit' }, { owner: 'lexwdex', repo: 'specgit' })).toBe(true);
-    expect(sameRepoRef({ owner: 'a', repo: 'b' }, { owner: 'a', repo: 'c' })).toBe(false);
+    expect(
+      sameRepoRef(
+        { owner: 'LeXwDeX', repo: 'SpecGit', platform: 'github' },
+        { owner: 'lexwdex', repo: 'specgit', platform: 'github' }
+      )
+    ).toBe(true);
+    expect(
+      sameRepoRef(
+        { owner: 'a', repo: 'b', platform: 'github' },
+        { owner: 'a', repo: 'c', platform: 'github' }
+      )
+    ).toBe(false);
   });
 
   it('formats owner/repo', () => {
-    expect(formatRepoRef({ owner: 'o', repo: 'r' })).toBe('o/r');
+    expect(formatRepoRef({ owner: 'o', repo: 'r', platform: 'github' })).toBe('o/r');
+  });
+
+  // #186: compile-time lock — `platform` is a REQUIRED union of the
+  // supported platforms. Either regression (an optional field or a
+  // narrowed/widened union) fails the typecheck, not just the suite.
+  it('RepoRef.platform is a required union of the supported platforms (#186)', () => {
+    type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+      ? true
+      : false;
+    const requiredCheck: Same<Required<RepoRef>, RepoRef> = true;
+    const unionCheck: Same<RepoRef['platform'], 'github' | 'gitlab'> = true;
+    expect(requiredCheck && unionCheck).toBe(true);
+    const github: RepoRef = { owner: 'o', repo: 'r', platform: 'github' };
+    const gitlab: RepoRef = { owner: 'o', repo: 'r', platform: 'gitlab' };
+    expect(github.platform).toBe('github');
+    expect(gitlab.platform).toBe('gitlab');
   });
 });
 
@@ -410,12 +438,13 @@ describe('parseRepoRef — nested-group acceptance on declared hosts (#112)', ()
     unresolvable('git@git.undeclared.com:g%2Fs%2Fp.git', declared);
   });
 
-  it('github keeps the pinned grammar: no nested paths, no %2F decoding, no platform field', () => {
+  it('github keeps the pinned grammar: no nested paths, no %2F decoding, explicit github marker', () => {
     unresolvable('https://github.com/g/sg/p.git');
     unresolvable('https://github.com/o%2Fr.git');
     const plain = parseRepoRef('https://github.com/o/r');
     expect(plain.ok).toBe(true);
-    if (plain.ok) expect(plain.value.platform).toBeUndefined();
+    // #186: github refs carry the marker explicitly — never undefined.
+    if (plain.ok) expect(plain.value.platform).toBe('github');
   });
 
   it('the spoof corpus stays closed on the declared nested grammar', () => {
@@ -536,11 +565,11 @@ describe('parseRepoRef — structural host classification (security hardening)',
   it('pins the widened shapes: default https port and normalized host case', () => {
     const r443 = parseRepoRef('https://github.com:443/o/r');
     expect(r443.ok).toBe(true);
-    if (r443.ok) expect(r443.value).toEqual({ owner: 'o', repo: 'r' });
+    if (r443.ok) expect(r443.value).toEqual({ owner: 'o', repo: 'r', platform: 'github' });
 
     const mixedCase = parseRepoRef('git@GitHub.com:o/r');
     expect(mixedCase.ok).toBe(true);
-    if (mixedCase.ok) expect(mixedCase.value).toEqual({ owner: 'o', repo: 'r' });
+    if (mixedCase.ok) expect(mixedCase.value).toEqual({ owner: 'o', repo: 'r', platform: 'github' });
 
     const upperSsh = parseRepoRef('SSH://Git@GitHub.COM/o/r');
     expect(upperSsh.ok).toBe(true);
@@ -568,11 +597,11 @@ describe('parseRepoRef — structural host classification (security hardening)',
   it('pins .git suffix handling', () => {
     const doubled = parseRepoRef('https://github.com/o/r.git.git');
     expect(doubled.ok).toBe(true);
-    if (doubled.ok) expect(doubled.value).toEqual({ owner: 'o', repo: 'r.git' });
+    if (doubled.ok) expect(doubled.value).toEqual({ owner: 'o', repo: 'r.git', platform: 'github' });
 
     const bare = parseRepoRef('https://github.com/o/.git');
     expect(bare.ok).toBe(true);
-    if (bare.ok) expect(bare.value).toEqual({ owner: 'o', repo: '.git' });
+    if (bare.ok) expect(bare.value).toEqual({ owner: 'o', repo: '.git', platform: 'github' });
   });
 
   it('pins declared-host matching: exact, user-tolerant, spoof-proof (#112 resolves)', () => {
@@ -592,7 +621,7 @@ describe('parseRepoRef — structural host classification (security hardening)',
     // a declared host never captures the github.com exact match
     const githubWins = parseRepoRef('git@github.com:o/r', { gitlabHost: 'git.ycgame.com' });
     expect(githubWins.ok).toBe(true);
-    if (githubWins.ok) expect(githubWins.value.platform).toBeUndefined();
+    if (githubWins.ok) expect(githubWins.value.platform).toBe('github');
   });
 
   it('rejects oversized origins before any parsing', () => {
@@ -650,7 +679,7 @@ describe('parsePrUrl', () => {
     const result = parsePrUrl('https://github.com/LeXwDeX/SpecGit/pull/42');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.repo).toEqual({ owner: 'LeXwDeX', repo: 'SpecGit' });
+    expect(result.value.repo).toEqual({ owner: 'LeXwDeX', repo: 'SpecGit', platform: 'github' });
     expect(result.value.pr).toBe(42);
   });
 

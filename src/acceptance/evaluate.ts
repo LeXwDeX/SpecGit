@@ -101,7 +101,7 @@ function isEvidenceKind(code: string): boolean {
   return (CODE_INFO[code as SpecGitCode]?.kind ?? 'evidence') === 'evidence';
 }
 
-function repoRefForMergedCheck(originUrl: string | null, gitlabHost?: string): { owner: string; repo: string } | null {
+function repoRefForMergedCheck(originUrl: string | null, gitlabHost?: string): RepoRef | null {
   if (!originUrl) return null;
   const parsed = parseRepoRef(originUrl, gitlabHost !== undefined ? { gitlabHost } : {});
   return parsed.ok ? parsed.value : null;

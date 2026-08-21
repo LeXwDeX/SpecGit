@@ -34,8 +34,9 @@ describe('createDefaultContext root resolution (#184)', () => {
     const parsed = await ctx.parseRepoRef('https://github.com/LeXwDeX/SpecGit.git');
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
-      // No GitLab declaration: the platform marker stays absent (github).
-      expect(parsed.value.platform).toBeUndefined();
+      // No GitLab declaration: the parse layer still fills the marker —
+      // platform is a required union (#186), explicitly 'github' here.
+      expect(parsed.value.platform).toBe('github');
     }
 
     // The evaluator delegate fills in the declared host the same way.
