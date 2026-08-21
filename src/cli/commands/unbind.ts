@@ -12,7 +12,7 @@ export interface UnbindOptions {
   json?: boolean;
 }
 
-async function promptForConfirmation(ctx: CommandContext): Promise<boolean> {
+async function promptForConfirmation(): Promise<boolean> {
   const { confirm } = await import('@inquirer/prompts');
   return confirm({ message: `Delete ${RECORD_FILENAME}?`, default: false });
 }
@@ -68,7 +68,7 @@ export async function runUnbind(
         ],
       };
     }
-    if (!(await promptForConfirmation(ctx))) {
+    if (!(await promptForConfirmation())) {
       return { exit: EXIT_SUCCESS, human: [human.unbindAborted()] };
     }
   }

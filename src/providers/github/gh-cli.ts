@@ -4,7 +4,7 @@ import { buildProtectionUpdateBody } from './protection-merge.js';
 // Shared CLI transport (spawn seam, shebang resolution, sanitization);
 // re-exported below for import-path stability (#114 moved the transport
 // beside the adapters so the GitLab adapter shares it).
-import { defaultSpawn, sanitizeApiText, type SpawnFn, type SpawnOptions } from '../cli-spawn.js';
+import { defaultSpawn, sanitizeApiText, type SpawnFn } from '../cli-spawn.js';
 export { resolveNodeScriptCommand, sanitizeApiText } from '../cli-spawn.js';
 export type { SpawnFn, SpawnOptions } from '../cli-spawn.js';
 import type {
