@@ -191,6 +191,99 @@ export function emitJson(io: CliIO, envelope: Record<string, unknown>): void {
   io.stdout(JSON.stringify(envelope, null, 2));
 }
 
+/**
+ * The shared human rendering builder (#190). Every command composes its
+ * `CommandOutcome.human` lines through this builder and the line formatters
+ * below instead of bespoke string assembly, so the human surface has one
+ * home and one set of byte shapes (locked by the CLI suites).
+ *
+ * Localization is pass-through: catalog text from `catalogFor(language)` is
+ * appended verbatim — the builder only owns structure (order, indentation),
+ * never wording.
+ */
+export interface HumanBuilder {
+  /** A top-level line (catalog prose, headline, status line). */
+  line(text: string): HumanBuilder;
+  /** Pre-rendered lines (nested groups, formatter batches); empty is a no-op. */
+  append(lines: string[]): HumanBuilder;
+  /** A two-space indented detail line. */
+  detail(text: string): HumanBuilder;
+  /** A two-space indented `- ` bullet item. */
+  bullet(text: string): HumanBuilder;
+  /** Snapshot of the composed lines; later appends do not leak into it. */
+  build(): string[];
+}
+
+export function humanBuilder(initial: string[] = []): HumanBuilder {
+  const lines = [...initial];
+  const builder: HumanBuilder = {
+    line(text: string): HumanBuilder {
+      lines.push(text);
+      return builder;
+    },
+    append(entries: string[]): HumanBuilder {
+      lines.push(...entries);
+      return builder;
+    },
+    detail(text: string): HumanBuilder {
+      return builder.line(detailLine(text));
+    },
+    bullet(text: string): HumanBuilder {
+      return builder.line(bulletItem(text));
+    },
+    build(): string[] {
+      return [...lines];
+    },
+  };
+  return builder;
+}
+
+/** Two-space indented detail line (bind context, init skipped workflows). */
+export function detailLine(text: string): string {
+  return `  ${text}`;
+}
+
+/** Two-space indented `- ` bullet item (setup installed entry points). */
+export function bulletItem(text: string): string {
+  return `  - ${text}`;
+}
+
+/** Unexpected-error headline; the message is sanitized before the terminal. */
+export function errorLine(message: string): string {
+  return `Error: ${sanitize(message)}`;
+}
+
+/**
+ * Warning line for human summaries. Verbatim on purpose: these messages are
+ * authored by SpecGit itself (init protection probes), and the diagnostic
+ * warning surface in `finishOutcome` owns its own sanitizing render.
+ */
+export function warningLine(message: string): string {
+  return `Warning: ${message}`;
+}
+
+/** One doctor probe line: `ok    <name> — <detail>` or `FAIL  <name> (<code>)`. */
+export function probeLine(probe: ProbeResult): string {
+  return probe.ok
+    ? `ok    ${probe.name}${probe.detail ? ` — ${probe.detail}` : ''}`
+    : `FAIL  ${probe.name}${probe.code ? ` (${probe.code})` : ''}`;
+}
+
+/** The status-surface gate failure: `Gate <id>: <code>[ — <fix>]`. */
+export function gateFailureLine(gateId: string, code: string, fix?: string): string {
+  return `Gate ${gateId}: ${code}${fix ? ` — ${fix}` : ''}`;
+}
+
+/** The accept/finish-surface gate failure: `  <id>: <code>[ — <fix>]` (fix sanitized). */
+export function verdictFailureLine(gateId: string, code: string, fix?: string): string {
+  return `  ${gateId}: ${code}${fix ? ` — ${sanitize(fix)}` : ''}`;
+}
+
+/** Issue numbers as closing-ref style references: `#1, #2`. */
+export function issueList(issues: number[]): string {
+  return issues.map((n) => `#${n}`).join(', ');
+}
+
 export function errorDiagnostic(
   code: string,
   message: string,

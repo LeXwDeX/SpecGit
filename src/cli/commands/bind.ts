@@ -10,7 +10,7 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
-import { errorDiagnostic, type BindOutcome } from '../output.js';
+import { errorDiagnostic, humanBuilder, issueList, type BindOutcome } from '../output.js';
 import { coerceIssueRef, coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, mergeIssueNumbers } from '../../record/schema.js';
@@ -169,11 +169,11 @@ export async function runBind(
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
     record: summary,
-    human: [
-      text.bindHeader(record.delivery),
-      `  ${contextLine}`,
-      ...(record.issues.length > 0 ? [text.bindIssues(record.issues.map((n) => `#${n}`).join(', '))] : []),
-      ...(record.pr !== undefined ? [text.bindPr(record.pr)] : []),
-    ],
+    human: humanBuilder()
+      .line(text.bindHeader(record.delivery))
+      .detail(contextLine)
+      .append(record.issues.length > 0 ? [text.bindIssues(issueList(record.issues))] : [])
+      .append(record.pr !== undefined ? [text.bindPr(record.pr)] : [])
+      .build(),
   };
 }
