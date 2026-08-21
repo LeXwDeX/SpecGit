@@ -63,12 +63,14 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     expect(read('README.md')).toMatch(/\]\(docs\/release-gates\.md\)/);
   });
 
-  it('the committed v1 scope narrative is dual-platform and incremental, not GitHub-only', () => {
+  it('the committed v1 scope narrative is dual-platform with the glab provider shipped, not GitHub-only', () => {
     for (const doc of ['AGENTS.md', path.join('docs', 'baseline-v1.md')] as const) {
       const text = read(doc);
       expect(text, `${doc} must not claim GitHub-only v1`).not.toMatch(/GitHub\.com only/i);
-      expect(text, `${doc} must carry the incremental dual-platform narrative`).toMatch(
-        /GitLab capability lands incrementally/i
+      expect(text, `${doc} must carry the dual-platform scope`).toMatch(/dual-platform/i);
+      expect(text, `${doc} must route GitLab evidence through glab`).toMatch(/glab/);
+      expect(text, `${doc} must not claim the GitLab provider has not landed`).not.toMatch(
+        /until the Phase-2 provider lands/i
       );
     }
   });
