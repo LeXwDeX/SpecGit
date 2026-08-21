@@ -67,6 +67,8 @@ export type { RepoRef } from './gitfacts/origin.js';
 
 export type {
   ForgeProvider,
+  ForgeReadPort,
+  ForgeAdminPort,
   GitHubProvider,
   IssueFact,
   PrFact,
@@ -78,7 +80,12 @@ export type {
   BranchProtectionFact,
   RepoAutomergeFact,
 } from './github/port.js';
-export { FORGE_PROVIDER_MEMBERS, GITHUB_PROVIDER_MEMBERS } from './github/port.js';
+export {
+  FORGE_PROVIDER_MEMBERS,
+  FORGE_READ_PORT_MEMBERS,
+  FORGE_ADMIN_PORT_MEMBERS,
+  GITHUB_PROVIDER_MEMBERS,
+} from './github/port.js';
 export { GhCliGitHubProvider, sanitizeApiText } from './providers/github/gh-cli.js';
 export type { GhCliGitHubProviderOptions } from './providers/github/gh-cli.js';
 export { GlabProvider, versionInWindow } from './providers/gitlab/glab-cli.js';
