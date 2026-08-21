@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RepoRef } from '../../src/gitfacts/origin.js';
 import { PlatformRoutingProvider } from '../../src/providers/routing.js';
-import { MockGitHubProvider } from './helpers/mock-github.js';
+import { MockForgeProvider } from './helpers/mock-forge.js';
 
 // #117 (platform routing): the production context hands commands ONE
 // provider. The routing provider dispatches per call — a ref resolved
@@ -15,8 +15,8 @@ const githubRef: RepoRef = { owner: 'acme', repo: 'app', platform: 'github' };
 const gitlabRef: RepoRef = { owner: 'group/subgroup', repo: 'app', platform: 'gitlab' };
 
 function makeRouter(originPlatform: 'github' | 'gitlab' | 'undecided') {
-  const github = new MockGitHubProvider();
-  const gitlab = new MockGitHubProvider();
+  const github = new MockForgeProvider();
+  const gitlab = new MockForgeProvider();
   let constructions = 0;
   const router = new PlatformRoutingProvider({
     github,
@@ -93,10 +93,10 @@ describe('PlatformRoutingProvider (#117)', () => {
 
   it('resolves the origin platform once across repo-less calls', async () => {
     let resolutions = 0;
-    const github = new MockGitHubProvider();
+    const github = new MockForgeProvider();
     const router = new PlatformRoutingProvider({
       github,
-      gitlab: async () => new MockGitHubProvider(),
+      gitlab: async () => new MockForgeProvider(),
       originPlatform: async () => {
         resolutions += 1;
         return 'github';

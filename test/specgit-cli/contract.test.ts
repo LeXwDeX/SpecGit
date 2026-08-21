@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
 import { sanitize } from '../../src/cli/output.js';
 import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
-import { makeCtx, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
+import { makeCtx, makeEvaluate, makeVerdict, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
 describe('CLI contract: exit codes', () => {
   it('exposes the stable exit-code constants', () => {
     expect(EXIT_SUCCESS).toBe(0);
@@ -66,6 +66,42 @@ describe('CLI contract: JSON envelope', () => {
     const env0 = parseStdoutJson(t0.io);
     expect(env0.exit).toBe(EXIT_SUCCESS);
     expect(env0.status).toBe('ok');
+  });
+
+  // #218: the rejected path. The 0/2/3 pins above left exit 1 unlocked;
+  // this scenario (accept under a rejecting evaluator) completes the
+  // contract surface: envelope.exit === 1 and status === 'rejected'.
+  it('the rejected path pins exit 1 in the --json envelope (#218)', async () => {
+    const verdict = makeVerdict({
+      accepted: false,
+      state: 'rejected',
+      classification: 'rejected',
+      exitCode: EXIT_REJECTED,
+      gates: [
+        {
+          id: 'pr',
+          status: 'fail',
+          failures: [
+            {
+              code: 'pr_draft',
+              message: 'The bound pull request is still a draft.',
+              fix: 'Mark the pull request ready for review.',
+            },
+          ],
+        },
+      ],
+    });
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      evaluate: makeEvaluate(verdict),
+    });
+    const code = await runCliWith(['node', 'specgit', 'accept', '--json'], t.ctx);
+    expect(code).toBe(EXIT_REJECTED);
+    const envelope = parseStdoutJson(t.io);
+    expect(typeof envelope.exit).toBe('number');
+    expect(envelope.exit).toBe(EXIT_REJECTED);
+    expect(envelope.status).toBe('rejected');
   });
 });
 
@@ -318,6 +354,17 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)', 
       expect(text).toMatch(/authoritative/i);
       expect(text).toMatch(/derived/i);
     }
+  });
+
+  it('README.md documents the status pre-binding exception like docs/cli.md (#217)', () => {
+    const cli = readRepoFile('docs', 'cli.md');
+    // The normative #175 statement the README must stay consistent with.
+    expect(cli).toContain('exit `0` with state `unbound` (#175)');
+    const readme = readRepoFile('README.md');
+    expect(readme, 'README must name the status exception').toMatch(/specgit status/);
+    expect(readme, 'README must state the exit-0 unbound exception').toMatch(
+      /missing record.*exit\s*`?0`?[^.]*unbound|exit\s*`?0`?[^.]*unbound[^.]*missing record/is
+    );
   });
 
   it('schemas/specgit templates carry the same taxonomy and command surface', async () => {
