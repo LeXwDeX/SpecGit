@@ -1,9 +1,8 @@
 version: 1
-delivery: issue155
+delivery: sync-agents-md
 context:
   kind: branch
-  label: scaffold-fix
-  branch: feat/155-issue155
+  branch: docs/158-sync-agents-md
 issues:
-  - 155
-pr: 157
+  - 158
+pr: 159

@@ -35,15 +35,22 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
 - One issue = one independently verifiable WHY; one delivery binds N
   issues to one PR that closes them all.
 - Provider seams: git facts come from **local git** (`src/gitfacts`);
-  GitHub evidence (issues, PR, checks) flows exclusively through the
-  authenticated **`gh` CLI** (`src/providers/github`, port at
-  `src/github/port.ts`). No direct REST client, no
-  stored or logged tokens. v1 scope is dual-platform — GitHub.com plus
-  GitLab CE/Free self-managed per the version policy — and
-  GitLab capability lands incrementally per the Phase-2 roadmap; today a
-  GitLab host declared via `specgit init --gitlab-host` is a
-  declaration-diagnostics seam (`gitlab_unsupported`), not yet a
-  provider — see [docs/gitlab-support.md](docs/gitlab-support.md).
+  platform evidence (issues, PRs/MRs, checks) flows exclusively through
+  authenticated CLIs — `gh` for GitHub (`src/providers/github/gh-cli.ts`,
+  port at `src/github/port.ts`) and `glab` for GitLab-declared origins
+  (`src/providers/gitlab/glab-cli.ts`) — dispatched per platform marker by
+  `src/providers/routing.ts`. No direct REST client, no stored or logged
+  tokens. v1 scope is dual-platform: self-managed GitLab is supported at
+  exactly `>= 19.2.4 < 19.3.0`, CE/Free tier (`glab` floor 1.113.0); a
+  delivery on a declared GitLab origin evaluates every gate through glab —
+  see [docs/gitlab-support.md](docs/gitlab-support.md).
+- Generated text is language-configurable: `language: en|zh` in
+  `spec_git/policy.yaml` (`specgit init --language zh`) selects the
+  language of issue/PR scaffolds, the managed guidance block, and
+  success-path stderr prose. The machine contract is never localized —
+  exit codes, `--json` fields, diagnostic `code`s, closing references
+  (`Closes #n`) — and branch names are always ASCII: a non-ASCII title
+  falls back to `feat/123-issue123`.
 
 ## Build, test, lint
 
@@ -61,6 +68,11 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
   — GitHub Issues on `LeXwDeX/SpecGit`, operated via `gh`.
 - Docs must stay consistent with the language of [README.md](README.md) and
   [docs/cli.md](docs/cli.md); when the contract changes, change those first.
+- Completion vocabulary, release gates, and growth discipline:
+  [docs/release-gates.md](docs/release-gates.md) — every new issue cites an
+  invariant or a seam, or is explicitly accepted-or-deferred.
+- Contributor onboarding: [CONTRIBUTING.md](CONTRIBUTING.md) (setup,
+  everyday checks, the delivery workflow).
 
 <!-- specgit:block:start -->
 ## SpecGit delivery harness
