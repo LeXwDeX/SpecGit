@@ -5,3 +5,4 @@ context:
   branch: fix/227-decouple-release-publish
 issues:
   - 227
+pr: 228
