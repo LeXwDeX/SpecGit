@@ -1,5 +1,13 @@
 # specgit
 
+## 1.0.1
+
+### Patch Changes
+
+- [#153](https://github.com/LeXwDeX/SpecGit/pull/153) [`a48997a`](https://github.com/LeXwDeX/SpecGit/commit/a48997a3ad6571b457ea3c82f38ba4ad059f8327) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Docs: refresh the README for the 1.0 dual-platform release — full English, a Platforms section (GitHub out of the box; self-managed GitLab CE >= 19.2.4 < 19.3.0 via --gitlab-host and glab), npm badge, corrected stale facts (CLI is published; specgit setup shipped with [#7](https://github.com/LeXwDeX/SpecGit/issues/7)), and the glab surface in prerequisites, command table, env vars, and security. Align the linked docs with the shipped dual-platform contract: baseline-v1 non-goals, overview, concepts, glossary, FAQ, agent contract, installation, reference, getting-started, existing-projects, and the skills index.
+
+- [#157](https://github.com/LeXwDeX/SpecGit/pull/157) [`a6e7ab1`](https://github.com/LeXwDeX/SpecGit/commit/a6e7ab16c6454550ec84aa400503d82e1c313d5b) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Fix: scaffolded issue headings no longer carry (required)/(optional) markers — the template meta-information leaked verbatim into created issues (observed on [#152](https://github.com/LeXwDeX/SpecGit/issues/152)) and was copied downstream by LLM authors. Headings are now `## Why` / `## Scope` / `## Acceptance` in both locales (zh: 为什么/范围/验收); a regression test pins every locale marker-free. The deterministic-scaffold boundary ([#77](https://github.com/LeXwDeX/SpecGit/issues/77) adoption) and the PR scaffold are unchanged in shape.
+
 ## 1.0.0
 
 ### Major Changes
