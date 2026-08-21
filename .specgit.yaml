@@ -1,8 +1,9 @@
 version: 1
-delivery: refresh-the-readme
+delivery: issue155
 context:
-  kind: branch
-  branch: docs/152-refresh-the-readme
+  kind: worktree
+  label: scaffold-fix
+  branch: feat/155-issue155
 issues:
-  - 152
-pr: 153
+  - 155
+pr: 157
