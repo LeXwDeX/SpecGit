@@ -138,6 +138,26 @@ deliveries), PR, closing refs, and required checks at the PR head.
 specgit finish --json
 \`\`\`
 
+## Steps
+
+1. Before running the verdict, confirm the bound pull request is not a
+   draft — a draft always fails with \`pr_draft\` (factual, exit 1). If it
+   is still a draft, mark it ready for review first:
+
+   \`\`\`bash
+   gh pr ready <number>              # GitHub deliveries
+   glab mr update <number> --ready   # GitLab deliveries
+   \`\`\`
+
+2. Run the verdict from the delivery branch:
+
+   \`\`\`bash
+   specgit finish --json
+   \`\`\`
+
+3. Branch on the exit code using the contract below; on \`1\` fix exactly
+   what the failures name and re-run until \`0\`.
+
 ## Exit contract
 
 - \`0\` accepted — produce the merge brief and ask the human to approve.
