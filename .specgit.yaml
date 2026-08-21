@@ -1,8 +1,7 @@
 version: 1
 delivery: archive-the-1
 context:
-  kind: worktree
-  label: final-archive
+  kind: branch
   branch: docs/150-archive-the-1
 issues:
   - 150
