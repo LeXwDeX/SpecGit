@@ -5,12 +5,24 @@
  * (fail-closed).
  */
 
+import { CODE_INFO, type SpecGitCode } from '../../acceptance/codes.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import { errorDiagnostic, type CommandOutcome, type ProbeResult } from '../output.js';
 import type { CommandContext } from '../types.js';
 
 export interface DoctorOptions {
   json?: boolean;
+}
+
+// #166: probe failures surface the catalogue `fix` hint so the --json
+// envelope carries a machine-readable remedy, not just a code. Codes the
+// catalogue does not know (or that define no fix) yield undefined, which
+// errorDiagnostic omits.
+function fixFor(code: string | undefined): string | undefined {
+  if (code === undefined) {
+    return undefined;
+  }
+  return CODE_INFO[code as SpecGitCode]?.fix;
 }
 
 export async function runDoctor(
@@ -94,7 +106,8 @@ export async function runDoctor(
       : failing.map((probe) =>
           errorDiagnostic(
             probe.code ?? 'probe_failed',
-            `Probe '${probe.name}' failed${probe.code ? ` (${probe.code})` : ''}.`
+            `Probe '${probe.name}' failed${probe.code ? ` (${probe.code})` : ''}.`,
+            { fix: fixFor(probe.code) }
           )
         ),
     human: probes.map((probe) =>
