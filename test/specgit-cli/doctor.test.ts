@@ -53,6 +53,7 @@ describe('specgit doctor', () => {
         createIssue: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         createDraftPr: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         listOpenPrsByHead: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+        addIssueComment: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         getBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         enableBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         getRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),

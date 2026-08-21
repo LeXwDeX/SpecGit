@@ -6,6 +6,7 @@ import type {
   CheckRunInfo,
   GitHubProvider,
   IssueCreation,
+  IssueCommentCreation,
   IssueFact,
   OpenIssueFact,
   PrCreation,
@@ -431,6 +432,40 @@ export class GlabProvider implements GitHubProvider {
       return fail('glab_transport', 'GitLab returned an unexpected issue payload.');
     }
     return ok({ number: issue.iid, url: issue.web_url });
+  }
+
+  async addIssueComment(
+    repo: RepoRef,
+    issue: number,
+    body: string
+  ): Promise<Evidence<IssueCommentCreation>> {
+    if (!Number.isInteger(issue) || issue <= 0) {
+      return fail('glab_transport', 'Cannot comment on an issue without a positive number.');
+    }
+    if (!body.trim()) {
+      return fail('glab_transport', 'Cannot post an empty issue comment.');
+    }
+    const result = await this.runCreate([
+      'api',
+      ...this.hostArgs(),
+      '-X',
+      'POST',
+      `projects/${this.projectPath(repo)}/issues/${issue}/notes`,
+      '-f',
+      `body=${body}`,
+    ]);
+    if (!result.ok) {
+      return this.asFailure(result);
+    }
+    const parsedEv = this.parseJsonOutput(result.value.stdout);
+    if (!parsedEv.ok) {
+      return parsedEv;
+    }
+    const note = parsedEv.value as { web_url?: unknown };
+    if (typeof note.web_url !== 'string' || !note.web_url) {
+      return fail('glab_transport', 'GitLab returned an unexpected issue-note payload.');
+    }
+    return ok({ url: note.web_url });
   }
 
   /**

@@ -4,6 +4,7 @@ import type {
   BranchProtectionFact,
   CheckRunInfo,
   GitHubProvider,
+  IssueCommentCreation,
   IssueCreation,
   IssueFact,
   OpenIssueFact,
@@ -22,6 +23,7 @@ export interface MockGitHubFixtures {
   createIssue?: (title: string) => Evidence<IssueCreation>;
   createDraftPr?: (head: string) => Evidence<PrCreation>;
   listOpenPrsByHead?: Evidence<PrSummary[]>;
+  addIssueComment?: (issue: number, body: string) => Evidence<IssueCommentCreation>;
   branchProtection?: Evidence<BranchProtectionFact>;
   enableBranchProtection?: Evidence<BranchProtectionFact>;
   repoAutomerge?: Evidence<RepoAutomergeFact>;
@@ -92,6 +94,18 @@ export class MockGitHubProvider implements GitHubProvider {
   async listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>> {
     this.calls.push(`listOpenPrsByHead:${formatRepo(repo)}:${head}`);
     return this.fixtures.listOpenPrsByHead ?? fail('gh_transport', 'listOpenPrsByHead not configured in mock');
+  }
+
+  async addIssueComment(
+    repo: RepoRef,
+    issue: number,
+    body: string
+  ): Promise<Evidence<IssueCommentCreation>> {
+    this.calls.push(`addIssueComment:${formatRepo(repo)}:${issue}`);
+    return (
+      this.fixtures.addIssueComment?.(issue, body) ??
+      fail('gh_transport', 'addIssueComment not configured in mock')
+    );
   }
 
   async getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>> {
