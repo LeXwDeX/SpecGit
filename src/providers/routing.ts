@@ -16,6 +16,11 @@ import type { ForgeProvider } from '../github/port.js';
  * lifetime, which for the CLI is one command). An undecided origin keeps
  * today's behavior — the github provider — because an undeclared origin
  * has no GitLab evidence route to probe.
+ *
+ * Since #180 the port composes the read surface (`ForgeReadPort`) and the
+ * admin surface (`ForgeAdminPort`); both delegates are full
+ * `ForgeProvider`s, so every member of both surfaces routes through the
+ * same per-call dispatch — the split changes no routing behavior.
  */
 
 export interface PlatformRoutingDeps {

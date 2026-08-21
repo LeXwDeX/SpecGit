@@ -121,6 +121,12 @@ type RunOutcome =
   | { ok: true; value: { stdout: string; stderr: string } }
   | { ok: false; code: string; message: string; fix?: string; exitCode?: number };
 
+/**
+ * The GitLab transport: the authenticated `glab` CLI (#114). Implements
+ * both port surfaces (#180): the read surface (`ForgeReadPort`) and the
+ * admin surface (`ForgeAdminPort`) — the same surfaces the gh adapter
+ * satisfies today.
+ */
 export class GlabProvider implements ForgeProvider {
   private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly timeoutMs: number;
