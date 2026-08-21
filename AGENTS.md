@@ -41,7 +41,7 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
   (`src/providers/gitlab/glab-cli.ts`) — dispatched per platform marker by
   `src/providers/routing.ts`. No direct REST client, no stored or logged
   tokens. v1 scope is dual-platform: self-managed GitLab is supported at
-  exactly `>= 19.2.4 < 19.3.0`, CE/Free tier (`glab` floor 1.113.0); a
+  exactly `>= 19.2.4 < 19.4.0`, CE/Free tier (`glab` floor 1.113.0); a
   delivery on a declared GitLab origin evaluates every gate through glab —
   see [docs/gitlab-support.md](docs/gitlab-support.md).
 - Generated text is language-configurable: `language: en|zh` in

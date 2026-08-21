@@ -139,8 +139,8 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   },
   gitlab_version_unsupported: {
     kind: 'evidence',
-    message: 'The self-managed GitLab version is outside the supported window (>= 19.2.4 < 19.3.0).',
-    fix: 'Upgrade within 19.2.x, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.',
+    message: 'The self-managed GitLab version is outside the supported window (>= 19.2.4 < 19.4.0).',
+    fix: 'Upgrade into the supported window, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.',
   },
   gh_missing: {
     kind: 'evidence',
