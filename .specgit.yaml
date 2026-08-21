@@ -1,7 +1,7 @@
 version: 1
 delivery: issue155
 context:
-  kind: worktree
+  kind: branch
   label: scaffold-fix
   branch: feat/155-issue155
 issues:
