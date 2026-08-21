@@ -1019,6 +1019,85 @@ describe('GlabProvider#createIssue', () => {
     expect(result.code).toBe('glab_transport');
     expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
   });
+});
+
+describe('GlabProvider#addIssueComment', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-glab-issue-comment-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGlabRule[]) {
+    const fake = createFakeGlab(tempDir, rules);
+    const provider = new GlabProvider({ hostname: HOST, env: fake.env() });
+    return { fake, provider };
+  }
+
+  it('posts a note through glab api -f body and returns {url}', async () => {
+    const { provider, fake } = setup([
+      {
+        match: `-X POST projects/${PROJECT_ID}/issues/8/notes `,
+        stdout: JSON.stringify({
+          web_url: 'https://git.example.com/group/subgroup/project/-/issues/8#note_1',
+        }),
+      },
+    ]);
+    const result = await provider.addIssueComment(
+      REPO,
+      8,
+      'SpecGit delivery branch: `feat/8-x` (draft pull request #9).'
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { url: 'https://git.example.com/group/subgroup/project/-/issues/8#note_1' },
+    });
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([
+      `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/issues/8/notes -f body=SpecGit delivery branch: \`feat/8-x\` (draft pull request #9).`,
+    ]);
+  });
+
+  it('fails closed with glab_transport when the payload misses the url', async () => {
+    const { provider } = setup([
+      { match: '-X POST projects/.*/issues/8/notes ', stdout: JSON.stringify({ id: 1 }) },
+    ]);
+    const result = await provider.addIssueComment(REPO, 8, 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(result.message).toContain('unexpected issue-note payload');
+  });
+
+  it('refuses an empty body without invoking glab', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.addIssueComment(REPO, 8, '   ');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
+  });
+});
+
+describe('GlabProvider#createIssue timeout regression home', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-glab-create-issue-slow-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGlabRule[], providerOptions: { timeoutMs?: number } = {}) {
+    const fake = createFakeGlab(tempDir, rules);
+    const provider = new GlabProvider({ hostname: HOST, env: fake.env(), ...providerOptions });
+    return { fake, provider };
+  }
 
   it('kills a slow glab at the timeout and reports glab_transport with the knob in the fix', async () => {
     const { provider } = setup(

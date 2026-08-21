@@ -88,6 +88,11 @@ export interface PrCreation {
   url: string;
 }
 
+/** A newly posted issue comment: its canonical URL. */
+export interface IssueCommentCreation {
+  url: string;
+}
+
 /** An open pull request as listed for one head branch. */
 export interface PrSummary {
   number: number;
@@ -143,6 +148,19 @@ export interface GitHubProvider {
     body: string
   ): Promise<Evidence<PrCreation>>;
   listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
+  /**
+   * Post a comment on an issue. The traceability edge issue→branch: the
+   * bootstrap writes the delivery branch and pull request on every bound
+   * issue the moment the PR binding is first established, so the triple
+   * branch↔issue↔PR is navigable from every node. Called at most once per
+   * binding — `record.pr` in `.specgit.yaml` is the persisted marker that
+   * the comment was posted, which keeps re-runs exactly-once.
+   */
+  addIssueComment(
+    repo: RepoRef,
+    issue: number,
+    body: string
+  ): Promise<Evidence<IssueCommentCreation>>;
   getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>>;
   enableBranchProtection(
     repo: RepoRef,
@@ -171,6 +189,7 @@ const GITHUB_PROVIDER_MEMBER_FLAGS = {
   createIssue: true,
   createDraftPr: true,
   listOpenPrsByHead: true,
+  addIssueComment: true,
   getBranchProtection: true,
   enableBranchProtection: true,
   getRepoAutomerge: true,

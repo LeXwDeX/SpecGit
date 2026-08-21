@@ -116,6 +116,14 @@ export class PlatformRoutingProvider implements GitHubProvider {
     return (await this.forRepo(repo)).listOpenPrsByHead(repo, head);
   }
 
+  async addIssueComment(
+    repo: RepoRef,
+    issue: number,
+    body: string
+  ): ReturnType<GitHubProvider['addIssueComment']> {
+    return (await this.forRepo(repo)).addIssueComment(repo, issue, body);
+  }
+
   async getBranchProtection(
     repo: RepoRef,
     branch: string

@@ -57,6 +57,7 @@ to those lists member-for-member: change a port, change this page.
 | `createIssue` | required | Bootstrap create for new WHYs. |
 | `createDraftPr` | required | Bootstrap draft PR that closes every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
+| `addIssueComment` | required | Traceability edge issue→branch (#160): the bootstrap posts the delivery branch and PR on every bound issue when the PR binding is first established; `record.pr` is the exactly-once marker. |
 | `getBranchProtection` | required | Protection state and required checks for the guarded-merge story. |
 | `enableBranchProtection` | required | Turn on the required-check gate on the base branch. |
 | `getRepoAutomerge` | required | Repository auto-merge setting. |

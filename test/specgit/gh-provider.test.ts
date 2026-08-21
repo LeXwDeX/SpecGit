@@ -747,6 +747,67 @@ describe('GhCliGitHubProvider#createIssue', () => {
   });
 });
 
+describe('GhCliGitHubProvider#addIssueComment', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-issue-comment-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGhRule[]) {
+    const fake = createFakeGh(tempDir, rules);
+    const provider = new GhCliGitHubProvider({ env: fake.env() });
+    return { fake, provider };
+  }
+
+  it('posts a comment through gh api -f body and returns {url}', async () => {
+    const { provider, fake } = setup([
+      {
+        match: '^api repos/LeXwDeX/SpecGit/issues/8/comments ',
+        stdout: JSON.stringify({
+          html_url: 'https://github.com/LeXwDeX/SpecGit/issues/8#issuecomment-1',
+        }),
+      },
+    ]);
+    const result = await provider.addIssueComment(
+      REPO,
+      8,
+      'SpecGit delivery branch: `feat/8-x` (draft pull request #9).'
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { url: 'https://github.com/LeXwDeX/SpecGit/issues/8#issuecomment-1' },
+    });
+    expect(readFakeGhCalls(fake.logPath)).toEqual([
+      'api repos/LeXwDeX/SpecGit/issues/8/comments -f body=SpecGit delivery branch: `feat/8-x` (draft pull request #9).',
+    ]);
+  });
+
+  it('fails closed with gh_transport when the payload misses the url', async () => {
+    const { provider } = setup([
+      { match: '^api repos/LeXwDeX/SpecGit/issues/8/comments ', stdout: JSON.stringify({ id: 1 }) },
+    ]);
+    const result = await provider.addIssueComment(REPO, 8, 'B');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(result.message).toContain('unexpected issue-comment payload');
+  });
+
+  it('refuses an empty body without invoking gh', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.addIssueComment(REPO, 8, '   ');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+    expect(readFakeGhCalls(fake.logPath)).toEqual([]);
+  });
+});
+
 describe('GhCliGitHubProvider#createDraftPr', () => {
   let tempDir: string;
 

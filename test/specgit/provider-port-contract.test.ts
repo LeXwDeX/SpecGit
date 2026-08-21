@@ -48,6 +48,7 @@ describe('provider port contract (#80)', () => {
     );
     expect([...GITHUB_PROVIDER_MEMBERS].sort()).toEqual(
       [
+        'addIssueComment',
         'createDraftPr',
         'createIssue',
         'enableBranchProtection',

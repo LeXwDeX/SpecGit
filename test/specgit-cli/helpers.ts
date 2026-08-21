@@ -142,6 +142,11 @@ export interface GhScript {
     repo: { owner: string; repo: string },
     head: string
   ) => Evidence<Array<{ number: number; title: string; url: string }>>;
+  addIssueComment?: (
+    repo: { owner: string; repo: string },
+    issue: number,
+    body: string
+  ) => Evidence<{ url: string }>;
   branchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
   enableBranchProtection?: Evidence<{ protected: boolean; requiredChecks: string[] }>;
   repoAutomerge?: Evidence<{ enabled: boolean }>;
@@ -213,6 +218,16 @@ export function makeGhProvider(
       return (
         behavior.listOpenPrsByHead?.(repo, head) ??
         ({ ok: false, code: 'gh_transport', message: 'not configured in fake' } as Evidence<never>)
+      );
+    }),
+    addIssueComment: vi.fn(async (repo: never, issue: number, body: string) => {
+      calls.push(`addIssueComment:${issue}`);
+      return (
+        behavior.addIssueComment?.(repo, issue, body) ??
+        ({
+          ok: true,
+          value: { url: `https://github.com/fake/issues/${issue}#comment` },
+        } as Evidence<never>)
       );
     }),
     getBranchProtection: vi.fn(async (repo: never, branch: string) => {
