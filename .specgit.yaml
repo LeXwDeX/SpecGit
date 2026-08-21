@@ -2,7 +2,7 @@ version: 1
 delivery: refresh-the-readme
 context:
   kind: branch
-  label: readme-opt
   branch: docs/152-refresh-the-readme
 issues:
   - 152
+pr: 153
