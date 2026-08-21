@@ -238,6 +238,24 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     expect(parseClosingRefs(zh).size).toBe(0);
     expect(parseClosingRefs(en).size).toBe(0);
   });
+
+  it('the zh block names the never-localized diagnostic surface, the en block stays byte-stable (#183)', () => {
+    const zh = managedPromptBlock('zh');
+    const en = managedPromptBlock('en');
+    // The zh note names the machine-contract surface: diagnostics, codes,
+    // and fix strings remain English under every configuration.
+    expect(zh).toContain('诊断信息');
+    expect(zh).toContain('机器契约');
+    // Act on the machine literals, never on language consistency.
+    expect(zh).toContain('`code`');
+    expect(zh).toContain('`fix`');
+    // The en block carries no counterpart: issue #183 scopes the note to
+    // zh, and the en text is the pre-#118 byte-stable pin.
+    expect(en).not.toContain('诊断信息');
+    // The note introduces no closing references.
+    expect(parseClosingRefs(zh).size).toBe(0);
+    expect(parseClosingRefs(en).size).toBe(0);
+  });
 });
 
 describe('#118 language: success-path human prose follows policy.language', () => {

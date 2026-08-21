@@ -215,6 +215,9 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
   请求，找不到时报错并给出修复办法，找到多个时列出并拒绝。
 - \`specgit status\` 只展示本地证据：记录、状态、漂移、origin。
   \`specgit doctor\` 探测 git、仓库、origin、gh 与策略。
+- 诊断信息（diagnostic 的 message/fix）与诊断 \`code\` 恒为英文——这是
+  机器契约的一部分，任何语言配置都不本地化它们；按 \`code\` 与 \`fix\`
+  行动，不要依赖语言一致性。
 
 ### 命令面
 
