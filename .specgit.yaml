@@ -1,8 +1,7 @@
 version: 1
-delivery: sync-agents-md
+delivery: complete-the-traceability
 context:
   kind: branch
-  branch: docs/158-sync-agents-md
+  branch: feat/160-complete-the-traceability
 issues:
-  - 158
-pr: 159
+  - 160
