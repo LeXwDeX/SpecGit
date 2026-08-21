@@ -1067,6 +1067,26 @@ describe('specgit init --language (#118)', () => {
     expect(agents.endsWith(BLOCK_END_MARKER + '\n')).toBe(true);
   });
 
+  // #183 (audit P-12): with language zh the block is Chinese while
+  // diagnostics, codes, and fix strings stay English by the machine
+  // contract. The zh block must say so, or a reader may try to "fix" the
+  // mixed output by localizing the machine surface.
+  it('the zh block states diagnostics stay English as part of the machine contract (#183)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const agents = read(AGENTS_ABS(root));
+    expect(agents).toContain('诊断信息');
+    expect(agents).toContain('机器契约');
+    // Generated deterministically: identical to the template output.
+    expect(managedPromptBlock('zh')).toContain('诊断信息');
+    // The note is zh-only guidance; the en block is untouched.
+    expect(managedPromptBlock('en')).not.toContain('诊断信息');
+  });
+
   it('writes no language key for the default (en)', async () => {
     const t = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
