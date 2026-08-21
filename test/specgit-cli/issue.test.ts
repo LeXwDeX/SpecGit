@@ -143,9 +143,9 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.harness.createdIssues.length).toBe(2);
     expect(t.harness.createdIssues[0].title).toBe('feat: strict delivery harness');
     expect(t.harness.createdIssues[0].body).toContain('## Why');
-    expect(t.harness.createdIssues[0].body).toContain('## Why (required)');
-    expect(t.harness.createdIssues[0].body).toContain('## Scope (optional)');
-    expect(t.harness.createdIssues[0].body).toContain('## Acceptance (required)');
+    expect(t.harness.createdIssues[0].body).toContain('## Why\n');
+    expect(t.harness.createdIssues[0].body).toContain('## Scope\n');
+    expect(t.harness.createdIssues[0].body).toContain('## Acceptance\n');
     expect(t.harness.createdIssues[0].body).toContain('`specgit finish` must exit 0');
     // branch <type>/<first#>-<slug> with the type from the conventional prefix
     expect(t.harness.createdPrs.length).toBe(1);
@@ -757,12 +757,12 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
   // boundary marker that disambiguates a same-title collision (#77).
   const scaffoldBody = (title: string): string =>
     [
-      '## Why (required)',
+      '## Why',
       title,
       '',
-      '## Scope (optional)',
+      '## Scope',
       '',
-      '## Acceptance (required)',
+      '## Acceptance',
       'The delivery pull request closes this issue; `specgit finish` must exit 0.',
       '',
     ].join('\n');

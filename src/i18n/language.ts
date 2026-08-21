@@ -122,9 +122,9 @@ export interface LanguageCatalog {
 }
 
 const EN_SCAFFOLD: ScaffoldText = {
-  issueWhy: '## Why (required)',
-  issueScope: '## Scope (optional)',
-  issueAcceptance: '## Acceptance (required)',
+  issueWhy: '## Why',
+  issueScope: '## Scope',
+  issueAcceptance: '## Acceptance',
   issueAcceptanceLine:
     'The delivery pull request closes this issue; `specgit finish` must exit 0.',
   prWhy: '## Why',
@@ -139,9 +139,9 @@ const EN_SCAFFOLD: ScaffoldText = {
 };
 
 const ZH_SCAFFOLD: ScaffoldText = {
-  issueWhy: '## 为什么（必填）',
-  issueScope: '## 范围（选填）',
-  issueAcceptance: '## 验收（必填）',
+  issueWhy: '## 为什么',
+  issueScope: '## 范围',
+  issueAcceptance: '## 验收',
   issueAcceptanceLine: '交付拉取请求会关闭本议题；`specgit finish` 必须以退出码 0 结束。',
   prWhy: '## 为什么',
   prWhyHint: '概述本次交付要解决的问题或需求。',
