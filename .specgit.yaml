@@ -1,8 +1,8 @@
 version: 1
-delivery: decouple-release-publish
+delivery: issue229
 context:
   kind: branch
-  branch: fix/227-decouple-release-publish
+  branch: feat/229-issue229
 issues:
-  - 227
-pr: 228
+  - 229
+pr: 230
