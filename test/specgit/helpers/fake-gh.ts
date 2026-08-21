@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface FakeGhRule {
   match: string;
@@ -23,80 +24,11 @@ export interface FakeGh {
   env(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 }
 
-const FAKE_GH_SCRIPT = `
-const fs = require('node:fs');
-const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_GH_CONFIG, 'utf8'));
-const argv = process.argv.slice(2);
-const args = argv.join(' ');
-// Mirror real gh: '--body-file -' and '--input -' read their payload from stdin.
-const bodyFileIdx = argv.indexOf('--body-file');
-const inputIdx = argv.indexOf('--input');
-const readsStdin =
-  (bodyFileIdx !== -1 && argv[bodyFileIdx + 1] === '-') ||
-  (inputIdx !== -1 && argv[inputIdx + 1] === '-');
-function statePath() {
-  return cfg.statePath || (cfg.logPath + '.state');
-}
-function loadState() {
-  try {
-    return JSON.parse(fs.readFileSync(statePath(), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-function finish(stdinText) {
-  const record = readsStdin ? { args, stdin: stdinText } : { args };
-  fs.appendFileSync(cfg.logPath, JSON.stringify(record) + '\\n');
-  const ruleIndex = cfg.rules.findIndex((r) => new RegExp(r.match).test(args));
-  const rule = cfg.rules[ruleIndex];
-  if (!rule) {
-    process.stderr.write('fake gh: no rule matched: ' + args);
-    process.exit(1);
-  }
-  let stdout = rule.stdout;
-  if (rule.seq && stdout !== undefined) {
-    const state = loadState();
-    const n = state[String(ruleIndex)] || 0;
-    state[String(ruleIndex)] = n + 1;
-    fs.writeFileSync(statePath(), JSON.stringify(state));
-    stdout = stdout.split('%SEQ%').join(String(rule.seq.start + (rule.seq.step || 1) * n));
-  }
-  function respond() {
-    const exitCode = typeof rule.exit === 'number' ? rule.exit : 0;
-    // Exit only after every write is flushed to the OS: process.exit can
-    // drop pipe-buffered output mid-write, and larger payloads (e.g. a
-    // 100-entry check-run page, ~13 KB) lose their tail exactly when the
-    // parent has not drained the pipe yet (#120 CI macos flake).
-    const writes = [];
-    if (stdout) writes.push(function (done) { process.stdout.write(stdout, done); });
-    if (rule.stderr) writes.push(function (done) { process.stderr.write(rule.stderr, done); });
-    if (writes.length === 0) {
-      process.exit(exitCode);
-      return;
-    }
-    let remaining = writes.length;
-    for (const write of writes) {
-      write(function () {
-        remaining -= 1;
-        if (remaining === 0) process.exit(exitCode);
-      });
-    }
-  }
-  if (rule.delayMs && rule.delayMs > 0) {
-    setTimeout(respond, rule.delayMs);
-  } else {
-    respond();
-  }
-}
-if (readsStdin) {
-  let pending = '';
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (chunk) => (pending += chunk));
-  process.stdin.on('end', () => finish(pending));
-} else {
-  finish('');
-}
-`;
+// The fake gh implementation is a real script file (#189): it gets syntax
+// highlighting and checkJs typechecking instead of living as an inline
+// string. The helper copies it verbatim into the temp bin dir; the lock
+// test in fake-gh-script.test.ts pins materialized content to this file.
+const FAKE_GH_SCRIPT_PATH = fileURLToPath(new URL('./fake-gh-script.cjs', import.meta.url));
 
 export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
   const binDir = path.join(tempDir, 'fake-gh-bin');
@@ -106,7 +38,8 @@ export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
   fs.writeFileSync(configPath, JSON.stringify({ rules, logPath }));
 
   const recorderPath = path.join(binDir, 'fake-gh.cjs');
-  fs.writeFileSync(recorderPath, `#!/usr/bin/env node\n${FAKE_GH_SCRIPT}`);
+  // The script file carries its own POSIX node shebang; copy it verbatim.
+  fs.writeFileSync(recorderPath, fs.readFileSync(FAKE_GH_SCRIPT_PATH, 'utf8'));
   // Executable bit so POSIX execFile can run the shebang directly; Windows
   // goes through the provider's node-shebang detection instead.
   fs.chmodSync(recorderPath, 0o755);
