@@ -21,6 +21,8 @@ specgit issue "<title A>" "<title B>"   # N issues, one delivery
 specgit issue 42                   # reuse an existing issue
 ```
 
+New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf, docs, test, chore, style, build, ci, revert, security, deprecate, dogfood.
+
 ## What it does (idempotent; re-run resumes)
 
 1. Creates (or reuses) the issues — one issue = one independently verifiable

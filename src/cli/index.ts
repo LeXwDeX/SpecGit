@@ -20,7 +20,7 @@ import { runDoctor } from './commands/doctor.js';
 import { runFinish } from './commands/finish.js';
 import { runInit } from './commands/init.js';
 import { runSetup } from './commands/setup.js';
-import { runIssue } from './commands/issue.js';
+import { runIssue, ISSUE_TYPE_LIST } from './commands/issue.js';
 import { runPr } from './commands/pr.js';
 import { runStatus } from './commands/status.js';
 import { runUnbind } from './commands/unbind.js';
@@ -202,7 +202,8 @@ export function createProgram(
   program
     .command('issue')
     .description(
-      'One-command delivery bootstrap: create/reuse issues, branch, draft PR, record — resumable'
+      'One-command delivery bootstrap: create/reuse issues, branch, draft PR, record — resumable. New titles must start with "<type>: "; allowed types: ' +
+        ISSUE_TYPE_LIST
     )
     .argument('[titles...]', 'Issue titles to create (quoted) or existing issue numbers to reuse')
     .option('--json', 'Output as JSON')
