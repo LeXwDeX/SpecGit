@@ -41,8 +41,14 @@ export const STATE_ASSET_TAXONOMY = {
     paths: [
       '.opencode/command/specgit-issue.md',
       '.opencode/command/specgit-finish.md',
+      '.opencode/command/specgit-doctor.md',
+      '.opencode/command/specgit-pr.md',
+      '.opencode/command/specgit-status.md',
       '.agents/skills/specgit-issue/SKILL.md',
       '.agents/skills/specgit-finish/SKILL.md',
+      '.agents/skills/specgit-doctor/SKILL.md',
+      '.agents/skills/specgit-pr/SKILL.md',
+      '.agents/skills/specgit-status/SKILL.md',
     ],
   },
 } as const satisfies Record<string, StateAssetTier>;
