@@ -1,9 +1,8 @@
 version: 1
-delivery: issue176
+delivery: issue178
 context:
   kind: branch
-  branch: feat/176-issue176
+  branch: feat/178-issue178
 issues:
-  - 176
-  - 177
-pr: 200
+  - 178
+pr: 201
