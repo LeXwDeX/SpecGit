@@ -75,7 +75,18 @@ export async function probeGitBinary(): Promise<Evidence<string>> {
   }
 }
 
-export function createDefaultContext(): CommandContext {
+/**
+ * Optional seams over the production wiring, used by tests to observe
+ * composition-root behavior (e.g. a counting discover stub, #184). Every
+ * field defaults to the real production implementation, so
+ * `createDefaultContext()` with no argument is exactly the shipped CLI.
+ */
+export interface WiringOverrides {
+  /** Repo-root discovery; defaults to real `git rev-parse --show-toplevel`. */
+  discoverRoot?: (cwd: string) => Promise<Evidence<string>>;
+}
+
+export function createDefaultContext(overrides: WiringOverrides = {}): CommandContext {
   let version = '0.0.0';
   try {
     version = readPackageJson().version;
@@ -87,38 +98,79 @@ export function createDefaultContext(): CommandContext {
   const git = new LocalGitAdapter();
   const gh = new GhCliGitHubProvider();
 
+  // #184: the repo root has exactly one answer per command run, so resolve
+  // it once per cwd and inject the cached value into every consumer
+  // (providers declaration, policy, platform routing, record IO). The
+  // cache removes both the repeated work and the theoretical TOCTOU where
+  // mid-run filesystem changes could let two call sites see two roots.
+  const discoverRoot = overrides.discoverRoot ?? discoverRepoRoot;
+  const rootCache = new Map<string, Promise<Evidence<string>>>();
+  const resolveRoot = (cwd: string): Promise<Evidence<string>> => {
+    let pending = rootCache.get(cwd);
+    if (pending === undefined) {
+      pending = discoverRoot(cwd);
+      rootCache.set(cwd, pending);
+    }
+    return pending;
+  };
+
+  // Policy and providers are likewise read at most once per resolved root
+  // per command; the same file never hits disk twice in one run.
+  const providersCache = new Map<string, Promise<Awaited<ReturnType<typeof readProviders>>>>();
+  const providersFor = (root: string) => {
+    let pending = providersCache.get(root);
+    if (pending === undefined) {
+      pending = readProviders(root);
+      providersCache.set(root, pending);
+    }
+    return pending;
+  };
+  const policyCache = new Map<string, Promise<Awaited<ReturnType<typeof readPolicy>>>>();
+  const policyFor = (root: string) => {
+    let pending = policyCache.get(root);
+    if (pending === undefined) {
+      pending = readPolicy(root);
+      policyCache.set(root, pending);
+    }
+    return pending;
+  };
+
   // Provider declarations (spec_git/providers.yaml) decide how non-github
   // origins classify; resolved once per command context and threaded into
   // every parseRepoRef / evaluate call site. The declaration grammar is
   // `host` or `host:port` (#78): a declared non-default port classifies
   // only origins that use exactly that port.
-  const declaredGitlabHost = async (): Promise<string | undefined> => {
-    try {
-      const rootEv = await discoverRepoRoot(process.cwd());
-      if (!rootEv.ok) return undefined;
-      const providers = await readProviders(rootEv.value);
-      if (!providers.ok || providers.value.gitlab === undefined) return undefined;
-      const { host, port } = providers.value.gitlab;
-      return port !== undefined ? `${host}:${port}` : host;
-    } catch {
-      return undefined;
-    }
-  };
+  let gitlabHostPromise: Promise<string | undefined> | undefined;
+  const declaredGitlabHost = (): Promise<string | undefined> =>
+    (gitlabHostPromise ??= (async () => {
+      try {
+        const rootEv = await resolveRoot(process.cwd());
+        if (!rootEv.ok) return undefined;
+        const providers = await providersFor(rootEv.value);
+        if (!providers.ok || providers.value.gitlab === undefined) return undefined;
+        const { host, port } = providers.value.gitlab;
+        return port !== undefined ? `${host}:${port}` : host;
+      } catch {
+        return undefined;
+      }
+    })());
 
   // The policy's required_checks (#116): the glab adapter's verified
   // pipeline-gate intersection reads the policy names, so the delegate is
   // constructed with them. Without a readable policy there is nothing to
   // verify — the adapter reports `[]` and never fabricates an intersection.
-  const policyRequiredChecks = async (): Promise<string[] | undefined> => {
-    try {
-      const rootEv = await discoverRepoRoot(process.cwd());
-      if (!rootEv.ok) return undefined;
-      const policy = await readPolicy(rootEv.value);
-      return policy.ok ? policy.value.required_checks : undefined;
-    } catch {
-      return undefined;
-    }
-  };
+  let requiredChecksPromise: Promise<string[] | undefined> | undefined;
+  const policyRequiredChecks = (): Promise<string[] | undefined> =>
+    (requiredChecksPromise ??= (async () => {
+      try {
+        const rootEv = await resolveRoot(process.cwd());
+        if (!rootEv.ok) return undefined;
+        const policy = await policyFor(rootEv.value);
+        return policy.ok ? policy.value.required_checks : undefined;
+      } catch {
+        return undefined;
+      }
+    })());
 
   const routingProvider = new PlatformRoutingProvider({
     github: gh,
@@ -131,7 +183,7 @@ export function createDefaultContext(): CommandContext {
       const gitlabHost = await declaredGitlabHost();
       if (gitlabHost === undefined) return 'github';
       try {
-        const rootEv = await discoverRepoRoot(process.cwd());
+        const rootEv = await resolveRoot(process.cwd());
         if (!rootEv.ok) return 'undecided';
         const facts = await git.facts(rootEv.value);
         if (facts.originUrl === null) return 'undecided';
@@ -155,7 +207,7 @@ export function createDefaultContext(): CommandContext {
     version,
     cwd: process.cwd(),
     stdinIsTTY: Boolean(process.stdin.isTTY),
-    discoverRoot: discoverRepoRoot,
+    discoverRoot: resolveRoot,
     probeGitBinary,
     git,
     gh: routingProvider,
