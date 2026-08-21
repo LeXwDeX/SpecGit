@@ -1,8 +1,8 @@
 version: 1
-delivery: archive-the-1
+delivery: refresh-the-readme
 context:
   kind: branch
-  branch: docs/150-archive-the-1
+  label: readme-opt
+  branch: docs/152-refresh-the-readme
 issues:
-  - 150
-pr: 151
+  - 152
