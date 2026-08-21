@@ -58,7 +58,7 @@ guessed**:
 
 - **GitHub.com** works out of the box: evidence flows through your
   authenticated `gh` session.
-- **Self-managed GitLab CE/Free** `>= 19.2.4 < 19.3.0` is supported since
+- **Self-managed GitLab CE/Free** `>= 19.2.4 < 19.4.0` is supported since
   1.0: declare the host once (`specgit init --gitlab-host <hostname>`,
   persisted in `spec_git/providers.yaml`) and evidence flows through your
   authenticated `glab` session (`glab` ≥ 1.113.0). Nested-group origins
