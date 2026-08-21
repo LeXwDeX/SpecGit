@@ -13,7 +13,7 @@ A GitLab origin is **recognized, not silently misread**:
 
 ## Supported-version policy (self-managed)
 
-- **Self-managed GitLab is supported at exactly `>= 19.2.4 < 19.3.0`, CE/Free tier** (#98). The known-good anchor is the `v19.2.4-ee` release tag (tagged 2026-08-14, commit `85f4a2d9`). Any version outside the range fails closed: planned diagnostic `gitlab_version_unsupported`, exit 3, fix text pointing here and to upgrading within 19.2.x. Versions `>= 19.3.0` also fail closed until a rebaseline delivery widens the range — the range moves only through explicit rebaseline deliveries, never silent drift (procedure: [Rebaseline SOP](#rebaseline-sop-moving-the-version-window)).
+- **Self-managed GitLab is supported at exactly `>= 19.2.4 < 19.4.0`, CE/Free tier** (#98; widened by the #236 rebaseline). The known-good anchors are `v19.2.4-ee` at the floor (tagged 2026-08-14, commit `85f4a2d9`) and `v19.3.0-ee` at the head (tagged 2026-08-20, commit `8f83039b`; rows pinned in [gitlab-19.3.md](evidence/gitlab-19.3.md)). Any version outside the range fails closed: diagnostic `gitlab_version_unsupported`, exit 3, fix text pointing here and to upgrading into the supported window. Versions `>= 19.4.0` also fail closed until a rebaseline delivery widens the range — the range moves only through explicit rebaseline deliveries, never silent drift (procedure: [Rebaseline SOP](#rebaseline-sop-moving-the-version-window)).
 - **The `-ee`/`-ce` suffix is a release-channel marker, not semver pre-release semantics**: naive semver ordering ranks `19.2.4-ee < 19.2.4`, which is wrong. Version comparison strips the suffix first, then compares the `x.y.z` triple (ledger rule 4).
 - **Version discovery uses the authenticated metadata endpoint** (`glab api /metadata`): no unauthenticated version channel is documented at the pinned tag (ledger row 3). `metadata.enterprise` is informational only — never a gate input.
 - **GitLab.com (SaaS) is in scope and is judged by capability probing, never version pinning** (#93): the instance auto-upgrades, so a pinned self-managed range cannot apply. The evidence path probes every API surface the delivery depends on with read-only calls; any probe failure ⇒ verdict `unknown` (planned `gitlab_capability_missing`, exit 3). Missing evidence is UNKNOWN = a blocked path, never an inferred capability.
@@ -95,4 +95,4 @@ Project identity is addressed by full path URL-encoded (`/`→`%2F`) as `:id` (r
 
 - No cross-platform deliveries (one delivery, one platform, one PR/MR).
 - No token storage: `glab` owns credentials, same as `gh` today.
-- No support for versions outside `>= 19.2.4 < 19.3.0` (self-managed) without a rebaseline delivery; no Ultimate-tier primitives, ever.
+- No support for versions outside `>= 19.2.4 < 19.4.0` (self-managed) without a rebaseline delivery; no Ultimate-tier primitives, ever.
