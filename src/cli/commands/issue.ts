@@ -35,7 +35,7 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
-import { errorDiagnostic, sanitize, type IssueOutcome } from '../output.js';
+import { errorDiagnostic, humanBuilder, issueList, sanitize, type IssueOutcome } from '../output.js';
 import { commandLanguage, catalogFor } from '../language.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
@@ -424,13 +424,13 @@ export async function runIssue(
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
     record: recordSummary(record),
-    human: [
-      human.issueHeader(resumed, record.delivery),
-      human.issueBranch(target),
-      human.issueIssues(record.issues.map((n) => `#${n}`).join(', ')),
-      human.issuePr(record.pr as number | string),
-      human.issueRecorded(RECORD_FILENAME),
-    ],
+    human: humanBuilder()
+      .line(human.issueHeader(resumed, record.delivery))
+      .line(human.issueBranch(target))
+      .line(human.issueIssues(issueList(record.issues)))
+      .line(human.issuePr(record.pr as number | string))
+      .line(human.issueRecorded(RECORD_FILENAME))
+      .build(),
   };
 }
 

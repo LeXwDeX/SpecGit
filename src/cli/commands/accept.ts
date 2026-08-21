@@ -10,7 +10,12 @@
  */
 
 import { EXIT_UNKNOWN } from '../exit-codes.js';
-import { errorDiagnostic, sanitize, type AcceptOutcome } from '../output.js';
+import {
+  errorDiagnostic,
+  humanBuilder,
+  verdictFailureLine,
+  type AcceptOutcome,
+} from '../output.js';
 import { catalogFor, resolveLanguage } from '../language.js';
 import type { CommandContext, Evidence } from '../types.js';
 
@@ -48,10 +53,7 @@ export async function runAccept(
         : text.finishUnknown(verdict.evidence.delivery ?? null);
 
   const failureLines = verdict.gates.flatMap((gate) =>
-    gate.failures.map(
-      (failure) =>
-        `  ${gate.id}: ${failure.code}${failure.fix ? ` — ${sanitize(failure.fix)}` : ''}`
-    )
+    gate.failures.map((failure) => verdictFailureLine(gate.id, failure.code, failure.fix))
   );
 
   return {
@@ -69,6 +71,6 @@ export async function runAccept(
                 errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {})
               )
             ),
-    human: [headline, ...failureLines],
+    human: humanBuilder().line(headline).append(failureLines).build(),
   };
 }

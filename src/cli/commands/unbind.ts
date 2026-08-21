@@ -3,7 +3,7 @@
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type UnbindOutcome } from '../output.js';
+import { errorDiagnostic, humanBuilder, type UnbindOutcome } from '../output.js';
 import { RECORD_FILENAME, type CommandContext } from '../types.js';
 import { catalogFor, commandLanguage } from '../language.js';
 
@@ -69,7 +69,7 @@ export async function runUnbind(
       };
     }
     if (!(await promptForConfirmation())) {
-      return { exit: EXIT_SUCCESS, human: [human.unbindAborted()] };
+      return { exit: EXIT_SUCCESS, human: humanBuilder().line(human.unbindAborted()).build() };
     }
   }
 
@@ -86,6 +86,6 @@ export async function runUnbind(
   return {
     exit: EXIT_SUCCESS,
     state: 'unbound',
-    human: [human.unbindRemoved(RECORD_FILENAME)],
+    human: humanBuilder().line(human.unbindRemoved(RECORD_FILENAME)).build(),
   };
 }

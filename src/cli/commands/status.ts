@@ -26,7 +26,13 @@ import {
   policyGate,
   recordGate,
 } from '../gates.js';
-import { errorDiagnostic, type StatusOutcome } from '../output.js';
+import {
+  errorDiagnostic,
+  gateFailureLine,
+  humanBuilder,
+  issueList,
+  type StatusOutcome,
+} from '../output.js';
 import { STATE_ASSET_TAXONOMY } from '../state-taxonomy.js';
 import { catalogFor, resolveLanguage } from '../language.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
@@ -75,7 +81,7 @@ export async function runStatus(
           },
         ],
         assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
-        human: [text.statusUnbound()],
+        human: humanBuilder().line(text.statusUnbound()).build(),
       };
     }
     return {
@@ -135,36 +141,41 @@ export async function runStatus(
       gates,
       errors: failClosedErrors,
       assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
-      human: [
-        text.statusDelivery(record.delivery, state),
-        ...gates.flatMap((gate) =>
-          gate.failures.map(
-            (failure) => `Gate ${gate.id}: ${failure.code}${failure.fix ? ` — ${failure.fix}` : ''}`
+      human: humanBuilder()
+        .line(text.statusDelivery(record.delivery, state))
+        .append(
+          gates.flatMap((gate) =>
+            gate.failures.map((failure) => gateFailureLine(gate.id, failure.code, failure.fix))
           )
-        ),
-      ],
+        )
+        .build(),
     };
   }
 
-  const human = [
-    text.statusDelivery(record.delivery, state),
-    record.context.kind === 'worktree'
-      ? text.statusContextWorktree(record.context.label, record.context.branch)
-      : text.statusContextBranch(record.context.branch),
-    record.issues.length > 0
-      ? text.statusIssues(record.issues.map((n) => `#${n}`).join(', '))
-      : text.statusIssuesNone(),
-    record.pr !== undefined ? text.statusPr(record.pr) : text.statusPrNone(),
-    origin.repo !== null ? text.statusRepository(origin.repo) : text.statusRepositoryUnresolved(),
-    facts.branch !== null ? text.statusLiveBranch(facts.branch) : text.statusLiveBranchDetached(),
-    'Assets: authoritative committed (spec_git/policy.yaml, spec_git/providers.yaml, .specgit.yaml) · derived committed harness (regenerate via init --force) · local integration (setup entry points)',
-    ...gates.flatMap((gate) =>
-      gate.failures.map(
-        (failure) =>
-          `Gate ${gate.id}: ${failure.code}${failure.fix ? ` — ${failure.fix}` : ''}`
+  const human = humanBuilder()
+    .line(text.statusDelivery(record.delivery, state))
+    .line(
+      record.context.kind === 'worktree'
+        ? text.statusContextWorktree(record.context.label, record.context.branch)
+        : text.statusContextBranch(record.context.branch)
+    )
+    .line(
+      record.issues.length > 0
+        ? text.statusIssues(issueList(record.issues))
+        : text.statusIssuesNone()
+    )
+    .line(record.pr !== undefined ? text.statusPr(record.pr) : text.statusPrNone())
+    .line(origin.repo !== null ? text.statusRepository(origin.repo) : text.statusRepositoryUnresolved())
+    .line(facts.branch !== null ? text.statusLiveBranch(facts.branch) : text.statusLiveBranchDetached())
+    .line(
+      'Assets: authoritative committed (spec_git/policy.yaml, spec_git/providers.yaml, .specgit.yaml) · derived committed harness (regenerate via init --force) · local integration (setup entry points)'
+    )
+    .append(
+      gates.flatMap((gate) =>
+        gate.failures.map((failure) => gateFailureLine(gate.id, failure.code, failure.fix))
       )
-    ),
-  ];
+    )
+    .build();
 
   return {
     exit: EXIT_SUCCESS,

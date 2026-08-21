@@ -7,7 +7,7 @@
  */
 
 import { EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type InitOutcome } from '../output.js';
+import { errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { SPEC_GIT_DIR, type CommandContext } from '../types.js';
@@ -174,12 +174,12 @@ export async function resolvePlatformMode(
         mode: 'gitlab',
         gitlabHost: declaredEndpointName(existingGitlab.host, existingGitlab.port ?? null),
       },
-      human: [],
+      human: humanBuilder().build(),
     };
   }
 
   if (!originUrl) {
-    return { outcome: { mode: 'undecided' }, human: [] };
+    return { outcome: { mode: 'undecided' }, human: humanBuilder().build() };
   }
   const endpoint = originEndpoint(originUrl);
   // Port rule (#78): only the scheme default keeps a shape classifiable —
@@ -187,7 +187,10 @@ export async function resolvePlatformMode(
   // gitlab heuristics never capture non-default ports either; those
   // endpoints need an explicit host(:port) declaration.
   if (endpoint !== null && endpoint.host === 'github.com' && endpointUsesDefaultPort(endpoint)) {
-    return { outcome: { mode: 'github' }, human: [text.initPlatformGithubDefault()] };
+    return {
+      outcome: { mode: 'github' },
+      human: humanBuilder().line(text.initPlatformGithubDefault()).build(),
+    };
   }
   if (
     endpoint !== null &&
@@ -203,7 +206,9 @@ export async function resolvePlatformMode(
     }
     return {
       outcome: { mode: 'gitlab', gitlabHost: endpoint.host },
-      human: [text.initPlatformGitlab(endpoint.host, `${SPEC_GIT_DIR}/providers.yaml`)],
+      human: humanBuilder()
+        .line(text.initPlatformGitlab(endpoint.host, `${SPEC_GIT_DIR}/providers.yaml`))
+        .build(),
     };
   }
 
@@ -235,12 +240,17 @@ export async function resolvePlatformMode(
       }
       return {
         outcome: { mode: 'gitlab', gitlabHost: declaredEndpointName(endpoint.host, port) },
-        human: [
-          text.initPlatformGitlab(declaredEndpointName(endpoint.host, port), `${SPEC_GIT_DIR}/providers.yaml`),
-        ],
+        human: humanBuilder()
+          .line(
+            text.initPlatformGitlab(declaredEndpointName(endpoint.host, port), `${SPEC_GIT_DIR}/providers.yaml`)
+          )
+          .build(),
       };
     }
-    return { outcome: { mode: 'github' }, human: [text.initPlatformGithubUser()] };
+    return {
+      outcome: { mode: 'github' },
+      human: humanBuilder().line(text.initPlatformGithubUser()).build(),
+    };
   }
 
   warnings.push({
@@ -251,5 +261,5 @@ export async function resolvePlatformMode(
     }" is neither github.com nor a declared GitLab host.`,
     fix: 'Re-run init with --gitlab-host <hostname> (or <hostname>:<port> for a non-default port), or answer the platform question on an interactive terminal.',
   });
-  return { outcome: { mode: 'undecided' }, human: [] };
+  return { outcome: { mode: 'undecided' }, human: humanBuilder().build() };
 }

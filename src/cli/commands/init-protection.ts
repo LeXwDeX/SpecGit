@@ -8,6 +8,7 @@
  */
 
 import { ACCEPTANCE_CHECK_NAME } from '../harness-assets.js';
+import { humanBuilder, warningLine } from '../output.js';
 import type { HumanText } from '../language.js';
 import type { CommandContext } from '../types.js';
 import type { BranchProtectionFact } from '../../github/port.js';
@@ -52,11 +53,15 @@ export async function setupBranchProtection(
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
   if (!originUrl) {
-    return { human: ['Warning: no origin remote — cannot probe branch protection.'] };
+    return { human: humanBuilder().line(warningLine('no origin remote — cannot probe branch protection.')).build() };
   }
   const repoEv = await ctx.parseRepoRef(originUrl);
   if (!repoEv.ok) {
-    return { human: [`Warning: cannot resolve a GitHub repository from '${originUrl}' — protection not probed.`] };
+    return {
+      human: humanBuilder()
+        .line(warningLine(`cannot resolve a GitHub repository from '${originUrl}' — protection not probed.`))
+        .build(),
+    };
   }
   const repo = repoEv.value;
 
@@ -73,7 +78,7 @@ export async function setupBranchProtection(
         action: 'unavailable',
         fix: protectionEv.message,
       },
-      human: [`Warning: branch protection could not be probed (${protectionEv.message}).`],
+      human: humanBuilder().line(warningLine(`branch protection could not be probed (${protectionEv.message}).`)).build(),
     };
   }
   const protection: BranchProtectionFact = protectionEv.value;
@@ -90,7 +95,7 @@ export async function setupBranchProtection(
         action: 'unavailable',
         fix: automergeEv.message,
       },
-      human: [`Warning: repository auto-merge could not be probed (${automergeEv.message}).`],
+      human: humanBuilder().line(warningLine(`repository auto-merge could not be probed (${automergeEv.message}).`)).build(),
     };
   }
   const automerge = automergeEv.value.enabled;
@@ -104,7 +109,7 @@ export async function setupBranchProtection(
         automerge,
         action: 'already-protected',
       },
-      human: [],
+      human: humanBuilder().build(),
     };
   }
 
@@ -130,9 +135,13 @@ export async function setupBranchProtection(
         action: 'warned',
         fix: PROTECT_FIX(branch),
       },
-      human: [
-        `Warning: ${branch} does not require "${ACCEPTANCE_CHECK_NAME}" — the acceptance gate can be bypassed by a direct push or merge.`,
-      ],
+      human: humanBuilder()
+        .line(
+          warningLine(
+            `${branch} does not require "${ACCEPTANCE_CHECK_NAME}" — the acceptance gate can be bypassed by a direct push or merge.`
+          )
+        )
+        .build(),
     };
   }
 
@@ -166,7 +175,7 @@ export async function setupBranchProtection(
         action: 'unavailable',
         fix: failed ?? undefined,
       },
-      human: [`Warning: enabling branch protection failed (${failed ?? 'unknown'}).`],
+      human: humanBuilder().line(warningLine(`enabling branch protection failed (${failed ?? 'unknown'}).`)).build(),
     };
   }
 
@@ -178,9 +187,9 @@ export async function setupBranchProtection(
       automerge: automergeFinal,
       action: 'protected',
     },
-    human: [
-      text.initProtectionRequired(branch, ACCEPTANCE_CHECK_NAME),
-      text.initAutomerge(automergeFinal),
-    ],
+    human: humanBuilder()
+      .line(text.initProtectionRequired(branch, ACCEPTANCE_CHECK_NAME))
+      .line(text.initAutomerge(automergeFinal))
+      .build(),
   };
 }
