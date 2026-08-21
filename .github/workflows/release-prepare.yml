@@ -8,11 +8,17 @@ name: Release
 #    "chore(release): v<version>" as a PR held open as the manual
 #    batch-decision point (auto-merge armed off, #102).
 # 2. that PR merges (SpecGit Acceptance passes via its no-record skip
-#    path) -> push to main with no pending changesets and a head commit
-#    matching "chore(release): v" -> publish to npm, tag, GitHub Release.
+#    path) -> push to main with no pending changesets and package.json
+#    version not yet on npm -> publish to npm, tag, GitHub Release.
+#
+# The publish gate is registry evidence, never the head commit message
+# (#227): a merge-commit merge leaves "Merge pull request #N..." as the
+# head, and workflow_dispatch has no head commit at all. Dispatch is the
+# manual retry entry point for a version that failed to publish.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write # tag push + GitHub Release + version branch
@@ -53,6 +59,23 @@ jobs:
           COUNT=$(node -e "const fs=require('fs');let consumed=[];try{consumed=JSON.parse(fs.readFileSync('.changeset/pre.json','utf8')).changesets||[]}catch{};let files=[];try{files=fs.readdirSync('.changeset')}catch{};const pending=files.filter(f=>f.endsWith('.md')&&f!=='README.md').map(f=>f.replace(/\.md$/,'')).filter(id=>!consumed.includes(id));console.log(pending.length)")
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Pending changesets: $COUNT"
+
+      # No pending changesets: publish iff this version is not on npm yet.
+      - name: Check if unpublished version exists
+        id: unpublished
+        if: steps.pending.outputs.count == '0'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+            echo "specgit@${VERSION} already on npm; nothing to publish."
+          elif git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v${VERSION} exists but npm is behind; manual investigation needed."
+          else
+            echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+            echo "specgit@${VERSION} not on npm and no tag — publish needed."
+          fi
 
       # Push with pending changesets: propose the version PR.
       - name: Open version pull request
@@ -141,13 +164,13 @@ jobs:
           echo "::error::Version PR check-runs did not appear within 120s; investigate the PR checks manually."
           exit 1
 
-      # Push without pending changesets whose head is a version bump: publish.
+      # This version is not on npm and carries no tag: publish it.
       - name: Build
-        if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
+        if: "steps.unpublished.outputs.needs_publish == 'true'"
         run: pnpm run build
 
       - name: Publish to npm
-        if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
+        if: "steps.unpublished.outputs.needs_publish == 'true'"
         run: |
           VERSION=$(node -p "require('./package.json').version")
           if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
@@ -165,7 +188,7 @@ jobs:
           npm publish --access public --provenance --tag "$DIST_TAG"
 
       - name: Tag and create GitHub Release
-        if: "steps.pending.outputs.count == '0' && startsWith(github.event.head_commit.message, 'chore(release): v')"
+        if: "steps.unpublished.outputs.needs_publish == 'true'"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

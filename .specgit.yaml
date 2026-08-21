@@ -1,8 +1,7 @@
 version: 1
-delivery: add-v1-1
+delivery: decouple-release-publish
 context:
   kind: branch
-  branch: chore/222-add-v1-1
+  branch: fix/227-decouple-release-publish
 issues:
-  - 222
-pr: 223
+  - 227
