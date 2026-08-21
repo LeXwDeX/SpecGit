@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
 import { sanitize } from '../../src/cli/output.js';
 import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
-import { makeCtx, parseStdoutJson, stdoutText } from './helpers.js';
+import { makeCtx, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
 describe('CLI contract: exit codes', () => {
   it('exposes the stable exit-code constants', () => {
     expect(EXIT_SUCCESS).toBe(0);
@@ -36,6 +36,35 @@ describe('CLI contract: JSON envelope', () => {
     const joined = t.io.stdout.join('');
     expect(joined.startsWith('{')).toBe(true);
     expect(() => JSON.parse(joined)).not.toThrow();
+  });
+
+  // #167: every envelope carries a top-level numeric exit equal to the
+  // process exit code, alongside the textual status.
+  it('every --json envelope carries a top-level numeric exit equal to the observed exit code (#167)', async () => {
+    // exit 2 — usage error path
+    const t2 = makeCtx();
+    const code2 = await runCliWith(['node', 'specgit', 'bind', '--json'], t2.ctx);
+    expect(code2).toBe(EXIT_USAGE);
+    const env2 = parseStdoutJson(t2.io);
+    expect(typeof env2.exit).toBe('number');
+    expect(env2.exit).toBe(EXIT_USAGE);
+    expect(env2.status).toBe('error');
+
+    // exit 3 — fail-closed unknown path (record missing)
+    const t3 = makeCtx();
+    const code3 = await runCliWith(['node', 'specgit', 'status', '--json'], t3.ctx);
+    expect(code3).toBe(EXIT_UNKNOWN);
+    const env3 = parseStdoutJson(t3.io);
+    expect(env3.exit).toBe(EXIT_UNKNOWN);
+    expect(env3.status).toBe('unknown');
+
+    // exit 0 — success path
+    const t0 = makeCtx({ record: sampleBinding(), policy: samplePolicy() });
+    const code0 = await runCliWith(['node', 'specgit', 'status', '--json'], t0.ctx);
+    expect(code0).toBe(EXIT_SUCCESS);
+    const env0 = parseStdoutJson(t0.io);
+    expect(env0.exit).toBe(EXIT_SUCCESS);
+    expect(env0.status).toBe('ok');
   });
 });
 

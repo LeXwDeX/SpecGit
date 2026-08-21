@@ -116,7 +116,7 @@ specgit setup --tool all      # everything
 | --- | --- |
 | `--tool <tool>` | `opencode` \| `generic` \| `all`. Omit to auto-detect (opencode when `.opencode/` exists, otherwise generic). |
 
-`opencode` installs command entry points under `.opencode/command/`; `generic` installs the portable skills (see [`skills/`](../skills/README.md)) that work with any agent that reads files. Exits `2` for an unknown tool (`setup_tool_invalid`), `3` outside a git repository or on write failure.
+`opencode` installs command entry points under `.opencode/command/`; `generic` installs the portable skills (see [`skills/`](../skills/README.md)) that work with any agent that reads files. Exits `2` for an unknown tool (`setup_tool_invalid`), `3` outside a git repository or on write failure. Under `--json`, the envelope carries `assets: { tool, installed }` — the tool that was installed for and the path of every written entry point.
 
 ## `specgit issue`
 
@@ -252,6 +252,7 @@ Every `--json` invocation writes exactly one JSON document to stdout:
   "version": "1.0.0",
   "command": "accept",
   "status": "rejected",
+  "exit": 1,
   "state": "bound",
   "verdict": {
     "accepted": false,
@@ -287,6 +288,7 @@ Every `--json` invocation writes exactly one JSON document to stdout:
 Fields:
 
 - `status` — `ok` | `rejected` | `unknown` | `error`
+- `exit` — the numeric exit code the process exits with (`0` | `1` | `2` | `3`), equal to `status`' mapping; lets a piped caller read the exit code from the document itself
 - `state` — derived delivery state: `unbound` | `draft` | `bound` | `accepted` | `rejected` | `unknown`
 - `verdict.gates[]` — one entry per evaluated gate with `id`, `status`, failure `code`, structured `detail`, and a `fix`
 - `verdict.evidence` — the facts the verdict was derived from (repo, branch, context, PR, PR head SHA)

@@ -6,11 +6,13 @@
  * receives the human rendering, diagnostics still carry stable codes.
  *
  * Envelope shape (stable):
- *   { tool, version, command, status, state?, verdict?, gates?, evidence?,
- *     errors?, warnings?, record?, policy?, probes? }
+ *   { tool, version, command, status, exit, state?, verdict?, gates?,
+ *     evidence?, errors?, warnings?, record?, policy?, probes? }
  *
  * `status` maps to the exit-code contract: 0→ok, 1→rejected, 2→error,
- * 3→unknown.
+ * 3→unknown. `exit` (#167) carries that same contract as a top-level
+ * number, so a piped caller reads the process exit code without mapping
+ * the textual `status` back by hand.
  */
 
 import { statusFromExit, EXIT_INTERRUPTED } from './exit-codes.js';
@@ -93,6 +95,7 @@ export function buildEnvelope(
     version,
     command,
     status: statusFromExit(outcome.exit),
+    exit: outcome.exit,
   };
   const optional: Array<[string, unknown]> = [
     ['state', outcome.state],
