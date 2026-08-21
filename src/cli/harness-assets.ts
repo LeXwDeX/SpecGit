@@ -248,6 +248,17 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
 - 绝不为了通过裁决而削弱 \`spec_git/policy.yaml\`。
 - \`--json\` 是唯一的解析面：stdout 恰好是一个 JSON 文档；绝不抓取
   人读输出。
+
+### 代理契约要点
+
+- 唯一规则：交付完成当且仅当 \`specgit finish\` 退出 \`0\`。绝不凭任务
+  清单、文件状态或自己跑过的测试宣布完成。
+- 按退出码分支，不按措辞：\`1\` = 证据齐全，修门槛点名的内容；\`3\` =
+  证据缺失，先修环境（\`specgit doctor\`）。绝不把退出 \`3\` 当作成功。
+- 保持 PR 正文里的 \`Closes #n\` 引用完整；改动 PR 正文、头分支或 CI
+  后重跑 \`specgit finish\`。绝不为通过验收而绕过或改配置必需检查。
+- 平台证据只经由用户已认证的 CLI 会话（\`gh\` / \`glab\`）流转：绝不
+  读取、记录或传递 token。
 ${BLOCK_END_MARKER}`;
   }
   return `${BLOCK_START_MARKER}
@@ -317,6 +328,20 @@ verified on its own evidence, split it before binding.
 - Never weaken \`spec_git/policy.yaml\` to make a verdict pass.
 - \`--json\` is the only parse surface: stdout is exactly one JSON
   document; never scrape human-readable output.
+
+### Agent contract essentials
+
+- The one rule: a delivery is done if and only if \`specgit finish\`
+  exits \`0\`. Never declare completion from task lists, file states, or
+  test runs you performed yourself.
+- Branch on exit codes, not phrasing: \`1\` = evidence complete, fix what
+  the gates named; \`3\` = evidence missing, fix the environment first
+  (\`specgit doctor\`). Never present exit \`3\` as success.
+- Keep the \`Closes #n\` references in the PR body intact; after changing
+  the PR body, head branch, or CI, re-run \`specgit finish\`. Never
+  bypass or reconfig a required check to make acceptance pass.
+- Forge evidence flows through the user's authenticated CLI session only
+  (\`gh\` / \`glab\`): never read, log, or pass around tokens.
 ${BLOCK_END_MARKER}`;
 }
 
