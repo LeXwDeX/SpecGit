@@ -141,4 +141,18 @@ verified on its own evidence, split it before binding.
 - Never weaken `spec_git/policy.yaml` to make a verdict pass.
 - `--json` is the only parse surface: stdout is exactly one JSON
   document; never scrape human-readable output.
+
+### Agent contract essentials
+
+- The one rule: a delivery is done if and only if `specgit finish`
+  exits `0`. Never declare completion from task lists, file states, or
+  test runs you performed yourself.
+- Branch on exit codes, not phrasing: `1` = evidence complete, fix what
+  the gates named; `3` = evidence missing, fix the environment first
+  (`specgit doctor`). Never present exit `3` as success.
+- Keep the `Closes #n` references in the PR body intact; after changing
+  the PR body, head branch, or CI, re-run `specgit finish`. Never
+  bypass or reconfig a required check to make acceptance pass.
+- Forge evidence flows through the user's authenticated CLI session only
+  (`gh` / `glab`): never read, log, or pass around tokens.
 <!-- specgit:block:end -->

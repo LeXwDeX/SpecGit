@@ -24,6 +24,13 @@
  * record whose PR merged is completed history — no-args resume is a
  * usage error naming the way forward, and validated replacement
  * arguments re-bootstrap in its place (#75).
+ *
+ * Structure (#177): `runIssue` is orchestration only; the readable,
+ * individually testable steps live in named sub-functions —
+ * `resolveMergedRecord` (read-only mergedness probe), `validateResumeArgs`
+ * (positional resume validation), `createOrAdoptIssues` (the issue
+ * creation loop with durable per-issue record writes), and
+ * `bindPullRequest` (PR discovery/adoption/creation + traceability).
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
@@ -33,7 +40,7 @@ import { commandLanguage, catalogFor } from '../language.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { PolicyLanguage } from '../../record/policy.js';
-import type { CommandContext, DeliveryBinding, Evidence } from '../types.js';
+import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
 import type { OpenIssueFact } from '../../github/port.js';
 
 export interface IssueOptions {
@@ -296,38 +303,18 @@ export async function runIssue(
     return passthrough(existingRead);
   }
 
-  // Mergedness first (read-only): a record whose PR already merged is
-  // completed history, not an active delivery, and is replaced rather
-  // than demanding a manual unbind. Provider failures keep the existing
-  // record (fail-closed — never guess merged): resuming on a guess of
-  // "not merged" could re-push the branch GitHub deleted on merge (#75).
-  let existing: Evidence<DeliveryBinding> | null = existingRead.ok ? existingRead : null;
-  let merged = false;
-  if (existing && existing.value.pr !== undefined) {
-    const prEv = await ctx.gh.getPr(repoEv.value, existing.value.pr);
-    if (!prEv.ok) {
-      return passthrough(prEv);
-    }
-    merged = prEv.value.state === 'merged';
+  const mergedEv = await resolveMergedRecord(ctx, repoEv.value, existingRead.ok ? existingRead : null);
+  if ('exit' in mergedEv) {
+    return mergedEv;
   }
+  let existing = mergedEv.existing;
 
   // A merged record has nothing to resume: no-args resume would re-run
   // the branch/commit/push steps and resurrect the head branch GitHub
   // auto-deleted on merge. End the lifecycle decision before any side
   // effect, naming the way forward (#75).
-  if (existing !== null && merged && args.length === 0) {
-    return {
-      exit: EXIT_USAGE,
-      errors: [
-        errorDiagnostic(
-          'issue_delivery_merged',
-          `Delivery '${existing.value.delivery}' is already merged (PR #${existing.value.pr}); there is nothing to resume.`,
-          {
-            fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why", or run "specgit unbind --yes" to clear the merged record.',
-          }
-        ),
-      ],
-    };
+  if (existing !== null && existing.ok && mergedEv.merged && args.length === 0) {
+    return mergedDeliveryError(existing.value);
   }
 
   // Validate arguments BEFORE any destructive side effect, scoped to what
@@ -356,7 +343,7 @@ export async function runIssue(
   }
 
   // Replace a merged record only with validated replacement arguments.
-  if (existing !== null && merged && args.length > 0) {
+  if (existing !== null && existing.ok && mergedEv.merged && args.length > 0) {
     const invalidReplacement = validateArgsForCreation(args);
     if (invalidReplacement) {
       return invalidReplacement;
@@ -365,152 +352,33 @@ export async function runIssue(
     existing = null;
   }
 
-  let record!: DeliveryBinding;
-  let resumed = false;
-  let firstTitle: string | null = null;
-  let issues: number[] = [];
-  let startIndex = 0;
-
-  if (existing !== null && existing.ok) {
-    // Resume: the record is the durable step marker, rewritten after every
-    // issue (and the PR), so a partial record carries exactly the issues
-    // that exist and the arguments map onto it positionally.
-    resumed = true;
-    record = existing.value;
-    issues = [...record.issues];
-    // Every recorded issue is a consumed argument; creation, if any,
-    // continues after them.
-    startIndex = issues.length;
-    if (args.length > 0) {
-      if (args.length < issues.length) {
-        return driftError(
-          `This checkout already carries delivery '${record.delivery}' with ${record.issues.length} bound issue(s); the ${args.length} argument(s) do not match.`
-        );
-      }
-      if (args.length === issues.length) {
-        // Numeric arguments are verifiable and must be bound already. Title
-        // arguments cannot be matched to numbers post-creation; the count
-        // check above is their guard, and a complete record never creates.
-        for (const arg of args) {
-          const number = parseNumericRef(arg);
-          if (number !== null && !record.issues.includes(number)) {
-            return driftError(
-              `Argument '${sanitize(arg)}' is not among the issues bound to delivery '${record.delivery}'.`
-            );
-          }
-        }
-      } else {
-        // Partial continuation (issues ⊂ args) is only possible while the
-        // bootstrap is incomplete: no PR recorded yet. A record with a PR
-        // bound is a complete delivery — a finished bootstrap never creates
-        // issues, so surplus arguments are drift, refused with zero side
-        // effects before any probe or create.
-        if (record.pr !== undefined) {
-          return driftError(
-            `This checkout already carries the complete delivery '${record.delivery}' with ${record.issues.length} bound issue(s) and PR #${record.pr}; the ${args.length} argument(s) do not match.`
-          );
-        }
-        // Partial record (issues ⊂ args): the first issues.length
-        // arguments were consumed by the previous run — numeric ones are
-        // verified positionally — and creation continues from there.
-        for (let i = 0; i < issues.length; i += 1) {
-          const number = parseNumericRef(args[i]);
-          if (number !== null && number !== issues[i]) {
-            return driftError(
-              `Argument '${sanitize(args[i])}' is not among the issues bound to delivery '${record.delivery}'.`
-            );
-          }
-        }
-        firstTitle = firstTitleArg(args.slice(0, startIndex));
-        // The remaining arguments will create issues: validate them before
-        // any side effect.
-        const invalidRemaining = validateArgsForCreation(args.slice(startIndex));
-        if (invalidRemaining) {
-          return invalidRemaining;
-        }
-      }
-    }
+  // Resume: the record is the durable step marker; the arguments map
+  // onto it positionally, and the resolution names where creation (if
+  // any) continues.
+  const liveRecord = existing !== null && existing.ok ? existing.value : null;
+  const resumed = liveRecord !== null;
+  const resume = liveRecord !== null ? validateResumeArgs(liveRecord, args) : null;
+  if (resume !== null && 'exit' in resume) {
+    return resume;
   }
+  const startIndex = resume !== null ? resume.startIndex : 0;
 
-  // Remotely discoverable idempotency marker for issue creation: an open
-  // issue whose title exactly matches a pending title argument is that
-  // argument's issue — a previous run created it but failed to record it
-  // (lost response, crash, or failed record write). Adopt it instead of
-  // duplicating the WHY. One title-carrying scan of the open issues
-  // (#77) replaces the former per-issue probe fan-out, so the probe cost
-  // is bounded by pages, not by the open-issue count. Probe failures
-  // fail closed: never guess.
-  const remaining = args.slice(startIndex);
-  const adoptable = new Map<string, OpenIssueFact[]>();
-  if (remaining.some((arg) => parseNumericRef(arg) === null)) {
-    const openEv = await ctx.gh.getOpenIssues(repoEv.value);
-    if (!openEv.ok) {
-      return passthrough(openEv);
-    }
-    for (const fact of openEv.value) {
-      if (typeof fact.title === 'string' && fact.title) {
-        const bucket = adoptable.get(fact.title) ?? [];
-        bucket.push(fact);
-        adoptable.set(fact.title, bucket);
-      }
-    }
+  const created = await createOrAdoptIssues({
+    ctx,
+    root,
+    repo: repoEv.value,
+    language,
+    context: contextEv.value,
+    record: liveRecord,
+    args,
+    startIndex,
+    firstTitle: resume !== null ? resume.firstTitle : null,
+  });
+  if ('exit' in created) {
+    return created;
   }
-
-  for (let i = startIndex; i < args.length; i += 1) {
-    const arg = args[i];
-    let number: number;
-    const reuseNumber = parseNumericRef(arg);
-    if (reuseNumber !== null) {
-      number = reuseNumber;
-    } else {
-      // Same-title adoption is disambiguated, never silent (#77): an
-      // exact title match binds only when it is unambiguous — one
-      // candidate, or a sole candidate carrying the deterministic
-      // scaffold body. An issue already bound in this run is not a
-      // candidate again; a repeated title argument creates fresh.
-      const bucket = adoptable.get(arg) ?? [];
-      const unbound = bucket.filter((c) => !issues.includes(c.number));
-      const resolved = disambiguateAdoption(arg, unbound, language);
-      if ('ambiguous' in resolved) {
-        return adoptionAmbiguousError(arg, unbound);
-      }
-      if ('candidate' in resolved) {
-        bucket.splice(bucket.indexOf(resolved.candidate), 1);
-        number = resolved.candidate.number;
-      } else {
-        const created = await ctx.gh.createIssue(repoEv.value, arg, issueBody(arg, language));
-        if (!created.ok) {
-          return passthrough(created);
-        }
-        number = created.value.number;
-      }
-      if (firstTitle === null) {
-        firstTitle = arg;
-      }
-    }
-    issues.push(number);
-
-    // Durable resumable state: rewrite the record after every issue so
-    // any failure heals on the next invocation without re-creating. The
-    // interim delivery/branch converge on the final derivation as the
-    // first title argument is consumed.
-    const { type, cleanTitle } =
-      firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat', cleanTitle: '' };
-    const slug = slugifyTitle(cleanTitle);
-    const delivery = slug && isKebabId(slug) ? slug : `issue${issues[0]}`;
-    const branch = `${type}/${issues[0]}-${delivery}`;
-    record = {
-      version: 1,
-      delivery,
-      context: { ...contextEv.value, branch },
-      issues: [...issues],
-    };
-    try {
-      await ctx.record.writeRecord(root, record);
-    } catch (error) {
-      return recordWriteFailure(error);
-    }
-  }
+  let record = created.record;
+  const firstTitle = created.firstTitle;
 
   const target = record.context.branch;
 
@@ -522,67 +390,20 @@ export async function runIssue(
   }
 
   if (record.pr === undefined) {
-    const baseEv = await ctx.git.remoteDefaultBranch(root);
-    if (!baseEv.ok) {
-      return passthrough(baseEv);
+    const bound = await bindPullRequest({
+      ctx,
+      root,
+      repo: repoEv.value,
+      language,
+      human,
+      record,
+      branch: target,
+      firstTitle,
+    });
+    if ('exit' in bound) {
+      return bound;
     }
-    // Remotely discoverable idempotency marker for the PR: the open pull
-    // request for this head branch. A previous run may have created it but
-    // failed to record the number — adopt it instead of opening a second.
-    const listEv = await ctx.gh.listOpenPrsByHead(repoEv.value, target);
-    if (!listEv.ok) {
-      return passthrough(listEv);
-    }
-    let prNumber: number;
-    if (listEv.value.length === 1) {
-      prNumber = listEv.value[0].number;
-    } else if (listEv.value.length > 1) {
-      const listing = listEv.value
-        .map((pr) => `  #${pr.number} ${pr.title} (${pr.url})`)
-        .join('\n');
-      return {
-        exit: EXIT_UNKNOWN,
-        errors: [
-          errorDiagnostic(
-            'pr_ambiguous',
-            `Multiple open pull requests have head branch '${target}':\n${listing}`,
-            {
-              fix: 'Bind one explicitly: specgit pr <number>, then re-run specgit issue to finish the delivery.',
-            }
-          ),
-        ],
-      };
-    } else {
-      const prTitle = firstTitle ?? human.issuePrTitleFallback(record.delivery);
-      // The scaffold is written exactly once, here on the fresh-creation
-      // path (no PR bound, none adoptable): resume and repair bind or
-      // adopt what already exists and never rewrite a PR body (#87).
-      const prBody = renderPrScaffold(record.issues, language);
-      const prEv = await ctx.gh.createDraftPr(repoEv.value, target, baseEv.value, prTitle, prBody);
-      if (!prEv.ok) {
-        return passthrough(prEv);
-      }
-      prNumber = prEv.value.number;
-    }
-    // Traceability edge issue→branch (#160): the moment the PR binding is
-    // first established, every bound issue gets the branch and PR as a
-    // comment. `record.pr` below is the persisted exactly-once marker —
-    // a comment failure fails closed *before* the number lands in the
-    // record, so a re-run re-enters this block (fresh or adopt path) and
-    // posts it; a completed binding never comments again.
-    const commentBody = human.issueTraceabilityComment(target, prNumber);
-    for (const issueNumber of record.issues) {
-      const commentEv = await ctx.gh.addIssueComment(repoEv.value, issueNumber, commentBody);
-      if (!commentEv.ok) {
-        return passthrough(commentEv);
-      }
-    }
-    record = { ...record, pr: prNumber };
-    try {
-      await ctx.record.writeRecord(root, record);
-    } catch (error) {
-      return recordWriteFailure(error);
-    }
+    record = bound.record;
   }
 
   const commit = await ctx.git.commitFile(
@@ -611,4 +432,296 @@ export async function runIssue(
       human.issueRecorded(RECORD_FILENAME),
     ],
   };
+}
+
+/**
+ * Read-only mergedness probe (#75): a record whose PR already merged is
+ * completed history, not an active delivery. Provider failures keep the
+ * existing record (fail-closed — never guess merged): resuming on a guess
+ * of "not merged" could re-push the branch GitHub deleted on merge.
+ */
+async function resolveMergedRecord(
+  ctx: CommandContext,
+  repo: RepoRef,
+  existing: Evidence<DeliveryBinding> | null
+): Promise<CommandOutcome | { existing: Evidence<DeliveryBinding> | null; merged: boolean }> {
+  if (existing === null || !existing.ok || existing.value.pr === undefined) {
+    return { existing, merged: false };
+  }
+  const prEv = await ctx.gh.getPr(repo, existing.value.pr);
+  if (!prEv.ok) {
+    return passthrough(prEv);
+  }
+  return { existing, merged: prEv.value.state === 'merged' };
+}
+
+/** The no-args refusal for a record whose PR already merged (#75). */
+function mergedDeliveryError(record: DeliveryBinding): CommandOutcome {
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issue_delivery_merged',
+        `Delivery '${record.delivery}' is already merged (PR #${record.pr}); there is nothing to resume.`,
+        {
+          fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why", or run "specgit unbind --yes" to clear the merged record.',
+        }
+      ),
+    ],
+  };
+}
+
+/**
+ * Resume validation (#177 extraction): map replacement arguments onto a
+ * live record positionally. Every recorded issue is a consumed argument;
+ * numeric arguments are verifiable against the binding, and creation
+ * continues only from a partial record without a PR. Any mismatch is
+ * drift, refused with zero side effects.
+ */
+function validateResumeArgs(
+  record: DeliveryBinding,
+  args: string[]
+): CommandOutcome | { startIndex: number; firstTitle: string | null } {
+  const issues = [...record.issues];
+  if (args.length === 0) {
+    return { startIndex: issues.length, firstTitle: null };
+  }
+  if (args.length < issues.length) {
+    return driftError(
+      `This checkout already carries delivery '${record.delivery}' with ${record.issues.length} bound issue(s); the ${args.length} argument(s) do not match.`
+    );
+  }
+  if (args.length === issues.length) {
+    // Numeric arguments are verifiable and must be bound already. Title
+    // arguments cannot be matched to numbers post-creation; the count
+    // check above is their guard, and a complete record never creates.
+    for (const arg of args) {
+      const number = parseNumericRef(arg);
+      if (number !== null && !record.issues.includes(number)) {
+        return driftError(
+          `Argument '${sanitize(arg)}' is not among the issues bound to delivery '${record.delivery}'.`
+        );
+      }
+    }
+    return { startIndex: issues.length, firstTitle: null };
+  }
+  // Partial continuation (issues ⊂ args) is only possible while the
+  // bootstrap is incomplete: no PR recorded yet. A record with a PR
+  // bound is a complete delivery — a finished bootstrap never creates
+  // issues, so surplus arguments are drift, refused with zero side
+  // effects before any probe or create.
+  if (record.pr !== undefined) {
+    return driftError(
+      `This checkout already carries the complete delivery '${record.delivery}' with ${record.issues.length} bound issue(s) and PR #${record.pr}; the ${args.length} argument(s) do not match.`
+    );
+  }
+  // Partial record (issues ⊂ args): the first issues.length arguments
+  // were consumed by the previous run — numeric ones are verified
+  // positionally — and creation continues from there.
+  for (let i = 0; i < issues.length; i += 1) {
+    const number = parseNumericRef(args[i]);
+    if (number !== null && number !== issues[i]) {
+      return driftError(
+        `Argument '${sanitize(args[i])}' is not among the issues bound to delivery '${record.delivery}'.`
+      );
+    }
+  }
+  const firstTitle = firstTitleArg(args.slice(0, issues.length));
+  // The remaining arguments will create issues: validate them before
+  // any side effect.
+  const invalidRemaining = validateArgsForCreation(args.slice(issues.length));
+  if (invalidRemaining) {
+    return invalidRemaining;
+  }
+  return { startIndex: issues.length, firstTitle };
+}
+
+/**
+ * The issue creation loop (#177 extraction): for every unconsumed
+ * argument, reuse the number, adopt an unambiguous same-title open issue
+ * (#77), or create fresh — then persist the record after every issue so
+ * any failure heals on the next invocation without re-creating. The
+ * interim delivery/branch converge on the final derivation as the first
+ * title argument is consumed.
+ */
+async function createOrAdoptIssues(deps: {
+  ctx: CommandContext;
+  root: string;
+  repo: RepoRef;
+  language: PolicyLanguage;
+  context: DeliveryBinding['context'];
+  record: DeliveryBinding | null;
+  args: string[];
+  startIndex: number;
+  firstTitle: string | null;
+}): Promise<CommandOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
+  const { ctx, root, repo, language, context } = deps;
+  const issues = deps.record !== null ? [...deps.record.issues] : [];
+  let record: DeliveryBinding | null = deps.record;
+  let firstTitle = deps.firstTitle;
+
+  // Remotely discoverable idempotency marker for issue creation: an open
+  // issue whose title exactly matches a pending title argument is that
+  // argument's issue — a previous run created it but failed to record it
+  // (lost response, crash, or failed record write). Adopt it instead of
+  // duplicating the WHY. One title-carrying scan of the open issues
+  // (#77) replaces the former per-issue probe fan-out, so the probe cost
+  // is bounded by pages, not by the open-issue count. Probe failures
+  // fail closed: never guess.
+  const remaining = deps.args.slice(deps.startIndex);
+  const adoptable = new Map<string, OpenIssueFact[]>();
+  if (remaining.some((arg) => parseNumericRef(arg) === null)) {
+    const openEv = await ctx.gh.getOpenIssues(repo);
+    if (!openEv.ok) {
+      return passthrough(openEv);
+    }
+    for (const fact of openEv.value) {
+      if (typeof fact.title === 'string' && fact.title) {
+        const bucket = adoptable.get(fact.title) ?? [];
+        bucket.push(fact);
+        adoptable.set(fact.title, bucket);
+      }
+    }
+  }
+
+  for (let i = deps.startIndex; i < deps.args.length; i += 1) {
+    const arg = deps.args[i];
+    let number: number;
+    const reuseNumber = parseNumericRef(arg);
+    if (reuseNumber !== null) {
+      number = reuseNumber;
+    } else {
+      // Same-title adoption is disambiguated, never silent (#77): an
+      // exact title match binds only when it is unambiguous — one
+      // candidate, or a sole candidate carrying the deterministic
+      // scaffold body. An issue already bound in this run is not a
+      // candidate again; a repeated title argument creates fresh.
+      const bucket = adoptable.get(arg) ?? [];
+      const unbound = bucket.filter((c) => !issues.includes(c.number));
+      const resolved = disambiguateAdoption(arg, unbound, language);
+      if ('ambiguous' in resolved) {
+        return adoptionAmbiguousError(arg, unbound);
+      }
+      if ('candidate' in resolved) {
+        bucket.splice(bucket.indexOf(resolved.candidate), 1);
+        number = resolved.candidate.number;
+      } else {
+        const created = await ctx.gh.createIssue(repo, arg, issueBody(arg, language));
+        if (!created.ok) {
+          return passthrough(created);
+        }
+        number = created.value.number;
+      }
+      if (firstTitle === null) {
+        firstTitle = arg;
+      }
+    }
+    issues.push(number);
+
+    // Durable resumable state: rewrite the record after every issue so
+    // any failure heals on the next invocation without re-creating.
+    const { type, cleanTitle } =
+      firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat', cleanTitle: '' };
+    const slug = slugifyTitle(cleanTitle);
+    const delivery = slug && isKebabId(slug) ? slug : `issue${issues[0]}`;
+    const branch = `${type}/${issues[0]}-${delivery}`;
+    record = {
+      version: 1,
+      delivery,
+      context: { ...context, branch },
+      issues: [...issues],
+    };
+    try {
+      await ctx.record.writeRecord(root, record);
+    } catch (error) {
+      return recordWriteFailure(error);
+    }
+  }
+
+  return { record: record as DeliveryBinding, firstTitle };
+}
+
+/**
+ * PR binding (#177 extraction): discover, adopt, or create the draft PR
+ * for the head branch — the open PR for the branch is the remotely
+ * discoverable idempotency marker — then post the traceability comment
+ * (#160) on every bound issue and persist the number as the exactly-once
+ * marker. The scaffold body is written exactly once, on the fresh-creation
+ * path (#87).
+ */
+async function bindPullRequest(deps: {
+  ctx: CommandContext;
+  root: string;
+  repo: RepoRef;
+  language: PolicyLanguage;
+  human: ReturnType<typeof catalogFor>['human'];
+  record: DeliveryBinding;
+  branch: string;
+  firstTitle: string | null;
+}): Promise<CommandOutcome | { record: DeliveryBinding }> {
+  const { ctx, root, repo, language, human, branch, firstTitle } = deps;
+  let record = deps.record;
+
+  const baseEv = await ctx.git.remoteDefaultBranch(root);
+  if (!baseEv.ok) {
+    return passthrough(baseEv);
+  }
+  // Remotely discoverable idempotency marker for the PR: the open pull
+  // request for this head branch. A previous run may have created it but
+  // failed to record the number — adopt it instead of opening a second.
+  const listEv = await ctx.gh.listOpenPrsByHead(repo, branch);
+  if (!listEv.ok) {
+    return passthrough(listEv);
+  }
+  let prNumber: number;
+  if (listEv.value.length === 1) {
+    prNumber = listEv.value[0].number;
+  } else if (listEv.value.length > 1) {
+    const listing = listEv.value
+      .map((pr) => `  #${pr.number} ${pr.title} (${pr.url})`)
+      .join('\n');
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'pr_ambiguous',
+          `Multiple open pull requests have head branch '${branch}':\n${listing}`,
+          {
+            fix: 'Bind one explicitly: specgit pr <number>, then re-run specgit issue to finish the delivery.',
+          }
+        ),
+      ],
+    };
+  } else {
+    const prTitle = firstTitle ?? human.issuePrTitleFallback(record.delivery);
+    // The scaffold is written exactly once, here on the fresh-creation
+    // path (no PR bound, none adoptable): resume and repair bind or
+    // adopt what already exists and never rewrite a PR body (#87).
+    const prBody = renderPrScaffold(record.issues, language);
+    const prEv = await ctx.gh.createDraftPr(repo, branch, baseEv.value, prTitle, prBody);
+    if (!prEv.ok) {
+      return passthrough(prEv);
+    }
+    prNumber = prEv.value.number;
+  }
+  // Traceability edge issue→branch (#160): the moment the PR binding is
+  // first established, every bound issue gets the branch and PR as a
+  // comment. `record.pr` below is the persisted exactly-once marker —
+  // a comment failure fails closed *before* the number lands in the
+  // record, so a re-run re-enters this block (fresh or adopt path) and
+  // posts it; a completed binding never comments again.
+  const commentBody = human.issueTraceabilityComment(branch, prNumber);
+  for (const issueNumber of record.issues) {
+    const commentEv = await ctx.gh.addIssueComment(repo, issueNumber, commentBody);
+    if (!commentEv.ok) {
+      return passthrough(commentEv);
+    }
+  }
+  record = { ...record, pr: prNumber };
+  try {
+    await ctx.record.writeRecord(root, record);
+  } catch (error) {
+    return recordWriteFailure(error);
+  }
+  return { record };
 }
