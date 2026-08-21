@@ -4,6 +4,9 @@
  * 0 success/accepted · 1 rejected with complete evidence · 2 usage error ·
  * 3 fail-closed unknown (record invalid/missing, provider missing/
  * unauthenticated/transport, not-a-repo, anything undeterminable).
+ * Documented exception (#175): `specgit status` reports a MISSING record as
+ * the healthy pre-binding state — exit 0 with state `unbound`; only an
+ * invalid record fails closed there.
  */
 
 export const EXIT_SUCCESS = 0;
