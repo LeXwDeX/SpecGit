@@ -206,7 +206,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
           }),
         },
         {
-          match: api(`projects/${project}/pipelines\\?sha=${headSha}&per_page=100&page=1$`),
+          match: api(`projects/${project}/pipelines\\?sha=${headSha}&order_by=updated_at&sort=desc&per_page=11&page=1$`),
           stdout: `[${payload('probe-project/tp_pipeline2_detail.json', {
             sha: headSha,
             status: 'success',
