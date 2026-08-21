@@ -7,7 +7,7 @@
  */
 
 import { runAccept, type AcceptOptions } from './accept.js';
-import type { CommandOutcome } from '../output.js';
+import type { FinishOutcome } from '../output.js';
 import type { CommandContext } from '../types.js';
 
 export type FinishOptions = AcceptOptions;
@@ -15,6 +15,6 @@ export type FinishOptions = AcceptOptions;
 export async function runFinish(
   options: FinishOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<FinishOutcome> {
   return runAccept(options, ctx);
 }

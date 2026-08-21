@@ -26,7 +26,7 @@ import {
   policyGate,
   recordGate,
 } from '../gates.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type StatusOutcome } from '../output.js';
 import { STATE_ASSET_TAXONOMY } from '../state-taxonomy.js';
 import { catalogFor, resolveLanguage } from '../language.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
@@ -39,7 +39,7 @@ export interface StatusOptions {
 export async function runStatus(
   _options: StatusOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<StatusOutcome> {
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return {
