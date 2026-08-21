@@ -1444,7 +1444,7 @@ describe('GlabProvider branch protection', () => {
     const { provider, fake } = setup([
       { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
       {
-        match: `-X PATCH projects/${PROJECT_ID} `,
+        match: `-X PUT projects/${PROJECT_ID} `,
         stdout: JSON.stringify({
           id: 1278,
           path_with_namespace: 'group/subgroup/project',
@@ -1460,7 +1460,7 @@ describe('GlabProvider branch protection', () => {
     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
       `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
-      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+      `api --hostname ${HOST} -X PUT projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
       `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/protected_branches -f name=main -f push_access_level=40 -f merge_access_level=40 -f unprotect_access_level=40`,
     ]);
   });
@@ -1472,7 +1472,7 @@ describe('GlabProvider branch protection', () => {
         stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
       },
       {
-        match: `-X PATCH projects/${PROJECT_ID} `,
+        match: `-X PUT projects/${PROJECT_ID} `,
         stdout: JSON.stringify({
           id: 1278,
           path_with_namespace: 'group/subgroup/project',
@@ -1491,7 +1491,7 @@ describe('GlabProvider branch protection', () => {
     const { provider } = setup([
       { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
       {
-        match: `-X PATCH projects/${PROJECT_ID} `,
+        match: `-X PUT projects/${PROJECT_ID} `,
         stdout: JSON.stringify({
           id: 1278,
           path_with_namespace: 'group/subgroup/project',
@@ -1669,7 +1669,7 @@ describe('GlabProvider requiredChecks — the verified pipeline-gate intersectio
       [
         { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
         {
-          match: `-X PATCH projects/${PROJECT_ID} `,
+          match: `-X PUT projects/${PROJECT_ID} `,
           stdout: projectJson(true),
         },
         {
@@ -1695,7 +1695,7 @@ describe('GlabProvider requiredChecks — the verified pipeline-gate intersectio
     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: ['build', 'SpecGit Acceptance'] } });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
       `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
-      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+      `api --hostname ${HOST} -X PUT projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
       `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/protected_branches -f name=main -f push_access_level=40 -f merge_access_level=40 -f unprotect_access_level=40`,
       `api --hostname ${HOST} projects/${PROJECT_ID}`,
       `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?ref=main&per_page=1&page=1`,
@@ -1804,10 +1804,10 @@ describe('GlabProvider repo auto-merge (pipeline gate, row 7)', () => {
     expect(result.message).toContain('renamed');
   });
 
-  it('enables the gate via PATCH and reports the verified setting', async () => {
+  it('enables the gate via PUT and reports the verified setting', async () => {
     const { provider, fake } = setup([
       {
-        match: `-X PATCH projects/${PROJECT_ID} `,
+        match: `-X PUT projects/${PROJECT_ID} `,
         stdout: JSON.stringify({
           id: 1278,
           path_with_namespace: 'group/subgroup/project',
@@ -1818,14 +1818,14 @@ describe('GlabProvider repo auto-merge (pipeline gate, row 7)', () => {
     const result = await provider.enableRepoAutomerge(REPO);
     expect(result).toEqual({ ok: true, value: { enabled: true } });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
-      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+      `api --hostname ${HOST} -X PUT projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
     ]);
   });
 
   it('reports enabled=false when the server response does not echo the setting', async () => {
     const { provider } = setup([
       {
-        match: `-X PATCH projects/${PROJECT_ID} `,
+        match: `-X PUT projects/${PROJECT_ID} `,
         stdout: JSON.stringify({ id: 1278, path_with_namespace: 'group/subgroup/project' }),
       },
     ]);

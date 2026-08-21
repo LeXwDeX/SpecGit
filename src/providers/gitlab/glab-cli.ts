@@ -24,7 +24,8 @@ import type {
  *
  * Endpoint discipline: read endpoints plus exactly four documented write
  * endpoints — POST issues, POST merge_requests, POST protected_branches,
- * PATCH project (the pipeline gate; row 24 method map).
+ * PUT project (the pipeline gate; row 24 method map). GitLab's edit-project
+ * endpoint is routed for PUT only — a PATCH returns 404 Not Found.
  */
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -652,7 +653,7 @@ export class GlabProvider implements ForgeProvider {
       return ok({ protected: true, requiredChecks: [] });
     }
     // Post-state read: the gate is now on by construction, and the
-    // intersection reflects the branch's live pipeline, not the PATCH
+    // intersection reflects the branch's live pipeline, not the PUT
     // echo.
     const checksEv = await this.pipelineGateChecks(repo, branch);
     if (!checksEv.ok) {
@@ -751,7 +752,7 @@ export class GlabProvider implements ForgeProvider {
       'api',
       ...this.hostArgs(),
       '-X',
-      'PATCH',
+      'PUT',
       `projects/${this.projectPath(repo)}`,
       '-f',
       'only_allow_merge_if_pipeline_succeeds=true',
