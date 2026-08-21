@@ -56,11 +56,11 @@ const MR_LIST_LIMIT = 30;
 const GITLAB_SAAS_HOST = 'gitlab.com';
 
 /**
- * Supported self-managed window (ledger row 5): >= 19.2.4 < 19.3.0. The
+ * Supported self-managed window (ledger row 5): >= 19.2.4 < 19.4.0. The
  * range moves only through explicit rebaseline deliveries, never drift.
  */
 const VERSION_WINDOW_MIN = [19, 2, 4] as const;
-const VERSION_WINDOW_MAX_EXCLUSIVE = [19, 3, 0] as const;
+const VERSION_WINDOW_MAX_EXCLUSIVE = [19, 4, 0] as const;
 
 /**
  * glab stderr markers that mean "not authenticated" rather than transport.
@@ -227,8 +227,8 @@ export class GlabProvider implements ForgeProvider {
       if (typeof reported !== 'string' || !versionInWindow(reported)) {
         return fail(
           'gitlab_version_unsupported',
-          `GitLab version "${typeof reported === 'string' ? reported : 'unknown'}" is outside the supported self-managed window (>= 19.2.4 < 19.3.0).`,
-          'Upgrade within 19.2.x, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.'
+          `GitLab version "${typeof reported === 'string' ? reported : 'unknown'}" is outside the supported self-managed window (>= 19.2.4 < 19.4.0).`,
+          'Upgrade into the supported window, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.'
         );
       }
     }

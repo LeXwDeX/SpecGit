@@ -102,10 +102,10 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
   it('the rebaseline SOP does not itself move the window or the glab floor (#181)', () => {
     const src = read('src', 'providers', 'gitlab', 'glab-cli.ts');
     expect(src).toContain('VERSION_WINDOW_MIN = [19, 2, 4]');
-    expect(src).toContain('VERSION_WINDOW_MAX_EXCLUSIVE = [19, 3, 0]');
+    expect(src).toContain('VERSION_WINDOW_MAX_EXCLUSIVE = [19, 4, 0]');
 
     const docs = read('docs', 'gitlab-support.md');
-    expect(docs).toMatch(/>= 19\.2\.4 < 19\.3\.0/);
+    expect(docs).toMatch(/>= 19\.2\.4 < 19\.4\.0/);
     expect(docs).toMatch(/glab floor.*1\.113\.0/i);
   });
 

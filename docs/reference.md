@@ -73,7 +73,7 @@ gitlab:
 | `gitlab.port` | string \| number | Optional. Present only when the instance uses a non-default port; origins then classify against `host:port` exactly (a portless origin on the same host is a different effective port and stays `origin_unresolvable`). Absence means the scheme default (443 https, 22 ssh). |
 | `gitlab.insecure_ssl` | boolean | Default `false`. Per-host TLS-skip for the declared host only (self-signed certificates), via glab's host-scoped mechanism when the GitLab adapter lands — never global, never logged. The exact glab flag/config key is not yet pinned from gitlab-org/cli, so the setting stays inert until then (see the [evidence ledger](evidence/gitlab-19.2.md)). |
 
-A declared host changes origin classification: matching origins report `gitlab_unsupported` (dedicated diagnostic) instead of `origin_unresolvable` — including **nested-group** paths (`group/subgroup/project`, any depth ≥ 2). The self-managed support policy is version-qualified: CE/Free `>= 19.2.4 < 19.3.0`, fail-closed outside ([GitLab support roadmap](gitlab-support.md)). Strict schema: unknown keys are rejected.
+A declared host changes origin classification: matching origins report `gitlab_unsupported` (dedicated diagnostic) instead of `origin_unresolvable` — including **nested-group** paths (`group/subgroup/project`, any depth ≥ 2). The self-managed support policy is version-qualified: CE/Free `>= 19.2.4 < 19.4.0`, fail-closed outside ([GitLab support roadmap](gitlab-support.md)). Strict schema: unknown keys are rejected.
 
 ## Root discovery
 

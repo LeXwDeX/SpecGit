@@ -139,12 +139,27 @@ describe('GlabProvider#preflight', () => {
     }
   });
 
-  it('fails closed with gitlab_version_unsupported above the window (>= 19.3.0)', async () => {
+  it('accepts 19.3.x inside the widened window (#236 rebaseline)', async () => {
+    for (const version of ['19.3.0', '19.3.0-ee', '19.3.0-ce']) {
+      const { provider } = setup(
+        [
+          { match: '^--version$', stdout: 'glab version 1.113.0\n' },
+          { match: '^auth status --hostname', stdout: 'ok\n' },
+          { match: '^api --hostname .* /metadata$', stdout: metadataJson(version) },
+        ],
+        { hostname: HOST }
+      );
+      const result = await provider.preflight();
+      expect(result, version).toEqual({ ok: true, value: { authenticated: true } });
+    }
+  });
+
+  it('fails closed with gitlab_version_unsupported above the window (>= 19.4.0)', async () => {
     const { provider } = setup(
       [
         { match: '^--version$', stdout: 'glab version 1.113.0\n' },
         { match: '^auth status --hostname', stdout: 'ok\n' },
-        { match: '^api --hostname .* /metadata$', stdout: metadataJson('19.3.0') },
+        { match: '^api --hostname .* /metadata$', stdout: metadataJson('19.4.0') },
       ],
       { hostname: HOST }
     );
@@ -152,8 +167,8 @@ describe('GlabProvider#preflight', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('gitlab_version_unsupported');
-    expect(result.message).toContain('19.3.0');
-    expect(result.fix).toContain('19.2');
+    expect(result.message).toContain('19.4.0');
+    expect(result.fix).toContain('rebaseline');
   });
 
   it('fails closed with gitlab_version_unsupported below the window (< 19.2.4)', async () => {
