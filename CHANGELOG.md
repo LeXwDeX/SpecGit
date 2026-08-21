@@ -1,5 +1,16 @@
 # specgit
 
+## 1.1.1
+
+### Patch Changes
+
+- [#232](https://github.com/LeXwDeX/SpecGit/pull/232) [`d1b9227`](https://github.com/LeXwDeX/SpecGit/commit/d1b92275f45fffa9ae96e284eeaeeb2c4d098267) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ## GitLab provider
+
+  - Fix `setPipelineGate` to edit the project with `PUT` instead of `PATCH`:
+    GitLab's edit-project endpoint is routed for `PUT` only, so every
+    pipeline-gate call returned HTTP 404 and `specgit init` could never enable
+    branch protection / auto-merge on a declared GitLab origin ([#229](https://github.com/LeXwDeX/SpecGit/issues/229), [#230](https://github.com/LeXwDeX/SpecGit/issues/230))
+
 ## 1.1.0
 
 ### Minor Changes
