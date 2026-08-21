@@ -3,7 +3,7 @@
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type UnbindOutcome } from '../output.js';
 import { RECORD_FILENAME, type CommandContext } from '../types.js';
 import { catalogFor, commandLanguage } from '../language.js';
 
@@ -20,7 +20,7 @@ async function promptForConfirmation(): Promise<boolean> {
 export async function runUnbind(
   options: UnbindOptions,
   ctx: CommandContext
-): Promise<CommandOutcome> {
+): Promise<UnbindOutcome> {
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return {

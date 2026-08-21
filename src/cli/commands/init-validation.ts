@@ -9,7 +9,7 @@ import * as fsConstants from 'node:fs';
 import { access } from 'node:fs/promises';
 
 import { EXIT_USAGE, EXIT_UNKNOWN } from '../exit-codes.js';
-import { errorDiagnostic, type CommandOutcome } from '../output.js';
+import { errorDiagnostic, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { Evidence } from '../../kernel/evidence.js';
 import type { CommandContext, Policy } from '../types.js';
@@ -49,7 +49,7 @@ export interface CheckResolution {
 export async function detectAndValidateChecks(
   options: InitOptions,
   ctx: CommandContext
-): Promise<CommandOutcome | CheckResolution> {
+): Promise<InitOutcome | CheckResolution> {
   let checks = (options.requiredCheck ?? []).map((value) => value.trim());
   let detected: DetectionReport | null = null;
 
@@ -95,7 +95,7 @@ export async function detectAndValidateChecks(
  * filesystem or remote mutation. Returns a usage outcome, or null when the
  * option is absent or valid.
  */
-export function validateLanguageOption(options: InitOptions): CommandOutcome | null {
+export function validateLanguageOption(options: InitOptions): InitOutcome | null {
   if (options.language !== undefined && !POLICY_LANGUAGES.includes(options.language as PolicyLanguage)) {
     return {
       exit: EXIT_USAGE,
@@ -121,7 +121,7 @@ export function validateLanguageOption(options: InitOptions): CommandOutcome | n
 export function policyGateOutcome(
   existingPolicy: Evidence<Policy>,
   options: InitOptions
-): CommandOutcome | null {
+): InitOutcome | null {
   if (existingPolicy.ok && !options.force) {
     return {
       exit: EXIT_USAGE,
@@ -149,7 +149,7 @@ export function policyGateOutcome(
  * Writability preflight: fail usage before touching the tree rather than
  * discovering EACCES halfway through the harness write.
  */
-export async function preflightRootWritable(root: string): Promise<CommandOutcome | null> {
+export async function preflightRootWritable(root: string): Promise<InitOutcome | null> {
   try {
     await access(root, fsConstants.constants.W_OK);
     return null;
