@@ -25,16 +25,48 @@ describe('release-prepare gates (#71)', () => {
   const raw = readWorkflow('release-prepare.yml');
   const parsed = parse(raw) as {
     on?: Record<string, unknown>;
-    jobs?: Record<string, { steps?: Array<{ run?: string; env?: Record<string, string> }> }>;
+    jobs?: Record<
+      string,
+      {
+        steps?: Array<{
+          name?: string;
+          id?: string;
+          if?: string;
+          run?: string;
+          env?: Record<string, string>;
+        }>;
+      }
+    >;
   };
 
-  it('publishes only on push to main behind a merged version PR, with explicit provenance', () => {
-    expect(Object.keys(parsed.on ?? {})).toEqual(['push']);
+  it('publishes only on push to main or a manual retry, with explicit provenance', () => {
+    expect(Object.keys(parsed.on ?? {}).sort()).toEqual(['push', 'workflow_dispatch']);
     const publish = raw.match(/^.*npm publish.*$/gm) ?? [];
     expect(publish.length).toBeGreaterThan(0);
     for (const line of publish) {
       expect(line).toContain('--provenance');
       expect(line).not.toContain('--dry-run');
+    }
+  });
+
+  it('gates publish on an unpublished version, never on the head commit message (#227)', () => {
+    // A merge-commit merge strategy makes the head commit message "Merge
+    // pull request #N...", so a publish gated on startsWith(...,
+    // 'chore(release): v') can never fire — and workflow_dispatch has no
+    // head_commit at all. The gate is the registry/tag evidence instead.
+    expect(raw).not.toContain('head_commit');
+    const steps = parsed.jobs?.release?.steps ?? [];
+    const probe = steps.find((step) => step.id === 'unpublished');
+    expect(probe).toBeDefined();
+    expect(probe?.if).toBe("steps.pending.outputs.count == '0'");
+    expect(probe?.run).toContain('npm view');
+    expect(probe?.run).toContain('refs/tags/v${VERSION}');
+    expect(probe?.run).toContain('needs_publish=true');
+    expect(probe?.run).toContain('needs_publish=false');
+    for (const name of ['Build', 'Publish to npm', 'Tag and create GitHub Release']) {
+      const step = steps.find((candidate) => candidate.name === name);
+      expect(step, name).toBeDefined();
+      expect(step?.if, name).toBe("steps.unpublished.outputs.needs_publish == 'true'");
     }
   });
 
