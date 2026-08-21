@@ -139,7 +139,7 @@ Before creating from a title, the bootstrap probes the open issues with one titl
 ```json
 {
   "tool": "specgit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "command": "issue",
   "status": "ok",
   "state": "bound",
@@ -259,7 +259,7 @@ Every `--json` invocation writes exactly one JSON document to stdout:
 ```json
 {
   "tool": "specgit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "command": "accept",
   "status": "rejected",
   "exit": 1,
