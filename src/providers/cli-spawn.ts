@@ -1,29 +1,19 @@
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 
+import type { SpawnFn } from '../kernel/spawn.js';
+
 /**
  * Transport plumbing shared by the CLI provider adapters (`gh`, `glab`):
  * the spawn seam, Node-shebang command resolution, and diagnostic text
  * sanitization. Extracted from the GitHub adapter (#113 home) when the
  * GitLab adapter landed (#114) so both platforms resolve commands and
  * classify spawn failures identically; the GitHub module re-exports these
- * for import-path stability.
+ * for import-path stability. The spawn contract types themselves live once
+ * in the kernel (#185) and are re-exported here for stable import paths.
  */
 
-export interface SpawnOptions {
-  timeoutMs?: number;
-  maxBuffer?: number;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-  /** Body piped to the child's stdin (used by `--body-file -` / `--input -`). */
-  stdin?: string;
-}
-
-export type SpawnFn = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => Promise<{ stdout: string; stderr: string }>;
+export type { SpawnFn, SpawnOptions } from '../kernel/spawn.js';
 
 const NODE_SHEBANG = /^#!\s*(?:\/usr\/bin\/env\s+)?node/;
 
