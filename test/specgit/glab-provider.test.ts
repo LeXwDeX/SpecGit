@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -8,9 +10,12 @@ import {
   createFakeGlab,
   readFakeGlabCalls,
   readFakeGlabStdin,
+  type FakeGlab,
   type FakeGlabRule,
 } from './helpers/fake-glab.js';
 import { makeTempDir, rmDir } from './helpers/temp-repo.js';
+
+const execFileAsync = promisify(execFile);
 
 // Nested-group ref (#112 grammar): the full group path is the owner, so
 // the API-side :id is the %2F-encoded full path (ledger row 4).
@@ -1892,5 +1897,103 @@ describe('GlabProvider transport discipline', () => {
     const provider = new GlabProvider({ hostname: HOST, env: fake.env() });
     await provider.createIssue(REPO, 'T', 'B');
     expect(readFakeGlabStdin(fake.logPath)).toEqual([]);
+  });
+});
+
+// The double is a routing oracle, not just a request matcher (#234): a
+// call hitting a known endpoint with an unrouted verb gets GitLab's
+// shaped 404. This is the regression guard for the #229 failure class —
+// a wrong verb (like PATCH on the PUT-only edit-project endpoint) must
+// fail here exactly as it fails against a real GitLab.
+describe('fake glab routing oracle (#234)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-glab-routing-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function callFakeGlab(fake: FakeGlab, args: string[]) {
+    return execFileAsync(process.execPath, [path.join(fake.binDir, 'fake-glab.cjs'), ...args], {
+      env: fake.env(),
+    });
+  }
+
+  async function expectGitLab404(promise: Promise<{ stdout: string; stderr: string }>): Promise<void> {
+    try {
+      await promise;
+    } catch (error) {
+      const err = error as { code?: unknown; stdout?: string; stderr?: string };
+      expect(err.code).toBe(1);
+      expect(err.stdout).toBe('{"error":"404 Not Found"}\n');
+      expect(err.stderr).toContain('glab: HTTP 404');
+      return;
+    }
+    expect.unreachable('an unrouted verb must fail with GitLab\'s shaped 404');
+  }
+
+  it('rejects PATCH on the PUT-only edit-project endpoint with GitLab\'s shaped 404', async () => {
+    const fake = createFakeGlab(tempDir, [
+      { match: `projects/${PROJECT_ID}$`, stdout: '{"id":1}\n' },
+    ]);
+    await expectGitLab404(
+      callFakeGlab(fake, [
+        'api',
+        '--hostname',
+        HOST,
+        '-X',
+        'PATCH',
+        `projects/${PROJECT_ID}`,
+        '-f',
+        'only_allow_merge_if_pipeline_succeeds=true',
+      ])
+    );
+    // The call still lands in the recorder log — the rejection shapes the
+    // evidence, it does not hide the request.
+    expect(readFakeGlabCalls(fake.logPath)).toHaveLength(1);
+  });
+
+  it('rejects an unrouted verb on protected_branches the same way', async () => {
+    const fake = createFakeGlab(tempDir, [
+      { match: `projects/${PROJECT_ID}/protected_branches -f`, stdout: '{"name":"main"}\n' },
+    ]);
+    await expectGitLab404(
+      callFakeGlab(fake, [
+        'api',
+        '--hostname',
+        HOST,
+        '-X',
+        'DELETE',
+        `projects/${PROJECT_ID}/protected_branches`,
+        '-f',
+        'name=main',
+      ])
+    );
+  });
+
+  it('serves the scripted response when the verb is routed', async () => {
+    const fake = createFakeGlab(tempDir, [
+      { match: `-X PUT projects/${PROJECT_ID} `, stdout: '{"id":1}\n' },
+    ]);
+    const { stdout } = await callFakeGlab(fake, [
+      'api',
+      '--hostname',
+      HOST,
+      '-X',
+      'PUT',
+      `projects/${PROJECT_ID}`,
+      '-f',
+      'only_allow_merge_if_pipeline_succeeds=true',
+    ]);
+    expect(stdout).toBe('{"id":1}\n');
+  });
+
+  it('leaves unrouted paths to the scripted rules', async () => {
+    const fake = createFakeGlab(tempDir, [{ match: '/metadata$', stdout: metadataJson('19.2.4') }]);
+    const { stdout } = await callFakeGlab(fake, ['api', '--hostname', HOST, '/metadata']);
+    expect(stdout).toBe(metadataJson('19.2.4'));
   });
 });
