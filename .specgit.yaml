@@ -1,9 +1,8 @@
 version: 1
-delivery: release-honest-diagnostics
+delivery: live-loop-verify
 context:
   kind: branch
-  branch: feat/265-release-honest-diagnostics
+  branch: feat/287-live-loop-verify
 issues:
-  - 265
-  - 269
-pr: 286
+  - 287
+pr: 288
