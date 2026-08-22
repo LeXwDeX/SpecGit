@@ -5,3 +5,4 @@ context:
   branch: feat/247-issue247
 issues:
   - 247
+pr: 248
