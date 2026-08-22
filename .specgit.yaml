@@ -1,8 +1,8 @@
 version: 1
-delivery: issue257
+delivery: never-invent-issue
 context:
   kind: branch
-  branch: feat/257-issue257
+  branch: feat/246-never-invent-issue
 issues:
-  - 257
-pr: 258
+  - 246
+pr: 259
