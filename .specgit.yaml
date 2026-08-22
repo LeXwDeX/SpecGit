@@ -1,9 +1,8 @@
 version: 1
-delivery: release-honest-diagnostics
+delivery: v143-changeset
 context:
   kind: branch
-  branch: feat/265-release-honest-diagnostics
+  branch: feat/289-v143-changeset
 issues:
-  - 265
-  - 269
-pr: 286
+  - 289
+pr: 290
