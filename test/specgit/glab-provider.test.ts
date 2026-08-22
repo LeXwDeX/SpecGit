@@ -1134,9 +1134,23 @@ describe('GlabProvider#addIssueComment', () => {
     ]);
   });
 
-  it('fails closed with glab_transport when the payload misses the url', async () => {
+  it('derives the note deep-link when CE returns no web_url (#252)', async () => {
+    // Live CE shape (19.3.0 probe, note 88688): the note object carries
+    // an id but no web_url. The deep-link is derived deterministically
+    // from returned facts, never scraped.
     const { provider } = setup([
-      { match: '-X POST projects/.*/issues/8/notes ', stdout: JSON.stringify({ id: 1 }) },
+      { match: '-X POST projects/.*/issues/8/notes ', stdout: JSON.stringify({ id: 88688, noteable_iid: 8 }) },
+    ]);
+    const result = await provider.addIssueComment(REPO, 8, 'B');
+    expect(result).toEqual({
+      ok: true,
+      value: { url: 'https://git.example.com/group/subgroup/project/-/issues/8#note_88688' },
+    });
+  });
+
+  it('fails closed with glab_transport when the payload has neither web_url nor id', async () => {
+    const { provider } = setup([
+      { match: '-X POST projects/.*/issues/8/notes ', stdout: JSON.stringify({ body: 'x' }) },
     ]);
     const result = await provider.addIssueComment(REPO, 8, 'B');
     expect(result.ok).toBe(false);
