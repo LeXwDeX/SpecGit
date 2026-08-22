@@ -35,20 +35,21 @@
  * Structure (#177): `runIssue` is orchestration only; the readable,
  * individually testable steps live in named sub-functions —
  * `resolveMergedRecord` (read-only mergedness probe), `validateResumeArgs`
- * (positional resume validation), `createOrAdoptIssues` (the issue
- * creation loop with durable per-issue record writes), and
- * `bindPullRequest` (PR discovery/adoption/creation + traceability).
+ * (positional resume validation), and `createOrAdoptIssues` (the issue
+ * creation loop with durable per-issue record writes). The tail chain —
+ * checkout, push, PR binding, record commit, push — is the ordered step
+ * list of the DeliveryBootstrap module (#278, ./bootstrap.ts).
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import { errorDiagnostic, humanBuilder, issueList, sanitize, type IssueOutcome } from '../output.js';
 import { commandLanguage, catalogFor } from '../language.js';
-import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { isKebabId, KEBAB_ID_FIX, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
 import type { OpenIssueFact } from '../../github/port.js';
+import { BOOTSTRAP_STEPS, passthrough, recordWriteFailure, runBootstrapSteps } from './bootstrap.js';
 
 export interface IssueOptions {
   titles?: string[];
@@ -271,17 +272,6 @@ function recordSummary(record: DeliveryBinding): Record<string, unknown> {
   };
 }
 
-type FailureEvidence = Extract<Evidence<unknown>, { ok: false }>;
-
-function passthrough(failure: FailureEvidence): IssueOutcome {
-  return {
-    exit: EXIT_UNKNOWN,
-    errors: [
-      errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {}),
-    ],
-  };
-}
-
 /**
  * First title (non-numeric) argument in a consumed prefix: the argument
  * that produced the delivery's name. Deterministic from the arguments
@@ -304,14 +294,6 @@ function driftError(message: string): IssueOutcome {
         fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to start a new delivery.',
       }),
     ],
-  };
-}
-
-function recordWriteFailure(error: unknown): IssueOutcome {
-  const message = error instanceof Error ? error.message : String(error);
-  return {
-    exit: EXIT_UNKNOWN,
-    errors: [errorDiagnostic('record_write_failed', message)],
   };
 }
 
@@ -489,58 +471,26 @@ export async function runIssue(
   let record = created.record;
   const firstTitle = created.firstTitle;
 
-  const target = record.context.branch;
-
-  if (facts.branch !== target) {
-    const checkout = await ctx.git.checkoutOrCreateBranch(root, target);
-    if (!checkout.ok) {
-      return passthrough(checkout);
-    }
-  }
-
-  // #270: the branch must exist on the remote before PR/MR creation —
-  // both platforms refuse a pull request whose head branch was never
-  // pushed (glab: source_branch 不存在; gh: Head sha can't be blank).
-  // The push is idempotent, so a resume re-runs it and heals an
-  // unpushed branch before the PR step retries — the exactly-once
-  // discipline (#65) at the branch-push/PR-create seam.
-  const pushBeforePr = await ctx.git.pushBranch(root, target);
-  if (!pushBeforePr.ok) {
-    return passthrough(pushBeforePr);
-  }
-
-  if (record.pr === undefined) {
-    const bound = await bindPullRequest({
-      ctx,
-      root,
-      repo: repoEv.value,
-      language,
-      human,
-      record,
-      branch: target,
-      firstTitle,
-    });
-    if ('exit' in bound) {
-      return bound;
-    }
-    record = bound.record;
-  }
-
-  const commit = await ctx.git.commitFile(
+  // #278: the tail chain is data — the DeliveryBootstrap module's
+  // ordered steps (checkout → push head → bind PR → commit record →
+  // push). Each step carries its precondition and resume marker, so a
+  // re-run from any partial state converges; reordering is a change to
+  // BOOTSTRAP_STEPS, reviewable as such.
+  const chained = await runBootstrapSteps(BOOTSTRAP_STEPS, {
+    ctx,
     root,
-    RECORD_FILENAME,
-    `chore: record delivery binding for ${record.delivery}`
-  );
-  if (!commit.ok) {
-    return passthrough(commit);
+    repo: repoEv.value,
+    language,
+    record,
+    firstTitle,
+    facts,
+  });
+  if ('exit' in chained) {
+    return chained;
   }
+  record = chained.record;
 
-  // The record commit rides the branch to the remote; the push before PR
-  // creation (#270) carried everything committed up to that point.
-  const push = await ctx.git.pushBranch(root, target);
-  if (!push.ok) {
-    return passthrough(push);
-  }
+  const target = record.context.branch;
 
   return {
     exit: EXIT_SUCCESS,
@@ -808,89 +758,4 @@ export async function createOrAdoptIssues(deps: {
     };
   }
   return { record, firstTitle };
-}
-
-/**
- * PR binding (#177 extraction): discover, adopt, or create the draft PR
- * for the head branch — the open PR for the branch is the remotely
- * discoverable idempotency marker — then post the traceability comment
- * (#160) on every bound issue and persist the number as the exactly-once
- * marker. The scaffold body is written exactly once, on the fresh-creation
- * path (#87).
- */
-async function bindPullRequest(deps: {
-  ctx: CommandContext;
-  root: string;
-  repo: RepoRef;
-  language: PolicyLanguage;
-  human: ReturnType<typeof catalogFor>['human'];
-  record: DeliveryBinding;
-  branch: string;
-  firstTitle: string | null;
-}): Promise<IssueOutcome | { record: DeliveryBinding }> {
-  const { ctx, root, repo, language, human, branch, firstTitle } = deps;
-  let record = deps.record;
-
-  const baseEv = await ctx.git.remoteDefaultBranch(root);
-  if (!baseEv.ok) {
-    return passthrough(baseEv);
-  }
-  // Remotely discoverable idempotency marker for the PR: the open pull
-  // request for this head branch. A previous run may have created it but
-  // failed to record the number — adopt it instead of opening a second.
-  const listEv = await ctx.gh.listOpenPrsByHead(repo, branch);
-  if (!listEv.ok) {
-    return passthrough(listEv);
-  }
-  let prNumber: number;
-  if (listEv.value.length === 1) {
-    prNumber = listEv.value[0].number;
-  } else if (listEv.value.length > 1) {
-    const listing = listEv.value
-      .map((pr) => `  #${pr.number} ${pr.title} (${pr.url})`)
-      .join('\n');
-    return {
-      exit: EXIT_UNKNOWN,
-      errors: [
-        errorDiagnostic(
-          'pr_ambiguous',
-          `Multiple open pull requests have head branch '${branch}':\n${listing}`,
-          {
-            fix: 'Bind one explicitly: specgit pr <number>, then re-run specgit issue to finish the delivery.',
-          }
-        ),
-      ],
-    };
-  } else {
-    const prTitle = firstTitle ?? human.issuePrTitleFallback(record.delivery);
-    // The scaffold is written exactly once, here on the fresh-creation
-    // path (no PR bound, none adoptable): resume and repair bind or
-    // adopt what already exists and never rewrite a PR body (#87).
-    const prBody = renderPrScaffold(record.issues, language);
-    const prEv = await ctx.gh.createDraftPr(repo, branch, baseEv.value, prTitle, prBody);
-    if (!prEv.ok) {
-      return passthrough(prEv);
-    }
-    prNumber = prEv.value.number;
-  }
-  // Traceability edge issue→branch (#160): the moment the PR binding is
-  // first established, every bound issue gets the branch and PR as a
-  // comment. `record.pr` below is the persisted exactly-once marker —
-  // a comment failure fails closed *before* the number lands in the
-  // record, so a re-run re-enters this block (fresh or adopt path) and
-  // posts it; a completed binding never comments again.
-  const commentBody = human.issueTraceabilityComment(branch, prNumber);
-  for (const issueNumber of record.issues) {
-    const commentEv = await ctx.gh.addIssueComment(repo, issueNumber, commentBody);
-    if (!commentEv.ok) {
-      return passthrough(commentEv);
-    }
-  }
-  record = { ...record, pr: prNumber };
-  try {
-    await ctx.record.writeRecord(root, record);
-  } catch (error) {
-    return recordWriteFailure(error);
-  }
-  return { record };
 }
