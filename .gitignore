@@ -170,3 +170,11 @@ opencode.json
 # Cursor
 .cursor/
 node_modules
+
+# Review/audit scratch — local working files, never acceptance input;
+# `git add -A` must never sweep them into a delivery (#247).
+.local/diff-*
+.local/review-*
+.local/pr-*
+.review_*
+AUDIT-REPORT.md
