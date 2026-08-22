@@ -30,6 +30,13 @@ the suffix-stripping version comparison (rule 4).
 | 4 | Recorded payload fixtures need no refresh: the recorded shapes (metadata, issues, MR detail/list, pipelines, jobs, protected branches) parsed unchanged while the dogfood delivery below ran its full evidence pass on 19.3.0 | [`test/specgit-e2e/fixtures/gitlab/`](../../test/specgit-e2e/fixtures/gitlab/README.md) | live 19.3.0 CE | Free | live read-only probes during the dogfood delivery | High | ✅ pinned (#236) |
 | 5 | Support range statement: **>= 19.2.4 < 19.4.0** — this ledger widens the window per the SOP; `VERSION_WINDOW_MAX_EXCLUSIVE` moves `[19,3,0]` → `[19,4,0]`, MIN unchanged | this delivery (#236) | — | — | — | — | ✅ pinned (#236) |
 
+> **Superseded in part (#241).** Row 5's out-of-window semantics — fail
+> closed with `gitlab_version_unsupported`, exit 3 — was downgraded by the
+> #241 delivery: a version outside the window now warns
+> (`gitlab_version_unverified`) and evaluation proceeds against the live
+> APIs, which remain the fail-closed guarantee. The window values pinned
+> here stand; only their enforcement changed.
+
 ## Dogfood witness
 
 - [gitlab-dogfood-236.md](gitlab-dogfood-236.md) — one real probe delivery on

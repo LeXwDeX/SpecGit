@@ -154,8 +154,9 @@ reports no value) routes the merged-lineage gate to fail-closed
   `GlabProvider` satisfies `FORGE_PROVIDER_MEMBERS`, extends the
   contract test as an in-tree implementer, and mirrors the gh adapter's
   failure taxonomy per platform (`glab_missing`, `glab_unauthenticated`,
-  `glab_transport` — timeout included — plus `gitlab_version_unsupported`
-  for the self-managed version window). The glab method map stays
+  `glab_transport` — timeout included — plus the advisory
+  `gitlab_version_unverified` warning for a self-managed version outside
+  the verified window (#241)). The glab method map stays
   anchored cell-for-cell to this inventory and the
   [GitLab evidence ledger](evidence/gitlab-19.2.md) (row 24, all cells
   pinned). Routed since #117: the production context evaluates GitLab

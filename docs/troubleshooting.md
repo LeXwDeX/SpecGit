@@ -73,8 +73,10 @@ verdict is rejected with exit 1 (the same factual class as
 GitHub-pointing advice). GitLab evidence requires `glab`
 support, which is not implemented yet — see the
 [GitLab support roadmap](gitlab-support.md). The planned support range is
-precise and fail-closed: self-managed **GitLab CE/Free `>= 19.2.4 < 19.4.0`**
-(anything outside ⇒ planned `gitlab_version_unsupported`, exit 3), GitLab.com
+precise: self-managed **GitLab CE/Free `>= 19.2.4 < 19.4.0`** is the
+verified window — a version outside it warns (`gitlab_version_unverified`)
+while evaluation proceeds against the live APIs, and real API failures
+still fail closed (exit 3) — GitLab.com
 via capability probing, and **glab ≥ 1.113.0**; every claim is pinned in the
 [evidence ledger](evidence/gitlab-19.2.md). The declaration is honored
 diagnostically: matching origins fail with this dedicated code instead of the
