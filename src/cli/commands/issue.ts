@@ -25,6 +25,13 @@
  * usage error naming the way forward, and validated replacement
  * arguments re-bootstrap in its place (#75).
  *
+ * Delivery naming (#246): the branch is always issue number + semantic
+ * name (`<type>/<issue>-<slug>`), and bootstrap never invents a name. When
+ * the title yields no ASCII slug, an interactive session is asked for
+ * a kebab-case delivery name; anything else is a usage error naming
+ * `--delivery <slug>`. Once recorded, resume reuses the name without
+ * asking again.
+ *
  * Structure (#177): `runIssue` is orchestration only; the readable,
  * individually testable steps live in named sub-functions —
  * `resolveMergedRecord` (read-only mergedness probe), `validateResumeArgs`
@@ -38,7 +45,7 @@ import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import { errorDiagnostic, humanBuilder, issueList, sanitize, type IssueOutcome } from '../output.js';
 import { commandLanguage, catalogFor } from '../language.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
-import { isKebabId, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
+import { isKebabId, KEBAB_ID_FIX, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
 import type { OpenIssueFact } from '../../github/port.js';
@@ -46,6 +53,8 @@ import type { OpenIssueFact } from '../../github/port.js';
 export interface IssueOptions {
   titles?: string[];
   json?: boolean;
+  /** Explicit semantic delivery name (#246); wins over the title slug. */
+  delivery?: string;
 }
 
 /**
@@ -106,10 +115,11 @@ export function validateIssueTitles(
 /**
  * Kebab slug from the first three ASCII words of the title (#118: the
  * defined non-ASCII behavior). Any non-ASCII character in the title
- * yields '' and the caller falls back to `issue<N>` — the branch stays
- * ASCII, typeable, and valid under every language setting. A mixed
- * title's incidental ASCII words would make a garbage slug, so the
- * fallback is all-or-nothing on ASCII-only titles.
+ * yields '' — a mixed title's incidental ASCII words would make a
+ * garbage slug, so slugging is all-or-nothing on ASCII-only titles.
+ * An empty result is a naming gap the caller surfaces (#246): an
+ * interactive session is asked for a name, a scripted one gets a usage
+ * error naming `--delivery <slug>`. Never a silent `issue<N>`.
  */
 export function slugifyTitle(title: string): string {
   if (!/^[\x20-\x7E]*$/.test(title)) {
@@ -120,6 +130,80 @@ export function slugifyTitle(title: string): string {
     .slice(0, 3)
     .map((word) => word.toLowerCase())
     .join('-');
+}
+
+/** The interactive delivery-name prompt is bounded; EOF or exhaustion is a refusal, never a hang (#246). */
+const DELIVERY_NAME_PROMPT_ATTEMPTS = 3;
+
+/**
+ * Default prompt transport (#246): the same prompt stack the init
+ * command uses, writing to stderr so stdout keeps its parse-surface
+ * contract. Returns the trimmed answer, or null on EOF/interrupt.
+ */
+async function terminalDeliveryNamePrompt(message: string): Promise<string | null> {
+  try {
+    const { input } = await import('@inquirer/prompts');
+    const answer = await input({ message }, { output: process.stderr });
+    return answer.trim();
+  } catch {
+    return null;
+  }
+}
+
+/** The usage error for a delivery whose name cannot be resolved (#246). */
+function deliveryNameRequiredError(reason: string): IssueOutcome {
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issue_delivery_name_required',
+        `The delivery name could not be resolved: ${reason}`,
+        {
+          fix: 'Name the delivery explicitly — specgit issue <title-or-number> --delivery <slug> (kebab-case ASCII, e.g. add-login) — or use an ASCII issue title.',
+        }
+      ),
+    ],
+  };
+}
+
+/**
+ * Delivery-name resolution (#246), in precedence order: an explicit
+ * `--delivery` flag (the operator already named it) → the kebab slug of
+ * the first ASCII title → an interactive prompt → a usage error. The
+ * former silent `issue<N>` fallback is gone: a nameless delivery is a
+ * gap the operator resolves, never one bootstrap papers over.
+ *
+ * Exported for the #246 naming tests: the precedence and prompt loop
+ * are pure given the injected transport.
+ */
+export async function resolveDeliveryName(deps: {
+  cleanTitle: string;
+  override?: string;
+  interactive: boolean;
+  prompt: (message: string) => Promise<string | null>;
+  promptText: string;
+  retryText: string;
+}): Promise<{ name: string } | IssueOutcome> {
+  if (deps.override !== undefined) {
+    return { name: deps.override };
+  }
+  const slug = slugifyTitle(deps.cleanTitle);
+  if (slug && isKebabId(slug)) {
+    return { name: slug };
+  }
+  if (!deps.interactive) {
+    return deliveryNameRequiredError('the title yields no ASCII slug and no explicit name was given.');
+  }
+  for (let attempt = 0; attempt < DELIVERY_NAME_PROMPT_ATTEMPTS; attempt += 1) {
+    const answer = await deps.prompt(attempt === 0 ? deps.promptText : deps.retryText);
+    if (answer === null) {
+      break;
+    }
+    if (isKebabId(answer)) {
+      return { name: answer };
+    }
+  }
+  return deliveryNameRequiredError('no valid kebab-case name was entered.');
 }
 
 function issueBody(title: string, language: PolicyLanguage = 'en'): string {
@@ -265,6 +349,25 @@ export async function runIssue(
 ): Promise<IssueOutcome> {
   const args = (options.titles ?? []).map((value) => value.trim());
 
+  // #246: an explicit delivery name is validated like any other
+  // argument — before any discovery or side effect.
+  const deliveryOverride = options.delivery?.trim();
+  if (
+    options.delivery !== undefined &&
+    (deliveryOverride === undefined || deliveryOverride === '' || !isKebabId(deliveryOverride))
+  ) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'issue_delivery_name_invalid',
+          `--delivery '${sanitize(options.delivery ?? '')}' is not a valid delivery name.`,
+          { fix: `${KEBAB_ID_FIX} Example: specgit issue <title-or-number> --delivery add-login.` }
+        ),
+      ],
+    };
+  }
+
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return passthrough(rootEv);
@@ -363,6 +466,10 @@ export async function runIssue(
   }
   const startIndex = resume !== null ? resume.startIndex : 0;
 
+  // #246: naming is interactive only on a real terminal — a `--json`
+  // run keeps stdout a pure parse surface, so it never prompts.
+  const interactive = options.json !== true && ctx.stdinIsTTY;
+
   const created = await createOrAdoptIssues({
     ctx,
     root,
@@ -373,6 +480,8 @@ export async function runIssue(
     args,
     startIndex,
     firstTitle: resume !== null ? resume.firstTitle : null,
+    deliveryOverride,
+    interactive,
   });
   if ('exit' in created) {
     return created;
@@ -541,8 +650,8 @@ function validateResumeArgs(
  * argument, reuse the number, adopt an unambiguous same-title open issue
  * (#77), or create fresh — then persist the record after every issue so
  * any failure heals on the next invocation without re-creating. The
- * interim delivery/branch converge on the final derivation as the first
- * title argument is consumed.
+ * delivery name is resolved once before any remote side effect (#246);
+ * a resume keeps the recorded name.
  *
  * Exported for the #216 guard test: the function proves its own null-record
  * precondition with an explicit runtime guard instead of a type assertion.
@@ -557,11 +666,43 @@ export async function createOrAdoptIssues(deps: {
   args: string[];
   startIndex: number;
   firstTitle: string | null;
+  /** Explicit `--delivery` name; wins over the title slug (#246). */
+  deliveryOverride?: string;
+  /** Real-terminal session: the naming gap may be asked (#246). */
+  interactive?: boolean;
+  /** Injectable prompt transport; defaults to readline (#246). */
+  promptDeliveryName?: (message: string) => Promise<string | null>;
 }): Promise<IssueOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
   const { ctx, root, repo, language, context } = deps;
   const issues = deps.record !== null ? [...deps.record.issues] : [];
   let record: DeliveryBinding | null = deps.record;
   let firstTitle = deps.firstTitle;
+
+  // #246: resolve the delivery name BEFORE any remote side effect — a
+  // nameless bootstrap is a usage error and must never leave a created
+  // issue behind. Precedence: the recorded name on resume (never ask
+  // twice) → explicit `--delivery` → the ASCII title slug → an
+  // interactive prompt → a usage error naming the explicit flag.
+  let delivery: string;
+  if (deps.record !== null) {
+    delivery = deps.record.delivery;
+  } else {
+    const { human } = catalogFor(language);
+    const titleArg = firstTitleArg(deps.args);
+    const cleanTitle = titleArg !== null ? parseIssueTitle(titleArg).cleanTitle : '';
+    const resolved = await resolveDeliveryName({
+      cleanTitle,
+      override: deps.deliveryOverride,
+      interactive: deps.interactive === true,
+      prompt: deps.promptDeliveryName ?? terminalDeliveryNamePrompt,
+      promptText: human.deliveryNamePrompt(),
+      retryText: human.deliveryNameRetry(),
+    });
+    if ('exit' in resolved) {
+      return resolved;
+    }
+    delivery = resolved.name;
+  }
 
   // Remotely discoverable idempotency marker for issue creation: an open
   // issue whose title exactly matches a pending title argument is that
@@ -623,10 +764,8 @@ export async function createOrAdoptIssues(deps: {
 
     // Durable resumable state: rewrite the record after every issue so
     // any failure heals on the next invocation without re-creating.
-    const { type, cleanTitle } =
-      firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat', cleanTitle: '' };
-    const slug = slugifyTitle(cleanTitle);
-    const delivery = slug && isKebabId(slug) ? slug : `issue${issues[0]}`;
+    const { type } =
+      firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat' };
     const branch = `${type}/${issues[0]}-${delivery}`;
     record = {
       version: 1,

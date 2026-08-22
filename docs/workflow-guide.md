@@ -69,7 +69,9 @@ specgit issue "feat: add login" "Harden the session model" --json
 N 个参数 = N 个 issue 绑进 **同一个** 交付（1 PR : N issues）。
 该命令依次完成：创建/复用 issues → 建分支 `<type>/<first#>-<slug>`
 （type 取自首个标题的 conventional 前缀，默认 feat；slug 取前三个
-ASCII 单词，非 ASCII 回退 `issue<N>`）→ 开 draft PR（body 自动写
+ASCII 单词；标题产不出 slug 时绝不静默造名——交互终端会反问一个
+kebab-case 交付名，脚本环境报 `issue_delivery_name_required` 并指向
+`--delivery <slug>`）→ 开 draft PR（body 自动写
 `Closes #n`，覆盖每个 issue）→ 写 `.specgit.yaml` → commit → push。
 
 **幂等续跑**：任何一步之间失败后，重跑同一条命令即恢复——已完成的
