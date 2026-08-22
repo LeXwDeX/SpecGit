@@ -112,6 +112,18 @@ export interface RepoAutomergeFact {
 }
 
 /**
+ * Preflight facts (#247): platform-neutral so the port contract never
+ * names a forge. `versionUnverified` is advisory (#241) — an adapter may
+ * set it when its instance reports a version outside its verified window
+ * (only the glab adapter does today); the evaluator relays it as a
+ * warning and never blocks the verdict on it.
+ */
+export interface PreflightFact {
+  authenticated: boolean;
+  versionUnverified?: boolean;
+}
+
+/**
  * The read surface of the forge port (#180): evidence collection plus the
  * delivery-lifecycle mutations (issues, pull requests, check runs,
  * comments). This is the surface a platform needs to participate in
@@ -120,7 +132,7 @@ export interface RepoAutomergeFact {
  * never consume admin evidence can implement this surface alone.
  */
 export interface ForgeReadPort {
-  preflight(): Promise<Evidence<{ authenticated: boolean; gitlabVersionUnverified?: boolean }>>;
+  preflight(): Promise<Evidence<PreflightFact>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
   /**
    * Numbers of all open issues (for the ordered_issues sequencing gate and

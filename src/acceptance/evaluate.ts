@@ -351,7 +351,7 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       // Advisory verified-window flag from the GitLab preflight (#241):
       // a version outside the verified window warns but never blocks —
       // the live evidence pass is the fail-closed guarantee.
-      if (preflight.value.gitlabVersionUnverified === true) {
+      if (preflight.value.versionUnverified === true) {
         warnings.push({
           severity: 'warning',
           code: 'gitlab_version_unverified',
