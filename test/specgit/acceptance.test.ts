@@ -235,6 +235,26 @@ describe('acceptance evaluator', () => {
     expect(verdict.warnings.map((w) => w.code)).toContain('local_head_stale');
   });
 
+  it('reports gitlab_version_unverified as a warning only, never a gate (#241)', async () => {
+    // An unverified self-managed GitLab version warns; evaluation
+    // proceeds against the live evidence and still accepts.
+    const gh = new MockForgeProvider({
+      preflight: ok({ authenticated: true, gitlabVersionUnverified: true }),
+      pr: ok(makePrFact({ headSha: HEAD })),
+      checkRuns: ok([makeCheckRun('All checks passed')]),
+    });
+    const verdict = await evaluate(input({ gh }));
+    expect(verdict.accepted).toBe(true);
+    expect(verdict.exitCode).toBe(0);
+    expect(gate(verdict, 'provider').status).toBe('pass');
+    expect(verdict.warnings.map((w) => w.code)).toContain('gitlab_version_unverified');
+  });
+
+  it('never warns gitlab_version_unverified for a verified-window preflight', async () => {
+    const verdict = await evaluate(input());
+    expect(verdict.warnings.map((w) => w.code)).not.toContain('gitlab_version_unverified');
+  });
+
   it('accepts a merged-delivery record on main instead of branch_mismatch', async () => {
     // The record binds feat/123-login but we are on main, and the bound PR
     // is merged: completed history, not a mismatch — but only once local

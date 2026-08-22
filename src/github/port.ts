@@ -120,7 +120,7 @@ export interface RepoAutomergeFact {
  * never consume admin evidence can implement this surface alone.
  */
 export interface ForgeReadPort {
-  preflight(): Promise<Evidence<{ authenticated: boolean }>>;
+  preflight(): Promise<Evidence<{ authenticated: boolean; gitlabVersionUnverified?: boolean }>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
   /**
    * Numbers of all open issues (for the ordered_issues sequencing gate and

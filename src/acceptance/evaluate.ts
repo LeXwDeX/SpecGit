@@ -348,6 +348,17 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       if (!preflight.ok) {
         return [makeFailure(preflight.code)];
       }
+      // Advisory verified-window flag from the GitLab preflight (#241):
+      // a version outside the verified window warns but never blocks —
+      // the live evidence pass is the fail-closed guarantee.
+      if (preflight.value.gitlabVersionUnverified === true) {
+        warnings.push({
+          severity: 'warning',
+          code: 'gitlab_version_unverified',
+          message: CODE_INFO.gitlab_version_unverified.message,
+          fix: CODE_INFO.gitlab_version_unverified.fix,
+        });
+      }
       return [];
     }));
 

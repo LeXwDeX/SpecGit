@@ -56,8 +56,11 @@ const MR_LIST_LIMIT = 30;
 const GITLAB_SAAS_HOST = 'gitlab.com';
 
 /**
- * Supported self-managed window (ledger row 5): >= 19.2.4 < 19.4.0. The
- * range moves only through explicit rebaseline deliveries, never drift.
+ * Verified self-managed window (ledger row 5): >= 19.2.4 < 19.4.0. A
+ * version outside it is advisory, not a gate (#241): preflight flags it
+ * and the verdict warns, while the live evidence pass itself stays the
+ * fail-closed guarantee. The range moves only through explicit
+ * rebaseline deliveries, never drift.
  */
 const VERSION_WINDOW_MIN = [19, 2, 4] as const;
 const VERSION_WINDOW_MAX_EXCLUSIVE = [19, 4, 0] as const;
@@ -108,8 +111,9 @@ export interface GlabProviderOptions {
    * Declared self-managed GitLab host (optionally `host:port`), from
    * `spec_git/providers.yaml`. Scopes every call per host —
    * `glab auth status --hostname` and `glab api --hostname` — and turns
-   * on the supported-version window. Absent (or `gitlab.com`) means the
-   * SaaS judgment: capability probing, never version pinning (#93).
+   * on the verified-version window check (advisory, #241). Absent (or
+   * `gitlab.com`) means the SaaS judgment: capability probing, never
+   * version pinning (#93).
    */
   hostname?: string;
   glabCommand?: string;
@@ -193,11 +197,15 @@ export class GlabProvider implements ForgeProvider {
 
   /**
    * Detection → per-host auth → metadata probe. On a declared
-   * self-managed host the metadata version must sit inside the supported
-   * window; the SaaS host is never version-pinned (#93) — the metadata
-   * call remains a capability probe whose failure fails closed.
+   * self-managed host the metadata version is compared against the
+   * verified window; outside it (or unparsable) sets
+   * `gitlabVersionUnverified` — an advisory flag the verdict surfaces
+   * as a warning (#241) — but never aborts preflight: the real
+   * fail-closed guarantee is the live evidence pass itself. The SaaS
+   * host is never version-pinned (#93) — the metadata call remains a
+   * capability probe whose failure fails closed.
    */
-  async preflight(): Promise<Evidence<{ authenticated: boolean }>> {
+  async preflight(): Promise<Evidence<{ authenticated: boolean; gitlabVersionUnverified?: boolean }>> {
     const version = await this.runGlab(['--version']);
     if (!version.ok) {
       if (version.code === 'glab_missing') return this.asFailure(version);
@@ -225,11 +233,7 @@ export class GlabProvider implements ForgeProvider {
     if (this.isSelfManaged()) {
       const reported = (metadataEv.value as { version?: unknown }).version;
       if (typeof reported !== 'string' || !versionInWindow(reported)) {
-        return fail(
-          'gitlab_version_unsupported',
-          `GitLab version "${typeof reported === 'string' ? reported : 'unknown'}" is outside the supported self-managed window (>= 19.2.4 < 19.4.0).`,
-          'Upgrade into the supported window, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.'
-        );
+        return ok({ authenticated: true, gitlabVersionUnverified: true });
       }
     }
     return ok({ authenticated: true });

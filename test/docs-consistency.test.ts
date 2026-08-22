@@ -85,8 +85,8 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     expect(text).toContain('VERSION_WINDOW_MIN');
     expect(text).toContain('VERSION_WINDOW_MAX_EXCLUSIVE');
 
-    // Triggers: new releases and the fail-closed diagnostic report.
-    expect(text).toMatch(/gitlab_version_unsupported/);
+    // Triggers: new releases and the advisory unverified-version warning.
+    expect(text).toMatch(/gitlab_version_unverified/);
 
     // Which dogfood evidence must be recaptured — the SOP names the
     // evidence artifacts under docs/evidence/ it produces.
