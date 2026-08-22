@@ -16,7 +16,7 @@ export type SpecGitCode =
   | 'no_origin'
   | 'origin_unresolvable'
   | 'gitlab_unsupported'
-  | 'gitlab_version_unsupported'
+  | 'gitlab_version_unverified'
   | 'gh_missing'
   | 'gh_unauthenticated'
   | 'gh_transport'
@@ -137,10 +137,10 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
     message: 'The origin remote points at a GitLab repository; GitLab evidence requires glab support, which is not implemented yet.',
     fix: 'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.',
   },
-  gitlab_version_unsupported: {
+  gitlab_version_unverified: {
     kind: 'evidence',
-    message: 'The self-managed GitLab version is outside the supported window (>= 19.2.4 < 19.4.0).',
-    fix: 'Upgrade into the supported window, or land a rebaseline delivery that widens the window — see docs/gitlab-support.md.',
+    message: 'The self-managed GitLab version is outside the verified window (>= 19.2.4 < 19.4.0); acceptance proceeded against the live APIs.',
+    fix: 'If any gate behaves unexpectedly, land a rebaseline delivery that moves the verified window — see docs/gitlab-support.md.',
   },
   gh_missing: {
     kind: 'evidence',
