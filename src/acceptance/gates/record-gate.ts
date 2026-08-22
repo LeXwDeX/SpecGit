@@ -8,7 +8,9 @@ import { makeFailure, type GateContext, type GateFailure } from './types.js';
 export function recordGate(ctx: GateContext): GateFailure[] {
   const { record } = ctx.input;
   if (!record.ok) {
-    return [makeFailure(record.code)];
+    // #277: the record reader already knows the path it missed — its
+    // account reaches the operator instead of the generic registry line.
+    return [makeFailure(record)];
   }
   const binding = record.value;
   ctx.evidence.delivery = binding.delivery;

@@ -141,7 +141,10 @@ function codes(failures: Array<{ code: string }>): string[] {
 describe('record gate', () => {
   it('fails with the record evidence code when the binding did not load', () => {
     const ctx = makeContext({ record: fail('record_missing', 'absent'), binding: null });
-    expect(codes(recordGate(ctx))).toEqual(['record_missing']);
+    const failures = recordGate(ctx);
+    expect(codes(failures)).toEqual(['record_missing']);
+    // #277: the reader's own account wins over the generic registry line.
+    expect(failures[0].message).toBe('absent');
   });
 
   it('publishes the delivery, context, and issue evidence on a clean load', () => {
@@ -302,9 +305,13 @@ describe('origin gate', () => {
 describe('provider gate', () => {
   it('fails with the preflight code when the forge CLI is not ready', async () => {
     const ctx = makeContext({
-      gh: forgeStub({ preflight: async () => fail('gh_unauthenticated', 'no auth') }),
+      gh: forgeStub({ preflight: async () => fail('gh_unauthenticated', 'no auth', 'run gh auth login') }),
     });
-    expect(codes(await providerGate(ctx))).toEqual(['gh_unauthenticated']);
+    const failures = await providerGate(ctx);
+    expect(codes(failures)).toEqual(['gh_unauthenticated']);
+    // #277: the Evidence message and fix win; CODE_INFO is only the fallback.
+    expect(failures[0].message).toBe('no auth');
+    expect(failures[0].fix).toBe('run gh auth login');
   });
 
   it('warns but passes when the GitLab version is outside the verified window', async () => {

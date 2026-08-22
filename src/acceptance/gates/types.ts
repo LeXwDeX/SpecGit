@@ -88,16 +88,25 @@ export interface GateContext {
 /** The one gate shape: read the context, publish evidence, return failures. */
 export type GateFn = (context: GateContext) => Promise<GateFailure[]> | GateFailure[];
 
+/** A failed Evidence arm — the diagnosis the failing call already computed. */
+export type FailedEvidence = Extract<Evidence<never>, { ok: false }>;
+
 /**
- * One failure construction site for every gate: the diagnostic prose comes
- * from the code registry, so gate modules never restate it.
+ * One failure construction site for every gate. The source is either a
+ * diagnostic code or the failed Evidence itself (#277): an
+ * Evidence-supplied message wins so the precise diagnosis the failing
+ * call computed reaches the operator; `CODE_INFO` remains the fallback
+ * for failures raised without one. The code — the machine contract —
+ * always comes from the registry vocabulary.
  */
-export function makeFailure(code: string, detail?: unknown): GateFailure {
+export function makeFailure(source: string | FailedEvidence, detail?: unknown): GateFailure {
+  const code = typeof source === 'string' ? source : source.code;
   const info = CODE_INFO[code as SpecGitCode];
+  const reported = typeof source === 'string' || source.message === '' ? undefined : source;
   return {
     code: code as SpecGitCode,
-    message: info?.message ?? code,
-    fix: info?.fix,
+    message: reported?.message ?? info?.message ?? code,
+    fix: reported?.fix ?? info?.fix,
     ...(detail === undefined ? {} : { detail }),
   };
 }

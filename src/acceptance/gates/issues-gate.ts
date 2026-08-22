@@ -14,7 +14,7 @@ export async function issuesGate(ctx: GateContext): Promise<GateFailure[]> {
         failures.push(makeFailure('issue_not_found', { issue: issueNumber }));
         continue;
       }
-      failures.push(makeFailure(issue.code));
+      failures.push(makeFailure(issue));
       break;
     }
     if (issue.value.pullRequest) {
