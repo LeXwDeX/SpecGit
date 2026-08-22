@@ -60,6 +60,13 @@ only when the gates are green:
 No intermediate plan sign-offs, status pings, or approvals before it. After
 the brief is approved, do not push decisions upward again.
 
+## Pre-merge quality loop
+
+Between the local gates going green and the merge, the change runs the
+quality loop — fast REVIEW+FIX rounds, then one full two-axis code
+review over the whole diff, capped and fail-closed. Binding spec:
+[quality-loop.md](quality-loop.md).
+
 ## Machine verdict
 
 `specgit finish` is the machine verdict and the only definition of done

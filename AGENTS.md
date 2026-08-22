@@ -66,6 +66,10 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
 
 - Development loop (binding): [workflows/specgit-dev-loop.md](workflows/specgit-dev-loop.md)
   — TDD slices, PR to `main`, single push-right checkpoint at the PR brief.
+- Pre-merge quality loop (binding):
+  [workflows/quality-loop.md](workflows/quality-loop.md) — REVIEW →
+  DEBUG → FIX until clean (fast rounds, then one full two-axis review),
+  then merge, then release; zero checkpoints, capped, fail-closed.
 - Issue tracker: [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md)
   — GitHub Issues on `LeXwDeX/SpecGit`, operated via `gh`.
 - Docs must stay consistent with the language of [README.md](README.md) and
