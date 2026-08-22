@@ -49,6 +49,7 @@ const readsStdin = inputIdx !== -1 && argv[inputIdx + 1] === '-';
 function finish(stdinText) {
   const record = readsStdin ? { args, stdin: stdinText } : { args };
   fs.appendFileSync(cfg.logPath, JSON.stringify(record) + '\\n');
+  rejectMrOnUnpushedBranch();
   checkRouting();
   const rule = cfg.rules.find((r) => new RegExp(r.match).test(args));
   if (!rule) {
@@ -86,6 +87,42 @@ if (readsStdin) {
 } else {
   finish('');
 }
+// GitLab rejects MR creation whose source branch was never pushed to
+// the remote (#270). When cfg.repoDir points at the bare remote, the
+// double enforces the same constraint: a POST merge_requests for an
+// unpushed branch gets GitLab's shaped 400 instead of a rule match.
+function rejectMrOnUnpushedBranch() {
+  if (!cfg.repoDir || argv[0] !== 'api') return;
+  let method = 'GET';
+  let endpoint = null;
+  let sourceBranch = null;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '-X' || a === '--hostname' || a === '--input') {
+      if (a === '-X') method = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (a === '-f' || a === '--field') {
+      const value = argv[i + 1] || '';
+      if (value.indexOf('source_branch=') === 0) sourceBranch = value.slice('source_branch='.length);
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('-')) continue;
+    if (endpoint === null) endpoint = a;
+  }
+  if (method !== 'POST' || endpoint === null || sourceBranch === null) return;
+  if (!/merge_requests$/.test(endpoint.split('?')[0])) return;
+  const { execFileSync } = require('node:child_process');
+  try {
+    execFileSync('git', ['--git-dir', cfg.repoDir, 'show-ref', '--verify', 'refs/heads/' + sourceBranch], { stdio: 'ignore' });
+  } catch (err) {
+    process.stdout.write('{"message":{"source_branch":["does not exist"]}}\\n');
+    process.stderr.write('glab: HTTP 400 {"message":{"source_branch":["does not exist"]}}\\n');
+    process.exit(1);
+  }
+}
 function checkRouting() {
   if (argv[0] !== 'api') return;
   let method = 'GET';
@@ -114,12 +151,33 @@ function checkRouting() {
 }
 `;
 
-export function createFakeGlab(tempDir: string, rules: FakeGlabRule[]): FakeGlab {
+export interface FakeGlabOptions {
+  /**
+   * Bare remote the double verifies pushed branches against (#270): a
+   * POST merge_requests whose source_branch is absent from this repo is
+   * rejected with GitLab's shaped 400, like the real API.
+   */
+  repoDir?: string;
+}
+
+export function createFakeGlab(
+  tempDir: string,
+  rules: FakeGlabRule[],
+  options: FakeGlabOptions = {}
+): FakeGlab {
   const binDir = path.join(tempDir, 'fake-glab-bin');
   fs.mkdirSync(binDir, { recursive: true });
   const configPath = path.join(tempDir, 'fake-glab-config.json');
   const logPath = path.join(tempDir, 'fake-glab-calls.jsonl');
-  fs.writeFileSync(configPath, JSON.stringify({ rules, routes: GITLAB_API_ROUTES, logPath }));
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      rules,
+      routes: GITLAB_API_ROUTES,
+      logPath,
+      ...(options.repoDir === undefined ? {} : { repoDir: options.repoDir }),
+    })
+  );
 
   const recorderPath = path.join(binDir, 'fake-glab.cjs');
   fs.writeFileSync(recorderPath, `#!/usr/bin/env node\n${FAKE_GLAB_SCRIPT}`);

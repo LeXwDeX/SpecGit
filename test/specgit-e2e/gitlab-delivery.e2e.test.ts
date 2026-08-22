@@ -96,6 +96,9 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         `^api --hostname ${GITLAB_HOST} ${endpoint}`;
 
       // ---- Phase 1: init declares the platform and detects .gitlab-ci.yml.
+      // repoDir makes the double enforce GitLab's real constraint (#270):
+      // MR creation for a branch never pushed to the bare remote is a 400,
+      // so this bootstrap doubles as the push-before-MR ordering guard.
       const bootstrapGlab = createFakeGlab(fixture.dir, [
         { match: '^--version$', stdout: 'glab version 1.113.0-fake\n' },
         { match: `^auth status --hostname ${GITLAB_HOST}$`, stdout: 'Logged in\n' },
@@ -124,7 +127,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
             source_branch: 'feat/7-gitlab-delivery-story',
           }),
         },
-      ]);
+      ], { repoDir: fixture.bareDir });
       cleanup.push(bootstrapGlab.binDir);
       const sandboxEnv = (extra?: NodeJS.ProcessEnv) =>
         bootstrapGlab.env({

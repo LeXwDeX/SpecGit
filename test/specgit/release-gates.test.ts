@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-import { GUARD_SCRIPT, mergeHooksJson } from '../../src/cli/harness-assets.js';
+import { GUARD_SCRIPT, mergeHooksJson } from '../../src/cli/harness-content.js';
 
 /**
  * #71 + #68 workflow wiring locks. YAML has no unit-test seam, so the

@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { parse } from 'yaml';
 
-import { harnessWorkflowYaml } from '../../src/cli/harness-assets.js';
+import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
 
 // #66: security invariants for the workflows that execute untrusted code.
 // Invariants throw (instead of returning booleans) so the mutation tests

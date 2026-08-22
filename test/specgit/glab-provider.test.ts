@@ -1237,8 +1237,12 @@ describe('GlabProvider#createDraftPr', () => {
     rmDir(tempDir);
   });
 
-  function setup(rules: FakeGlabRule[], providerOptions: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}) {
-    const fake = createFakeGlab(tempDir, rules);
+  function setup(
+    rules: FakeGlabRule[],
+    providerOptions: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
+    fakeOptions: { repoDir?: string } = {}
+  ) {
+    const fake = createFakeGlab(tempDir, rules, fakeOptions);
     const { env: extraEnv, ...rest } = providerOptions;
     const provider = new GlabProvider({ hostname: HOST, env: fake.env(extraEnv), ...rest });
     return { fake, provider };
@@ -1355,6 +1359,63 @@ describe('GlabProvider#createDraftPr', () => {
     if (result.ok) return;
     expect(result.code).toBe('glab_transport');
     expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
+  });
+
+  // #270: GitLab rejects an MR whose source branch was never pushed.
+  // The double enforces that against a real bare remote, so the create
+  // must fail closed with the transport diagnosis instead of a rule hit.
+  describe('against a remote that only knows pushed branches (#270)', () => {
+    const MR_RULE: FakeGlabRule = {
+      match: `-X POST projects/${PROJECT_ID}/merge_requests `,
+      stdout: JSON.stringify({
+        iid: 12,
+        web_url: 'https://git.example.com/group/subgroup/project/-/merge_requests/12',
+        draft: true,
+        work_in_progress: true,
+      }),
+    };
+
+    async function bareRemote(): Promise<string> {
+      const repoDir = path.join(tempDir, 'remote.git');
+      await execFileAsync('git', ['init', '--bare', repoDir]);
+      return repoDir;
+    }
+
+    // CI runners carry no global git identity; commit-tree needs one.
+    const COMMIT_IDENTITY = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'specgit-test',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'specgit-test',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    };
+
+    it('fails closed when the source branch was never pushed', async () => {
+      const repoDir = await bareRemote();
+      const { provider } = setup([MR_RULE], {}, { repoDir });
+      const result = await provider.createDraftPr(REPO, 'feat/7-never-pushed', 'main', 'T', 'B');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe('glab_transport');
+      expect(result.message).toContain('source_branch');
+    });
+
+    it('creates the MR once the branch exists on the remote', async () => {
+      const repoDir = await bareRemote();
+      const { stdout: emptyTree } = await execFileAsync('git', ['--git-dir', repoDir, 'hash-object', '-t', 'tree', '/dev/null']);
+      const { stdout: commitSha } = await execFileAsync(
+        'git',
+        ['--git-dir', repoDir, 'commit-tree', emptyTree.trim(), '-m', 'seed'],
+        { env: COMMIT_IDENTITY }
+      );
+      await execFileAsync('git', ['--git-dir', repoDir, 'update-ref', 'refs/heads/feat/7-pushed', commitSha.trim()]);
+      const { provider } = setup([MR_RULE], {}, { repoDir });
+      const result = await provider.createDraftPr(REPO, 'feat/7-pushed', 'main', 'T', 'B');
+      expect(result).toEqual({
+        ok: true,
+        value: { number: 12, url: 'https://git.example.com/group/subgroup/project/-/merge_requests/12' },
+      });
+    });
   });
 });
 

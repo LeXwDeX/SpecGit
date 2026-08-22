@@ -7,6 +7,15 @@ import { buildProtectionUpdateBody } from './protection-merge.js';
 import { defaultSpawn, sanitizeApiText, type SpawnFn } from '../cli-spawn.js';
 export { resolveNodeScriptCommand, sanitizeApiText } from '../cli-spawn.js';
 export type { SpawnFn, SpawnOptions } from '../cli-spawn.js';
+// The shared CLI-evidence transport (#274): pagination to exhaustion,
+// JSON decoding, and the spawn-failure taxonomy exist once there.
+import {
+  classifySpawnError,
+  decodeJsonResponse,
+  evidenceTruncated,
+  paginateToExhaustion,
+  type CliRunOutcome,
+} from '../cli-evidence-transport.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
@@ -53,20 +62,16 @@ const MAX_ISSUE_SEARCH_PAGES = 10;
 /** gh stderr markers that mean "not authenticated" rather than transport. */
 const AUTH_FAILURE_PATTERN = /HTTP 40[13]|Bad credentials|gh auth login|not logged in|authentication required/i;
 
+/** gh stderr markers that mean the looked-up resource does not exist. */
+const NOT_FOUND_PATTERN = /HTTP 404|Not Found/i;
+
+const TIMEOUT_FIX =
+  'A timeout this basic points at one of three causes — check in order: ' +
+  '(1) network reachability (curl -sI https://api.github.com), ' +
+  '(2) a GitHub incident (https://www.githubstatus.com), ' +
+  '(3) a genuinely slow call — raise the budget via SPECGIT_GH_TIMEOUT_MS (milliseconds).';
+
 const PR_URL_PATTERN = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/;
-
-function isSpawnNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as NodeJS.ErrnoException).code === 'ENOENT'
-  );
-}
-
-interface GhFailure {
-  error: unknown;
-}
 
 export interface GhCliGitHubProviderOptions {
   env?: NodeJS.ProcessEnv;
@@ -178,48 +183,54 @@ export class GhCliGitHubProvider implements ForgeProvider {
    * of returning a silently partial list.
    */
   async getOpenIssues(repo: RepoRef): Promise<Evidence<OpenIssueFact[]>> {
-    const byNumber = new Map<number, OpenIssueFact>();
-    for (let page = 1; page <= MAX_ISSUE_SEARCH_PAGES; page += 1) {
-      const endpoint =
-        `search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+is:open` +
-        `&per_page=${ISSUE_SEARCH_PAGE_SIZE}&page=${page}`;
-      const result = await this.runApi(endpoint, 'search');
-      if (!result.ok) {
-        return result;
+    const pagesEv = await paginateToExhaustion<unknown>(
+      {
+        pageSize: ISSUE_SEARCH_PAGE_SIZE,
+        maxPages: MAX_ISSUE_SEARCH_PAGES,
+        what: "GitHub's issue search",
+        capMessage:
+          `GitHub's issue search caps at ${MAX_ISSUE_SEARCH_PAGES * ISSUE_SEARCH_PAGE_SIZE} results; ` +
+          'the open-issue list may be truncated.',
+      },
+      async (page) => {
+        const endpoint =
+          `search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+is:open` +
+          `&per_page=${ISSUE_SEARCH_PAGE_SIZE}&page=${page}`;
+        const result = await this.runApi(endpoint, 'search');
+        if (!result.ok) {
+          return result;
+        }
+        const parsed = result.value as { items?: unknown; incomplete_results?: unknown };
+        if (!Array.isArray(parsed.items)) {
+          return fail('gh_transport', 'GitHub returned an unexpected issue-search payload.');
+        }
+        if (parsed.incomplete_results === true) {
+          return evidenceTruncated(
+            'GitHub reports the open-issue search as incomplete; the list may be missing issues.'
+          );
+        }
+        return ok(parsed.items);
       }
-      const parsed = result.value as { items?: unknown; incomplete_results?: unknown };
-      if (!Array.isArray(parsed.items)) {
-        return fail('gh_transport', 'GitHub returned an unexpected issue-search payload.');
-      }
-      if (parsed.incomplete_results === true) {
-        return fail(
-          'evidence_truncated',
-          'GitHub reports the open-issue search as incomplete; the list may be missing issues.'
-        );
-      }
-      for (const item of parsed.items) {
-        const number = (item as { number?: unknown }).number;
-        if (typeof number !== 'number') continue;
-        // Deduplicate: a page-boundary shift between calls (an issue
-        // opened mid-pagination) can repeat an entry across pages.
-        if (byNumber.has(number)) continue;
-        const title = (item as { title?: unknown }).title;
-        const body = (item as { body?: unknown }).body;
-        byNumber.set(number, {
-          number,
-          ...(typeof title === 'string' && title ? { title } : {}),
-          ...(typeof body === 'string' ? { body } : {}),
-        });
-      }
-      if (parsed.items.length < ISSUE_SEARCH_PAGE_SIZE) {
-        return ok([...byNumber.values()]);
-      }
-    }
-    return fail(
-      'evidence_truncated',
-      `GitHub's issue search caps at ${MAX_ISSUE_SEARCH_PAGES * ISSUE_SEARCH_PAGE_SIZE} results; ` +
-        'the open-issue list may be truncated.'
     );
+    if (!pagesEv.ok) {
+      return pagesEv;
+    }
+    const byNumber = new Map<number, OpenIssueFact>();
+    for (const item of pagesEv.value) {
+      const number = (item as { number?: unknown }).number;
+      if (typeof number !== 'number') continue;
+      // Deduplicate: a page-boundary shift between calls (an issue
+      // opened mid-pagination) can repeat an entry across pages.
+      if (byNumber.has(number)) continue;
+      const title = (item as { title?: unknown }).title;
+      const body = (item as { body?: unknown }).body;
+      byNumber.set(number, {
+        number,
+        ...(typeof title === 'string' && title ? { title } : {}),
+        ...(typeof body === 'string' ? { body } : {}),
+      });
+    }
+    return ok([...byNumber.values()]);
   }
 
   /**
@@ -291,49 +302,48 @@ export class GhCliGitHubProvider implements ForgeProvider {
       return fail('gh_transport', 'Cannot query check runs without a valid commit SHA.');
     }
 
-    const runs: CheckRunInfo[] = [];
-    for (let page = 1; page <= MAX_CHECK_RUN_PAGES; page += 1) {
-      const endpoint =
-        `repos/${repo.owner}/${repo.repo}/commits/${sha}/check-runs` +
-        `?per_page=${CHECK_RUN_PAGE_SIZE}&page=${page}`;
-      const result = await this.runApi(endpoint, 'checks');
-      if (!result.ok) {
-        return result;
-      }
+    return paginateToExhaustion<CheckRunInfo>(
+      {
+        pageSize: CHECK_RUN_PAGE_SIZE,
+        maxPages: MAX_CHECK_RUN_PAGES,
+        what: 'Check-run',
+        capMessage:
+          `Check-run pagination hit its cap (${MAX_CHECK_RUN_PAGES * CHECK_RUN_PAGE_SIZE} runs); ` +
+          'the check-run list may be truncated.',
+      },
+      async (page) => {
+        const endpoint =
+          `repos/${repo.owner}/${repo.repo}/commits/${sha}/check-runs` +
+          `?per_page=${CHECK_RUN_PAGE_SIZE}&page=${page}`;
+        const result = await this.runApi(endpoint, 'checks');
+        if (!result.ok) {
+          return result;
+        }
 
-      const parsed = result.value as { check_runs?: unknown };
-      if (!Array.isArray(parsed.check_runs)) {
-        return fail('gh_transport', 'GitHub returned an unexpected check-runs payload.');
-      }
+        const parsed = result.value as { check_runs?: unknown };
+        if (!Array.isArray(parsed.check_runs)) {
+          return fail('gh_transport', 'GitHub returned an unexpected check-runs payload.');
+        }
 
-      for (const run of parsed.check_runs) {
-        const item = run as {
-          name?: unknown;
-          status?: unknown;
-          conclusion?: unknown;
-          id?: unknown;
-          started_at?: unknown;
-        };
-        runs.push({
-          name: typeof item.name === 'string' ? item.name : '',
-          status: typeof item.status === 'string' ? item.status : '',
-          conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
-          id: typeof item.id === 'number' ? item.id : 0,
-          startedAt: typeof item.started_at === 'string' ? item.started_at : null,
-        });
+        return ok(
+          parsed.check_runs.map((run) => {
+            const item = run as {
+              name?: unknown;
+              status?: unknown;
+              conclusion?: unknown;
+              id?: unknown;
+              started_at?: unknown;
+            };
+            return {
+              name: typeof item.name === 'string' ? item.name : '',
+              status: typeof item.status === 'string' ? item.status : '',
+              conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
+              id: typeof item.id === 'number' ? item.id : 0,
+              startedAt: typeof item.started_at === 'string' ? item.started_at : null,
+            };
+          })
+        );
       }
-
-      if (parsed.check_runs.length < CHECK_RUN_PAGE_SIZE) {
-        return ok(runs);
-      }
-    }
-    // Evidence-completeness rule (#120, I3b): the page cap was reached
-    // with a full page — more runs may exist beyond it. Never return a
-    // silently partial list; fail closed instead.
-    return fail(
-      'evidence_truncated',
-      `Check-run pagination hit its cap (${MAX_CHECK_RUN_PAGES * CHECK_RUN_PAGE_SIZE} runs); ` +
-        'the check-run list may be truncated.'
     );
   }
 
@@ -603,11 +613,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
   }
 
   private parseJsonOutput(stdout: string): Evidence<unknown> {
-    try {
-      return ok(JSON.parse(stdout));
-    } catch {
-      return fail('gh_transport', 'GitHub returned a response that is not valid JSON.');
-    }
+    return decodeJsonResponse(stdout, 'gh_transport', 'GitHub');
   }
 
   /**
@@ -691,20 +697,23 @@ export class GhCliGitHubProvider implements ForgeProvider {
       if (result.code === 'not_found') {
         return fail('gh_transport', `GitHub lookup failed for ${sanitizeApiText(endpoint)}.`);
       }
+      // The behavioural contract (#275): every read path classifies an
+      // authentication failure the same way the create and admin paths
+      // already do — an expired token mid-evidence-gathering is
+      // `gh_unauthenticated`, never a generic transport failure.
+      if (AUTH_FAILURE_PATTERN.test(result.message)) {
+        return fail(
+          'gh_unauthenticated',
+          'GitHub CLI is not authenticated.',
+          'Run "gh auth login" to authenticate.'
+        );
+      }
       return fail('gh_transport', result.message, result.fix);
     }
-
-    try {
-      return ok(JSON.parse(result.value.stdout));
-    } catch {
-      return fail('gh_transport', 'GitHub returned a response that is not valid JSON.');
-    }
+    return this.parseJsonOutput(result.value.stdout);
   }
 
-  private async runGh(args: string[], stdin?: string): Promise<
-    | { ok: true; value: { stdout: string; stderr: string } }
-    | (GhFailure & { ok: false; code: string; message: string; fix?: string; exitCode?: number })
-  > {
+  private async runGh(args: string[], stdin?: string): Promise<CliRunOutcome> {
     try {
       const { stdout, stderr } = await this.spawn(this.resolveGhCommand(), args, {
         timeoutMs: this.timeoutMs,
@@ -714,63 +723,15 @@ export class GhCliGitHubProvider implements ForgeProvider {
       });
       return { ok: true, value: { stdout, stderr: stderr ?? '' } };
     } catch (error) {
-      if (isSpawnNotFoundError(error)) {
-        return {
-          ok: false,
-          code: 'gh_missing',
-          message: 'GitHub CLI (gh) is not installed or not on PATH.',
-          fix: 'Install gh from https://cli.github.com/ and run "gh auth login".',
-          error,
-        };
-      }
-
-      const err = error as {
-        killed?: boolean;
-        signal?: NodeJS.Signals;
-        code?: unknown;
-        stderr?: unknown;
-        message?: unknown;
-      };
-
-      if (err.killed || err.signal === 'SIGTERM') {
-        return {
-          ok: false,
-          code: 'gh_timeout',
-          message: `GitHub CLI timed out after ${this.timeoutMs} ms.`,
-          fix: 'A timeout this basic points at one of three causes — check in order: (1) network reachability (curl -sI https://api.github.com), (2) a GitHub incident (https://www.githubstatus.com), (3) a genuinely slow call — raise the budget via SPECGIT_GH_TIMEOUT_MS (milliseconds).',
-          error,
-        };
-      }
-
-      if (err.code === 'ERR_CHILD_PROCESS_STDOUT_MAXBUFFER') {
-        return {
-          ok: false,
-          code: 'gh_transport',
-          message: 'GitHub CLI returned more output than the response size cap allows.',
-          error,
-        };
-      }
-
-      const stderr = typeof err.stderr === 'string' ? err.stderr : '';
-      const exitCode = typeof err.code === 'number' ? err.code : undefined;
-      if (/HTTP 404|Not Found/i.test(stderr)) {
-        return {
-          ok: false,
-          code: 'not_found',
-          message: sanitizeApiText(stderr || 'Not found.'),
-          exitCode,
-          error,
-        };
-      }
-
-      const detail = sanitizeApiText(stderr || (typeof err.message === 'string' ? err.message : String(error)));
-      return {
-        ok: false,
-        code: 'gh_transport',
-        message: detail ? `GitHub CLI failed: ${detail}` : 'GitHub CLI failed.',
-        exitCode,
-        error,
-      };
+      return classifySpawnError(error, {
+        platformWord: 'GitHub',
+        codes: { missing: 'gh_missing', transport: 'gh_transport', timeout: 'gh_timeout' },
+        missingMessage: 'GitHub CLI (gh) is not installed or not on PATH.',
+        missingFix: 'Install gh from https://cli.github.com/ and run "gh auth login".',
+        timeoutFix: TIMEOUT_FIX,
+        notFoundPattern: NOT_FOUND_PATTERN,
+        timeoutMs: this.timeoutMs,
+      });
     }
   }
 }

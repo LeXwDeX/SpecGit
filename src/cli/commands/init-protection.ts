@@ -7,7 +7,7 @@
  * init fails.
  */
 
-import { ACCEPTANCE_CHECK_NAME } from '../harness-assets.js';
+import { ACCEPTANCE_CHECK_NAME } from '../harness-content.js';
 import { humanBuilder, warningLine } from '../output.js';
 import type { HumanText } from '../language.js';
 import type { CommandContext } from '../types.js';

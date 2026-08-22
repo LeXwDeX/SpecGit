@@ -7,10 +7,11 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import {
+  HarnessWriteError,
   legacyGitHooksDir,
   writeHarnessAssets,
   type HarnessWriteResult,
-} from '../harness-assets.js';
+} from '../harness-placement.js';
 import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
@@ -60,9 +61,15 @@ export async function writeHarnessAndPolicy(args: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // Distinguishable diagnostics (#280): a plan-phase failure is a
+    // content failure; a commit-phase failure is a write failure.
+    const code =
+      error instanceof HarnessWriteError && error.phase === 'plan'
+        ? 'harness_content_failed'
+        : 'harness_write_failed';
     return {
       exit: EXIT_UNKNOWN,
-      errors: [errorDiagnostic('harness_write_failed', message)],
+      errors: [errorDiagnostic(code, message)],
     };
   }
   for (const warning of harness.warnings) {

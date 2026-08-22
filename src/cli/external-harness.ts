@@ -1,7 +1,7 @@
 /**
  * Portable external acceptance harness for `specgit init` (issue #63).
  *
- * The self-hosted template in `harness-assets.ts` assumes the adopting
+ * The self-hosted template in `harness-content.ts` assumes the adopting
  * repository IS SpecGit (pnpm, local build, `node bin/specgit.js`, `main`).
  * This module generates the workflow for every other repository: it
  * installs the PUBLISHED SpecGit package at the exact version the running
@@ -28,7 +28,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { HARNESS_WORKFLOW_PATH } from './harness-assets.js';
+import { HARNESS_WORKFLOW_PATH } from './harness-placement.js';
 
 export interface ExternalHarnessInput {
   /** The adopting repository's remote default branch (e.g. `main`, `master`, `trunk`). */
