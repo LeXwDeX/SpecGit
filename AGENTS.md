@@ -51,8 +51,9 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
   language of issue/PR scaffolds, the managed guidance block, and
   success-path stderr prose. The machine contract is never localized —
   exit codes, `--json` fields, diagnostic `code`s, closing references
-  (`Closes #n`) — and branch names are always ASCII: a non-ASCII title
-  falls back to `feat/123-issue123`.
+  (`Closes #n`) — and branch names are always ASCII: a title that
+  yields no ASCII slug never falls back to `issue<N>` — bootstrap asks
+  for a kebab-case delivery name (`--delivery <slug>` in scripts).
 
 ## Build, test, lint
 

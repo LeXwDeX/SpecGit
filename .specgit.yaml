@@ -1,8 +1,7 @@
 version: 1
-delivery: v140-changesets
+delivery: contract-docs-align
 context:
   kind: branch
-  branch: feat/260-v140-changesets
+  branch: feat/263-contract-docs-align
 issues:
-  - 260
-pr: 261
+  - 263

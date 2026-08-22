@@ -63,7 +63,7 @@ Verdicts and delivery states are derived per invocation and never persisted.
 - The record schema (`version: 1`) and policy schema (`version: 1`) are strict; unknown policy keys are invalid, unknown record keys are preserved.
 - Check names match byte-for-byte against `required_checks`.
 - The `accept` alias is permanent for v1 — existing scripts keep working.
-- **Generated text is language-configurable; the machine contract is not** ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). The policy's optional `language` key (`en` default, `zh` supported) selects the language of generated scaffolds, harness guidance, and success-path human prose. Never localized under any value: exit codes, `--json` envelope field names, diagnostic `code` values (and, in v1, diagnostic prose), the closing-reference keywords, the workflow YAML, and the guard scripts. Branch names stay ASCII — a title containing non-ASCII characters derives the numeric slug fallback (`feat/123-issue123`).
+- **Generated text is language-configurable; the machine contract is not** ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). The policy's optional `language` key (`en` default, `zh` supported) selects the language of generated scaffolds, harness guidance, and success-path human prose. Never localized under any value: exit codes, `--json` envelope field names, diagnostic `code` values (and, in v1, diagnostic prose), the closing-reference keywords, the workflow YAML, and the guard scripts. Branch names stay ASCII — a title that yields no ASCII slug never invents `issue<N>`: bootstrap asks for a kebab-case delivery name, and scripted sessions pass `--delivery <slug>` ([#246](https://github.com/LeXwDeX/SpecGit/issues/246)).
 
 ## Non-goals (v1)
 

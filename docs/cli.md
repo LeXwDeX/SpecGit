@@ -58,7 +58,7 @@ Generated text is language-configurable ([#118](https://github.com/LeXwDeX/SpecG
 
 Set it at init time (`specgit init --language zh`) or edit the policy in a reviewed PR; `init --force` inherits the existing policy's language unless `--language` overrides it. An unsupported value fails closed (`policy_invalid`) — the strict policy schema lists the supported values in its diagnostic. The supported set is exactly `en`, `zh`; adding a language is a catalog addition in `src/i18n/language.ts`, not a policy-format change.
 
-Branch names stay ASCII under every language. The slug derivation is defined for any title: an ASCII-only title keeps the first-three-words kebab slug; any title containing non-ASCII characters falls back to the numeric form — issue #123 bootstraps branch `feat/123-issue123` (delivery `issue123`).
+Branch names stay ASCII under every language. An ASCII title yields the first-three-words kebab slug; a title that yields no slug never falls back to `issue<N>` (#246) — `specgit issue` asks for a kebab-case delivery name, as described in the command section below.
 
 **Never localized, under every configuration** (the machine contract):
 
