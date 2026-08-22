@@ -1,6 +1,6 @@
 {
   "name": "specgit",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Delivery binding and acceptance harness: bind a branch or worktree to GitHub issues and one PR, then derive acceptance from real git, PR, and CI evidence",
   "keywords": [
     "specgit",
