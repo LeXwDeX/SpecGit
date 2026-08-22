@@ -80,6 +80,11 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
   invariant or a seam, or is explicitly accepted-or-deferred.
 - Contributor onboarding: [CONTRIBUTING.md](CONTRIBUTING.md) (setup,
   everyday checks, the delivery workflow).
+- GitLab live testing and release sync use the `gitlab-mirror` remote
+  (`git@git.ycgame.com:suntao/specgit.git`, glab-authenticated,
+  self-managed CE): never claim there is no live GitLab environment.
+  A release counts as done only after `main` and every version tag
+  are pushed to it and verified with `git ls-remote`.
 
 <!-- specgit:block:start -->
 ## SpecGit delivery harness
