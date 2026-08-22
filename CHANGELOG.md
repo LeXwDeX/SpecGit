@@ -1,5 +1,11 @@
 # specgit
 
+## 1.4.2
+
+### Patch Changes
+
+- [#272](https://github.com/LeXwDeX/SpecGit/pull/272) [`24c0c36`](https://github.com/LeXwDeX/SpecGit/commit/24c0c364346759244cb3837fcd57e8f9456c2222) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Document the `gitlab-mirror` remote as the GitLab live-test and release-sync target in AGENTS.md: GitLab live testing and release syncing go through `git@git.ycgame.com:suntao/specgit.git` (glab-authenticated), and a release counts as done only after `main` and every version tag are pushed to it and verified ([#271](https://github.com/LeXwDeX/SpecGit/issues/271)).
+
 ## 1.4.1
 
 ### Patch Changes
