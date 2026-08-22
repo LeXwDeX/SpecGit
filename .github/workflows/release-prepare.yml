@@ -144,24 +144,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
         run: |
-          # #71: no required workflow may end up needing undisclosed manual
-          # approval. Poll the version PR head's check-runs: action_required
-          # there means the runs were created but wait for approval (zero
-          # jobs) — the exact PR #61 failure mode. Fail loudly with the fix.
+          # #71/#265: no required workflow may end up needing undisclosed
+          # manual approval. The evidence source is workflow RUNS, never
+          # the per-commit check-run list: an approval-waiting run
+          # completes as action_required with ZERO jobs, so it never
+          # creates any check-run entries at all — a check-run poll sees
+          # only the independently triggered runs and reports started
+          # while the version PR blocks silently (observed live during
+          # the v1.4.0 cut). Runs cover exactly this failure mode.
           for i in $(seq 1 12); do
             sleep 10
             SHA=$(git rev-parse changeset-release/main)
-            JSON=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" 2>/dev/null || echo '{"check_runs":[]}')
-            STATE=$(printf '%s' "$JSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const runs=j.check_runs||[];if(runs.length===0){console.log('empty');return;}if(runs.some(r=>r.conclusion==='action_required')){console.log('action_required');return;}console.log('started')}catch{console.log('empty')}})")
-            echo "check-runs poll ${i}/12: ${STATE}"
+            JSON=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" 2>/dev/null || echo '{"workflow_runs":[]}')
+            STATE=$(printf '%s' "$JSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const runs=j.workflow_runs||[];if(runs.length===0){console.log('empty');return;}if(runs.some(r=>r.conclusion==='action_required')){console.log('action_required');return;}console.log('started')}catch{console.log('empty')}})")
+            echo "workflow-runs poll ${i}/12: ${STATE}"
             case "$STATE" in
               started) exit 0 ;;
               action_required)
-                echo "::error::Required workflows on the version PR are action_required (zero jobs): the head was pushed by an actor whose events need approval (the bare github.token / github-actions[bot]). Provide RELEASE_BOT_TOKEN (a PAT or GitHub App token with contents + pull-requests write) and re-run, or approve the runs manually."
+                echo "::error::Required workflows on the version PR are action_required (zero jobs): the head was pushed by an actor whose events need approval (the bare github.token / github-actions[bot]). Provide RELEASE_BOT_TOKEN (a PAT or GitHub App token with contents + pull-requests write) and re-run, or approve each run (POST /repos/${GITHUB_REPOSITORY}/actions/runs/<run_id>/approve)."
                 exit 1 ;;
             esac
           done
-          echo "::error::Version PR check-runs did not appear within 120s; investigate the PR checks manually."
+          echo "::error::No workflow runs appeared for the version PR head within 120s; investigate the PR checks manually."
           exit 1
 
       # This version is not on npm and carries no tag: publish it.
