@@ -1,5 +1,16 @@
 # specgit
 
+## 1.3.1
+
+### Patch Changes
+
+- [#250](https://github.com/LeXwDeX/SpecGit/pull/250) [`5830e56`](https://github.com/LeXwDeX/SpecGit/commit/5830e5610a3f4a0355a9a302a015f1f3f06ed9dd) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Extract the preflight fact into a named, platform-neutral `PreflightFact`
+  on the forge port and rename the advisory flag to `versionUnverified`
+  ([#247](https://github.com/LeXwDeX/SpecGit/issues/247)). No behaviour or machine-contract change: exit codes, `--json`
+  fields, and the `gitlab_version_unverified` diagnostic code are
+  untouched. Also untracks review scratch files and hardens `.gitignore`
+  so `git add -A` never sweeps local scratch into a delivery.
+
 ## 1.3.0
 
 ### Minor Changes
