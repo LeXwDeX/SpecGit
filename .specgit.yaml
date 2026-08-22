@@ -1,8 +1,14 @@
 version: 1
-delivery: gitlab-mirror-rule
+delivery: architecture-deepening
 context:
   kind: branch
-  branch: feat/271-gitlab-mirror-rule
+  branch: feat/274-architecture-deepening
 issues:
-  - 271
-pr: 272
+  - 274
+  - 275
+  - 276
+  - 277
+  - 278
+  - 279
+  - 280
+  - 270
