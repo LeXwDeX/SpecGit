@@ -1,8 +1,8 @@
 version: 1
-delivery: a-bound-pr
+delivery: release-honest-diagnostics
 context:
   kind: branch
-  branch: fix/284-a-bound-pr
+  branch: feat/265-release-honest-diagnostics
 issues:
-  - 284
-pr: 285
+  - 265
+  - 269
