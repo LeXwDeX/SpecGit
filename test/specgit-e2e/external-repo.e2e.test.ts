@@ -35,7 +35,8 @@ import {
   externalAcceptanceWorkflowYaml,
 } from '../../src/cli/external-harness.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
-import { ACCEPTANCE_CHECK_NAME, HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-assets.js';
+import { ACCEPTANCE_CHECK_NAME } from '../../src/cli/harness-content.js';
+import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import { createFakeGh, type FakeGhRule } from '../specgit/helpers/fake-gh.js';
 import {
   EXT_CHECK,

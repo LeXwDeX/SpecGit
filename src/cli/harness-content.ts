@@ -1,32 +1,23 @@
 /**
- * Generated harness assets for `specgit init`.
+ * Harness CONTENT (#280): pure generation and byte-level merging for the
+ * derived harness. Configuration in, bytes out — this module never touches
+ * the filesystem. Placement (planning against the live tree, writing,
+ * rollback) lives in `harness-placement.ts`, which receives these bytes
+ * without knowing what they say.
  *
- * Artifacts, all deterministic so repeated harness writes are byte-stable:
+ * Everything here is deterministic so repeated harness writes are
+ * byte-stable:
  *
- * - `.github/workflows/specgit-accept.yml` — the CI acceptance gate that
- *   runs `specgit finish --json` on every pull request targeting the
- *   default branch.
- * - the managed prompt block — injected into AGENTS.md (created when
- *   missing) and CLAUDE.md (only when the file already exists), delimited
- *   by exact markers; a rewrite replaces only the region between them.
- * - the OpenCode guard hook (`.opencode/hooks.json` merged, never
- *   overwritten; `.opencode/hooks/specgit-merge-guard.sh` is specgit-owned)
- *   and the git `pre-push` guard (merged with any existing user hook via
- *   markers, installed into the directory `git rev-parse --git-path hooks`
- *   resolves — worktree and `core.hooksPath` aware).
+ * - the CI acceptance workflow YAML that runs `specgit finish --json` on
+ *   every pull request targeting the default branch;
+ * - the managed prompt block in both languages, delimited by exact
+ *   markers; a rewrite replaces only the region between them;
+ * - the OpenCode merge-guard hook entry and script bytes;
+ * - the git `pre-push` guard region, merged with any existing user hook
+ *   via markers (#62: merge, never overwrite).
  *
- * The whole write sequence is error-atomic (#62): every target is read and
- * transformed first; if any write fails, prior targets are restored to
- * their pre-write bytes and newly created files/directories are removed.
- * Crash-atomicity is out of scope; remote mutations happen later in init
- * and are never attempted when the local harness could not be written.
- *
- * Paths surfaced in output are repo-relative with forward slashes; file
- * contents use LF line endings only.
+ * File contents use LF line endings only.
  */
-
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 
 import type { PolicyLanguage } from '../record/policy.js';
 
@@ -368,15 +359,6 @@ export function injectManagedBlock(existing: string, block: string): string {
   return `${existing}${separator}\n${block}\n`;
 }
 
-export interface HarnessWriteResult {
-  workflow: string;
-  prompts: string[];
-  hooks: string[];
-  gitHook: string | null;
-  /** Non-fatal merge refusals (e.g. an unmergeable hooks.json), surfaced by init as warnings. */
-  warnings: Array<{ code: string; message: string }>;
-}
-
 const GUARD_COMMAND = '.opencode/hooks/specgit-merge-guard.sh';
 
 const GUARD_HOOK_JSON = `{
@@ -711,212 +693,4 @@ export function mergeGitPrePush(existing: string | null): string {
   }
   const separator = existing.endsWith('\n') ? '' : '\n';
   return `${existing}${separator}${managedPrePushRegion()}`;
-}
-
-const HOOKS_SEGMENTS = ['.opencode', 'hooks'];
-const GUARD_HOOK_PATH = [...HOOKS_SEGMENTS, 'specgit-merge-guard.sh'].join('/');
-export const GUARD_SCRIPT_PATH = GUARD_HOOK_PATH;
-
-/**
- * Legacy resolution used when no git-backed resolver is available: install
- * into `<root>/.git/hooks` only when `.git` is a real directory (a linked
- * worktree's `.git` is a file, so the git hook is skipped there).
- */
-export async function legacyGitHooksDir(root: string): Promise<string | null> {
-  const gitDir = path.join(root, '.git');
-  const gitStat = await fs.stat(gitDir).catch(() => null);
-  return gitStat?.isDirectory() ?? false ? path.join(gitDir, 'hooks') : null;
-}
-
-export interface HarnessWriteOptions {
-  /**
-   * Resolve the directory git actually runs hooks from (absolute), or
-   * null to skip the git hook. Production wires this to
-   * `git rev-parse --git-path hooks` via the git port so linked
-   * worktrees and `core.hooksPath` (husky/lefthook) behave correctly.
-   */
-  resolveHooksDir?: (root: string) => Promise<string | null>;
-  /**
-   * Workflow bytes to write (#63 template selection). Defaults to the
-   * self-hosted template (the SpecGit repository's own workflow);
-   * `specgit init` passes the portable external template for adopting
-   * repositories. Either way the write is planned and rolled back
-   * atomically with the rest of the harness. `null` (#117: GitLab
-   * platform mode) skips the workflow write entirely — a GitHub Actions
-   * workflow is wrong-platform output for a GitLab repository; every
-   * platform-neutral asset is still written.
-   */
-  workflowYaml?: string | null;
-  /**
-   * Guidance language (#118): the managed prompt block renders in the
-   * policy's language. Defaults to `en`; the workflow YAML and guard
-   * scripts are machine artifacts and never localize.
-   */
-  language?: PolicyLanguage;
-}
-
-async function readIfExists(target: string): Promise<string | null> {
-  try {
-    return await fs.readFile(target, 'utf-8');
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') {
-      return null;
-    }
-    throw error;
-  }
-}
-
-interface Snapshot {
-  target: string;
-  existed: boolean;
-  content: string | null;
-  mode: number | null;
-}
-
-async function snapshot(target: string): Promise<Snapshot> {
-  const [content, stat] = await Promise.all([
-    readIfExists(target),
-    fs.stat(target).catch(() => null),
-  ]);
-  return { target, existed: content !== null, content, mode: stat?.mode ?? null };
-}
-
-interface PlannedWrite {
-  target: string;
-  content: string;
-  mode: number;
-}
-
-/**
- * Write the full harness (#62 non-destructive contract):
- *
- * 1. Plan — read every target and compute its final bytes up front
- *    (merging user hooks, injecting the managed block).
- * 2. Commit — create directories and write files in order.
- * 3. Rollback — if any commit step fails, restore every prior target to
- *    its snapshot (bytes and mode) and remove files/directories this run
- *    created, then rethrow so init reports exit 3 with a clean tree.
- */
-export async function writeHarnessAssets(
-  root: string,
-  options: HarnessWriteOptions = {}
-): Promise<HarnessWriteResult> {
-  const warnings: Array<{ code: string; message: string }> = [];
-
-  // ---- Plan phase (reads + pure transforms; no writes yet) ----
-  const block = managedPromptBlock(options.language);
-  const planned: PlannedWrite[] = [];
-  const prompts: string[] = [];
-
-  if (options.workflowYaml !== null) {
-    planned.push({
-      target: path.join(root, ...HARNESS_WORKFLOW_SEGMENTS),
-      content: options.workflowYaml ?? harnessWorkflowYaml(),
-      mode: 0o644,
-    });
-  }
-
-  for (const filename of [AGENTS_FILENAME, CLAUDE_FILENAME]) {
-    const target = path.join(root, filename);
-    const existing = await readIfExists(target);
-    if (existing === null && filename === CLAUDE_FILENAME) {
-      continue;
-    }
-    planned.push({ target, content: injectManagedBlock(existing ?? '', block), mode: 0o644 });
-    prompts.push(filename);
-  }
-
-  const hooksJsonTarget = path.join(root, ...HOOKS_JSON_PATH.split('/'));
-  const hooksJsonExisting = await readIfExists(hooksJsonTarget);
-  const hooksJsonMerge = mergeHooksJson(hooksJsonExisting);
-  let hooksJsonWritten = true;
-  if (hooksJsonMerge.warning !== undefined) {
-    warnings.push({ code: 'hooks_json_unmerged', message: hooksJsonMerge.warning });
-    hooksJsonWritten = false;
-  } else {
-    planned.push({ target: hooksJsonTarget, content: hooksJsonMerge.json, mode: 0o644 });
-  }
-
-  const guardTarget = path.join(root, ...HOOKS_SEGMENTS, 'specgit-merge-guard.sh');
-  planned.push({ target: guardTarget, content: GUARD_SCRIPT, mode: 0o755 });
-
-  const hooksDir = options.resolveHooksDir
-    ? await options.resolveHooksDir(root)
-    : await legacyGitHooksDir(root);
-  let gitHook: string | null = null;
-  let gitHookTarget: string | null = null;
-  if (hooksDir !== null) {
-    gitHookTarget = path.join(hooksDir, 'pre-push');
-    const existing = await readIfExists(gitHookTarget);
-    planned.push({ target: gitHookTarget, content: mergeGitPrePush(existing), mode: 0o755 });
-    gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
-  }
-
-  // ---- Commit phase (writes; rollback restores on failure) ----
-  const snapshots: Snapshot[] = [];
-  const createdDirs: string[] = [];
-  try {
-    for (const step of planned) {
-      snapshots.push(await snapshot(step.target));
-      await ensureDirTracked(path.dirname(step.target), createdDirs);
-      await fs.writeFile(step.target, step.content, 'utf-8');
-      await fs.chmod(step.target, step.mode);
-    }
-  } catch (error) {
-    const rollbackNote = await rollback(snapshots, createdDirs);
-    if (rollbackNote !== null) {
-      throw new Error(`${(error as Error).message} (rollback incomplete: ${rollbackNote})`);
-    }
-    throw error;
-  }
-
-  const hooks = [...(hooksJsonWritten ? [HOOKS_JSON_PATH] : []), GUARD_HOOK_PATH];
-  return { workflow: HARNESS_WORKFLOW_PATH, prompts, hooks, gitHook, warnings };
-}
-
-/** mkdir -p that records the directory chain it had to create. */
-async function ensureDirTracked(dir: string, created: string[]): Promise<void> {
-  const missing: string[] = [];
-  let cursor = dir;
-  while (!(await fs.stat(cursor).then(() => true).catch(() => false))) {
-    missing.push(cursor);
-    const parent = path.dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  if (missing.length > 0) {
-    await fs.mkdir(dir, { recursive: true });
-    created.push(...missing);
-  }
-}
-
-/**
- * Best-effort restore to the pre-write state: rewritten files get their
- * original bytes and mode back, files this run created are removed, and
- * directories this run created are removed deepest-first (rmdir refuses
- * non-empty dirs, so user content can never be deleted here).
- */
-async function rollback(snapshots: Snapshot[], createdDirs: string[]): Promise<string | null> {
-  let failure: string | null = null;
-  for (const snap of [...snapshots].reverse()) {
-    try {
-      if (snap.existed && snap.content !== null) {
-        await fs.writeFile(snap.target, snap.content, 'utf-8');
-        if (snap.mode !== null) await fs.chmod(snap.target, snap.mode);
-      } else {
-        await fs.unlink(snap.target).catch(() => undefined);
-      }
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-  }
-  for (const dir of [...createdDirs].sort((a, b) => b.length - a.length)) {
-    try {
-      await fs.rmdir(dir);
-    } catch {
-      // Non-empty (or already gone) — nothing more we can safely do.
-    }
-  }
-  return failure;
 }
