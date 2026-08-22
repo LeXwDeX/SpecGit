@@ -511,6 +511,10 @@ export async function runIssue(
  * completed history, not an active delivery. Provider failures keep the
  * existing record (fail-closed — never guess merged): resuming on a guess
  * of "not merged" could re-push the branch GitHub deleted on merge.
+ * `pr_not_found` is the one exception (#284): it is a fact, not a probe
+ * failure — a bound PR that does not exist on this platform can never
+ * merge, so the lifecycle is terminal like a merged one (a mirror
+ * repository's record names the other platform's PR number).
  */
 async function resolveMergedRecord(
   ctx: CommandContext,
@@ -522,21 +526,24 @@ async function resolveMergedRecord(
   }
   const prEv = await ctx.gh.getPr(repo, existing.value.pr);
   if (!prEv.ok) {
+    if (prEv.code === 'pr_not_found') {
+      return { existing, merged: true };
+    }
     return passthrough(prEv);
   }
   return { existing, merged: prEv.value.state === 'merged' };
 }
 
-/** The no-args refusal for a record whose PR already merged (#75). */
+/** The no-args refusal for a record whose PR is terminal: merged or absent (#75, #284). */
 function mergedDeliveryError(record: DeliveryBinding): IssueOutcome {
   return {
     exit: EXIT_USAGE,
     errors: [
       errorDiagnostic(
         'issue_delivery_merged',
-        `Delivery '${record.delivery}' is already merged (PR #${record.pr}); there is nothing to resume.`,
+        `Delivery '${record.delivery}' has no live pull request (PR #${record.pr} is merged or does not exist on this platform); there is nothing to resume.`,
         {
-          fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why", or run "specgit unbind --yes" to clear the merged record.',
+          fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why", or run "specgit unbind --yes" to clear the terminal record.',
         }
       ),
     ],

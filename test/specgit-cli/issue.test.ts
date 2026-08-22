@@ -798,6 +798,49 @@ describe('specgit issue: mergedness probe fails closed (provider failure)', () =
   });
 });
 
+describe('specgit issue: a bound PR that does not exist is terminal evidence (#284)', () => {
+  // Live finding on the GitLab mirror: main carries a record whose bound
+  // PR number exists only on the other platform. The mergedness probe
+  // then returns pr_not_found — a FACT, not a transport failure. A
+  // non-existent PR can never merge, so the lifecycle is terminal like a
+  // merged one: replacement arguments start the next delivery, and a
+  // no-args resume refuses with the way forward. Transport failures stay
+  // fail-closed (the describe above).
+  function missingPrCtx() {
+    return issueCtx({
+      facts: { branch: 'main' },
+      record: sampleBinding({
+        delivery: 'stale-cross-platform',
+        context: { kind: 'branch', branch: 'feat/11-stale-cross-platform' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () => fail('pr_not_found', 'The platform reports this pull request does not exist.'),
+      },
+    });
+  }
+
+  it('replacement arguments delete the stale record and bootstrap the next delivery', async () => {
+    const t = missingPrCtx();
+    const outcome = await runIssue({ titles: ['feat: next why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.recordPort.deletes).toEqual(['/repo']);
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: next why']);
+  });
+
+  it('a no-args resume refuses with the way forward, keeping the record', async () => {
+    const t = missingPrCtx();
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit unbind --yes');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+});
+
 describe('specgit issue: exactly-once issue creation (fault injection)', () => {
   it('persists each created issue incrementally, so a mid-loop failure resumes without duplicates', async () => {
     // Fault: the second createIssue fails after the first succeeded.
