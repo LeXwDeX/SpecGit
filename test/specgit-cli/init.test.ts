@@ -8,10 +8,10 @@ import { SPEC_GIT_DIR, POLICY_FILENAME } from '../../src/cli/types.js';
 import {
   BLOCK_END_MARKER,
   BLOCK_START_MARKER,
-  HARNESS_WORKFLOW_PATH,
   harnessWorkflowYaml,
   managedPromptBlock,
-} from '../../src/cli/harness-assets.js';
+} from '../../src/cli/harness-content.js';
+import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
