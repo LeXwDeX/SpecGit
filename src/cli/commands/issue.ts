@@ -670,7 +670,7 @@ export async function createOrAdoptIssues(deps: {
   deliveryOverride?: string;
   /** Real-terminal session: the naming gap may be asked (#246). */
   interactive?: boolean;
-  /** Injectable prompt transport; defaults to readline (#246). */
+  /** Injectable prompt transport; defaults to the terminal prompt (#246). */
   promptDeliveryName?: (message: string) => Promise<string | null>;
 }): Promise<IssueOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
   const { ctx, root, repo, language, context } = deps;
