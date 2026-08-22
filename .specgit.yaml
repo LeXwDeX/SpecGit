@@ -1,15 +1,7 @@
 version: 1
-delivery: architecture-deepening
+delivery: a-bound-pr
 context:
   kind: branch
-  branch: feat/274-architecture-deepening
+  branch: fix/284-a-bound-pr
 issues:
-  - 274
-  - 275
-  - 276
-  - 277
-  - 278
-  - 279
-  - 280
-  - 270
-pr: 281
+  - 284
