@@ -85,6 +85,22 @@ describe('release-prepare gates (#71)', () => {
     expect(watchdog?.run).toContain('::error');
   });
 
+  it('the watchdog decides from workflow runs, never check-runs (#265)', () => {
+    // Approval-waiting runs complete as action_required with ZERO jobs:
+    // they never create check-runs, so a check-runs poll sees only the
+    // independently triggered runs and reports started while the version
+    // PR blocks silently (observed live during the v1.4.0 cut). The
+    // evidence source must cover exactly the failure mode it names.
+    const watchdog = (parsed.jobs?.release?.steps ?? []).find((step) =>
+      (step.run ?? '').includes('action_required')
+    );
+    expect(watchdog).toBeDefined();
+    expect(watchdog?.run).toContain('actions/runs');
+    expect(watchdog?.run).not.toContain('check-runs');
+    // The error text names the recovery: the approve API.
+    expect(watchdog?.run).toMatch(/runs\/\$\{?[A-Za-z_]+\}?\/approve|approve/);
+  });
+
   it('supersedes an existing version PR explicitly, with a recorded rationale', () => {
     const openPrStep = (parsed.jobs?.release?.steps ?? []).find((step) =>
       (step.run ?? '').includes('changeset-release/main')

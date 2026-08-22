@@ -518,6 +518,28 @@ describe('checks gate', () => {
     expect(failures[0].detail).toEqual({ name: 'ci' });
   });
 
+  it('keeps the GitHub Actions wording on a GitHub origin', async () => {
+    const ctx = makeContext({ repoRef: REPO, prFact: PR_FACT, gh: greenForge([]) });
+    const failures = await checksGate(ctx);
+    expect(failures[0].fix).toContain('GitHub Actions');
+  });
+
+  it('wording is GitLab-shaped on a declared GitLab origin (#269)', async () => {
+    // The checks diagnostics must not say "GitHub Actions" on a declared
+    // GitLab origin: the platform's CI is not GitHub Actions, and the
+    // prose misdirects the repair.
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: greenForge([]),
+      gitlabHost: 'git.ycgame.com',
+    });
+    const failures = await checksGate(ctx);
+    expect(codes(failures)).toEqual(['checks_missing']);
+    expect(failures[0].message).not.toContain('GitHub Actions');
+    expect(failures[0].fix).not.toContain('GitHub Actions');
+  });
+
   it('fails checks_pending naming the live status', async () => {
     const ctx = makeContext({
       repoRef: REPO,

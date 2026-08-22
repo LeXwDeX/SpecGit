@@ -33,6 +33,10 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
   if (!runs.ok) {
     return [makeFailure(runs)];
   }
+  // #269: diagnostic prose is the greppable surface — on a declared
+  // GitLab origin the platform's CI is a GitLab pipeline, never GitHub
+  // Actions, so the checks_missing fix is GitLab-shaped there.
+  const onGitLab = ctx.input.gitlabHost !== undefined;
   const failures: GateFailure[] = [];
   for (const requiredName of ctx.policy!.required_checks) {
     // #119: re-runs keep every same-name run in the Checks API. The
@@ -41,7 +45,11 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
     // position is never evidence.
     const run = truthRun(runs.value, requiredName);
     if (!run) {
-      failures.push(makeFailure('checks_missing', { name: requiredName }));
+      const missing = makeFailure('checks_missing', { name: requiredName });
+      if (onGitLab) {
+        missing.fix = 'Ensure the required GitLab CI pipeline runs on the MR head commit.';
+      }
+      failures.push(missing);
       continue;
     }
     if (run.status !== 'completed') {
