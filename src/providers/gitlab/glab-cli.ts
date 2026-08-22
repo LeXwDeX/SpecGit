@@ -492,11 +492,18 @@ export class GlabProvider implements ForgeProvider {
     if (!parsedEv.ok) {
       return parsedEv;
     }
-    const note = parsedEv.value as { web_url?: unknown };
-    if (typeof note.web_url !== 'string' || !note.web_url) {
-      return fail('glab_transport', 'GitLab returned an unexpected issue-note payload.');
+    const note = parsedEv.value as { id?: unknown; web_url?: unknown };
+    if (typeof note.web_url === 'string' && note.web_url) {
+      return ok({ url: note.web_url });
     }
-    return ok({ url: note.web_url });
+    if (typeof note.id === 'number') {
+      // CE notes carry no web_url (live probe, note 88688 on 19.3.0
+      // CE; #252): derive the canonical deep-link deterministically
+      // from returned facts — never scraped, never guessed.
+      const host = this.hostname ?? GITLAB_SAAS_HOST;
+      return ok({ url: `https://${host}/${repo.owner}/${repo.repo}/-/issues/${issue}#note_${note.id}` });
+    }
+    return fail('glab_transport', 'GitLab returned an unexpected issue-note payload.');
   }
 
   /**
