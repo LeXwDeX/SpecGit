@@ -498,6 +498,17 @@ export async function runIssue(
     }
   }
 
+  // #270: the branch must exist on the remote before PR/MR creation —
+  // both platforms refuse a pull request whose head branch was never
+  // pushed (glab: source_branch 不存在; gh: Head sha can't be blank).
+  // The push is idempotent, so a resume re-runs it and heals an
+  // unpushed branch before the PR step retries — the exactly-once
+  // discipline (#65) at the branch-push/PR-create seam.
+  const pushBeforePr = await ctx.git.pushBranch(root, target);
+  if (!pushBeforePr.ok) {
+    return passthrough(pushBeforePr);
+  }
+
   if (record.pr === undefined) {
     const bound = await bindPullRequest({
       ctx,
@@ -524,6 +535,8 @@ export async function runIssue(
     return passthrough(commit);
   }
 
+  // The record commit rides the branch to the remote; the push before PR
+  // creation (#270) carried everything committed up to that point.
   const push = await ctx.git.pushBranch(root, target);
   if (!push.ok) {
     return passthrough(push);
