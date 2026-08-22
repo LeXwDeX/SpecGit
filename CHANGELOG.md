@@ -1,5 +1,31 @@
 # specgit
 
+## 1.4.0
+
+### Minor Changes
+
+- [#261](https://github.com/LeXwDeX/SpecGit/pull/261) [`50b55ac`](https://github.com/LeXwDeX/SpecGit/commit/50b55ac68eaf48eb7b4c61cc10ef5cf9b59843ca) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ## `specgit issue` never invents a delivery name
+
+  - When a title yields no ASCII slug, bootstrap no longer falls back to
+    `issue<N>`: an interactive session is asked for a kebab-case delivery
+    name (up to three attempts), and a scripted session fails closed with
+    `issue_delivery_name_required` pointing at the explicit flag
+    ([#246](https://github.com/LeXwDeX/SpecGit/issues/246)).
+  - New `--delivery <slug>` flag names the delivery explicitly and wins
+    over the derived slug; an invalid value fails with
+    `issue_delivery_name_invalid` before any side effect.
+  - Resume never asks again: the recorded name is reused as-is. Branch
+    syntax is unchanged (`<type>/<issue>-<slug>`), and the machine
+    contract (exit codes, `--json` fields) is untouched.
+
+### Patch Changes
+
+- [#261](https://github.com/LeXwDeX/SpecGit/pull/261) [`50b55ac`](https://github.com/LeXwDeX/SpecGit/commit/50b55ac68eaf48eb7b4c61cc10ef5cf9b59843ca) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Land the quality-loop workflow spec at `workflows/quality-loop.md` and
+  wire it into the agent guidance: AGENTS.md now cites it under working
+  discipline, and the dev loop references its pre-merge REVIEW+FIX rounds
+  ([#257](https://github.com/LeXwDeX/SpecGit/issues/257)). Documentation
+  only — no behaviour or machine-contract change.
+
 ## 1.3.2
 
 ### Patch Changes
