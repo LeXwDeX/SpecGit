@@ -62,8 +62,9 @@ guessed**:
   1.0: declare the host once (`specgit init --gitlab-host <hostname>`,
   persisted in `spec_git/providers.yaml`) and evidence flows through your
   authenticated `glab` session (`glab` ≥ 1.113.0). Nested-group origins
-  (`group/subgroup/project`) are first-class; the version window is
-  fail-closed. Full policy, evidence ledger, and SaaS (GitLab.com)
+  (`group/subgroup/project`) are first-class; the verified window is
+  advisory — outside versions warn (`gitlab_version_unverified`) while
+  the live API evidence stays fail-closed. Full policy, evidence ledger, and SaaS (GitLab.com)
   capability probing: [GitLab support](docs/gitlab-support.md).
 - GitHub Enterprise is declaration-and-diagnostics only (non-goal for v1);
   one delivery never spans platforms.

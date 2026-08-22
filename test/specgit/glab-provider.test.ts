@@ -154,7 +154,7 @@ describe('GlabProvider#preflight', () => {
     }
   });
 
-  it('fails closed with gitlab_version_unsupported above the window (>= 19.4.0)', async () => {
+  it('flags gitlabVersionUnverified above the verified window (>= 19.4.0) without aborting (#241)', async () => {
     const { provider } = setup(
       [
         { match: '^--version$', stdout: 'glab version 1.113.0\n' },
@@ -164,14 +164,13 @@ describe('GlabProvider#preflight', () => {
       { hostname: HOST }
     );
     const result = await provider.preflight();
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('gitlab_version_unsupported');
-    expect(result.message).toContain('19.4.0');
-    expect(result.fix).toContain('rebaseline');
+    expect(result).toEqual({
+      ok: true,
+      value: { authenticated: true, gitlabVersionUnverified: true },
+    });
   });
 
-  it('fails closed with gitlab_version_unsupported below the window (< 19.2.4)', async () => {
+  it('flags gitlabVersionUnverified below the verified window (< 19.2.4) without aborting (#241)', async () => {
     const { provider } = setup(
       [
         { match: '^--version$', stdout: 'glab version 1.113.0\n' },
@@ -181,15 +180,16 @@ describe('GlabProvider#preflight', () => {
       { hostname: HOST }
     );
     const result = await provider.preflight();
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('gitlab_version_unsupported');
-    expect(result.message).toContain('19.2.3');
+    expect(result).toEqual({
+      ok: true,
+      value: { authenticated: true, gitlabVersionUnverified: true },
+    });
   });
 
-  it('fails closed with gitlab_version_unsupported when the version is missing or unparsable', async () => {
+  it('flags gitlabVersionUnverified when the version is missing or unparsable, without aborting (#241)', async () => {
     // Both bodies are valid JSON metadata payloads whose version cannot be
-    // verified inside the window — never an inferred capability.
+    // verified inside the window — advisory, never an abort: the live
+    // evidence pass stays the fail-closed guarantee.
     for (const body of [metadataJson(undefined), JSON.stringify({ revision: '06e8d813296' })]) {
       const { provider } = setup(
         [
@@ -200,9 +200,10 @@ describe('GlabProvider#preflight', () => {
         { hostname: HOST }
       );
       const result = await provider.preflight();
-      expect(result.ok, body).toBe(false);
-      if (result.ok) return;
-      expect(result.code).toBe('gitlab_version_unsupported');
+      expect(result, body).toEqual({
+        ok: true,
+        value: { authenticated: true, gitlabVersionUnverified: true },
+      });
     }
   });
 
