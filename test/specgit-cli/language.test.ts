@@ -11,16 +11,18 @@
  * configuration.
  *
  * Branch-slug derivation for non-ASCII titles is defined here: any
- * non-ASCII character in the clean title yields the numeric fallback
- * `issue<N>` (branch `<type>/<N>-issue<N>`), under every language
- * setting.
+ * non-ASCII character in the clean title yields no slug (#118), and the
+ * naming gap is surfaced, never papered over (#246): an interactive
+ * session is asked for a kebab-case delivery name, a scripted one gets
+ * a usage error naming `--delivery <slug>` — under every language
+ * setting, never a silent `issue<N>`.
  */
 
 import { describe, expect, it } from 'vitest';
 import { ok } from '../../src/kernel/evidence.js';
 import { parseClosingRefs } from '../../src/github/closing-refs.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
-import { slugifyTitle, runIssue } from '../../src/cli/commands/issue.js';
+import { slugifyTitle, runIssue, resolveDeliveryName } from '../../src/cli/commands/issue.js';
 import { catalogFor } from '../../src/i18n/language.js';
 import {
   BLOCK_END_MARKER,
@@ -92,10 +94,10 @@ function issueGh(harness: IssueHarness) {
   });
 }
 
-describe('#118 language: branch slug for non-ASCII titles', () => {
-  it('slugifyTitle yields the empty string (numeric fallback) for any non-ASCII title', () => {
+describe('#118/#246 language: branch naming for non-ASCII titles', () => {
+  it('slugifyTitle yields the empty string (a naming gap) for any non-ASCII title', () => {
     expect(slugifyTitle('添加登录功能')).toBe('');
-    // Mixed titles fall back too: a partial ASCII-word slug from a
+    // Mixed titles yield no slug either: a partial ASCII-word slug from a
     // translated title would be garbage.
     expect(slugifyTitle('修复 login flow')).toBe('');
   });
@@ -105,39 +107,173 @@ describe('#118 language: branch slug for non-ASCII titles', () => {
     expect(slugifyTitle('one two three four')).toBe('one-two-three');
   });
 
-  it('bootstraps a non-ASCII title with the numeric fallback branch (issue 118 recommendation)', async () => {
+  it('bootstraps a non-ASCII title with an explicit delivery name (#246)', async () => {
     const t = zhCtx();
-    const outcome = await runIssue({ titles: ['feat: 添加登录功能'] }, t.ctx);
+    const outcome = await runIssue(
+      { titles: ['feat: 添加登录功能'], delivery: 'add-login' },
+      t.ctx
+    );
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdIssues).toHaveLength(1);
     expect(t.harness.createdIssues[0].title).toBe('feat: 添加登录功能');
-    expect(t.harness.createdPrs[0].head).toBe('feat/123-issue123');
+    expect(t.harness.createdPrs[0].head).toBe('feat/123-add-login');
     const written = t.recordPort.recordWrites.at(-1)?.record;
-    expect(written?.delivery).toBe('issue123');
-    expect(written?.context.branch).toBe('feat/123-issue123');
+    expect(written?.delivery).toBe('add-login');
+    expect(written?.context.branch).toBe('feat/123-add-login');
   });
 
-  it('bootstraps a mixed non-ASCII title with the numeric fallback branch', async () => {
+  it('refuses a non-ASCII title without a name in a scripted session (#246)', async () => {
+    const t = zhCtx();
+    const outcome = await runIssue({ titles: ['feat: 添加登录功能'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    expect(outcome.errors?.[0]?.fix).toContain('--delivery');
+    // Zero side effects: no issue created before the name exists.
+    expect(t.harness.createdIssues).toHaveLength(0);
+    expect(t.recordPort.recordWrites).toHaveLength(0);
+  });
+
+  it('a mixed non-ASCII title hits the same naming gap (#246)', async () => {
     const t = zhCtx();
     const outcome = await runIssue({ titles: ['fix: 修复 login flow'] }, t.ctx);
-    expect(outcome.exit).toBe(0);
-    expect(t.harness.createdPrs[0].head).toBe('fix/123-issue123');
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
   });
 
-  it('the numeric fallback is the defined behavior under the default (en) language too', async () => {
+  it('the naming gap is refused under the default (en) language too, with ASCII scaffolding untouched', async () => {
     const harness: IssueHarness = { createdIssues: [], createdPrs: [] };
     const t = makeCtx({ policy: 'none', gh: issueGh(harness) });
     const outcome = await runIssue({ titles: ['feat: 中文标题'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    // With the explicit name, the English scaffold still renders.
+    const healed = makeCtx({ policy: 'none', gh: issueGh(harness) });
+    const named = await runIssue(
+      { titles: ['feat: 中文标题'], delivery: 'zh-title' },
+      healed.ctx
+    );
+    expect(named.exit).toBe(0);
+    expect(harness.createdPrs.at(-1)?.head).toBe('feat/77-zh-title');
+    expect(harness.createdIssues.at(-1)?.body).toContain('## Why\n');
+  });
+});
+
+describe('#246 delivery-name resolution precedence and prompt loop', () => {
+  const neverPrompt = async () => {
+    throw new Error('test: the prompt must not be reached');
+  };
+
+  it('an explicit override wins over the derived slug and never prompts', async () => {
+    const resolved = await resolveDeliveryName({
+      cleanTitle: 'add login',
+      override: 'auth-flow',
+      interactive: true,
+      prompt: neverPrompt,
+      promptText: 'p',
+      retryText: 'r',
+    });
+    expect('name' in resolved && resolved.name).toBe('auth-flow');
+  });
+
+  it('a valid ASCII slug resolves without prompting', async () => {
+    const resolved = await resolveDeliveryName({
+      cleanTitle: 'Add Login Flow Now',
+      interactive: false,
+      prompt: neverPrompt,
+      promptText: 'p',
+      retryText: 'r',
+    });
+    expect('name' in resolved && resolved.name).toBe('add-login-flow');
+  });
+
+  it('an interactive session is asked, and the first valid answer wins', async () => {
+    const prompts: string[] = [];
+    const answers = ['Not Valid', 'still bad', 'good-name', 'never-reached'];
+    const resolved = await resolveDeliveryName({
+      cleanTitle: '添加登录功能',
+      interactive: true,
+      prompt: async (message) => {
+        prompts.push(message);
+        return answers.shift() ?? null;
+      },
+      promptText: 'first?',
+      retryText: 'retry?',
+    });
+    expect('name' in resolved && resolved.name).toBe('good-name');
+    expect(prompts).toEqual(['first?', 'retry?', 'retry?']);
+  });
+
+  it('EOF on the prompt is a refusal, and attempts are bounded', async () => {
+    let asked = 0;
+    const resolved = await resolveDeliveryName({
+      cleanTitle: '添加登录功能',
+      interactive: true,
+      prompt: async () => {
+        asked += 1;
+        return asked === 1 ? 'BAD ANSWER' : null;
+      },
+      promptText: 'p',
+      retryText: 'r',
+    });
+    expect('exit' in resolved && resolved.exit).toBe(2);
+    expect('exit' in resolved && resolved.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    expect(asked).toBe(2);
+  });
+
+  it('three invalid answers exhaust the attempts and fail closed', async () => {
+    let asked = 0;
+    const resolved = await resolveDeliveryName({
+      cleanTitle: '',
+      interactive: true,
+      prompt: async () => {
+        asked += 1;
+        return 'NOPE';
+      },
+      promptText: 'p',
+      retryText: 'r',
+    });
+    expect('exit' in resolved && resolved.exit).toBe(2);
+    expect(asked).toBe(3);
+  });
+
+  it('a resume keeps the recorded name and never asks again', async () => {
+    // Seed a record whose name was prompted in a previous session: the
+    // title yields no slug, yet resume must not ask again.
+    const seeded = makeCtx({
+      gh: makeGhProvider({
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/123-prompted-name',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #123\n',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+        listOpenPrsByHead: () => ok([]),
+      }),
+      policy: samplePolicy({ language: 'zh' }),
+      record: {
+        version: 1,
+        delivery: 'prompted-name',
+        context: { kind: 'branch', branch: 'feat/123-prompted-name' },
+        issues: [123],
+        pr: 42,
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, seeded.ctx);
     expect(outcome.exit).toBe(0);
-    expect(harness.createdPrs[0].head).toBe('feat/77-issue77');
-    expect(harness.createdIssues[0].body).toContain('## Why\n');
+    // The recorded name survives resume untouched — no prompt, no rename.
+    expect(outcome.record?.delivery).toBe('prompted-name');
   });
 });
 
 describe('#118 language: generated scaffolding follows policy.language', () => {
   it('renders the issue body scaffold in the policy language', async () => {
     const t = zhCtx();
-    await runIssue({ titles: ['feat: 添加登录功能'] }, t.ctx);
+    await runIssue({ titles: ['feat: 添加登录功能'], delivery: 'add-login' }, t.ctx);
     const body = t.harness.createdIssues[0].body;
     expect(body).toContain('## 为什么\n');
     expect(body).toContain('feat: 添加登录功能');
@@ -155,7 +291,7 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
 
   it('renders the PR scaffold sections in the policy language', async () => {
     const t = zhCtx();
-    await runIssue({ titles: ['feat: 添加登录功能'] }, t.ctx);
+    await runIssue({ titles: ['feat: 添加登录功能'], delivery: 'add-login' }, t.ctx);
     const body = t.harness.createdPrs[0].body;
     expect(body.startsWith('Closes #123\n\n## 为什么\n')).toBe(true);
     expect(body).toContain('## 变更内容');
@@ -261,10 +397,13 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
 describe('#118 language: success-path human prose follows policy.language', () => {
   it('the issue summary renders in the policy language', async () => {
     const t = zhCtx();
-    const outcome = await runIssue({ titles: ['feat: 添加登录功能'] }, t.ctx);
+    const outcome = await runIssue(
+      { titles: ['feat: 添加登录功能'], delivery: 'add-login' },
+      t.ctx
+    );
     expect(outcome.exit).toBe(0);
-    expect(outcome.human?.[0]).toBe("已引导交付 'issue123'：");
-    expect(outcome.human?.join('\n')).toContain('分支：feat/123-issue123');
+    expect(outcome.human?.[0]).toBe("已引导交付 'add-login'：");
+    expect(outcome.human?.join('\n')).toContain('分支：feat/123-add-login');
     expect(outcome.human?.join('\n')).toContain('议题：#123');
   });
 

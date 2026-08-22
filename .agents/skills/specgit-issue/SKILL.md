@@ -18,6 +18,7 @@ branch, one draft pull request, one record (`.specgit.yaml`).
 specgit issue "<title>"                 # create one issue and start
 specgit issue "<title A>" "<title B>"   # N issues, one delivery
 specgit issue 42                        # reuse an existing issue
+specgit issue "<no-slug title>" --delivery my-name   # explicit delivery name
 ```
 
 New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf, docs, test, chore, style, build, ci, revert, security, deprecate, dogfood.
@@ -42,3 +43,6 @@ New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf,
   afterwards, and the repository's own PR template is never read.
 - If it fails mid-chain, re-run the same command — completed steps are
   detected and resumed; never hand-edit `.specgit.yaml`.
+- When the title yields no ASCII slug, the command asks for a kebab-case
+  delivery name on an interactive terminal; a scripted session must pass
+  `--delivery <slug>` (exit 2 otherwise). Bootstrap never invents a name.

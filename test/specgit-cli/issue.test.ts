@@ -227,14 +227,27 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.recordPort.recordWrites.length).toBe(0);
   });
 
-  it('accepts a non-ASCII title and derives the numeric fallback branch (#118)', async () => {
+  it('accepts a non-ASCII title with an explicit delivery name (#246)', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
-    const outcome = await runIssue({ titles: ['feat: 严格交付'] }, t.ctx);
+    const outcome = await runIssue(
+      { titles: ['feat: 严格交付'], delivery: 'strict-delivery' },
+      t.ctx
+    );
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdIssues).toHaveLength(1);
     expect(t.harness.createdIssues[0].title).toBe('feat: 严格交付');
-    expect(t.harness.createdPrs[0].head).toBe('feat/11-issue11');
-    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('issue11');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-strict-delivery');
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('strict-delivery');
+  });
+
+  it('refuses a non-ASCII title without a name in a non-interactive session (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feat: 严格交付'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    // Zero side effects: the naming gap is refused before any issue is created.
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
   });
 
   it('honors other conventional types (fix:)', async () => {
@@ -262,13 +275,40 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.harness.createdPrs[0].head).toBe('feat/11-one-two-three');
   });
 
-  it('falls back to issue<N> when the first title has no ASCII words', async () => {
+  it('refuses a title with no ASCII words instead of inventing issue<N> (#246)', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue({ titles: ['feat: !!!'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    expect(t.harness.createdIssues.length).toBe(0);
+    // The explicit flag heals the same gap.
+    const healed = issueCtx({ facts: { branch: 'main' } });
+    const named = await runIssue({ titles: ['feat: !!!'], delivery: 'bang-path' }, healed.ctx);
+    expect(named.exit).toBe(0);
+    expect(healed.harness.createdPrs[0].head).toBe('feat/11-bang-path');
+    const written = healed.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.delivery).toBe('bang-path');
+  });
+
+  it('rejects a malformed --delivery flag before any side effect (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['feat: add login'], delivery: 'Not Kebab!' },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_invalid');
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('an explicit --delivery name wins over the derived title slug (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['feat: add login'], delivery: 'auth-flow' },
+      t.ctx
+    );
     expect(outcome.exit).toBe(0);
-    expect(t.harness.createdPrs[0].head).toBe('feat/11-issue11');
-    const written = t.recordPort.recordWrites.at(-1)?.record;
-    expect(written?.delivery).toBe('issue11');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-auth-flow');
   });
 
   it('reuses existing issues given as pure numbers and creates the rest', async () => {
@@ -936,7 +976,9 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
 
   it('skips the probe for purely numeric arguments (no title to reconcile)', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
-    const outcome = await runIssue({ titles: ['4'] }, t.ctx);
+    // A number-only bootstrap has no title to slug — the explicit name
+    // supplies the semantic half of the branch (#246).
+    const outcome = await runIssue({ titles: ['4'], delivery: 'reuse-four' }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.gh.calls).not.toContain('getOpenIssues');
     expect(t.recordPort.recordWrites.at(-1)?.record?.issues).toEqual([4]);
@@ -1165,6 +1207,9 @@ describe('createOrAdoptIssues explicit null guard (#216)', () => {
       args: [],
       startIndex: 0,
       firstTitle: null,
+      // The name resolves before the loop (#246); the explicit override
+      // keeps this test on the null-guard path it exists to prove.
+      deliveryOverride: 'guard',
     });
     expect('exit' in outcome).toBe(true);
     if ('exit' in outcome) {

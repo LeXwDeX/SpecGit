@@ -70,6 +70,9 @@ export interface HumanText {
   issueRecorded(filename: string): string;
   issuePrTitleFallback(delivery: string): string;
   issueTraceabilityComment(branch: string, pr: number | string): string;
+  // issue — delivery-name prompt (#246)
+  deliveryNamePrompt(): string;
+  deliveryNameRetry(): string;
   // pr
   prBound(pr: number | string, delivery: string): string;
   prIssues(list: string): string;
@@ -166,6 +169,10 @@ const EN_HUMAN: HumanText = {
   issuePrTitleFallback: (delivery) => `Delivery ${delivery}`,
   issueTraceabilityComment: (branch, pr) =>
     `SpecGit delivery branch: \`${branch}\` (draft pull request #${pr}).`,
+  deliveryNamePrompt: () =>
+    'Enter a delivery name (kebab-case ASCII, e.g. add-login): ',
+  deliveryNameRetry: () =>
+    'Not a valid kebab-case name — try again (e.g. add-login): ',
   prBound: (pr, delivery) => `Bound PR #${pr} to delivery '${delivery}':`,
   prIssues: (list) => `  Issues: ${list}`,
   bindHeader: (delivery) => `Bound delivery '${delivery}':`,
@@ -218,6 +225,8 @@ const ZH_HUMAN: HumanText = {
   issuePr: (pr) => `  PR：#${pr}（草稿）`,
   issueRecorded: (filename) => `  已记录 ${filename}，已提交并推送到 origin`,
   issuePrTitleFallback: (delivery) => `交付 ${delivery}`,
+  deliveryNamePrompt: () => '请输入交付名（kebab-case ASCII，例如 add-login）：',
+  deliveryNameRetry: () => '不是有效的 kebab-case 名称——请重试（例如 add-login）：',
   issueTraceabilityComment: (branch, pr) =>
     `SpecGit 交付分支：\`${branch}\`（草稿拉取请求 #${pr}）。`,
   prBound: (pr, delivery) => `已将 PR #${pr} 绑定到交付 '${delivery}'：`,
