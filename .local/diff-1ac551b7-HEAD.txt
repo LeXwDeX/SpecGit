@@ -1,0 +1,1287 @@
+diff --git a/.specgit.yaml b/.specgit.yaml
+index f9beb41d..2b0248a6 100644
+--- a/.specgit.yaml
++++ b/.specgit.yaml
+@@ -1,8 +1,15 @@
+ version: 1
+-delivery: issue190
++delivery: remove-remaining-evidence
+ context:
+   kind: branch
+-  branch: feat/190-issue190
++  branch: test/213-remove-remaining-evidence
+ issues:
+-  - 190
+-pr: 212
++  - 213
++  - 214
++  - 215
++  - 216
++  - 217
++  - 218
++  - 219
++  - 220
++pr: 221
+diff --git a/README.md b/README.md
+index 21f32639..ffce1fd1 100644
+--- a/README.md
++++ b/README.md
+@@ -144,6 +144,8 @@ Every command supports `--json` (one JSON document on stdout, human text on
+ stderr). Exit-code contract: `0` accepted/success · `1` rejected with complete
+ evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C
+ interruption exception (no envelope — see the [CLI reference](docs/cli.md)).
++One documented exception: `specgit status` reports a missing record as the
++healthy pre-binding state — exit `0` with state `unbound` (#175).
+ Environment inputs: `SPECGIT_GH` / `SPECGIT_GH_TIMEOUT_MS` and
+ `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` (executable path and per-call
+ timeout per forge CLI, defaults: `gh`/`glab` on PATH, 15 s). Requirements:
+diff --git a/docs/providers.md b/docs/providers.md
+index a3fa47f1..6d13276c 100644
+--- a/docs/providers.md
++++ b/docs/providers.md
+@@ -142,8 +142,8 @@ reports no value) routes the merged-lineage gate to fail-closed
+   `PlatformRoutingProvider` (`src/providers/routing.ts`, #117 — the
+   production composition's single provider, dispatching per call to the
+   gh or glab adapter on the ref's platform marker), `LocalGitAdapter`
+-  (`src/gitfacts/local.ts`), `MockGitHubProvider`
+-  (`test/specgit/helpers/mock-github.ts`), and the recording doubles
++  (`src/gitfacts/local.ts`), `MockForgeProvider`
++  (`test/specgit/helpers/mock-forge.ts`), and the recording doubles
+   `makeGhProvider` / `makeGitPort`
+   (`test/specgit-cli/helpers.ts`). The contract test holds all of them
+   to the port shape at every run — the canonical adapter home and its
+diff --git a/src/cli/commands/issue.ts b/src/cli/commands/issue.ts
+index f8dc5cd1..9c27d6f2 100644
+--- a/src/cli/commands/issue.ts
++++ b/src/cli/commands/issue.ts
+@@ -543,8 +543,11 @@ function validateResumeArgs(
+  * any failure heals on the next invocation without re-creating. The
+  * interim delivery/branch converge on the final derivation as the first
+  * title argument is consumed.
++ *
++ * Exported for the #216 guard test: the function proves its own null-record
++ * precondition with an explicit runtime guard instead of a type assertion.
+  */
+-async function createOrAdoptIssues(deps: {
++export async function createOrAdoptIssues(deps: {
+   ctx: CommandContext;
+   root: string;
+   repo: RepoRef;
+@@ -638,7 +641,21 @@ async function createOrAdoptIssues(deps: {
+     }
+   }
+ 
+-  return { record: record as DeliveryBinding, firstTitle };
++  // #216: the loop above assigns `record` on every iteration, so it stays
++  // null only when no iteration ran (no unconsumed arguments). runIssue's
++  // pre-validation makes that path unreachable in production — but this
++  // function proves the precondition explicitly instead of asserting it.
++  if (record === null) {
++    return {
++      exit: EXIT_USAGE,
++      errors: [
++        errorDiagnostic('issue_args_required', 'specgit issue needs at least one issue.', {
++          fix: 'Pass one or more quoted issue titles to create, or existing issue numbers to reuse, e.g. specgit issue "feat: add login".',
++        }),
++      ],
++    };
++  }
++  return { record, firstTitle };
+ }
+ 
+ /**
+diff --git a/src/cli/output.ts b/src/cli/output.ts
+index cbf3350b..e27109bb 100644
+--- a/src/cli/output.ts
++++ b/src/cli/output.ts
+@@ -254,12 +254,12 @@ export function errorLine(message: string): string {
+ }
+ 
+ /**
+- * Warning line for human summaries. Verbatim on purpose: these messages are
+- * authored by SpecGit itself (init protection probes), and the diagnostic
+- * warning surface in `finishOutcome` owns its own sanitizing render.
++ * Warning line for human summaries (#215): sanitized like `errorLine` —
++ * every formatter that interpolates runtime-sourced text goes through the
++ * same terminal guard, no exceptions by provenance.
+  */
+ export function warningLine(message: string): string {
+-  return `Warning: ${message}`;
++  return `Warning: ${sanitize(message)}`;
+ }
+ 
+ /** One doctor probe line: `ok    <name> — <detail>` or `FAIL  <name> (<code>)`. */
+@@ -269,9 +269,12 @@ export function probeLine(probe: ProbeResult): string {
+     : `FAIL  ${probe.name}${probe.code ? ` (${probe.code})` : ''}`;
+ }
+ 
+-/** The status-surface gate failure: `Gate <id>: <code>[ — <fix>]`. */
++/**
++ * The status-surface gate failure: `Gate <id>: <code>[ — <fix>]` (#215:
++ * code and fix are runtime-sourced, so both pass the terminal guard).
++ */
+ export function gateFailureLine(gateId: string, code: string, fix?: string): string {
+-  return `Gate ${gateId}: ${code}${fix ? ` — ${fix}` : ''}`;
++  return `Gate ${gateId}: ${sanitize(code)}${fix ? ` — ${sanitize(fix)}` : ''}`;
+ }
+ 
+ /** The accept/finish-surface gate failure: `  <id>: <code>[ — <fix>]` (fix sanitized). */
+diff --git a/test/AGENTS.md b/test/AGENTS.md
+index 7d272de1..506d59f3 100644
+--- a/test/AGENTS.md
++++ b/test/AGENTS.md
+@@ -13,7 +13,7 @@ Applies to tests under `test/`.
+ 
+ - `test/specgit/` — focused unit/integration tests for the domain ports and
+   adapters (`record`, `gitfacts`, `github`, `acceptance`). Uses deterministic
+-  fakes (`helpers/temp-repo.ts`, `helpers/mock-github.ts`, `helpers/fake-gh.ts`).
++  fakes (`helpers/temp-repo.ts`, `helpers/mock-forge.ts`, `helpers/fake-gh.ts`).
+ - `test/specgit-cli/` — focused tests for the `specgit` CLI command functions
+   with injected ports.
+ - `test/specgit-e2e/` — end-to-end acceptance tests that run the real built CLI
+diff --git a/test/evidence-cast-sweep.test.ts b/test/evidence-cast-sweep.test.ts
+new file mode 100644
+index 00000000..ae5328c9
+--- /dev/null
++++ b/test/evidence-cast-sweep.test.ts
+@@ -0,0 +1,62 @@
++/**
++ * #213 — the zero-Evidence-cast invariant of the test tree.
++ *
++ * The #178 delivery aligned every CLI test double with the real port
++ * signatures and removed the last never-cast Evidence assertions; this
++ * sweep keeps them removed. Both evasion forms are forbidden anywhere
++ * under test/: a direct never-cast and the two-step unknown-bridge
++ * rewrite that hides the same drift from the type checker. The
++ * forbidden tokens are built by concatenation so this file stays clean
++ * under its own sweep.
++ */
++
++import { describe, expect, it } from 'vitest';
++import * as fs from 'node:fs';
++import * as path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
++const TEST_ROOT = path.join(REPO_ROOT, 'test');
++
++const FORBIDDEN_PATTERNS: RegExp[] = [
++  new RegExp('as ' + 'Evidence<' + 'never>'),
++  new RegExp('as ' + 'unknown as ' + 'Evidence'),
++];
++
++function* walkFiles(dir: string): Generator<string> {
++  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
++    const fullPath = path.join(dir, entry.name);
++    if (entry.isDirectory()) {
++      if (entry.name === 'node_modules' || entry.name === 'dist') {
++        continue;
++      }
++      yield* walkFiles(fullPath);
++    } else if (entry.isFile() && path.extname(entry.name) === '.ts') {
++      yield fullPath;
++    }
++  }
++}
++
++describe('test-tree Evidence-cast sweep (#213)', () => {
++  it('keeps the port-signature-hiding Evidence casts out of the test tree', () => {
++    const offenders: string[] = [];
++
++    for (const filePath of walkFiles(TEST_ROOT)) {
++      const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
++      lines.forEach((line, index) => {
++        for (const pattern of FORBIDDEN_PATTERNS) {
++          if (pattern.test(line)) {
++            offenders.push(
++              `${path.relative(REPO_ROOT, filePath)}:${index + 1}: ${line.trim()}`
++            );
++          }
++        }
++      });
++    }
++
++    expect(
++      offenders,
++      `Evidence evasion casts found — align the double with the port signature instead:\n${offenders.join('\n')}`
++    ).toEqual([]);
++  });
++});
+diff --git a/test/specgit-cli/contract.test.ts b/test/specgit-cli/contract.test.ts
+index f677c59f..da4817d7 100644
+--- a/test/specgit-cli/contract.test.ts
++++ b/test/specgit-cli/contract.test.ts
+@@ -4,7 +4,7 @@ import * as path from 'node:path';
+ import { runCliWith } from '../../src/cli/index.js';
+ import { sanitize } from '../../src/cli/output.js';
+ import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
+-import { makeCtx, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
++import { makeCtx, makeEvaluate, makeVerdict, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
+ describe('CLI contract: exit codes', () => {
+   it('exposes the stable exit-code constants', () => {
+     expect(EXIT_SUCCESS).toBe(0);
+@@ -67,6 +67,42 @@ describe('CLI contract: JSON envelope', () => {
+     expect(env0.exit).toBe(EXIT_SUCCESS);
+     expect(env0.status).toBe('ok');
+   });
++
++  // #218: the rejected path. The 0/2/3 pins above left exit 1 unlocked;
++  // this scenario (accept under a rejecting evaluator) completes the
++  // contract surface: envelope.exit === 1 and status === 'rejected'.
++  it('the rejected path pins exit 1 in the --json envelope (#218)', async () => {
++    const verdict = makeVerdict({
++      accepted: false,
++      state: 'rejected',
++      classification: 'rejected',
++      exitCode: EXIT_REJECTED,
++      gates: [
++        {
++          id: 'pr',
++          status: 'fail',
++          failures: [
++            {
++              code: 'pr_draft',
++              message: 'The bound pull request is still a draft.',
++              fix: 'Mark the pull request ready for review.',
++            },
++          ],
++        },
++      ],
++    });
++    const t = makeCtx({
++      record: sampleBinding(),
++      policy: samplePolicy(),
++      evaluate: makeEvaluate(verdict),
++    });
++    const code = await runCliWith(['node', 'specgit', 'accept', '--json'], t.ctx);
++    expect(code).toBe(EXIT_REJECTED);
++    const envelope = parseStdoutJson(t.io);
++    expect(typeof envelope.exit).toBe('number');
++    expect(envelope.exit).toBe(EXIT_REJECTED);
++    expect(envelope.status).toBe('rejected');
++  });
+ });
+ 
+ describe('CLI contract: sanitization', () => {
+@@ -320,6 +356,17 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)',
+     }
+   });
+ 
++  it('README.md documents the status pre-binding exception like docs/cli.md (#217)', () => {
++    const cli = readRepoFile('docs', 'cli.md');
++    // The normative #175 statement the README must stay consistent with.
++    expect(cli).toContain('exit `0` with state `unbound` (#175)');
++    const readme = readRepoFile('README.md');
++    expect(readme, 'README must name the status exception').toMatch(/specgit status/);
++    expect(readme, 'README must state the exit-0 unbound exception').toMatch(
++      /missing record.*exit\s*`?0`?[^.]*unbound|exit\s*`?0`?[^.]*unbound[^.]*missing record/is
++    );
++  });
++
+   it('schemas/specgit templates carry the same taxonomy and command surface', async () => {
+     const schema = readRepoFile('schemas', 'specgit', 'schema.yaml');
+     const { GATE_ORDER } = await import('../../src/acceptance/evaluate.js');
+diff --git a/test/specgit-cli/human-antidrift.test.ts b/test/specgit-cli/human-antidrift.test.ts
+new file mode 100644
+index 00000000..38be8944
+--- /dev/null
++++ b/test/specgit-cli/human-antidrift.test.ts
+@@ -0,0 +1,143 @@
++/**
++ * #214 — anti-drift lock for the human surface.
++ *
++ * The accept/finish rendering passes diagnostic text through verbatim:
++ * `verdictFailureLine` prints the gate failure's code and fix unchanged,
++ * and `finishOutcome` prints the error message and fix unchanged. These
++ * tests pin that pass-through BYTE-FOR-BYTE against the one registry the
++ * text comes from (CODE_INFO) — the expectations are composed from the
++ * registry itself, so the lock proves the terminal sees the registry's
++ * bytes, not a hand-copied duplicate that could drift silently.
++ *
++ * Also locks the human branches the CLI suites had not pinned yet: the
++ * unexpected-error catch path (runMain/wrap) in both text and JSON mode.
++ */
++
++import { describe, expect, it } from 'vitest';
++import { runCliWith } from '../../src/cli/index.js';
++import { EXIT_REJECTED, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
++import { CODE_INFO, type SpecGitCode } from '../../src/acceptance/codes.js';
++import type { GateId } from '../../src/acceptance/evaluate.js';
++import {
++  makeCtx,
++  makeEvaluate,
++  makeVerdict,
++  parseStdoutJson,
++  sampleBinding,
++  samplePolicy,
++} from './helpers.js';
++
++/** A rejected verdict whose one gate failure carries the registry's own text. */
++function registryRejectedVerdict(gateId: GateId, code: SpecGitCode) {
++  const info = CODE_INFO[code];
++  return makeVerdict({
++    accepted: false,
++    state: 'rejected',
++    classification: 'rejected',
++    exitCode: EXIT_REJECTED,
++    gates: [
++      {
++        id: gateId,
++        status: 'fail',
++        failures: [
++          {
++            code,
++            message: info.message,
++            ...(info.fix !== undefined ? { fix: info.fix } : {}),
++          },
++        ],
++      },
++    ],
++  });
++}
++
++describe('human rendering: CODE_INFO pass-through is byte-verbatim (#214)', () => {
++  it.each([
++    ['pr', 'pr_draft'],
++    ['checks', 'checks_failed'],
++    ['closing', 'closing_refs_incomplete'],
++  ] as const)('accept text mode renders %s/%s byte-identical to CODE_INFO', async (gateId, code) => {
++    const info = CODE_INFO[code];
++    const verdict = registryRejectedVerdict(gateId, code);
++    const t = makeCtx({
++      record: sampleBinding(),
++      policy: samplePolicy(),
++      evaluate: makeEvaluate(verdict),
++    });
++    const exit = await runCliWith(['node', 'specgit', 'accept'], t.ctx);
++    expect(exit).toBe(EXIT_REJECTED);
++
++    // The verdict failure line carries the registry's fix unchanged.
++    const stdout = t.io.stdout.join('\n');
++    expect(stdout).toContain(`  ${gateId}: ${code} — ${info.fix}`);
++
++    // The stderr diagnostic block carries the registry's message and fix
++    // unchanged — no wording owned outside CODE_INFO.
++    const stderr = t.io.stderr.join('\n');
++    expect(stderr).toContain(`Error: ${info.message}`);
++    expect(stderr).toContain(`Fix: ${info.fix}`);
++  });
++
++  it('finish renders the same byte shapes as accept (evaluator parity)', async () => {
++    const info = CODE_INFO.pr_draft;
++    const verdict = registryRejectedVerdict('pr', 'pr_draft');
++    const t = makeCtx({
++      record: sampleBinding(),
++      policy: samplePolicy(),
++      evaluate: makeEvaluate(verdict),
++    });
++    const exit = await runCliWith(['node', 'specgit', 'finish'], t.ctx);
++    expect(exit).toBe(EXIT_REJECTED);
++    const stdout = t.io.stdout.join('\n');
++    expect(stdout).toContain(`  pr: pr_draft — ${info.fix}`);
++    expect(t.io.stderr.join('\n')).toContain(`Error: ${info.message}`);
++  });
++
++  it('the --json envelope carries the registry text through sanitize unchanged', async () => {
++    const info = CODE_INFO.checks_failed;
++    const verdict = registryRejectedVerdict('checks', 'checks_failed');
++    const t = makeCtx({
++      record: sampleBinding(),
++      policy: samplePolicy(),
++      evaluate: makeEvaluate(verdict),
++    });
++    const exit = await runCliWith(['node', 'specgit', 'accept', '--json'], t.ctx);
++    expect(exit).toBe(EXIT_REJECTED);
++    const envelope = parseStdoutJson(t.io);
++    expect(envelope.errors[0].code).toBe('checks_failed');
++    expect(envelope.errors[0].message).toBe(info.message);
++    expect(envelope.errors[0].fix).toBe(info.fix);
++  });
++});
++
++describe('human rendering: the unexpected-error catch path (#214)', () => {
++  function throwingCtx() {
++    return makeCtx({
++      record: sampleBinding(),
++      policy: samplePolicy(),
++      evaluate: async () => {
++        throw new Error('boom\u0007');
++      },
++    });
++  }
++
++  it('text mode renders a sanitized Error line and exits 3', async () => {
++    const t = throwingCtx();
++    const exit = await runCliWith(['node', 'specgit', 'accept'], t.ctx);
++    expect(exit).toBe(EXIT_UNKNOWN);
++    // errorLine sanitizes: the control character never reaches the terminal.
++    expect(t.io.stdout.join('\n')).toContain('Error: boom');
++    expect(t.io.stdout.join('\n')).not.toContain('\u0007');
++  });
++
++  it('--json mode reports unexpected_error with the fail-closed exit', async () => {
++    const t = throwingCtx();
++    const exit = await runCliWith(['node', 'specgit', 'accept', '--json'], t.ctx);
++    expect(exit).toBe(EXIT_UNKNOWN);
++    const envelope = parseStdoutJson(t.io);
++    expect(envelope.status).toBe('unknown');
++    expect(envelope.exit).toBe(EXIT_UNKNOWN);
++    expect(envelope.errors[0].code).toBe('unexpected_error');
++    expect(envelope.errors[0].message).toBe('boom');
++  });
++});
+diff --git a/test/specgit-cli/human-builder.test.ts b/test/specgit-cli/human-builder.test.ts
+index 6aaaebcf..61647f45 100644
+--- a/test/specgit-cli/human-builder.test.ts
++++ b/test/specgit-cli/human-builder.test.ts
+@@ -92,10 +92,14 @@ describe('shared line formatters (#190)', () => {
+     expect(errorLine('bad\u0007char')).toBe('Error: badchar');
+   });
+ 
+-  it('warningLine keeps the message verbatim (no sanitizing rewrite)', () => {
++  it('warningLine sanitizes the message like errorLine (#215)', () => {
++    // Clean inputs keep their exact bytes; hostile inputs are cleaned the
++    // same way errorLine cleans them — the surface is symmetric.
+     expect(warningLine('no origin remote — cannot probe branch protection.')).toBe(
+       'Warning: no origin remote — cannot probe branch protection.'
+     );
++    expect(warningLine('bad\u0007char')).toBe('Warning: badchar');
++    expect(warningLine('\u001b[31mred\u001b[0m')).toBe('Warning: red');
+   });
+ 
+   it('probeLine renders ok and failing probes in their locked shapes', () => {
+@@ -112,6 +116,12 @@ describe('shared line formatters (#190)', () => {
+     );
+   });
+ 
++  it('gateFailureLine sanitizes its dynamic fields like errorLine (#215)', () => {
++    expect(gateFailureLine('context', 'branch_mismatch\u0007', 'Check out \u001b[2Mmain.')).toBe(
++      'Gate context: branch_mismatch — Check out main.'
++    );
++  });
++
+   it('verdictFailureLine renders the accept-surface gate failure', () => {
+     expect(verdictFailureLine('pr_checks', 'pr_draft')).toBe('  pr_checks: pr_draft');
+     expect(verdictFailureLine('pr_checks', 'checks_pending', 'Wait for CI.')).toBe(
+diff --git a/test/specgit-cli/init-units.test.ts b/test/specgit-cli/init-units.test.ts
+new file mode 100644
+index 00000000..d23b0e46
+--- /dev/null
++++ b/test/specgit-cli/init-units.test.ts
+@@ -0,0 +1,218 @@
++/**
++ * #220 — direct unit tests for the init submodules split out in #171.
++ *
++ * `init-platform.ts` and `init-validation.ts` advertise themselves as
++ * individually testable modules; these tests import them directly (no
++ * CLI-level init.test.ts round-trip) and pin their decision logic: the
++ * endpoint/port classification that drives platform resolution, and the
++ * required-check / language / policy validation that runs before any
++ * mutation.
++ */
++
++import { describe, expect, it } from 'vitest';
++import {
++  DECLARED_ENDPOINT,
++  declaredEndpointName,
++  endpointEffectivePort,
++  endpointUsesDefaultPort,
++  originEndpoint,
++  validateGitlabHost,
++} from '../../src/cli/commands/init-platform.js';
++import {
++  detectAndValidateChecks,
++  nonPrWorkflowWarning,
++  policyGateOutcome,
++  resolveInitLanguage,
++  validateLanguageOption,
++} from '../../src/cli/commands/init-validation.js';
++import { EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
++import { ok, fail } from '../../src/kernel/evidence.js';
++import type { DetectionReport } from '../../src/cli/detect-checks.js';
++import type { Policy } from '../../src/cli/types.js';
++import { makeCtx, makeGitFacts, samplePolicy } from './helpers.js';
++
++describe('init-platform: endpoint and port judgment (#220)', () => {
++  it('classifies the accepted origin URL shapes', () => {
++    expect(originEndpoint('https://github.com/LeXwDeX/SpecGit.git')).toEqual({
++      host: 'github.com',
++      port: null,
++      defaultPort: '443',
++    });
++    expect(originEndpoint('git@github.com:LeXwDeX/SpecGit.git')).toEqual({
++      host: 'github.com',
++      port: null,
++      defaultPort: '22',
++    });
++    expect(originEndpoint('ssh://git@git.example.com:2222/team/repo.git')).toEqual({
++      host: 'git.example.com',
++      port: '2222',
++      defaultPort: '22',
++    });
++    expect(originEndpoint('https://git.example.com:8443/team/repo.git')).toEqual({
++      host: 'git.example.com',
++      port: '8443',
++      defaultPort: '443',
++    });
++  });
++
++  it('rejects shapes the classification never accepts', () => {
++    expect(originEndpoint('ftp://git.example.com/team/repo.git')).toBeNull();
++    expect(originEndpoint('')).toBeNull();
++  });
++
++  it('answers the effective-port question from explicit digits or the scheme default', () => {
++    expect(endpointEffectivePort({ host: 'h', port: '8443', defaultPort: '443' })).toBe('8443');
++    expect(endpointEffectivePort({ host: 'h', port: null, defaultPort: '443' })).toBe('443');
++    expect(endpointEffectivePort({ host: 'h', port: null, defaultPort: '22' })).toBe('22');
++  });
++
++  it('treats the scheme default port as the portless equivalent', () => {
++    expect(endpointUsesDefaultPort({ host: 'h', port: null, defaultPort: '443' })).toBe(true);
++    expect(endpointUsesDefaultPort({ host: 'h', port: '443', defaultPort: '443' })).toBe(true);
++    expect(endpointUsesDefaultPort({ host: 'h', port: '8443', defaultPort: '443' })).toBe(false);
++    expect(endpointUsesDefaultPort({ host: 'h', port: '2222', defaultPort: '22' })).toBe(false);
++  });
++
++  it('parses the host(:port) declaration grammar', () => {
++    expect(DECLARED_ENDPOINT.exec('git.ycgame.com')?.[1]).toBe('git.ycgame.com');
++    expect(DECLARED_ENDPOINT.exec('git.ycgame.com')?.[2]).toBeUndefined();
++    const ported = DECLARED_ENDPOINT.exec('git.ycgame.com:8443');
++    expect(ported?.[1]).toBe('git.ycgame.com');
++    expect(ported?.[2]).toBe('8443');
++    expect(DECLARED_ENDPOINT.exec('https://git.example.com')).toBeNull();
++  });
++
++  it('renders the declaration name for envelopes and human output', () => {
++    expect(declaredEndpointName('git.example.com', null)).toBe('git.example.com');
++    expect(declaredEndpointName('git.example.com', '8443')).toBe('git.example.com:8443');
++  });
++
++  it('refuses a GitLab declaration against a github.com origin', async () => {
++    const t = makeCtx();
++    const outcome = await validateGitlabHost({ gitlabHost: 'git.example.com' }, t.ctx, '/repo');
++    expect('exit' in outcome).toBe(true);
++    if ('exit' in outcome) {
++      expect(outcome.exit).toBe(EXIT_USAGE);
++      expect(outcome.errors?.[0]?.code).toBe('gitlab_host_invalid');
++      expect(outcome.errors?.[0]?.message).toContain('already a github.com repository');
++    }
++  });
++
++  it('refuses malformed declarations before any write', async () => {
++    const t = makeCtx({ facts: makeGitFacts({ originUrl: 'https://git.example.com/team/repo.git' }) });
++    const outcome = await validateGitlabHost({ gitlabHost: 'https://git.example.com' }, t.ctx, '/repo');
++    expect('exit' in outcome).toBe(true);
++    if ('exit' in outcome) {
++      expect(outcome.exit).toBe(EXIT_USAGE);
++      expect(outcome.errors?.[0]?.code).toBe('gitlab_host_invalid');
++    }
++  });
++
++  it('accepts the declaration that matches the origin endpoint', async () => {
++    const t = makeCtx({ facts: makeGitFacts({ originUrl: 'https://git.example.com/team/repo.git' }) });
++    const outcome = await validateGitlabHost({ gitlabHost: 'git.example.com' }, t.ctx, '/repo');
++    expect(outcome).toEqual({ host: 'git.example.com', port: null });
++  });
++
++  it('requires the declared port to be the port the origin actually uses', async () => {
++    const facts = makeGitFacts({ originUrl: 'ssh://git@git.example.com:2222/team/repo.git' });
++    const matching = await validateGitlabHost(
++      { gitlabHost: 'git.example.com:2222' },
++      makeCtx({ facts }).ctx,
++      '/repo'
++    );
++    expect(matching).toEqual({ host: 'git.example.com', port: '2222' });
++
++    const portless = await validateGitlabHost(
++      { gitlabHost: 'git.example.com' },
++      makeCtx({ facts }).ctx,
++      '/repo'
++    );
++    expect('exit' in portless).toBe(true);
++    if ('exit' in portless) {
++      expect(portless.exit).toBe(EXIT_USAGE);
++      expect(portless.errors?.[0]?.message).toContain('does not match the origin endpoint');
++    }
++  });
++
++  it('accepts any well-formed declaration when the origin is unknown', async () => {
++    const t = makeCtx({ facts: makeGitFacts({ originUrl: null }) });
++    const outcome = await validateGitlabHost({ gitlabHost: 'git.example.com:8443' }, t.ctx, '/repo');
++    expect(outcome).toEqual({ host: 'git.example.com', port: '8443' });
++  });
++});
++
++describe('init-validation: check parsing and pre-mutation gates (#220)', () => {
++  it('trims explicit check names and skips detection', async () => {
++    const t = makeCtx();
++    const resolution = await detectAndValidateChecks({ requiredCheck: [' build ', 'test'] }, t.ctx);
++    expect('exit' in resolution).toBe(false);
++    if (!('exit' in resolution)) {
++      expect(resolution.checks).toEqual(['build', 'test']);
++      expect(resolution.detected).toBeNull();
++    }
++  });
++
++  it('rejects empty check names as usage errors', async () => {
++    const t = makeCtx();
++    const outcome = await detectAndValidateChecks({ requiredCheck: ['valid', ' '] }, t.ctx);
++    expect('exit' in outcome).toBe(true);
++    if ('exit' in outcome) {
++      expect(outcome.exit).toBe(EXIT_USAGE);
++      expect(outcome.errors?.[0]?.code).toBe('required_check_invalid');
++    }
++  });
++
++  it('keeps the strict --no-detect path explicit-or-refused', async () => {
++    const t = makeCtx();
++    const outcome = await detectAndValidateChecks({ detect: false }, t.ctx);
++    expect('exit' in outcome).toBe(true);
++    if ('exit' in outcome) {
++      expect(outcome.exit).toBe(EXIT_USAGE);
++      expect(outcome.errors?.[0]?.code).toBe('required_check_required');
++    }
++  });
++
++  it('validates --language before any mutation', () => {
++    expect(validateLanguageOption({})).toBeNull();
++    expect(validateLanguageOption({ language: 'zh' })).toBeNull();
++    const invalid = validateLanguageOption({ language: 'fr' });
++    expect(invalid?.exit).toBe(EXIT_USAGE);
++    expect(invalid?.errors?.[0]?.code).toBe('language_invalid');
++  });
++
++  it('gates the policy write on existence unless --force', () => {
++    const existing = ok(samplePolicy());
++    const refused = policyGateOutcome(existing, {});
++    expect(refused?.exit).toBe(EXIT_USAGE);
++    expect(refused?.errors?.[0]?.code).toBe('policy_exists');
++    expect(policyGateOutcome(existing, { force: true })).toBeNull();
++
++    const missing = fail<Policy>('policy_missing', 'No policy found.');
++    expect(policyGateOutcome(missing, {})).toBeNull();
++
++    const invalid = fail<Policy>('policy_invalid', 'spec_git/policy.yaml is invalid.');
++    expect(policyGateOutcome(invalid, {})?.exit).toBe(EXIT_UNKNOWN);
++  });
++
++  it('resolves the effective language: explicit wins, force inherits, default en', () => {
++    expect(resolveInitLanguage({ language: 'zh' }, undefined)).toBe('zh');
++    expect(resolveInitLanguage({}, 'zh')).toBe('zh');
++    expect(resolveInitLanguage({}, undefined)).toBe('en');
++    expect(resolveInitLanguage({ language: 'fr' }, 'zh')).toBe('zh');
++  });
++
++  it('warns exactly when non-PR workflows were excluded from detection', () => {
++    const base: DetectionReport = {
++      platform: 'github',
++      requiredChecks: ['Test'],
++      sources: ['.github/workflows/ci.yml'],
++      nonPrWorkflows: [],
++      clis: { gh: true, glab: false },
++    };
++    expect(nonPrWorkflowWarning(base)).toBeNull();
++    const warning = nonPrWorkflowWarning({ ...base, nonPrWorkflows: ['release.yml'] });
++    expect(warning?.code).toBe('checks_not_pr_visible');
++    expect(warning?.message).toContain('release.yml');
++  });
++});
+diff --git a/test/specgit-cli/issue.test.ts b/test/specgit-cli/issue.test.ts
+index 2006bde3..124addd8 100644
+--- a/test/specgit-cli/issue.test.ts
++++ b/test/specgit-cli/issue.test.ts
+@@ -9,7 +9,9 @@ import type { DeliveryBinding } from '../../src/record/schema.js';
+ import { fail, ok } from '../../src/kernel/evidence.js';
+ import type { PrSummary } from '../../src/github/port.js';
+ import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
+-import { runIssue } from '../../src/cli/commands/issue.js';
++import { createOrAdoptIssues, runIssue } from '../../src/cli/commands/issue.js';
++import { EXIT_USAGE } from '../../src/cli/exit-codes.js';
++import { parseRepoRef } from '../../src/gitfacts/origin.js';
+ import {
+   makeCtx,
+   makeGitFacts,
+@@ -1141,3 +1143,33 @@ describe('specgit issue: complete-record argument drift (P1 regression)', () =>
+     expect(written?.pr).toBe(42);
+   });
+ });
++
++describe('createOrAdoptIssues explicit null guard (#216)', () => {
++  it('fails closed with a usage diagnostic instead of casting a null record', async () => {
++    // Unreachable through runIssue (absent arguments are refused before
++    // the loop, and a resume always carries a live record) — but the
++    // function itself must prove it, not assert it. A null record with
++    // nothing consumed returns an error diagnostic, never a cast.
++    const t = makeCtx();
++    const repoEv = parseRepoRef('https://github.com/LeXwDeX/SpecGit.git');
++    if (!repoEv.ok) {
++      throw new Error('test setup: the GitHub origin must parse');
++    }
++    const outcome = await createOrAdoptIssues({
++      ctx: t.ctx,
++      root: '/repo',
++      repo: repoEv.value,
++      language: 'en',
++      context: { kind: 'branch', branch: 'feat/1-guard' },
++      record: null,
++      args: [],
++      startIndex: 0,
++      firstTitle: null,
++    });
++    expect('exit' in outcome).toBe(true);
++    if ('exit' in outcome) {
++      expect(outcome.exit).toBe(EXIT_USAGE);
++      expect(outcome.errors?.[0]?.code).toBe('issue_args_required');
++    }
++  });
++});
+diff --git a/test/specgit/acceptance.test.ts b/test/specgit/acceptance.test.ts
+index 498f6c16..c34ef7bf 100644
+--- a/test/specgit/acceptance.test.ts
++++ b/test/specgit/acceptance.test.ts
+@@ -19,11 +19,11 @@ import {
+   type Verdict,
+ } from '../../src/acceptance/evaluate.js';
+ import {
+-  MockGitHubProvider,
++  MockForgeProvider,
+   makeCheckRun,
+   makeIssueFact,
+   makePrFact,
+-} from './helpers/mock-github.js';
++} from './helpers/mock-forge.js';
+ import { createFakeGh, type FakeGhRule } from './helpers/fake-gh.js';
+ import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
+ 
+@@ -110,7 +110,7 @@ function input(overrides: Partial<EvaluateInput> = {}): EvaluateInput {
+     record: ok(binding()),
+     policy: ok(POLICY),
+     git: new StubGitPort(facts()),
+-    gh: new MockGitHubProvider({
++    gh: new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     }),
+@@ -140,7 +140,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('ordered_issues rejects when a smaller open issue exists (issue_out_of_order)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       issues: {
+         122: ok(makeIssueFact({ number: 122, state: 'open' })),
+         123: ok(makeIssueFact({ number: 123 })),
+@@ -164,7 +164,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('ordered_issues passes when every smaller issue is closed', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       openIssueNumbers: ok([123, 200]),
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+@@ -180,7 +180,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('ordered_issues off (default) never queries open issues', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       openIssueNumbers: ok([1, 2, 3]),
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+@@ -194,7 +194,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('sequence gate degrades to unknown (exit 3) when the open-issue list is truncated (#120, I3b)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       openIssueNumbers: fail('evidence_truncated', 'GitHub reported incomplete search results.'),
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+@@ -213,7 +213,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('checks gate degrades to unknown (exit 3) when the check-run list is truncated (#120, I3b)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: fail('evidence_truncated', 'Check-run pagination hit its cap.'),
+     });
+@@ -226,7 +226,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('reports local_head_stale as a warning only, never a gate', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: 'c'.repeat(40) })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     });
+@@ -240,7 +240,7 @@ describe('acceptance evaluator', () => {
+     // is merged: completed history, not a mismatch — but only once local
+     // HEAD is proven to contain the merged delivery (the merge commit).
+     // The trailing gates run against the merged PR's evidence.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     });
+@@ -253,7 +253,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('keeps branch_mismatch when the bound PR is open, not merged', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ state: 'open' })),
+     });
+     const verdict = await evaluate(
+@@ -265,7 +265,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('keeps branch_mismatch when the provider cannot confirm the merge (fail-closed)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: fail('gh_transport', 'network down'),
+     });
+     const verdict = await evaluate(
+@@ -283,7 +283,7 @@ describe('acceptance evaluator', () => {
+     // anchor in local HEAD is the lineage proof.
+ 
+     it('contains: historical acceptance only after proving the merge commit is contained by local HEAD', async () => {
+-      const gh = new MockGitHubProvider({
++      const gh = new MockForgeProvider({
+         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+         checkRuns: ok([makeCheckRun('All checks passed')]),
+       });
+@@ -305,7 +305,7 @@ describe('acceptance evaluator', () => {
+     });
+ 
+     it('does-not-contain: rejects when the merge commit is locally known but not in HEAD history', async () => {
+-      const gh = new MockGitHubProvider({
++      const gh = new MockForgeProvider({
+         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+         checkRuns: ok([makeCheckRun('All checks passed')]),
+       });
+@@ -324,7 +324,7 @@ describe('acceptance evaluator', () => {
+     });
+ 
+     it('unavailable evidence (local): fails closed to unknown when lineage cannot be resolved', async () => {
+-      const gh = new MockGitHubProvider({
++      const gh = new MockForgeProvider({
+         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+         checkRuns: ok([makeCheckRun('All checks passed')]),
+       });
+@@ -347,7 +347,7 @@ describe('acceptance evaluator', () => {
+       // GitHub guarantees merge_commit_sha once merged; its absence is an
+       // evidence gap. The PR head is definitionally absent from the base
+       // under squash and rebase, so it can never anchor containment.
+-      const gh = new MockGitHubProvider({
++      const gh = new MockForgeProvider({
+         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: null, headSha: 'a'.repeat(40) })),
+         checkRuns: ok([makeCheckRun('All checks passed')]),
+       });
+@@ -363,7 +363,7 @@ describe('acceptance evaluator', () => {
+     });
+ 
+     it('keeps evidence-kind passthrough when git itself is unavailable mid-lineage', async () => {
+-      const gh = new MockGitHubProvider({
++      const gh = new MockForgeProvider({
+         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+       });
+       const git = new StubGitPort(facts({ branch: 'main' }), () =>
+@@ -536,7 +536,7 @@ describe('acceptance evaluator', () => {
+       name: 'gh_missing',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({ preflight: fail('gh_missing', 'gh not installed.') }),
++          gh: new MockForgeProvider({ preflight: fail('gh_missing', 'gh not installed.') }),
+         }),
+       gate: 'provider',
+       code: 'gh_missing',
+@@ -546,7 +546,7 @@ describe('acceptance evaluator', () => {
+       name: 'gh_unauthenticated',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({ preflight: fail('gh_unauthenticated', 'Not logged in.') }),
++          gh: new MockForgeProvider({ preflight: fail('gh_unauthenticated', 'Not logged in.') }),
+         }),
+       gate: 'provider',
+       code: 'gh_unauthenticated',
+@@ -556,7 +556,7 @@ describe('acceptance evaluator', () => {
+       name: 'gh_transport (preflight)',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({ preflight: fail('gh_transport', 'boom') }),
++          gh: new MockForgeProvider({ preflight: fail('gh_transport', 'boom') }),
+         }),
+       gate: 'provider',
+       code: 'gh_transport',
+@@ -566,7 +566,7 @@ describe('acceptance evaluator', () => {
+       name: 'issue_not_found',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             issues: { 123: fail('issue_not_found', 'Issue #123 not found.') },
+             pr: ok(makePrFact({ headSha: HEAD })),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+@@ -580,7 +580,7 @@ describe('acceptance evaluator', () => {
+       name: 'issue_is_pull_request',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             issues: { 123: ok(makeIssueFact({ number: 123, pullRequest: true })) },
+             pr: ok(makePrFact({ headSha: HEAD })),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+@@ -594,7 +594,7 @@ describe('acceptance evaluator', () => {
+       name: 'gh_transport (issue lookup)',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             issues: { 123: fail('gh_transport', 'network down') },
+           }),
+         }),
+@@ -606,7 +606,7 @@ describe('acceptance evaluator', () => {
+       name: 'pr_not_found',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             pr: fail('pr_not_found', 'PR 42 not found.'),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+           }),
+@@ -619,7 +619,7 @@ describe('acceptance evaluator', () => {
+       name: 'pr_closed_unmerged',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             pr: ok(makePrFact({ state: 'closed', headSha: HEAD })),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+           }),
+@@ -632,7 +632,7 @@ describe('acceptance evaluator', () => {
+       name: 'pr_draft',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             pr: ok(makePrFact({ draft: true, headSha: HEAD })),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+           }),
+@@ -645,7 +645,7 @@ describe('acceptance evaluator', () => {
+       name: 'pr_head_mismatch',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             pr: ok(makePrFact({ headBranch: 'some-other-branch', headSha: HEAD })),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+           }),
+@@ -659,7 +659,7 @@ describe('acceptance evaluator', () => {
+       input: () =>
+         input({
+           record: ok(binding({ pr: 'https://github.com/other/repo/pull/42' })),
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             pr: ok(makePrFact({ headSha: HEAD })),
+             checkRuns: ok([makeCheckRun('All checks passed')]),
+           }),
+@@ -672,7 +672,7 @@ describe('acceptance evaluator', () => {
+       name: 'gh_transport (check runs)',
+       input: () =>
+         input({
+-          gh: new MockGitHubProvider({
++          gh: new MockForgeProvider({
+             pr: ok(makePrFact({ headSha: HEAD })),
+             checkRuns: fail('gh_transport', 'network down'),
+           }),
+@@ -704,7 +704,7 @@ describe('acceptance evaluator', () => {
+   // cannot match. This is the evaluator seam the production routing
+   // provider feeds glab into.
+   it('evaluates a declared GitLab origin through the provider with the GitLab closing dialect (#117)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(
+         makePrFact({
+           headBranch: 'feat/123-login',
+@@ -735,7 +735,7 @@ describe('acceptance evaluator', () => {
+   // the dialect follows the platform marker, and the GitHub grammar
+   // does not know the gerund form — the mirror proof of the routing.
+   it('a gerund closing form does not close a GitHub-grammar delivery (#117 mirror)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(
+         makePrFact({
+           headBranch: 'feat/123-login',
+@@ -772,7 +772,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('closing_refs_incomplete lists exactly the missing issue numbers', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD, body: 'Closes #123' })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     });
+@@ -788,7 +788,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('enumerates every failing required check name in one gate', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([
+         makeCheckRun('Test', { status: 'in_progress', conclusion: null }),
+@@ -815,7 +815,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('reports checks_failed with the failing conclusion', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure' })]),
+     });
+@@ -826,7 +826,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('presents checks_pending as transient and retryable while staying exit 1', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed', { status: 'in_progress', conclusion: null })]),
+     });
+@@ -843,7 +843,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('names the maintainer-approval path when a check concluded action_required', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'action_required' })]),
+     });
+@@ -862,7 +862,7 @@ describe('acceptance evaluator', () => {
+     // Re-runs keep every same-name run in the Checks API. The truth run
+     // is the latest by started_at (docs/reference.md, Checks G11): an
+     // old green followed by a new red must fail, whatever the array order.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([
+         makeCheckRun('All checks passed', {
+@@ -889,7 +889,7 @@ describe('acceptance evaluator', () => {
+     // First-match would read the stale red run and reject a delivery
+     // whose latest evidence is green: position in the response is not
+     // evidence, started_at is.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([
+         makeCheckRun('All checks passed', {
+@@ -913,7 +913,7 @@ describe('acceptance evaluator', () => {
+     // The older run is completed green, the latest-by-started_at run is
+     // in_progress: the honest verdict is pending (transient, retryable),
+     // never acceptance on stale evidence.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([
+         makeCheckRun('All checks passed', {
+@@ -964,7 +964,7 @@ describe('acceptance evaluator', () => {
+         }),
+       ],
+     ]) {
+-      const gh = new MockGitHubProvider({
++      const gh = new MockForgeProvider({
+         pr: ok(makePrFact({ headSha: HEAD })),
+         checkRuns: ok(runs),
+       });
+@@ -979,7 +979,7 @@ describe('acceptance evaluator', () => {
+     // pipeline green. The check-run fact still reports conclusion
+     // 'failure' — evidence never lies — but the gate verdict follows
+     // the pipeline: the run passes.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure', allowFailure: true })]),
+     });
+@@ -993,7 +993,7 @@ describe('acceptance evaluator', () => {
+     // Row 17 covers exactly "failed but allowed to fail". A canceled
+     // allow_failure run carries a different conclusion and fails the
+     // gate like any other non-success.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'cancelled', allowFailure: true })]),
+     });
+@@ -1006,7 +1006,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('a hard failure without allowFailure still fails the gate (#116)', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed', { conclusion: 'failure', allowFailure: false })]),
+     });
+@@ -1019,7 +1019,7 @@ describe('acceptance evaluator', () => {
+     // The truth run is the latest same-name run; its own allowFailure
+     // flag decides. An older allowed failure never launders a newer
+     // hard failure of the same name.
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([
+         makeCheckRun('All checks passed', {
+@@ -1041,7 +1041,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('short-circuits in gate order G1 through G10', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     });
+@@ -1055,7 +1055,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('stops calling the provider once a deterministic gate fails', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     });
+@@ -1085,7 +1085,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('resolves a PR URL ref matching origin and queries by number', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       pr: ok(makePrFact({ headSha: HEAD })),
+       checkRuns: ok([makeCheckRun('All checks passed')]),
+     });
+@@ -1097,7 +1097,7 @@ describe('acceptance evaluator', () => {
+   });
+ 
+   it('collects all failing issues within the issues gate', async () => {
+-    const gh = new MockGitHubProvider({
++    const gh = new MockForgeProvider({
+       issues: {
+         123: fail('issue_not_found', 'Issue #123 not found.'),
+         124: ok(makeIssueFact({ number: 124, pullRequest: true })),
+diff --git a/test/specgit/helpers/mock-github.ts b/test/specgit/helpers/mock-forge.ts
+similarity index 90%
+rename from test/specgit/helpers/mock-github.ts
+rename to test/specgit/helpers/mock-forge.ts
+index 6df46f7f..b2a553e0 100644
+--- a/test/specgit/helpers/mock-github.ts
++++ b/test/specgit/helpers/mock-forge.ts
+@@ -1,3 +1,13 @@
++/**
++ * The platform-neutral forge test double (#169 naming, #219 rename).
++ *
++ * Implements `ForgeProvider` — the port both the gh and the glab
++ * adapters realize — so the same fixture-driven double can stand in for
++ * either delegate (see routing-provider.test.ts, where it plays both
++ * sides of the platform routing seam). The class name names the seam,
++ * not one platform.
++ */
++
+ import { fail, ok, type Evidence } from '../../../src/kernel/evidence.js';
+ import type { RepoRef } from '../../../src/gitfacts/origin.js';
+ import type {
+@@ -14,7 +24,7 @@ import type {
+   RepoAutomergeFact,
+ } from '../../../src/github/port.js';
+ 
+-export interface MockGitHubFixtures {
++export interface MockForgeFixtures {
+   preflight?: Evidence<{ authenticated: boolean }>;
+   issues?: Record<number, Evidence<IssueFact>>;
+   defaultIssue?: (n: number) => Evidence<IssueFact>;
+@@ -36,10 +46,10 @@ function formatRepo(repo: RepoRef): string {
+   return `${repo.owner}/${repo.repo}`;
+ }
+ 
+-export class MockGitHubProvider implements ForgeProvider {
++export class MockForgeProvider implements ForgeProvider {
+   readonly calls: string[] = [];
+ 
+-  constructor(private readonly fixtures: MockGitHubFixtures = {}) {}
++  constructor(private readonly fixtures: MockForgeFixtures = {}) {}
+ 
+   async preflight(): Promise<Evidence<{ authenticated: boolean }>> {
+     this.calls.push('preflight');
+diff --git a/test/specgit/provider-port-contract.test.ts b/test/specgit/provider-port-contract.test.ts
+index 37e1e303..44725253 100644
+--- a/test/specgit/provider-port-contract.test.ts
++++ b/test/specgit/provider-port-contract.test.ts
+@@ -13,7 +13,7 @@ import {
+   LocalGitAdapter,
+   sanitizeApiText,
+ } from '../../src/index.js';
+-import { MockGitHubProvider } from './helpers/mock-github.js';
++import { MockForgeProvider } from './helpers/mock-forge.js';
+ import { makeGitFacts, makeGitPort, makeGhProvider } from '../specgit-cli/helpers.js';
+ 
+ // Port-contract pins (#80): every in-tree implementation — production
+@@ -161,7 +161,7 @@ describe('provider port contract (#80)', () => {
+             originPlatform: async () => 'github',
+           }),
+         ],
+-        ['MockGitHubProvider (test double)', new MockGitHubProvider()],
++        ['MockForgeProvider (test double)', new MockForgeProvider()],
+         ['makeGhProvider (test double)', makeGhProvider()],
+       ];
+       for (const [label, instance] of implementations) {
+@@ -181,11 +181,11 @@ describe('provider port contract (#80)', () => {
+         'PlatformRoutingProvider'
+       );
+     });
+-    it('MockGitHubProvider (test double)', () => {
++    it('MockForgeProvider (test double)', () => {
+       expectExposes(
+-        new MockGitHubProvider(),
++        new MockForgeProvider(),
+         FORGE_PROVIDER_MEMBERS,
+-        'MockGitHubProvider (test double)'
++        'MockForgeProvider (test double)'
+       );
+     });
+     it('makeGhProvider (test double)', () => {
+diff --git a/test/specgit/routing-provider.test.ts b/test/specgit/routing-provider.test.ts
+index a37f24c2..3591c23b 100644
+--- a/test/specgit/routing-provider.test.ts
++++ b/test/specgit/routing-provider.test.ts
+@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
+ 
+ import type { RepoRef } from '../../src/gitfacts/origin.js';
+ import { PlatformRoutingProvider } from '../../src/providers/routing.js';
+-import { MockGitHubProvider } from './helpers/mock-github.js';
++import { MockForgeProvider } from './helpers/mock-forge.js';
+ 
+ // #117 (platform routing): the production context hands commands ONE
+ // provider. The routing provider dispatches per call — a ref resolved
+@@ -15,8 +15,8 @@ const githubRef: RepoRef = { owner: 'acme', repo: 'app', platform: 'github' };
+ const gitlabRef: RepoRef = { owner: 'group/subgroup', repo: 'app', platform: 'gitlab' };
+ 
+ function makeRouter(originPlatform: 'github' | 'gitlab' | 'undecided') {
+-  const github = new MockGitHubProvider();
+-  const gitlab = new MockGitHubProvider();
++  const github = new MockForgeProvider();
++  const gitlab = new MockForgeProvider();
+   let constructions = 0;
+   const router = new PlatformRoutingProvider({
+     github,
+@@ -93,10 +93,10 @@ describe('PlatformRoutingProvider (#117)', () => {
+ 
+   it('resolves the origin platform once across repo-less calls', async () => {
+     let resolutions = 0;
+-    const github = new MockGitHubProvider();
++    const github = new MockForgeProvider();
+     const router = new PlatformRoutingProvider({
+       github,
+-      gitlab: async () => new MockGitHubProvider(),
++      gitlab: async () => new MockForgeProvider(),
+       originPlatform: async () => {
+         resolutions += 1;
+         return 'github';

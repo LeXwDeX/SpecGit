@@ -12,6 +12,7 @@ import type {
   PrCreation,
   PrFact,
   PrSummary,
+  PreflightFact,
   RepoAutomergeFact,
 } from '../../github/port.js';
 
@@ -199,13 +200,13 @@ export class GlabProvider implements ForgeProvider {
    * Detection → per-host auth → metadata probe. On a declared
    * self-managed host the metadata version is compared against the
    * verified window; outside it (or unparsable) sets
-   * `gitlabVersionUnverified` — an advisory flag the verdict surfaces
+   * `versionUnverified` — an advisory flag the verdict surfaces
    * as a warning (#241) — but never aborts preflight: the real
    * fail-closed guarantee is the live evidence pass itself. The SaaS
    * host is never version-pinned (#93) — the metadata call remains a
    * capability probe whose failure fails closed.
    */
-  async preflight(): Promise<Evidence<{ authenticated: boolean; gitlabVersionUnverified?: boolean }>> {
+  async preflight(): Promise<Evidence<PreflightFact>> {
     const version = await this.runGlab(['--version']);
     if (!version.ok) {
       if (version.code === 'glab_missing') return this.asFailure(version);
@@ -233,7 +234,7 @@ export class GlabProvider implements ForgeProvider {
     if (this.isSelfManaged()) {
       const reported = (metadataEv.value as { version?: unknown }).version;
       if (typeof reported !== 'string' || !versionInWindow(reported)) {
-        return ok({ authenticated: true, gitlabVersionUnverified: true });
+        return ok({ authenticated: true, versionUnverified: true });
       }
     }
     return ok({ authenticated: true });

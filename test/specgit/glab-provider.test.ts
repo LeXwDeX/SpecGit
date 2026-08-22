@@ -31,6 +31,9 @@ function metadataJson(version: string | undefined): string {
   );
 }
 
+// The advisory preflight fact (#241): the flag is platform-neutral (#247).
+const UNVERIFIED_PREFLIGHT = { ok: true, value: { authenticated: true, versionUnverified: true } } as const;
+
 describe('glab command resolution', () => {
   let tempDir: string;
 
@@ -154,7 +157,7 @@ describe('GlabProvider#preflight', () => {
     }
   });
 
-  it('flags gitlabVersionUnverified above the verified window (>= 19.4.0) without aborting (#241)', async () => {
+  it('flags versionUnverified above the verified window (>= 19.4.0) without aborting (#241)', async () => {
     const { provider } = setup(
       [
         { match: '^--version$', stdout: 'glab version 1.113.0\n' },
@@ -164,13 +167,10 @@ describe('GlabProvider#preflight', () => {
       { hostname: HOST }
     );
     const result = await provider.preflight();
-    expect(result).toEqual({
-      ok: true,
-      value: { authenticated: true, gitlabVersionUnverified: true },
-    });
+    expect(result).toEqual(UNVERIFIED_PREFLIGHT);
   });
 
-  it('flags gitlabVersionUnverified below the verified window (< 19.2.4) without aborting (#241)', async () => {
+  it('flags versionUnverified below the verified window (< 19.2.4) without aborting (#241)', async () => {
     const { provider } = setup(
       [
         { match: '^--version$', stdout: 'glab version 1.113.0\n' },
@@ -180,13 +180,10 @@ describe('GlabProvider#preflight', () => {
       { hostname: HOST }
     );
     const result = await provider.preflight();
-    expect(result).toEqual({
-      ok: true,
-      value: { authenticated: true, gitlabVersionUnverified: true },
-    });
+    expect(result).toEqual(UNVERIFIED_PREFLIGHT);
   });
 
-  it('flags gitlabVersionUnverified when the version is missing or unparsable, without aborting (#241)', async () => {
+  it('flags versionUnverified when the version is missing or unparsable, without aborting (#241)', async () => {
     // Both bodies are valid JSON metadata payloads whose version cannot be
     // verified inside the window — advisory, never an abort: the live
     // evidence pass stays the fail-closed guarantee.
@@ -200,10 +197,7 @@ describe('GlabProvider#preflight', () => {
         { hostname: HOST }
       );
       const result = await provider.preflight();
-      expect(result, body).toEqual({
-        ok: true,
-        value: { authenticated: true, gitlabVersionUnverified: true },
-      });
+      expect(result, body).toEqual(UNVERIFIED_PREFLIGHT);
     }
   });
 

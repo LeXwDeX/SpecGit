@@ -1,0 +1,153 @@
+diff --git a/.changeset/gitlab-project-edit-put.md b/.changeset/gitlab-project-edit-put.md
+new file mode 100644
+index 00000000..dae781fe
+--- /dev/null
++++ b/.changeset/gitlab-project-edit-put.md
+@@ -0,0 +1,10 @@
++---
++"specgit": patch
++---
++
++## GitLab provider
++
++- Fix `setPipelineGate` to edit the project with `PUT` instead of `PATCH`:
++  GitLab's edit-project endpoint is routed for `PUT` only, so every
++  pipeline-gate call returned HTTP 404 and `specgit init` could never enable
++  branch protection / auto-merge on a declared GitLab origin (#229, #230)
+diff --git a/.specgit.yaml b/.specgit.yaml
+index e37d5866..ec482af0 100644
+--- a/.specgit.yaml
++++ b/.specgit.yaml
+@@ -1,8 +1,8 @@
+ version: 1
+-delivery: decouple-release-publish
++delivery: add-v1-1
+ context:
+   kind: branch
+-  branch: fix/227-decouple-release-publish
++  branch: chore/231-add-v1-1
+ issues:
+-  - 227
+-pr: 228
++  - 231
++pr: 232
+diff --git a/src/providers/gitlab/glab-cli.ts b/src/providers/gitlab/glab-cli.ts
+index 9532650b..a4052ab0 100644
+--- a/src/providers/gitlab/glab-cli.ts
++++ b/src/providers/gitlab/glab-cli.ts
+@@ -24,7 +24,8 @@ import type {
+  *
+  * Endpoint discipline: read endpoints plus exactly four documented write
+  * endpoints — POST issues, POST merge_requests, POST protected_branches,
+- * PATCH project (the pipeline gate; row 24 method map).
++ * PUT project (the pipeline gate; row 24 method map). GitLab's edit-project
++ * endpoint is routed for PUT only — a PATCH returns 404 Not Found.
+  */
+ 
+ const DEFAULT_TIMEOUT_MS = 15_000;
+@@ -652,7 +653,7 @@ export class GlabProvider implements ForgeProvider {
+       return ok({ protected: true, requiredChecks: [] });
+     }
+     // Post-state read: the gate is now on by construction, and the
+-    // intersection reflects the branch's live pipeline, not the PATCH
++    // intersection reflects the branch's live pipeline, not the PUT
+     // echo.
+     const checksEv = await this.pipelineGateChecks(repo, branch);
+     if (!checksEv.ok) {
+@@ -751,7 +752,7 @@ export class GlabProvider implements ForgeProvider {
+       'api',
+       ...this.hostArgs(),
+       '-X',
+-      'PATCH',
++      'PUT',
+       `projects/${this.projectPath(repo)}`,
+       '-f',
+       'only_allow_merge_if_pipeline_succeeds=true',
+diff --git a/test/specgit/glab-provider.test.ts b/test/specgit/glab-provider.test.ts
+index 17508cc6..3d0ad6eb 100644
+--- a/test/specgit/glab-provider.test.ts
++++ b/test/specgit/glab-provider.test.ts
+@@ -1444,7 +1444,7 @@ describe('GlabProvider branch protection', () => {
+     const { provider, fake } = setup([
+       { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+       {
+-        match: `-X PATCH projects/${PROJECT_ID} `,
++        match: `-X PUT projects/${PROJECT_ID} `,
+         stdout: JSON.stringify({
+           id: 1278,
+           path_with_namespace: 'group/subgroup/project',
+@@ -1460,7 +1460,7 @@ describe('GlabProvider branch protection', () => {
+     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
+     expect(readFakeGlabCalls(fake.logPath)).toEqual([
+       `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
+-      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
++      `api --hostname ${HOST} -X PUT projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+       `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/protected_branches -f name=main -f push_access_level=40 -f merge_access_level=40 -f unprotect_access_level=40`,
+     ]);
+   });
+@@ -1472,7 +1472,7 @@ describe('GlabProvider branch protection', () => {
+         stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
+       },
+       {
+-        match: `-X PATCH projects/${PROJECT_ID} `,
++        match: `-X PUT projects/${PROJECT_ID} `,
+         stdout: JSON.stringify({
+           id: 1278,
+           path_with_namespace: 'group/subgroup/project',
+@@ -1491,7 +1491,7 @@ describe('GlabProvider branch protection', () => {
+     const { provider } = setup([
+       { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+       {
+-        match: `-X PATCH projects/${PROJECT_ID} `,
++        match: `-X PUT projects/${PROJECT_ID} `,
+         stdout: JSON.stringify({
+           id: 1278,
+           path_with_namespace: 'group/subgroup/project',
+@@ -1669,7 +1669,7 @@ describe('GlabProvider requiredChecks — the verified pipeline-gate intersectio
+       [
+         { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+         {
+-          match: `-X PATCH projects/${PROJECT_ID} `,
++          match: `-X PUT projects/${PROJECT_ID} `,
+           stdout: projectJson(true),
+         },
+         {
+@@ -1695,7 +1695,7 @@ describe('GlabProvider requiredChecks — the verified pipeline-gate intersectio
+     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: ['build', 'SpecGit Acceptance'] } });
+     expect(readFakeGlabCalls(fake.logPath)).toEqual([
+       `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
+-      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
++      `api --hostname ${HOST} -X PUT projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+       `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/protected_branches -f name=main -f push_access_level=40 -f merge_access_level=40 -f unprotect_access_level=40`,
+       `api --hostname ${HOST} projects/${PROJECT_ID}`,
+       `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?ref=main&per_page=1&page=1`,
+@@ -1804,10 +1804,10 @@ describe('GlabProvider repo auto-merge (pipeline gate, row 7)', () => {
+     expect(result.message).toContain('renamed');
+   });
+ 
+-  it('enables the gate via PATCH and reports the verified setting', async () => {
++  it('enables the gate via PUT and reports the verified setting', async () => {
+     const { provider, fake } = setup([
+       {
+-        match: `-X PATCH projects/${PROJECT_ID} `,
++        match: `-X PUT projects/${PROJECT_ID} `,
+         stdout: JSON.stringify({
+           id: 1278,
+           path_with_namespace: 'group/subgroup/project',
+@@ -1818,14 +1818,14 @@ describe('GlabProvider repo auto-merge (pipeline gate, row 7)', () => {
+     const result = await provider.enableRepoAutomerge(REPO);
+     expect(result).toEqual({ ok: true, value: { enabled: true } });
+     expect(readFakeGlabCalls(fake.logPath)).toEqual([
+-      `api --hostname ${HOST} -X PATCH projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
++      `api --hostname ${HOST} -X PUT projects/${PROJECT_ID} -f only_allow_merge_if_pipeline_succeeds=true`,
+     ]);
+   });
+ 
+   it('reports enabled=false when the server response does not echo the setting', async () => {
+     const { provider } = setup([
+       {
+-        match: `-X PATCH projects/${PROJECT_ID} `,
++        match: `-X PUT projects/${PROJECT_ID} `,
+         stdout: JSON.stringify({ id: 1278, path_with_namespace: 'group/subgroup/project' }),
+       },
+     ]);

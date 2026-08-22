@@ -1,0 +1,202 @@
+===== ISSUE 213 =====
+title:	test: lock the zero-Evidence-cast invariant across the test tree
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	213
+--
+## Why
+The review round asked to zero out remaining `as Evidence<never>` / `as unknown as Evidence` casts in the CLI test tree. Verified against main (1ac551b7) via grep and `git log -S`: the last occurrence was already removed by the #178 delivery (c43fb5dc), so the invariant holds today but nothing pins it — a future test could silently reintroduce port-signature-hiding casts.
+
+## Scope
+Add a guard test that sweeps the test tree and fails if any `as Evidence<never>` or `as unknown as Evidence` evasion form reappears.
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 214 =====
+title:	test: pin the human rendering's verbatim CODE_INFO pass-through
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	214
+--
+## Why
+The review round reported wording drift between human output and the i18n catalog / CODE_INFO. Verified against main (1ac551b7): the cited drift does not exist — #190 already unified human rendering through humanBuilder with catalog text passing through verbatim, and verdictFailureLine renders CODE_INFO code/fix unchanged. The real gap is test coverage: no byte-level anti-drift lock pins that pass-through, and several human branches are untested.
+
+## Scope
+Anti-drift byte tests pinning the accept/finish gate-failure human lines to CODE_INFO verbatim (factual codes such as pr_draft and checks_failed), plus human-branch tests for the currently unlocked paths: the unexpectedOutcome (runMain catch) path, checks_failed, and closing_refs_incomplete.
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 215 =====
+title:	refactor: sanitize warning and gate-failure output lines like error lines
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	215
+--
+## Why
+refactor: sanitize warning and gate-failure output lines like error lines
+
+## Scope
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 216 =====
+title:	refactor: replace DeliveryBinding cast in createOrAdoptIssues with a runtime guard
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	216
+--
+## Why
+refactor: replace DeliveryBinding cast in createOrAdoptIssues with a runtime guard
+
+## Scope
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 217 =====
+title:	docs: document the exit 0 exception for status without a record
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	217
+--
+## Why
+docs: document the exit 0 exception for status without a record
+
+## Scope
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 218 =====
+title:	test: lock the exit 1 rejected envelope in the contract tests
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	218
+--
+## Why
+test: lock the exit 1 rejected envelope in the contract tests
+
+## Scope
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 219 =====
+title:	refactor: rename MockGitHubProvider to the platform-neutral MockForgeProvider
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	219
+--
+## Why
+refactor: rename MockGitHubProvider to the platform-neutral MockForgeProvider
+
+## Scope
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
+===== ISSUE 220 =====
+title:	test: add direct unit tests for init-platform and init-validation modules
+state:	CLOSED
+author:	LeXwDeX (Lex)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	220
+--
+## Why
+test: add direct unit tests for init-platform and init-validation modules
+
+## Scope
+
+## Acceptance
+The delivery pull request closes this issue; `specgit finish` must exit 0.
+
