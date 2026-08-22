@@ -208,6 +208,10 @@ export function createProgram(
     )
     .argument('[titles...]', 'Issue titles to create (quoted) or existing issue numbers to reuse')
     .option('--json', 'Output as JSON')
+    .option(
+      '--delivery <slug>',
+      'Explicit semantic delivery name for the branch (kebab-case ASCII); required when the title yields no slug'
+    )
     .action(
       wrap('issue', runIssue as CommandRun, (rest) => ({
         titles: (rest[0] as string[]) ?? [],
