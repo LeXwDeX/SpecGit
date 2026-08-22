@@ -133,7 +133,9 @@ export function buildInitOutcome(args: {
       );
   }
   builder
-    .line(text.initCreatedHook(harness.workflow))
+    // #269: a skipped workflow write (GitLab platform mode) claims
+    // nothing — the gitlab_harness_pending warning is the only statement.
+    .append(harness.workflow ? [text.initCreatedHook(harness.workflow)] : [])
     .append(harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)))
     .append(harness.gitHook ? [text.initGitHook(harness.gitHook)] : [])
     .append(harness.prompts.map((filename) => text.initManagedRefreshed(filename)))

@@ -51,7 +51,12 @@ export class HarnessWriteError extends Error {
 }
 
 export interface HarnessWriteResult {
-  workflow: string;
+  /**
+   * The written workflow's repo-relative path, or null when the write
+   * was skipped (#269: GitLab platform mode). Output must equal real
+   * side effects — a skipped write reports no path.
+   */
+  workflow: string | null;
   prompts: string[];
   hooks: string[];
   gitHook: string | null;
@@ -149,6 +154,7 @@ interface PlannedWrite {
  */
 interface HarnessPlan {
   planned: PlannedWrite[];
+  workflowWritten: boolean;
   prompts: string[];
   hooksJsonWritten: boolean;
   gitHook: string | null;
@@ -162,7 +168,8 @@ async function planHarnessWrites(root: string, options: HarnessWriteOptions): Pr
   const planned: PlannedWrite[] = [];
   const prompts: string[] = [];
 
-  if (options.workflowYaml !== null) {
+  const workflowWritten = options.workflowYaml !== null;
+  if (workflowWritten) {
     planned.push({
       target: path.join(root, ...HARNESS_WORKFLOW_SEGMENTS),
       content: options.workflowYaml ?? harnessWorkflowYaml(),
@@ -206,7 +213,7 @@ async function planHarnessWrites(root: string, options: HarnessWriteOptions): Pr
     gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
   }
 
-  return { planned, prompts, hooksJsonWritten, gitHook, warnings };
+  return { planned, workflowWritten, prompts, hooksJsonWritten, gitHook, warnings };
 }
 
 export async function writeHarnessAssets(
@@ -243,7 +250,7 @@ export async function writeHarnessAssets(
 
   const hooks = [...(plan.hooksJsonWritten ? [HOOKS_JSON_PATH] : []), GUARD_HOOK_PATH];
   return {
-    workflow: HARNESS_WORKFLOW_PATH,
+    workflow: plan.workflowWritten ? HARNESS_WORKFLOW_PATH : null,
     prompts: plan.prompts,
     hooks,
     gitHook: plan.gitHook,

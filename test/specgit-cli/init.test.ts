@@ -211,6 +211,25 @@ describe('specgit init', () => {
     expect(read(AGENTS_ABS(root))).toContain(BLOCK_START_MARKER);
   });
 
+  it('--gitlab-host never claims to create the workflow it skips (#269)', async () => {
+    // The human summary must equal the real side effects: no "Created
+    // .github/workflows/specgit-accept.yml" line when nothing was
+    // written; the gitlab_harness_pending warning is the only statement.
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(stdoutText(t.io)).not.toContain('specgit-accept.yml');
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+  });
+
   it('--gitlab-host validates the host against the origin (bare hostname, must match)', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },

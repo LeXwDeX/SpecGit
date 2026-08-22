@@ -78,6 +78,15 @@ describe('writeHarnessAssets placement', () => {
     expect(treeBytes(root)).toEqual(first);
   });
 
+  it('reports no workflow when the workflow write is skipped (#269)', async () => {
+    // GitLab platform mode passes workflowYaml: null — nothing is written
+    // under .github, so the result must not name a workflow path: the
+    // reported side effects must equal the real side effects.
+    const result = await writeHarnessAssets(root, { ...skipGitHook, workflowYaml: null });
+    expect(result.workflow).toBeNull();
+    expect(fs.existsSync(path.join(root, '.github'))).toBe(false);
+  });
+
   it('a commit-phase failure reports phase `commit` and rolls back the tree', async () => {
     fs.writeFileSync(path.join(root, 'AGENTS.md'), '# trivial notes\n');
     // `.opencode` as a regular file: mkdir inside it fails mid-commit.
