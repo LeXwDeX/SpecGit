@@ -1,6 +1,15 @@
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import { defaultSpawn, sanitizeApiText, type SpawnFn, type SpawnOptions } from '../cli-spawn.js';
+// The shared CLI-evidence transport (#274): pagination to exhaustion,
+// JSON decoding, and the spawn-failure taxonomy exist once there.
+import {
+  classifySpawnError,
+  decodeJsonResponse,
+  evidenceTruncated,
+  paginateToExhaustion,
+  type CliRunOutcome,
+} from '../cli-evidence-transport.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
@@ -131,9 +140,7 @@ export interface GlabProviderOptions {
   requiredChecks?: readonly string[];
 }
 
-type RunOutcome =
-  | { ok: true; value: { stdout: string; stderr: string } }
-  | { ok: false; code: string; message: string; fix?: string; exitCode?: number };
+type RunOutcome = CliRunOutcome;
 
 /**
  * The GitLab transport: the authenticated `glab` CLI (#114). Implements
@@ -396,8 +403,7 @@ export class GlabProvider implements ForgeProvider {
       return fail('glab_transport', 'GitLab returned an unexpected pipeline-list payload.');
     }
     if (listEv.value.length > PIPELINE_FETCH_LIMIT) {
-      return fail(
-        'evidence_truncated',
+      return evidenceTruncated(
         `pipeline-list returned more than the ${PIPELINE_FETCH_LIMIT} most recent pipelines for this sha; the job evidence would be incomplete.`
       );
     }
@@ -847,32 +853,23 @@ export class GlabProvider implements ForgeProvider {
     buildEndpoint: (page: number) => string,
     what: string
   ): Promise<Evidence<unknown[]>> {
-    const items: unknown[] = [];
-    for (let page = 1; page <= MAX_LIST_PAGES; page += 1) {
-      const result = await this.runApi(buildEndpoint(page));
-      if (!result.ok) {
-        return result;
+    return paginateToExhaustion(
+      { pageSize: LIST_PAGE_SIZE, maxPages: MAX_LIST_PAGES, what },
+      async (page) => {
+        const result = await this.runApi(buildEndpoint(page));
+        if (!result.ok) {
+          return result;
+        }
+        if (!Array.isArray(result.value)) {
+          return fail('glab_transport', `GitLab returned an unexpected ${what} payload.`);
+        }
+        return ok(result.value);
       }
-      if (!Array.isArray(result.value)) {
-        return fail('glab_transport', `GitLab returned an unexpected ${what} payload.`);
-      }
-      items.push(...result.value);
-      if (result.value.length < LIST_PAGE_SIZE) {
-        return ok(items);
-      }
-    }
-    return fail(
-      'evidence_truncated',
-      `${what} pagination hit its cap (${MAX_LIST_PAGES * LIST_PAGE_SIZE} items); the list may be truncated.`
     );
   }
 
   private parseJsonOutput(stdout: string): Evidence<unknown> {
-    try {
-      return ok(JSON.parse(stdout));
-    } catch {
-      return fail('glab_transport', 'GitLab returned a response that is not valid JSON.');
-    }
+    return decodeJsonResponse(stdout, 'glab_transport', 'GitLab');
   }
 
   private asFailure<T>(
@@ -932,7 +929,7 @@ export class GlabProvider implements ForgeProvider {
     return result;
   }
 
-  private async runGlab(args: string[], stdin?: string): Promise<RunOutcome> {
+  private async runGlab(args: string[], stdin?: string): Promise<CliRunOutcome> {
     try {
       const { stdout, stderr } = await this.spawn(this.resolveGlabCommand(), args, {
         timeoutMs: this.timeoutMs,
@@ -942,67 +939,16 @@ export class GlabProvider implements ForgeProvider {
       } satisfies SpawnOptions);
       return { ok: true, value: { stdout, stderr } };
     } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        (error as NodeJS.ErrnoException).code === 'ENOENT'
-      ) {
-        return {
-          ok: false,
-          code: 'glab_missing',
-          message: 'GitLab CLI (glab) is not installed or not on PATH.',
-          fix: 'Install glab from https://gitlab.com/gitlab-org/cli and run "glab auth login --hostname <host>".',
-        };
-      }
-
-      const err = error as {
-        killed?: boolean;
-        signal?: NodeJS.Signals;
-        code?: unknown;
-        stderr?: unknown;
-        message?: unknown;
-      };
-
-      // Environment contract: a timeout is glab_transport, exit 3 — with
-      // the attributed fix naming the knob (SPECGIT_GLAB_TIMEOUT_MS).
-      if (err.killed || err.signal === 'SIGTERM') {
-        return {
-          ok: false,
-          code: 'glab_transport',
-          message: `GitLab CLI timed out after ${this.timeoutMs} ms.`,
-          fix: TIMEOUT_FIX,
-        };
-      }
-
-      if (err.code === 'ERR_CHILD_PROCESS_STDOUT_MAXBUFFER') {
-        return {
-          ok: false,
-          code: 'glab_transport',
-          message: 'GitLab CLI returned more output than the response size cap allows.',
-        };
-      }
-
-      const stderr = typeof err.stderr === 'string' ? err.stderr : '';
-      const exitCode = typeof err.code === 'number' ? err.code : undefined;
-      if (NOT_FOUND_PATTERN.test(stderr)) {
-        return {
-          ok: false,
-          code: 'not_found',
-          message: sanitizeApiText(stderr || 'Not found.'),
-          exitCode,
-        };
-      }
-
-      const detail = sanitizeApiText(
-        stderr || (typeof err.message === 'string' ? err.message : String(error))
-      );
-      return {
-        ok: false,
-        code: 'glab_transport',
-        message: detail ? `GitLab CLI failed: ${detail}` : 'GitLab CLI failed.',
-        exitCode,
-      };
+      return classifySpawnError(error, {
+        platformWord: 'GitLab',
+        codes: { missing: 'glab_missing', transport: 'glab_transport' },
+        missingMessage: 'GitLab CLI (glab) is not installed or not on PATH.',
+        missingFix:
+          'Install glab from https://gitlab.com/gitlab-org/cli and run "glab auth login --hostname <host>".',
+        timeoutFix: TIMEOUT_FIX,
+        notFoundPattern: NOT_FOUND_PATTERN,
+        timeoutMs: this.timeoutMs,
+      });
     }
   }
 }

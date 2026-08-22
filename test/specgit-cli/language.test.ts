@@ -28,7 +28,7 @@ import {
   BLOCK_END_MARKER,
   BLOCK_START_MARKER,
   managedPromptBlock,
-} from '../../src/cli/harness-assets.js';
+} from '../../src/cli/harness-content.js';
 import { runCliWith } from '../../src/cli/index.js';
 import {
   makeCtx,

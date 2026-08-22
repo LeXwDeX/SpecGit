@@ -6,14 +6,16 @@ import {
   ACCEPTANCE_CHECK_NAME,
   BLOCK_END_MARKER,
   BLOCK_START_MARKER,
-  GUARD_SCRIPT_PATH,
-  HARNESS_WORKFLOW_PATH,
   HOOKS_JSON_PATH,
   managedPromptBlock,
   mergeGitPrePush,
   mergeHooksJson,
+} from '../../src/cli/harness-content.js';
+import {
+  GUARD_SCRIPT_PATH,
+  HARNESS_WORKFLOW_PATH,
   writeHarnessAssets,
-} from '../../src/cli/harness-assets.js';
+} from '../../src/cli/harness-placement.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const WORKFLOW_ABS = (root: string) => path.join(root, ...HARNESS_WORKFLOW_PATH.split('/'));
@@ -331,7 +333,7 @@ describe('writeHarnessAssets', () => {
 
 describe('managed prompt block markers', () => {
   it('the block still round-trips through injectManagedBlock unchanged', async () => {
-    const { injectManagedBlock } = await import('../../src/cli/harness-assets.js');
+    const { injectManagedBlock } = await import('../../src/cli/harness-content.js');
     const block = managedPromptBlock();
     expect(block.startsWith(BLOCK_START_MARKER)).toBe(true);
     expect(block.endsWith(BLOCK_END_MARKER)).toBe(true);

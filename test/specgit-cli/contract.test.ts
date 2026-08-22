@@ -283,7 +283,7 @@ describe('CLI contract: gate surface truth (#69)', () => {
 
   it('the managed AGENTS.md block covers the whole ten-command surface', async () => {
     const { COMMAND_NAMES } = await import('../../src/cli/index.js');
-    const { managedPromptBlock } = await import('../../src/cli/harness-assets.js');
+    const { managedPromptBlock } = await import('../../src/cli/harness-content.js');
     const block = managedPromptBlock();
     for (const name of COMMAND_NAMES) {
       expect(block, `managed block must mention \`specgit ${name}\``).toContain(`specgit ${name}`);

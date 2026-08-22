@@ -173,7 +173,12 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.gitPort.checkoutCalls).toEqual(['feat/11-strict-delivery-harness']);
     expect(t.gitPort.commitCalls.length).toBe(1);
     expect(t.gitPort.commitCalls[0].path).toBe('.specgit.yaml');
-    expect(t.gitPort.pushCalls).toEqual(['feat/11-strict-delivery-harness']);
+    // #270: the branch is pushed before the draft PR is created, and the
+    // record commit rides a second push to the remote.
+    expect(t.gitPort.pushCalls).toEqual([
+      'feat/11-strict-delivery-harness',
+      'feat/11-strict-delivery-harness',
+    ]);
 
     // Traceability edge issue→branch (#160): every bound issue gets the
     // delivery branch and PR as a comment, exactly once per binding.
@@ -507,7 +512,7 @@ describe('specgit issue: idempotent resume', () => {
     const outcome = await runIssue({ titles: [] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdPrs.length).toBe(0);
-    expect(t.gitPort.pushCalls).toEqual(['feat/11-x']);
+    expect(t.gitPort.pushCalls).toEqual(['feat/11-x', 'feat/11-x']);
   });
 });
 
@@ -546,7 +551,10 @@ describe('specgit issue: fail-closed write steps', () => {
     expect(outcome.errors?.[0]?.code).toBe('git_commit_failed');
   });
 
-  it('push failure exits 3 after the record is written (resumable)', async () => {
+  it('push failure exits 3 before PR creation (resumable, #270)', async () => {
+    // The branch push now precedes PR/MR creation: a push failure leaves
+    // no pull request behind — the record keeps its issues and the next
+    // run pushes, then retries the PR step.
     const t = issueCtx({
       facts: { branch: 'feat/11-x' },
       record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
@@ -561,7 +569,62 @@ describe('specgit issue: fail-closed write steps', () => {
     const outcome = await runIssue({ titles: [] }, t.ctx);
     expect(outcome.exit).toBe(3);
     expect(outcome.errors?.[0]?.code).toBe('git_push_failed');
-    expect(t.recordPort.recordWrites.at(-1)?.record?.pr).toBe(42);
+    expect(t.harness.createdPrs.length).toBe(0);
+  });
+
+  it('pushes the branch before creating the draft PR (#270)', async () => {
+    const order: string[] = [];
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        pushBranch: (branch) => {
+          order.push(`push:${branch}`);
+          return { ok: true as const, value: { pushed: true } };
+        },
+      },
+      gh: {
+        createDraftPr: (_repo, head) => {
+          order.push(`createDraftPr:${head}`);
+          return {
+            ok: true as const,
+            value: { number: 42, url: 'https://github.com/LeXwDeX/SpecGit/pull/42' },
+          };
+        },
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(order).toEqual([
+      'push:feat/11-x',
+      'createDraftPr:feat/11-x',
+      'push:feat/11-x',
+    ]);
+  });
+
+  it('a run whose push failed heals on re-run: push first, then the PR (#270)', async () => {
+    let pushShouldFail = true;
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        pushBranch: () =>
+          pushShouldFail
+            ? { ok: false as const, code: 'git_push_failed', message: 'transient push failure' }
+            : { ok: true as const, value: { pushed: true } },
+      },
+    });
+    const first = await runIssue({ titles: [] }, t.ctx);
+    expect(first.exit).toBe(3);
+    expect(t.harness.createdPrs.length).toBe(0);
+
+    pushShouldFail = false;
+    const second = await runIssue({ titles: [] }, t.ctx);
+    expect(second.exit).toBe(0);
+    // The healing run pushed the unpushed branch before creating the PR.
+    expect(t.harness.createdPrs.length).toBe(1);
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-x');
+    expect(second.record).toMatchObject({ pr: 42 });
   });
 
   it('comment failure fails closed before record.pr is written (re-runnable)', async () => {

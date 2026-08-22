@@ -1484,3 +1484,74 @@ describe('merged-delivery lineage against real git (issue #64)', () => {
     expect(context.failures.map((f) => f.code)).toEqual(['merged_lineage_unavailable']);
   });
 });
+
+describe('evidence-supplied diagnostics reach the envelope (#277)', () => {
+  // The machine contract is untouched in every case: the code and exit
+  // code stay the registry's; only the human prose sharpens from the
+  // generic CODE_INFO line to the account the failing call computed.
+
+  it('the record gate reports the path the reader missed', async () => {
+    const message = 'No delivery binding found at /repo/.specgit.yaml.';
+    const verdict = await evaluate(input({ record: fail('record_missing', message) }));
+    expect(verdict.exitCode).toBe(3);
+    const record = gate(verdict, 'record');
+    expect(record.failures[0].code).toBe('record_missing');
+    expect(record.failures[0].message).toBe(message);
+    // No evidence fix: the registry fallback still carries the repair step.
+    expect(record.failures[0].fix).toBe('Run "specgit bind" to create the delivery binding.');
+  });
+
+  it('the provider gate reports the preflight account', async () => {
+    const message = 'gh: To get started with gh, run "gh auth login".';
+    const verdict = await evaluate(
+      input({
+        gh: new MockForgeProvider({ preflight: fail('gh_unauthenticated', message) }),
+      })
+    );
+    const provider = gate(verdict, 'provider');
+    expect(provider.failures[0].code).toBe('gh_unauthenticated');
+    expect(provider.failures[0].message).toBe(message);
+  });
+
+  it('the issues gate reports the provider failure it hit', async () => {
+    const message = 'GitHub CLI failed: rate limit exceeded';
+    const verdict = await evaluate(
+      input({
+        gh: new MockForgeProvider({
+          defaultIssue: () => fail('gh_transport', message),
+        }),
+      })
+    );
+    const issues = gate(verdict, 'issues');
+    expect(issues.failures[0].code).toBe('gh_transport');
+    expect(issues.failures[0].message).toBe(message);
+  });
+
+  it('the sequence gate reports the open-issue scan failure', async () => {
+    const message = 'Open-issue pagination hit its cap (1000 items); the list may be truncated.';
+    const verdict = await evaluate(
+      input({
+        policy: ok({ ...POLICY, ordered_issues: true }),
+        gh: new MockForgeProvider({ openIssueNumbers: fail('evidence_truncated', message) }),
+      })
+    );
+    const sequence = gate(verdict, 'sequence');
+    expect(sequence.failures[0].code).toBe('evidence_truncated');
+    expect(sequence.failures[0].message).toBe(message);
+  });
+
+  it('the checks gate reports the check-run fetch failure', async () => {
+    const message = 'GitHub CLI failed: Bad Gateway (HTTP 502)';
+    const verdict = await evaluate(
+      input({
+        gh: new MockForgeProvider({
+          pr: ok(makePrFact({ headSha: HEAD })),
+          checkRuns: fail('gh_transport', message),
+        }),
+      })
+    );
+    const checks = gate(verdict, 'checks');
+    expect(checks.failures[0].code).toBe('gh_transport');
+    expect(checks.failures[0].message).toBe(message);
+  });
+});

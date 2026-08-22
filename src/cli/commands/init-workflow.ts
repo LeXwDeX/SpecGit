@@ -12,7 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { harnessWorkflowYaml } from '../harness-assets.js';
+import { harnessWorkflowYaml } from '../harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../external-harness.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { CommandContext } from '../types.js';
