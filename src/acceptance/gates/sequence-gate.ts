@@ -12,7 +12,7 @@ export async function sequenceGate(ctx: GateContext): Promise<GateFailure[]> {
   }
   const open = await ctx.input.gh!.getOpenIssueNumbers(ctx.repoRef!);
   if (!open.ok) {
-    return [makeFailure(open.code)];
+    return [makeFailure(open)];
   }
   const first = Math.min(...ctx.binding!.issues);
   const earlier = open.value.filter((n) => n < first).sort((a, b) => a - b);

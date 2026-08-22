@@ -9,7 +9,7 @@ import { makeFailure, type GateContext, type GateFailure } from './types.js';
 export async function providerGate(ctx: GateContext): Promise<GateFailure[]> {
   const preflight = await ctx.input.gh!.preflight();
   if (!preflight.ok) {
-    return [makeFailure(preflight.code)];
+    return [makeFailure(preflight)];
   }
   // Advisory verified-window flag from the GitLab preflight (#241):
   // a version outside the verified window warns but never blocks —

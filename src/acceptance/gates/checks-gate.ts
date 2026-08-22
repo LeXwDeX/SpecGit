@@ -31,7 +31,7 @@ function isLaterRun(a: CheckRunInfo, b: CheckRunInfo): boolean {
 export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
   const runs = await ctx.input.gh!.getCheckRuns(ctx.repoRef!, ctx.prFact!.headSha);
   if (!runs.ok) {
-    return [makeFailure(runs.code)];
+    return [makeFailure(runs)];
   }
   const failures: GateFailure[] = [];
   for (const requiredName of ctx.policy!.required_checks) {

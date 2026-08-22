@@ -4,7 +4,7 @@ import { makeFailure, type GateContext, type GateFailure } from './types.js';
 export function policyGate(ctx: GateContext): GateFailure[] {
   const { policy } = ctx.input;
   if (!policy.ok) {
-    return [makeFailure(policy.code)];
+    return [makeFailure(policy)];
   }
   return [];
 }

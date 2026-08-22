@@ -30,7 +30,12 @@ export async function prGate(ctx: GateContext): Promise<GateFailure[]> {
 
   const pr = await ctx.input.gh!.getPr(ctx.repoRef!, queryRef);
   if (!pr.ok) {
-    return [makeFailure(pr.code === 'pr_not_found' ? 'pr_not_found' : pr.code, { pr: bound })];
+    // pr_not_found keeps the registry prose (the bound-ref detail carries
+    // the specifics); any other failure forwards the provider's account.
+    if (pr.code === 'pr_not_found') {
+      return [makeFailure('pr_not_found', { pr: bound })];
+    }
+    return [makeFailure(pr, { pr: bound })];
   }
   ctx.prFact = pr.value;
   const fact = pr.value;

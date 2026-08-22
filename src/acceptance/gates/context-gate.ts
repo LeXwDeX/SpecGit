@@ -15,7 +15,7 @@ function repoRefForMergedCheck(originUrl: string | null, gitlabHost?: string): R
 export async function contextGate(ctx: GateContext): Promise<GateFailure[]> {
   const { input, binding } = ctx;
   if (!input.root.ok) {
-    return [makeFailure(input.root.code)];
+    return [makeFailure(input.root)];
   }
   const facts = await input.git.facts(input.root.value);
   ctx.facts = facts;
@@ -65,12 +65,9 @@ export async function contextGate(ctx: GateContext): Promise<GateFailure[]> {
         }
         const containment = await input.git.headContains(input.root.value, mergeCommitSha);
         if (!containment.ok) {
-          return [
-            makeFailure(containment.code, {
-              mergeCommitSha,
-              reason: containment.message,
-            }),
-          ];
+          // #277: the containment Evidence's own message carries the
+          // reason; the detail keeps the anchor for attribution.
+          return [makeFailure(containment, { mergeCommitSha })];
         }
         if (!containment.value.contained) {
           return [
