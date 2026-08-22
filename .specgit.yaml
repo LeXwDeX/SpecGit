@@ -1,15 +1,7 @@
 version: 1
-delivery: architecture-deepening
+delivery: live-delivery-loop
 context:
   kind: branch
-  branch: feat/274-architecture-deepening
+  branch: chore/282-live-delivery-loop
 issues:
-  - 274
-  - 275
-  - 276
-  - 277
-  - 278
-  - 279
-  - 280
-  - 270
-pr: 281
+  - 282
