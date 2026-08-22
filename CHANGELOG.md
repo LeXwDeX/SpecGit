@@ -1,5 +1,18 @@
 # specgit
 
+## 1.4.1
+
+### Patch Changes
+
+- [#267](https://github.com/LeXwDeX/SpecGit/pull/267) [`75d2ece`](https://github.com/LeXwDeX/SpecGit/commit/75d2ece43989554ac34c3f0b58a99e6dec01d5c4) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Align the contract docs with the shipped delivery-name behaviour: the
+  product-contract bullet in AGENTS.md, the language section of
+  `docs/cli.md` (which contradicted its own updated command section), and
+  the v1 baseline now all state that a title yielding no ASCII slug never
+  falls back to `issue<N>` — bootstrap asks for a kebab-case delivery
+  name, and scripted sessions pass `--delivery <slug>`
+  ([#263](https://github.com/LeXwDeX/SpecGit/issues/263)). Documentation
+  only — no behaviour or machine-contract change.
+
 ## 1.4.0
 
 ### Minor Changes
