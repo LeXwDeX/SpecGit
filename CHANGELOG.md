@@ -1,5 +1,15 @@
 # specgit
 
+## 1.3.2
+
+### Patch Changes
+
+- [#255](https://github.com/LeXwDeX/SpecGit/pull/255) [`9109351`](https://github.com/LeXwDeX/SpecGit/commit/91093514ba8d5266715709b3feaf18840b3b1a39) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Fix `specgit issue` adoption on GitLab CE: CE issue notes carry no
+  `web_url`, and the adapter rejected exactly that normal payload
+  ([#252](https://github.com/LeXwDeX/SpecGit/issues/252)). The note deep-link is now derived deterministically from the
+  returned id; only a payload carrying neither `web_url` nor an id fails
+  closed. Found and verified against a live 19.3.0 CE instance.
+
 ## 1.3.1
 
 ### Patch Changes
