@@ -1,5 +1,11 @@
 # specgit
 
+## 1.4.3
+
+### Patch Changes
+
+- [#290](https://github.com/LeXwDeX/SpecGit/pull/290) [`b801ffd`](https://github.com/LeXwDeX/SpecGit/commit/b801ffd0797f386234ef6589ce4c28ba8cf37f37) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Fix the release watchdog's evidence source and make GitLab diagnostics honest: the version-PR watchdog now polls workflow runs instead of the per-commit check-run list (approval-waiting runs never create check-runs, so the alarm could not fire — [#265](https://github.com/LeXwDeX/SpecGit/issues/265)), and init on a declared GitLab origin no longer claims to create the GitHub Actions workflow it skips, with checks diagnostics GitLab-shaped there ([#269](https://github.com/LeXwDeX/SpecGit/issues/269)).
+
 ## 1.4.2
 
 ### Patch Changes
