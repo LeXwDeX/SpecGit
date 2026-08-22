@@ -21,11 +21,12 @@ import type {
   PrCreation,
   PrFact,
   PrSummary,
+  PreflightFact,
   RepoAutomergeFact,
 } from '../../../src/github/port.js';
 
 export interface MockForgeFixtures {
-  preflight?: Evidence<{ authenticated: boolean; gitlabVersionUnverified?: boolean }>;
+  preflight?: Evidence<PreflightFact>;
   issues?: Record<number, Evidence<IssueFact>>;
   defaultIssue?: (n: number) => Evidence<IssueFact>;
   pr?: Evidence<PrFact>;
@@ -51,7 +52,7 @@ export class MockForgeProvider implements ForgeProvider {
 
   constructor(private readonly fixtures: MockForgeFixtures = {}) {}
 
-  async preflight(): Promise<Evidence<{ authenticated: boolean; gitlabVersionUnverified?: boolean }>> {
+  async preflight(): Promise<Evidence<PreflightFact>> {
     this.calls.push('preflight');
     return this.fixtures.preflight ?? ok({ authenticated: true });
   }

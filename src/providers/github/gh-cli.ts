@@ -18,6 +18,7 @@ import type {
   PrCreation,
   PrFact,
   PrSummary,
+  PreflightFact,
   RepoAutomergeFact,
 } from '../../github/port.js';
 
@@ -114,7 +115,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
     );
   }
 
-  async preflight(): Promise<Evidence<{ authenticated: boolean }>> {
+  async preflight(): Promise<Evidence<PreflightFact>> {
     const version = await this.runGh(['--version']);
     if (!version.ok) {
       if (version.code === 'gh_missing') {
