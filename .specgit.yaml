@@ -1,8 +1,8 @@
 version: 1
-delivery: v141-changeset
+delivery: gitlab-mirror-rule
 context:
   kind: branch
-  branch: feat/266-v141-changeset
+  branch: feat/271-gitlab-mirror-rule
 issues:
-  - 266
-pr: 267
+  - 271
+pr: 272
