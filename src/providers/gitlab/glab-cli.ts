@@ -185,6 +185,18 @@ export class GlabProvider implements ForgeProvider {
     return `${encodeURIComponent(repo.owner)}%2F${encodeURIComponent(repo.repo)}`;
   }
 
+  /**
+   * The canonical note deep-link (#252): CE note objects carry no
+   * `web_url` (ledger row 6), so the URL is assembled from returned
+   * facts and the known host. Nested-group slashes stay literal —
+   * this is a browser link, not an API `:id` (row 4 encodes; here
+   * encoding would break the path). Never scraped, never guessed.
+   */
+  private noteDeepLink(repo: RepoRef, issue: number, noteId: number): string {
+    const host = this.hostname ?? GITLAB_SAAS_HOST;
+    return `https://${host}/${repo.owner}/${repo.repo}/-/issues/${issue}#note_${noteId}`;
+  }
+
   private isSelfManaged(): boolean {
     if (this.hostname === undefined) return false;
     return this.hostname.split(':')[0] !== GITLAB_SAAS_HOST;
@@ -498,10 +510,8 @@ export class GlabProvider implements ForgeProvider {
     }
     if (typeof note.id === 'number') {
       // CE notes carry no web_url (live probe, note 88688 on 19.3.0
-      // CE; #252): derive the canonical deep-link deterministically
-      // from returned facts — never scraped, never guessed.
-      const host = this.hostname ?? GITLAB_SAAS_HOST;
-      return ok({ url: `https://${host}/${repo.owner}/${repo.repo}/-/issues/${issue}#note_${note.id}` });
+      // CE; #252): derive the canonical deep-link from returned facts.
+      return ok({ url: this.noteDeepLink(repo, issue, note.id) });
     }
     return fail('glab_transport', 'GitLab returned an unexpected issue-note payload.');
   }

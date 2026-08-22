@@ -1148,6 +1148,30 @@ describe('GlabProvider#addIssueComment', () => {
     });
   });
 
+  it('keeps a ported self-managed host literal in the derived deep-link (#252)', async () => {
+    const fake = createFakeGlab(tempDir, [
+      { match: '-X POST projects/.*/issues/8/notes ', stdout: JSON.stringify({ id: 7 }) },
+    ]);
+    const provider = new GlabProvider({ hostname: 'git.example.com:8443', env: fake.env() });
+    const result = await provider.addIssueComment(REPO, 8, 'B');
+    expect(result).toEqual({
+      ok: true,
+      value: { url: 'https://git.example.com:8443/group/subgroup/project/-/issues/8#note_7' },
+    });
+  });
+
+  it('falls back to gitlab.com in the derived deep-link when no hostname is scoped (#252)', async () => {
+    const fake = createFakeGlab(tempDir, [
+      { match: '-X POST projects/.*/issues/8/notes', stdout: JSON.stringify({ id: 9 }) },
+    ]);
+    const provider = new GlabProvider({ env: fake.env() });
+    const result = await provider.addIssueComment(REPO, 8, 'B');
+    expect(result).toEqual({
+      ok: true,
+      value: { url: 'https://gitlab.com/group/subgroup/project/-/issues/8#note_9' },
+    });
+  });
+
   it('fails closed with glab_transport when the payload has neither web_url nor id', async () => {
     const { provider } = setup([
       { match: '-X POST projects/.*/issues/8/notes ', stdout: JSON.stringify({ body: 'x' }) },
