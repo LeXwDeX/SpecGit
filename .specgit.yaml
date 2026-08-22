@@ -1,8 +1,7 @@
 version: 1
 delivery: never-invent-issue
 context:
-  kind: worktree
-  label: specgit-wt-246
+  kind: branch
   branch: feat/246-never-invent-issue
 issues:
   - 246
