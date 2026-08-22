@@ -1381,6 +1381,15 @@ describe('GlabProvider#createDraftPr', () => {
       return repoDir;
     }
 
+    // CI runners carry no global git identity; commit-tree needs one.
+    const COMMIT_IDENTITY = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'specgit-test',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'specgit-test',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    };
+
     it('fails closed when the source branch was never pushed', async () => {
       const repoDir = await bareRemote();
       const { provider } = setup([MR_RULE], {}, { repoDir });
@@ -1394,7 +1403,11 @@ describe('GlabProvider#createDraftPr', () => {
     it('creates the MR once the branch exists on the remote', async () => {
       const repoDir = await bareRemote();
       const { stdout: emptyTree } = await execFileAsync('git', ['--git-dir', repoDir, 'hash-object', '-t', 'tree', '/dev/null']);
-      const { stdout: commitSha } = await execFileAsync('git', ['--git-dir', repoDir, 'commit-tree', emptyTree.trim(), '-m', 'seed']);
+      const { stdout: commitSha } = await execFileAsync(
+        'git',
+        ['--git-dir', repoDir, 'commit-tree', emptyTree.trim(), '-m', 'seed'],
+        { env: COMMIT_IDENTITY }
+      );
       await execFileAsync('git', ['--git-dir', repoDir, 'update-ref', 'refs/heads/feat/7-pushed', commitSha.trim()]);
       const { provider } = setup([MR_RULE], {}, { repoDir });
       const result = await provider.createDraftPr(REPO, 'feat/7-pushed', 'main', 'T', 'B');
