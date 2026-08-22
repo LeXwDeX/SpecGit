@@ -691,6 +691,17 @@ export class GhCliGitHubProvider implements ForgeProvider {
       if (result.code === 'not_found') {
         return fail('gh_transport', `GitHub lookup failed for ${sanitizeApiText(endpoint)}.`);
       }
+      // The behavioural contract (#275): every read path classifies an
+      // authentication failure the same way the create and admin paths
+      // already do — an expired token mid-evidence-gathering is
+      // `gh_unauthenticated`, never a generic transport failure.
+      if (AUTH_FAILURE_PATTERN.test(result.message)) {
+        return fail(
+          'gh_unauthenticated',
+          'GitHub CLI is not authenticated.',
+          'Run "gh auth login" to authenticate.'
+        );
+      }
       return fail('gh_transport', result.message, result.fix);
     }
 
