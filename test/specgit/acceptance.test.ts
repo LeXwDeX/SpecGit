@@ -239,7 +239,7 @@ describe('acceptance evaluator', () => {
     // An unverified self-managed GitLab version warns; evaluation
     // proceeds against the live evidence and still accepts.
     const gh = new MockForgeProvider({
-      preflight: ok({ authenticated: true, gitlabVersionUnverified: true }),
+      preflight: ok({ authenticated: true, versionUnverified: true }),
       pr: ok(makePrFact({ headSha: HEAD })),
       checkRuns: ok([makeCheckRun('All checks passed')]),
     });
