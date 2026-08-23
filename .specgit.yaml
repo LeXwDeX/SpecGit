@@ -1,0 +1,8 @@
+version: 1
+delivery: record-carry-commit
+context:
+  kind: branch
+  branch: feat/299-record-carry-commit
+issues:
+  - 299
+pr: 303
