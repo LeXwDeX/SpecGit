@@ -151,7 +151,11 @@ describe('LocalGitAdapter', () => {
     it('force-stages ignored authoritative files, commits exactly them, and is idempotent', async () => {
       // The #292 shape: .gitignore shields the delivery assets, so a
       // plain `git add` would refuse them — the binding commit must
-      // carry them into git anyway, on a real repo.
+      // carry them into git anyway, on a real repo. Identity is set
+      // LOCAL to the repo: the adapter spawns git with the process env,
+      // where CI runners carry no global identity.
+      git(root, ['config', 'user.name', 'SpecGit Tester'], env);
+      git(root, ['config', 'user.email', 'tester@example.com'], env);
       fs.writeFileSync(path.join(root, '.gitignore'), ['/.specgit.yaml', '/spec_git/'].join('\n') + '\n');
       fs.writeFileSync(path.join(root, 'readme.txt'), 'base\n');
       git(root, ['add', '.gitignore', 'readme.txt'], env);
