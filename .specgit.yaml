@@ -1,9 +1,7 @@
 version: 1
-delivery: docs-contract-wording-align
+delivery: merged-delivery-lifecycle
 context:
   kind: branch
-  branch: docs/295-docs-contract-wording-align
+  branch: feat/298-merged-delivery-lifecycle
 issues:
-  - 295
-  - 297
-pr: 296
+  - 298
