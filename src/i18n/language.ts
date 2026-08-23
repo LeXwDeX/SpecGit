@@ -114,6 +114,8 @@ export interface HumanText {
   initCreatedHook(hook: string): string;
   initGitHook(hook: string): string;
   initManagedRefreshed(filename: string): string;
+  initRemovedAsset(path: string): string;
+  initPreservedAsset(path: string): string;
   initProtectionRequired(branch: string, check: string): string;
   initAutomerge(enabled: boolean): string;
   // finish / accept
@@ -210,6 +212,8 @@ const EN_HUMAN: HumanText = {
   initCreatedHook: (hook) => `Created ${hook}`,
   initGitHook: (hook) => `Installed git pre-push guard (${hook})`,
   initManagedRefreshed: (filename) => `Managed block refreshed in ${filename}`,
+  initRemovedAsset: (path) => `Removed obsolete SpecGit asset ${path}`,
+  initPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initProtectionRequired: (branch, check) =>
     `Branch protection: ${branch} now requires "${check}"`,
   initAutomerge: (enabled) => `Auto-merge: ${enabled ? 'enabled' : 'already on'}`,
@@ -267,6 +271,8 @@ const ZH_HUMAN: HumanText = {
   initCreatedHook: (hook) => `已创建 ${hook}`,
   initGitHook: (hook) => `已安装 git pre-push 守卫（${hook}）`,
   initManagedRefreshed: (filename) => `已在 ${filename} 中刷新托管块`,
+  initRemovedAsset: (path) => `已移除过时的 SpecGit 资产 ${path}`,
+  initPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initProtectionRequired: (branch, check) => `分支保护：${branch} 现在要求 "${check}"`,
   initAutomerge: (enabled) => `自动合并：${enabled ? '已启用' : '已开启'}`,
   finishAccepted: (delivery, pr) =>

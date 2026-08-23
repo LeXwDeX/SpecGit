@@ -1,0 +1,5 @@
+---
+"specgit": minor
+---
+
+Make `specgit init --force` the supported version-upgrade operation: it now converges an adopting repository to the running version's complete desired init-owned asset state (#305). The managed `.gitignore` region is delimited by start/end markers and reconciled to the current entry set (a later version's new entries appear inside an existing region; a legacy or damaged region is migrated by consuming only the marker and the entry lines SpecGit knows it wrote, so adjacent user rules keep their bytes and position), an obsolete SpecGit-owned GitHub acceptance workflow is safely removed when a refresh declares GitLab (only with proven content ownership — anything else is preserved and reported), and the harness, policy, ignore, and providers mutations run inside one reversible transaction, so a failed upgrade restores the exact pre-run tree — bytes, modes, and directories created by the run — instead of leaving a mixed-version state. The init envelope gains `reconciled: { created, updated, removed, preserved }`.
