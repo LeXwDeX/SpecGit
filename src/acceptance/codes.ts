@@ -70,7 +70,7 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   policy_invalid: {
     kind: 'evidence',
     message: 'spec_git/policy.yaml is invalid.',
-    fix: 'Declare at least one required check name in spec_git/policy.yaml.',
+    fix: 'Fix or recreate spec_git/policy.yaml — every required check name must be a non-empty string, and the list itself may be empty (the no-CI policy).',
   },
   issues_empty: {
     kind: 'factual',
