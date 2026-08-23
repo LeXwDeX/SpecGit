@@ -157,14 +157,24 @@ function transportBlock(transport: WaitTransport): string[] {
   return [
     `          // gh.cmd needs a shell on Windows; POSIX execs the binary
 `,
-    `          // directly (shell stays off where it is not needed).`,
+    `          // directly (shell stays off where it is not needed). The
+`,
+    `          // query rides --field args (never a raw "?" URL): cmd.exe
+`,
+    `          // treats a bare "&" as a command separator, so a URL query
+`,
+    `          // would be split mid-parameter on Windows.
+`,
     `          const listChecks = (page) =>`,
     `            JSON.parse(`,
     `              execFileSync(`,
     `                'gh',`,
     `                [`,
     `                  'api',`,
-    `                  'repos/' + process.env.WAIT_REPO + '/commits/' + process.env.WAIT_SHA + '/check-runs?per_page=' + PER_PAGE + '&page=' + page,`,
+    `                  'repos/' + process.env.WAIT_REPO + '/commits/' + process.env.WAIT_SHA + '/check-runs',`,
+    `                  '--method', 'GET',`,
+    `                  '--field', 'per_page=' + PER_PAGE,`,
+    `                  '--field', 'page=' + page,`,
     `                ],`,
     `                { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }`,
     `              )`,

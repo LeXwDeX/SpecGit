@@ -80,7 +80,12 @@ describe('external acceptance harness template', () => {
   it('waits for sibling checks through the gh seam, never raw REST', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
     expect(yaml).toContain("readFileSync('spec_git/policy.yaml', 'utf8')");
-    expect(yaml).toContain('check-runs?per_page=');
+    // The query rides --field args (gh builds the query string itself):
+    // a raw "?a=1&b=2" URL would be split by cmd.exe's "&" separator on
+    // Windows, where gh.cmd needs a shell (#300).
+    expect(yaml).toContain("'--field', 'per_page=' + PER_PAGE");
+    expect(yaml).toContain("'--field', 'page=' + page");
+    expect(yaml).not.toContain('?per_page=');
     expect(yaml).toContain('MAX_ATTEMPTS');
     // #300: the listing pages to exhaustion like the self template.
     expect(yaml).toContain('fetchAllCheckRuns');
