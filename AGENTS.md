@@ -4,8 +4,10 @@ SpecGit (package and CLI: `specgit`) is a delivery binding and acceptance
 harness: bind a branch or worktree to GitHub issues and one pull request, then
 derive acceptance from real git, PR, and CI evidence. Repository:
 https://github.com/LeXwDeX/SpecGit. Everything SpecGit writes falls into three
-tiers: **authoritative committed files** (the policy `spec_git/policy.yaml`,
-the record `.specgit.yaml`, optional `spec_git/providers.yaml`), a **derived
+tiers: **authoritative delivery files** (the policy `spec_git/policy.yaml`,
+the record `.specgit.yaml`, optional `spec_git/providers.yaml` — shielded in
+`.gitignore` by default since #292 and carried into git by the bootstrap's
+binding commit, where the PR-head CI verdict reads them), a **derived
 committed harness** (the acceptance workflow and the managed AGENTS/CLAUDE
 block — regenerate with `init --force`, never hand-edit), and **local
 integration assets** (guard hooks and `setup` entry points; agent

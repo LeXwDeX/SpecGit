@@ -45,7 +45,7 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
 
 Three tiers, nothing else (normative table: [reference.md](reference.md#state-and-assets)):
 
-1. **Authoritative committed files** — `spec_git/policy.yaml`, `.specgit.yaml`, and the optional `spec_git/providers.yaml`. Human-owned, reviewed like code.
+1. **Authoritative delivery files** — `spec_git/policy.yaml`, `.specgit.yaml`, and the optional `spec_git/providers.yaml`. Human-owned. Shielded from everyday commits by the managed `.gitignore` block `init` writes by default (#292); the bootstrap's binding commit force-carries them into git on the delivery branch (`--no-ignore` keeps the classic committed model).
 2. **Derived committed harness** — `.github/workflows/specgit-accept.yml` and the managed block in `AGENTS.md`/`CLAUDE.md`. Generated, regenerable (`init --force` repairs drift).
 3. **Local integration assets** — guard hooks (`.opencode/hooks.json` entry, `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`) and `setup` entry points. Merged non-destructively into your existing wiring.
 

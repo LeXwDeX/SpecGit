@@ -162,19 +162,21 @@ export class LocalGitAdapter implements GitPort {
 
   async commitFile(
     root: string,
-    relativePath: string,
+    relativePaths: string[],
     message: string
   ): Promise<Evidence<{ committed: boolean }>> {
-    const add = await this.write('commit', ['-C', root, 'add', '--', relativePath]);
+    // #292: -f stages past the tool-installed local-asset ignore — the
+    // binding commit is the authoritative files' intended entry into git.
+    const add = await this.write('commit', ['-C', root, 'add', '-f', '--', ...relativePaths]);
     if (!add.ok) {
       return add;
     }
     // Locale-independent emptiness probe: `git diff --cached --quiet`
-    // exits 1 exactly when the path has staged changes. (git's own
+    // exits 1 exactly when a path has staged changes. (git's own
     // "nothing to commit" text is localized and must not be parsed.)
     const hasStagedChanges = await this.spawn(
       'git',
-      ['-C', root, 'diff', '--cached', '--quiet', '--', relativePath],
+      ['-C', root, 'diff', '--cached', '--quiet', '--', ...relativePaths],
       { timeoutMs: GIT_WRITE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env }
     ).then(
       () => false,
@@ -190,7 +192,7 @@ export class LocalGitAdapter implements GitPort {
       '-m',
       message,
       '--',
-      relativePath,
+      ...relativePaths,
     ]);
     if (commit.ok) {
       return ok({ committed: true });

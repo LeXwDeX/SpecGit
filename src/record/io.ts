@@ -8,6 +8,7 @@ import { PolicySchema, type Policy } from './policy.js';
 import { ProvidersSchema, type Providers } from './providers.js';
 import {
   POLICY_FILENAME,
+  PROVIDERS_FILENAME,
   RECORD_FILENAME,
   SPEC_GIT_DIR,
   DeliveryBindingSchema,
@@ -272,7 +273,7 @@ export async function writePolicy(root: string, policy: Policy): Promise<void> {
 }
 
 export function providersPath(root: string): string {
-  return path.join(policyDir(root), 'providers.yaml');
+  return path.join(policyDir(root), PROVIDERS_FILENAME);
 }
 
 export async function readProviders(root: string): Promise<Evidence<Providers>> {

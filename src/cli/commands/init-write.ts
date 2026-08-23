@@ -16,6 +16,7 @@ import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome } from '../
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
+import { writeLocalAssetIgnore, type LocalAssetIgnoreResult } from './init-ignore.js';
 import type { DetectionReport } from '../detect-checks.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { PlatformOutcome } from './init-platform.js';
@@ -24,6 +25,8 @@ import type { ProtectionOutcome } from './init-protection.js';
 export interface HarnessAndPolicyWrite {
   harness: HarnessWriteResult;
   policy: Policy;
+  /** #292: null when --no-ignore skipped the local-asset shielding. */
+  ignore: LocalAssetIgnoreResult | null;
 }
 
 /**
@@ -40,6 +43,8 @@ export async function writeHarnessAndPolicy(args: {
   language: PolicyLanguage;
   /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
   workflowYaml: string | null;
+  /** false (--no-ignore) skips the local-asset .gitignore block (#292). */
+  writeIgnore: boolean;
   warnings: Diagnostic[];
 }): Promise<InitOutcome | HarnessAndPolicyWrite> {
   const { root, ctx, checks, language, workflowYaml, warnings } = args;
@@ -91,7 +96,22 @@ export async function writeHarnessAndPolicy(args: {
     };
   }
 
-  return { harness, policy };
+  // #292: shield the local delivery assets by default (after the
+  // policy write — same mutation phase, still before any remote call).
+  let ignore: LocalAssetIgnoreResult | null = null;
+  if (args.writeIgnore) {
+    try {
+      ignore = writeLocalAssetIgnore(root);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        exit: EXIT_UNKNOWN,
+        errors: [errorDiagnostic('ignore_write_failed', message)],
+      };
+    }
+  }
+
+  return { harness, policy, ignore };
 }
 
 /** Assemble the success envelope and human summary for a completed init. */
@@ -101,6 +121,7 @@ export function buildInitOutcome(args: {
   platform: { outcome: PlatformOutcome; human: string[] };
   harness: HarnessWriteResult;
   policy: Policy;
+  ignore: LocalAssetIgnoreResult | null;
   template: string;
   warnings: Diagnostic[];
   protection: ProtectionOutcome | undefined;
@@ -113,6 +134,7 @@ export function buildInitOutcome(args: {
     platform,
     harness,
     policy,
+    ignore,
     template,
     warnings,
     protection,
@@ -121,6 +143,7 @@ export function buildInitOutcome(args: {
   } = args;
   const builder = humanBuilder()
     .line(text.initCreatedPolicy(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`))
+    .append(ignore ? [text.initIgnoredAssets(ignore.path)] : [])
     .line(text.initRequiredChecks(checks.length))
     .append(checks.map((name) => text.initCheck(name)))
     .append(platform.human);
@@ -145,6 +168,7 @@ export function buildInitOutcome(args: {
     policy,
     harness: { template },
     platform: platform.outcome,
+    ...(ignore !== null ? { ignore } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),
     ...(detected !== null
