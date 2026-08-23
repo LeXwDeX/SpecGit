@@ -39,7 +39,7 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
 - Exit codes `0` (success/accepted) · `1` (rejected with complete evidence) · `2` (usage) · `3` (fail-closed unknown). `1` vs `3` is contractual.
 - `130` is the single **interruption exception**: Ctrl-C during an interactive prompt prints `Interrupted.` to stderr, emits no JSON envelope, and exits 130. This is documented, deterministic behavior — automation treats it as "interrupted, no verdict".
 - With `--json`, stdout carries **exactly one** valid JSON document (the envelope in [cli.md](cli.md#json-envelope)); every human-readable line goes to stderr. The `130` path above is the only exception.
-- Environment inputs: `SPECGIT_GH` (path to the `gh` executable) and `SPECGIT_GH_TIMEOUT_MS` (per-call gh timeout, default `15000` ms), plus standard `NO_COLOR`/`CI`. No tokens, no telemetry.
+- Environment inputs: `SPECGIT_GH` / `SPECGIT_GH_TIMEOUT_MS` (path to and per-call timeout for the `gh` executable, default `15000` ms) and the `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` mirror pair, plus standard `NO_COLOR`/`CI`. No tokens, no telemetry.
 
 ## State and assets
 

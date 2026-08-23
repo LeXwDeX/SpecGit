@@ -32,7 +32,9 @@ Per slice, in order:
   command: it creates/reuses the issues, branches as
   `<type>/<first-issue#>-<slug>` (e.g. `feat/123-add-login`; `<type>`
   mirrors the CLI's fixed type whitelist — see
-  [docs/cli.md](../docs/cli.md); titles must be English),
+  [docs/cli.md](../docs/cli.md); the title body may be any language
+  (#118), and a title that yields no ASCII slug asks for a
+  `--delivery <slug>` name instead of inventing one),
   opens the draft PR (body carries `Closes #N` for every bound issue),
   writes the record, commits, and pushes. Re-run the same command to
   resume an interrupted bootstrap; `specgit bind` remains as the

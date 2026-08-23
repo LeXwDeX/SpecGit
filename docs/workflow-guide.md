@@ -43,10 +43,13 @@ specgit init --required-check "Test (linux-bash)" --required-check "Lint & Type 
 
 - 产出 `spec_git/policy.yaml`：列出本仓库 PR 必须 passing 的 CI check 名。
 - Check 名必须与 CI 矩阵里的 job `name:` **完全一致**（含空格、括号、大小写）。
-- 自动检测（规划中，见 issue #3）：无参时从 `.github/workflows/*.yml` 与
-  `.gitlab-ci.yml` 静态发现 check 名。
+- 自动检测（已上线，#63）：无参时从 `.github/workflows/*.yml`（GitHub 模式）
+  静态发现 check 名；仓库完全没有 CI 时 policy 为空列表——分支保护强制
+  的验收 job 本身就是门。GitLab 模式检测 `.gitlab-ci.yml` 顶层 job 名。
 - `--force`：policy 已存在时强制重建（默认报 `policy_exists` 拒绝）。
-- 把 `spec_git/policy.yaml` 提交进仓库（走 change 流程或首次引导提交）。
+- `spec_git/policy.yaml` 默认被 init 写入的 `.gitignore` 托管块屏蔽（#292）；
+  它进入 git 的正规路径是交付引导的绑定提交——手动提交需 `git add -f`
+  越过屏蔽，或 init 时用 `--no-ignore` 保持经典提交模型。
 
 ---
 
@@ -63,7 +66,7 @@ specgit issue "feat: add login" "Harden the session model" --json
 
 一个参数 = 一个独立可验证的 WHY：
 
-- 带引号的文本 → 新建 issue（必填/选填模板；标题必须 `<type>: <英文标题>`，type 走固定白名单，非英文标题直接 usage 报错）；
+- 带引号的文本 → 新建 issue（标题必须 `<type>: <标题>` 前缀，type 走固定白名单；标题正文任意语言（#118），产不出 ASCII slug 时要求 `--delivery <slug>`）；
 - 纯数字 → 复用已有 issue。
 
 N 个参数 = N 个 issue 绑进 **同一个** 交付（1 PR : N issues）。
@@ -90,11 +93,11 @@ kebab-case 交付名，脚本环境报 `issue_delivery_name_required` 并指向
 specgit finish --json
 ```
 
-10 道门禁全部从真实 git/PR/CI 证据推导：
+11 道门禁全部从真实 git/PR/CI 证据推导：
 
 1. `record` / 2. `policy` / 3. `completeness` / 4. `context` / 5. `origin`
-6. `provider` / 7. `issues` / 8. `pr` / 9. `closing`（PR body 覆盖所有 issue）
-10. `checks`（policy 里的每个 check 在 PR head 上 success）
+6. `provider` / 7. `issues` / 8. `sequence` / 9. `pr` / 10. `closing`（PR body 覆盖所有 issue）
+11. `checks`（policy 里的每个 check 在 PR head 上 success）
 
 `spec_git/policy.yaml` 已由 `specgit init` 声明的 required checks 与
 `.github/workflows/specgit-accept.yml` 里的 **SpecGit Acceptance** job

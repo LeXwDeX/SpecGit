@@ -86,7 +86,7 @@ Commit the PR, merge, done. Nothing else remains: no stores, no caches, no globa
 
 **Our CI is not GitHub Actions.** Fine — SpecGit matches check-run names, not their source. Any CI system that reports check runs (or status checks surfaced as check runs) to the PR head works; the naming guidance in [GitHub Actions](actions.md) still applies to choosing names.
 
-**GitHub Enterprise / non-github.com hosts?** Not supported in v1 — the scope is GitHub.com. Only `github.com` origins resolve; a GitLab host declared in `spec_git/providers.yaml` fails closed with the dedicated `gitlab_unsupported`, anything else with `origin_unresolvable`. See the [GitLab roadmap](gitlab-support.md).
+**GitHub Enterprise / non-github.com hosts?** Not supported in v1 — the scope is GitHub.com plus declared self-managed GitLab (see the [GitLab support](gitlab-support.md) ledger). Only `github.com` origins resolve on the GitHub route; a GitLab host declared in `spec_git/providers.yaml` routes through glab (#117). An undeclared `gitlab.com`/`*gitlab*` host fails closed with the dedicated `gitlab_unsupported`, anything else with `origin_unresolvable`.
 
 **We track work in a non-GitHub tracker.** The delivery must still bind GitHub issue numbers (`--issue` rejects opaque tracker ids). The common bridge: file a thin GitHub issue that links to the tracker item, and bind that number.
 
