@@ -1,8 +1,7 @@
 version: 1
-delivery: wait-step-convergence
+delivery: version-upgrade-refresh
 context:
   kind: branch
-  branch: feat/300-wait-step-convergence
+  branch: feat/305-version-upgrade-refresh
 issues:
-  - 300
-pr: 304
+  - 305
