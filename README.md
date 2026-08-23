@@ -124,6 +124,13 @@ integration assets** (guard hooks and `setup` entry points — likewise
 converged to the running version by re-running `specgit setup`, which
 removes retired SpecGit-owned entry points only with proven ownership,
 preserves unmarked files, and never touches the unselected surface).
+`specgit status` is the read-only check of that convergence (#308): its
+`assets.generated` report names every stale, missing, or conflicting
+generated asset with the exact command that repairs its surface, and
+fail-closed about its own coverage — `clean` requires `complete`, an
+`uninspected` part means incomplete (never clean), while a proven opt-out
+(`skipped`) does not — the numbered upgrade sequence is in
+[Installation](docs/installation.md#upgrade-to-a-newer-cli-version).
 Verdicts are never persisted. One PR may close N issues;
 every bound issue must be closed from the PR body; checks are matched
 byte-for-byte against the names in `spec_git/policy.yaml`. Full table:
@@ -153,7 +160,7 @@ reality.
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`/`glab`) |
 | `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block); by default also shields the local delivery assets in `.gitignore` (`--no-ignore` opts out) | gh (protection probe) |
 | `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills for other tools (`--tool opencode \| generic \| all`) | no |
-| `specgit status` | Local evidence snapshot (record, policy, git facts, drift) | no |
+| `specgit status` | Local evidence snapshot (record, policy, git facts, drift) plus the generated-asset drift report — the local upgrade check: per-surface current/stale/missing/conflict states with the exact fix command (`assets.generated`, #308) | no |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, forge CLI, policy) | forge auth |
 | `specgit bind` / `unbind` / `accept` | Machine aliases for scripts: record edits, and the same evaluation as `finish` | accept: yes (`gh`/`glab`) |
 

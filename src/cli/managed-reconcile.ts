@@ -306,6 +306,100 @@ async function rollback(snapshots: Snapshot[], createdDirs: string[]): Promise<s
   return failure;
 }
 
+// ---------------------------------------------------------------------------
+// Read-only inspection (#308): the same desired states the writer converges,
+// answered without mutating anything. One shared notion of "drift" — the
+// inspector walks the identical step list `reconcileManagedAssets` plans,
+// with the identical path resolution, byte/mode equality, and ownership
+// predicates — so the read side can never drift from the write side.
+// ---------------------------------------------------------------------------
+
+/** The state of one managed asset relative to the desired state (#308). */
+export type ManagedAssetState = 'current' | 'stale' | 'missing' | 'conflict';
+
+/** Stable machine diagnostic code for a non-current asset (#308). */
+export type ManagedAssetDriftCode = 'asset_stale' | 'asset_missing' | 'asset_conflict';
+
+export interface ManagedAssetFinding {
+  /** Repo-relative, forward slashes — never localized. */
+  path: string;
+  state: ManagedAssetState;
+  /** Present exactly when `state` is not `current`; never localized. */
+  code?: ManagedAssetDriftCode;
+}
+
+export interface ManagedInspection {
+  /**
+   * One entry per step that makes a claim: every `write` step (current /
+   * stale / missing — the resolver declining plans nothing and claims
+   * nothing), and every `remove` step whose target exists (stale when the
+   * bytes prove ownership, conflict when they do not). An absent removal
+   * target is clean by absence and produces no entry.
+   */
+  findings: ManagedAssetFinding[];
+  /**
+   * `portWrite` step paths: inspecting one would mean executing its owned
+   * closure, and a port write mutates. They are excluded BY KIND here and
+   * named so a caller can never silently lose coverage; the closure is
+   * never invoked.
+   */
+  notInspected: string[];
+}
+
+/**
+ * Inspect `root` against the desired managed-asset state without touching
+ * the tree: no writes, no deletes, no chmods, no port writes. Throws
+ * `ManagedReconcileError('plan', …)` with the failing step when a read or
+ * resolver fails — the same failure shape the writer's plan phase reports.
+ */
+export async function inspectManagedAssets(
+  root: string,
+  desired: DesiredManagedAssets
+): Promise<ManagedInspection> {
+  const findings: ManagedAssetFinding[] = [];
+  const notInspected: string[] = [];
+  for (const step of desired.steps) {
+    const target = path.join(root, ...step.path.split('/'));
+    try {
+      if (step.kind === 'write') {
+        const existing = await readIfExists(target);
+        const content = step.merge(existing);
+        if (content === null) {
+          continue; // the resolver declined (an optional target): no claim
+        }
+        if (existing === null) {
+          findings.push({ path: step.path, state: 'missing', code: 'asset_missing' });
+          continue;
+        }
+        const mode = await statMode(target);
+        const unchanged =
+          existing === content && mode !== null && (mode & 0o777) === (step.mode & 0o777);
+        findings.push(
+          unchanged
+            ? { path: step.path, state: 'current' }
+            : { path: step.path, state: 'stale', code: 'asset_stale' }
+        );
+      } else if (step.kind === 'remove') {
+        const existing = await readIfExists(target);
+        if (existing === null) {
+          continue; // nothing to remove: clean by absence, no claim
+        }
+        findings.push(
+          step.isOwned(existing)
+            ? { path: step.path, state: 'stale', code: 'asset_stale' }
+            : { path: step.path, state: 'conflict', code: 'asset_conflict' }
+        );
+      } else {
+        notInspected.push(step.path);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ManagedReconcileError('plan', message, { kind: step.kind, path: step.path });
+    }
+  }
+  return { findings, notInspected };
+}
+
 /**
  * Converge `root` to the desired managed-asset state in one reversible
  * transaction and report what happened. Throws `ManagedReconcileError`;

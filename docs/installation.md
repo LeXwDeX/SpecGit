@@ -46,6 +46,28 @@ specgit init
 
 Creates `spec_git/policy.yaml` and the delivery harness. Required-check names are auto-detected from CI files; a no-CI repository gets the empty list (the acceptance job itself is the gate). Choose check names with care; [GitHub Actions](actions.md) explains the naming model and the recommended aggregator pattern.
 
+## Upgrade to a newer CLI version
+
+After `npm install -g specgit` brings in a new version, one numbered sequence converges each repository — all local, zero forge calls:
+
+```bash
+specgit status --json          # 1. see the drift: assets.generated names every
+                               #    stale / missing / conflict state and the
+                               #    exact per-surface fix command
+specgit init --force           # 2. converge the init-owned tier (workflow,
+                               #    managed AGENTS.md block, guard hooks,
+                               #    managed .gitignore region)
+specgit setup --tool all       # 3. converge both agent surfaces (or the exact
+                               #    per-surface command status named)
+specgit status --json          # 4. assets.generated.clean must be true
+                               #    (clean implies complete — an incomplete
+                               #    report never claims current; resolve any
+                               #    uninspected code first)
+git add -A && git commit       # 5. commit the intended derived assets
+```
+
+Between 4 and 5: a `conflict` state is a file at a managed path that does not prove SpecGit ownership (no managed markers) — review it and, if it is a leftover, delete it yourself; the commands never delete unproven files. After the commit, `git status --porcelain` is empty: no generated legacy or ignored residue reappears. What "intended" means is decided by the three asset tiers — see [State and assets](reference.md#state-and-assets) and the [status reference](cli.md#specgit-status).
+
 ## Uninstall
 
 Remove the CLI and, if you want the project clean of SpecGit:

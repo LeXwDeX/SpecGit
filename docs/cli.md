@@ -13,7 +13,7 @@ The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `se
 | `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
 | `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias; carries the rewrite into git (#299) | git push (no forge) | 0 · 2 · 3 |
 | `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
-| `specgit status` | Local evidence only (record, policy, git facts, drift) | no | 0 · 2 · 3 |
+| `specgit status` | Local evidence only (record, policy, git facts, drift, generated-asset drift) | no | 0 · 2 · 3 |
 | `specgit accept` | Same evaluation as `finish` — script/CI alias | yes | 0 · 1 · 2 · 3 |
 | `specgit doctor` | Probe prerequisites (git, repo, origin, gh, policy) | forge auth (platform CLI: gh or glab) | 0 · 3 |
 
@@ -244,6 +244,55 @@ with exit `3` and envelope `status: "unknown"`, so the pre-binding case and
 a true unknown stay distinguishable on both the exit code and the state.
 
 Policy and context problems discovered along the way behave differently: a **missing or invalid policy fails closed** (`policy_missing`/`policy_invalid` → exit 3, listed in `errors`), while evidence *mismatches* (`branch_mismatch`, origin drift, incompleteness, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
+
+### Generated-asset drift report (#308)
+
+`status` is also the deterministic local upgrade check: `assets.generated` reports, for every SpecGit-managed asset the writers would converge, whether it is `current`, `stale` (owned but drifted — an old template, a damaged managed region), `missing` (a required init asset that is not there), or `conflict` (bytes at a managed path that do not prove SpecGit ownership — only a human may decide). The inspection reuses the writers' own desired states (`init`'s harness + `.gitignore` reconciliation, `setup`'s entry-point sets) through one shared read-only inspector, so the checklist cannot drift from what `init --force` / `setup` actually repair. It never writes, chmods, deletes, prompts, calls `gh`/`glab`, or edits provider declarations — and drift is factual evidence: it never changes the exit code.
+
+The report is grouped by repair surface, each with the exact fix command (`specgit init --force`, `specgit setup --tool opencode`, `specgit setup --tool generic`; a repository with no policy yet is told `specgit init` instead). An optional setup surface nothing was ever installed on is `absent` — clean, with no missing-file list; once anything SpecGit-named exists on a surface, that surface is diagnosed independently. Per-asset codes are stable and never localized: `asset_stale`, `asset_missing`, `asset_conflict`.
+
+The verdict is fail-closed about its own coverage. `complete` is `true` only when every part of the desired state got a claim (or a proven skip); `clean` requires `complete` **and** no inspected surface stale/missing/conflict — "no detected drift" is never "proven clean". `uninspected` lists machine codes for the desired parts status makes **no claim** about, each an unknown that makes the report incomplete — a refusal to guess where the writer itself would guess: `workflow_platform_undecided` (the platform is neither github.com, a declared GitLab, nor an evident GitLab host, so the desired workflow is unknowable), `workflow_platform_providers_invalid` (`spec_git/providers.yaml` exists but its bytes are invalid, so the platform — and the workflow it desires — is unknown, never guessed from the origin), `workflow_default_branch_unresolved` (the external template pins the remote default branch, which could not be resolved), `hooks_json_unmerged` (an unmergeable `.opencode/hooks.json` — `init` warns and leaves it untouched too), `ignore_tracked_unknown` (the tracked probe failed), `ignore_unreadable` (the `.gitignore` could not be read at all — a directory or a permission failure is unknown evidence, never the committed-authoritative opt-out). `skipped` lists intentional, proven non-applicability — currently `ignore_committed_authoritative` (the repository tracks the authoritative tier and has no managed `.gitignore` region: the #292 opt-out, not drift). A skip is proof, not an unknown: it never makes an otherwise current report incomplete, while a failed probe always does. Human output distinguishes the three states — current, drifted, incomplete — and an incomplete report never says current/clean. An inspection that cannot even run (an unreadable path) surfaces the warning `asset_inspection_failed` instead of a report. Fail-closed snapshots (invalid record/policy, git unavailable) carry no drift claim at all.
+
+```json
+"assets": {
+  "generated": {
+    "clean": false,
+    "complete": true,
+    "surfaces": [
+      {
+        "surface": "init",
+        "state": "missing",
+        "fix": "specgit init --force",
+        "assets": [
+          { "path": ".github/workflows/specgit-accept.yml", "state": "stale", "code": "asset_stale" },
+          { "path": ".opencode/hooks/specgit-merge-guard.sh", "state": "missing", "code": "asset_missing" }
+        ]
+      },
+      { "surface": "opencode", "state": "absent", "assets": [] },
+      {
+        "surface": "generic",
+        "state": "conflict",
+        "fix": "specgit setup --tool generic",
+        "assets": [
+          { "path": ".agents/skills/specgit-old/SKILL.md", "state": "conflict", "code": "asset_conflict" }
+        ]
+      }
+    ],
+    "uninspected": [],
+    "skipped": []
+  }
+}
+```
+
+### The version-upgrade sequence
+
+After upgrading the CLI (`npm install -g specgit`), one numbered sequence converges a repository and proves it clean — locally, with zero forge calls:
+
+1. **Upgrade the CLI** to the new version.
+2. **`specgit init --force`** — converges the init-owned tier: the acceptance workflow (or removes a SpecGit-owned one on a GitLab-declared repository), the managed `AGENTS.md`/`CLAUDE.md` blocks, the guard hooks, and the managed `.gitignore` region.
+3. **`specgit setup --tool opencode` / `--tool generic`** (or `--tool all` for both) — converges the agent surfaces; each surface's exact fix is what `status` names per surface.
+4. **`specgit status --json`** — `assets.generated.clean` must be `true`. Clean implies `complete`: an incomplete report never claims current, so first resolve any `uninspected` code (declare the platform with `--gitlab-host`, fetch the remote so the default branch resolves, merge or repair `.opencode/hooks.json`). A remaining `conflict` is a file at a managed path that does not prove SpecGit ownership: review it, and if it is a leftover, delete it yourself — the tools never will — then re-run `status`.
+5. **Review and commit the intended derived assets** (`git add -A && git commit`). The three tiers decide what "intended" means: authoritative files (`spec_git/`, `.specgit.yaml`) are yours or the binding commit's; the derived harness is meant to be committed; local integration assets (entry points, `.git/hooks`) are your team's choice. After that commit, `git status --porcelain` is empty — no generated legacy or ignored residue reappears (#308 pins this journey as a test).
 
 ## `specgit accept`
 

@@ -52,6 +52,24 @@ export function managedIgnoreBlock(): string {
   );
 }
 
+/**
+ * True when the bytes carry a managed region SpecGit wrote — the current
+ * delimited form, the damaged start-only form, or the legacy single-marker
+ * block (#308). Read-side only: `status` distinguishes "a region exists,
+ * keep it current" from "this repository opted out of the ignore block
+ * entirely" before it dares to call an absent region drift.
+ */
+export function hasManagedIgnoreRegion(content: string | null): boolean {
+  if (content === null) {
+    return false;
+  }
+  const lines = content.split('\n');
+  return (
+    lines.some((line) => isMarkerLine(line, LOCAL_ASSET_IGNORE_START)) ||
+    lines.some((line) => isMarkerLine(line, LOCAL_ASSET_IGNORE_MARKER))
+  );
+}
+
 function entryLines(content: string): Set<string> {
   return new Set(
     content

@@ -258,7 +258,7 @@ export function createProgram(
 
   program
     .command('status')
-    .description('Local evidence only: record, state, live context, drift, origin (no network)')
+    .description('Local evidence only: record, state, live context, drift, origin, generated-asset drift (no network)')
     .option('--json', 'Output as JSON')
     .action(wrap('status', runStatus as CommandRun));
 

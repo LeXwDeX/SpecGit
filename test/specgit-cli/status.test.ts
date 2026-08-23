@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
+import { ENTRY_POINT_MARKER } from '../../src/cli/agent-surface.js';
+import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import {
   makeCtx,
   makeGitFacts,
@@ -9,6 +13,7 @@ import {
   sampleBinding,
   samplePolicy,
 } from './helpers.js';
+import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 describe('specgit status (local evidence only, G1-G5)', () => {
   it('reports a bound state with all local gates passing', async () => {
@@ -202,10 +207,147 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(Object.keys(envelope.assets).sort()).toEqual([
       'authoritativeCommitted',
       'derivedCommittedHarness',
+      'generated',
       'localIntegrationAssets',
     ]);
     expect(envelope.assets.authoritativeCommitted.paths).toContain('spec_git/policy.yaml');
     expect(envelope.assets.derivedCommittedHarness.paths).toContain('.github/workflows/specgit-accept.yml');
+  });
+
+  // #308: assets.generated is the drift report — computed for every
+  // computable snapshot, additive next to the static taxonomy, and never
+  // an exit-code input.
+  describe('generated-asset drift report (#308)', () => {
+    let root: string;
+
+    beforeEach(() => {
+      root = makeTempDir('specgit-status-drift-');
+      fs.mkdirSync(path.join(root, '.git'), { recursive: true }); // legacy hooks fallback
+    });
+
+    afterEach(() => {
+      rmDir(root);
+    });
+
+    it('reports actionable old/missing states with exact fixes, without failing the snapshot', async () => {
+      fs.mkdirSync(path.join(root, '.github', 'workflows'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, ...HARNESS_WORKFLOW_PATH.split('/')),
+        'name: SpecGit Acceptance\n\nold owned workflow bytes\n'
+      );
+      fs.mkdirSync(path.join(root, '.opencode', 'command'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, '.opencode', 'command', 'specgit-issue.md'),
+        `---\ndescription: old\n---\n\n${ENTRY_POINT_MARKER}\n\nold trigger\n`
+      );
+
+      const t = makeCtx({
+        record: sampleBinding(),
+        policy: samplePolicy(),
+        root: { ok: true, value: root },
+        cwd: root,
+      });
+      const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.assets.generated.clean).toBe(false);
+      const surfaces = envelope.assets.generated.surfaces;
+      const init = surfaces.find((s: any) => s.surface === 'init');
+      // The fixture mixes a stale workflow with absent required assets:
+      // missing outranks stale in the aggregate.
+      expect(init.state).toBe('missing');
+      expect(init.fix).toBe('specgit init --force');
+      expect(
+        init.assets.find((a: any) => a.path === HARNESS_WORKFLOW_PATH)
+      ).toMatchObject({ state: 'stale', code: 'asset_stale' });
+      const opencode = surfaces.find((s: any) => s.surface === 'opencode');
+      expect(opencode.state).toBe('missing'); // one stale entry, the other four absent
+      expect(opencode.fix).toBe('specgit setup --tool opencode');
+      // The generic surface was never installed: absent, clean, no missing list.
+      const generic = surfaces.find((s: any) => s.surface === 'generic');
+      expect(generic.state).toBe('absent');
+      expect(generic.assets).toEqual([]);
+      expect(generic.fix).toBeUndefined();
+    });
+
+    it('is read-only: a status run leaves the tree byte-and-mode identical', async () => {
+      fs.mkdirSync(path.join(root, '.opencode', 'command'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, '.opencode', 'command', 'specgit-issue.md'),
+        `---\ndescription: old\n---\n\n${ENTRY_POINT_MARKER}\n\nold trigger\n`
+      );
+      const before = fs.readFileSync(
+        path.join(root, '.opencode', 'command', 'specgit-issue.md'),
+        'utf-8'
+      );
+      const t = makeCtx({
+        record: sampleBinding(),
+        policy: samplePolicy(),
+        root: { ok: true, value: root },
+        cwd: root,
+      });
+      await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+      expect(
+        fs.readFileSync(path.join(root, '.opencode', 'command', 'specgit-issue.md'), 'utf-8')
+      ).toBe(before);
+      expect(fs.readdirSync(path.join(root, '.opencode', 'command')).sort()).toEqual([
+        'specgit-issue.md',
+      ]);
+      expect(t.recordPort.writePolicy).not.toHaveBeenCalled();
+      expect(t.recordPort.writeRecord).not.toHaveBeenCalled();
+      expect(t.ghProvider.calls).toEqual([]);
+    });
+
+    it('carries the drift report on the healthy unbound snapshot too', async () => {
+      const t = makeCtx({
+        policy: samplePolicy(),
+        root: { ok: true, value: root },
+        cwd: root,
+      });
+      const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.state).toBe('unbound');
+      expect(envelope.assets.generated.surfaces.find((s: any) => s.surface === 'init').state).toBe(
+        'missing'
+      );
+    });
+
+    it('makes no drift claim on a fail-closed snapshot', async () => {
+      const t = makeCtx({
+        record: sampleBinding(),
+        policy: 'invalid',
+        root: { ok: true, value: root },
+        cwd: root,
+      });
+      const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+      expect(code).toBe(EXIT_UNKNOWN);
+      const envelope = parseStdoutJson(t.io);
+      expect(Object.keys(envelope.assets).sort()).toEqual([
+        'authoritativeCommitted',
+        'derivedCommittedHarness',
+        'localIntegrationAssets',
+      ]);
+    });
+
+    it('renders asset_inspection_failed, not a report, when the inspection itself throws (#308 Delta 2)', async () => {
+      // A directory at the providers path: readProviders rethrows EISDIR
+      // out of platform classification — the existing catch-all turns it
+      // into the warning with NO generated claim, and the snapshot still
+      // computes: exit 0, never a platform guess from the origin.
+      fs.mkdirSync(path.join(root, 'spec_git', 'providers.yaml'), { recursive: true });
+      const t = makeCtx({
+        record: sampleBinding(),
+        policy: samplePolicy(),
+        root: { ok: true, value: root },
+        cwd: root,
+      });
+      const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.assets.generated).toBeUndefined();
+      expect(envelope.warnings.map((w: any) => w.code)).toContain('asset_inspection_failed');
+    });
   });
 
   it('never contacts the GitHub provider', async () => {
