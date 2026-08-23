@@ -745,11 +745,22 @@ describe('specgit init harness generation', () => {
     const workflow = harnessWorkflowYaml();
     // Retry markers: bounded attempts with exponential backoff on 5xx/429.
     expect(workflow).toContain('MAX_ATTEMPTS');
-    expect(workflow).toContain('retryAfter');
     expect(workflow).toContain('backoff');
+    // #300: the dead retryAfterHeader variable is gone — a fixed ladder only.
+    expect(workflow).not.toContain('retryAfter');
     // The dispatch trigger and the SHA fallback are part of the synced evolution.
     expect(workflow).toContain('workflow_dispatch');
     expect(workflow).toContain('github.event.pull_request.head.sha || github.sha');
+  });
+
+  it('wait-for-siblings script pages the check-runs listing to exhaustion (#300)', async () => {
+    const workflow = harnessWorkflowYaml();
+    expect(workflow).toContain('fetchAllCheckRuns');
+    expect(workflow).toContain('page += 1');
+    expect(workflow).toContain('PER_PAGE');
+    // A short page ends the walk; required names past the first 100 runs
+    // are still observable.
+    expect(workflow).toContain('length < PER_PAGE');
   });
 
   it('covers the human story, repair, diagnostics, granularity, and iron rules in the block', async () => {
