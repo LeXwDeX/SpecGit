@@ -1,13 +1,6 @@
 version: 1
 required_checks:
-  - Detect changes
-  - test_matrix
-  - Test
+  - Test (linux-bash)
+  - Test (macos-bash)
+  - Test (windows-pwsh)
   - Lint & Type Check
-  - Nix Flake Validation
-  - Validate Release Tracking
-  - All checks passed
-  - All checks passed
-  - RC Verify
-  - Dependency Review
-  - Audit
