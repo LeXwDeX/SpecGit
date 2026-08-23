@@ -1,40 +1,61 @@
 /**
- * Mutation phase of `specgit init`: the harness write (error-atomic) and
- * the policy write, plus the final success envelope assembly. Local
- * writes happen first, remote mutation (branch protection) last and only
- * when explicitly requested.
+ * Mutation phase of `specgit init` (#305): the harness write, the policy
+ * write, and the local-asset ignore write reconcile as ONE reversible
+ * transaction — a failure at any step rolls every prior local mutation
+ * back to its pre-run bytes and mode, so an upgrade can never leave a
+ * mixed-version tree. Remote mutation (branch protection) still happens
+ * last and only when explicitly requested.
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import {
-  HarnessWriteError,
+  buildHarnessDesiredState,
+  harnessResultFrom,
   legacyGitHooksDir,
-  writeHarnessAssets,
+  type HarnessDesiredState,
   type HarnessWriteResult,
 } from '../harness-placement.js';
+import {
+  ManagedReconcileError,
+  reconcileManagedAssets,
+  type ManagedReconcileReport,
+  type ManagedStep,
+} from '../managed-reconcile.js';
 import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
-import { writeLocalAssetIgnore, type LocalAssetIgnoreResult } from './init-ignore.js';
+import {
+  LOCAL_ASSET_IGNORE_ENTRIES,
+  reconcileLocalAssetIgnore,
+  type LocalAssetIgnoreResult,
+} from './init-ignore.js';
 import type { DetectionReport } from '../detect-checks.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { PlatformOutcome } from './init-platform.js';
 import type { ProtectionOutcome } from './init-protection.js';
+
+const POLICY_PATH = `${SPEC_GIT_DIR}/${POLICY_FILENAME}`;
+const IGNORE_PATH = '.gitignore';
 
 export interface HarnessAndPolicyWrite {
   harness: HarnessWriteResult;
   policy: Policy;
   /** #292: null when --no-ignore skipped the local-asset shielding. */
   ignore: LocalAssetIgnoreResult | null;
+  /** #305: what the reconciliation transaction did (created/updated/removed/preserved). */
+  reconciled: ManagedReconcileReport;
 }
 
 /**
  * Write the harness (workflow, hooks, managed prompt block — merged with
- * existing hooks, rolled back on failure) and then the policy. The git
- * hook goes where git actually runs hooks from: worktree and
- * core.hooksPath aware, with a legacy `.git/hooks` fallback; when neither
- * resolves, the git hook is skipped.
+ * existing hooks), the policy, and the managed `.gitignore` region inside
+ * one managed-asset reconciliation transaction (#305): every target is
+ * snapshotted, a mid-transaction failure restores the whole pre-run tree,
+ * and obsolete SpecGit-owned assets (a wrong-platform workflow) are
+ * removed only with proven ownership. The git hook goes where git actually
+ * runs hooks from: worktree and core.hooksPath aware, with a legacy
+ * `.git/hooks` fallback; when neither resolves, the git hook is skipped.
  */
 export async function writeHarnessAndPolicy(args: {
   root: string;
@@ -57,27 +78,18 @@ export async function writeHarnessAndPolicy(args: {
     return legacyGitHooksDir(repoRoot);
   };
 
-  let harness: HarnessWriteResult;
+  // ---- Plan the harness desired state (reads + merges, no writes). ----
+  let desired: HarnessDesiredState;
   try {
-    harness = await writeHarnessAssets(root, {
-      resolveHooksDir,
-      workflowYaml,
-      language,
-    });
+    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, language });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Distinguishable diagnostics (#280): a plan-phase failure is a
-    // content failure; a commit-phase failure is a write failure.
-    const code =
-      error instanceof HarnessWriteError && error.phase === 'plan'
-        ? 'harness_content_failed'
-        : 'harness_write_failed';
     return {
       exit: EXIT_UNKNOWN,
-      errors: [errorDiagnostic(code, message)],
+      errors: [errorDiagnostic('harness_content_failed', message)],
     };
   }
-  for (const warning of harness.warnings) {
+  for (const warning of desired.warnings) {
     warnings.push({ severity: 'warning', ...warning });
   }
 
@@ -89,44 +101,85 @@ export async function writeHarnessAndPolicy(args: {
   // #298: probe BEFORE the rewrite — a tracked policy rewritten by
   // --force shows as an uncommitted modification until committed; warn
   // instead of leaving silent residue. Advisory, never a block.
-  const policyPath = `${SPEC_GIT_DIR}/${POLICY_FILENAME}`;
-  const policyTrackedEv = await ctx.git.trackedFiles(root, [policyPath]);
-  const policyWasTracked =
-    policyTrackedEv.ok && policyTrackedEv.value.includes(policyPath);
+  const policyTrackedEv = await ctx.git.trackedFiles(root, [POLICY_PATH]);
+  const policyWasTracked = policyTrackedEv.ok && policyTrackedEv.value.includes(POLICY_PATH);
+
+  // ---- One transaction: harness → policy port write → ignore region. ----
+  const steps: ManagedStep[] = [
+    ...desired.steps,
+    {
+      kind: 'portWrite',
+      path: POLICY_PATH,
+      write: () => ctx.record.writePolicy(root, policy),
+    },
+  ];
+  if (args.writeIgnore) {
+    steps.push({
+      kind: 'write',
+      path: IGNORE_PATH,
+      mode: 0o644,
+      merge: (existing) => reconcileLocalAssetIgnore(existing),
+    });
+  }
+
+  let report: ManagedReconcileReport;
   try {
-    await ctx.record.writePolicy(root, policy);
+    report = await reconcileManagedAssets(root, { steps });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // The failing step decides the diagnostic: the policy port write and
+    // the ignore write have their own codes; harness steps keep the #280
+    // plan/commit distinction.
+    const step = error instanceof ManagedReconcileError ? error.step : null;
+    let code: string;
+    if (step?.path === POLICY_PATH) {
+      code = 'policy_write_failed';
+    } else if (step?.path === IGNORE_PATH) {
+      code = 'ignore_write_failed';
+    } else if (error instanceof ManagedReconcileError && error.phase === 'plan') {
+      code = 'harness_content_failed';
+    } else {
+      code = 'harness_write_failed';
+    }
     return {
       exit: EXIT_UNKNOWN,
-      errors: [errorDiagnostic('policy_write_failed', message)],
+      errors: [errorDiagnostic(code, message)],
     };
   }
+
   if (policyWasTracked) {
     warnings.push({
       severity: 'warning',
       code: 'policy_rewrite_tracked',
-      message: `${policyPath} is tracked by git — this rewrite shows as an uncommitted modification until it is committed.`,
+      message: `${POLICY_PATH} is tracked by git — this rewrite shows as an uncommitted modification until it is committed.`,
       fix: 'Carry the policy with the delivery (the bootstrap binding commit force-stages it), or discard the rewrite if it was explorative.',
     });
   }
-
-  // #292: shield the local delivery assets by default (after the
-  // policy write — same mutation phase, still before any remote call).
-  let ignore: LocalAssetIgnoreResult | null = null;
-  if (args.writeIgnore) {
-    try {
-      ignore = writeLocalAssetIgnore(root);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        exit: EXIT_UNKNOWN,
-        errors: [errorDiagnostic('ignore_write_failed', message)],
-      };
-    }
+  // #305: a removal candidate we could not prove ownership for is
+  // preserved verbatim — surfaced, never silently dropped.
+  for (const path of report.preserved) {
+    warnings.push({
+      severity: 'warning',
+      code: 'unowned_asset_preserved',
+      message: `${path} is not provably SpecGit-owned (no managed markers in its content); left untouched.`,
+      fix: 'If it is a leftover SpecGit artifact, remove it manually; otherwise it is yours to keep.',
+    });
   }
 
-  return { harness, policy, ignore };
+  const ignore: LocalAssetIgnoreResult | null = args.writeIgnore
+    ? {
+        path: IGNORE_PATH,
+        entries: [...LOCAL_ASSET_IGNORE_ENTRIES],
+        created: report.created.includes(IGNORE_PATH),
+      }
+    : null;
+
+  return {
+    harness: harnessResultFrom(desired, report),
+    policy,
+    ignore,
+    reconciled: report,
+  };
 }
 
 /** Assemble the success envelope and human summary for a completed init. */
@@ -137,6 +190,7 @@ export function buildInitOutcome(args: {
   harness: HarnessWriteResult;
   policy: Policy;
   ignore: LocalAssetIgnoreResult | null;
+  reconciled: ManagedReconcileReport;
   template: string;
   warnings: Diagnostic[];
   protection: ProtectionOutcome | undefined;
@@ -150,6 +204,7 @@ export function buildInitOutcome(args: {
     harness,
     policy,
     ignore,
+    reconciled,
     template,
     warnings,
     protection,
@@ -177,11 +232,16 @@ export function buildInitOutcome(args: {
     .append(harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)))
     .append(harness.gitHook ? [text.initGitHook(harness.gitHook)] : [])
     .append(harness.prompts.map((filename) => text.initManagedRefreshed(filename)))
+    // #305: convergence speaks for itself — removed owned assets and
+    // preserved unowned ones are the upgrade decisions a user audits.
+    .append(reconciled.removed.map((path) => text.initRemovedAsset(path)))
+    .append(reconciled.preserved.map((path) => text.initPreservedAsset(path)))
     .append(protectionHuman);
   return {
     exit: EXIT_SUCCESS,
     policy,
     harness: { template },
+    reconciled,
     platform: platform.outcome,
     ...(ignore !== null ? { ignore } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),

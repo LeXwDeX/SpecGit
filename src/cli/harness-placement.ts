@@ -1,16 +1,12 @@
 /**
  * Harness PLACEMENT (#280): takes the content bytes from
- * `harness-content.ts` and owns planning, writing, and rollback —
+ * `harness-content.ts` and owns planning them against the live tree —
  * merging is delegated to the pure content transforms, so this module
- * never inspects what the bytes say. Content failures and write failures
- * report distinguishable diagnostics via `HarnessWriteError.phase`.
- *
- * The whole write sequence is error-atomic (#62): every target is read
- * and transformed first; if any write fails, prior targets are restored
- * to their pre-write bytes and newly created files/directories are
- * removed. Crash-atomicity is out of scope; remote mutations happen
- * later in init and are never attempted when the local harness could not
- * be written.
+ * never inspects what the bytes say. Since #305 the writes, snapshots,
+ * rollback, and safe removals run inside the shared managed-asset
+ * reconciliation transaction (`managed-reconcile.ts`); this module stays
+ * the harness-specific desired-state builder. Content failures and write
+ * failures report distinguishable diagnostics via `HarnessWriteError.phase`.
  *
  * Paths surfaced in output are repo-relative with forward slashes.
  */
@@ -30,6 +26,12 @@ import {
   mergeGitPrePush,
   mergeHooksJson,
 } from './harness-content.js';
+import {
+  ManagedReconcileError,
+  reconcileManagedAssets,
+  type ManagedReconcileReport,
+  type ManagedStep,
+} from './managed-reconcile.js';
 
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
@@ -52,14 +54,16 @@ export class HarnessWriteError extends Error {
 
 export interface HarnessWriteResult {
   /**
-   * The written workflow's repo-relative path, or null when the write
-   * was skipped (#269: GitLab platform mode). Output must equal real
-   * side effects — a skipped write reports no path.
+   * The written workflow's repo-relative path, or null when no workflow
+   * belongs to this platform (#269 GitLab mode — an old SpecGit-owned
+   * workflow is REMOVED there instead, reported via `removed`).
    */
   workflow: string | null;
   prompts: string[];
   hooks: string[];
   gitHook: string | null;
+  /** #305: obsolete SpecGit-owned assets removed by the write (repo-relative). */
+  removed: string[];
   /** Non-fatal merge refusals (e.g. an unmergeable hooks.json), surfaced by init as warnings. */
   warnings: Array<{ code: string; message: string }>;
 }
@@ -92,10 +96,12 @@ export interface HarnessWriteOptions {
    * self-hosted template (the SpecGit repository's own workflow);
    * `specgit init` passes the portable external template for adopting
    * repositories. Either way the write is planned and rolled back
-   * atomically with the rest of the harness. `null` (#117: GitLab
-   * platform mode) skips the workflow write entirely — a GitHub Actions
-   * workflow is wrong-platform output for a GitLab repository; every
-   * platform-neutral asset is still written.
+   * atomically with the rest of the harness. `null` (#117/#305: GitLab
+   * platform mode) plans no workflow write AND removes a previous
+   * SpecGit-owned workflow at the managed path — a GitHub Actions
+   * workflow is obsolete output for a GitLab repository; every
+   * platform-neutral asset is still written. A file at that path that
+   * does not prove SpecGit ownership is preserved and reported.
    */
   workflowYaml?: string | null;
   /**
@@ -118,42 +124,19 @@ async function readIfExists(target: string): Promise<string | null> {
   }
 }
 
-interface Snapshot {
-  target: string;
-  existed: boolean;
-  content: string | null;
-  mode: number | null;
-}
-
-async function snapshot(target: string): Promise<Snapshot> {
-  const [content, stat] = await Promise.all([
-    readIfExists(target),
-    fs.stat(target).catch(() => null),
-  ]);
-  return { target, existed: content !== null, content, mode: stat?.mode ?? null };
-}
-
-interface PlannedWrite {
-  target: string;
-  content: string;
-  mode: number;
-}
-
 /**
- * Write the full harness (#62 non-destructive contract):
- *
- * 1. Plan — read every target and compute its final bytes up front
- *    (merging user hooks, injecting the managed block). A failure here
- *    surfaces as a `HarnessWriteError` with phase `plan` — a content
- *    failure, before any write touched the tree.
- * 2. Commit — create directories and write files in order.
- * 3. Rollback — if any commit step fails, restore every prior target to
- *    its snapshot (bytes and mode) and remove files/directories this run
- *    created, then rethrow with phase `commit` so init reports exit 3
- *    with a clean tree.
+ * Structural ownership proof for the managed workflow path: both SpecGit
+ * workflow generations (self and external template) carry the acceptance
+ * job name and the `specgit finish` invocation. A file at the managed path
+ * without both markers is user content — preserved, never removed (#305).
  */
-interface HarnessPlan {
-  planned: PlannedWrite[];
+export function isSpecGitOwnedWorkflow(content: string): boolean {
+  return content.includes('name: SpecGit Acceptance') && content.includes('specgit finish');
+}
+
+export interface HarnessDesiredState {
+  /** Ordered reconciliation steps for every harness asset (#305). */
+  steps: ManagedStep[];
   workflowWritten: boolean;
   prompts: string[];
   hooksJsonWritten: boolean;
@@ -161,19 +144,38 @@ interface HarnessPlan {
   warnings: Array<{ code: string; message: string }>;
 }
 
-/** The plan phase: reads + pure content transforms; never writes. */
-async function planHarnessWrites(root: string, options: HarnessWriteOptions): Promise<HarnessPlan> {
+/**
+ * Build the harness desired state (#305): reads every target and turns the
+ * content merges into reconciliation steps. Pure with respect to the tree —
+ * no writes happen here; a failure surfaces as a plan-phase
+ * `HarnessWriteError` from the caller.
+ */
+export async function buildHarnessDesiredState(
+  root: string,
+  options: HarnessWriteOptions
+): Promise<HarnessDesiredState> {
   const warnings: Array<{ code: string; message: string }> = [];
   const block = managedPromptBlock(options.language);
-  const planned: PlannedWrite[] = [];
+  const steps: ManagedStep[] = [];
   const prompts: string[] = [];
 
   const workflowWritten = options.workflowYaml !== null;
   if (workflowWritten) {
-    planned.push({
-      target: path.join(root, ...HARNESS_WORKFLOW_SEGMENTS),
-      content: options.workflowYaml ?? harnessWorkflowYaml(),
+    steps.push({
+      kind: 'write',
+      path: HARNESS_WORKFLOW_PATH,
       mode: 0o644,
+      // The current template wholesale: an init-owned artifact is
+      // regenerated, local drift repaired.
+      merge: () => options.workflowYaml ?? harnessWorkflowYaml(),
+    });
+  } else {
+    // #305: wrong-platform workflow — remove it when (and only when) the
+    // bytes prove SpecGit ownership; anything else is preserved + reported.
+    steps.push({
+      kind: 'remove',
+      path: HARNESS_WORKFLOW_PATH,
+      isOwned: isSpecGitOwnedWorkflow,
     });
   }
 
@@ -183,7 +185,12 @@ async function planHarnessWrites(root: string, options: HarnessWriteOptions): Pr
     if (existing === null && filename === CLAUDE_FILENAME) {
       continue;
     }
-    planned.push({ target, content: injectManagedBlock(existing ?? '', block), mode: 0o644 });
+    steps.push({
+      kind: 'write',
+      path: filename,
+      mode: 0o644,
+      merge: (current) => (current === null && filename === CLAUDE_FILENAME ? null : injectManagedBlock(current ?? '', block)),
+    });
     prompts.push(filename);
   }
 
@@ -195,111 +202,83 @@ async function planHarnessWrites(root: string, options: HarnessWriteOptions): Pr
     warnings.push({ code: 'hooks_json_unmerged', message: hooksJsonMerge.warning });
     hooksJsonWritten = false;
   } else {
-    planned.push({ target: hooksJsonTarget, content: hooksJsonMerge.json, mode: 0o644 });
+    steps.push({
+      kind: 'write',
+      path: HOOKS_JSON_PATH,
+      mode: 0o644,
+      merge: () => hooksJsonMerge.json,
+    });
   }
 
-  const guardTarget = path.join(root, ...HOOKS_SEGMENTS, 'specgit-merge-guard.sh');
-  planned.push({ target: guardTarget, content: GUARD_SCRIPT, mode: 0o755 });
+  steps.push({
+    kind: 'write',
+    path: GUARD_HOOK_PATH,
+    mode: 0o755,
+    merge: () => GUARD_SCRIPT,
+  });
 
   const hooksDir = options.resolveHooksDir
     ? await options.resolveHooksDir(root)
     : await legacyGitHooksDir(root);
   let gitHook: string | null = null;
-  let gitHookTarget: string | null = null;
   if (hooksDir !== null) {
-    gitHookTarget = path.join(hooksDir, 'pre-push');
+    const gitHookTarget = path.join(hooksDir, 'pre-push');
     const existing = await readIfExists(gitHookTarget);
-    planned.push({ target: gitHookTarget, content: mergeGitPrePush(existing), mode: 0o755 });
+    steps.push({
+      kind: 'write',
+      path: path.relative(root, gitHookTarget).split(path.sep).join('/'),
+      mode: 0o755,
+      merge: () => mergeGitPrePush(existing),
+    });
     gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
   }
 
-  return { planned, workflowWritten, prompts, hooksJsonWritten, gitHook, warnings };
+  return { steps, workflowWritten, prompts, hooksJsonWritten, gitHook, warnings };
 }
 
+/** Assemble the #280 result shape from the desired state and the #305 report. */
+export function harnessResultFrom(
+  desired: HarnessDesiredState,
+  report: ManagedReconcileReport
+): HarnessWriteResult {
+  const hooks = [...(desired.hooksJsonWritten ? [HOOKS_JSON_PATH] : []), GUARD_HOOK_PATH];
+  return {
+    workflow: desired.workflowWritten ? HARNESS_WORKFLOW_PATH : null,
+    prompts: desired.prompts,
+    hooks,
+    gitHook: desired.gitHook,
+    removed: report.removed,
+    warnings: desired.warnings,
+  };
+}
+
+/**
+ * Write the full harness (#62 non-destructive contract, #305 transaction):
+ * build the desired state (plan — content failures surface as phase
+ * `plan`), then reconcile it in one reversible transaction (commit —
+ * rollback on failure, phase `commit`).
+ */
 export async function writeHarnessAssets(
   root: string,
   options: HarnessWriteOptions = {}
 ): Promise<HarnessWriteResult> {
-  // ---- Plan phase: content failures, nothing written yet ----
-  let plan: HarnessPlan;
+  let desired: HarnessDesiredState;
   try {
-    plan = await planHarnessWrites(root, options);
+    desired = await buildHarnessDesiredState(root, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new HarnessWriteError('plan', message);
   }
 
-  // ---- Commit phase (writes; rollback restores on failure) ----
-  const snapshots: Snapshot[] = [];
-  const createdDirs: string[] = [];
+  let report: ManagedReconcileReport;
   try {
-    for (const step of plan.planned) {
-      snapshots.push(await snapshot(step.target));
-      await ensureDirTracked(path.dirname(step.target), createdDirs);
-      await fs.writeFile(step.target, step.content, 'utf-8');
-      await fs.chmod(step.target, step.mode);
-    }
+    report = await reconcileManagedAssets(root, { steps: desired.steps });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const rollbackNote = await rollback(snapshots, createdDirs);
-    throw new HarnessWriteError(
-      'commit',
-      rollbackNote !== null ? `${message} (rollback incomplete: ${rollbackNote})` : message
-    );
+    const phase =
+      error instanceof ManagedReconcileError && error.phase === 'plan' ? 'plan' : 'commit';
+    throw new HarnessWriteError(phase, message);
   }
 
-  const hooks = [...(plan.hooksJsonWritten ? [HOOKS_JSON_PATH] : []), GUARD_HOOK_PATH];
-  return {
-    workflow: plan.workflowWritten ? HARNESS_WORKFLOW_PATH : null,
-    prompts: plan.prompts,
-    hooks,
-    gitHook: plan.gitHook,
-    warnings: plan.warnings,
-  };
-}
-
-/** mkdir -p that records the directory chain it had to create. */
-async function ensureDirTracked(dir: string, created: string[]): Promise<void> {
-  const missing: string[] = [];
-  let cursor = dir;
-  while (!(await fs.stat(cursor).then(() => true).catch(() => false))) {
-    missing.push(cursor);
-    const parent = path.dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  if (missing.length > 0) {
-    await fs.mkdir(dir, { recursive: true });
-    created.push(...missing);
-  }
-}
-
-/**
- * Best-effort restore to the pre-write state: rewritten files get their
- * original bytes and mode back, files this run created are removed, and
- * directories this run created are removed deepest-first (rmdir refuses
- * non-empty dirs, so user content can never be deleted here).
- */
-async function rollback(snapshots: Snapshot[], createdDirs: string[]): Promise<string | null> {
-  let failure: string | null = null;
-  for (const snap of [...snapshots].reverse()) {
-    try {
-      if (snap.existed && snap.content !== null) {
-        await fs.writeFile(snap.target, snap.content, 'utf-8');
-        if (snap.mode !== null) await fs.chmod(snap.target, snap.mode);
-      } else {
-        await fs.unlink(snap.target).catch(() => undefined);
-      }
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-  }
-  for (const dir of [...createdDirs].sort((a, b) => b.length - a.length)) {
-    try {
-      await fs.rmdir(dir);
-    } catch {
-      // Non-empty (or already gone) — nothing more we can safely do.
-    }
-  }
-  return failure;
+  return harnessResultFrom(desired, report);
 }

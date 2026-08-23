@@ -111,12 +111,15 @@ walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 
 State and assets, in three tiers: **authoritative delivery files**
 (`spec_git/policy.yaml`, `.specgit.yaml`, optional `spec_git/providers.yaml`
-— shielded from everyday commits by a managed `.gitignore` block that
-`init` writes by default, and carried into git only by the bootstrap's
-own binding commit, where the CI verdict can read them; `--no-ignore`
-keeps the classic committed model), a **derived committed harness** (the
-acceptance workflow and the managed
-AGENTS/CLAUDE block — regenerable with `init --force`), and **local
+— shielded from everyday commits by a managed `.gitignore` region that
+`init` writes by default and reconciles on upgrade, and carried into git
+only by the bootstrap's own binding commit, where the CI verdict can read
+them; `--no-ignore` keeps the classic committed model), a **derived
+committed harness** (the acceptance workflow and the managed
+AGENTS/CLAUDE block — converged to the running version by `init --force`,
+which also removes obsolete SpecGit-owned assets it can prove ownership
+of and rolls the whole local mutation — bytes, modes, and created
+directories — back on failure), and **local
 integration assets** (guard hooks and `setup` entry points, merged
 non-destructively). Verdicts are never persisted. One PR may close N issues;
 every bound issue must be closed from the PR body; checks are matched
