@@ -120,8 +120,11 @@ AGENTS/CLAUDE block — converged to the running version by `init --force`,
 which also removes obsolete SpecGit-owned assets it can prove ownership
 of and rolls the whole local mutation — bytes, modes, and created
 directories — back on failure), and **local
-integration assets** (guard hooks and `setup` entry points, merged
-non-destructively). Verdicts are never persisted. One PR may close N issues;
+integration assets** (guard hooks and `setup` entry points — likewise
+converged to the running version by re-running `specgit setup`, which
+removes retired SpecGit-owned entry points only with proven ownership,
+preserves unmarked files, and never touches the unselected surface).
+Verdicts are never persisted. One PR may close N issues;
 every bound issue must be closed from the PR body; checks are matched
 byte-for-byte against the names in `spec_git/policy.yaml`. Full table:
 [Reference](docs/reference.md#state-and-assets).

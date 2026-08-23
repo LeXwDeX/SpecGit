@@ -10,12 +10,25 @@
  *
  * With no `--tool` flag the tool is auto-detected: an existing
  * `.opencode/` directory selects opencode, otherwise generic.
+ *
+ * Since #307 re-running setup is the version-upgrade refresh for the agent
+ * surfaces: the selected surface converges inside ONE managed-asset
+ * reconciliation transaction — current entry points are created/refreshed,
+ * retired SpecGit-owned entries (ownership proven from their bytes) are
+ * removed with only-empty directory pruning, and any failure restores the
+ * exact pre-run tree.
  */
 
 import * as fs from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
 
 import { ISSUE_TYPE_LIST } from './commands/issue.js';
+import {
+  reconcileManagedAssets,
+  type ManagedReconcileReport,
+  type ManagedStep,
+} from './managed-reconcile.js';
 
 export type SetupTool = 'opencode' | 'generic' | 'all';
 
@@ -383,24 +396,95 @@ specgit status --json
 - \`--json\` is the only parse surface.
 `;
 
+/**
+ * Ownership marker (#307): every generated entry point carries this HTML
+ * comment — inert for every markdown consumer — directly after its YAML
+ * frontmatter. A later version that retires an entry point proves SpecGit
+ * ownership of the retired bytes from this marker; for the released
+ * pre-marker generic skills, an `author: specgit` value in the file's YAML
+ * frontmatter is equivalent evidence. A file with neither is user
+ * content — preserved verbatim, never deleted.
+ */
+export const ENTRY_POINT_MARKER = '<!-- specgit-managed-entry-point -->';
+
+/**
+ * A released skill's authorship declaration: a YAML mapping line whose
+ * value is exactly `specgit` (optionally quoted) — the released
+ * `metadata: author: specgit` shape, never mere body prose.
+ */
+const FRONTMATTER_AUTHOR_LINE = /^\s*author:\s*["']?specgit["']?\s*$/;
+
+/**
+ * The YAML frontmatter's interior lines, empty when the file has none:
+ * the leading `---` fence up to the closing fence, found the same way
+ * `withEntryPointMarker` locates the block it stamps.
+ */
+function frontmatterLines(content: string): string[] {
+  if (!content.startsWith('---\n')) {
+    return [];
+  }
+  const close = content.indexOf('\n---\n', 3);
+  return close === -1 ? [] : content.slice(4, close).split('\n');
+}
+
+/**
+ * Structural ownership proof for a SpecGit entry point (#307): the managed
+ * marker, or `author: specgit` as a frontmatter metadata value. Body text
+ * quoting the authorship string proves nothing — user prose may discuss
+ * the marker line itself.
+ */
+export function isSpecGitOwnedEntryPoint(content: string): boolean {
+  if (content.includes(ENTRY_POINT_MARKER)) {
+    return true;
+  }
+  return frontmatterLines(content).some((line) => FRONTMATTER_AUTHOR_LINE.test(line));
+}
+
+/**
+ * Stamp a template with the ownership marker directly after the frontmatter
+ * (a leading comment would break frontmatter parsers); templates without
+ * frontmatter get it as the leading line.
+ */
+function withEntryPointMarker(template: string): string {
+  const close = template.indexOf('\n---\n', 3);
+  if (close === -1) {
+    return `${ENTRY_POINT_MARKER}\n\n${template}`;
+  }
+  const insertAt = close + '\n---\n'.length;
+  return `${template.slice(0, insertAt)}\n${ENTRY_POINT_MARKER}\n${template.slice(insertAt)}`;
+}
+
 const OPENCODE_COMMANDS: Record<string, string> = {
-  'specgit-issue.md': ISSUE_COMMAND,
-  'specgit-finish.md': FINISH_COMMAND,
-  'specgit-doctor.md': DOCTOR_COMMAND,
-  'specgit-pr.md': PR_COMMAND,
-  'specgit-status.md': STATUS_COMMAND,
+  'specgit-issue.md': withEntryPointMarker(ISSUE_COMMAND),
+  'specgit-finish.md': withEntryPointMarker(FINISH_COMMAND),
+  'specgit-doctor.md': withEntryPointMarker(DOCTOR_COMMAND),
+  'specgit-pr.md': withEntryPointMarker(PR_COMMAND),
+  'specgit-status.md': withEntryPointMarker(STATUS_COMMAND),
 };
 
 const GENERIC_SKILLS: Record<string, string> = {
-  ['specgit-issue/SKILL.md']: ISSUE_SKILL,
-  ['specgit-finish/SKILL.md']: FINISH_SKILL,
-  ['specgit-doctor/SKILL.md']: DOCTOR_SKILL,
-  ['specgit-pr/SKILL.md']: PR_SKILL,
-  ['specgit-status/SKILL.md']: STATUS_SKILL,
+  ['specgit-issue/SKILL.md']: withEntryPointMarker(ISSUE_SKILL),
+  ['specgit-finish/SKILL.md']: withEntryPointMarker(FINISH_SKILL),
+  ['specgit-doctor/SKILL.md']: withEntryPointMarker(DOCTOR_SKILL),
+  ['specgit-pr/SKILL.md']: withEntryPointMarker(PR_SKILL),
+  ['specgit-status/SKILL.md']: withEntryPointMarker(STATUS_SKILL),
 };
+
+const OPENCODE_COMMAND_DIR = '.opencode/command';
+const GENERIC_SKILLS_DIR = '.agents/skills';
 
 export interface SetupWriteResult {
   tool: SetupTool;
+  installed: string[];
+  /** #307: what the reconciliation transaction did (created/updated/removed/preserved). */
+  reconciled: ManagedReconcileReport;
+}
+
+/** The desired agent-surface state for one setup run (#307). */
+export interface AgentSurfaceDesiredState {
+  /** Ordered reconciliation steps: current writes, then proven removals. */
+  steps: ManagedStep[];
+  /** Repo-relative paths of the selected surfaces' current entry points. */
   installed: string[];
 }
 
@@ -416,29 +500,108 @@ export async function detectSetupTool(root: string): Promise<'opencode' | 'gener
   return (await dirExists(path.join(root, '.opencode'))) ? 'opencode' : 'generic';
 }
 
-export async function writeAgentSurface(root: string, tool: SetupTool): Promise<SetupWriteResult> {
-  const installed: string[] = [];
+/** List a directory for removal-candidate discovery; absent means empty. */
+async function readdirEntries(target: string): Promise<Dirent[]> {
+  try {
+    return await fs.readdir(target, { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return [];
+    }
+    throw error;
+  }
+}
 
+/**
+ * Build the selected surfaces' desired state (#307): a write step for every
+ * current entry point, then — bounded strictly to the selected managed
+ * roots — removal steps for retired candidates (`specgit-*.md` commands
+ * and `SKILL.md` files in `specgit-*` skill directories; the naming every
+ * released version used).
+ * Reads only; the ownership decision itself stays with the transaction.
+ */
+export async function buildAgentSurfaceDesiredState(
+  root: string,
+  tool: SetupTool
+): Promise<AgentSurfaceDesiredState> {
   const wantsOencode = tool === 'opencode' || tool === 'all';
   const wantsGeneric = tool === 'generic' || tool === 'all';
 
+  const steps: ManagedStep[] = [];
+  const installed: string[] = [];
+
   if (wantsOencode) {
     for (const [rel, content] of Object.entries(OPENCODE_COMMANDS)) {
-      const target = path.join(root, '.opencode', 'command', rel);
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, content, 'utf-8');
-      installed.push(`.opencode/command/${rel}`);
+      steps.push({
+        kind: 'write',
+        path: `${OPENCODE_COMMAND_DIR}/${rel}`,
+        mode: 0o644,
+        // The current template wholesale: a setup-owned entry point is
+        // regenerated, local drift repaired.
+        merge: () => content,
+      });
+      installed.push(`${OPENCODE_COMMAND_DIR}/${rel}`);
+    }
+    const current = new Set(Object.keys(OPENCODE_COMMANDS));
+    const commandDir = path.join(root, ...OPENCODE_COMMAND_DIR.split('/'));
+    for (const entry of await readdirEntries(commandDir)) {
+      if (!entry.isFile() || !entry.name.startsWith('specgit-') || !entry.name.endsWith('.md')) {
+        continue;
+      }
+      if (current.has(entry.name)) {
+        continue;
+      }
+      steps.push({
+        kind: 'remove',
+        path: `${OPENCODE_COMMAND_DIR}/${entry.name}`,
+        isOwned: isSpecGitOwnedEntryPoint,
+      });
     }
   }
 
   if (wantsGeneric) {
     for (const [rel, content] of Object.entries(GENERIC_SKILLS)) {
-      const target = path.join(root, '.agents', 'skills', rel);
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, content, 'utf-8');
-      installed.push(`.agents/skills/${rel}`);
+      steps.push({
+        kind: 'write',
+        path: `${GENERIC_SKILLS_DIR}/${rel}`,
+        mode: 0o644,
+        merge: () => content,
+      });
+      installed.push(`${GENERIC_SKILLS_DIR}/${rel}`);
+    }
+    const current = new Set(Object.keys(GENERIC_SKILLS));
+    const skillsDir = path.join(root, ...GENERIC_SKILLS_DIR.split('/'));
+    for (const entry of await readdirEntries(skillsDir)) {
+      if (!entry.isDirectory() || !entry.name.startsWith('specgit-')) {
+        continue;
+      }
+      if (current.has(`${entry.name}/SKILL.md`)) {
+        continue;
+      }
+      // Only the owned generated file is ever a candidate: a directory
+      // holding user files keeps them (removal prunes dirs only when empty).
+      steps.push({
+        kind: 'remove',
+        path: `${GENERIC_SKILLS_DIR}/${entry.name}/SKILL.md`,
+        isOwned: isSpecGitOwnedEntryPoint,
+      });
     }
   }
 
-  return { tool, installed };
+  return { steps, installed };
+}
+
+/**
+ * Converge the selected agent surfaces to this version's entry-point set
+ * (#307) inside one reversible managed-asset transaction: current entry
+ * points are created/refreshed, retired SpecGit-owned entries are removed
+ * (only with proven ownership, with emptied directories pruned), and a
+ * failure at any step restores the pre-run tree — bytes, modes, and
+ * run-created directories.
+ */
+export async function writeAgentSurface(root: string, tool: SetupTool): Promise<SetupWriteResult> {
+  const desired = await buildAgentSurfaceDesiredState(root, tool);
+  const reconciled = await reconcileManagedAssets(root, { steps: desired.steps });
+  return { tool, installed: desired.installed, reconciled };
 }
