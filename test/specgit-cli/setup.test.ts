@@ -501,6 +501,30 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     }
   });
 
+  // #311: the portable status skill must teach the full #175 contract — a
+  // missing record is the healthy unbound state on exit 0, distinct from a
+  // genuine exit-3 evidence failure — so an agent neither treats unbound as
+  // broken nor unknown as success. Both branches are pinned; removing
+  // either fails here.
+  it('pins the unbound/exit-3 contract in the portable status skill (#311)', async () => {
+    gitInit(tempDir);
+    await writeAgentSurface(tempDir, 'generic');
+    const skill = fs.readFileSync(
+      path.join(tempDir, '.agents', 'skills', 'specgit-status', 'SKILL.md'),
+      'utf-8'
+    );
+    // Unbound branch: explicitly not an error, exit 0, normal pre-binding.
+    expect(skill).toContain('`state: "unbound"` with exit `0`');
+    expect(skill).toMatch(/normal pre-binding state/);
+    expect(skill).toContain('not an error');
+    // Next action for unbound: bootstrap; the envelope rides a warning (#175).
+    expect(skill).toContain('bootstrap with `specgit issue`');
+    expect(skill).toContain('`warnings[].fix`');
+    // Exit-3 branch: a genuine evidence failure; the exact fix rides errors[].
+    expect(skill).toMatch(/[Ee]xit `3`/);
+    expect(skill).toContain('`errors[].fix`');
+  });
+
   it('human output reports removed entry points alongside the installed set', async () => {
     gitInit(tempDir);
     const commandDir = path.join(tempDir, '.opencode', 'command');

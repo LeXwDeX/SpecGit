@@ -2,6 +2,8 @@
 description: Show local SpecGit evidence — record, delivery state, drift, origin
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # /specgit-status
 
 Thin trigger for local evidence. The canonical behavior lives in the

@@ -2,6 +2,8 @@
 description: Diagnose the SpecGit environment probes and drive the exit-3 repair loop
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # /specgit-doctor
 
 Thin trigger for the exit-3 diagnostic loop. The canonical behavior lives in
