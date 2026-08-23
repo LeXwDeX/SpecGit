@@ -186,6 +186,8 @@ export async function writeHarnessAndPolicy(args: {
 export function buildInitOutcome(args: {
   checks: string[];
   detected: DetectionReport | null;
+  /** #310: how `checks` was selected — explicit | existing | detected. */
+  provenance: 'explicit' | 'existing' | 'detected';
   platform: { outcome: PlatformOutcome; human: string[] };
   harness: HarnessWriteResult;
   policy: Policy;
@@ -200,6 +202,7 @@ export function buildInitOutcome(args: {
   const {
     checks,
     detected,
+    provenance,
     platform,
     harness,
     policy,
@@ -214,6 +217,9 @@ export function buildInitOutcome(args: {
   const builder = humanBuilder()
     .line(text.initCreatedPolicy(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`))
     .append(ignore ? [text.initIgnoredAssets(ignore.path)] : [])
+    // #310: an upgrade says it preserved the checks (and names the
+    // replacement path); a fresh init or an explicit list does not.
+    .append(provenance === 'existing' ? [text.initPreservedChecks()] : [])
     .line(text.initRequiredChecks(checks.length))
     .append(checks.map((name) => text.initCheck(name)))
     .append(platform.human);
@@ -223,6 +229,11 @@ export function buildInitOutcome(args: {
       .append(detected.sources.map((s) => text.initDetectedSource(s)))
       .append(
         detected.nonPrWorkflows.map((s) => detailLine(`skipped, never runs on a PR head: ${s}`))
+      )
+      .append(
+        detected.ambiguousJobs.map((s) =>
+          detailLine(`excluded, check-run name not statically provable: ${s}`)
+        )
       );
   }
   builder
@@ -252,6 +263,8 @@ export function buildInitOutcome(args: {
             platform: detected.platform,
             sources: detected.sources,
             nonPrWorkflows: detected.nonPrWorkflows,
+            /** #310: jobs whose names detection could not prove (matrix/reusable). */
+            ambiguousJobs: detected.ambiguousJobs,
             clis: detected.clis,
             fallback: checks.length === 0,
           },

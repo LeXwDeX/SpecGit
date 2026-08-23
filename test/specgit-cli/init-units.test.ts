@@ -19,7 +19,9 @@ import {
   validateGitlabHost,
 } from '../../src/cli/commands/init-platform.js';
 import {
-  detectAndValidateChecks,
+  ambiguousJobWarning,
+  preservedChecksWarning,
+  resolveRequiredChecks,
   nonPrWorkflowWarning,
   policyGateOutcome,
   resolveInitLanguage,
@@ -142,20 +144,33 @@ describe('init-platform: endpoint and port judgment (#220)', () => {
   });
 });
 
-describe('init-validation: check parsing and pre-mutation gates (#220)', () => {
+describe('init-validation: check selection provenance and pre-mutation gates (#220, #310)', () => {
+  const noPolicy = fail<Policy>('policy_missing', 'No policy found at spec_git/policy.yaml.');
+
   it('trims explicit check names and skips detection', async () => {
     const t = makeCtx();
-    const resolution = await detectAndValidateChecks({ requiredCheck: [' build ', 'test'] }, t.ctx);
+    const resolution = await resolveRequiredChecks(
+      { requiredCheck: [' build ', 'test'] },
+      t.ctx,
+      '/repo',
+      noPolicy
+    );
     expect('exit' in resolution).toBe(false);
     if (!('exit' in resolution)) {
       expect(resolution.checks).toEqual(['build', 'test']);
       expect(resolution.detected).toBeNull();
+      expect(resolution.provenance).toBe('explicit');
     }
   });
 
   it('rejects empty check names as usage errors', async () => {
     const t = makeCtx();
-    const outcome = await detectAndValidateChecks({ requiredCheck: ['valid', ' '] }, t.ctx);
+    const outcome = await resolveRequiredChecks(
+      { requiredCheck: ['valid', ' '] },
+      t.ctx,
+      '/repo',
+      noPolicy
+    );
     expect('exit' in outcome).toBe(true);
     if ('exit' in outcome) {
       expect(outcome.exit).toBe(EXIT_USAGE);
@@ -163,13 +178,56 @@ describe('init-validation: check parsing and pre-mutation gates (#220)', () => {
     }
   });
 
-  it('keeps the strict --no-detect path explicit-or-refused', async () => {
+  it('keeps the strict --no-detect path explicit-or-refused without a policy', async () => {
     const t = makeCtx();
-    const outcome = await detectAndValidateChecks({ detect: false }, t.ctx);
+    const outcome = await resolveRequiredChecks({ detect: false }, t.ctx, '/repo', noPolicy);
     expect('exit' in outcome).toBe(true);
     if ('exit' in outcome) {
       expect(outcome.exit).toBe(EXIT_USAGE);
       expect(outcome.errors?.[0]?.code).toBe('required_check_required');
+    }
+  });
+
+  it('preserves an existing policy exactly — order and emptiness included (#310)', async () => {
+    const t = makeCtx();
+    const ordered = await resolveRequiredChecks(
+      {},
+      t.ctx,
+      '/repo',
+      ok(samplePolicy({ required_checks: ['Second', 'First'] }))
+    );
+    expect('exit' in ordered).toBe(false);
+    if (!('exit' in ordered)) {
+      expect(ordered.checks).toEqual(['Second', 'First']);
+      expect(ordered.detected).toBeNull();
+      expect(ordered.provenance).toBe('existing');
+    }
+    // A no-CI policy (zero checks, #63) upgrades as a no-CI policy too.
+    const noCi = await resolveRequiredChecks(
+      {},
+      t.ctx,
+      '/repo',
+      ok(samplePolicy({ required_checks: [] }))
+    );
+    expect('exit' in noCi).toBe(false);
+    if (!('exit' in noCi)) {
+      expect(noCi.checks).toEqual([]);
+      expect(noCi.provenance).toBe('existing');
+    }
+  });
+
+  it('explicit checks win over an existing policy — the intentional replacement path (#310)', async () => {
+    const t = makeCtx();
+    const resolution = await resolveRequiredChecks(
+      { requiredCheck: ['New'] },
+      t.ctx,
+      '/repo',
+      ok(samplePolicy({ required_checks: ['Old'] }))
+    );
+    expect('exit' in resolution).toBe(false);
+    if (!('exit' in resolution)) {
+      expect(resolution.checks).toEqual(['New']);
+      expect(resolution.provenance).toBe('explicit');
     }
   });
 
@@ -208,11 +266,38 @@ describe('init-validation: check parsing and pre-mutation gates (#220)', () => {
       requiredChecks: ['Test'],
       sources: ['.github/workflows/ci.yml'],
       nonPrWorkflows: [],
+      ambiguousJobs: [],
       clis: { gh: true, glab: false },
     };
     expect(nonPrWorkflowWarning(base)).toBeNull();
     const warning = nonPrWorkflowWarning({ ...base, nonPrWorkflows: ['release.yml'] });
     expect(warning?.code).toBe('checks_not_pr_visible');
     expect(warning?.message).toContain('release.yml');
+  });
+
+  it('warns exactly when detection could not prove a check-run name (#310)', () => {
+    const base: DetectionReport = {
+      platform: 'github',
+      requiredChecks: ['Test'],
+      sources: ['.github/workflows/ci.yml'],
+      nonPrWorkflows: [],
+      ambiguousJobs: [],
+      clis: { gh: true, glab: false },
+    };
+    expect(ambiguousJobWarning(base)).toBeNull();
+    const warning = ambiguousJobWarning({
+      ...base,
+      ambiguousJobs: ['.github/workflows/ci.yml: test_matrix'],
+    });
+    expect(warning?.code).toBe('checks_name_ambiguous');
+    expect(warning?.message).toContain('test_matrix');
+    expect(warning?.fix).toContain('--required-check');
+  });
+
+  it('the preserve path names the replacement path in its warning (#310)', () => {
+    const warning = preservedChecksWarning();
+    expect(warning.severity).toBe('warning');
+    expect(warning.code).toBe('checks_preserved');
+    expect(warning.fix).toContain('--required-check');
   });
 });

@@ -9,7 +9,13 @@ Normative rules for AI agents operating on a SpecGit project. Everything here is
 - Branch on exit codes, not on output phrasing: `0` accepted/success · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown.
 - Never invent environment configuration: there are no product environment variables and no telemetry to disable.
 
-## 2. The one rule
+## 2. Issue-first delivery
+
+**Non-trivial mutation work becomes tracker issues before development starts.** A feature, a fix, a refactor, a docs change — any non-trivial task — is a delivery: work items live in the tracker as issues (`specgit issue <type>: <title>...`), never in private task lists or conversational checklists. Mid-conversation inventories ("let me list everything to do") become issues, not chat artifacts. Before creating an issue, search the tracker for duplicates and continue the existing issue when the WHY is the same — one line of work per WHY, never two.
+
+Trivial replies and read-only questions are exempt: they change nothing and need no issue.
+
+## 3. The one rule
 
 **A delivery is done if and only if `specgit finish` exits `0`.** (`specgit accept` is the script alias running the same evaluation.)
 
@@ -20,7 +26,7 @@ Corollaries:
 - Treat exit `1` and exit `3` differently. Exit `1`: the evidence is complete — fix what the gates named. Exit `3`: evidence is missing — fix record, policy, git, or `gh` first (run `specgit doctor --json`).
 - A verdict is a fact about the moment it was computed. If the PR, checks, or branch change afterwards, re-run `finish` before relying on it.
 
-## 3. Command discipline
+## 4. Command discipline
 
 | Command | When you run it | Hard rules |
 | --- | --- | --- |
@@ -32,13 +38,13 @@ Corollaries:
 | `status` | Anytime — it is local-only and network-free | Use it for the record/state/context snapshot; never present its output as acceptance. |
 | `doctor` | Diagnosing exit-3 results or first-time setup | Its probe order is the debugging order: git → repo → origin → gh → auth → policy. |
 
-## 4. Working with the PR and checks
+## 5. Working with the PR and checks
 
 - `specgit issue` opens the draft PR with `Closes #n` for every bound issue; keep those references intact when editing the body (keywords: `close(s|d)`, `fix(es|ed)`, `resolve(s|d)`; forms: `#N`, `owner/repo#N`, full issue URL).
 - After changing the PR body, head branch, or CI, re-run `specgit finish`; do not assume.
 - When a check fails, fix the cause and push; checks are re-read from the new PR head. Never bypass, rename-around, or reconfig a required check to make acceptance pass without the user's explicit decision.
 
-## 5. Hard prohibitions
+## 6. Hard prohibitions
 
 - Do not run `finish`/`accept` and present exit `3` (`unknown`) as success or as "probably fine."
 - Do not modify git state to satisfy context gates while on the wrong branch without the user's explicit instruction (the fix is to check out the delivery branch).
