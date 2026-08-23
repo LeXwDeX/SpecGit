@@ -1,8 +1,7 @@
 version: 1
-delivery: init-ignore-specgit-files
+delivery: docs-contract-wording-align
 context:
   kind: branch
-  branch: feat/292-init-ignore-specgit-files
+  branch: docs/295-docs-contract-wording-align
 issues:
-  - 292
-pr: 293
+  - 295
