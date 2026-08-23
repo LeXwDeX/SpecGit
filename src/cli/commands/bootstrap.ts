@@ -21,7 +21,7 @@
 import { EXIT_UNKNOWN } from '../exit-codes.js';
 import { errorDiagnostic, type IssueOutcome } from '../output.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
-import { POLICY_FILENAME, RECORD_FILENAME } from '../../record/schema.js';
+import { POLICY_FILENAME, PROVIDERS_FILENAME, RECORD_FILENAME } from '../../record/schema.js';
 import { SPEC_GIT_DIR } from '../types.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
@@ -173,7 +173,7 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
         RECORD_FILENAME,
         ...[
           `${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
-          `${SPEC_GIT_DIR}/providers.yaml`,
+          `${SPEC_GIT_DIR}/${PROVIDERS_FILENAME}`,
         ].filter((relative) => existsSync(path.join(root, relative))),
       ];
       const commit = await ctx.git.commitFile(
