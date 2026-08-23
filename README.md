@@ -86,6 +86,12 @@ specgit init                          # auto-detects checks from your CI workflo
 specgit init --gitlab-host git.example.com   # self-managed GitLab instead
 specgit setup                         # install agent entry points (commands/skills)
 specgit doctor                        # all probes green?
+#    protection ordering: the init run above offers to require the
+#    acceptance check on the default branch — on a fresh adoption answer
+#    "no" (or pass --no-protect) until the adoption PR (init's output,
+#    committed) has merged; a required check no PR can pass yet locks out
+#    non-admin merges. Re-run `specgit init --force --protect` after that
+#    first merge.
 
 # The loop
 # 3. per delivery — one command bootstraps everything

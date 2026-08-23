@@ -25,7 +25,9 @@ git push -u origin chore/adopt-specgit
 
 Open the PR and merge it. The acceptance workflow's first run on this PR reports `record_missing` — expected: the adoption PR is not itself a delivery, and once the workflow lands on your base branch every later delivery carries a record.
 
-Set the same name(s) as a required status check in branch protection in the same change, so the GitHub-side and SpecGit-side contracts never disagree.
+**Then, after that merge**, set the acceptance check as a required status check in branch protection (`specgit init --force --protect`, or Settings → Branches without weakening existing rules). Ordering matters: while the check is required, no PR can merge without a passing verdict — so requiring it before the adoption PR merges would lock it out (`record_missing` can never pass). This is the one place where "protect first" is wrong: protect after the adoption merge, not before, and the GitHub-side and SpecGit-side contracts never disagree.
+
+One more #292 note for the recipe above: with the default local-asset shielding, the plain `git add spec_git` line silently misses the ignored policy — use `git add -f spec_git/policy.yaml .github/workflows/specgit-accept.yml AGENTS.md CLAUDE.md` (or run `specgit init --no-ignore`), so the adoption PR really carries the policy its own wait step reads.
 
 ### 3. Verify the environment
 
