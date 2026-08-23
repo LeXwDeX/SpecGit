@@ -1192,4 +1192,91 @@ describe('specgit init --language (#118)', () => {
     expect(stdoutText(t.io)).toContain('已创建 spec_git/policy.yaml');
     expect(stdoutText(t.io)).toContain('必需检查');
   });
+
+  // ---- #292: init shields the local delivery assets from git by default. ----
+
+  it('writes the local-asset ignore block to .gitignore by default (#292)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const gitignore = read(path.join(root, '.gitignore'));
+    expect(gitignore).toContain('/.specgit.yaml');
+    expect(gitignore).toContain('/spec_git/');
+    expect(gitignore).toContain('specgit');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.ignore).toEqual({
+      path: '.gitignore',
+      entries: ['/.specgit.yaml', '/spec_git/'],
+      created: true,
+    });
+    expect(stdoutText(t.io)).toContain('.gitignore');
+  });
+
+  it('keeps existing .gitignore content and stays idempotent across re-inits (#292)', async () => {
+    fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\ndist/\n');
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect'],
+      t.ctx
+    );
+    // A --force rebuild runs the write again: the entries must appear once.
+    const forceCtx = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Test'] },
+    });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--no-protect', '--json'],
+      forceCtx.ctx
+    );
+    const gitignore = read(path.join(root, '.gitignore'));
+    expect(gitignore.startsWith('node_modules/\ndist/\n')).toBe(true);
+    expect(gitignore.split('/.specgit.yaml').length - 1).toBe(1);
+    expect(gitignore.split('/spec_git/').length - 1).toBe(1);
+    const envelope = parseStdoutJson(forceCtx.io);
+    expect(envelope.ignore).toEqual({
+      path: '.gitignore',
+      entries: ['/.specgit.yaml', '/spec_git/'],
+      created: false,
+    });
+  });
+
+  it('does not duplicate entries a user already added without the marker (#292)', async () => {
+    fs.writeFileSync(path.join(root, '.gitignore'), '/.specgit.yaml\n/spec_git/\n');
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      t.ctx
+    );
+    const gitignore = read(path.join(root, '.gitignore'));
+    expect(gitignore.split('/.specgit.yaml').length - 1).toBe(1);
+    expect(gitignore.split('/spec_git/').length - 1).toBe(1);
+  });
+
+  it('--no-ignore leaves .gitignore untouched and omits the ignore field (#292)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-ignore', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(fs.existsSync(path.join(root, '.gitignore'))).toBe(false);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.ignore).toBeUndefined();
+  });
+
+  it('a rejected init never writes .gitignore (#62/#292)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Existing'] },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    expect(fs.existsSync(path.join(root, '.gitignore'))).toBe(false);
+  });
 });

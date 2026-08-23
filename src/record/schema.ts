@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const SPEC_GIT_DIR = 'spec_git';
 export const POLICY_FILENAME = 'policy.yaml';
 export const RECORD_FILENAME = '.specgit.yaml';
+export const PROVIDERS_FILENAME = 'providers.yaml';
 
 export const KEBAB_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 

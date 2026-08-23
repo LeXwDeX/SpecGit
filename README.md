@@ -103,9 +103,13 @@ specgit finish                       # exit 0 → merge; else fix what it names
 walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 [Workflow Guide](docs/workflow-guide.md).
 
-State and assets, in three tiers: **authoritative committed files**
-(`spec_git/policy.yaml`, `.specgit.yaml`, optional `spec_git/providers.yaml`),
-a **derived committed harness** (the acceptance workflow and the managed
+State and assets, in three tiers: **authoritative delivery files**
+(`spec_git/policy.yaml`, `.specgit.yaml`, optional `spec_git/providers.yaml`
+— shielded from everyday commits by a managed `.gitignore` block that
+`init` writes by default, and carried into git only by the bootstrap's
+own binding commit, where the CI verdict can read them; `--no-ignore`
+keeps the classic committed model), a **derived committed harness** (the
+acceptance workflow and the managed
 AGENTS/CLAUDE block — regenerable with `init --force`), and **local
 integration assets** (guard hooks and `setup` entry points, merged
 non-destructively). Verdicts are never persisted. One PR may close N issues;
@@ -135,7 +139,7 @@ reality.
 | `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, record, commit, push (idempotent resume) | yes (`gh`/`glab`) |
 | `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`/`glab`) |
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`/`glab`) |
-| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block) | no |
+| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block); by default also shields the local delivery assets in `.gitignore` (`--no-ignore` opts out) | no |
 | `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills for other tools (`--tool opencode \| generic \| all`) | no |
 | `specgit status` | Local evidence snapshot (record, policy, git facts, drift) | no |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, forge CLI, policy) | forge auth |

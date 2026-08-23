@@ -1,8 +1,8 @@
 version: 1
-delivery: v143-changeset
+delivery: init-ignore-specgit-files
 context:
   kind: branch
-  branch: feat/289-v143-changeset
+  branch: feat/292-init-ignore-specgit-files
 issues:
-  - 289
-pr: 290
+  - 292
+pr: 293

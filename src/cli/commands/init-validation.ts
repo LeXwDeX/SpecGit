@@ -27,6 +27,8 @@ export interface InitOptions {
   gitlabHost?: string;
   /** Presentation language of generated text (#118): en | zh. */
   language?: string;
+  /** false (--no-ignore): skip the local-asset .gitignore block (#292); default writes it. */
+  ignore?: boolean;
   json?: boolean;
 }
 

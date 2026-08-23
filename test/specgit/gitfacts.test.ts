@@ -147,6 +147,49 @@ describe('LocalGitAdapter', () => {
     });
   });
 
+  describe('commitFile (binding commit past the local-asset ignore, #292)', () => {
+    it('force-stages ignored authoritative files, commits exactly them, and is idempotent', async () => {
+      // The #292 shape: .gitignore shields the delivery assets, so a
+      // plain `git add` would refuse them — the binding commit must
+      // carry them into git anyway, on a real repo. Identity is set
+      // LOCAL to the repo: the adapter spawns git with the process env,
+      // where CI runners carry no global identity.
+      git(root, ['config', 'user.name', 'SpecGit Tester'], env);
+      git(root, ['config', 'user.email', 'tester@example.com'], env);
+      fs.writeFileSync(path.join(root, '.gitignore'), ['/.specgit.yaml', '/spec_git/'].join('\n') + '\n');
+      fs.writeFileSync(path.join(root, 'readme.txt'), 'base\n');
+      git(root, ['add', '.gitignore', 'readme.txt'], env);
+      git(root, ['commit', '-m', 'base'], env);
+
+      fs.writeFileSync(path.join(root, '.specgit.yaml'), 'version: 1\n');
+      fs.mkdirSync(path.join(root, 'spec_git'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'spec_git', 'policy.yaml'), 'version: 1\n');
+      // Sanity: git really ignores both files (clean porcelain).
+      expect(git(root, ['status', '--porcelain'], env).trim()).toBe('');
+
+      const first = await adapter.commitFile(
+        root,
+        ['.specgit.yaml', 'spec_git/policy.yaml'],
+        'chore: record delivery binding for x'
+      );
+      expect(first).toEqual({ ok: true, value: { committed: true } });
+      // Both files are in HEAD and the tree is clean around them.
+      const tracked = git(root, ['ls-tree', '-r', '--name-only', 'HEAD'], env)
+        .split('\n')
+        .filter((line) => line.includes('specgit') || line.includes('spec_git'));
+      expect(tracked).toEqual(['.specgit.yaml', 'spec_git/policy.yaml']);
+      expect(git(root, ['status', '--porcelain'], env).trim()).toBe('');
+
+      // Idempotent: an unchanged tree commits nothing on re-run.
+      const second = await adapter.commitFile(
+        root,
+        ['.specgit.yaml', 'spec_git/policy.yaml'],
+        'chore: record delivery binding for x'
+      );
+      expect(second).toEqual({ ok: true, value: { committed: false } });
+    });
+  });
+
   describe('anchor validation (issue #76)', () => {
     const HEX40 = 'a1b2c3d4'.padEnd(40, '0');
     const HEX64 = 'e5f6a7b8'.padEnd(64, '0');
