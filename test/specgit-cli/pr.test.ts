@@ -132,3 +132,43 @@ describe('specgit pr: preconditions', () => {
     expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
   });
 });
+
+// ---- #299: the repaired record must reach the PR head — local-only
+// writes fork the local and CI verdicts. ----
+
+describe('specgit pr: carrying commit (#299)', () => {
+  it('force-commits the repaired record and pushes the branch', async () => {
+    const t = prCtx({ gh: { listOpenPrsByHead: (_repo, head) => prList([{ number: 7, title: 'Delivery add-login-flow' }]) } });
+    const outcome = await runPr({}, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gitPort.commitCalls.length).toBe(1);
+    expect(t.gitPort.commitCalls[0].paths).toContain('.specgit.yaml');
+    expect(t.gitPort.pushCalls).toContain('feat/123-login');
+  });
+
+  it('a carry push failure downgrades to a warning (offline stays usable), the record is committed and written (#299)', async () => {
+    const t = prCtx({
+      gh: { listOpenPrsByHead: () => prList([{ number: 7, title: 'Delivery add-login-flow' }]) },
+    });
+    t.gitPort.pushBranch = async () => ({
+      ok: false as const,
+      code: 'git_push_failed',
+      message: 'git push failed: network',
+    });
+    const outcome = await runPr({}, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.recordPort.recordWrites.at(-1)?.record?.pr).toBe(7);
+    expect(t.gitPort.commitCalls.length).toBe(1);
+    expect(JSON.stringify(outcome.warnings ?? [])).toContain('record_carry_push_failed');
+  });
+
+  it('an off-branch repair skips the carry and warns (#299)', async () => {
+    const t = prCtx({ gh: { listOpenPrsByHead: () => prList([{ number: 7, title: 'x' }]) } });
+    t.gitPort.facts = async () => makeGitFacts({ branch: 'some-other-branch' });
+    const outcome = await runPr({}, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gitPort.commitCalls.length).toBe(0);
+    expect(t.gitPort.pushCalls.length).toBe(0);
+    expect(JSON.stringify(outcome.warnings ?? [])).toContain('record_carry_skipped');
+  });
+});
