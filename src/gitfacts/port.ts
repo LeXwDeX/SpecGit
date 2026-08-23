@@ -74,6 +74,15 @@ export interface GitPort extends GitWritePort {
    * the caller to classify. Never touches the network.
    */
   headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>>;
+  /**
+   * Which of `paths` (repo-relative POSIX) are tracked in the index
+   * (`git ls-files --`). The answer is the intersection — paths git does
+   * not list are untracked (or absent). Read-only, never touches the
+   * network. Used by the merged-delivery lifecycle (#298): a tracked
+   * record/policy keeps behaving as a tracked file after deletion or
+   * rewrite, and the caller warns instead of leaving silent residue.
+   */
+  trackedFiles(root: string, paths: string[]): Promise<Evidence<string[]>>;
 }
 
 /**
@@ -88,6 +97,7 @@ export interface GitPort extends GitWritePort {
 const GIT_PORT_MEMBER_FLAGS = {
   facts: true,
   headContains: true,
+  trackedFiles: true,
   checkoutOrCreateBranch: true,
   commitFile: true,
   pushBranch: true,

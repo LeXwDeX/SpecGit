@@ -225,8 +225,44 @@ export class LocalGitAdapter implements GitPort {
     return ok('main');
   }
 
-  async headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {
-    // The anchor is provider-derived text; only a full hex object id may
+  /** #298: which of `paths` the index tracks (`git ls-files --`). */
+  async trackedFiles(root: string, paths: string[]): Promise<Evidence<string[]>> {
+    if (paths.length === 0) {
+      return ok([]);
+    }
+    try {
+      const { stdout } = await this.spawn('git', ['-C', root, 'ls-files', '--', ...paths], {
+        timeoutMs: GIT_PROBE_TIMEOUT_MS,
+        maxBuffer: GIT_PROBE_MAX_BUFFER,
+        env: this.env,
+      });
+      const listed = new Set(
+        stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      );
+      // `git ls-files` echoes paths in its own normalized form; match the
+      // caller's spelling against the listing (both repo-relative POSIX).
+      return ok(paths.filter((p) => listed.has(p)));
+    } catch (error) {
+      if (isSpawnNotFoundError(error)) {
+        return fail(
+          'git_unavailable',
+          'The git executable could not be found on PATH.',
+          'Install git and ensure it is on PATH.'
+        );
+      }
+      const detail = error instanceof Error ? sanitizeGitText(error.message) : '';
+      return fail(
+        'tracked_probe_failed',
+        `git ls-files failed: ${detail || 'unknown error'}`,
+        'Re-run once git answers in this repository (specgit doctor probes it).'
+      );
+    }
+  }
+
+  async headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {    // The anchor is provider-derived text; only a full hex object id may
     // reach git. Anything else — empty, padded, ref-like, abbreviated —
     // would either ride git's opaque exit-128 path or be resolved as a
     // ref instead of rejected as an object id (#76), so it is classified
