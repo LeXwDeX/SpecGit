@@ -435,7 +435,7 @@ describe('acceptance evaluator', () => {
     },
     {
       name: 'policy_invalid',
-      input: () => input({ policy: fail('policy_invalid', 'required_checks must be non-empty.') }),
+      input: () => input({ policy: fail('policy_invalid', 'required_checks contains an empty name.') }),
       gate: 'policy',
       code: 'policy_invalid',
       classification: 'unknown',

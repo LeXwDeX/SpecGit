@@ -106,7 +106,7 @@ No `spec_git/policy.yaml`. Run `specgit init --required-check "<name>"` and comm
 
 ### `policy_invalid`
 
-The policy failed validation. The list of `required_checks` must be non-empty with non-empty names, and the file must not contain unknown keys (the policy schema is strict). Recreate it with `init` if in doubt.
+The policy failed validation. Each `required_checks` name must be a non-empty string — the list itself may be empty (the no-CI policy) — and the file must not contain unknown keys (the policy schema is strict). Recreate it with `init` if in doubt.
 
 ## Completeness
 

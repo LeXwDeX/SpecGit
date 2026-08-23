@@ -48,7 +48,7 @@ repo root/
 └── .specgit.yaml        # this delivery's binding — committed on the delivery branch
 ```
 
-- **Policy** (`spec_git/policy.yaml`): the project-level contract — the non-empty list of CI check names every delivery must pass. Created by `specgit init`, versioned like code.
+- **Policy** (`spec_git/policy.yaml`): the project-level contract — the list of CI check names every delivery must pass. An empty list is the no-CI policy: the generated acceptance job remains the gate. Created by `specgit init`, versioned like code.
 - **Record** (`.specgit.yaml`): the delivery-level binding. Written by `specgit issue` (script alias: `bind`), removed by `specgit unbind`. Unknown keys are preserved on rewrite so other tools can coexist in the file.
 
 No other state exists. No artifact directories, no caches, no global stores. Root discovery is `git rev-parse --show-toplevel` — SpecGit runs only inside a git repository, at its root.
