@@ -2,7 +2,8 @@ version: 1
 delivery: docs-contract-wording-align
 context:
   kind: branch
-  branch: docs/295-docs-contract-wording-align
+  branch: feat/295-docs-contract-wording-align
 issues:
   - 295
-pr: 296
+  - 297
+pr: 301
