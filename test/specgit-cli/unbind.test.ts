@@ -45,4 +45,51 @@ describe('specgit unbind', () => {
     const envelope = parseStdoutJson(t.io);
     expect(envelope.errors[0].code).toBe('record_invalid');
   });
+
+  // ---- #298: merged-delivery lifecycle — tracked records must not leave
+  // a silent deletion residue in the working tree. ----
+
+  it('warns when the record being deleted is tracked by git (#298)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      gitWrites: {
+        trackedFiles: (paths) => ({ ok: true, value: [...paths] }),
+      },
+    });
+    const code = await runCliWith(['node', 'specgit', 'unbind', '--yes', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'record_deletion_tracked'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.fix).toContain('Commit');
+    // The deletion itself still happens — the warning is guidance, not a block.
+    expect(t.recordPort.deletes).toEqual(['/repo']);
+  });
+
+  it('stays silent when the record is untracked (the #292 default) (#298)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      gitWrites: {
+        trackedFiles: () => ({ ok: true, value: [] }),
+      },
+    });
+    const code = await runCliWith(['node', 'specgit', 'unbind', '--yes', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(JSON.stringify(envelope.warnings ?? [])).not.toContain('record_deletion_tracked');
+  });
+
+  it('unbind still succeeds when the tracked probe fails closed (#298)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      gitWrites: {
+        trackedFiles: () => ({ ok: false, code: 'tracked_probe_failed', message: 'no git' }),
+      },
+    });
+    const code = await runCliWith(['node', 'specgit', 'unbind', '--yes', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.deletes).toEqual(['/repo']);
+  });
 });

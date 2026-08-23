@@ -48,8 +48,9 @@ to those lists member-for-member: change a port, change this page.
 | --- | --- | --- |
 | `facts` | required | Read side: repo, toplevel, branch, HEAD sha, dirty state, worktree layout, origin URL, upstream drift, git availability. Feeds the context and drift gates. |
 | `headContains` | required | Ancestor-or-equal containment of a full hex object id (40 or 64 hex chars) in local HEAD history; proves merged-delivery lineage (G4). A non-hex anchor (empty, padded, ref-like, abbreviated) fails closed as `merged_lineage_unavailable` without invoking git (#76); containment behavior is unchanged for valid anchors. |
+| `trackedFiles` | required | Which of the given repo-relative paths the index tracks (`git ls-files --`); read-only intersection. Feeds the merged-delivery lifecycle warnings (#298): a tracked record/policy that gets deleted or rewritten warns instead of leaving silent working-tree residue. Fails closed as `tracked_probe_failed`; callers treat a failed probe as advisory. |
 | `checkoutOrCreateBranch` | required | Bootstrap write: check out the delivery branch, creating it from HEAD when absent. |
-| `commitFile` | required | Bootstrap write: pathspec-limited commit of one state file; unchanged file is a successful no-op (idempotent bootstrap). |
+| `commitFile` | required | Bootstrap write: force-staged (`git add -f`), pathspec-limited commit of the authoritative delivery files (#292 — past the tool-installed local-asset ignore); unchanged paths are a successful no-op (idempotent bootstrap). |
 | `pushBranch` | required | Bootstrap write: push the delivery branch with upstream (`git push -u`). |
 | `remoteDefaultBranch` | required | `origin/HEAD` for the PR base; falls back to `main`. |
 | `hooksPath` | required | The hooks directory git will actually use (linked-worktree and `core.hooksPath` aware) for guard installation. |
