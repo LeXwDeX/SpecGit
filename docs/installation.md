@@ -44,7 +44,7 @@ In the repository root, on the default branch:
 specgit init
 ```
 
-Creates `spec_git/policy.yaml` and the delivery harness. Required-check names are auto-detected from CI files; a no-CI repository gets the empty list (the acceptance job itself is the gate). Choose check names with care; [GitHub Actions](actions.md) explains the naming model and the recommended aggregator pattern.
+Creates `spec_git/policy.yaml` and the delivery harness. Required-check names are auto-detected from CI files — only names static reading can prove; matrix fan-out and reusable-workflow calls are reported as ambiguous, never guessed (#310). A no-CI repository gets the empty list (the acceptance job itself is the gate). Choose check names with care; [GitHub Actions](actions.md) explains the naming model and the recommended aggregator pattern.
 
 ## Upgrade to a newer CLI version
 
@@ -56,7 +56,9 @@ specgit status --json          # 1. see the drift: assets.generated names every
                                #    exact per-surface fix command
 specgit init --force           # 2. converge the init-owned tier (workflow,
                                #    managed AGENTS.md block, guard hooks,
-                               #    managed .gitignore region)
+                               #    managed .gitignore region) — the policy's
+                               #    required checks and language are PRESERVED;
+                               #    pass explicit --required-check to replace them
 specgit setup --tool all       # 3. converge both agent surfaces (or the exact
                                #    per-surface command status named)
 specgit status --json          # 4. assets.generated.clean must be true

@@ -115,6 +115,8 @@ export interface HumanText {
   // init
   initCreatedPolicy(path: string): string;
   initIgnoredAssets(path: string): string;
+  /** #310: the upgrade run kept the existing policy's checks. */
+  initPreservedChecks(): string;
   initRequiredChecks(count: number): string;
   initCheck(name: string): string;
   initPlatformGithubDefault(): string;
@@ -224,6 +226,8 @@ const EN_HUMAN: HumanText = {
   setupPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initCreatedPolicy: (path) => `Created ${path}`,
   initIgnoredAssets: (path) => `Added local delivery assets to ${path} (untracked model; --no-ignore to keep them committed)`,
+  initPreservedChecks: () =>
+    'Preserved the required checks from the existing policy (pass --required-check to replace them)',
   initRequiredChecks: (count) => `Required checks (${count}):`,
   initCheck: (name) => `  - ${name}`,
   initPlatformGithubDefault: () => 'Platform: github (default from origin)',
@@ -294,6 +298,7 @@ const ZH_HUMAN: HumanText = {
   setupPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initCreatedPolicy: (path) => `已创建 ${path}`,
   initIgnoredAssets: (path) => `已将本地交付资产加入 ${path} 屏蔽（未跟踪模式；如需保持提交请用 --no-ignore）`,
+  initPreservedChecks: () => '已保留现有策略中的必需检查（如需替换请显式传入 --required-check）',
   initRequiredChecks: (count) => `必需检查（${count}）：`,
   initCheck: (name) => `  - ${name}`,
   initPlatformGithubDefault: () => '平台：github（默认来自 origin）',

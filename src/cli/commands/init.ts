@@ -21,13 +21,19 @@
  * only Node, parameterizes the default branch, and never assumes the
  * adopting project's toolchain, lockfile, layout, or build.
  *
- * With no arguments, required-check names are auto-detected from
- * `.github/workflows/*.{yml,yaml}` (job `name:`, falling back to the job
- * id; the generated SpecGit Acceptance job is excluded to avoid
- * self-reference). When no CI exists at all, the policy names zero
- * checks (#63: a fallback name the harness cannot produce would deadlock
- * the wait step and make the verdict unsatisfiable) — the acceptance
- * job itself, enforced through branch protection, is then the gate.
+ * Required-check selection (#310) happens in ONE seam after the existing
+ * policy is known: explicit `--required-check` (repeatable) fully replaces
+ * the list; a no-argument `init --force` PRESERVES a valid existing
+ * policy's required checks and language while rebuilding the versioned
+ * harness/config/ignore assets; only a fresh init (no policy yet)
+ * auto-detects from `.github/workflows/*.{yml,yaml}` (job `name:` or the
+ * job id; the generated SpecGit Acceptance job is excluded to avoid
+ * self-reference; a matrix/reusable shape is never claimed as a proven
+ * check-run name — it is reported as ambiguous). When no CI exists at
+ * all, the policy names zero checks (#63: a fallback name the harness
+ * cannot produce would deadlock the wait step and make the verdict
+ * unsatisfiable) — the acceptance job itself, enforced through branch
+ * protection, is then the gate.
  *
  * Structure (#171): `runInit` below only orchestrates named steps; the
  * concerns live in focused modules — detection and validation in
@@ -51,11 +57,13 @@ import {
 } from '../managed-reconcile.js';
 import { providersPath } from '../../record/io.js';
 import {
-  detectAndValidateChecks,
+  ambiguousJobWarning,
   nonPrWorkflowWarning,
   policyGateOutcome,
   preflightRootWritable,
+  preservedChecksWarning,
   resolveInitLanguage,
+  resolveRequiredChecks,
   validateLanguageOption,
   type InitOptions,
 } from './init-validation.js';
@@ -116,11 +124,7 @@ export async function runInit(
   options: InitOptions,
   ctx: CommandContext
 ): Promise<InitOutcome> {
-  // ---- Detection and input validation (#62: before any mutation). ----
-  const resolved = await detectAndValidateChecks(options, ctx);
-  if ('exit' in resolved) return resolved;
-  const { checks, detected } = resolved;
-
+  // ---- Input validation (#62: before any mutation). ----
   const languageError = validateLanguageOption(options);
   if (languageError !== null) return languageError;
 
@@ -137,12 +141,24 @@ export async function runInit(
   if ('exit' in validated) return validated;
   const { declaredEndpoint, existingPolicy, selection } = validated;
 
+  // ---- Required-check selection (#310: one seam, after the existing
+  // policy is known — still before any mutation). Explicit --required-check
+  // replaces; a valid existing policy upgrades by preservation; only a
+  // fresh init detects. ----
+  const resolved = await resolveRequiredChecks(options, ctx, root, existingPolicy);
+  if ('exit' in resolved) return resolved;
+  const { checks, detected, provenance } = resolved;
+
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
   const warnings: Diagnostic[] = [];
   if (selection.warning !== undefined) warnings.push(selection.warning);
   if (detected !== null) {
     const nonPrWarning = nonPrWorkflowWarning(detected);
     if (nonPrWarning !== null) warnings.push(nonPrWarning);
+    const ambiguousWarning = ambiguousJobWarning(detected);
+    if (ambiguousWarning !== null) warnings.push(ambiguousWarning);
+  } else if (provenance === 'existing') {
+    warnings.push(preservedChecksWarning());
   }
 
   // #117: the platform resolves BEFORE the harness write — GitLab mode
@@ -249,6 +265,7 @@ export async function runInit(
   return buildInitOutcome({
     checks,
     detected,
+    provenance,
     platform,
     harness: written.harness,
     policy: written.policy,
