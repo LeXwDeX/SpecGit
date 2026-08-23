@@ -103,6 +103,7 @@ export interface HumanText {
   setupInstalled(): string;
   // init
   initCreatedPolicy(path: string): string;
+  initIgnoredAssets(path: string): string;
   initRequiredChecks(count: number): string;
   initCheck(name: string): string;
   initPlatformGithubDefault(): string;
@@ -198,6 +199,7 @@ const EN_HUMAN: HumanText = {
   setupTool: (tool) => `Tool: ${tool}`,
   setupInstalled: () => 'Installed entry points:',
   initCreatedPolicy: (path) => `Created ${path}`,
+  initIgnoredAssets: (path) => `Added local delivery assets to ${path} (untracked model; --no-ignore to keep them committed)`,
   initRequiredChecks: (count) => `Required checks (${count}):`,
   initCheck: (name) => `  - ${name}`,
   initPlatformGithubDefault: () => 'Platform: github (default from origin)',
@@ -254,6 +256,7 @@ const ZH_HUMAN: HumanText = {
   setupTool: (tool) => `工具：${tool}`,
   setupInstalled: () => '已安装入口：',
   initCreatedPolicy: (path) => `已创建 ${path}`,
+  initIgnoredAssets: (path) => `已将本地交付资产加入 ${path} 屏蔽（未跟踪模式；如需保持提交请用 --no-ignore）`,
   initRequiredChecks: (count) => `必需检查（${count}）：`,
   initCheck: (name) => `  - ${name}`,
   initPlatformGithubDefault: () => '平台：github（默认来自 origin）',

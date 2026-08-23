@@ -263,7 +263,7 @@ export function makeGhProvider(
 export interface GitWriteScript {
   checkoutOrCreateBranch?: (branch: string) => Evidence<BranchCheckout>;
   commitFile?: (
-    relativePath: string,
+    relativePaths: string[],
     message: string
   ) => Evidence<{ committed: boolean }>;
   pushBranch?: (branch: string) => Evidence<{ pushed: boolean }>;
@@ -274,7 +274,7 @@ export interface GitWriteScript {
 export interface RecordingGitPort extends GitPort {
   factsCalls: string[];
   checkoutCalls: string[];
-  commitCalls: Array<{ path: string; message: string }>;
+  commitCalls: Array<{ paths: string[]; message: string }>;
   pushCalls: string[];
   defaultBranchCalls: string[];
 }
@@ -294,9 +294,9 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       port.checkoutCalls.push(branch);
       return writes.checkoutOrCreateBranch?.(branch) ?? { ok: true, value: { branch, created: true } };
     }),
-    commitFile: vi.fn(async (_root: string, relativePath: string, message: string): Promise<Evidence<{ committed: boolean }>> => {
-      port.commitCalls.push({ path: relativePath, message });
-      return writes.commitFile?.(relativePath, message) ?? { ok: true, value: { committed: true } };
+    commitFile: vi.fn(async (_root: string, relativePaths: string[], message: string): Promise<Evidence<{ committed: boolean }>> => {
+      port.commitCalls.push({ paths: relativePaths, message });
+      return writes.commitFile?.(relativePaths, message) ?? { ok: true, value: { committed: true } };
     }),
     pushBranch: vi.fn(async (_root: string, branch: string): Promise<Evidence<{ pushed: boolean }>> => {
       port.pushCalls.push(branch);

@@ -172,7 +172,9 @@ describe('specgit issue: fresh bootstrap', () => {
 
     expect(t.gitPort.checkoutCalls).toEqual(['feat/11-strict-delivery-harness']);
     expect(t.gitPort.commitCalls.length).toBe(1);
-    expect(t.gitPort.commitCalls[0].path).toBe('.specgit.yaml');
+    // #292: the binding commit force-carries every authoritative
+    // delivery file that exists — here only the record.
+    expect(t.gitPort.commitCalls[0].paths).toEqual(['.specgit.yaml']);
     // #270: the branch is pushed before the draft PR is created, and the
     // record commit rides a second push to the remote.
     expect(t.gitPort.pushCalls).toEqual([

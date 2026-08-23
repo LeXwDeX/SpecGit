@@ -170,6 +170,7 @@ export async function runInit(
     checks,
     language,
     workflowYaml: gitlabMode ? null : selection.yaml,
+    writeIgnore: options.ignore !== false,
     warnings,
   });
   if ('exit' in written) return written;
@@ -188,6 +189,7 @@ export async function runInit(
     platform,
     harness: written.harness,
     policy: written.policy,
+    ignore: written.ignore,
     template: gitlabMode ? 'gitlab-pending' : selection.template,
     warnings,
     protection,

@@ -130,13 +130,15 @@ export interface SetupOutcome extends OutcomeBase {
   assets?: Record<string, unknown>;
 }
 
-/** `specgit init`: policy, harness, platform, detection, protection. */
+/** `specgit init`: policy, harness, platform, detection, protection, local-asset ignore. */
 export interface InitOutcome extends OutcomeBase {
   policy?: Policy;
   harness?: Record<string, unknown>;
   platform?: Record<string, unknown>;
   protection?: Record<string, unknown>;
   detected?: Record<string, unknown>;
+  /** #292: the managed .gitignore block for the local delivery assets (absent with --no-ignore). */
+  ignore?: { path: string; entries: string[]; created: boolean };
 }
 
 export type CommandOutcome =
@@ -178,6 +180,7 @@ export function buildEnvelope(
   if ('protection' in outcome) optional.push(['protection', outcome.protection]);
   if ('platform' in outcome) optional.push(['platform', outcome.platform]);
   if ('harness' in outcome) optional.push(['harness', outcome.harness]);
+  if ('ignore' in outcome) optional.push(['ignore', outcome.ignore]);
   if ('assets' in outcome) optional.push(['assets', outcome.assets]);
   for (const [key, value] of optional) {
     if (value !== undefined) {
