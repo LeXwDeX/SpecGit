@@ -1,3 +1,5 @@
+import { RECORD_MISSING_FIX } from '../kernel/diagnostics.js';
+
 export type SpecGitCode =
   | 'record_missing'
   | 'record_invalid'
@@ -56,7 +58,7 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   record_missing: {
     kind: 'evidence',
     message: 'No .specgit.yaml delivery binding found.',
-    fix: 'Run "specgit bind" to create the delivery binding.',
+    fix: RECORD_MISSING_FIX,
   },
   record_invalid: {
     kind: 'evidence',
