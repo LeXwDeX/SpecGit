@@ -14,6 +14,7 @@ import { errorDiagnostic, humanBuilder, issueList, type BindOutcome } from '../o
 import { coerceIssueRef, coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, mergeIssueNumbers } from '../../record/schema.js';
+import { carryRecordToBranch } from './bootstrap.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
 
 export interface BindOptions {
@@ -152,6 +153,45 @@ export async function runBind(
     };
   }
 
+  // #299 carrying commit: bind surgery rewrites the record — on the
+  // delivery branch it must reach the PR head (commit + push, idempotent,
+  // resumable); off-branch, say so instead of silently skipping.
+  const warnings: BindOutcome['warnings'] = [];
+  if (facts.branch === record.context.branch) {
+    const carry = await carryRecordToBranch(ctx, root, record);
+    if (!carry.ok) {
+      return {
+        exit: EXIT_UNKNOWN,
+        state: deriveBindingState(record),
+        record: {
+          version: record.version,
+          delivery: record.delivery,
+          context: record.context,
+          issues: record.issues,
+          ...(record.pr !== undefined ? { pr: record.pr } : {}),
+        },
+        errors: [
+          errorDiagnostic(carry.code, carry.message, carry.fix ? { fix: carry.fix } : {}),
+        ],
+      };
+    }
+    if ('pushFailed' in carry) {
+      warnings.push({
+        severity: 'warning',
+        code: 'record_carry_push_failed',
+        message: `The record rewrite was committed locally but not pushed: ${carry.pushMessage}`,
+        fix: 'Push the delivery branch (git push) so the CI verdict on the PR head reads the same record; until then the local and CI verdicts can disagree.',
+      });
+    }
+  } else {
+    warnings.push({
+      severity: 'warning',
+      code: 'record_carry_skipped',
+      message: `The record rewrite was not carried into git: the current branch '${facts.branch ?? '(detached)'}' is not the delivery branch '${record.context.branch}'.`,
+      fix: 'Re-run this bind on the delivery branch, or commit and push the record there manually (git add -f .specgit.yaml) so the CI verdict reads the same record.',
+    });
+  }
+
   const summary: Record<string, unknown> = {
     version: record.version,
     delivery: record.delivery,
@@ -169,6 +209,7 @@ export async function runBind(
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
     record: summary,
+    ...(warnings.length > 0 ? { warnings } : {}),
     human: humanBuilder()
       .line(text.bindHeader(record.delivery))
       .detail(contextLine)

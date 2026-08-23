@@ -1,8 +1,8 @@
 version: 1
-delivery: merged-delivery-lifecycle
+delivery: record-carry-commit
 context:
   kind: branch
-  branch: feat/298-merged-delivery-lifecycle
+  branch: feat/299-record-carry-commit
 issues:
-  - 298
-pr: 302
+  - 299
+pr: 303
