@@ -309,24 +309,36 @@ describe('writeHarnessAssets', () => {
     });
 
     it('restores pre-existing file modes on rollback', async () => {
-      if (process.platform === 'win32') return; // chmod is advisory on Windows
+      // AGENTS.md seeded read-only is no longer a failure injection — #314
+      // makes the harness repair a write-protected managed target instead
+      // of crashing on it. The mid-sequence failure is injected by
+      // `.opencode` as a regular file (the hooks.json write cannot land)
+      // after the workflow and the repaired AGENTS.md writes already did.
       const workflowDir = path.join(root, '.github', 'workflows');
       fs.mkdirSync(workflowDir, { recursive: true });
       fs.writeFileSync(WORKFLOW_ABS(root), '# canonical v1\n');
-      // AGENTS.md read-only: the write of the managed block fails with
-      // EACCES after the workflow was already rewritten.
       write(AGENTS_ABS(root), '# frozen\n');
       fs.chmodSync(AGENTS_ABS(root), 0o444);
+      fs.writeFileSync(path.join(root, '.opencode'), 'not a directory');
 
+      let modeAfter: number;
       try {
-        await expect(writeHarnessAssets(root)).rejects.toThrow();
+        await expect(
+          writeHarnessAssets(root, { resolveHooksDir: async () => null })
+        ).rejects.toThrow();
+        // Capture before the finally clears the protection for cleanup.
+        modeAfter = fs.statSync(AGENTS_ABS(root)).mode & 0o777;
       } finally {
         fs.chmodSync(AGENTS_ABS(root), 0o644);
       }
 
       expect(read(AGENTS_ABS(root))).toBe('# frozen\n');
+      // The pre-run protection round-trips: 0o444 is enforceable on every
+      // platform (the read-only attribute is all it means on Windows).
+      expect(modeAfter).toBe(0o444);
       expect(read(WORKFLOW_ABS(root))).toBe('# canonical v1\n');
       expect(fs.existsSync(HOOKS_JSON_ABS(root))).toBe(false);
+      expect(fs.readFileSync(path.join(root, '.opencode'), 'utf-8')).toBe('not a directory');
     });
   });
 });

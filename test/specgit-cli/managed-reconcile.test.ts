@@ -115,6 +115,106 @@ describe('reconcileManagedAssets', () => {
     expect(inspection.findings).toEqual([{ path: 'hook.sh', state: 'current' }]);
   });
 
+  it('repairs a write-protected drifted target instead of crashing on it (#314)', async () => {
+    // Enforceable drift can leave the target write-protected: the
+    // read-only attribute on Windows, a mode without the owner-write bit
+    // anywhere. The repair write must clear exactly that bit, converge the
+    // bytes, and land the desired mode — the old writer crashed EPERM/
+    // EACCES here and its rollback could not restore the file either.
+    const target = path.join(root, 'guard.sh');
+    fs.writeFileSync(target, 'old bytes\n');
+    fs.chmodSync(target, 0o444);
+
+    const steps: ManagedStep[] = [
+      { kind: 'write', path: 'guard.sh', mode: 0o755, merge: () => 'body\n' },
+    ];
+    const report = await reconcileManagedAssets(root, { steps });
+
+    expect(report.updated).toEqual(['guard.sh']);
+    expect(read(target)).toBe('body\n');
+    expect(managedModeMatches(modeOf(target), 0o755)).toBe(true);
+    if (posixModesEnforced()) {
+      expect(modeOf(target) & 0o777).toBe(0o755);
+    }
+  });
+
+  it('a write-protected target is repaired in-transaction and the pre-run protection round-trips (#314)', async () => {
+    // The guarded step must SUCCEED mid-transaction (a later step fails),
+    // proving the guard is part of the commit path — and the rollback then
+    // returns even the read-only pre-run state byte-and-mode-exact, with
+    // no incomplete-rollback note.
+    const guarded = path.join(root, 'guarded.txt');
+    fs.writeFileSync(guarded, 'user bytes\n');
+    fs.chmodSync(guarded, 0o444);
+    const seededMode = modeOf(guarded);
+    fs.writeFileSync(path.join(root, 'mutable.txt'), 'old\n');
+    fs.writeFileSync(path.join(root, 'blocker'), 'not a directory');
+
+    let caught: unknown;
+    try {
+      await reconcileManagedAssets(root, {
+        steps: [
+          { kind: 'write', path: 'mutable.txt', mode: 0o644, merge: () => 'new\n' },
+          { kind: 'write', path: 'guarded.txt', mode: 0o644, merge: () => 'specgit bytes\n' },
+          { kind: 'write', path: 'blocker/child.txt', mode: 0o644, merge: () => 'never\n' },
+        ],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ManagedReconcileError);
+    // The guarded write was repaired, not the failure: the blocker is.
+    expect((caught as ManagedReconcileError).step?.path).toBe('blocker/child.txt');
+    expect((caught as ManagedReconcileError).message).not.toContain('rollback incomplete');
+    // The whole pre-run tree round-trips — including the protection.
+    expect(read(path.join(root, 'mutable.txt'))).toBe('old\n');
+    expect(read(guarded)).toBe('user bytes\n');
+    expect(modeOf(guarded)).toBe(seededMode);
+    if (posixModesEnforced()) {
+      expect(modeOf(guarded) & 0o777).toBe(0o444);
+    }
+  });
+
+  it('a restore can rewrite a target that is still write-protected (#314)', async () => {
+    // Rollback restores EVERY snapshot — including a step whose own write
+    // never got past the guard, so its target is still read-only when the
+    // restore rewrites it. The restore must complete and put the exact
+    // pre-run protection back (the contract says it throws, never fails
+    // silently — before #314 it threw EACCES/EPERM here).
+    const target = path.join(root, 'spec_git', 'policy.yaml');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '# team config\n');
+    fs.chmodSync(target, 0o444);
+    const seededMode = modeOf(target);
+    const shot = await snapshotManagedFile(root, 'spec_git/policy.yaml');
+
+    await restoreManagedSnapshot(shot); // must not throw
+
+    expect(read(target)).toBe('# team config\n');
+    expect(modeOf(target)).toBe(seededMode);
+  });
+
+  it('removes a write-protected obsolete asset ownership already proved (#314)', async () => {
+    // On Windows unlink refuses a read-only file (EPERM); the bytes still
+    // prove SpecGit ownership, so the retirement clears the protection and
+    // removes it instead of crashing mid-transaction.
+    const workflowPath = path.join(root, '.github', 'workflows', 'specgit-accept.yml');
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(workflowPath, 'name: SpecGit Acceptance\n');
+    fs.chmodSync(workflowPath, 0o444);
+
+    const report = await reconcileManagedAssets(root, {
+      steps: [
+        { kind: 'remove', path: '.github/workflows/specgit-accept.yml', isOwned: () => true },
+      ],
+    });
+
+    expect(report.removed).toEqual(['.github/workflows/specgit-accept.yml']);
+    expect(fs.existsSync(workflowPath)).toBe(false);
+    expect(fs.existsSync(path.join(root, '.github'))).toBe(false);
+  });
+
   it('plans no write when the merge resolver returns null (merge refused)', async () => {
     fs.writeFileSync(path.join(root, 'user.json'), '{ "user": true }\n');
     const before = read(path.join(root, 'user.json'));
