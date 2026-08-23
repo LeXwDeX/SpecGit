@@ -87,6 +87,14 @@ describe('external acceptance harness template', () => {
     expect(yaml).not.toContain('authorization');
   });
 
+  it('fails with a diagnosis, not a crash, when the policy is absent at the head (#297)', () => {
+    const yaml = externalAcceptanceWorkflowYaml(INPUT);
+    // The adoption story: a hand-made PR (no binding commit) must see an
+    // actionable message instead of an unreadable ENOENT stack.
+    expect(yaml).toContain('policy.yaml is absent at this head');
+    expect(yaml).toContain('existsSync');
+  });
+
   it('uses Node at the engine floor and SHA-pinned actions', () => {
     const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
       jobs: Record<string, { steps: Array<{ name: string; uses?: string; with?: Record<string, string> }> }>;

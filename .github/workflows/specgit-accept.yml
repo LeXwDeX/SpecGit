@@ -61,8 +61,12 @@ jobs:
           WAIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node --input-type=module <<'EOF'
-          import { readFileSync } from 'node:fs';
+          import { existsSync, readFileSync } from 'node:fs';
           import { parse } from 'yaml';
+          if (!existsSync('spec_git/policy.yaml')) {
+            console.error('spec_git/policy.yaml is absent at this head — an adoption PR carries no binding commit yet (expected once; merge it before enabling branch protection), and a delivery PR must carry it via specgit issue.');
+            process.exit(1);
+          }
           const policy = parse(readFileSync('spec_git/policy.yaml', 'utf8'));
           const required = policy.required_checks ?? [];
           const headers = {
