@@ -86,6 +86,12 @@ specgit init                          # auto-detects checks from your CI workflo
 specgit init --gitlab-host git.example.com   # self-managed GitLab instead
 specgit setup                         # install agent entry points (commands/skills)
 specgit doctor                        # all probes green?
+#    protection ordering: the init run above offers to require the
+#    acceptance check on the default branch — on a fresh adoption answer
+#    "no" (or pass --no-protect) until the adoption PR (init's output,
+#    committed) has merged; a required check no PR can pass yet locks out
+#    non-admin merges. Re-run `specgit init --force --protect` after that
+#    first merge.
 
 # The loop
 # 3. per delivery — one command bootstraps everything
@@ -139,7 +145,7 @@ reality.
 | `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, record, commit, push (idempotent resume) | yes (`gh`/`glab`) |
 | `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`/`glab`) |
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`/`glab`) |
-| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block); by default also shields the local delivery assets in `.gitignore` (`--no-ignore` opts out) | no |
+| `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block); by default also shields the local delivery assets in `.gitignore` (`--no-ignore` opts out) | gh (protection probe) |
 | `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills for other tools (`--tool opencode \| generic \| all`) | no |
 | `specgit status` | Local evidence snapshot (record, policy, git facts, drift) | no |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, forge CLI, policy) | forge auth |

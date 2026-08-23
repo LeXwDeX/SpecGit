@@ -15,7 +15,7 @@ The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `se
 | `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift) | no | 0 · 2 · 3 |
 | `specgit accept` | Same evaluation as `finish` — script/CI alias | yes | 0 · 1 · 2 · 3 |
-| `specgit doctor` | Probe prerequisites (git, repo, origin, gh, policy) | gh auth only | 0 · 3 |
+| `specgit doctor` | Probe prerequisites (git, repo, origin, gh, policy) | forge auth (platform CLI: gh or glab) | 0 · 3 |
 
 Plus `--version` and `--help` (exit 0; usage errors exit 2).
 
@@ -80,7 +80,7 @@ Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates 
 
 Artifacts:
 
-- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance**. In the self template it runs the local build and `node bin/specgit.js finish --json`; in the external template it installs the pinned published CLI and runs `npx --no-install specgit finish --json`. Both wait for sibling checks to reach a terminal state first (through the authenticated `gh` CLI). The workflow is never listed in `policy.required_checks` (self-deadlock avoidance).
+- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance**. In the self template it runs the local build and `node bin/specgit.js finish --json`; in the external template it installs the pinned published CLI and runs `npx --no-install specgit finish --json`. Both wait for sibling checks to reach a terminal state first (the self template polls the check-runs REST API with the workflow's `GITHUB_TOKEN`; the external template shells out to the authenticated `gh` CLI). The workflow is never listed in `policy.required_checks` (self-deadlock avoidance).
 - a managed prompt block `<!-- specgit:block:start --> … <!-- specgit:block:end -->` injected into `AGENTS.md` (created if missing) and `CLAUDE.md` (only if present). A harness rewrite replaces only the block region.
 
 ```bash
@@ -235,7 +235,7 @@ Genuine evidence failures — `record_invalid`, `policy_missing`,
 with exit `3` and envelope `status: "unknown"`, so the pre-binding case and
 a true unknown stay distinguishable on both the exit code and the state.
 
-Policy and context problems discovered along the way (`policy_missing`, `policy_invalid`, `branch_mismatch`, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
+Policy and context problems discovered along the way behave differently: a **missing or invalid policy fails closed** (`policy_missing`/`policy_invalid` → exit 3, listed in `errors`), while evidence *mismatches* (`branch_mismatch`, origin drift, incompleteness, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
 
 ## `specgit accept`
 
