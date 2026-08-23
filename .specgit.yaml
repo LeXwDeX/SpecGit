@@ -1,8 +1,7 @@
 version: 1
-delivery: record-carry-commit
+delivery: wait-step-convergence
 context:
   kind: branch
-  branch: feat/299-record-carry-commit
+  branch: feat/300-wait-step-convergence
 issues:
-  - 299
-pr: 303
+  - 300

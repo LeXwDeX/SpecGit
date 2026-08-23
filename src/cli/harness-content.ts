@@ -20,6 +20,7 @@
  */
 
 import type { PolicyLanguage } from '../record/policy.js';
+import { waitStepYaml } from './wait-step.js';
 
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
@@ -83,88 +84,7 @@ jobs:
       - name: Build CLI
         run: pnpm run build
 
-      - name: Wait for sibling checks
-        # The verdict must see the OTHER required checks in a terminal
-        # state. Sibling jobs start in parallel AND may not have registered
-        # their check-runs yet, so an empty poll is not "done": wait until
-        # every name in spec_git/policy.yaml is present with a terminal
-        # conclusion. This job is not in the policy, so no self-deadlock.
-        env:
-          GH_TOKEN: \${{ github.token }}
-          WAIT_REPO: \${{ github.repository }}
-          WAIT_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          node --input-type=module <<'EOF'
-          import { existsSync, readFileSync } from 'node:fs';
-          import { parse } from 'yaml';
-          if (!existsSync('spec_git/policy.yaml')) {
-            console.error('spec_git/policy.yaml is absent at this head — an adoption PR carries no binding commit yet (expected once; merge it before enabling branch protection), and a delivery PR must carry it via specgit issue.');
-            process.exit(1);
-          }
-          const policy = parse(readFileSync('spec_git/policy.yaml', 'utf8'));
-          const required = policy.required_checks ?? [];
-          const headers = {
-            authorization: 'Bearer ' + process.env.GH_TOKEN,
-            accept: 'application/vnd.github+json',
-          };
-          const url = 'https://api.github.com/repos/' + process.env.WAIT_REPO
-            + '/commits/' + process.env.WAIT_SHA + '/check-runs?per_page=100';
-          const terminal = new Set(['completed']);
-          const terminalHas = (byName, name) => {
-            if (byName.has(name)) return terminal.has(byName.get(name));
-            const retried = [...byName.keys()].find((k) => k.startsWith(name + ' ('));
-            return retried !== undefined && terminal.has(byName.get(retried));
-          };
-          // Transient API failures (5xx, 429, network) retry with bounded
-          // exponential backoff — a platform blip must not fail the gate.
-          const MAX_ATTEMPTS = 5;
-          const fetchJsonWithRetry = async () => {
-            for (let attempt = 1; ; attempt += 1) {
-              try {
-                const res = await fetch(url, { headers });
-                if (res.ok) return await res.json();
-                if (res.status >= 500 || res.status === 429) {
-                  if (attempt >= MAX_ATTEMPTS) throw new Error('check-runs API ' + res.status + ' after ' + attempt + ' attempts');
-                } else {
-                  throw new Error('check-runs API ' + res.status);
-                }
-              } catch (error) {
-                if (attempt >= MAX_ATTEMPTS) throw error;
-              }
-              const retryAfterHeader = 0; // fetch hides headers on throw; fixed ladder below
-              const backoff = Math.min(30000, 2000 * 2 ** (attempt - 1));
-              const retryAfter = retryAfterHeader || backoff;
-              console.log('Transient failure; retry ' + attempt + '/' + MAX_ATTEMPTS + ' in ' + retryAfter + 'ms');
-              await new Promise((r) => setTimeout(r, retryAfter));
-            }
-          };
-          const deadline = Date.now() + 15 * 60 * 1000;
-          while (Date.now() < deadline) {
-            const payload = await fetchJsonWithRetry();
-            // #119: re-runs keep every same-name run; terminality is
-            // decided on the truth run — latest started_at, ties broken
-            // by the higher check-run id (docs/reference.md) — never on
-            // response position.
-            const truth = new Map();
-            for (const r of payload.check_runs) {
-              const cur = truth.get(r.name);
-              const later = cur === undefined
-                || (r.started_at || '') > (cur.started_at || '')
-                || ((r.started_at || '') === (cur.started_at || '') && (r.id || 0) > (cur.id || 0));
-              if (later) truth.set(r.name, r);
-            }
-            const byName = new Map([...truth].map(([name, r]) => [name, r.status]));
-            const missing = required.filter((n) => !terminalHas(byName, n));
-            if (missing.length === 0) {
-              console.log('All required checks are in a terminal state.');
-              process.exit(0);
-            }
-            console.log('Waiting for: ' + missing.join(', '));
-            await new Promise((r) => setTimeout(r, 10000));
-          }
-          console.error('Timed out waiting for sibling checks.');
-          process.exit(1);
-          EOF
+${waitStepYaml('rest')}
 
       - name: specgit finish
         run: node bin/specgit.js finish --json
