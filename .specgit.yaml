@@ -5,3 +5,4 @@ context:
   branch: docs/295-docs-contract-wording-align
 issues:
   - 295
+pr: 296
