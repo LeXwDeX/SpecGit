@@ -603,6 +603,11 @@ describe('specgit init', () => {
     expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
   });
 
+  it('self-template wait step diagnoses an absent policy instead of crashing (#297)', () => {
+    expect(harnessWorkflowYaml()).toContain('policy.yaml is absent at this head');
+    expect(harnessWorkflowYaml()).toContain('existsSync');
+  });
+
   it('does not overwrite an existing policy', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },

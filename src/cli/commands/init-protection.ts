@@ -118,7 +118,9 @@ export async function setupBranchProtection(
     const { confirm } = await import('@inquirer/prompts');
     confirmed = await confirm(
       {
-        message: `Require "${ACCEPTANCE_CHECK_NAME}" on ${branch} and enable auto-merge (blocks bypassing the acceptance gate)?`,
+        message:
+          `Require "${ACCEPTANCE_CHECK_NAME}" on ${branch} and enable auto-merge (blocks bypassing the acceptance gate)? ` +
+          'Adopting a fresh repository: merge the adoption PR first — a required check no PR can pass yet locks out non-admin merges.',
         default: true,
       },
       { output: process.stderr }
