@@ -21,11 +21,14 @@
 import { EXIT_UNKNOWN } from '../exit-codes.js';
 import { errorDiagnostic, type IssueOutcome } from '../output.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
-import { RECORD_FILENAME } from '../../record/schema.js';
+import { POLICY_FILENAME, RECORD_FILENAME } from '../../record/schema.js';
+import { SPEC_GIT_DIR } from '../types.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
 import { catalogFor } from '../language.js';
 import type { GitFacts } from '../../gitfacts/port.js';
+import { existsSync } from 'node:fs';
+import * as path from 'node:path';
 
 type FailureEvidence = Extract<Evidence<unknown>, { ok: false }>;
 
@@ -159,10 +162,23 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
     run: async ({ ctx, root, state }) => {
       // Locale-independent: commitFile probes staged changes itself and
       // reports committed=false on a clean tree, so a resume re-run
-      // commits nothing new.
+      // commits nothing new. The commit carries every authoritative
+      // delivery file that exists (#292): under the default local-asset
+      // ignore, this binding commit is their only entry into git — the
+      // CI verdict on the PR head must be able to read them.
+      // The record always rides the commit (the step's precondition is
+      // that it was just written); the optional policy and providers
+      // files join when they exist on disk.
+      const authoritative = [
+        RECORD_FILENAME,
+        ...[
+          `${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
+          `${SPEC_GIT_DIR}/providers.yaml`,
+        ].filter((relative) => existsSync(path.join(root, relative))),
+      ];
       const commit = await ctx.git.commitFile(
         root,
-        RECORD_FILENAME,
+        authoritative,
         `chore: record delivery binding for ${state.record.delivery}`
       );
       return commit.ok ? { record: state.record } : passthrough(commit);

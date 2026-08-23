@@ -188,6 +188,7 @@ export function createProgram(
     .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
     .option('--gitlab-host <hostname>', 'Declare a self-hosted GitLab host (bare hostname, or host:port for a non-default port, matching the origin)')
     .option('--language <lang>', 'Language of generated text: en | zh (default en; persisted in spec_git/policy.yaml)')
+    .option('--no-ignore', 'Skip the .gitignore block for the local delivery assets (.specgit.yaml, spec_git/)')
     .option('--protect', 'Enable branch protection + auto-merge without asking')
     .option('--no-protect', 'Skip the branch-protection probe and warning entirely')
     .option('--json', 'Output as JSON')
