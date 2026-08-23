@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
+import { readRecord } from '../../src/record/io.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import { ENTRY_POINT_MARKER } from '../../src/cli/agent-surface.js';
 import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
@@ -110,6 +111,32 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(record.failures.map((f: any) => f.code)).toEqual(['record_missing']);
     expect(envelope.warnings?.[0]?.code).toBe('record_missing');
     expect(envelope.errors ?? []).toEqual([]);
+  });
+
+  // #313: the managed status skill documents that the `record_missing`
+  // warning names the `specgit issue` bootstrap in `warnings[].fix` —
+  // so the real reader's repair (not a faked port wording) must reach
+  // the warning. The record port here is the production `readRecord`
+  // reading a real absent file.
+  it('the unbound record_missing warning carries the real reader issue-first fix (#313)', async () => {
+    const tempDir = makeTempDir('specgit-status-missing-');
+    try {
+      const t = makeCtx({
+        policy: samplePolicy(),
+        root: { ok: true, value: tempDir },
+        cwd: tempDir,
+      });
+      t.recordPort.readRecord = readRecord;
+      const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.state).toBe('unbound');
+      expect(envelope.exit).toBe(EXIT_SUCCESS);
+      expect(envelope.warnings?.[0]?.code).toBe('record_missing');
+      expect(envelope.warnings?.[0]?.fix).toContain('specgit issue');
+    } finally {
+      rmDir(tempDir);
+    }
   });
 
   it('fails closed (exit 3) when the record is invalid', async () => {

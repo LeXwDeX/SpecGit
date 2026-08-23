@@ -18,6 +18,7 @@ import {
   type GateId,
   type Verdict,
 } from '../../src/acceptance/evaluate.js';
+import { CODE_INFO } from '../../src/acceptance/codes.js';
 import {
   MockForgeProvider,
   makeCheckRun,
@@ -1501,8 +1502,9 @@ describe('evidence-supplied diagnostics reach the envelope (#277)', () => {
     const record = gate(verdict, 'record');
     expect(record.failures[0].code).toBe('record_missing');
     expect(record.failures[0].message).toBe(message);
-    // No evidence fix: the registry fallback still carries the repair step.
-    expect(record.failures[0].fix).toBe('Run "specgit bind" to create the delivery binding.');
+    // No evidence fix: the registry fallback still carries the repair
+    // step — the one shared issue-first repair (#313).
+    expect(record.failures[0].fix).toBe(CODE_INFO.record_missing.fix);
   });
 
   it('the provider gate reports the preflight account', async () => {
@@ -1557,5 +1559,38 @@ describe('evidence-supplied diagnostics reach the envelope (#277)', () => {
     const checks = gate(verdict, 'checks');
     expect(checks.failures[0].code).toBe('gh_transport');
     expect(checks.failures[0].message).toBe(message);
+  });
+});
+
+// #313 — the record-missing repair is issue-first everywhere. The human
+// story starts with `specgit issue`; bare `specgit bind` (which demands
+// hand-invented delivery/pr/issue arguments) may appear only after the
+// primary path, described as the lower-level alias that writes or updates
+// the delivery binding record — never as an equivalent bootstrap.
+describe('record_missing repair vocabulary (#313)', () => {
+  it('the registry fix leads with the issue bootstrap, never bare bind', () => {
+    const fix = CODE_INFO.record_missing.fix ?? '';
+    expect(fix).toContain('specgit issue');
+    const issueAt = fix.indexOf('specgit issue');
+    const bindAt = fix.indexOf('specgit bind');
+    expect(bindAt === -1 || issueAt < bindAt).toBe(true);
+    expect(fix.startsWith('Run "specgit bind"')).toBe(false);
+    // `bind` is described by what it does — record write/update from
+    // explicit inputs — never as "the same bootstrap".
+    expect(fix).not.toContain('same bootstrap');
+    expect(fix).toContain('delivery binding record');
+    expect(fix).toMatch(/writes or updates/i);
+  });
+
+  it('a missing record stays fail-closed: classification unknown, exit 3, corrected next action', async () => {
+    const verdict = await evaluate(
+      input({ record: fail('record_missing', 'No .specgit.yaml found.') })
+    );
+    expect(verdict.classification).toBe('unknown');
+    expect(verdict.exitCode).toBe(3);
+    expect(verdict.state).toBe('unbound');
+    const record = gate(verdict, 'record');
+    expect(record.failures[0].fix).toBe(CODE_INFO.record_missing.fix);
+    expect(record.failures[0].fix).toContain('specgit issue');
   });
 });
