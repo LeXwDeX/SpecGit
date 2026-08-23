@@ -148,6 +148,25 @@ state_assets:
         - .agents/skills/specgit-finish/SKILL.md
       written_by: specgit setup
       rule: agent conveniences only; never acceptance inputs
+  drift_report: >-
+    #308: `specgit status` reports, under `assets.generated`, whether each
+    managed asset of the last two tiers is current, stale (asset_stale),
+    missing (asset_missing), or conflict (asset_conflict — ownership
+    unproven, a human decision), grouped by the surface that repairs it
+    (init → `specgit init --force` / `specgit init` when no policy exists;
+    opencode → `specgit setup --tool opencode`; generic → `specgit setup
+    --tool generic`). One shared read-only inspector over the writers' own
+    desired states; an uninstalled optional setup surface is `absent`
+    (clean, no missing-file list). The verdict is fail-closed about its
+    own coverage: clean requires complete — every desired part claimed or
+    proven skipped; uninspected codes name the unknown parts that make a
+    report incomplete (workflow_platform_undecided,
+    workflow_platform_providers_invalid, workflow_default_branch_unresolved,
+    hooks_json_unmerged, ignore_tracked_unknown, ignore_unreadable), while
+    skipped names the intentional, proven
+    opt-out (ignore_committed_authoritative — the committed-authoritative
+    model) that never spoils an otherwise current report. Drift never
+    changes the exit code and fail-closed snapshots carry no drift claim.
 
 command_surface:
   commands:

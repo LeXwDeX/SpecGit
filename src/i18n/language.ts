@@ -98,6 +98,15 @@ export interface HumanText {
   statusLiveBranch(branch: string): string;
   statusLiveBranchDetached(): string;
   statusUnbound(): string;
+  // status — generated-asset drift (#308); states/codes/paths/fix commands
+  // interpolate verbatim (machine contract, never localized)
+  statusAssetsCurrent(): string;
+  statusAssetsDrift(): string;
+  statusAssetsIncomplete(): string;
+  statusAssetSurface(surface: string, state: string, fix: string): string;
+  statusAssetEntry(state: string, path: string): string;
+  statusAssetUninspected(code: string): string;
+  statusAssetSkipped(code: string): string;
   // setup
   setupTool(tool: string): string;
   setupInstalled(): string;
@@ -200,6 +209,15 @@ const EN_HUMAN: HumanText = {
   statusLiveBranchDetached: () => 'Live branch: (detached)',
   statusUnbound: () =>
     'Not bound: no delivery record (.specgit.yaml) exists yet — the normal pre-binding state. Run "specgit issue" to start a delivery.',
+  statusAssetsCurrent: () =>
+    'Generated assets: current — every desired init/setup output is proven current, absent, or intentionally skipped for this CLI version.',
+  statusAssetsDrift: () => 'Generated assets: drift detected — run each surface\'s exact fix:',
+  statusAssetsIncomplete: () =>
+    'Generated assets: incomplete — parts of the desired state could not be proven, so no current claim is made:',
+  statusAssetSurface: (surface, state, fix) => `  ${surface}: ${state} — fix: ${fix}`,
+  statusAssetEntry: (state, path) => `    ${state} ${path}`,
+  statusAssetUninspected: (code) => `  not inspected (${code})`,
+  statusAssetSkipped: (code) => `  not applicable (${code}) — a proven opt-out, not drift`,
   setupTool: (tool) => `Tool: ${tool}`,
   setupInstalled: () => 'Installed entry points:',
   setupRemovedAsset: (path) => `Removed retired SpecGit entry point ${path}`,
@@ -261,6 +279,15 @@ const ZH_HUMAN: HumanText = {
   statusLiveBranchDetached: () => '当前分支：（分离头指针）',
   statusUnbound: () =>
     '尚未绑定：还没有交付记录（.specgit.yaml）——这是引导前的正常状态。运行 "specgit issue" 开始交付。',
+  statusAssetsCurrent: () =>
+    '生成资产：均为最新——所有期望的 init/setup 产物均被证实与当前 CLI 版本一致、未安装或有意跳过。',
+  statusAssetsDrift: () => '生成资产：检测到漂移——请逐面执行精确修复命令：',
+  statusAssetsIncomplete: () =>
+    '生成资产：检查不完整——部分期望状态无法证明，因此不作"均为最新"的结论：',
+  statusAssetSurface: (surface, state, fix) => `  ${surface}：${state} — 修复：${fix}`,
+  statusAssetEntry: (state, path) => `    ${state} ${path}`,
+  statusAssetUninspected: (code) => `  未检查（${code}）`,
+  statusAssetSkipped: (code) => `  不适用（${code}）——已证实的主动退出，并非漂移`,
   setupTool: (tool) => `工具：${tool}`,
   setupInstalled: () => '已安装入口：',
   setupRemovedAsset: (path) => `已移除已退役的 SpecGit 入口 ${path}`,

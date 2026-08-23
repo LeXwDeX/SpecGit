@@ -148,6 +148,62 @@ export async function persistGitlabHost(
   }
 }
 
+/** `providers_invalid` is a refusal, not a mode: see `classifyPlatformMode`. */
+export type PlatformClassification = 'github' | 'gitlab' | 'undecided' | 'providers_invalid';
+
+/**
+ * Read-only platform classification (#308): the same evidence order
+ * `resolvePlatformMode` acts on — the persisted declaration first, then
+ * origin-endpoint heuristics — with every mutating branch removed. No
+ * providers write, no TTY question, no prompts: `specgit status` uses this
+ * to decide which workflow the repository's platform desires without ever
+ * touching `spec_git/providers.yaml`. A non-default-port origin (the #78
+ * rule) and an unresolvable origin both stay `undecided` — an explicit
+ * declaration is the only classification there, and status makes no claim
+ * without one.
+ *
+ * Fail-closed on the declaration itself (#308 Delta 2): `providers_invalid`
+ * is a refusal, not a mode — the authoritative platform declaration exists
+ * but its bytes are invalid, so the platform is UNKNOWN. A github.com
+ * origin must never be classified GitHub over bytes that may carry a valid
+ * GitLab declaration. `providers_missing` (the file is optional) and a
+ * valid file without a gitlab entry still fall through to the heuristics,
+ * exactly like the writer; a read error that THROWS propagates to the
+ * caller's inspection catch (`asset_inspection_failed`), never a guess.
+ */
+export async function classifyPlatformMode(
+  root: string,
+  originUrl: string | null
+): Promise<PlatformClassification> {
+  const existing = await readProviders(root);
+  if (existing.ok) {
+    if (existing.value.gitlab !== undefined) {
+      return 'gitlab';
+    }
+    // A readable, valid declaration without a gitlab entry declares
+    // nothing: the origin heuristics speak, same as the writer.
+  } else if (existing.code === 'providers_invalid') {
+    return 'providers_invalid';
+  }
+  // providers_missing: the file is optional, the heuristics classify.
+  if (!originUrl) {
+    return 'undecided';
+  }
+  const endpoint = originEndpoint(originUrl);
+  if (endpoint === null || !endpointUsesDefaultPort(endpoint)) {
+    return 'undecided';
+  }
+  if (endpoint.host === 'github.com') {
+    return 'github';
+  }
+  if (/(^|\.)gitlab/i.test(endpoint.host)) {
+    // gitlab.com or a *gitlab* self-host on the default port: evident
+    // without a declaration — the same heuristic the writer persists.
+    return 'gitlab';
+  }
+  return 'undecided';
+}
+
 /**
  * Platform-mode selection: a github.com origin defaults to GitHub; any
  * other origin needs a declaration (TTY question or --gitlab-host). The
