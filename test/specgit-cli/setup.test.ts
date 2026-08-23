@@ -458,47 +458,48 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     fs.writeFileSync(staleCommandPath, 'stale managed bytes\n');
     fs.chmodSync(staleCommandPath, 0o600);
     fs.writeFileSync(path.join(commandDir, 'specgit-retired.md'), RETIRED_OWNED_COMMAND);
-    // Block the generic phase at commit time: `.agents/skills` exists but is
-    // not writable, so the first skill mkdir fails AFTER the whole opencode
-    // surface already reconciled (stale rewrite + retired removal landed).
+    // Block the generic phase at commit time (#314): a regular FILE where
+    // the first skill directory belongs, so the write of
+    // `.agents/skills/specgit-issue/SKILL.md` fails AFTER the whole
+    // opencode surface already reconciled (stale rewrite + retired
+    // removal landed). A file-shaped blocker is portable — the old
+    // injection (a non-writable `.agents/skills`) never fires on Windows,
+    // where a directory's read-only attribute does not block creation.
     const skillsDir = path.join(tempDir, '.agents', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    fs.chmodSync(skillsDir, 0o500);
+    fs.writeFileSync(path.join(skillsDir, 'specgit-issue'), 'not a directory');
     const before = treeState(tempDir);
 
-    try {
-      const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
-      const code = await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], t.ctx);
-      expect(code).toBe(3);
-      const envelope = parseStdoutJson(t.io);
-      expect(envelope.errors?.[0]?.code).toBe('setup_write_failed');
-      // The opencode reconciliation round-trips: stale bytes, stale mode,
-      // and the removed-then-restored retired entry point.
-      expect(treeState(tempDir)).toEqual(before);
-    } finally {
-      fs.chmodSync(skillsDir, 0o755);
-    }
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+    const code = await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], t.ctx);
+    expect(code).toBe(3);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('setup_write_failed');
+    // The opencode reconciliation round-trips: stale bytes, stale mode,
+    // and the removed-then-restored retired entry point. The blocker file
+    // is pre-existing user content and stays.
+    expect(treeState(tempDir)).toEqual(before);
   });
 
   it('a failure after fresh writes removes every directory the run created', async () => {
     gitInit(tempDir);
     const skillsDir = path.join(tempDir, '.agents', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    fs.chmodSync(skillsDir, 0o500);
+    // Portable commit-time blocker (#314): the first generic skill write
+    // needs `.agents/skills/specgit-issue` as a directory — a regular file
+    // there fails it after the fresh opencode writes already landed.
+    fs.writeFileSync(path.join(skillsDir, 'specgit-issue'), 'not a directory');
     const before = treeState(tempDir);
 
-    try {
-      const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
-      const code = await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], t.ctx);
-      expect(code).toBe(3);
-      expect(treeState(tempDir)).toEqual(before);
-      // No empty residue: the run-created .opencode chain is gone and no
-      // skill directory was left behind.
-      expect(fs.existsSync(path.join(tempDir, '.opencode'))).toBe(false);
-      expect(fs.readdirSync(skillsDir)).toEqual([]);
-    } finally {
-      fs.chmodSync(skillsDir, 0o755);
-    }
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+    const code = await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], t.ctx);
+    expect(code).toBe(3);
+    expect(treeState(tempDir)).toEqual(before);
+    // No empty residue: the run-created .opencode chain is gone and no
+    // run-created skill directory was left behind (the blocker file is
+    // pre-existing user content, not residue).
+    expect(fs.existsSync(path.join(tempDir, '.opencode'))).toBe(false);
+    expect(fs.readdirSync(skillsDir)).toEqual(['specgit-issue']);
   });
 
   // #311: the portable status skill must teach the full #175 contract — a

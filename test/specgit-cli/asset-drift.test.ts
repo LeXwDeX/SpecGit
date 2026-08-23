@@ -23,6 +23,7 @@ import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
 import {
   inspectManagedAssets,
+  posixModesEnforced,
   type DesiredManagedAssets,
 } from '../../src/cli/managed-reconcile.js';
 import {
@@ -107,14 +108,36 @@ describe('inspectManagedAssets: per-step read-only states (#308)', () => {
     ]);
   });
 
-  it('reports a mode-only difference as stale — the writer chmods, so drift is not just bytes', async () => {
+  it('reports an enforceable mode-only difference as stale — the writer chmods, so drift is not just bytes', async () => {
+    const target = write(root, 'modeled.txt', 'bytes\n');
+    // Seed the drift in bits the platform can represent and repair (#314):
+    // the executable bit where POSIX modes are enforced, the read-only
+    // attribute on Windows (the desired 0o644 is writable there).
+    fs.chmodSync(target, posixModesEnforced() ? 0o755 : 0o444);
+    const desired: DesiredManagedAssets = {
+      steps: [{ kind: 'write', path: 'modeled.txt', mode: 0o644, merge: () => 'bytes\n' }],
+    };
+    const inspection = await inspectManagedAssets(root, desired);
+    expect(inspection.findings).toEqual([{ path: 'modeled.txt', state: 'stale', code: 'asset_stale' }]);
+  });
+
+  it('reports a mode difference only unenforceable bits make as current, not stale (#314)', async () => {
+    // chmod(0o755) on Windows leaves the file statting as 0o666: the gap
+    // to the desired 0o644 exists only in bits no filesystem there can
+    // hold, so it is convergence, never drift — otherwise status could
+    // never report clean on Windows. Where POSIX modes ARE enforced the
+    // same fixture is a genuine, repairable drift.
     const target = write(root, 'modeled.txt', 'bytes\n');
     fs.chmodSync(target, 0o755);
     const desired: DesiredManagedAssets = {
       steps: [{ kind: 'write', path: 'modeled.txt', mode: 0o644, merge: () => 'bytes\n' }],
     };
     const inspection = await inspectManagedAssets(root, desired);
-    expect(inspection.findings).toEqual([{ path: 'modeled.txt', state: 'stale', code: 'asset_stale' }]);
+    expect(inspection.findings).toEqual([
+      posixModesEnforced()
+        ? { path: 'modeled.txt', state: 'stale', code: 'asset_stale' }
+        : { path: 'modeled.txt', state: 'current' },
+    ]);
   });
 
   it('makes no claim when the write resolver declines (an optional target)', async () => {

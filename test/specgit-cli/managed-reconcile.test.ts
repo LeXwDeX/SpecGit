@@ -11,7 +11,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+  inspectManagedAssets,
+  managedModeMatches,
   ManagedReconcileError,
+  posixModesEnforced,
   reconcileManagedAssets,
   restoreManagedSnapshot,
   snapshotManagedFile,
@@ -25,6 +28,16 @@ function read(target: string): string {
 
 function modeOf(target: string): number {
   return fs.statSync(target).mode;
+}
+
+/**
+ * Seed a mode that genuinely DIFFERS from `desired` in bits the platform
+ * can enforce (#314): the executable/mask bits where POSIX modes hold, the
+ * read-only attribute on Windows — so drift detection is exercised for
+ * real on every platform, never against a difference chmod cannot repair.
+ */
+function enforceableDriftMode(desired: number): number {
+  return posixModesEnforced() ? (desired ^ 0o111) : desired ^ 0o200;
 }
 
 const rel = (root: string, target: string): string => path.relative(root, target);
@@ -60,17 +73,46 @@ describe('reconcileManagedAssets', () => {
     expect(read(path.join(root, 'drift.txt'))).toBe('current\n');
   });
 
-  it('treats a mode drift as an update: desired state includes the mode', async () => {
+  it('treats an enforceable mode drift as an update: desired state includes the mode', async () => {
     const target = path.join(root, 'guard.sh');
     fs.writeFileSync(target, 'body\n');
-    fs.chmodSync(target, 0o644);
+    fs.chmodSync(target, enforceableDriftMode(0o755));
 
     const report = await reconcileManagedAssets(root, {
       steps: [{ kind: 'write', path: 'guard.sh', mode: 0o755, merge: () => 'body\n' }],
     });
 
     expect(report.updated).toEqual(['guard.sh']);
-    expect(modeOf(target) & 0o777).toBe(0o755);
+    // Converged to the full desired mode where POSIX modes are enforced;
+    // to the enforceable read-only contract where that is all there is.
+    expect(managedModeMatches(modeOf(target), 0o755)).toBe(true);
+    if (posixModesEnforced()) {
+      expect(modeOf(target) & 0o777).toBe(0o755);
+    }
+  });
+
+  it('a mode difference the filesystem cannot enforce is converged, not drift (#314)', async () => {
+    // On Windows every writable file stats as 0o666: the difference from
+    // the desired 0o755 exists only in bits no filesystem there can hold,
+    // so planning a write would loop forever without ever converging. The
+    // reconciler must treat it as identical — plan nothing, answer
+    // `current` — while POSIX keeps detecting real mode drift (above).
+    const steps: ManagedStep[] = [
+      { kind: 'write', path: 'hook.sh', mode: 0o755, merge: () => 'body\n' },
+    ];
+    await reconcileManagedAssets(root, { steps });
+    // Numerically different from 0o755, semantically identical wherever
+    // POSIX modes are not enforced (chmod there cannot produce 0o755).
+    fs.chmodSync(path.join(root, 'hook.sh'), posixModesEnforced() ? 0o755 : 0o666);
+
+    const report = await reconcileManagedAssets(root, { steps });
+    const inspection = await inspectManagedAssets(root, { steps });
+
+    expect(report.created).toEqual([]);
+    expect(report.updated).toEqual([]);
+    // The writer's own convergence proof: what it wrote, inspection calls
+    // current — same equivalence rule on both sides, every platform.
+    expect(inspection.findings).toEqual([{ path: 'hook.sh', state: 'current' }]);
   });
 
   it('plans no write when the merge resolver returns null (merge refused)', async () => {
@@ -149,8 +191,14 @@ describe('reconcileManagedAssets', () => {
     const existing = path.join(root, 'existing.txt');
     fs.writeFileSync(existing, 'user bytes\n');
     fs.chmodSync(existing, 0o600);
+    // The raw observed mode is the exact round-trip contract on every
+    // platform: full POSIX bits where enforced, the read-only attribute
+    // mapping where that is all the filesystem holds (#314).
+    const seededMode = modeOf(existing);
     // A regular file where a directory is needed: the LAST write fails after
-    // earlier steps already mutated the tree.
+    // earlier steps already mutated the tree. Portable injection — it does
+    // not depend on chmod being enforceable (a directory made non-writable
+    // never blocks a Windows mkdir, whose read-only attribute is advisory).
     fs.writeFileSync(path.join(root, 'blocker'), 'not a directory');
 
     let caught: unknown;
@@ -171,7 +219,10 @@ describe('reconcileManagedAssets', () => {
     expect((caught as ManagedReconcileError).step?.path).toBe('blocker/child.txt');
     // Prior mutations round-trip: bytes and mode of the rewritten file…
     expect(read(existing)).toBe('user bytes\n');
-    expect(modeOf(existing) & 0o777).toBe(0o600);
+    expect(modeOf(existing)).toBe(seededMode);
+    if (posixModesEnforced()) {
+      expect(modeOf(existing) & 0o777).toBe(0o600);
+    }
     // …and every path this run created is gone, including directories.
     expect(fs.existsSync(path.join(root, 'nested'))).toBe(false);
   });
@@ -362,6 +413,7 @@ describe('reconcileManagedAssets', () => {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, '# team config\n');
     fs.chmodSync(target, 0o600);
+    const seededMode = modeOf(target); // exact round-trip contract (#314)
     const shot = await snapshotManagedFile(root, 'spec_git/providers.yaml');
     // The run rewrites the file, and a later cleanup loses the directory.
     fs.rmSync(path.join(root, 'spec_git'), { recursive: true, force: true });
@@ -369,6 +421,9 @@ describe('reconcileManagedAssets', () => {
     await restoreManagedSnapshot(shot);
 
     expect(read(target)).toBe('# team config\n');
-    expect(modeOf(target) & 0o777).toBe(0o600);
+    expect(modeOf(target)).toBe(seededMode);
+    if (posixModesEnforced()) {
+      expect(modeOf(target) & 0o777).toBe(0o600);
+    }
   });
 });
