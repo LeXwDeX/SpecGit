@@ -181,4 +181,35 @@ describe('specgit bind', () => {
       issues: [1],
     });
   });
+
+  // ---- #299: record surgery must reach the delivery branch too. ----
+
+  it('force-commits the bound record and pushes the branch (#299)', async () => {
+    const t = makeCtx();
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'add-login-flow', '--issue', '1', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.gitPort.commitCalls.length).toBe(1);
+    expect(t.gitPort.commitCalls[0].paths).toContain('.specgit.yaml');
+    expect(t.gitPort.pushCalls).toContain('feat/123-login');
+  });
+
+  it('a carry push failure downgrades to a warning, the record stays written (#299)', async () => {
+    const t = makeCtx();
+    t.gitPort.pushBranch = async () => ({
+      ok: false as const,
+      code: 'git_push_failed',
+      message: 'git push failed: network',
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'add-login-flow', '--issue', '1', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(JSON.stringify(envelope.warnings ?? [])).toContain('record_carry_push_failed');
+    expect(t.recordPort.recordWrites).toHaveLength(1);
+  });
 });

@@ -32,6 +32,62 @@ import * as path from 'node:path';
 
 type FailureEvidence = Extract<Evidence<unknown>, { ok: false }>;
 
+/**
+ * #299: the authoritative delivery files that ride a carrying commit —
+ * the record always, the policy and providers files when they exist on
+ * disk. One spelling for the bootstrap chain, `pr` repair, and `bind`
+ * surgery, so every path that rewrites the record carries it into git
+ * the same way (force-staged past the #292 local-asset ignore, where
+ * the PR-head CI verdict reads it).
+ */
+export function authoritativeDeliveryPaths(root: string): string[] {
+  return [
+    RECORD_FILENAME,
+    ...[
+      `${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
+      `${SPEC_GIT_DIR}/${PROVIDERS_FILENAME}`,
+    ].filter((relative) => existsSync(path.join(root, relative))),
+  ];
+}
+
+export function recordBindingCommitMessage(delivery: string): string {
+  return `chore: record delivery binding for ${delivery}`;
+}
+
+/**
+ * #299 carrying commit for record-changing repair paths: force-stage the
+ * authoritative files, commit, push the delivery branch. Idempotent
+ * (unchanged tree commits nothing; push -u is safe to re-run). The
+ * caller owns the failure policy: the local commit is deterministic
+ * (its failure is a real environment problem), while the push depends
+ * on remote availability — callers warn on push failure so offline and
+ * sandboxed environments keep working, with the stale-record
+ * consequence spelled out.
+ */
+export async function carryRecordToBranch(
+  ctx: CommandContext,
+  root: string,
+  record: DeliveryBinding
+): Promise<
+  | { ok: true; value: { committed: boolean; pushed: boolean } }
+  | { ok: false; code: string; message: string; fix?: string }
+  | { ok: true; pushFailed: true; pushMessage: string }
+> {
+  const commit = await ctx.git.commitFile(
+    root,
+    authoritativeDeliveryPaths(root),
+    recordBindingCommitMessage(record.delivery)
+  );
+  if (!commit.ok) {
+    return commit;
+  }
+  const push = await ctx.git.pushBranch(root, record.context.branch);
+  if (!push.ok) {
+    return { ok: true, pushFailed: true, pushMessage: push.message };
+  }
+  return { ok: true, value: { committed: commit.value.committed, pushed: true } };
+}
+
 export function passthrough(failure: FailureEvidence): IssueOutcome {
   return {
     exit: EXIT_UNKNOWN,
@@ -163,23 +219,14 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
       // Locale-independent: commitFile probes staged changes itself and
       // reports committed=false on a clean tree, so a resume re-run
       // commits nothing new. The commit carries every authoritative
-      // delivery file that exists (#292): under the default local-asset
-      // ignore, this binding commit is their only entry into git — the
-      // CI verdict on the PR head must be able to read them.
-      // The record always rides the commit (the step's precondition is
-      // that it was just written); the optional policy and providers
-      // files join when they exist on disk.
-      const authoritative = [
-        RECORD_FILENAME,
-        ...[
-          `${SPEC_GIT_DIR}/${POLICY_FILENAME}`,
-          `${SPEC_GIT_DIR}/${PROVIDERS_FILENAME}`,
-        ].filter((relative) => existsSync(path.join(root, relative))),
-      ];
+      // delivery file that exists (#292/#299): under the default
+      // local-asset ignore, this binding commit is their only entry
+      // into git — the CI verdict on the PR head must be able to read
+      // them.
       const commit = await ctx.git.commitFile(
         root,
-        authoritative,
-        `chore: record delivery binding for ${state.record.delivery}`
+        authoritativeDeliveryPaths(root),
+        recordBindingCommitMessage(state.record.delivery)
       );
       return commit.ok ? { record: state.record } : passthrough(commit);
     },

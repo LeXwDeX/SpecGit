@@ -13,6 +13,7 @@ import { deriveBindingState } from '../gates.js';
 import { errorDiagnostic, humanBuilder, issueList, type PrOutcome } from '../output.js';
 import { coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
+import { carryRecordToBranch } from './bootstrap.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
 
 export interface PrOptions {
@@ -52,11 +53,11 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
   }
 
   let record = existing.value;
+  const facts = await ctx.git.facts(root);
 
   if (options.ref !== undefined) {
     record = bindPr(record, coercePrRef(options.ref));
   } else {
-    const facts = await ctx.git.facts(root);
     if (!facts.originUrl) {
       return {
         exit: EXIT_UNKNOWN,
@@ -133,6 +134,51 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
     };
   }
 
+  // #299 carrying commit: a local-only repair forks the local and CI
+  // verdicts — the PR head still reads the stale record. On the delivery
+  // branch, force-carry the repaired record (commit + push, idempotent,
+  // resumable on failure). Off-branch, say so instead of silently
+  // skipping.
+  const warnings: PrOutcome['warnings'] = [];
+  if (facts.branch === record.context.branch) {
+    const carry = await carryRecordToBranch(ctx, root, record);
+    if (!carry.ok) {
+      return {
+        exit: EXIT_UNKNOWN,
+        state: deriveBindingState(record),
+        record: {
+          version: record.version,
+          delivery: record.delivery,
+          context: record.context,
+          issues: record.issues,
+          pr: record.pr,
+        },
+        errors: [
+          errorDiagnostic(carry.code, carry.message, carry.fix ? { fix: carry.fix } : {}),
+        ],
+        human: humanBuilder()
+          .line(human.prBound(record.pr as number | string, record.delivery))
+          .line(human.prIssues(issueList(record.issues)))
+          .build(),
+      };
+    }
+    if ('pushFailed' in carry) {
+      warnings.push({
+        severity: 'warning',
+        code: 'record_carry_push_failed',
+        message: `The repaired record was committed locally but not pushed: ${carry.pushMessage}`,
+        fix: 'Push the delivery branch (git push) so the CI verdict on the PR head reads the same record; until then the local and CI verdicts can disagree.',
+      });
+    }
+  } else {
+    warnings.push({
+      severity: 'warning',
+      code: 'record_carry_skipped',
+      message: `The repaired record was not carried into git: the current branch '${facts.branch ?? '(detached)'}' is not the delivery branch '${record.context.branch}'.`,
+      fix: 'Re-run this repair on the delivery branch, or commit and push the record there manually (git add -f .specgit.yaml) so the CI verdict reads the same record.',
+    });
+  }
+
   return {
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
@@ -143,6 +189,7 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
       issues: record.issues,
       pr: record.pr,
     },
+    ...(warnings.length > 0 ? { warnings } : {}),
     human: humanBuilder()
       .line(human.prBound(record.pr as number | string, record.delivery))
       .line(human.prIssues(issueList(record.issues)))

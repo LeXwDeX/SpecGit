@@ -1,8 +1,0 @@
-version: 1
-delivery: merged-delivery-lifecycle
-context:
-  kind: branch
-  branch: feat/298-merged-delivery-lifecycle
-issues:
-  - 298
-pr: 302

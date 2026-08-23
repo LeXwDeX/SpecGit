@@ -67,8 +67,13 @@ export function makeRepo(branch: string, deliveryFile = 'feature.txt'): RepoFixt
     '-m',
     `deliver ${branch}`
   );
-  const sha = git(dir, 'rev-parse', 'HEAD').trim();
-  return { dir, branch, sha };
+  // #299: bind now force-carries the record as a commit — HEAD moves
+  // after fixture creation, so `sha` must always read live.
+  const fixture = { dir, branch } as RepoFixture;
+  Object.defineProperty(fixture, 'sha', {
+    get: () => git(dir, 'rev-parse', 'HEAD').trim(),
+  });
+  return fixture;
 }
 
 export interface WorktreeFixture {
@@ -84,14 +89,16 @@ export function makeWorktree(branch: string): WorktreeFixture {
   const suffix = randomUUID().slice(0, 8);
   const worktreeDir = path.join(os.tmpdir(), `specgit-e2e-wt-${safeName(branch)}-${suffix}`);
   git(main.dir, 'worktree', 'add', worktreeDir, '-b', branch);
-  const sha = git(main.dir, 'rev-parse', branch).trim();
-  return {
+  const fixture = {
     mainDir: main.dir,
     worktreeDir: fs.realpathSync(worktreeDir),
     label: path.basename(worktreeDir),
     branch,
-    sha,
-  };
+  } as WorktreeFixture;
+  Object.defineProperty(fixture, 'sha', {
+    get: () => git(main.dir, 'rev-parse', branch).trim(),
+  });
+  return fixture;
 }
 
 export function rmDir(dir: string): void {
