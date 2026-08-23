@@ -1188,6 +1188,47 @@ describe('specgit init --language (#118)', () => {
     });
   });
 
+  // ---- #298: a tracked policy rewritten by --force shows as an uncommitted
+  // modification until committed — warn instead of leaving silent residue. ----
+
+  it('--force warns when the rewritten policy is tracked by git (#298)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'] },
+      gitWrites: {
+        trackedFiles: (paths) => ({ ok: true, value: [...paths] }),
+      },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'policy_rewrite_tracked'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.fix).toContain('binding commit');
+  });
+
+  it('--force stays silent when the policy is untracked (the #292 default) (#298)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'] },
+      gitWrites: {
+        trackedFiles: () => ({ ok: true, value: [] }),
+      },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(JSON.stringify(envelope.warnings ?? [])).not.toContain('policy_rewrite_tracked');
+  });
+
   it('renders the human summary in the policy language', async () => {
     const t = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(

@@ -47,6 +47,7 @@ describe('provider port contract (#80)', () => {
         'hooksPath',
         'pushBranch',
         'remoteDefaultBranch',
+        'trackedFiles',
       ].sort()
     );
     expect([...FORGE_PROVIDER_MEMBERS].sort()).toEqual(
