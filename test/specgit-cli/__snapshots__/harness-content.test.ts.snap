@@ -304,7 +304,15 @@ jobs:
             }
             return runs;
           };
-          const deadline = Date.now() + 15 * 60 * 1000;
+          // Poll deadline sits BELOW the job's timeout-minutes (15) on
+
+          // purpose: when the deadline loses the race against a slow
+
+          // sibling, the script exits with its own diagnosis instead of
+
+          // being killed by the job timeout mid-line.
+
+          const deadline = Date.now() + 13 * 60 * 1000;
           while (Date.now() < deadline) {
             const runs = await fetchAllCheckRuns();
             // #119: re-runs keep every same-name run; terminality is
