@@ -7,6 +7,8 @@ metadata:
   author: specgit
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # specgit-issue
 
 The delivery bootstrap. One command binds the whole aggregate: N issues, one

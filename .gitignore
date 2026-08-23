@@ -178,3 +178,7 @@ node_modules
 .local/pr-*
 .review_*
 AUDIT-REPORT.md
+# >>> specgit: local delivery assets (managed by specgit init) >>>
+/.specgit.yaml
+/spec_git/
+# <<< specgit: local delivery assets (managed by specgit init) <<<

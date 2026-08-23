@@ -2,6 +2,8 @@
 description: Start a SpecGit delivery from a title or existing issue number
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # /specgit-issue
 
 Thin trigger for the delivery bootstrap. The canonical behavior lives in the
