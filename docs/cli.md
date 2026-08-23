@@ -11,7 +11,7 @@ The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `se
 | `specgit issue` | One-command delivery bootstrap (issues, branch, draft PR, record, commit, push) | yes | 0 · 2 · 3 |
 | `specgit finish` | The verdict — full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
 | `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
-| `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias | no | 0 · 2 · 3 |
+| `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias; carries the rewrite into git (#299) | git push (no forge) | 0 · 2 · 3 |
 | `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift) | no | 0 · 2 · 3 |
 | `specgit accept` | Same evaluation as `finish` — script/CI alias | yes | 0 · 1 · 2 · 3 |
@@ -180,6 +180,8 @@ specgit pr 42              # bind explicitly
 
 Diagnostics: `pr_not_found` (zero candidates, with fix), `pr_ambiguous` (several candidates, with the list), `record_missing` (nothing to repair — run `specgit issue` first); all exit 3.
 
+**Carrying commit (#299).** The repair is not local-only anymore: after writing the record, `pr` force-carries it into git on the delivery branch (the same `git add -f` + pathspec commit the bootstrap uses, then `git push -u`) — a local-only repair would leave the CI verdict on the PR head reading a stale record. A local commit failure exits 3; a push failure downgrades to the warning `record_carry_push_failed` (offline and sandboxed environments stay usable — push when reconnected, the warning names the stale-verdict consequence); running on a branch other than the record's delivery branch skips the carry with `record_carry_skipped` and says so.
+
 ## `specgit bind`
 
 Script alias: creates or updates `.specgit.yaml` at the repository root, one field at a time (`specgit issue` is the one-command form). The execution context is **auto-resolved from live git**; no context flags exist.
@@ -196,7 +198,7 @@ specgit bind --pr 42                # sets/replaces the PR
 | `--issue <n>` | GitHub issue number or full issue URL. Repeatable. New values merge with existing ones, deduplicated, first-seen order kept. Opaque tracker ids (e.g. `JIRA-123`) are rejected (`issue_ref_not_github`). |
 | `--pr <ref>` | Pull request number or URL. Replaces any previous value. At most one PR per delivery. |
 
-Exits `3` outside a git repository (`not_a_git_repo`). Never calls the network — bind is local-only.
+Exits `3` outside a git repository (`not_a_git_repo`). Never calls the forge — but since #299 `bind` carries the record rewrite into git on the current branch (`git add -f` + commit, then `git push -u`), exactly like `pr` above: local commit failure exits 3, push failure warns (`record_carry_push_failed`), and the carry runs because `bind` auto-resolves its context from live git (the current branch is the delivery branch by construction).
 
 ## `specgit unbind`
 
