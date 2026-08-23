@@ -208,6 +208,8 @@ specgit unbind --yes
 
 Requires `--yes`; there is no interactive prompt. The policy is untouched.
 
+**Merged-delivery lifecycle (#298):** when the record is *tracked* (it is, after a delivery merged — the binding commit force-carried it), deleting the working-tree copy leaves an uncommitted deletion behind. `unbind` detects this and warns (`record_deletion_tracked`) with the fix: commit the deletion through a PR (e.g. `chore: unbind delivery`) to return the tree to clean — or simply bootstrap the next delivery, whose binding commit force-carries the rewritten record and absorbs the residue. An untracked record (the #292 default on a fresh adoption) deletes silently. The probe is advisory: `tracked_probe_failed` never blocks the unbind.
+
 ## `specgit status`
 
 Reports local evidence only — record, policy, live git context, upstream drift, origin — with **zero network calls**. Safe to run anywhere, any time.

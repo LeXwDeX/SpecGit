@@ -190,6 +190,22 @@ describe('LocalGitAdapter', () => {
     });
   });
 
+  describe('trackedFiles (merged-delivery lifecycle, #298)', () => {
+    it('reports the tracked intersection and drops untracked paths', async () => {
+      fs.writeFileSync(path.join(root, 'kept.txt'), 'k\n');
+      fs.writeFileSync(path.join(root, 'ignored.txt'), 'i\n');
+      git(root, ['add', 'kept.txt'], env);
+      const result = await adapter.trackedFiles(root, [
+        'kept.txt',
+        'ignored.txt',
+        'absent.txt',
+        'README.md',
+      ]);
+      expect(result).toEqual({ ok: true, value: ['kept.txt', 'README.md'] });
+      await expect(adapter.trackedFiles(root, [])).resolves.toEqual({ ok: true, value: [] });
+    });
+  });
+
   describe('anchor validation (issue #76)', () => {
     const HEX40 = 'a1b2c3d4'.padEnd(40, '0');
     const HEX64 = 'e5f6a7b8'.padEnd(64, '0');

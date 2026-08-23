@@ -86,6 +86,13 @@ export async function writeHarnessAndPolicy(args: {
     required_checks: checks,
     ...(language !== 'en' ? { language } : {}),
   };
+  // #298: probe BEFORE the rewrite — a tracked policy rewritten by
+  // --force shows as an uncommitted modification until committed; warn
+  // instead of leaving silent residue. Advisory, never a block.
+  const policyPath = `${SPEC_GIT_DIR}/${POLICY_FILENAME}`;
+  const policyTrackedEv = await ctx.git.trackedFiles(root, [policyPath]);
+  const policyWasTracked =
+    policyTrackedEv.ok && policyTrackedEv.value.includes(policyPath);
   try {
     await ctx.record.writePolicy(root, policy);
   } catch (error) {
@@ -94,6 +101,14 @@ export async function writeHarnessAndPolicy(args: {
       exit: EXIT_UNKNOWN,
       errors: [errorDiagnostic('policy_write_failed', message)],
     };
+  }
+  if (policyWasTracked) {
+    warnings.push({
+      severity: 'warning',
+      code: 'policy_rewrite_tracked',
+      message: `${policyPath} is tracked by git — this rewrite shows as an uncommitted modification until it is committed.`,
+      fix: 'Carry the policy with the delivery (the bootstrap binding commit force-stages it), or discard the rewrite if it was explorative.',
+    });
   }
 
   // #292: shield the local delivery assets by default (after the

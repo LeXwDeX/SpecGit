@@ -269,6 +269,8 @@ export interface GitWriteScript {
   pushBranch?: (branch: string) => Evidence<{ pushed: boolean }>;
   remoteDefaultBranch?: () => Evidence<string>;
   hooksPath?: () => Evidence<string>;
+  /** #298: paths the fake index reports as tracked (default: none). */
+  trackedFiles?: (paths: string[]) => Evidence<string[]>;
 }
 
 export interface RecordingGitPort extends GitPort {
@@ -316,6 +318,9 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
         writes.hooksPath?.() ??
         { ok: false, code: 'git_unavailable', message: 'hooks path not configured in fake' }
       );
+    }),
+    trackedFiles: vi.fn(async (_root: string, paths: string[]): Promise<Evidence<string[]>> => {
+      return writes.trackedFiles?.(paths) ?? { ok: true, value: [] };
     }),
   };
   return port;

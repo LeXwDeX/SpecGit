@@ -170,6 +170,8 @@ Everything SpecGit writes falls into exactly three tiers:
 
 Verdicts are never part of state: they are computed per invocation from git and the forge and never persisted.
 
+**Merged-delivery lifecycle (#298).** While a delivery is live, the binding commit keeps the record (and the policy, when it exists) tracked on the delivery branch — the PR-head CI verdict reads them there. After the delivery merges, those files stay tracked on the base branch: `specgit unbind` warns (`record_deletion_tracked`) that the working-tree deletion needs a commit, and `specgit init --force` warns (`policy_rewrite_tracked`) that a rewritten policy shows as an uncommitted modification — the next delivery's binding commit force-carries the rewritten record and absorbs the residue, so the tree returns to clean through the normal delivery flow.
+
 ## Exit codes and JSON
 
 Stable contract: `0` success/accepted · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C interruption exception (stderr `Interrupted.`, no envelope — see the [CLI reference](cli.md)). `--json` output is a single JSON envelope on stdout — shape documented in the [CLI reference](cli.md). Telemetry does not exist; the only environment inputs are `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, `SPECGIT_GLAB_TIMEOUT_MS`, and standard `NO_COLOR`/`CI` detection.

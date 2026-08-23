@@ -73,6 +73,15 @@ export async function runUnbind(
     }
   }
 
+  // #298 merged-delivery lifecycle: after a delivery merges, the binding
+  // commit has made the record a TRACKED file — deleting the working-tree
+  // copy leaves a deletion residue in every later commit's view. Probe
+  // before deleting (the file is gone afterwards) and warn; the probe is
+  // advisory, never a block.
+  const trackedEv = await ctx.git.trackedFiles(root, [RECORD_FILENAME]);
+  const wasTracked =
+    trackedEv.ok && trackedEv.value.includes(RECORD_FILENAME);
+
   try {
     await ctx.record.deleteRecord(root);
   } catch (error) {
@@ -83,9 +92,21 @@ export async function runUnbind(
     };
   }
 
+  const warnings: UnbindOutcome['warnings'] = wasTracked
+    ? [
+        {
+          severity: 'warning',
+          code: 'record_deletion_tracked',
+          message: `${RECORD_FILENAME} is tracked by git — deleting the working-tree copy leaves an uncommitted deletion behind.`,
+          fix: 'Commit the deletion (e.g. "chore: unbind delivery") through a PR to return the tree to clean; the next delivery\'s binding commit force-carries the rewritten record anyway.',
+        },
+      ]
+    : undefined;
+
   return {
     exit: EXIT_SUCCESS,
     state: 'unbound',
+    ...(warnings !== undefined ? { warnings } : {}),
     human: humanBuilder().line(human.unbindRemoved(RECORD_FILENAME)).build(),
   };
 }
