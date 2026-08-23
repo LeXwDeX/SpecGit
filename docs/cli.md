@@ -118,7 +118,11 @@ specgit setup --tool all      # everything
 | --- | --- |
 | `--tool <tool>` | `opencode` \| `generic` \| `all`. Omit to auto-detect (opencode when `.opencode/` exists, otherwise generic). |
 
-`opencode` installs command entry points under `.opencode/command/`; `generic` installs the portable skills (see [`skills/`](../skills/README.md)) that work with any agent that reads files. Exits `2` for an unknown tool (`setup_tool_invalid`), `3` outside a git repository or on write failure. Under `--json`, the envelope carries `assets: { tool, installed }` — the tool that was installed for and the path of every written entry point.
+`opencode` installs command entry points under `.opencode/command/`; `generic` installs the portable skills (see [`skills/`](../skills/README.md)) that work with any agent that reads files. Exits `2` for an unknown tool (`setup_tool_invalid`), `3` outside a git repository or on write failure.
+
+Re-running `setup` after a CLI upgrade is the supported refresh for the agent surfaces (#307). It converges the selected surface to the running version's entry-point set inside one reversible transaction: current entry points are created or refreshed (local drift repaired), and an entry point a later version retired is removed only when its bytes prove SpecGit ownership — the `specgit-managed-entry-point` marker every generated file now carries, or the released skills' `metadata.author: specgit` line. A `specgit-*` file without that evidence is user content: preserved byte-for-byte, reported as `unowned_asset_preserved`, never deleted. Discovery never leaves the selected surface's root (`.opencode/command` for opencode, `.agents/skills` for generic; a skill directory with user files keeps them — directories are pruned only when empty), and the unselected surface is not touched. A failure at any step restores the exact pre-run tree — bytes, modes, and directories the run created — and a second successful run is a filesystem no-op. After an upgrade, `specgit setup --tool all` is the one repair command for both surfaces.
+
+Entry points are local integration assets (like the guard hooks): written for the local agent, never treated as acceptance inputs; committing them is the adopting repository's choice. Under `--json`, the envelope carries `assets: { tool, installed, reconciled }` — the tool that was installed for, the path of every entry point on the selected surfaces, and `{ created, updated, removed, preserved }` describing what the convergence did.
 
 ## `specgit issue`
 

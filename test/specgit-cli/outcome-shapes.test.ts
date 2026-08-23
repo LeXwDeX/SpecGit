@@ -38,9 +38,18 @@ describe('per-command outcome shapes (#179)', () => {
       { exit: 0, state: 'bound', gates: [gate], evidence: {}, assets: {} } satisfies StatusOutcome,
       { exit: 0, probes: [{ name: 'git', ok: true }] } satisfies DoctorOutcome,
       { exit: 0, assets: { tool: 'generic' } } satisfies SetupOutcome,
+      // #307: setup assets carry the reconciliation report additively.
+      {
+        exit: 0,
+        assets: {
+          tool: 'generic',
+          installed: [],
+          reconciled: { created: [], updated: [], removed: [], preserved: [] },
+        },
+      } satisfies SetupOutcome,
       { exit: 0, policy: { version: 1, required_checks: [] }, harness: {}, platform: {} } satisfies InitOutcome,
     ];
-    expect(outcomes).toHaveLength(9);
+    expect(outcomes).toHaveLength(10);
   });
 
   it('accept/finish outcomes reject fields they do not emit', () => {

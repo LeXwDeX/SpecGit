@@ -101,6 +101,8 @@ export interface HumanText {
   // setup
   setupTool(tool: string): string;
   setupInstalled(): string;
+  setupRemovedAsset(path: string): string;
+  setupPreservedAsset(path: string): string;
   // init
   initCreatedPolicy(path: string): string;
   initIgnoredAssets(path: string): string;
@@ -200,6 +202,8 @@ const EN_HUMAN: HumanText = {
     'Not bound: no delivery record (.specgit.yaml) exists yet — the normal pre-binding state. Run "specgit issue" to start a delivery.',
   setupTool: (tool) => `Tool: ${tool}`,
   setupInstalled: () => 'Installed entry points:',
+  setupRemovedAsset: (path) => `Removed retired SpecGit entry point ${path}`,
+  setupPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initCreatedPolicy: (path) => `Created ${path}`,
   initIgnoredAssets: (path) => `Added local delivery assets to ${path} (untracked model; --no-ignore to keep them committed)`,
   initRequiredChecks: (count) => `Required checks (${count}):`,
@@ -259,6 +263,8 @@ const ZH_HUMAN: HumanText = {
     '尚未绑定：还没有交付记录（.specgit.yaml）——这是引导前的正常状态。运行 "specgit issue" 开始交付。',
   setupTool: (tool) => `工具：${tool}`,
   setupInstalled: () => '已安装入口：',
+  setupRemovedAsset: (path) => `已移除已退役的 SpecGit 入口 ${path}`,
+  setupPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initCreatedPolicy: (path) => `已创建 ${path}`,
   initIgnoredAssets: (path) => `已将本地交付资产加入 ${path} 屏蔽（未跟踪模式；如需保持提交请用 --no-ignore）`,
   initRequiredChecks: (count) => `必需检查（${count}）：`,
