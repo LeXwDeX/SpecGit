@@ -24,6 +24,13 @@
  *    watched being created (rmdir only, up to the repository root), and a
  *    restore that cannot complete THROWS instead of failing silently.
  *
+ * Replaceability (#314): an existing managed target that has drifted
+ * write-protected (a read-only attribute on Windows, a mode without the
+ * owner-write bit anywhere) is made replaceable — only the owner-write
+ * bit added — before its bytes are rewritten, it is unlinked, or a
+ * snapshot restore rewrites it, so repairing the drift cannot crash and
+ * the final chmod puts the intended protection back.
+ *
  * Deletion safety: a removal is applied only when the caller's ownership
  * predicate proves SpecGit ownership of the current bytes; anything else is
  * preserved verbatim and reported, never guessed at. After a successful
@@ -165,6 +172,25 @@ async function statMode(target: string): Promise<number | null> {
   return stat?.mode ?? null;
 }
 
+/**
+ * Make an existing managed target replaceable before SpecGit mutates it
+ * (#314): a drifted asset may be write-protected — a read-only attribute
+ * on Windows, a mode without the owner-write bit anywhere — and without
+ * this guard the repair itself would crash (EPERM/EACCES replacing bytes,
+ * EPERM unlinking on Windows) and so would the rollback that must restore
+ * them. Adds ONLY the owner-write bit, keeping every other bit; the final
+ * chmod — the step's desired mode in commit, the snapshot mode in
+ * restore — puts the intended protection back. A no-op for targets that
+ * do not exist or are already writable.
+ */
+async function ensureReplaceable(target: string): Promise<void> {
+  const mode = await statMode(target);
+  if (mode === null || (mode & 0o200) !== 0) {
+    return;
+  }
+  await fs.chmod(target, mode | 0o200);
+}
+
 /** True when `child` names a path strictly inside `ancestor`. */
 function isStrictlyBelow(child: string, ancestor: string): boolean {
   const rel = path.relative(ancestor, child);
@@ -214,6 +240,10 @@ export async function snapshotManagedFile(
 export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> {
   if (snapshot.existed && snapshot.content !== null) {
     await fs.mkdir(path.dirname(snapshot.target), { recursive: true });
+    // The pre-run state itself may have been write-protected: the restore
+    // must be able to rewrite it before the final chmod below protects it
+    // again (#314).
+    await ensureReplaceable(snapshot.target);
     await fs.writeFile(snapshot.target, snapshot.content, 'utf-8');
     // Full-mode chmod is already the platform-maximal restore (#314): exact
     // bits where enforced, the read-only contract where that is all there is.
@@ -223,8 +253,16 @@ export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> 
   // The file did not exist before the run: removing it must actually
   // remove it — only "already gone" is tolerable, everything else means
   // the tree did not round-trip and must surface, not be swallowed.
+  // ENOTDIR is the same absence proof `readIfExists` uses (a path
+  // component is a regular file — the target cannot exist), so a failed
+  // create under a file-shaped blocker does not masquerade as an
+  // incomplete rollback on POSIX (#314); Windows reports ENOENT here.
+  // A run-created target can carry a write-protected desired mode; unlink
+  // must stay able to remove it (EPERM on Windows) before the walk prunes.
+  await ensureReplaceable(snapshot.target);
   await fs.unlink(snapshot.target).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
   });
   // Prune the directories this run created (deepest-first): rmdir refuses
   // a non-empty directory, so user content can never be deleted here.
@@ -481,6 +519,10 @@ export async function reconcileManagedAssets(
       if (action.kind === 'write') {
         const before = await snap(target);
         await ensureDirTracked(path.dirname(target), createdDirs);
+        // Repairing an enforceable drift can mean the target is currently
+        // write-protected: make it replaceable, then let the final chmod
+        // land the desired (possibly protected) mode (#314).
+        await ensureReplaceable(target);
         await fs.writeFile(target, action.content, 'utf-8');
         // Full-mode chmod is the platform-maximal enforcement (#314): exact
         // POSIX bits where enforced, the read-only contract on Windows.
@@ -502,6 +544,10 @@ export async function reconcileManagedAssets(
         }
       } else {
         await snap(target);
+        // A write-protected owned asset is still SpecGit's to retire — on
+        // Windows unlink refuses read-only files (EPERM), so clear the
+        // protection first; ownership was already proven from the bytes.
+        await ensureReplaceable(target);
         await fs.unlink(target);
         await pruneEmptyDirs(root, target);
         report.removed.push(action.step.path);
