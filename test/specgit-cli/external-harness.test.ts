@@ -18,7 +18,7 @@ import {
   externalAcceptanceWorkflowYaml,
   writeExternalHarnessWorkflow,
 } from '../../src/cli/external-harness.js';
-import { ACCEPTANCE_CHECK_NAME } from '../../src/cli/harness-content.js';
+import { ACCEPTANCE_CHECK_NAME, harnessWorkflowYaml } from '../../src/cli/harness-content.js';
 import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import { createFakeGh } from '../specgit/helpers/fake-gh.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
@@ -80,11 +80,34 @@ describe('external acceptance harness template', () => {
   it('waits for sibling checks through the gh seam, never raw REST', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
     expect(yaml).toContain("readFileSync('spec_git/policy.yaml', 'utf8')");
-    expect(yaml).toContain('check-runs?per_page=100');
+    expect(yaml).toContain('check-runs?per_page=');
     expect(yaml).toContain('MAX_ATTEMPTS');
+    // #300: the listing pages to exhaustion like the self template.
+    expect(yaml).toContain('fetchAllCheckRuns');
     // GitHub evidence flows exclusively through the authenticated gh CLI.
     expect(yaml).not.toContain('api.github.com');
     expect(yaml).not.toContain('authorization');
+  });
+
+  it('renders the wait step from the shared #300 generator, one transport seam apart', () => {
+    const external = externalAcceptanceWorkflowYaml(INPUT);
+    const self = harnessWorkflowYaml();
+    // The shared skeleton (pagination, truth-run rule, absent-policy
+    // diagnosis) is identical in both templates byte-for-byte; only the
+    // transport block differs.
+    for (const shared of [
+      'fetchAllCheckRuns',
+      'const truth = new Map();',
+      'policy.yaml is absent at this head',
+      "const terminal = new Set(['completed']);",
+    ]) {
+      expect(external).toContain(shared);
+      expect(self).toContain(shared);
+    }
+    expect(external).toContain("'gh',");
+    expect(self).toContain('api.github.com');
+    expect(self).not.toContain("'gh',");
+    expect(external).not.toContain('api.github.com');
   });
 
   it('fails with a diagnosis, not a crash, when the policy is absent at the head (#297)', () => {
