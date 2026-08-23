@@ -13,10 +13,12 @@
  * 2. Commit — apply the planned steps in order; every target is snapshotted
  *    (bytes and mode) right before it is touched.
  * 3. Rollback — if any commit step fails, prior snapshots are restored
- *    byte-and-mode-exact, paths this run created are removed, and directories
- *    this run created are removed deepest-first (rmdir refuses non-empty
- *    dirs, so user content can never be deleted here). Deletes are inside the
- *    transaction: a removed owned asset comes back if a later step fails.
+ *    byte-and-mode-exact (mode to the full extent the platform enforces,
+ *    per the capability note below), paths this run created are removed,
+ *    and directories this run created are removed deepest-first (rmdir
+ *    refuses non-empty dirs, so user content can never be deleted here).
+ *    Deletes are inside the transaction: a removed owned asset comes
+ *    back if a later step fails.
  *    The same holds for the public snapshot/restore pair: a restore returns
  *    the COMPLETE pre-run tree — it prunes the directories the snapshot
  *    watched being created (rmdir only, up to the repository root), and a
@@ -32,6 +34,44 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+
+// ---------------------------------------------------------------------------
+// Platform mode capability (#314): POSIX permission bits are product-
+// significant only where the filesystem can represent and enforce them.
+// Node on Windows stats every regular file as 0o666 (writable) or 0o444
+// (read-only), and chmod only toggles the read-only attribute from the
+// owner-write bit — no 0o644/0o755/0o600 can ever be observed or produced
+// there. One shared equivalence rule (below) keeps plan, inspect, commit,
+// and restore converged on every platform instead of looping forever on
+// bits chmod cannot set.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether this platform's filesystem enforces full POSIX permission bits
+ * (everywhere except Windows). When false, only the read-only contract —
+ * the owner-write bit — is representable, and that is the entire mode
+ * surface SpecGit compares, chmods, or restores.
+ */
+export function posixModesEnforced(): boolean {
+  return process.platform !== 'win32';
+}
+
+/**
+ * The mode equivalence the platform can actually enforce (#314): exact
+ * permission bits where POSIX modes are enforced; on Windows only the
+ * owner-write bit (writable vs read-only), because that is all Node can
+ * observe or change there. Differences confined to unenforceable bits
+ * (executable, group/other masks) cannot be repaired on such a filesystem
+ * and must not manufacture false stale/updated states — while enforceable
+ * drift (a read-only file a writable step desires) is still detected and
+ * repaired on every platform.
+ */
+export function managedModeMatches(actual: number, desired: number): boolean {
+  if (posixModesEnforced()) {
+    return (actual & 0o777) === (desired & 0o777);
+  }
+  return (actual & 0o200) === (desired & 0o200);
+}
 
 export type ManagedStep =
   | {
@@ -175,6 +215,8 @@ export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> 
   if (snapshot.existed && snapshot.content !== null) {
     await fs.mkdir(path.dirname(snapshot.target), { recursive: true });
     await fs.writeFile(snapshot.target, snapshot.content, 'utf-8');
+    // Full-mode chmod is already the platform-maximal restore (#314): exact
+    // bits where enforced, the read-only contract where that is all there is.
     if (snapshot.mode !== null) await fs.chmod(snapshot.target, snapshot.mode);
     return;
   }
@@ -245,7 +287,7 @@ async function planManaged(root: string, desired: DesiredManagedAssets): Promise
         }
         const mode = await statMode(target);
         const unchanged =
-          existing === content && mode !== null && (mode & 0o777) === (step.mode & 0o777);
+          existing === content && mode !== null && managedModeMatches(mode, step.mode);
         if (!unchanged) {
           actions.push({ kind: 'write', step, content });
         }
@@ -373,7 +415,7 @@ export async function inspectManagedAssets(
         }
         const mode = await statMode(target);
         const unchanged =
-          existing === content && mode !== null && (mode & 0o777) === (step.mode & 0o777);
+          existing === content && mode !== null && managedModeMatches(mode, step.mode);
         findings.push(
           unchanged
             ? { path: step.path, state: 'current' }
@@ -440,6 +482,8 @@ export async function reconcileManagedAssets(
         const before = await snap(target);
         await ensureDirTracked(path.dirname(target), createdDirs);
         await fs.writeFile(target, action.content, 'utf-8');
+        // Full-mode chmod is the platform-maximal enforcement (#314): exact
+        // POSIX bits where enforced, the read-only contract on Windows.
         await fs.chmod(target, action.step.mode);
         (before.existed ? report.updated : report.created).push(action.step.path);
       } else if (action.kind === 'portWrite') {

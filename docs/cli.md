@@ -296,6 +296,8 @@ After upgrading the CLI (`npm install -g specgit`), one numbered sequence conver
 4. **`specgit status --json`** — `assets.generated.clean` must be `true`. Clean implies `complete`: an incomplete report never claims current, so first resolve any `uninspected` code (declare the platform with `--gitlab-host`, fetch the remote so the default branch resolves, merge or repair `.opencode/hooks.json`). A remaining `conflict` is a file at a managed path that does not prove SpecGit ownership: review it, and if it is a leftover, delete it yourself — the tools never will — then re-run `status`.
 5. **Review and commit the intended derived assets** (`git add -A && git commit`). The three tiers decide what "intended" means: authoritative files (`spec_git/`, `.specgit.yaml`) are yours or the binding commit's; the derived harness is meant to be committed; local integration assets (entry points, `.git/hooks`) are your team's choice. After that commit, `git status --porcelain` is empty — no generated legacy or ignored residue reappears (#308 pins this journey as a test).
 
+The sequence converges identically on every supported OS (#314): mode drift is compared and repaired to the extent the filesystem enforces — full POSIX permission bits on Linux/macOS, the read-only attribute on Windows, whose files cannot carry `0o755`/`0o644` bits at all — so a second `init --force`/`setup` run is a filesystem no-op and `status` can prove `clean` on Windows too.
+
 ## `specgit accept`
 
 Script/CI alias of `specgit finish`: the identical eleven-gate evaluation and exit codes, differing only in the envelope's `command` field. Prefer `finish` in human flows and new automation; `accept` stays stable for existing scripts.
