@@ -5,3 +5,4 @@ context:
   branch: feat/298-merged-delivery-lifecycle
 issues:
   - 298
+pr: 302
