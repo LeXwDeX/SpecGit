@@ -1,8 +1,7 @@
 version: 1
-delivery: cancel-superseded-acceptance-runs
+delivery: fix-bootstrap-pr-order
 context:
   kind: branch
-  branch: feat/319-cancel-superseded-acceptance-runs
+  branch: feat/323-fix-bootstrap-pr-order
 issues:
-  - 319
-pr: 321
+  - 323
