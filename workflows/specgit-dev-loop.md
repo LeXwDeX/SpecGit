@@ -50,6 +50,14 @@ green at the PR head commit:
 - `pnpm run lint`
 - CI green — every check named in `spec_git/policy.yaml`
 
+Mark the PR ready immediately after the final push (`gh pr ready` on GitHub,
+`glab mr update <number> --ready` on GitLab). A draft always fails the
+verdict (`pr_draft`), and both required workflows run in cancel-in-progress
+concurrency groups scoped to the ref (#319): the ready transition supersedes
+the push-triggered runs instead of stacking after them, so a well-timed
+delivery costs one effective matrix. Delaying the ready only donates partial
+runner time to runs the transition will cancel.
+
 ## Push-right: one checkpoint
 
 The single human checkpoint is the **PR brief**, approved once, prepared
