@@ -1,9 +1,10 @@
 /**
  * The DeliveryBootstrap module (#278): the tail chain of `specgit
- * issue` — checkout, push head, bind PR, commit record, push — exists
- * as an ordered list of steps, each carrying its precondition, resume
- * marker, and failure code. Reordering is a change to the list; resume
- * from any partial state converges without repeating a completed step.
+ * issue` — checkout, commit binding, push head, bind PR, commit
+ * record, push — exists as an ordered list of steps, each carrying its
+ * precondition, resume marker, and failure code. Reordering is a
+ * change to the list; resume from any partial state converges without
+ * repeating a completed step.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -23,6 +24,7 @@ import { makeCtx, makeGitFacts, makeGhProvider, sampleBinding } from './helpers.
 
 const CHAIN_ORDER = [
   'checkout',
+  'commit-binding',
   'push-head',
   'bind-pr',
   'commit-record',
@@ -45,6 +47,19 @@ describe('the bootstrap chain is data (#278)', () => {
   it('push-head runs before bind-pr: both platforms refuse a PR for an unpushed head (#270)', () => {
     const ids = BOOTSTRAP_STEPS.map((step) => step.id);
     expect(ids.indexOf('push-head')).toBeLessThan(ids.indexOf('bind-pr'));
+  });
+
+  it('commit-binding runs before push-head and bind-pr: a PR whose head adds no commit over the base is refused (#323)', () => {
+    // Live failure on #317 and #321: pushing the bare branch left it at
+    // the base SHA, and GitHub rejected createDraftPr with "No commits
+    // between main and <branch>". The binding must be IN git before the
+    // branch is pushed for PR creation.
+    const ids = BOOTSTRAP_STEPS.map((step) => step.id);
+    expect(ids.indexOf('commit-binding')).toBeLessThan(ids.indexOf('push-head'));
+    expect(ids.indexOf('commit-binding')).toBeLessThan(ids.indexOf('bind-pr'));
+    // The PR number the bind step persists rides a second carrying
+    // commit after the bind.
+    expect(ids.indexOf('bind-pr')).toBeLessThan(ids.indexOf('commit-record'));
   });
 
   it('marks the durable-marker steps resumable and the idempotent pushes/commit as healing', () => {
@@ -213,9 +228,10 @@ describe('per-step resume converges without repeating completed steps', () => {
     expect(t.gh.calls.filter((c) => c.startsWith('createDraftPr'))).toEqual([]);
     expect(t.gh.calls.filter((c) => c.startsWith('addIssueComment'))).toEqual([]);
     // The marker-less healing steps re-run and converge: push ×2, and
-    // the commit probe finds a clean tree (nothing new committed).
+    // each of the two record-commit positions probes the (clean) tree,
+    // committing nothing.
     expect(t.gitPort.pushCalls).toEqual([BRANCH, BRANCH]);
-    expect(t.gitPort.commitCalls.length).toBe(1);
+    expect(t.gitPort.commitCalls.length).toBe(2);
   });
 
   it('complete record off the delivery branch: checkout runs exactly once, the PR step still skips', async () => {
@@ -243,6 +259,26 @@ describe('per-step resume converges without repeating completed steps', () => {
     ]);
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.pr).toBe(42);
+  });
+
+  it('a fresh delivery has the binding committed BEFORE PR creation is attempted (#323)', async () => {
+    // The live failure this pins: GitHub refuses createDraftPr with
+    // "No commits between" when the head branch holds nothing beyond
+    // the base. At the moment of PR creation at least one carrying
+    // commit (the binding) must already exist.
+    const partial = completeRecord();
+    delete (partial as Partial<DeliveryBinding>).pr;
+    const t = resumeCtx({ branch: BRANCH, record: partial });
+    const inner = (t.gh.createDraftPr as typeof t.gh.createDraftPr).bind(t.gh);
+    let commitsAtCreation = -1;
+    t.gh.createDraftPr = vi.fn(async (...args: Parameters<typeof t.gh.createDraftPr>) => {
+      commitsAtCreation = t.gitPort.commitCalls.length;
+      return inner(...args);
+    }) as typeof t.gh.createDraftPr;
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit, JSON.stringify(outcome)).toBe(0);
+    expect(t.gh.calls.filter((c) => c.startsWith('createDraftPr'))).toHaveLength(1);
+    expect(commitsAtCreation).toBeGreaterThanOrEqual(1);
   });
 
   it('a failed step halts the chain before later steps run (push failure never reaches PR binding)', async () => {

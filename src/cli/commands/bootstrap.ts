@@ -1,14 +1,16 @@
 /**
  * The delivery bootstrap chain (#278): the ordered steps `specgit
  * issue` walks after arguments and record are resolved — checkout,
- * push the head, bind the PR, commit the record, push the commit.
- * The order is a contract (§5 of docs/release-gates.md: a PR/MR for a
- * head branch that was never pushed is refused by both platforms), so
- * it lives here as data — one registration per step with its
- * precondition, resume marker, and failure code — instead of statement
- * sequence in the highest-churn command file. Reordering the chain is a
- * change to BOOTSTRAP_STEPS, reviewable as such; `runIssue` is a thin
- * facade over `runBootstrapSteps`.
+ * commit the binding, push the head, bind the PR, commit the final
+ * record, push the commit. The order is a contract (§5 of
+ * docs/release-gates.md: a PR/MR for a head branch that was never
+ * pushed is refused by both platforms; #323: a PR whose head adds no
+ * commit over the base is refused too), so it lives here as data — one
+ * registration per step with its precondition, resume marker, and
+ * failure code — instead of statement sequence in the highest-churn
+ * command file. Reordering the chain is a change to BOOTSTRAP_STEPS,
+ * reviewable as such; `runIssue` is a thin facade over
+ * `runBootstrapSteps`.
  *
  * Resume discipline (I4): each step's `resume` probe names the durable
  * marker of its completion — the live branch, the recorded PR number —
@@ -126,6 +128,7 @@ export type BootstrapOutcome = IssueOutcome | { record: DeliveryBinding };
 
 export type BootstrapStepId =
   | 'checkout'
+  | 'commit-binding'
   | 'push-head'
   | 'bind-pr'
   | 'commit-record'
@@ -153,8 +156,41 @@ export interface BootstrapStep {
 }
 
 /**
+ * The record-commit step body, shared by the two chain positions that
+ * carry the authoritative files (#323): once BEFORE PR creation — a
+ * pull request whose head equals its base is refused by both platforms
+ * ("No commits between"), so the binding must be in git before the
+ * head is pushed for binding — and once AFTER, to carry the PR number
+ * the bind step persisted. Both positions are marker-less healing
+ * steps: commitFile probes staged changes itself and commits nothing
+ * on a clean tree.
+ */
+function recordCommitStep(id: 'commit-binding' | 'commit-record'): BootstrapStep {
+  return {
+    id,
+    failureCode: 'git_commit_failed',
+    precondition: () => true,
+    resume: null,
+    run: async ({ ctx, root, state }) => {
+      const commit = await ctx.git.commitFile(
+        root,
+        authoritativeDeliveryPaths(root),
+        recordBindingCommitMessage(state.record.delivery)
+      );
+      return commit.ok ? { record: state.record } : passthrough(commit);
+    },
+  };
+}
+
+/**
  * The chain, in order. Reordering the bootstrap is a change to this
  * list; the runner carries no order of its own.
+ *
+ * #323 ordering contract: `commit-binding` precedes `push-head` +
+ * `bind-pr` because both platforms refuse a pull request whose head
+ * branch holds no commit beyond the base — pushing the bare branch
+ * first made every fresh bootstrap die at PR creation with "No
+ * commits between".
  */
 export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
   {
@@ -171,11 +207,14 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
       return { record: state.record };
     },
   },
+  recordCommitStep('commit-binding'),
   {
     // The branch must exist on the remote before PR/MR creation — both
     // platforms refuse a pull request whose head branch was never
     // pushed (gh: Head sha can't be blank; glab: source_branch does not
     // exist). Idempotent, so it also heals an unpushed branch on resume.
+    // It runs after `commit-binding`: the pushed head must differ from
+    // the base (#323), not merely exist.
     id: 'push-head',
     failureCode: 'git_push_failed',
     precondition: () => true,
@@ -210,27 +249,7 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
       return bound;
     },
   },
-  {
-    id: 'commit-record',
-    failureCode: 'git_commit_failed',
-    precondition: () => true,
-    resume: null,
-    run: async ({ ctx, root, state }) => {
-      // Locale-independent: commitFile probes staged changes itself and
-      // reports committed=false on a clean tree, so a resume re-run
-      // commits nothing new. The commit carries every authoritative
-      // delivery file that exists (#292/#299): under the default
-      // local-asset ignore, this binding commit is their only entry
-      // into git — the CI verdict on the PR head must be able to read
-      // them.
-      const commit = await ctx.git.commitFile(
-        root,
-        authoritativeDeliveryPaths(root),
-        recordBindingCommitMessage(state.record.delivery)
-      );
-      return commit.ok ? { record: state.record } : passthrough(commit);
-    },
-  },
+  recordCommitStep('commit-record'),
   {
     id: 'push-record-commit',
     failureCode: 'git_push_failed',

@@ -113,7 +113,7 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
   // 32438687376/32438704880). Runtime variance, not a regression: this
   // test passed the windows-pwsh leg before 588f245e, which never touched
   // the bootstrap/finish path.
-  it('bootstraps two issues → branch → draft PR → record → commit → push, then finish accepts post-merge', { timeout: 30_000 }, async () => {
+  it('bootstraps two issues → branch → binding commit → draft PR → record commit → push, then finish accepts post-merge', { timeout: 30_000 }, async () => {
     const repo = makePushableRepo('main');
     const deliveryBranch = 'feat/11-strict-delivery-harness';
 
