@@ -1278,6 +1278,10 @@ describe('acceptance evaluator evidence discipline', () => {
         }),
       },
       { match: 'check-runs', stdout: JSON.stringify({ total_count: 0, check_runs: [] }) },
+      // #315: the checks gate reads the PR's ready-for-review anchor;
+      // an empty timeline keeps the no-boundary verdict these fixtures
+      // predate.
+      { match: 'timeline', stdout: '[]' },
     ]);
 
     const spawned: Array<{ command: string; args: string[] }> = [];
@@ -1416,6 +1420,10 @@ describe('merged-delivery lineage against real git (issue #64)', () => {
           check_runs: [{ name: 'All checks passed', status: 'completed', conclusion: 'success' }],
         }),
       },
+      // #315: merged-lineage fixtures carry check runs without
+      // started_at; a no-boundary anchor (empty timeline) keeps their
+      // verdict byte-identical.
+      { match: 'timeline', stdout: '[]' },
     ];
   }
 

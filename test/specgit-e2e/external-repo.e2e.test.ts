@@ -52,7 +52,7 @@ import {
   rmDir,
   runInstalledSpecgit,
 } from './external-repo-fixture.js';
-import { readFakeGhStdin } from './helpers.js';
+import { emptyTimelineRule, readFakeGhStdin } from './helpers.js';
 
 interface WorkflowStep {
   name?: string;
@@ -111,6 +111,7 @@ describe('e2e external repository adoption (#63)', () => {
             body: 'Closes #7',
           }),
         },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/commits/[0-9a-f]+/check-runs`,
           stdout: JSON.stringify({

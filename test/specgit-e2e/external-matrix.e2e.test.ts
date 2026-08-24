@@ -44,7 +44,7 @@ import {
   rmDir,
   runInstalledSpecgit,
 } from './external-repo-fixture.js';
-import { createFakeGh, readFakeGhCalls, type FakeGhRule } from './helpers.js';
+import { createFakeGh, emptyTimelineRule, readFakeGhCalls, type FakeGhRule } from './helpers.js';
 
 /** The documented harness workflow location — asserted as a product surface, not imported from src. */
 const HARNESS_WORKFLOW_PATH = '.github/workflows/specgit-accept.yml';
@@ -198,6 +198,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
             body: 'Closes #11\n',
           }),
         },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
       ]);
       const resume = runInstalledSpecgit(
         fixture.dir,
@@ -235,6 +236,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
             body: 'Closes #11',
           }),
         },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/commits/[0-9a-f]+/check-runs`,
           stdout: JSON.stringify({ total_count: 0, check_runs: [] }),
@@ -320,6 +322,7 @@ describe('e2e external matrix (#67): main + existing CI', () => {
             body: 'Closes #7',
           }),
         },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/commits/[0-9a-f]+/check-runs`,
           stdout: JSON.stringify({
@@ -356,6 +359,7 @@ describe('e2e external matrix (#67): main + existing CI', () => {
             body: 'Closes #7',
           }),
         },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/commits/[0-9a-f]+/check-runs`,
           stdout: JSON.stringify({
@@ -446,6 +450,7 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
             body: 'Closes #11',
           }),
         },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/commits/[0-9a-f]+/check-runs`,
           stdout: JSON.stringify({ total_count: 0, check_runs: [] }),

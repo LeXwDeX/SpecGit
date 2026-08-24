@@ -13,6 +13,7 @@ import {
 import type {
   BranchProtectionFact,
   CheckRunInfo,
+  EvidenceAnchorFact,
   ForgeProvider,
   IssueCreation,
   IssueCommentCreation,
@@ -452,6 +453,25 @@ export class GlabProvider implements ForgeProvider {
       }
     }
     return ok(runs);
+  }
+
+  /**
+   * Check-freshness anchor (#315): GitLab declares no boundary. The
+   * three-state contract reads `anchoredAt: null` as "this provider
+   * sets no freshness boundary" — the verdict then keeps exactly its
+   * pre-#315 shape, without claiming the two platforms' facts are
+   * equivalent. No glab call is made and no GitLab-specific behavior
+   * is invented: within the verified window (19.2.4 CE,
+   * docs/evidence/gitlab-19.2.md) no equivalent of GitHub's
+   * ready-for-review transition has been evidenced, so asserting one
+   * would be fabrication. Should live evidence for an equivalent MR
+   * transition emerge, GitLab anchor support is its own delivery.
+   */
+  async getEvidenceAnchor(
+    _repo: RepoRef,
+    _pr: number | string
+  ): Promise<Evidence<EvidenceAnchorFact>> {
+    return ok({ anchoredAt: null });
   }
 
   async createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>> {

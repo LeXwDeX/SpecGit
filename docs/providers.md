@@ -65,6 +65,7 @@ to those lists member-for-member: change a port, change this page.
 | `getOpenIssues` | required | Title-carrying open-issue facts for the bootstrap adoption probe (#77): one paginated scan (complete to exhaustion, #120 I3b) replaces the per-issue lookup fan-out, so probe cost is bounded by pages. Same-title collisions are disambiguated by the scaffold body, never silently adopted (`issue_title_ambiguous`). |
 | `getPr` | required | PR fact: state, head/base, body, `mergeCommitSha`. |
 | `getCheckRuns` | required | Check runs at the head sha (G6 evidence sufficiency). |
+| `getEvidenceAnchor` | required | Check-freshness anchor (#315): the platform instant the delivery last became reviewable. `anchoredAt: null` is a legal answer (no boundary set — e.g. glab); a failed envelope fails closed. |
 | `createIssue` | required | Bootstrap create for new WHYs. |
 | `createDraftPr` | required | Bootstrap draft PR that closes every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |

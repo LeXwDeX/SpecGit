@@ -20,19 +20,56 @@ import {
 } from '../../src/cli/external-harness.js';
 import { ACCEPTANCE_CHECK_NAME, harnessWorkflowYaml } from '../../src/cli/harness-content.js';
 import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
-import { createFakeGh } from '../specgit/helpers/fake-gh.js';
+import { createFakeGh, type FakeGhRule } from '../specgit/helpers/fake-gh.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const INPUT = { defaultBranch: 'master', version: '1.2.3' } as const;
+const WAIT_PROCESS_TIMEOUT_MS = 2_000;
+
+/** The heredoc body of the generated wait step, executable verbatim. */
+function waitScript(): string {
+  const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
+    jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+  };
+  const step = parsed.jobs['specgit-acceptance'].steps.find(
+    (s) => s.name === 'Wait for sibling checks'
+  );
+  const match = /<<'EOF'\n([\s\S]*)\nEOF/.exec(step?.run ?? '');
+  if (!match) throw new Error('wait step does not carry a quoted heredoc script');
+  return match[1];
+}
+
+/** A minimal adopting layout: policy with one required check + `yaml` resolvable. */
+function makeAdoptingLayout(dir: string): void {
+  fs.mkdirSync(path.join(dir, 'spec_git'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'spec_git', 'policy.yaml'),
+    `version: 1\nrequired_checks:\n  - Sibling Check\n`,
+    'utf-8'
+  );
+  // The script resolves `yaml` from the adopting repo's node_modules.
+  fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+  fs.symlinkSync(
+    path.resolve(__dirname, '..', '..', 'node_modules', 'yaml'),
+    path.join(dir, 'node_modules', 'yaml'),
+    'dir'
+  );
+}
 
 describe('external acceptance harness template', () => {
   it('parameterizes the default branch into the pull_request trigger', () => {
     for (const branch of ['master', 'trunk', 'release/1.x']) {
       const yaml = externalAcceptanceWorkflowYaml({ defaultBranch: branch, version: '1.2.3' });
       const parsed = parse(yaml) as {
-        on: { pull_request: { branches: string[] } };
+        on: { pull_request: { branches: string[]; types: string[] } };
       };
       expect(parsed.on.pull_request.branches).toEqual([branch]);
+      expect(parsed.on.pull_request.types).toEqual([
+        'opened',
+        'synchronize',
+        'reopened',
+        'ready_for_review',
+      ]);
     }
     expect(externalAcceptanceWorkflowYaml(INPUT)).toContain('branches: [master]');
   });
@@ -66,11 +103,13 @@ describe('external acceptance harness template', () => {
   it('contributes exactly the acceptance check name with read-only permissions', () => {
     const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
       name: string;
-      permissions: { contents: string };
+      permissions: { contents: string; issues: string; 'pull-requests': string };
       jobs: Record<string, { name: string; 'runs-on': string; 'timeout-minutes': number }>;
     };
     expect(parsed.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(parsed.permissions.contents).toBe('read');
+    expect(parsed.permissions.issues).toBe('read');
+    expect(parsed.permissions['pull-requests']).toBe('read');
     const job = parsed.jobs['specgit-acceptance'];
     expect(job.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(job['runs-on']).toBe('ubuntu-latest');
@@ -113,6 +152,18 @@ describe('external acceptance harness template', () => {
     expect(self).toContain('api.github.com');
     expect(self).not.toContain("'gh',");
     expect(external).not.toContain('api.github.com');
+  });
+
+  it('waits on anchored freshness through the timeline seam, never gh pr checks text (#315)', () => {
+    const yaml = externalAcceptanceWorkflowYaml(INPUT);
+    // The anchor rides the issue-timeline endpoint through the same gh
+    // seam; the PR number arrives via workflow context, defaulting to
+    // empty on non-PR events (no anchor, no freshness bound).
+    expect(yaml).toContain('ready_for_review');
+    expect(yaml).toContain('/timeline');
+    expect(yaml).toContain("WAIT_PR: ${{ github.event.pull_request.number || '' }}");
+    // Human-readable `gh pr checks` output is never a parse surface.
+    expect(yaml).not.toContain('pr checks');
   });
 
   it('fails with a diagnosis, not a crash, when the policy is absent at the head (#297)', () => {
@@ -163,34 +214,6 @@ describe('external wait step truth-run semantics (#119)', () => {
   const SIBLING = 'Sibling Check';
   const RULE_SHA = 'a'.repeat(40);
 
-  function waitScript(): string {
-    const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
-      jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
-    };
-    const step = parsed.jobs['specgit-acceptance'].steps.find(
-      (s) => s.name === 'Wait for sibling checks'
-    );
-    const match = /<<'EOF'\n([\s\S]*)\nEOF/.exec(step?.run ?? '');
-    if (!match) throw new Error('wait step does not carry a quoted heredoc script');
-    return match[1];
-  }
-
-  function makeAdoptingLayout(dir: string): void {
-    fs.mkdirSync(path.join(dir, 'spec_git'), { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, 'spec_git', 'policy.yaml'),
-      `version: 1\nrequired_checks:\n  - ${SIBLING}\n`,
-      'utf-8'
-    );
-    // The script resolves `yaml` from the adopting repo's node_modules.
-    fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
-    fs.symlinkSync(
-      path.resolve(__dirname, '..', '..', 'node_modules', 'yaml'),
-      path.join(dir, 'node_modules', 'yaml'),
-      'dir'
-    );
-  }
-
   function runWait(checkRuns: unknown[]): SpawnSyncReturns<string> {
     const dir = makeTempDir('specgit-wait-truth-');
     makeAdoptingLayout(dir);
@@ -206,7 +229,7 @@ describe('external wait step truth-run semantics (#119)', () => {
         cwd: dir,
         input: waitScript(),
         encoding: 'utf-8',
-        timeout: 15_000,
+        timeout: WAIT_PROCESS_TIMEOUT_MS,
         env: gh.env({
           WAIT_REPO: 'fixture/adopting',
           WAIT_SHA: RULE_SHA,
@@ -256,6 +279,205 @@ describe('external wait step truth-run semantics (#119)', () => {
       expect(wait.status, wait.stderr).toBe(0);
       expect(wait.stdout).toContain('All required checks are in a terminal state.');
     }
+  });
+
+  it('orders truth runs by parsed time when offsets differ', { timeout: 30_000 }, () => {
+    const wait = runWait([
+      { name: SIBLING, status: 'in_progress', conclusion: null, started_at: '2026-08-20T15:00:00-01:00', id: 2 },
+      { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T15:30:00Z', id: 1 },
+    ]);
+    expect(wait.status, wait.stderr).not.toBe(0);
+    expect(wait.stdout).toContain(`Waiting for: ${SIBLING}`);
+  });
+});
+
+describe('external wait step check freshness (#315, #316)', () => {
+  /**
+   * Anchored freshness: once the delivery became reviewable (the latest
+   * ready_for_review transition on the PR timeline), a green truth run
+   * that PREDATES the transition is stale — the wait keeps going until a
+   * fresh run (started at/after the anchor) registers and terminates.
+   * The anchor rides the same gh api timeline seam as the check-runs
+   * listing; `gh pr checks` human text is never parsed. Without a
+   * pull-request context (empty WAIT_PR) there is no anchor and the
+   * legacy terminality rule decides alone.
+   */
+  const SIBLING = 'Sibling Check';
+  const RULE_SHA = 'a'.repeat(40);
+  const READY_AT = '2026-08-20T15:00:00Z';
+
+  interface WaitScenario {
+    checkRuns: unknown[];
+    /** Timeline events for the pull request; absent means "no PR context". */
+    timeline?: unknown;
+    /** Defaults to '9' when a timeline is supplied, '' otherwise. */
+    waitPr?: string;
+  }
+
+  function runWaitScenario(scenario: WaitScenario): SpawnSyncReturns<string> {
+    const dir = makeTempDir('specgit-wait-fresh-');
+    makeAdoptingLayout(dir);
+    const rules: FakeGhRule[] = [
+      {
+        match: '^api repos/.*/commits/[0-9a-f]+/check-runs',
+        stdout: JSON.stringify({ total_count: scenario.checkRuns.length, check_runs: scenario.checkRuns }),
+      },
+    ];
+    if (scenario.timeline !== undefined) {
+      rules.push({
+        match: '^api repos/.*/issues/9/timeline',
+        stdout: JSON.stringify(scenario.timeline),
+      });
+    }
+    const gh = createFakeGh(dir, rules);
+    try {
+      return spawnSync(process.execPath, ['--input-type=module'], {
+        cwd: dir,
+        input: waitScript(),
+        encoding: 'utf-8',
+        timeout: WAIT_PROCESS_TIMEOUT_MS,
+        env: gh.env({
+          WAIT_REPO: 'fixture/adopting',
+          WAIT_SHA: RULE_SHA,
+          WAIT_PR: scenario.waitPr ?? (scenario.timeline !== undefined ? '9' : ''),
+        }),
+      });
+    } finally {
+      rmDir(dir);
+    }
+  }
+
+  it('keeps waiting when the only green truth run predates the ready-for-review anchor (stale green)', { timeout: 30_000 }, () => {
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T14:00:00Z', id: 1 },
+      ],
+      timeline: [{ event: 'ready_for_review', created_at: READY_AT }],
+    });
+    expect(wait.status, wait.stderr).not.toBe(0);
+    expect(wait.stdout).not.toContain('All required checks are in a terminal state.');
+    // The stale check is named as awaiting a fresh run, not silently passed.
+    expect(wait.stdout).toContain(SIBLING);
+  });
+
+  it('keeps waiting while the fresh run is registered but still pending', { timeout: 30_000 }, () => {
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'in_progress', conclusion: null, started_at: '2026-08-20T15:30:00Z', id: 2 },
+      ],
+      timeline: [{ event: 'ready_for_review', created_at: READY_AT }],
+    });
+    expect(wait.status, wait.stderr).not.toBe(0);
+    expect(wait.stdout).toContain(`Waiting for: ${SIBLING}`);
+  });
+
+  it('stops once a fresh terminal run exists (started after the anchor)', { timeout: 30_000 }, () => {
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T15:30:00Z', id: 2 },
+      ],
+      timeline: [{ event: 'ready_for_review', created_at: READY_AT }],
+    });
+    expect(wait.status, wait.stderr).toBe(0);
+    expect(wait.stdout).toContain('All required checks are in a terminal state.');
+  });
+
+  it('treats a truth run started exactly at the anchor as fresh (>= boundary)', { timeout: 30_000 }, () => {
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: READY_AT, id: 2 },
+      ],
+      timeline: [{ event: 'ready_for_review', created_at: READY_AT }],
+    });
+    expect(wait.status, wait.stderr).toBe(0);
+    expect(wait.stdout).toContain('All required checks are in a terminal state.');
+  });
+
+  it('without a pull-request context the anchor stays unset and legacy terminality decides alone', { timeout: 30_000 }, () => {
+    // The same stale green as the first case, but no WAIT_PR: no anchor,
+    // no timeline call, byte-legacy behavior (a push/dispatch run).
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T14:00:00Z', id: 1 },
+      ],
+    });
+    expect(wait.status, wait.stderr).toBe(0);
+    expect(wait.stdout).toContain('All required checks are in a terminal state.');
+  });
+
+   it('fails closed when a ready_for_review event has no valid timestamp', { timeout: 30_000 }, () => {
+     // A missing timestamp is malformed evidence, not proof that no
+     // transition occurred. Never silently remove the freshness boundary.
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T14:00:00Z', id: 1 },
+      ],
+      timeline: [{ event: 'ready_for_review' }],
+    });
+     expect(wait.status, wait.stderr).not.toBe(0);
+     expect(wait.stdout).not.toContain('All required checks are in a terminal state.');
+   });
+
+   it('fails closed when the timeline payload is not an array', { timeout: 30_000 }, () => {
+     const wait = runWaitScenario({
+       checkRuns: [
+         { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T15:30:00Z', id: 2 },
+       ],
+       timeline: 'malformed timeline payload',
+     });
+     expect(wait.status, wait.stderr).not.toBe(0);
+     expect(wait.stdout).not.toContain('All required checks are in a terminal state.');
+   });
+
+  it('fails loudly when the anchor cannot be read, never silently unbounds freshness', { timeout: 30_000 }, () => {
+    const dir = makeTempDir('specgit-wait-anchor-err-');
+    makeAdoptingLayout(dir);
+    const gh = createFakeGh(dir, [
+      {
+        match: '^api repos/.*/commits/[0-9a-f]+/check-runs',
+        stdout: JSON.stringify({
+          total_count: 1,
+          check_runs: [
+            { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T15:30:00Z', id: 2 },
+          ],
+        }),
+      },
+      {
+        match: '^api repos/.*/issues/9/timeline',
+        exit: 1,
+        stderr: 'gh: Not Found (HTTP 404)\n',
+      },
+    ]);
+    try {
+      const wait = spawnSync(process.execPath, ['--input-type=module'], {
+        cwd: dir,
+        input: waitScript(),
+        encoding: 'utf-8',
+        timeout: WAIT_PROCESS_TIMEOUT_MS,
+        env: gh.env({ WAIT_REPO: 'fixture/adopting', WAIT_SHA: RULE_SHA, WAIT_PR: '9' }),
+      });
+      expect(wait.status, wait.stderr).not.toBe(0);
+      expect(wait.stdout).not.toContain('All required checks are in a terminal state.');
+    } finally {
+      rmDir(dir);
+    }
+  });
+
+  it('anchors at the LATEST transition when the timeline carries several', { timeout: 30_000 }, () => {
+    // draft → ready → draft → ready: the newest ready_for_review wins,
+    // so a run started between the two transitions is stale.
+    const wait = runWaitScenario({
+      checkRuns: [
+        { name: SIBLING, status: 'completed', conclusion: 'success', started_at: '2026-08-20T16:00:00Z', id: 3 },
+      ],
+      timeline: [
+        { event: 'ready_for_review', created_at: '2026-08-20T15:00:00Z' },
+        { event: 'convert_to_draft', created_at: '2026-08-20T15:30:00Z' },
+        { event: 'ready_for_review', created_at: '2026-08-20T17:00:00Z' },
+      ],
+    });
+    expect(wait.status, wait.stderr).not.toBe(0);
+    expect(wait.stdout).not.toContain('All required checks are in a terminal state.');
   });
 });
 
