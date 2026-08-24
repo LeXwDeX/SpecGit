@@ -2106,3 +2106,32 @@ describe('fake glab routing oracle (#234)', () => {
     expect(stdout).toBe(metadataJson('19.2.4'));
   });
 });
+
+describe('GlabProvider#getEvidenceAnchor (check freshness #315)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-glab-anchor-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  it('declares no boundary — ok({ anchoredAt: null }) — without invoking glab', async () => {
+    // Compatibility is proven by pinning the absence of behavior, not by
+    // assuming a GitLab defect: within the verified window (19.2.4 CE,
+    // docs/evidence/gitlab-19.2.md) no equivalent of GitHub's
+    // ready-for-review transition has been evidenced, so the adapter
+    // sets no freshness boundary (`anchoredAt: null`, the three-state
+    // contract's legal "no boundary" arm) and makes no CLI call — no
+    // GitLab-specific behavior is invented or worked around (#315).
+    const fake = createFakeGlab(tempDir, [
+      { match: '^--version$', stdout: 'glab version 1.113.0\n' },
+    ]);
+    const provider = new GlabProvider({ hostname: HOST, env: fake.env() });
+    const result = await provider.getEvidenceAnchor(REPO, 9);
+    expect(result).toEqual({ ok: true, value: { anchoredAt: null } });
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
+  });
+});

@@ -26,6 +26,7 @@ import {
   bindDelivery,
   checkRunsJson,
   createFakeGh,
+  emptyTimelineRule,
   gitOnlyPathDir,
   greenGhRules,
   initPolicy,
@@ -147,7 +148,7 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
     expect(calls.filter((call) => call.includes('/issues/101'))).toHaveLength(1);
     expect(calls.filter((call) => call.includes('/issues/102'))).toHaveLength(1);
     expect(calls.filter((call) => call.includes('/check-runs'))).toHaveLength(1);
-    expect(calls.filter((call) => call.startsWith('api '))).toHaveLength(4);
+    expect(calls.filter((call) => call.startsWith('api '))).toHaveLength(5);
   });
 });
 
@@ -414,6 +415,7 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
         match: `^api repos/${OWNER}/${REPO}/pulls/8$`,
         stdout: prJson({ number: 8, branch: repo.branch, sha: repo.sha, body: 'Closes #999' }),
       },
+      emptyTimelineRule(),
       {
         match: '^api repos/.+/check-runs',
         stdout: checkRunsJson([{ name: REQUIRED_CHECK }]),
@@ -534,6 +536,7 @@ describe('e2e acceptance: spec/task artifacts can never change acceptance', () =
         match: `^api repos/${OWNER}/${REPO}/pulls/13$`,
         stdout: prJson({ number: 13, branch: repo.branch, sha: repo.sha, body: 'Closes #111' }),
       },
+      emptyTimelineRule(),
       { match: '^api repos/.+/check-runs', stdout: failingChecks },
     ];
 

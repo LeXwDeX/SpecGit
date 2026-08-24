@@ -1221,6 +1221,157 @@ describe('GhCliGitHubProvider#listOpenPrsByHead', () => {
   });
 });
 
+describe('GhCliGitHubProvider#getEvidenceAnchor (check freshness #315)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = makeTempDir('specgit-gh-anchor-');
+  });
+
+  afterEach(() => {
+    rmDir(tempDir);
+  });
+
+  function setup(rules: FakeGhRule[]) {
+    const fake = createFakeGh(tempDir, rules);
+    const provider = new GhCliGitHubProvider({ env: fake.env() });
+    return { fake, provider };
+  }
+
+  function timelinePage(events: Array<{ event: string; created_at?: string }>): string {
+    return JSON.stringify(events);
+  }
+
+  function fullPage(): Array<{ event: string; created_at?: string }> {
+    return Array.from({ length: 100 }, (_, i) => ({
+      event: 'committed',
+      created_at: `2026-08-22T08:00:${String(i).padStart(2, '0')}Z`,
+    }));
+  }
+
+  it('anchors on the latest ready_for_review created_at across paginated timeline pages', async () => {
+    const pageOne = fullPage();
+    pageOne[41] = { event: 'ready_for_review', created_at: '2026-08-22T09:00:00Z' };
+    const { provider, fake } = setup([
+      {
+        match: 'issues/317/timeline\\?per_page=100&page=1$',
+        stdout: timelinePage(pageOne),
+      },
+      {
+        match: 'issues/317/timeline\\?per_page=100&page=2$',
+        stdout: timelinePage([{ event: 'ready_for_review', created_at: '2026-08-23T10:52:06Z' }]),
+      },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result).toEqual({ ok: true, value: { anchoredAt: '2026-08-23T10:52:06Z' } });
+    expect(readFakeGhCalls(fake.logPath)).toEqual([
+      'api repos/LeXwDeX/SpecGit/issues/317/timeline?per_page=100&page=1',
+      'api repos/LeXwDeX/SpecGit/issues/317/timeline?per_page=100&page=2',
+    ]);
+  });
+
+  it('never trusts response order: the anchor is the maximum created_at, not the last event', async () => {
+    // A re-ordered page (newer transition first) must not change the
+    // fact — the live-probed shape of #306/#317 timelines is ascending,
+    // but order is never evidence (#119 discipline).
+    const { provider } = setup([
+      {
+        match: 'timeline',
+        stdout: timelinePage([
+          { event: 'ready_for_review', created_at: '2026-08-23T10:52:06Z' },
+          { event: 'ready_for_review', created_at: '2026-08-22T09:00:00Z' },
+        ]),
+      },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result).toEqual({ ok: true, value: { anchoredAt: '2026-08-23T10:52:06Z' } });
+  });
+
+  it('a PR with zero ready transitions reports anchoredAt null (the live-probed draft-PR shape)', async () => {
+    // Read-only probe of PR #317 (still draft) on 2026-08-24: its
+    // timeline holds only `committed` events — the null-anchor case.
+    const { provider } = setup([
+      {
+        match: 'timeline',
+        stdout: timelinePage([
+          { event: 'committed', created_at: '2026-08-23T08:00:00Z' },
+          { event: 'committed', created_at: '2026-08-23T09:00:00Z' },
+        ]),
+      },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result).toEqual({ ok: true, value: { anchoredAt: null } });
+  });
+
+  it('fails closed when a ready_for_review event carries no timestamp', async () => {
+    const { provider } = setup([
+      { match: 'timeline', stdout: timelinePage([{ event: 'ready_for_review' }]) },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+  });
+
+  it('fails closed when a ready_for_review event carries an invalid timestamp', async () => {
+    const { provider } = setup([
+      {
+        match: 'timeline',
+        stdout: timelinePage([{ event: 'ready_for_review', created_at: 'not-a-date' }]),
+      },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+  });
+
+  it('fails closed (evidence_truncated) when the timeline page cap is reached with full pages', async () => {
+    const { provider } = setup([{ match: 'timeline', stdout: timelinePage(fullPage()) }]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('evidence_truncated');
+  });
+
+  it('classifies a 404 timeline lookup as pr_not_found', async () => {
+    const { provider } = setup([
+      { match: 'timeline', exit: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 999);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('pr_not_found');
+  });
+
+  it('classifies an HTTP 401 as gh_unauthenticated (the #275 behavioural contract)', async () => {
+    const { provider } = setup([
+      { match: 'timeline', exit: 1, stderr: 'gh: HTTP 401 (github.com)\n' },
+    ]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_unauthenticated');
+  });
+
+  it('fails closed with gh_transport on a non-array timeline payload', async () => {
+    const { provider } = setup([{ match: 'timeline', stdout: '{"total_count": 1}\n' }]);
+    const result = await provider.getEvidenceAnchor(REPO, 317);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('gh_transport');
+  });
+
+  it('rejects a non-numeric PR ref without invoking gh', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.getEvidenceAnchor(REPO, 'not-a-number');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('pr_not_found');
+    expect(readFakeGhCalls(fake.logPath)).toEqual([]);
+  });
+});
+
 describe('sanitizeApiText', () => {
   it('strips ANSI escapes and control characters', () => {
     const dirty = '\u001b[31mERROR\u001b[0m\u0007 with\u0000 controls\u001b[2J';

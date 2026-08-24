@@ -6,6 +6,7 @@ import type { Policy as SpecGitPolicy } from '../../src/record/policy.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
+  EvidenceAnchorFact,
   IssueCommentCreation,
   IssueCreation,
   IssueFact,
@@ -136,6 +137,11 @@ export interface GhScript {
   getPr?: (repo: RepoRef, ref: number | string) => Evidence<PrFact>;
   getOpenIssueNumbers?: (repo: RepoRef) => Evidence<number[]>;
   getOpenIssues?: (repo: RepoRef) => Evidence<OpenIssueFact[]>;
+  /**
+   * Check-freshness anchor (#315); the default is the no-boundary fact
+   * so CLI fixtures that predate #315 keep their verdict unchanged.
+   */
+  getEvidenceAnchor?: (repo: RepoRef, ref: number | string) => Evidence<EvidenceAnchorFact>;
   createIssue?: (repo: RepoRef, title: string, body: string) => Evidence<IssueCreation>;
   createDraftPr?: (
     repo: RepoRef,
@@ -199,6 +205,17 @@ export function makeGhProvider(
       calls.push('getCheckRuns');
       return { ok: false, code: 'gh_transport', message: 'not configured in fake' };
     }),
+    getEvidenceAnchor: vi.fn(
+      async (repo: RepoRef, ref: number | string): Promise<Evidence<EvidenceAnchorFact>> => {
+        calls.push(`getEvidenceAnchor:${String(ref)}`);
+        return (
+          behavior.getEvidenceAnchor?.(repo, ref) ??
+          // No boundary by default (#315): fixtures that predate the
+          // anchor keep their byte-identical verdict.
+          { ok: true, value: { anchoredAt: null } }
+        );
+      }
+    ),
     createIssue: vi.fn(async (repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>> => {
       calls.push(`createIssue:${title}`);
       return (

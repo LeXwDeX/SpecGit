@@ -109,6 +109,13 @@ export class PlatformRoutingProvider implements ForgeProvider {
     return (await this.forRepo(repo)).getCheckRuns(repo, sha);
   }
 
+  async getEvidenceAnchor(
+    repo: RepoRef,
+    pr: number | string
+  ): ReturnType<ForgeProvider['getEvidenceAnchor']> {
+    return (await this.forRepo(repo)).getEvidenceAnchor(repo, pr);
+  }
+
   async createIssue(
     repo: RepoRef,
     title: string,
