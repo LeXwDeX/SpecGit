@@ -1,5 +1,11 @@
 # specgit
 
+## 1.5.3
+
+### Patch Changes
+
+- [#324](https://github.com/LeXwDeX/SpecGit/pull/324) [`2363c4a`](https://github.com/LeXwDeX/SpecGit/commit/2363c4a4a90dbeb6b41ffe132e4ce31c26b4a6d7) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Fix `specgit issue` bootstrap ordering: the binding record is committed and the head pushed WITH that commit before PR creation, so fresh deliveries no longer die at "No commits between main and <branch>" on real GitHub ([#323](https://github.com/LeXwDeX/SpecGit/issues/323)).
+
 ## 1.5.2
 
 ### Patch Changes
