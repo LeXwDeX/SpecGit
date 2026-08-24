@@ -1,16 +1,8 @@
 version: 1
-delivery: version-upgrade-refresh
+delivery: check-freshness
 context:
   kind: branch
-  branch: feat/305-version-upgrade-refresh
+  branch: feat/315-check-freshness
 issues:
-  - 305
-  - 307
-  - 308
-  - 309
-  - 310
-  - 311
-  - 312
-  - 313
-  - 314
-pr: 306
+  - 315
+  - 316
