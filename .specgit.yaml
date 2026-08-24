@@ -1,9 +1,7 @@
 version: 1
-delivery: check-freshness
+delivery: cancel-superseded-acceptance-runs
 context:
   kind: branch
-  branch: feat/315-check-freshness
+  branch: feat/319-cancel-superseded-acceptance-runs
 issues:
-  - 315
-  - 316
-pr: 317
+  - 319
