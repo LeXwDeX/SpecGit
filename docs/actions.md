@@ -58,7 +58,7 @@ Internal jobs can be renamed, split, or parallelized without touching either set
 Naming rules that matter:
 
 - The job's **display name** (`name:`) is the reported check name when present; otherwise the job key is. Set `name:` explicitly on the aggregator.
-- Matrix and reusable-workflow calls fan out into multiple or differently-shaped check runs. Keep the aggregator out of matrices, and prefer `needs:` over nesting reusable workflows for the gate job — SpecGit matches flat check-run names.
+- Matrix and reusable-workflow calls fan out into multiple or differently-shaped check runs. Keep the aggregator out of matrices, and prefer `needs:` over nesting reusable workflows for the gate job — SpecGit matches flat check-run names. `specgit init` auto-detection honors the same boundary (#310): a matrix job (placeholder name or not) or a reusable call has no statically provable check-run name, so detection reports it as ambiguous (`checks_name_ambiguous`, `detected.ambiguousJobs`) instead of arming the job id — name the real expanded names (e.g. `Test (linux-bash)`) explicitly with `--required-check`, and note that a later no-argument `init --force` PRESERVES the existing list; only an explicit `--required-check` run replaces it.
 - Name stability is your problem to keep: whatever string the policy declares, CI must report byte-for-byte.
 
 ## Wiring required checks

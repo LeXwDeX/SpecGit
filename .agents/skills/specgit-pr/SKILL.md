@@ -7,6 +7,8 @@ metadata:
   author: specgit
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # specgit-pr
 
 Repairs the record's PR binding without touching issues or the branch.

@@ -3,6 +3,11 @@
  * origin URL (no network), required-check names from local CI files
  * (.github/workflows job names/ids, .gitlab-ci.yml top-level job keys),
  * and gh/glab presence on PATH (reported only).
+ *
+ * #310 truth boundary: detection only ever reports names static reading
+ * can prove — a job whose check-run name depends on matrix expansion or a
+ * reusable-workflow call is reported as ambiguous, never armed as a
+ * required check.
  */
 
 import { execFile } from 'node:child_process';
@@ -33,6 +38,13 @@ export interface DetectionReport {
   sources: string[];
   /** Workflow files with jobs that never run on a PR head (#121) — reported so init can warn. */
   nonPrWorkflows: string[];
+  /**
+   * #310: jobs whose check-run name static reading cannot prove, as
+   * `<source>: <job id>` — matrix fan-out (placeholder or not) and
+   * reusable-workflow calls. Reported so init can warn; never armed as
+   * proven required checks.
+   */
+  ambiguousJobs: string[];
   clis: { gh: boolean; glab: boolean };
 }
 
@@ -40,15 +52,42 @@ interface WorkflowJobsShape {
   jobs?: Record<string, unknown>;
 }
 
-function jobName(id: string, job: unknown): string | null {
-  if (typeof job !== 'object' || job === null) return null;
-  const name = (job as { name?: unknown }).name;
-  if (typeof name === 'string' && name.trim().length > 0) {
-    // A matrix placeholder (e.g. "Tests (${{ matrix.os }})") never appears
-    // in check-runs; the job id is the stable identity.
-    return name.includes('${{') ? id : name.trim();
+/** What static reading can honestly claim about one job's check-run name (#310). */
+type JobCheckName = { kind: 'proven'; name: string } | { kind: 'ambiguous' };
+
+/**
+ * A matrix with at least one key fans the job out into one check run per
+ * combination; an empty `matrix: {}` object is a single un-expanded leg.
+ * A non-empty string (`matrix: ${{ fromJson(...) }}`) is a dynamic
+ * fan-out: the expansion — and every reported name with it — is decided
+ * by the runtime expression, never provable from this file.
+ */
+function hasMatrixFanOut(strategy: unknown): boolean {
+  if (typeof strategy !== 'object' || strategy === null) return false;
+  const matrix = (strategy as { matrix?: unknown }).matrix;
+  if (typeof matrix === 'string') {
+    return matrix.trim().length > 0;
   }
-  return id;
+  return typeof matrix === 'object' && matrix !== null && Object.keys(matrix).length > 0;
+}
+
+function jobCheckName(id: string, job: unknown): JobCheckName | null {
+  if (typeof job !== 'object' || job === null) return null;
+  const record = job as { name?: unknown; uses?: unknown; strategy?: unknown };
+  // #310: a reusable-workflow call reports the CALLED job's name; a matrix
+  // fans out into per-combination check runs whose names come from the
+  // expansion GitHub performs. Neither name is provable from this file —
+  // ambiguity is evidence, never a guessed success.
+  if (typeof record.uses === 'string') return { kind: 'ambiguous' };
+  if (hasMatrixFanOut(record.strategy)) return { kind: 'ambiguous' };
+  const name = record.name;
+  if (typeof name === 'string' && name.trim().length > 0) {
+    // An expression placeholder (e.g. "Tests (${{ matrix.os }})") resolves
+    // only at expansion time — and the #39 job-id fallback is NOT the
+    // expanded check-run name either, so neither may be claimed.
+    return name.includes('${{') ? { kind: 'ambiguous' } : { kind: 'proven', name: name.trim() };
+  }
+  return { kind: 'proven', name: id };
 }
 
 /**
@@ -135,7 +174,8 @@ async function probeCli(binary: string): Promise<boolean> {
 async function detectGithubChecks(
   root: string,
   sources: string[],
-  nonPrWorkflows: string[]
+  nonPrWorkflows: string[],
+  ambiguousJobs: string[]
 ): Promise<string[]> {
   const dir = path.join(root, ...WORKFLOWS_DIR_SEGMENTS);
   let entries: string[];
@@ -145,7 +185,22 @@ async function detectGithubChecks(
     return [];
   }
 
+  // #310: one wait list never names the same check twice — exact repeated
+  // display names (e.g. two aggregator jobs) collapse to the first
+  // occurrence, preserving discovery order.
   const names: string[] = [];
+  const seen = new Set<string>();
+  const addProven = (name: string): void => {
+    if (name === EXCLUDED_CHECK || seen.has(name)) return;
+    seen.add(name);
+    names.push(name);
+  };
+  const addAmbiguous = (entry: string): void => {
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      ambiguousJobs.push(entry);
+    }
+  };
   for (const entry of entries.sort()) {
     if (!/\.(yml|yaml)$/i.test(entry)) continue;
     let parsed: unknown;
@@ -164,8 +219,13 @@ async function detectGithubChecks(
     }
     sources.push(`.github/workflows/${entry}`);
     for (const [id, job] of Object.entries(jobs)) {
-      const name = jobName(id, job);
-      if (name !== null && name !== EXCLUDED_CHECK) names.push(name);
+      const resolution = jobCheckName(id, job);
+      if (resolution === null) continue;
+      if (resolution.kind === 'ambiguous') {
+        addAmbiguous(`.github/workflows/${entry}: ${id}`);
+        continue;
+      }
+      addProven(resolution.name);
     }
   }
   return names;
@@ -203,7 +263,8 @@ export async function detectInitInputs(
   const platform = await classifyPlatform(originUrl);
   const sources: string[] = [];
   const nonPrWorkflows: string[] = [];
-  const github = await detectGithubChecks(root, sources, nonPrWorkflows);
+  const ambiguousJobs: string[] = [];
+  const github = await detectGithubChecks(root, sources, nonPrWorkflows, ambiguousJobs);
   const gitlab = github.length > 0 ? [] : await detectGitlabChecks(root, sources);
   const [gh, glab] = await Promise.all([probeCli('gh'), probeCli('glab')]);
   return {
@@ -211,6 +272,7 @@ export async function detectInitInputs(
     requiredChecks: [...github, ...gitlab],
     sources,
     nonPrWorkflows,
+    ambiguousJobs,
     clis: { gh, glab },
   };
 }

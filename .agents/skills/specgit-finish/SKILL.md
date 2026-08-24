@@ -7,6 +7,8 @@ metadata:
   author: specgit
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # specgit-finish
 
 The acceptance verdict. Eleven gates evaluate live evidence: record, policy,

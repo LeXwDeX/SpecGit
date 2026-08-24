@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
+import { RECORD_MISSING_FIX } from '../kernel/diagnostics.js';
 import { PolicySchema, type Policy } from './policy.js';
 import { ProvidersSchema, type Providers } from './providers.js';
 import {
@@ -169,7 +170,7 @@ export async function readRecord(root: string): Promise<Evidence<DeliveryBinding
       return fail(
         'record_missing',
         `No delivery binding found at ${recordPath(root)}.`,
-        'Run "specgit bind" to link issues and a pull request to this branch.'
+        RECORD_MISSING_FIX
       );
     }
     throw error;

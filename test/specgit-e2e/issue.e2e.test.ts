@@ -102,7 +102,17 @@ function bootstrapRules(pr: number | undefined): FakeGhRule[] {  return [
 }
 
 describe('e2e issue: one-command bootstrap closes both new issues after merge', () => {
-  it('bootstraps two issues → branch → draft PR → record → commit → push, then finish accepts post-merge', async () => {
+  // Three full CLI passes (issue bootstrap with real git transport, init,
+  // finish) plus ~10 direct git spawns: the global 10s test budget cannot
+  // hold three passes that each may legally run up to the 30s per-CLI
+  // limit (run-cli DEFAULT_CLI_TIMEOUT_MS), and it intermittently overruns
+  // on the serialized 1-worker windows-pwsh runner (observed 2026-08-23,
+  // run 32643134007 / job 97203205775) — the same headroom the
+  // bootstrap-pair test below already needed (30s, runs
+  // 32438687376/32438704880). Runtime variance, not a regression: this
+  // test passed the windows-pwsh leg before 588f245e, which never touched
+  // the bootstrap/finish path.
+  it('bootstraps two issues → branch → draft PR → record → commit → push, then finish accepts post-merge', { timeout: 30_000 }, async () => {
     const repo = makePushableRepo('main');
     const deliveryBranch = 'feat/11-strict-delivery-harness';
 

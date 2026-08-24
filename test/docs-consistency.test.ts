@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CODE_INFO } from '../src/acceptance/codes.js';
+
 // Docs-consistency pins for the 1.0.0 convergence docs (#108). The release
 // gates, the dual-platform scope narrative, and the PR template are contract
 // surfaces: a regression here is a contract break, not a typo.
@@ -113,5 +115,50 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     const template = read('.github', 'PULL_REQUEST_TEMPLATE.md');
     expect(template).not.toMatch(/#[0-9]+\b/);
     expect(template).toContain('Closes #<issue-number>');
+  });
+});
+
+// #312 — one wording everywhere: `required_checks` is an array of non-empty
+// strings and the array itself may be empty (the no-CI policy, #63). Canonical
+// pages that claimed the list must be non-empty pushed users toward invented
+// check names that never report and permanently trigger `checks_missing`.
+describe('docs consistency (empty required_checks is the no-CI policy, #312)', () => {
+  const CANONICAL_PAGES = [
+    'customization.md',
+    'team-workflow.md',
+    'concepts.md',
+    'troubleshooting.md',
+  ] as const;
+
+  // The retired claims, each anchored to the phrasing the stale pages used.
+  const RETIRED_CLAIMS: Array<[string, RegExp]> = [
+    ['an empty list is invalid', /empty list is invalid/i],
+    ['the non-empty list', /non-empty list/i],
+    ['fails closed on an empty list', /fails? closed on an empty list/i],
+    ['the list must be non-empty', /must be non-empty/i],
+  ];
+
+  it.each(CANONICAL_PAGES)('docs/%s states the empty/no-CI semantics, not the retired wording', (page) => {
+    const text = read('docs', page);
+    for (const [claim, pattern] of RETIRED_CLAIMS) {
+      expect(text, `docs/${page} must not claim ${claim}`).not.toMatch(pattern);
+    }
+    expect(text, `docs/${page} must name the no-CI policy`).toMatch(/no-CI policy/);
+  });
+
+  it('the schema remains the source of truth: the empty list is the no-CI policy', () => {
+    expect(read('schemas', 'specgit', 'schema.yaml')).toMatch(
+      /An empty list is the no-CI policy/
+    );
+  });
+
+  it('policy_invalid stays generic: no non-empty-list demand, a truthful repair path', () => {
+    const fix = CODE_INFO.policy_invalid.fix ?? '';
+    // policy_invalid covers malformed YAML, unknown keys, wrong types, and
+    // empty names — the fix must not falsely require a non-empty list.
+    expect(fix, 'the fix must not demand at least one check').not.toMatch(/at least one/i);
+    expect(fix, 'the fix must not require a non-empty list').not.toMatch(/non-empty list/i);
+    expect(fix, 'the fix must name the real name rule').toMatch(/non-empty string/);
+    expect(fix, 'the fix must keep the empty list truthful').toMatch(/no-CI policy/);
   });
 });

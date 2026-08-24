@@ -32,50 +32,40 @@ export interface InitOptions {
   json?: boolean;
 }
 
-/** Resolved required checks plus the detection report (null when explicit). */
+/** Where the resolved required checks came from — the selection provenance (#310). */
+export type CheckProvenance = 'explicit' | 'existing' | 'detected';
+
+/** Resolved required checks plus the detection report (null unless detection ran). */
 export interface CheckResolution {
   checks: string[];
   detected: DetectionReport | null;
+  provenance: CheckProvenance;
 }
 
 /**
- * Detection and validation of the required-check inputs: explicit names
- * win; otherwise auto-detect from the repo's CI files (unless --no-detect
- * forces the strict legacy path). A repository with no CI at all names
- * zero required checks (#63): every fallback NAME is a name the generated
- * harness can never produce as a check-run, which would deadlock the wait
- * step and make the verdict unsatisfiable. The acceptance job itself —
- * kept out of the policy and enforced through branch protection — is the
- * gate for such repositories.
+ * Selection and validation of the required-check inputs (#310): ONE seam,
+ * resolved after the existing policy is known, with an explicit
+ * precedence — explicit `--required-check` (repeatable) is the
+ * intentional replacement path; otherwise a valid existing policy is
+ * PRESERVED (a no-argument `init --force` is a version upgrade of the
+ * generated assets, not a policy re-birth — detection must never replace
+ * a working policy's checks); only a fresh init (no policy) detects.
+ * `--no-detect` refuses guessing, not preserving: without a policy the
+ * strict legacy path still demands explicit names. A repository with no
+ * CI at all names zero required checks (#63): every fallback NAME is a
+ * name the generated harness can never produce as a check-run, which
+ * would deadlock the wait step and make the verdict unsatisfiable. The
+ * acceptance job itself — kept out of the policy and enforced through
+ * branch protection — is the gate for such repositories.
  */
-export async function detectAndValidateChecks(
+export async function resolveRequiredChecks(
   options: InitOptions,
-  ctx: CommandContext
+  ctx: CommandContext,
+  root: string,
+  existingPolicy: Evidence<Policy>
 ): Promise<InitOutcome | CheckResolution> {
-  let checks = (options.requiredCheck ?? []).map((value) => value.trim());
-  let detected: DetectionReport | null = null;
-
-  if (checks.length === 0) {
-    if (options.detect === false) {
-      // Strict legacy path: no detection, no prompt (non-interactive
-      // contract) — the caller must be explicit.
-      return {
-        exit: EXIT_USAGE,
-        errors: [
-          errorDiagnostic(
-            'required_check_required',
-            'init requires at least one required check name.',
-            { fix: 'Pass --required-check <name> (repeatable), or drop --no-detect to auto-detect.' }
-          ),
-        ],
-      };
-    }
-    const facts = await ctx.git.facts(ctx.cwd).catch(() => null);
-    detected = await detectInitInputs(ctx.cwd, facts?.originUrl ?? null);
-    checks = detected.requiredChecks;
-  }
-
-  const invalid = checks.find((value) => value.length === 0);
+  const explicit = (options.requiredCheck ?? []).map((value) => value.trim());
+  const invalid = explicit.find((value) => value.length === 0);
   if (invalid !== undefined) {
     return {
       exit: EXIT_USAGE,
@@ -88,8 +78,37 @@ export async function detectAndValidateChecks(
       ],
     };
   }
-
-  return { checks, detected };
+  if (explicit.length > 0) {
+    return { checks: explicit, detected: null, provenance: 'explicit' };
+  }
+  if (existingPolicy.ok) {
+    // Preserve-on-upgrade: exact names, exact order (a no-check policy
+    // stays no-check — #63 round-trips through upgrades).
+    return {
+      checks: [...existingPolicy.value.required_checks],
+      detected: null,
+      provenance: 'existing',
+    };
+  }
+  if (options.detect === false) {
+    // Strict legacy path: no detection, no prompt (non-interactive
+    // contract) — the caller must be explicit.
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'required_check_required',
+          'init requires at least one required check name.',
+          { fix: 'Pass --required-check <name> (repeatable), or drop --no-detect to auto-detect.' }
+        ),
+      ],
+    };
+  }
+  // Fresh init: detection reads the DISCOVERED root (never the cwd the
+  // command happened to run from).
+  const facts = await ctx.git.facts(root).catch(() => null);
+  const detected = await detectInitInputs(root, facts?.originUrl ?? null);
+  return { checks: detected.requiredChecks, detected, provenance: 'detected' };
 }
 
 /**
@@ -208,5 +227,45 @@ export function nonPrWorkflowWarning(detected: DetectionReport): Diagnostic | nu
       '--required-check; after CI changes, re-run init --force to re-detect — ' +
       'correcting a policy that was wrong at birth is the required repair, not a ' +
       'weakening.',
+  };
+}
+
+/**
+ * #310 detection truth boundary: a job whose check-run name depends on
+ * matrix expansion or a reusable-workflow call was EXCLUDED from the
+ * detected checks — ambiguity is evidence, never a guessed name. The
+ * warning names every excluded job and the legitimate naming paths.
+ */
+export function ambiguousJobWarning(detected: DetectionReport): Diagnostic | null {
+  if (detected.ambiguousJobs.length === 0) return null;
+  return {
+    severity: 'warning',
+    code: 'checks_name_ambiguous',
+    message:
+      'These jobs fan out through a matrix or a reusable workflow, so their ' +
+      `check-run names are not statically provable: ${detected.ambiguousJobs.join(', ')}.`,
+    fix:
+      'A matrix job reports one check run per combination (e.g. "Test (linux-bash)" ' +
+      'for a label matrix), and a reusable call reports the called job\'s name — ' +
+      'name the real expanded names explicitly with --required-check, or gate ' +
+      'deliveries on an aggregator job whose flat name never churns.',
+  };
+}
+
+/**
+ * #310 preserve-on-upgrade: the run kept the existing policy's required
+ * checks and language and rebuilt the versioned harness assets. The fix
+ * names the one intentional replacement path.
+ */
+export function preservedChecksWarning(): Diagnostic {
+  return {
+    severity: 'warning',
+    code: 'checks_preserved',
+    message:
+      'Preserved the required checks from the existing spec_git/policy.yaml ' +
+      '(this run is a version upgrade of the generated assets, not a policy re-birth).',
+    fix:
+      'To replace the checks, re-run with --required-check <name> (repeatable) — ' +
+      'the explicit list fully replaces the preserved one.',
   };
 }

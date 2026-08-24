@@ -35,11 +35,51 @@ import {
 } from '../output.js';
 import { STATE_ASSET_TAXONOMY } from '../state-taxonomy.js';
 import { catalogFor, resolveLanguage } from '../language.js';
+import {
+  inspectGeneratedAssets,
+  renderGeneratedAssetsHuman,
+  type GeneratedAssetsReport,
+} from '../asset-drift.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
-import type { CommandContext, GateResult } from '../types.js';
+import type { CommandContext, Evidence, GateResult, GitFacts, Policy } from '../types.js';
 
 export interface StatusOptions {
   json?: boolean;
+}
+
+/**
+ * The #308 generated-asset drift report for one status snapshot, or the
+ * warning that explains why none could be computed. Read-only by
+ * construction: a failure here is factual evidence riding a warning — it
+ * never turns an otherwise computable snapshot into exit 3.
+ */
+async function generatedAssetReport(
+  root: string,
+  ctx: CommandContext,
+  policy: Evidence<Policy>,
+  facts: GitFacts
+): Promise<{ report: GeneratedAssetsReport | null; warning: Diagnostic | null }> {
+  try {
+    return { report: await inspectGeneratedAssets({ root, ctx, policy, facts }), warning: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      report: null,
+      warning: {
+        severity: 'warning',
+        code: 'asset_inspection_failed',
+        message: `The generated-asset drift report could not be computed: ${message}`,
+        fix: 'Re-run status once the named path is readable; drift inspection is read-only and never blocks the snapshot.',
+      },
+    };
+  }
+}
+
+/** The taxonomy plus the drift report when one was computed (#308). */
+function assetsWith(report: GeneratedAssetsReport | null): Record<string, unknown> {
+  return report === null
+    ? { ...STATE_ASSET_TAXONOMY }
+    : { ...STATE_ASSET_TAXONOMY, generated: report };
 }
 
 export async function runStatus(
@@ -67,21 +107,29 @@ export async function runStatus(
       // unknown (#175): exit 0, state `unbound`, the record gate still
       // reports `record_missing`, and the next step rides a warning.
       const { human: text } = catalogFor(resolveLanguage(policyEv.ok ? policyEv.value : null));
+      const generated = await generatedAssetReport(root, ctx, policyEv, facts);
+      const warnings: Diagnostic[] = [
+        {
+          severity: 'warning',
+          code: recordEv.code,
+          message: recordEv.message,
+          ...(recordEv.fix !== undefined ? { fix: recordEv.fix } : {}),
+        },
+      ];
+      if (generated.warning !== null) {
+        warnings.push(generated.warning);
+      }
       return {
         exit: EXIT_SUCCESS,
         state: 'unbound',
         gates: [recordGate(recordEv)],
         evidence: { root, branch: facts.branch },
-        warnings: [
-          {
-            severity: 'warning',
-            code: recordEv.code,
-            message: recordEv.message,
-            ...(recordEv.fix !== undefined ? { fix: recordEv.fix } : {}),
-          },
-        ],
-        assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
-        human: humanBuilder().line(text.statusUnbound()).build(),
+        warnings,
+        assets: assetsWith(generated.report),
+        human: humanBuilder()
+          .line(text.statusUnbound())
+          .append(renderGeneratedAssetsHuman(generated.report, text))
+          .build(),
       };
     }
     return {
@@ -152,6 +200,11 @@ export async function runStatus(
     };
   }
 
+  // #308: the drift report is factual local evidence — computed for every
+  // computable snapshot, surfaced through `assets.generated` and the human
+  // drift lines, and never an exit-code input.
+  const generated = await generatedAssetReport(root, ctx, policyEv, facts);
+
   const human = humanBuilder()
     .line(text.statusDelivery(record.delivery, state))
     .line(
@@ -170,6 +223,7 @@ export async function runStatus(
     .line(
       'Assets: authoritative delivery files (spec_git/policy.yaml, spec_git/providers.yaml, .specgit.yaml; shielded in .gitignore by default, carried by the binding commit) · derived committed harness (regenerate via init --force) · local integration (setup entry points)'
     )
+    .append(renderGeneratedAssetsHuman(generated.report, text))
     .append(
       gates.flatMap((gate) =>
         gate.failures.map((failure) => gateFailureLine(gate.id, failure.code, failure.fix))
@@ -182,7 +236,8 @@ export async function runStatus(
     state,
     gates,
     evidence,
-    assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
+    ...(generated.warning !== null ? { warnings: [generated.warning] } : {}),
+    assets: assetsWith(generated.report),
     human,
   };
 }

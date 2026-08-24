@@ -2,6 +2,8 @@
 description: Show local SpecGit evidence — record, delivery state, drift, origin
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # /specgit-status
 
 Thin trigger for local evidence. The canonical behavior lives in the
@@ -18,5 +20,9 @@ AGENTS.md SpecGit block; this command only launches it.
 2. Read `state` and `record` from the envelope: local evidence only —
    record, drift, origin. Platform evidence (issues, PR, checks) belongs
    to `specgit finish`.
-3. No record → bootstrap with `specgit issue`. On `exit 3` read
-   `errors[].fix`. Never hand-edit `.specgit.yaml`.
+3. No record is not an error: `state: "unbound"` with exit `0` is the
+   normal pre-binding state — bootstrap with `specgit issue` (the
+   `record_missing` warning carries the next step in `warnings[].fix`).
+   Exit `3` is different: `state: "unknown"`, a genuine evidence
+   failure — read `errors[].fix`.
+4. Never hand-edit `.specgit.yaml`.
