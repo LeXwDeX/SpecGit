@@ -14,6 +14,14 @@ permissions:
   issues: read
   pull-requests: read
 
+# One verdict per head at a time (#319): a newer trigger event (a push
+# after the draft opened, then ready_for_review) supersedes the older
+# run of the same pull request instead of leaving parallel copies
+# burning identical wait budgets. The surviving run re-verdicts fully.
+concurrency:
+  group: specgit-accept-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   specgit-acceptance:
     name: SpecGit Acceptance
