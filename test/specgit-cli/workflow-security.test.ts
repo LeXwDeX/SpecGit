@@ -298,6 +298,16 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     assertAcceptanceGateSemantics(acceptTemplate, 'harnessWorkflowYaml()');
   });
 
+  it('the product CI re-verdicts on the draft→ready transition (#316)', () => {
+    // The required checks come from ci.yml; without ready_for_review in
+    // its pull_request types a delivery marked ready would wait forever
+    // for post-transition runs that no event ever creates.
+    const types = ((parse(ciFile) as Workflow).on?.pull_request as { types?: string[] }).types ?? [];
+    for (const required of ['opened', 'synchronize', 'reopened', 'ready_for_review']) {
+      expect(types).toContain(required);
+    }
+  });
+
   it('ci.yml executes no self-hosted legs (retired shadow job; #105)', () => {
     assertNoSelfHostedExecution(ciFile, 'ci.yml');
   });
