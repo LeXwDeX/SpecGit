@@ -278,23 +278,86 @@ ${BLOCK_END_MARKER}`;
 }
 
 /**
+ * Line-anchored marker pairing — the same discipline
+ * `reconcileLocalAssetIgnore` applies to the managed `.gitignore` region:
+ * a marker is a WHOLE line (exact literal up to surrounding whitespace;
+ * a mid-line prose mention never pairs and is never consumed), and an END
+ * line closes the NEAREST preceding unmatched START line, so a stray
+ * START ahead of a complete region never swallows the user bytes between
+ * them. Returns the first completed pairing, plus the whole-line marker
+ * predicate for stray consumption.
+ */
+function pairMarkerLines(
+  lines: string[],
+  isStart: (line: string) => boolean,
+  isEnd: (line: string) => boolean
+): { firstPair: { start: number; end: number } | null; isMarkerLine: (line: string) => boolean } {
+  const open: number[] = [];
+  let firstPair: { start: number; end: number } | null = null;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (isStart(line)) {
+      open.push(index);
+    } else if (isEnd(line) && open.length > 0) {
+      const start = open.pop() as number;
+      if (firstPair === null) {
+        firstPair = { start, end: index };
+      }
+    }
+  }
+  return {
+    firstPair,
+    isMarkerLine: (line: string) => isStart(line) || isEnd(line),
+  };
+}
+
+/**
+ * The lines in [from, to) that are NOT marker lines — everything the
+ * merge must preserve verbatim.
+ */
+function nonMarkerLines(
+  lines: string[],
+  range: { from: number; to: number },
+  isMarkerLine: (line: string) => boolean
+): string[] {
+  return lines.slice(range.from, range.to).filter((line) => !isMarkerLine(line));
+}
+
+/**
  * Pure transform: place `block` (which carries the markers) into existing
  * file content. When both markers are present, only the delimited region is
  * replaced; otherwise the block is appended after a blank line. Byte-stable
  * for repeated injection of the same block.
+ *
+ * Damaged layouts converge instead of growing: reversed or stray marker
+ * LINES are consumed wherever they sit (user bytes never are), and when no
+ * START/END pairing exists at all the block is appended to the remainder —
+ * so every re-write leaves exactly one managed region and re-writing that
+ * output is a byte-level no-op.
  */
 export function injectManagedBlock(existing: string, block: string): string {
-  const startIndex = existing.indexOf(BLOCK_START_MARKER);
-  const endIndex = existing.indexOf(BLOCK_END_MARKER);
-  if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-    const afterEnd = endIndex + BLOCK_END_MARKER.length;
-    return existing.slice(0, startIndex) + block + existing.slice(afterEnd);
+  const lines = existing.split('\n');
+  const { firstPair, isMarkerLine } = pairMarkerLines(
+    lines,
+    (line) => line.trim() === BLOCK_START_MARKER,
+    (line) => line.trim() === BLOCK_END_MARKER
+  );
+  if (firstPair !== null) {
+    // Replace the first paired region; marker lines anywhere else
+    // (a later duplicated region's, a stray's) are consumed, and every
+    // other line keeps its bytes and position.
+    return [
+      ...nonMarkerLines(lines, { from: 0, to: firstPair.start }, isMarkerLine),
+      ...block.split('\n'),
+      ...nonMarkerLines(lines, { from: firstPair.end + 1, to: lines.length }, isMarkerLine),
+    ].join('\n');
   }
-  if (existing.length === 0) {
+  const remainder = lines.filter((line) => !isMarkerLine(line)).join('\n');
+  if (remainder.length === 0) {
     return `${block}\n`;
   }
-  const separator = existing.endsWith('\n') ? '' : '\n';
-  return `${existing}${separator}\n${block}\n`;
+  const separator = remainder.endsWith('\n') ? '' : '\n';
+  return `${remainder}${separator}\n${block}\n`;
 }
 
 const GUARD_COMMAND = '.opencode/hooks/specgit-merge-guard.sh';
@@ -607,6 +670,11 @@ function managedPrePush(): string {
  * - markers present: only the delimited region is replaced;
  * - anything else (a user hook, e.g. husky): preserved verbatim with
  *   the managed region appended after it.
+ *
+ * Damaged marker layouts converge like `injectManagedBlock`: marker
+ * LINES pair nearest-start-first (a stray START never swallows user
+ * bytes), unpaired marker lines are consumed, and with no pairing at
+ * all the region is appended to the remainder.
  */
 export function mergeGitPrePush(existing: string | null): string {
   if (existing === null || existing === '') {
@@ -616,19 +684,31 @@ export function mergeGitPrePush(existing: string | null): string {
     // Legacy specgit install without markers: upgrade in place.
     return managedPrePush();
   }
-  const startIndex = existing.indexOf(PRE_PUSH_START);
-  const endIndex = existing.indexOf(PRE_PUSH_END);
-  if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-    const afterEnd = endIndex + PRE_PUSH_END.length;
-    if (startIndex === 0) {
+  const lines = existing.split('\n');
+  const { firstPair, isMarkerLine } = pairMarkerLines(
+    lines,
+    (line) => line.trim() === PRE_PUSH_START,
+    (line) => line.trim() === PRE_PUSH_END
+  );
+  if (firstPair !== null) {
+    const trailing = nonMarkerLines(lines, { from: firstPair.end + 1, to: lines.length }, isMarkerLine);
+    if (firstPair.start === 0) {
       // Old managed layout: the marker was line 1 and the shebang sat
       // inside the region. Rebuild in the spawnable layout, keeping any
       // user content that trails the managed region — the wholesale
       // replacement used to delete it (#88-3).
-      return managedPrePush().trimEnd() + existing.slice(afterEnd);
+      return [managedPrePush().trimEnd(), ...trailing].join('\n');
     }
-    return existing.slice(0, startIndex) + managedPrePushRegion().trimEnd() + existing.slice(afterEnd);
+    return [
+      ...nonMarkerLines(lines, { from: 0, to: firstPair.start }, isMarkerLine),
+      managedPrePushRegion().trimEnd(),
+      ...trailing,
+    ].join('\n');
   }
-  const separator = existing.endsWith('\n') ? '' : '\n';
-  return `${existing}${separator}${managedPrePushRegion()}`;
+  const remainder = lines.filter((line) => !isMarkerLine(line)).join('\n');
+  if (remainder === '') {
+    return managedPrePush();
+  }
+  const separator = remainder.endsWith('\n') ? '' : '\n';
+  return `${remainder}${separator}${managedPrePushRegion()}`;
 }

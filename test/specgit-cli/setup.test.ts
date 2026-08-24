@@ -226,6 +226,24 @@ Released skills self-identify with \`author: specgit\` in their frontmatter;
 a file that merely discusses that line is not SpecGit's to delete.
 `;
 
+/**
+ * A user-authored retired candidate whose Markdown body quotes the
+ * ownership marker as prose. The marker proves ownership only at the
+ * writer's anchor — the leading line without frontmatter, directly
+ * after the closing frontmatter fence otherwise — so a body mention is
+ * not SpecGit's to delete (#307 regression).
+ */
+const UNMARKED_COMMAND_QUOTING_MARKER = `---
+description: My own notes about the specgit ownership marker
+---
+
+# specgit-marker-notes
+
+Generated entries carry \`${ENTRY_POINT_MARKER}\` right after their
+frontmatter; a file that merely discusses that line is not SpecGit's
+to delete.
+`;
+
 /** Full-file snapshot: bytes AND mode, so round-trips are exact. */
 function treeState(root: string): Map<string, { content: string; mode: number }> {
   const state = new Map<string, { content: string; mode: number }>();
@@ -282,6 +300,14 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     expect(isSpecGitOwnedEntryPoint('# notes\n\ndiscussion of author: specgit in body text\n')).toBe(
       false
     );
+    // Prose quoting the ownership marker is not the writer's anchor.
+    expect(isSpecGitOwnedEntryPoint(UNMARKED_COMMAND_QUOTING_MARKER)).toBe(false);
+    // The writer's anchors: the leading line without frontmatter…
+    expect(isSpecGitOwnedEntryPoint(`${ENTRY_POINT_MARKER}\n\n# no frontmatter\n`)).toBe(true);
+    // …and directly after the frontmatter close fence.
+    expect(
+      isSpecGitOwnedEntryPoint(`---\ndescription: x\n---\n\n${ENTRY_POINT_MARKER}\n\n# body\n`)
+    ).toBe(true);
   });
 
   it('removes retired SpecGit-owned entry points; unmarked siblings survive byte-for-byte', async () => {
@@ -358,6 +384,32 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     expect(envelope.assets.reconciled.removed).toEqual(['.agents/skills/specgit-retired/SKILL.md']);
     expect(envelope.assets.reconciled.preserved).toEqual([
       '.agents/skills/specgit-migration-notes/SKILL.md',
+    ]);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'unowned_asset_preserved')
+    ).toBe(true);
+  });
+
+  it('preserves a candidate whose body quotes the ownership marker; the anchored marker still proves', async () => {
+    gitInit(tempDir);
+    const commandDir = path.join(tempDir, '.opencode', 'command');
+    fs.mkdirSync(commandDir, { recursive: true });
+    fs.writeFileSync(path.join(commandDir, 'specgit-retired.md'), RETIRED_OWNED_COMMAND);
+    const quotingCommandPath = path.join(commandDir, 'specgit-marker-notes.md');
+    fs.writeFileSync(quotingCommandPath, UNMARKED_COMMAND_QUOTING_MARKER);
+
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+    const code = await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], t.ctx);
+    expect(code).toBe(0);
+
+    // The anchored marker proves ownership; a body mention does not.
+    expect(fs.existsSync(path.join(commandDir, 'specgit-retired.md'))).toBe(false);
+    expect(fs.readFileSync(quotingCommandPath, 'utf-8')).toBe(UNMARKED_COMMAND_QUOTING_MARKER);
+
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.assets.reconciled.removed).toEqual(['.opencode/command/specgit-retired.md']);
+    expect(envelope.assets.reconciled.preserved).toEqual([
+      '.opencode/command/specgit-marker-notes.md',
     ]);
     expect(
       (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'unowned_asset_preserved')
@@ -524,6 +576,27 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     // Exit-3 branch: a genuine evidence failure; the exact fix rides errors[].
     expect(skill).toMatch(/[Ee]xit `3`/);
     expect(skill).toContain('`errors[].fix`');
+  });
+
+  // #311 equivalence: the opencode status COMMAND must teach the same
+  // unbound/exit-3 contract as the portable skill — any equivalent command
+  // surface installs the same semantics. Both branches are pinned.
+  it('pins the unbound/exit-3 contract in the opencode status command (#311)', async () => {
+    gitInit(tempDir);
+    await writeAgentSurface(tempDir, 'opencode');
+    const command = fs.readFileSync(
+      path.join(tempDir, '.opencode', 'command', 'specgit-status.md'),
+      'utf-8'
+    );
+    // Unbound branch: explicitly not an error, exit 0, normal pre-binding.
+    expect(command).toContain('`state: "unbound"` with exit `0`');
+    expect(command).toMatch(/normal pre-binding state/);
+    expect(command).toContain('not an error');
+    // Next action for unbound: bootstrap; the envelope rides a warning (#175).
+    expect(command).toContain('bootstrap with `specgit issue`');
+    // Exit-3 branch: a genuine evidence failure; the exact fix rides errors[].
+    expect(command).toMatch(/[Ee]xit `3`/);
+    expect(command).toContain('`errors[].fix`');
   });
 
   it('human output reports removed entry points alongside the installed set', async () => {
