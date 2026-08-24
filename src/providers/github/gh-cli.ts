@@ -19,6 +19,7 @@ import {
 import type {
   BranchProtectionFact,
   CheckRunInfo,
+  EvidenceAnchorFact,
   ForgeProvider,
   IssueCreation,
   IssueCommentCreation,
@@ -55,6 +56,9 @@ function readEnvTimeoutMs(env: NodeJS.ProcessEnv): number | null {
 const DEFAULT_MAX_BUFFER = 4 * 1024 * 1024;
 const CHECK_RUN_PAGE_SIZE = 100;
 const MAX_CHECK_RUN_PAGES = 10;
+const TIMELINE_PAGE_SIZE = 100;
+/** Completeness guard: pagination beyond this cap fails closed. */
+const MAX_TIMELINE_PAGES = 10;
 const ISSUE_SEARCH_PAGE_SIZE = 100;
 /** GitHub's search API never returns more than 1000 results (10×100). */
 const MAX_ISSUE_SEARCH_PAGES = 10;
@@ -345,6 +349,89 @@ export class GhCliGitHubProvider implements ForgeProvider {
         );
       }
     );
+  }
+
+  /**
+   * Check-freshness anchor (#315): the delivery's reviewable moment on
+   * GitHub is its latest ready-for-review transition — the
+   * `ready_for_review` event on the PR issue's timeline (`gh api
+   * repos/{owner}/{repo}/issues/{n}/timeline`; every pull request is an
+   * issue). The fact carries that event's `created_at` verbatim or
+   * `null` when no such event exists (a PR never marked ready — a draft
+   * has none), never a fabricated or re-encoded instant.
+   *
+   * Evidence-completeness rule (#120, I3b): the timeline is paginated
+   * to exhaustion; the cap reached with a full page fails closed
+   * (`evidence_truncated`). Selection never trusts response order
+   * (#119 discipline): the anchor is the maximum `created_at` across
+   * every `ready_for_review` event on every page — equal timestamps
+   * keep the later event — so a re-ordered page cannot change the
+   * fact. A `ready_for_review` event whose `created_at` is absent
+   * fails closed: an unparsable transition is reported, never silently
+   * dropped (same discipline as a PR payload omitting the draft flag).
+   */
+  async getEvidenceAnchor(
+    repo: RepoRef,
+    pr: number | string
+  ): Promise<Evidence<EvidenceAnchorFact>> {
+    const ref = String(pr);
+    if (!/^\d+$/.test(ref)) {
+      return fail(
+        'pr_not_found',
+        `Cannot resolve pull request reference "${sanitizeApiText(ref)}".`,
+        'Bind the PR by number or a full github.com pull request URL.'
+      );
+    }
+    const pagesEv = await paginateToExhaustion<unknown>(
+      {
+        pageSize: TIMELINE_PAGE_SIZE,
+        maxPages: MAX_TIMELINE_PAGES,
+        what: 'Timeline-event',
+        capMessage:
+          `Timeline pagination hit its cap (${MAX_TIMELINE_PAGES * TIMELINE_PAGE_SIZE} events); ` +
+          'the ready-for-review anchor may be missing.',
+      },
+      async (page) => {
+        const endpoint =
+          `repos/${repo.owner}/${repo.repo}/issues/${ref}/timeline` +
+          `?per_page=${TIMELINE_PAGE_SIZE}&page=${page}`;
+        const result = await this.runApi(endpoint, 'pr');
+        if (!result.ok) {
+          return result;
+        }
+        if (!Array.isArray(result.value)) {
+          return fail('gh_transport', 'GitHub returned an unexpected timeline payload.');
+        }
+        return ok(result.value);
+      }
+    );
+    if (!pagesEv.ok) {
+      return pagesEv;
+    }
+    let anchoredAt: string | null = null;
+    let anchorTime: number | null = null;
+    for (const entry of pagesEv.value) {
+      const event = entry as { event?: unknown; created_at?: unknown };
+      if (event.event !== 'ready_for_review') continue;
+      if (typeof event.created_at !== 'string' || event.created_at === '') {
+        return fail(
+          'gh_transport',
+          'GitHub returned a ready-for-review event without a timestamp.'
+        );
+      }
+      const eventTime = Date.parse(event.created_at);
+      if (Number.isNaN(eventTime)) {
+        return fail(
+          'gh_transport',
+          'GitHub returned a ready-for-review event with an invalid timestamp.'
+        );
+      }
+      if (anchoredAt === null || anchorTime === null || eventTime > anchorTime) {
+        anchoredAt = event.created_at;
+        anchorTime = eventTime;
+      }
+    }
+    return ok({ anchoredAt });
   }
 
   async createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>> {

@@ -890,6 +890,21 @@ describe('specgit init harness generation', () => {
     expect(workflow).toContain('length < PER_PAGE');
   });
 
+  it('wait-for-siblings script anchors freshness at the ready-for-review transition (#315)', async () => {
+    const workflow = harnessWorkflowYaml();
+    // The anchor rides the issue-timeline endpoint through the same REST
+    // seam; the PR number arrives via workflow context and stays empty on
+    // non-PR events (no anchor, no freshness bound).
+    expect(workflow).toContain("WAIT_PR: ${{ github.event.pull_request.number || '' }}");
+    expect(workflow).toContain('/issues/');
+    expect(workflow).toContain('/timeline');
+    expect(workflow).toContain('ready_for_review');
+    // A stale terminal run keeps waiting instead of settling the gate.
+    expect(workflow).toContain('Waiting for a fresh run after ready for review: ');
+    // Human-readable `gh pr checks` output is never a parse surface.
+    expect(workflow).not.toContain('pr checks');
+  });
+
   it('covers the human story, repair, diagnostics, granularity, and iron rules in the block', async () => {
     const t = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);

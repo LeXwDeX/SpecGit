@@ -112,6 +112,20 @@ export interface RepoAutomergeFact {
 }
 
 /**
+ * The delivery's evidence anchor (#315): the ISO-8601 instant the
+ * delivery last became reviewable on the platform, or null when the
+ * provider sets no boundary. Acceptance for a required check counts
+ * only truth runs started at or after this instant — a run that
+ * finished before the anchor is not evidence the reviewable delivery
+ * was verified. Null is a legal provider answer (a platform without
+ * such a transition concept); it leaves the verdict exactly as it
+ * stood, without claiming the two facts are equivalent.
+ */
+export interface EvidenceAnchorFact {
+  anchoredAt: string | null;
+}
+
+/**
  * Preflight facts (#247): platform-neutral so the port contract never
  * names a forge. `versionUnverified` is advisory (#241) — an adapter may
  * set it when its instance reports a version outside its verified window
@@ -159,6 +173,16 @@ export interface ForgeReadPort {
    * return a silently partial list.
    */
   getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>>;
+  /**
+   * The evidence anchor (#315): the platform instant the delivery
+   * last became reviewable — the boundary a required check's truth
+   * run must start at or after to count as acceptance evidence.
+   * `anchoredAt` is null when the provider sets no boundary (a legal
+   * answer, judged exactly as before); a failed Evidence is the
+   * fail-closed path — no verdict is possible. The transition source
+   * is an adapter concern; this surface stays provider-neutral.
+   */
+  getEvidenceAnchor(repo: RepoRef, pr: number | string): Promise<Evidence<EvidenceAnchorFact>>;
   createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>>;
   createDraftPr(
     repo: RepoRef,
@@ -231,6 +255,7 @@ const FORGE_READ_PORT_MEMBER_FLAGS = {
   getOpenIssues: true,
   getPr: true,
   getCheckRuns: true,
+  getEvidenceAnchor: true,
   createIssue: true,
   createDraftPr: true,
   listOpenPrsByHead: true,
