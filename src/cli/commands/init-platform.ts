@@ -222,6 +222,22 @@ export async function resolvePlatformMode(
   const existing = await readProviders(root);
   const existingGitlab = existing.ok ? existing.value.gitlab : undefined;
 
+  // #308 write/read symmetry: the read side (`classifyPlatformMode`)
+  // refuses to classify over unreadable declaration bytes — so must the
+  // writer. No heuristic classification, no providers write (a gitlab-
+  // shaped host would otherwise SILENTLY OVERWRITE the broken bytes and
+  // destroy the evidence the user needs to repair); the heuristics speak
+  // again only after the bytes parse.
+  if (!existing.ok && existing.code === 'providers_invalid') {
+    warnings.push({
+      severity: 'warning',
+      code: 'platform_providers_invalid',
+      message: `The platform declaration at ${SPEC_GIT_DIR}/providers.yaml exists but cannot be read: ${existing.message}`,
+      fix: `Repair the ${SPEC_GIT_DIR}/providers.yaml bytes, then re-run specgit init.`,
+    });
+    return { outcome: { mode: 'undecided' }, human: humanBuilder().build() };
+  }
+
   // The explicit flag already declared (or errored) before the policy
   // write; here the persisted declaration and heuristics speak.
   if (existingGitlab !== undefined) {

@@ -503,6 +503,36 @@ describe('specgit init', () => {
     ).toBe(true);
   });
 
+  it('a dynamic string-expression matrix is ambiguous even with a literal name (#310)', async () => {
+    // `matrix: ${{ fromJson(...) }}` fans out over values only the
+    // runtime expression decides — the expansion, and with it every
+    // reported check-run name, is unknowable from this file, so the
+    // literal name is not provable either.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  legs:\n' +
+        '    name: Test\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '    strategy:\n' +
+        '      matrix: ${{ fromJson(needs.gen.outputs.matrix) }}\n' +
+        '  lint:\n' +
+        '    name: Lint\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Lint'] });
+    expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: legs']);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
+  });
+
   it('de-duplicates exact repeated display names across workflows (#310)', async () => {
     // The dogfood shape: two aggregator jobs in different workflows share
     // one display name. A wait list naming it twice is noise, not signal.

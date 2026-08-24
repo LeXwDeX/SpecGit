@@ -349,6 +349,57 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(envelope.reconciled?.removed ?? []).toEqual([HARNESS_WORKFLOW_PATH]);
   });
 
+  it('invalid providers bytes refuse heuristic classification instead of being overwritten (#308 symmetry)', async () => {
+    // The write side must honor what the read side refuses: status calls
+    // an unreadable platform declaration `providers_invalid` and makes no
+    // platform claim, but init fell through to the origin heuristics —
+    // on a gitlab-shaped host it SILENTLY OVERWROTE the broken bytes,
+    // destroying the evidence the user needs to repair. Init must warn,
+    // leave the bytes untouched, and stay undecided.
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    fs.writeFileSync(PROVIDERS_ABS(root), 'gitlab: [unclosed\n');
+
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false, policy: samplePolicy() });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+
+    // Warned, undecided — never classified by heuristic over broken bytes.
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'undecided' });
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'platform_providers_invalid')
+    ).toBe(true);
+    // The invalid bytes survive verbatim: not overwritten, not repaired.
+    expect(read(PROVIDERS_ABS(root))).toBe('gitlab: [unclosed\n');
+  });
+
+  it('a gitlab-shaped origin does not silently overwrite invalid providers bytes (#308 symmetry)', async () => {
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    fs.writeFileSync(PROVIDERS_ABS(root), 'gitlab: [unclosed\n');
+
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'undecided' });
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'platform_providers_invalid')
+    ).toBe(true);
+    expect(read(PROVIDERS_ABS(root))).toBe('gitlab: [unclosed\n');
+  });
+
   it('preserves and reports a workflow file SpecGit cannot prove it owns', async () => {
     // Ownership preservation was pinned BEFORE the safe-delete behavior
     // shipped: a file at the managed workflow path without SpecGit markers

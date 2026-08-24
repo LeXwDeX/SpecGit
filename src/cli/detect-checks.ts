@@ -58,10 +58,16 @@ type JobCheckName = { kind: 'proven'; name: string } | { kind: 'ambiguous' };
 /**
  * A matrix with at least one key fans the job out into one check run per
  * combination; an empty `matrix: {}` object is a single un-expanded leg.
+ * A non-empty string (`matrix: ${{ fromJson(...) }}`) is a dynamic
+ * fan-out: the expansion — and every reported name with it — is decided
+ * by the runtime expression, never provable from this file.
  */
 function hasMatrixFanOut(strategy: unknown): boolean {
   if (typeof strategy !== 'object' || strategy === null) return false;
   const matrix = (strategy as { matrix?: unknown }).matrix;
+  if (typeof matrix === 'string') {
+    return matrix.trim().length > 0;
+  }
   return typeof matrix === 'object' && matrix !== null && Object.keys(matrix).length > 0;
 }
 

@@ -268,8 +268,12 @@ AGENTS.md SpecGit block; this command only launches it.
 2. Read \`state\` and \`record\` from the envelope: local evidence only —
    record, drift, origin. Platform evidence (issues, PR, checks) belongs
    to \`specgit finish\`.
-3. No record → bootstrap with \`specgit issue\`. On \`exit 3\` read
-   \`errors[].fix\`. Never hand-edit \`.specgit.yaml\`.
+3. No record is not an error: \`state: "unbound"\` with exit \`0\` is the
+   normal pre-binding state — bootstrap with \`specgit issue\` (the
+   \`record_missing\` warning carries the next step in \`warnings[].fix\`).
+   Exit \`3\` is different: \`state: "unknown"\`, a genuine evidence
+   failure — read \`errors[].fix\`.
+4. Never hand-edit \`.specgit.yaml\`.
 `;
 
 const DOCTOR_SKILL = `---
@@ -432,15 +436,30 @@ function frontmatterLines(content: string): string[] {
 
 /**
  * Structural ownership proof for a SpecGit entry point (#307): the managed
- * marker, or `author: specgit` as a frontmatter metadata value. Body text
- * quoting the authorship string proves nothing — user prose may discuss
- * the marker line itself.
+ * marker at its writer's anchor, or `author: specgit` as a frontmatter
+ * metadata value. Body text quoting the marker or the authorship string
+ * proves nothing — user prose may discuss either line itself.
  */
 export function isSpecGitOwnedEntryPoint(content: string): boolean {
-  if (content.includes(ENTRY_POINT_MARKER)) {
+  if (hasAnchoredEntryPointMarker(content)) {
     return true;
   }
   return frontmatterLines(content).some((line) => FRONTMATTER_AUTHOR_LINE.test(line));
+}
+
+/**
+ * The marker exactly where its writer puts it, mirroring
+ * `withEntryPointMarker`: bytes without a closing frontmatter fence carry
+ * it as the leading line; frontmatter carries it directly after the close
+ * fence. Anywhere else — quoted in body prose — it is not ownership
+ * evidence.
+ */
+function hasAnchoredEntryPointMarker(content: string): boolean {
+  const close = content.indexOf('\n---\n', 3);
+  if (close === -1) {
+    return content.startsWith(`${ENTRY_POINT_MARKER}\n`);
+  }
+  return content.startsWith(`\n${ENTRY_POINT_MARKER}\n`, close + '\n---\n'.length);
 }
 
 /**
