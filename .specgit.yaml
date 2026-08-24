@@ -5,3 +5,4 @@ context:
   branch: docs/326-pin-the-mark
 issues:
   - 326
+pr: 327
