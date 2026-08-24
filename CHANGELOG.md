@@ -1,5 +1,11 @@
 # specgit
 
+## 1.5.2
+
+### Patch Changes
+
+- [#321](https://github.com/LeXwDeX/SpecGit/pull/321) [`1d9eec2`](https://github.com/LeXwDeX/SpecGit/commit/1d9eec222505b6ed4fbbf3800ad0d6e953622b81) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - The generated acceptance workflows cancel superseded runs via a concurrency group: a newer trigger event on the same pull request no longer leaves older acceptance copies burning parallel wait budgets ([#319](https://github.com/LeXwDeX/SpecGit/issues/319)).
+
 ## 1.5.1
 
 ### Patch Changes
