@@ -1,8 +1,8 @@
 version: 1
-delivery: fix-bootstrap-pr-order
+delivery: pin-the-mark
 context:
   kind: branch
-  branch: feat/323-fix-bootstrap-pr-order
+  branch: docs/326-pin-the-mark
 issues:
-  - 323
-pr: 324
+  - 326
+pr: 327
