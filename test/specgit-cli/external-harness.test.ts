@@ -104,12 +104,17 @@ describe('external acceptance harness template', () => {
     const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
       name: string;
       permissions: { contents: string; issues: string; 'pull-requests': string };
+      concurrency: { group: string; 'cancel-in-progress': boolean };
       jobs: Record<string, { name: string; 'runs-on': string; 'timeout-minutes': number }>;
     };
     expect(parsed.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(parsed.permissions.contents).toBe('read');
     expect(parsed.permissions.issues).toBe('read');
     expect(parsed.permissions['pull-requests']).toBe('read');
+    // #319: a newer trigger event cancels the superseded run instead of
+    // leaving parallel copies burning identical wait budgets.
+    expect(parsed.concurrency.group).toBe('specgit-accept-${{ github.ref }}');
+    expect(parsed.concurrency['cancel-in-progress']).toBe(true);
     const job = parsed.jobs['specgit-acceptance'];
     expect(job.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(job['runs-on']).toBe('ubuntu-latest');
