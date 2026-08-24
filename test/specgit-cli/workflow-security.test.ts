@@ -40,6 +40,7 @@ interface Job {
 interface Workflow {
   on?: Record<string, unknown>;
   permissions?: Record<string, string>;
+  concurrency?: { group?: string; 'cancel-in-progress'?: boolean };
   jobs?: Record<string, Job>;
 }
 
@@ -305,6 +306,17 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     const types = ((parse(ciFile) as Workflow).on?.pull_request as { types?: string[] }).types ?? [];
     for (const required of ['opened', 'synchronize', 'reopened', 'ready_for_review']) {
       expect(types).toContain(required);
+    }
+  });
+
+  it('superseded acceptance runs cancel via a concurrency group (#319)', () => {
+    for (const [label, text] of [
+      ['specgit-accept.yml', acceptFile],
+      ['harnessWorkflowYaml()', acceptTemplate],
+    ] as Array<[string, string]>) {
+      const concurrency = (parse(text) as Workflow).concurrency;
+      expect(concurrency?.group, label).toBe('specgit-accept-${{ github.ref }}');
+      expect(concurrency?.['cancel-in-progress'], label).toBe(true);
     }
   });
 
