@@ -171,12 +171,19 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.harness.createdPrs[0].body.startsWith('Closes #11\nCloses #12\n')).toBe(true);
 
     expect(t.gitPort.checkoutCalls).toEqual(['feat/11-strict-delivery-harness']);
-    expect(t.gitPort.commitCalls.length).toBe(1);
-    // #292: the binding commit force-carries every authoritative
+    // #323: TWO carrying commits — the binding BEFORE PR creation (a
+    // head equal to the base is refused by both platforms) and the
+    // final record after the PR number is persisted.
+    expect(t.gitPort.commitCalls.length).toBe(2);
+    // #292: each carrying commit force-carries every authoritative
     // delivery file that exists — here only the record.
-    expect(t.gitPort.commitCalls[0].paths).toEqual(['.specgit.yaml']);
-    // #270: the branch is pushed before the draft PR is created, and the
-    // record commit rides a second push to the remote.
+    for (const commit of t.gitPort.commitCalls) {
+      expect(commit.paths).toEqual(['.specgit.yaml']);
+      expect(commit.message).toBe('chore: record delivery binding for strict-delivery-harness');
+    }
+    // #270/#323: the branch is pushed with the binding already in it,
+    // before the draft PR is created, and the final record commit rides
+    // a second push to the remote.
     expect(t.gitPort.pushCalls).toEqual([
       'feat/11-strict-delivery-harness',
       'feat/11-strict-delivery-harness',

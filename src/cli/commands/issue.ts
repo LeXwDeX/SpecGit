@@ -37,8 +37,9 @@
  * `resolveMergedRecord` (read-only mergedness probe), `validateResumeArgs`
  * (positional resume validation), and `createOrAdoptIssues` (the issue
  * creation loop with durable per-issue record writes). The tail chain —
- * checkout, push, PR binding, record commit, push — is the ordered step
- * list of the DeliveryBootstrap module (#278, ./bootstrap.ts).
+ * checkout, binding commit, push, PR binding, final record commit,
+ * push — is the ordered step list of the DeliveryBootstrap module
+ * (#278, ./bootstrap.ts).
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
@@ -472,10 +473,10 @@ export async function runIssue(
   const firstTitle = created.firstTitle;
 
   // #278: the tail chain is data — the DeliveryBootstrap module's
-  // ordered steps (checkout → push head → bind PR → commit record →
-  // push). Each step carries its precondition and resume marker, so a
-  // re-run from any partial state converges; reordering is a change to
-  // BOOTSTRAP_STEPS, reviewable as such.
+  // ordered steps (checkout → commit binding → push head → bind PR →
+  // commit record → push). Each step carries its precondition and
+  // resume marker, so a re-run from any partial state converges;
+  // reordering is a change to BOOTSTRAP_STEPS, reviewable as such.
   const chained = await runBootstrapSteps(BOOTSTRAP_STEPS, {
     ctx,
     root,
