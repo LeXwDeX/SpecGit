@@ -501,6 +501,13 @@ describe('checks gate', () => {
   const greenForge = (runs: CheckRunInfo[]) =>
     forgeStub({ getCheckRuns: async () => ok(runs) });
 
+  /** #315: a forge double that answers the evidence-anchor member. */
+  const anchoredForge = (runs: CheckRunInfo[], anchoredAt: string | null) =>
+    forgeStub({
+      getCheckRuns: async () => ok(runs),
+      getEvidenceAnchor: async () => ok({ anchoredAt }),
+    });
+
   it('fails with the provider code when the check evidence fails', async () => {
     const ctx = makeContext({
       repoRef: REPO,
@@ -594,5 +601,202 @@ describe('checks gate', () => {
         makeContext({ repoRef: REPO, prFact: PR_FACT, gh: greenForge(tieBrokenById) })
       )
     ).toEqual([]);
+  });
+
+  it('orders equivalent instants by parsed time, not ISO string shape', async () => {
+    const runs = [
+      run({ id: 1, conclusion: 'success', startedAt: '2026-01-01T15:30:00Z' }),
+      run({ id: 2, conclusion: 'failure', startedAt: '2026-01-01T15:00:00-01:00' }),
+    ];
+    expect(
+      codes(await checksGate(makeContext({ repoRef: REPO, prFact: PR_FACT, gh: greenForge(runs) })))
+    ).toEqual(['checks_failed']);
+  });
+
+  // #315: anchored check freshness — a required check's acceptance
+  // evidence is its truth run started at or after the delivery's
+  // evidence anchor (the instant it became reviewable). These tests
+  // pin the provider-neutral contract; the GitHub event behind the
+  // anchor is an adapter concern and never appears here.
+
+  it('pends a truth run that wholly predates the evidence anchor (#315)', async () => {
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([run({ startedAt: '2026-01-15T00:00:00Z' })], '2026-02-01T00:00:00Z'),
+    });
+    const failures = await checksGate(ctx);
+    expect(codes(failures)).toEqual(['checks_pending']);
+    expect(failures[0].message).toBe(
+      "A required check's truth run predates the evidence anchor [check: ci, started: 2026-01-15T00:00:00Z, anchor: 2026-02-01T00:00:00Z]"
+    );
+    expect(failures[0].fix).toContain('re-run');
+    expect(failures[0].detail).toEqual({
+      name: 'ci',
+      startedAt: '2026-01-15T00:00:00Z',
+      anchoredAt: '2026-02-01T00:00:00Z',
+    });
+  });
+
+  it('pends a stale truth run regardless of its conclusion (#315)', async () => {
+    const succeeded = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [run({ conclusion: 'success', startedAt: '2026-01-15T00:00:00Z' })],
+        '2026-02-01T00:00:00Z'
+      ),
+    });
+    expect(codes(await checksGate(succeeded))).toEqual(['checks_pending']);
+    const failed = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [run({ conclusion: 'failure', startedAt: '2026-01-15T00:00:00Z' })],
+        '2026-02-01T00:00:00Z'
+      ),
+    });
+    // Stale dominates: the failure is reported as pending-stale, never
+    // as checks_failed — the stale run is not conclusion evidence.
+    expect(codes(await checksGate(failed))).toEqual(['checks_pending']);
+  });
+
+  it('accepts a truth run that starts at or after the anchor — the boundary is inclusive (#315)', async () => {
+    const atBoundary = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([run({ startedAt: '2026-02-01T00:00:00Z' })], '2026-02-01T00:00:00Z'),
+    });
+    expect(await checksGate(atBoundary)).toEqual([]);
+    const afterBoundary = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([run({ startedAt: '2026-02-01T00:00:01Z' })], '2026-02-01T00:00:00Z'),
+    });
+    expect(await checksGate(afterBoundary)).toEqual([]);
+  });
+
+  it('judges freshness by the truth run: a stale failed rerun plus a fresh success passes (#315)', async () => {
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [
+          run({ id: 3, conclusion: 'failure', startedAt: '2026-01-15T00:00:00Z' }),
+          run({ id: 4, conclusion: 'success', startedAt: '2026-02-02T00:00:00Z' }),
+        ],
+        '2026-02-01T00:00:00Z'
+      ),
+    });
+    expect(await checksGate(ctx)).toEqual([]);
+  });
+
+  it('treats a null started_at as oldest under an enforced anchor (#315)', async () => {
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([run({ startedAt: null })], '2026-02-01T00:00:00Z'),
+    });
+    expect(codes(await checksGate(ctx))).toEqual(['checks_pending']);
+  });
+
+  it('fails toward stale on an unparseable anchor — the boundary never silently lifts (#315)', async () => {
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([run({ startedAt: '2026-02-02T00:00:00Z' })], 'not-a-timestamp'),
+    });
+    expect(codes(await checksGate(ctx))).toEqual(['checks_pending']);
+  });
+
+  it('a null anchor is no boundary — the verdict keeps its pre-#315 shape', async () => {
+    const green = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([run({ startedAt: '2026-01-01T00:00:00Z' })], null),
+    });
+    expect(await checksGate(green)).toEqual([]);
+    const failed = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [run({ conclusion: 'failure', startedAt: '2026-01-01T00:00:00Z' })],
+        null
+      ),
+    });
+    expect(codes(await checksGate(failed))).toEqual(['checks_failed']);
+    const pending = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [run({ status: 'in_progress', conclusion: null, startedAt: '2026-01-01T00:00:00Z' })],
+        null
+      ),
+    });
+    const failures = await checksGate(pending);
+    expect(codes(failures)).toEqual(['checks_pending']);
+    expect(failures[0].message).toContain('[check: ci, status: in_progress]');
+  });
+
+  it('a fact that omits anchoredAt behaves as no boundary (#315)', async () => {
+    // A sloppy provider fact (field absent) must not crash or enforce.
+    const sloppyFact = {} as unknown as { anchoredAt: string | null };
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: forgeStub({
+        getCheckRuns: async () => ok([run({ startedAt: '2026-01-01T00:00:00Z' })]),
+        getEvidenceAnchor: async () => ok(sloppyFact),
+      }),
+    });
+    expect(await checksGate(ctx)).toEqual([]);
+  });
+
+  it('a provider double without the member behaves as no boundary (#315)', async () => {
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: forgeStub({ getCheckRuns: async () => ok([run({ startedAt: '2026-01-01T00:00:00Z' })]) }),
+    });
+    expect(await checksGate(ctx)).toEqual([]);
+  });
+
+  it('fails closed with the provider code when the anchor evidence fails (#315)', async () => {
+    const ctx = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: forgeStub({
+        getCheckRuns: async () => ok([run({ startedAt: '2026-02-02T00:00:00Z' })]),
+        getEvidenceAnchor: async () => fail('gh_transport', 'down'),
+      }),
+    });
+    expect(codes(await checksGate(ctx))).toEqual(['gh_transport']);
+  });
+
+  it('keeps checks_missing and allow_failure intact under an enforced anchor (#315)', async () => {
+    const missing = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge([], '2026-02-01T00:00:00Z'),
+    });
+    expect(codes(await checksGate(missing))).toEqual(['checks_missing']);
+    const allowed = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [run({ conclusion: 'failure', allowFailure: true, startedAt: '2026-02-02T00:00:00Z' })],
+        '2026-02-01T00:00:00Z'
+      ),
+    });
+    expect(await checksGate(allowed)).toEqual([]);
+    const cancelled = makeContext({
+      repoRef: REPO,
+      prFact: PR_FACT,
+      gh: anchoredForge(
+        [run({ conclusion: 'cancelled', allowFailure: true, startedAt: '2026-02-02T00:00:00Z' })],
+        '2026-02-01T00:00:00Z'
+      ),
+    });
+    expect(codes(await checksGate(cancelled))).toEqual(['checks_failed']);
   });
 });

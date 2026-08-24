@@ -17,10 +17,51 @@ function truthRun(runs: CheckRunInfo[], name: string): CheckRunInfo | undefined 
 }
 
 function isLaterRun(a: CheckRunInfo, b: CheckRunInfo): boolean {
-  const keyA = a.startedAt ?? '';
-  const keyB = b.startedAt ?? '';
-  if (keyA !== keyB) return keyA > keyB;
+  const keyA = a.startedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(a.startedAt);
+  const keyB = b.startedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(b.startedAt);
+  const timeA = Number.isNaN(keyA) ? Number.NEGATIVE_INFINITY : keyA;
+  const timeB = Number.isNaN(keyB) ? Number.NEGATIVE_INFINITY : keyB;
+  if (timeA !== timeB) return timeA > timeB;
   return a.id > b.id;
+}
+
+/**
+ * #315: whether the truth run predates the evidence anchor. A null or
+ * unparseable started_at is treated as oldest (the CheckRunInfo
+ * contract); an unparseable anchor also reads as stale — a broken
+ * boundary fails toward protection instead of silently lifting it.
+ * The boundary is inclusive: a run started exactly at the anchor is
+ * fresh.
+ */
+function predatesAnchor(run: CheckRunInfo, anchor: string): boolean {
+  if (run.startedAt === null) return true;
+  const boundary = Date.parse(anchor);
+  if (Number.isNaN(boundary)) return true;
+  const started = Date.parse(run.startedAt);
+  if (Number.isNaN(started)) return true;
+  return started < boundary;
+}
+
+/**
+ * #315: fetch the evidence anchor for the bound pull request. Three
+ * states: an ISO string enforces the freshness boundary; null (or a
+ * fact without the field) means the provider sets no boundary and the
+ * verdict keeps its pre-#315 shape; a failed Evidence fails closed
+ * with the provider's own code (an evidence-class diagnostic).
+ */
+async function fetchAnchor(
+  ctx: GateContext
+): Promise<{ anchor: string | null; failure?: undefined } | { anchor?: undefined; failure: GateFailure }> {
+  const forge = ctx.input.gh!;
+  // Runtime guard: doubles that predate the member behave as "no
+  // boundary" — byte-for-byte the pre-#315 verdict. Typed providers
+  // implement it; the port member is required (#80 discipline).
+  if (typeof forge.getEvidenceAnchor !== 'function') return { anchor: null };
+  const evidence = await forge.getEvidenceAnchor(ctx.repoRef!, ctx.prFact!.number);
+  if (!evidence.ok) return { failure: makeFailure(evidence) };
+  return {
+    anchor: typeof evidence.value.anchoredAt === 'string' ? evidence.value.anchoredAt : null,
+  };
 }
 
 /**
@@ -33,6 +74,11 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
   if (!runs.ok) {
     return [makeFailure(runs)];
   }
+  // #315: the freshness boundary is read before any conclusion
+  // evaluation — a truth run that wholly predates the anchor pends,
+  // whatever its conclusion says.
+  const { anchor, failure: anchorFailure } = await fetchAnchor(ctx);
+  if (anchorFailure) return [anchorFailure];
   // #269: diagnostic prose is the greppable surface — on a declared
   // GitLab origin the platform's CI is a GitLab pipeline, never GitHub
   // Actions, so the checks_missing fix is GitLab-shaped there.
@@ -50,6 +96,23 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
         missing.fix = 'Ensure the required GitLab CI pipeline runs on the MR head commit.';
       }
       failures.push(missing);
+      continue;
+    }
+    // #315: anchored freshness — the truth run must start at or after
+    // the evidence anchor. A run that finished before the delivery
+    // became reviewable is not acceptance evidence, so it pends
+    // (factual, transient) regardless of conclusion; a fresh run
+    // started after the anchor clears it.
+    if (anchor !== null && predatesAnchor(run, anchor)) {
+      const stale = makeFailure('checks_pending', {
+        name: requiredName,
+        startedAt: run.startedAt,
+        anchoredAt: anchor,
+      });
+      stale.message = `A required check's truth run predates the evidence anchor [check: ${requiredName}, started: ${run.startedAt ?? 'unknown'}, anchor: ${anchor}]`;
+      stale.fix =
+        'A finished run never becomes fresh by waiting: re-run the required check on the pull request head (re-running is safe and idempotent), then run "specgit accept" again.';
+      failures.push(stale);
       continue;
     }
     if (run.status !== 'completed') {

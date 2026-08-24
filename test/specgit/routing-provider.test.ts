@@ -38,6 +38,7 @@ describe('PlatformRoutingProvider (#117)', () => {
     await router.getOpenIssueNumbers(gitlabRef);
     await router.getPr(gitlabRef, 9);
     await router.getCheckRuns(gitlabRef, 'a'.repeat(40));
+    await router.getEvidenceAnchor(gitlabRef, 9);
     await router.createIssue(gitlabRef, 't', 'b');
     await router.createDraftPr(gitlabRef, 'head', 'main', 't', 'b');
     await router.listOpenPrsByHead(gitlabRef, 'head');
@@ -47,7 +48,7 @@ describe('PlatformRoutingProvider (#117)', () => {
     await router.enableRepoAutomerge(gitlabRef);
 
     // Every GitLab call reached the glab delegate…
-    expect(gitlab.calls.length).toBe(12);
+    expect(gitlab.calls.length).toBe(13);
     // …and NO group/subgroup ref ever reached the github delegate (#112).
     expect(github.calls).toEqual([]);
   });
@@ -89,6 +90,42 @@ describe('PlatformRoutingProvider (#117)', () => {
       ok: true,
       value: { number: 7, state: 'open', pullRequest: false },
     });
+  });
+
+  it('routes getEvidenceAnchor per platform and delegates its evidence unchanged (#315)', async () => {
+    // GitHub-shaped delegate enforces a boundary; GitLab-shaped delegate
+    // sets none — both flow through the dispatch untouched.
+    const github = new MockForgeProvider({
+      evidenceAnchor: { ok: true, value: { anchoredAt: '2026-08-23T10:52:06Z' } },
+    });
+    const gitlab = new MockForgeProvider();
+    const router = new PlatformRoutingProvider({
+      github,
+      gitlab: async () => gitlab,
+      originPlatform: async () => 'github',
+    });
+
+    const ghAnchor = await router.getEvidenceAnchor(githubRef, 317);
+    expect(ghAnchor).toEqual({ ok: true, value: { anchoredAt: '2026-08-23T10:52:06Z' } });
+
+    const glAnchor = await router.getEvidenceAnchor(gitlabRef, 9);
+    expect(glAnchor).toEqual({ ok: true, value: { anchoredAt: null } });
+
+    expect(github.calls).toEqual(['getEvidenceAnchor:acme/app#317']);
+    expect(gitlab.calls).toEqual(['getEvidenceAnchor:group/subgroup/app#9']);
+
+    // A failed anchor Evidence fails closed through the dispatch with
+    // the delegate's own code — never flattened, never swallowed.
+    const failing = new MockForgeProvider({
+      evidenceAnchor: { ok: false, code: 'gh_transport', message: 'down' },
+    });
+    const failingRouter = new PlatformRoutingProvider({
+      github: failing,
+      gitlab: async () => failing,
+      originPlatform: async () => 'github',
+    });
+    const failed = await failingRouter.getEvidenceAnchor(githubRef, 317);
+    expect(failed).toEqual({ ok: false, code: 'gh_transport', message: 'down' });
   });
 
   it('resolves the origin platform once across repo-less calls', async () => {

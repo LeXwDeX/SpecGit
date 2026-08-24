@@ -13,6 +13,7 @@ import type { RepoRef } from '../../../src/gitfacts/origin.js';
 import type {
   BranchProtectionFact,
   CheckRunInfo,
+  EvidenceAnchorFact,
   ForgeProvider,
   IssueCommentCreation,
   IssueCreation,
@@ -31,6 +32,13 @@ export interface MockForgeFixtures {
   defaultIssue?: (n: number) => Evidence<IssueFact>;
   pr?: Evidence<PrFact>;
   checkRuns?: Evidence<CheckRunInfo[]>;
+  /**
+   * Check-freshness anchor (#315). The default is the no-boundary fact
+   * (`anchoredAt: null`) so every fixture that predates #315 keeps its
+   * byte-identical verdict; gate tests inject a string to enforce the
+   * boundary or a failure to exercise the fail-closed path.
+   */
+  evidenceAnchor?: Evidence<EvidenceAnchorFact>;
   createIssue?: (title: string) => Evidence<IssueCreation>;
   createDraftPr?: (head: string) => Evidence<PrCreation>;
   listOpenPrsByHead?: Evidence<PrSummary[]>;
@@ -84,6 +92,14 @@ export class MockForgeProvider implements ForgeProvider {
   async getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>> {
     this.calls.push(`getCheckRuns:${formatRepo(repo)}@${sha}`);
     return this.fixtures.checkRuns ?? ok([]);
+  }
+
+  async getEvidenceAnchor(
+    repo: RepoRef,
+    pr: number | string
+  ): Promise<Evidence<EvidenceAnchorFact>> {
+    this.calls.push(`getEvidenceAnchor:${formatRepo(repo)}#${pr}`);
+    return this.fixtures.evidenceAnchor ?? ok({ anchoredAt: null });
   }
 
   async createIssue(repo: RepoRef, title: string): Promise<Evidence<IssueCreation>> {

@@ -23,6 +23,7 @@ import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
 import {
   checkRunsJson,
   createFakeGh,
+  emptyTimelineRule,
   git,
   greenGhRules,
   initPolicy,
@@ -182,6 +183,7 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
           mergedAt: '2026-01-02T03:04:05Z',
         }),
       },
+      emptyTimelineRule(),
       {
         match: `^api repos/${OWNER}/${REPO}/commits/[0-9a-f]+/check-runs`,
         stdout: checkRunsJson([{ name: REQUIRED_CHECK }]),

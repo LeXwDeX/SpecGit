@@ -194,10 +194,12 @@ One structural cause needs the **policy** repaired, not the workflow: a check fr
 
 ### `checks_pending` (exit 1 — transient)
 
-Check runs exist but haven't all completed. This is a **transient, retryable**
+Check runs exist but haven't all completed, or the provider's truth run predates
+the delivery's reviewable-transition anchor. This is a **transient, retryable**
 non-acceptance, not a defect: the evidence is complete and says "not yet".
-Wait for CI to finish, then re-run `specgit finish` — checks are re-read from
-the PR head, so no repair work is needed unless a check then *fails*.
+Wait for the fresh check generation to finish, then re-run `specgit finish` —
+checks and the anchor are re-read from the PR head, so no repair work is needed
+unless a check then *fails*.
 
 ### `checks_failed` (rejected)
 

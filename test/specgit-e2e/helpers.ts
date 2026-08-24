@@ -148,6 +148,13 @@ export function checkRunsJson(checks: CheckShape[]): string {
   });
 }
 
+export function emptyTimelineRule(owner = OWNER, repo = REPO): FakeGhRule {
+  return {
+    match: `^api repos/${owner}/${repo}/issues/[0-9]+/timeline`,
+    stdout: '[]',
+  };
+}
+
 /**
  * Builds the standard fake-`gh` rule table for a delivery that should pass
  * every evidence gate: authenticated CLI, every issue present, one PR whose
@@ -183,6 +190,8 @@ export function greenGhRules(options: {
       body: options.body,
     }),
   });
+
+  rules.push(emptyTimelineRule());
 
   rules.push({
     match: `^api repos/${OWNER}/${REPO}/commits/[0-9a-f]+/check-runs`,

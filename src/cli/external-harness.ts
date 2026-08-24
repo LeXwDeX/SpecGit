@@ -67,10 +67,16 @@ export function externalAcceptanceWorkflowYaml(input: ExternalHarnessInput): str
 on:
   pull_request:
     branches: [${input.defaultBranch}]
+    # A draft PR fails the verdict (pr_draft), so the draft→ready
+    # transition must re-verdict. Listing types replaces the defaults,
+    # so the default activity types are listed alongside.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 jobs:
   specgit-acceptance:
