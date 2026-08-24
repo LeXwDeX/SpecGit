@@ -435,7 +435,10 @@ describe('specgit init', () => {
     expect(envelope.detected.sources).toEqual(['.gitlab-ci.yml']);
   });
 
-  it('skips matrix placeholder job names and falls back to the job id', async () => {
+  // ---- #310: detection truthfulness — ambiguity is evidence, never a ----
+  // ---- guessed check-run name; exact display names are unique.        ----
+
+  it('a matrix placeholder name is never armed as a proven check-run name (#310)', async () => {
     const workflowsDir = path.join(root, '.github', 'workflows');
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(
@@ -452,9 +455,133 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    // The placeholder name never appears in real check-runs; the job id is
-    // the stable, checkable identity.
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['unit', 'Lint'] });
+    // The placeholder never appears in real check-runs, and the #39 job-id
+    // fallback is NOT the expanded check-run name either — neither is
+    // proven. The job stays out of the policy and is surfaced as ambiguous.
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Lint'] });
+    expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: unit']);
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'checks_name_ambiguous'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.message).toContain('unit');
+    expect(warning.fix).toContain('--required-check');
+  });
+
+  it('matrix fan-out and reusable-workflow jobs are ambiguous even with a literal name (#310)', async () => {
+    // GitHub expands a matrix into one check run per combination (the
+    // literal name is not the reported name), and a reusable call reports
+    // the CALLED job's name — neither literal is provable from this file.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  build:\n' +
+        '    name: Build\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '  legs:\n' +
+        '    name: Test\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '    strategy:\n' +
+        '      matrix:\n' +
+        '        os: [ubuntu-latest, macos-latest]\n' +
+        '  reuse:\n' +
+        '    uses: org/repo/.github/workflows/wf.yml@v1\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Build'] });
+    expect(envelope.detected.ambiguousJobs).toEqual([
+      '.github/workflows/ci.yml: legs',
+      '.github/workflows/ci.yml: reuse',
+    ]);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
+  });
+
+  it('a dynamic string-expression matrix is ambiguous even with a literal name (#310)', async () => {
+    // `matrix: ${{ fromJson(...) }}` fans out over values only the
+    // runtime expression decides — the expansion, and with it every
+    // reported check-run name, is unknowable from this file, so the
+    // literal name is not provable either.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  legs:\n' +
+        '    name: Test\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '    strategy:\n' +
+        '      matrix: ${{ fromJson(needs.gen.outputs.matrix) }}\n' +
+        '  lint:\n' +
+        '    name: Lint\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Lint'] });
+    expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: legs']);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
+  });
+
+  it('de-duplicates exact repeated display names across workflows (#310)', async () => {
+    // The dogfood shape: two aggregator jobs in different workflows share
+    // one display name. A wait list naming it twice is noise, not signal.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    for (const file of ['ci.yml', 'gate.yml']) {
+      fs.writeFileSync(
+        path.join(workflowsDir, file),
+        'name: CI\non: [pull_request]\njobs:\n' +
+          '  aggregate:\n' +
+          '    name: All checks passed\n' +
+          '    runs-on: ubuntu-latest\n' +
+          '  lint:\n' +
+          '    name: Lint\n' +
+          '    runs-on: ubuntu-latest\n'
+      );
+    }
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({
+      version: 1,
+      required_checks: ['All checks passed', 'Lint'],
+    });
+  });
+
+  it('a workflow whose jobs are all ambiguous yields the fail-closed zero-check policy (#310)', async () => {
+    // No proven name at all: the policy falls back to zero checks (#63 —
+    // the acceptance job is the gate) instead of guessing. The JSON/exit
+    // contract is untouched: exit 0, one document, the ambiguity warned.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  test_matrix:\n' +
+        '    name: Test (${{ matrix.label }})\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ version: 1, required_checks: [] });
+    expect(envelope.detected.fallback).toBe(true);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
   });
 
   it('ignores workflow_dispatch-only workflows', async () => {

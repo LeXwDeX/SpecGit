@@ -14,7 +14,7 @@ required_checks:
 
 - Any number of check names, matched exactly (byte-for-byte) against check runs reported to the PR head commit.
 - Change it like code: a PR that updates the policy and the branch-protection settings together.
-- An empty list is invalid — there is no "no required checks" mode. Fail-closed is not configurable.
+- The list may be empty — that is the no-CI policy: the generated SpecGit Acceptance job, enforced through branch protection, remains the gate. Empty does not disable acceptance; never invent a fallback check name to fill the list.
 
 Choosing names well is the real customization; the aggregator pattern in [GitHub Actions](actions.md) keeps names stable while CI evolves.
 

@@ -16,7 +16,7 @@ That aggregate is the team's unit of work and the unit of acceptance:
 `spec_git/policy.yaml` is committed on the default branch and reviewed like code:
 
 - Adding a required check (say, a new security scan) is a PR that changes the policy **and** the branch-protection settings together. After it merges, every delivery must pass the new check before acceptance.
-- Removing a required check is equally deliberate — SpecGit fails closed on an empty list, so nobody can silently turn acceptance into a no-op.
+- Removing the last required check is equally deliberate — an empty list is the no-CI policy, and the generated SpecGit Acceptance job, enforced through branch protection, remains the gate, so nobody can silently turn acceptance into a no-op.
 - See [GitHub Actions](actions.md) for the aggregator pattern that keeps this contract stable while CI internals change.
 
 ## A delivery's lifecycle

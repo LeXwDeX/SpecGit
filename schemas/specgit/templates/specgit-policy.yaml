@@ -10,6 +10,12 @@
 # policy — the SpecGit Acceptance job itself (never listed here, to avoid
 # wait-step self-deadlock) is then the gate; prefer naming the repository's
 # real checks whenever they exist.
+#
+# Upgrades (#310): a no-argument `specgit init --force` PRESERVES this list
+# (and the language) exactly — it rebuilds the versioned harness assets and
+# never lets auto-detection replace a working policy. The one intentional
+# replacement path is explicit: `specgit init --force --required-check <name>`
+# (repeatable), which fully replaces the list with the names given.
 
 version: 1
 required_checks:

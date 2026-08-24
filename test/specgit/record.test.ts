@@ -10,6 +10,7 @@ import {
   parseNumericRef,
 } from '../../src/record/schema.js';
 import { deleteRecord, readRecord, writeRecord } from '../../src/record/io.js';
+import { CODE_INFO } from '../../src/acceptance/codes.js';
 import { makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 describe('record io', () => {
@@ -115,6 +116,31 @@ describe('record io', () => {
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.code).toBe('record_missing');
+  });
+
+  // #313: the repair leads with the product's human story — `specgit
+  // issue` bootstraps issues, branch, and draft PR from a title alone.
+  // `specgit bind` may appear only after that primary path, described as
+  // the lower-level alias that writes or updates the record — it is not
+  // an equivalent bootstrap, so the false equivalence may not return.
+  it('carries the issue-first repair on record_missing (#313)', async () => {
+    const read = await readRecord(root);
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.code).toBe('record_missing');
+    const fix = read.fix ?? '';
+    expect(fix).toContain('specgit issue');
+    const issueAt = fix.indexOf('specgit issue');
+    const bindAt = fix.indexOf('specgit bind');
+    expect(bindAt === -1 || issueAt < bindAt).toBe(true);
+    // `bind` is described by what it does — record write/update from
+    // explicit inputs — never as "the same bootstrap".
+    expect(fix).not.toContain('same bootstrap');
+    expect(fix).toContain('delivery binding record');
+    expect(fix).toMatch(/writes or updates/i);
+    // One shared product repair also drives the diagnostic registry —
+    // the two sources cannot drift apart.
+    expect(fix).toBe(CODE_INFO.record_missing.fix);
   });
 
   it('fails closed with record_invalid on corrupt YAML', async () => {

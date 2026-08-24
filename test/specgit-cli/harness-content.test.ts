@@ -74,6 +74,49 @@ describe('injectManagedBlock: pure byte merge', () => {
     const injected = injectManagedBlock('# notes\n', block);
     expect(injectManagedBlock(injected, block)).toBe(injected);
   });
+
+  // ---- marker-order and stray-marker convergence: a damaged layout ----
+  // ---- (reversed markers, a stray marker, duplicated regions) must  ----
+  // ---- converge in ONE pass instead of growing on every re-run.     ----
+
+  it('converges reversed-order markers; user lines survive verbatim', () => {
+    const reversed = `# intro\n${BLOCK_END_MARKER}\nuser note\n${BLOCK_START_MARKER}\n`;
+    const once = injectManagedBlock(reversed, block);
+    // The user prose keeps its bytes; exactly one managed region remains.
+    expect(once).toContain('user note');
+    expect(once.split(BLOCK_START_MARKER).length - 1).toBe(1);
+    expect(once.split(BLOCK_END_MARKER).length - 1).toBe(1);
+    // The old behavior appended a second block on every run.
+    expect(injectManagedBlock(once, block)).toBe(once);
+  });
+
+  it('a stray start marker before a complete region converges without swallowing user bytes', () => {
+    const stray = `# notes\n${BLOCK_START_MARKER}\nuser line\n${BLOCK_START_MARKER}\nold body\n${BLOCK_END_MARKER}\ntail\n`;
+    const once = injectManagedBlock(stray, block);
+    // The stray marker line is consumed; the user line between it and the
+    // real region keeps its bytes and position.
+    expect(once).toContain('# notes\nuser line');
+    expect(once).toContain('user line\n' + BLOCK_START_MARKER);
+    expect(once.split(BLOCK_START_MARKER).length - 1).toBe(1);
+    expect(injectManagedBlock(once, block)).toBe(once);
+  });
+
+  it('a lone end marker is consumed and the file converges', () => {
+    const lone = `# notes\n${BLOCK_END_MARKER}\n`;
+    const once = injectManagedBlock(lone, block);
+    expect(once).toContain('# notes\n');
+    expect(once.split(BLOCK_END_MARKER).length - 1).toBe(1);
+    expect(injectManagedBlock(once, block)).toBe(once);
+  });
+
+  it('mid-line marker prose neither pairs nor is consumed', () => {
+    const prose = `discusses ${BLOCK_START_MARKER} inline and ${BLOCK_END_MARKER} too\n`;
+    const once = injectManagedBlock(prose, block);
+    // The inline mentions stay verbatim; the block is appended.
+    expect(once.startsWith(prose)).toBe(true);
+    expect(once.endsWith(`\n${block}\n`)).toBe(true);
+    expect(injectManagedBlock(once, block)).toBe(once);
+  });
 });
 
 describe('mergeGitPrePush: pure byte merge', () => {
@@ -90,6 +133,24 @@ describe('mergeGitPrePush: pure byte merge', () => {
     const merged = mergeGitPrePush(user);
     expect(merged.startsWith(user)).toBe(true);
     expect(mergeGitPrePush(merged)).toBe(merged);
+  });
+
+  it('converges reversed-order pre-push markers; user hook bytes survive', () => {
+    const reversed =
+      '#!/bin/sh\necho user-hook\n# <<< specgit:end <<<\nuser line\n# >>> specgit:start >>>\n';
+    const once = mergeGitPrePush(reversed);
+    expect(once).toContain('echo user-hook\nuser line');
+    expect(once.split('# >>> specgit:start >>>').length - 1).toBe(1);
+    expect(mergeGitPrePush(once)).toBe(once);
+  });
+
+  it('a stray start marker before a complete region converges without swallowing user bytes', () => {
+    const stray =
+      '#!/bin/sh\necho user-hook\n# >>> specgit:start >>>\nuser line\n# >>> specgit:start >>>\nguard body\n# <<< specgit:end <<<\n';
+    const once = mergeGitPrePush(stray);
+    expect(once).toContain('echo user-hook\nuser line');
+    expect(once.split('# >>> specgit:start >>>').length - 1).toBe(1);
+    expect(mergeGitPrePush(once)).toBe(once);
   });
 });
 

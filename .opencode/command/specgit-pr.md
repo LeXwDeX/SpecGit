@@ -2,6 +2,8 @@
 description: Repair the SpecGit PR binding — auto-discover by head branch or bind explicitly
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # /specgit-pr
 
 Thin trigger for PR-binding repair. The canonical behavior lives in the

@@ -7,6 +7,8 @@ metadata:
   author: specgit
 ---
 
+<!-- specgit-managed-entry-point -->
+
 # specgit-doctor
 
 The exit-3 diagnostic loop. Exit code 3 means no verdict was possible — the

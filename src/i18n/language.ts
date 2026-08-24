@@ -98,12 +98,25 @@ export interface HumanText {
   statusLiveBranch(branch: string): string;
   statusLiveBranchDetached(): string;
   statusUnbound(): string;
+  // status — generated-asset drift (#308); states/codes/paths/fix commands
+  // interpolate verbatim (machine contract, never localized)
+  statusAssetsCurrent(): string;
+  statusAssetsDrift(): string;
+  statusAssetsIncomplete(): string;
+  statusAssetSurface(surface: string, state: string, fix: string): string;
+  statusAssetEntry(state: string, path: string): string;
+  statusAssetUninspected(code: string): string;
+  statusAssetSkipped(code: string): string;
   // setup
   setupTool(tool: string): string;
   setupInstalled(): string;
+  setupRemovedAsset(path: string): string;
+  setupPreservedAsset(path: string): string;
   // init
   initCreatedPolicy(path: string): string;
   initIgnoredAssets(path: string): string;
+  /** #310: the upgrade run kept the existing policy's checks. */
+  initPreservedChecks(): string;
   initRequiredChecks(count: number): string;
   initCheck(name: string): string;
   initPlatformGithubDefault(): string;
@@ -114,6 +127,8 @@ export interface HumanText {
   initCreatedHook(hook: string): string;
   initGitHook(hook: string): string;
   initManagedRefreshed(filename: string): string;
+  initRemovedAsset(path: string): string;
+  initPreservedAsset(path: string): string;
   initProtectionRequired(branch: string, check: string): string;
   initAutomerge(enabled: boolean): string;
   // finish / accept
@@ -196,10 +211,23 @@ const EN_HUMAN: HumanText = {
   statusLiveBranchDetached: () => 'Live branch: (detached)',
   statusUnbound: () =>
     'Not bound: no delivery record (.specgit.yaml) exists yet — the normal pre-binding state. Run "specgit issue" to start a delivery.',
+  statusAssetsCurrent: () =>
+    'Generated assets: current — every desired init/setup output is proven current, absent, or intentionally skipped for this CLI version.',
+  statusAssetsDrift: () => 'Generated assets: drift detected — run each surface\'s exact fix:',
+  statusAssetsIncomplete: () =>
+    'Generated assets: incomplete — parts of the desired state could not be proven, so no current claim is made:',
+  statusAssetSurface: (surface, state, fix) => `  ${surface}: ${state} — fix: ${fix}`,
+  statusAssetEntry: (state, path) => `    ${state} ${path}`,
+  statusAssetUninspected: (code) => `  not inspected (${code})`,
+  statusAssetSkipped: (code) => `  not applicable (${code}) — a proven opt-out, not drift`,
   setupTool: (tool) => `Tool: ${tool}`,
   setupInstalled: () => 'Installed entry points:',
+  setupRemovedAsset: (path) => `Removed retired SpecGit entry point ${path}`,
+  setupPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initCreatedPolicy: (path) => `Created ${path}`,
   initIgnoredAssets: (path) => `Added local delivery assets to ${path} (untracked model; --no-ignore to keep them committed)`,
+  initPreservedChecks: () =>
+    'Preserved the required checks from the existing policy (pass --required-check to replace them)',
   initRequiredChecks: (count) => `Required checks (${count}):`,
   initCheck: (name) => `  - ${name}`,
   initPlatformGithubDefault: () => 'Platform: github (default from origin)',
@@ -210,6 +238,8 @@ const EN_HUMAN: HumanText = {
   initCreatedHook: (hook) => `Created ${hook}`,
   initGitHook: (hook) => `Installed git pre-push guard (${hook})`,
   initManagedRefreshed: (filename) => `Managed block refreshed in ${filename}`,
+  initRemovedAsset: (path) => `Removed obsolete SpecGit asset ${path}`,
+  initPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initProtectionRequired: (branch, check) =>
     `Branch protection: ${branch} now requires "${check}"`,
   initAutomerge: (enabled) => `Auto-merge: ${enabled ? 'enabled' : 'already on'}`,
@@ -253,10 +283,22 @@ const ZH_HUMAN: HumanText = {
   statusLiveBranchDetached: () => '当前分支：（分离头指针）',
   statusUnbound: () =>
     '尚未绑定：还没有交付记录（.specgit.yaml）——这是引导前的正常状态。运行 "specgit issue" 开始交付。',
+  statusAssetsCurrent: () =>
+    '生成资产：均为最新——所有期望的 init/setup 产物均被证实与当前 CLI 版本一致、未安装或有意跳过。',
+  statusAssetsDrift: () => '生成资产：检测到漂移——请逐面执行精确修复命令：',
+  statusAssetsIncomplete: () =>
+    '生成资产：检查不完整——部分期望状态无法证明，因此不作"均为最新"的结论：',
+  statusAssetSurface: (surface, state, fix) => `  ${surface}：${state} — 修复：${fix}`,
+  statusAssetEntry: (state, path) => `    ${state} ${path}`,
+  statusAssetUninspected: (code) => `  未检查（${code}）`,
+  statusAssetSkipped: (code) => `  不适用（${code}）——已证实的主动退出，并非漂移`,
   setupTool: (tool) => `工具：${tool}`,
   setupInstalled: () => '已安装入口：',
+  setupRemovedAsset: (path) => `已移除已退役的 SpecGit 入口 ${path}`,
+  setupPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initCreatedPolicy: (path) => `已创建 ${path}`,
   initIgnoredAssets: (path) => `已将本地交付资产加入 ${path} 屏蔽（未跟踪模式；如需保持提交请用 --no-ignore）`,
+  initPreservedChecks: () => '已保留现有策略中的必需检查（如需替换请显式传入 --required-check）',
   initRequiredChecks: (count) => `必需检查（${count}）：`,
   initCheck: (name) => `  - ${name}`,
   initPlatformGithubDefault: () => '平台：github（默认来自 origin）',
@@ -267,6 +309,8 @@ const ZH_HUMAN: HumanText = {
   initCreatedHook: (hook) => `已创建 ${hook}`,
   initGitHook: (hook) => `已安装 git pre-push 守卫（${hook}）`,
   initManagedRefreshed: (filename) => `已在 ${filename} 中刷新托管块`,
+  initRemovedAsset: (path) => `已移除过时的 SpecGit 资产 ${path}`,
+  initPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initProtectionRequired: (branch, check) => `分支保护：${branch} 现在要求 "${check}"`,
   initAutomerge: (enabled) => `自动合并：${enabled ? '已启用' : '已开启'}`,
   finishAccepted: (delivery, pr) =>

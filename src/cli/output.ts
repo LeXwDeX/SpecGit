@@ -139,6 +139,13 @@ export interface InitOutcome extends OutcomeBase {
   detected?: Record<string, unknown>;
   /** #292: the managed .gitignore block for the local delivery assets (absent with --no-ignore). */
   ignore?: { path: string; entries: string[]; created: boolean };
+  /**
+   * #305: what the managed-asset reconciliation transaction did to converge
+   * the repository to this version's desired init-owned asset set —
+   * created/updated/removed asset paths, plus removal candidates preserved
+   * because SpecGit ownership could not be proven.
+   */
+  reconciled?: { created: string[]; updated: string[]; removed: string[]; preserved: string[] };
 }
 
 export type CommandOutcome =
@@ -180,6 +187,7 @@ export function buildEnvelope(
   if ('protection' in outcome) optional.push(['protection', outcome.protection]);
   if ('platform' in outcome) optional.push(['platform', outcome.platform]);
   if ('harness' in outcome) optional.push(['harness', outcome.harness]);
+  if ('reconciled' in outcome) optional.push(['reconciled', outcome.reconciled]);
   if ('ignore' in outcome) optional.push(['ignore', outcome.ignore]);
   if ('assets' in outcome) optional.push(['assets', outcome.assets]);
   for (const [key, value] of optional) {

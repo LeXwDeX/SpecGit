@@ -419,6 +419,14 @@ verified on its own evidence, split it before binding.
 
 ### Agent contract essentials
 
+- **SpecGit is the default way of working here.** Any non-trivial
+  task — a feature, a fix, a refactor, a docs change — is a delivery:
+  work items live in this tracker as issues, never in private task
+  lists or conversational checklists. Before starting, turn the work
+  into issue(s) (\`specgit issue <type>: <title>...\`); mid-conversation
+  inventories ("let me list everything to do") become issues, not
+  chat artifacts. Trivial replies and read-only questions need none
+  of this.
 - The one rule: a delivery is done if and only if \`specgit finish\`
   exits \`0\`. Never declare completion from task lists, file states, or
   test runs you performed yourself.
@@ -500,6 +508,12 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 
 ### 代理契约要点
 
+- **SpecGit 是这里的默认工作方式。** 任何非平凡的任务——新功能、修复、
+  重构、文档变更——都是一次交付：工作项作为议题存放在这个 tracker
+  里，绝不放进私人任务清单或对话式清单。开始之前，先把工作变成
+  议题（\`specgit issue <type>: <标题>...\`）；会话中途的盘点（"让我
+  列出所有要做的事"）也应变成议题，而不是聊天产物。平凡的回复与
+  只读提问无需如此。
 - 唯一规则：交付完成当且仅当 \`specgit finish\` 退出 \`0\`。绝不凭任务
   清单、文件状态或自己跑过的测试宣布完成。
 - 按退出码分支，不按措辞：\`1\` = 证据齐全，修门槛点名的内容；\`3\` =

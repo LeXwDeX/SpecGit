@@ -65,8 +65,9 @@ the brief is approved, do not push decisions upward again.
 ## Pre-merge quality loop
 
 Between the local gates going green and the merge, the change runs the
-quality loop — fast REVIEW+FIX rounds, then one full two-axis code
-review over the whole diff, capped and fail-closed. Binding spec:
+quality loop — its **clean** definition (four criteria), two-axis
+review with the harness-first principle, capped rounds, and the
+cap-breach escalation brief are binding:
 [quality-loop.md](quality-loop.md).
 
 ## Machine verdict

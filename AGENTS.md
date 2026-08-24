@@ -158,6 +158,14 @@ verified on its own evidence, split it before binding.
 
 ### Agent contract essentials
 
+- **SpecGit is the default way of working here.** Any non-trivial
+  task — a feature, a fix, a refactor, a docs change — is a delivery:
+  work items live in this tracker as issues, never in private task
+  lists or conversational checklists. Before starting, turn the work
+  into issue(s) (`specgit issue <type>: <title>...`); mid-conversation
+  inventories ("let me list everything to do") become issues, not
+  chat artifacts. Trivial replies and read-only questions need none
+  of this.
 - The one rule: a delivery is done if and only if `specgit finish`
   exits `0`. Never declare completion from task lists, file states, or
   test runs you performed yourself.

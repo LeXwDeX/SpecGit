@@ -375,6 +375,38 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     expect(parseClosingRefs(en).size).toBe(0);
   });
 
+  it('both languages make non-trivial mutations issue-first, with trivial and read-only work exempt (#309)', () => {
+    const en = managedPromptBlock('en');
+    const zh = managedPromptBlock('zh');
+    // The rule lands in each language's agent-contract essentials.
+    expect(en).toContain('### Agent contract essentials');
+    expect(zh).toContain('### 代理契约要点');
+    // Non-trivial mutations become tracker issues via the real command
+    // grammar before development starts…
+    expect(en).toContain('a feature, a fix, a refactor, a docs change');
+    expect(zh).toContain('任何非平凡的任务');
+    expect(zh).toContain('文档变更');
+    for (const block of [en, zh]) {
+      expect(block).toContain('specgit issue <type>:');
+      // …and the pre-existing duplicate-search and one-WHY contracts
+      // stay intact next to the new rule.
+      expect(block).toContain('gh issue list');
+      expect(block).toContain('gh issue view');
+    }
+    expect(en).toContain('one line of work per WHY');
+    expect(zh).toContain('一个 WHY 只走一条工作线');
+    // Chat/private checklists are named as where work must NOT live…
+    expect(en).toContain('as issues, never in private task');
+    expect(en).toContain('conversational checklists');
+    expect(zh).toContain('私人任务清单');
+    // …and the trivial/read-only exemption is explicit.
+    expect(en).toContain('Trivial replies and read-only questions');
+    expect(zh).toContain('只读提问无需如此');
+    // The rule is prose: it introduces no closing references.
+    expect(parseClosingRefs(en).size).toBe(0);
+    expect(parseClosingRefs(zh).size).toBe(0);
+  });
+
   it('the zh block names the never-localized diagnostic surface, the en block stays byte-stable (#183)', () => {
     const zh = managedPromptBlock('zh');
     const en = managedPromptBlock('en');
