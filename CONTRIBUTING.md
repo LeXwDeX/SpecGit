@@ -3,6 +3,17 @@
 Thanks for helping build SpecGit. This repository runs on its own product:
 every change is a delivery bound to issues and judged by evidence.
 
+```text
+  specgit issue "<type>: <title>"   bootstrap this change as a delivery
+        |                           (issues + branch + draft PR + record)
+        v
+  TDD slices, commit, push --> CI (quality loop: REVIEW -> DEBUG -> FIX)
+        |
+        v
+  gh pr ready <n> -> specgit finish --exit 0--> merge -> release
+        '-- exit 1/3 -> fix what the verdict names; never weaken the gate
+```
+
 ## Getting set up
 
 - **Prerequisites:** Node.js ≥ 20.19, `pnpm` (the only package manager), `git`,
@@ -69,9 +80,11 @@ Two directories share the word "github" and each has exactly one role:
 
 - **`src/github/`** is the canonical home of the platform-neutral provider
   port — `port.ts` defines `ForgeProvider` (#169) and its member inventory.
-  Its only other files, `gh-cli.ts` and `protection-merge.ts`, are
-  `@deprecated` alias modules that re-export the canonical GitHub adapter;
-  they never contain implementation.
+  Its other files: `pr-scaffold.ts` and `closing-refs.ts` are real
+  implementations (the draft-PR scaffold renderer, #87/#118, and the
+  closing-reference grammar, #115); `gh-cli.ts` and `protection-merge.ts`
+  are `@deprecated` alias modules that re-export the canonical GitHub
+  adapter and never contain implementation.
 - **`src/providers/github/`** is the canonical home of the GitHub adapter
   (`GhCliGitHubProvider`, #113), beside the glab adapter under
   `src/providers/gitlab/` and the shared transport `cli-spawn.ts`.

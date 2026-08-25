@@ -2,6 +2,29 @@
 
 The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `setup` installs agent entry points; `bind`/`unbind`/`accept` are machine aliases for scripts. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
 
+The delivery flow at a glance:
+
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## Command summary
 
 | Command | Purpose | Network | Exit codes |
@@ -42,7 +65,7 @@ The distinction between `1` and `3` is contractual: `1` means the evidence was g
 | Variable | Meaning |
 | --- | --- |
 | `SPECGIT_GH` | Path to the `gh` executable used for all GitHub evidence. Resolved per invocation; defaults to `gh` on `PATH`. Useful for testing against a scripted `gh`. |
-| `SPECGIT_GH_TIMEOUT_MS` | Per-call timeout for `gh` invocations, in milliseconds. Defaults to `15000` (15 s). Raise it on slow networks; the timeout is what turns a hung call into `gh_transport` (exit 3). |
+| `SPECGIT_GH_TIMEOUT_MS` | Per-call timeout for `gh` invocations, in milliseconds. Defaults to `15000` (15 s). Raise it on slow networks; a hung call killed at the budget is `gh_timeout` (exit 3, with attributed causes). |
 | `SPECGIT_GLAB` | Path to the `glab` executable used by the GitLab provider adapter (#114). Resolved per invocation; defaults to `glab` on `PATH`. Useful for testing against a scripted `glab`. |
 | `SPECGIT_GLAB_TIMEOUT_MS` | Per-call timeout for `glab` invocations, in milliseconds. Defaults to `15000` (15 s). A timeout is `glab_transport` (exit 3). |
 

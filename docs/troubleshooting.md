@@ -2,6 +2,27 @@
 
 Concrete fixes for concrete problems. Most entries correspond to a diagnostic code — run with `--json` to see codes directly. If `specgit finish` exited `3`, fix the environment entries first; if it exited `1`, jump to the gate it named.
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## Environment and setup
 
 ### `not_a_git_repo` (exit 3)
@@ -48,41 +69,67 @@ attributes the three likely causes in order:
    `SPECGIT_GH_TIMEOUT_MS=60000 specgit issue ...` (milliseconds; applies to
    every `gh` invocation SpecGit spawns).
 
+### `glab_missing` (exit 3)
+
+The origin is a declared self-managed GitLab host, but the `glab` CLI is not installed or not on `PATH`. Install `glab` (**≥ 1.113.0**) and authenticate for that host:
+
+```bash
+glab auth login --hostname <host>
+glab auth status --hostname <host>
+```
+
+### `glab_unauthenticated` (exit 3)
+
+`glab` is installed but has no session for the declared host. Glab authenticates per host — sign in for exactly the host named in `spec_git/providers.yaml`:
+
+```bash
+glab auth login --hostname <host>
+```
+
+SpecGit never reads or prints tokens — it relies entirely on your `glab` session.
+
+### `glab_transport` (exit 3)
+
+`glab` reached the GitLab instance but the call failed (network, rate limit, server error, or the per-call timeout). Retry; if it persists, run the same call by hand to see the server's message. On a slow network raise the per-call budget with `SPECGIT_GLAB_TIMEOUT_MS` (milliseconds; default `15000`). A call that exceeds the budget is killed and lands here too, carrying an attributed fix that names the three likely causes in order: network reachability of the host, a GitLab incident, a genuinely slow call.
+
 ### `no_origin` / `origin_unresolvable`
 
-The repository has no `origin` remote, or it does not parse to a GitHub repository. Only `github.com` remotes resolve (HTTPS, SCP-style SSH, or `ssh://`), each also with its scheme-default port spelled out (`https://github.com:443/…`, `ssh://git@github.com:22/…`). Any other explicit port fails closed unless the GitLab declaration names it (next entry). Check:
+The repository has no `origin` remote, or it does not parse to a GitHub repository. Only `github.com` remotes resolve on the GitHub route (HTTPS, SCP-style SSH, or `ssh://`), each also with its scheme-default port spelled out (`https://github.com:443/…`, `ssh://git@github.com:22/…`). Any other explicit port fails closed unless the GitLab declaration names it (next entry). Check:
 
 ```
 git remote get-url origin
 ```
 
-Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); non-GitHub hosts are unsupported in this version — for a GitLab repository, declare the host (next entry) to get the dedicated diagnostic.
+Fix the remote (`git remote set-url origin https://github.com/<owner>/<repo>.git`); a self-managed GitLab repository becomes resolvable once its host is declared (next entry) and its evidence then flows through `glab`.
 
 ### `gitlab_unsupported` (exit 1)
 
-The origin points at a GitLab repository — `gitlab.com`, a selfhosted host
-declared in `spec_git/providers.yaml` (created by `specgit init
---gitlab-host <hostname>` — or `<hostname>:<port>` when the instance uses a
-non-default port — or the interactive platform question), or a
-`*gitlab*` host — including **nested-group** paths (`group/subgroup/project`,
-any depth ≥ 2), which are recognized and reported with this code rather than
-misdiagnosed as `origin_unresolvable` (#95). The classification is decisive:
-the origin evidence is complete and says the platform is GitLab, so the
-verdict is rejected with exit 1 (the same factual class as
-`origin_unresolvable` — the dedicated code names the actual gap instead of
-GitHub-pointing advice). GitLab evidence requires `glab`
-support, which is not implemented yet — see the
-[GitLab support roadmap](gitlab-support.md). The planned support range is
-precise: self-managed **GitLab CE/Free `>= 19.2.4 < 19.4.0`** is the
-verified window — a version outside it warns (`gitlab_version_unverified`)
-while evaluation proceeds against the live APIs, and real API failures
-still fail closed (exit 3) — GitLab.com
-via capability probing, and **glab ≥ 1.113.0**; every claim is pinned in the
-[evidence ledger](evidence/gitlab-19.2.md). The declaration is honored
-diagnostically: matching origins fail with this dedicated code instead of the
-generic `origin_unresolvable`, and `specgit init --json` / `specgit doctor`
-report the platform and `glab` presence. Point origin at a github.com
-repository to use SpecGit today.
+The origin points at a GitLab host that is **not declared** — `gitlab.com`, a
+`*gitlab*` host with no entry in `spec_git/providers.yaml`, or a path outside
+the declared grammar. The classification is decisive: the origin evidence is
+complete and says the platform is GitLab, so the verdict is rejected with exit 1
+(the same factual class as `origin_unresolvable` — the dedicated code names the
+actual platform gap instead of guessing).
+
+A **declared** self-managed GitLab origin needs no workaround — full support
+shipped with the glab adapter (#114) and per-platform routing (#117): every gate
+evaluates through the authenticated `glab` CLI. To adopt one:
+
+1. Declare the host: `specgit init --force --gitlab-host <hostname>` (or
+   `<hostname>:<port>` for a non-default port; the upgrade run preserves your
+   existing checks, #310).
+2. Install `glab` ≥ 1.113.0 and authenticate for that host (entries above).
+3. Mind the verified window: self-managed **GitLab CE/Free
+   `>= 19.2.4 < 19.4.0`**; a version outside it warns
+   (`gitlab_version_unverified`) while evaluation proceeds against the live
+   APIs, and real API failures still fail closed (exit 3). Every claim is
+   pinned in the [evidence ledger](evidence/gitlab-19.2.md) — see
+   [GitLab support](gitlab-support.md).
+
+Alternatively point origin at a github.com repository. Nested-group paths
+(`group/subgroup/project`, any depth ≥ 2) resolve on declared hosts (#112);
+an undeclared `*gitlab*` host never resolves — the substring heuristic is
+deliberately not a guess.
 
 ## Record and policy
 

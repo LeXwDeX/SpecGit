@@ -2,6 +2,27 @@
 
 This guide explains the core ideas behind SpecGit and how they fit together. For practical usage see [Getting Started](getting-started.md); for the one-screen version see [Overview](overview.md).
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## Philosophy
 
 ```text
@@ -39,32 +60,34 @@ The execution context is **resolved from live git at evaluation time** — never
 
 If HEAD is detached, the live branch disagrees with the record, or the worktree label does not resolve to the record's branch, context gates fail with precise codes. There is no "trust me" mode.
 
-## The two files
+## The authoritative files
 
 ```text
 repo root/
 ├── spec_git/
-│   └── policy.yaml      # required_checks — shared by every delivery
-└── .specgit.yaml        # this delivery's binding — committed on the delivery branch
+│   ├── policy.yaml       # required_checks — shared by every delivery
+│   └── providers.yaml    # optional — a declared self-managed GitLab host
+└── .specgit.yaml         # this delivery's binding — committed on the delivery branch
 ```
 
 - **Policy** (`spec_git/policy.yaml`): the project-level contract — the list of CI check names every delivery must pass. An empty list is the no-CI policy: the generated acceptance job remains the gate. Created by `specgit init`, versioned like code.
+- **Declaration** (`spec_git/providers.yaml`, optional): present only when `init --gitlab-host` declared the origin as self-managed GitLab; committed so the team shares it.
 - **Record** (`.specgit.yaml`): the delivery-level binding. Written by `specgit issue` (script alias: `bind`), removed by `specgit unbind`. Unknown keys are preserved on rewrite so other tools can coexist in the file.
 
-No other state exists. No artifact directories, no caches, no global stores. Root discovery is `git rev-parse --show-toplevel` — SpecGit runs only inside a git repository, at its root.
+No other *authoritative* state exists — no artifact directories, no caches, no global stores. Around these files `init`/`setup` generate derived assets (the acceptance workflow, the managed AGENTS/CLAUDE blocks, guard hooks, agent entry points): regenerated to the running version, never hand-configured. Root discovery is `git rev-parse --show-toplevel` — SpecGit runs only inside a git repository, at its root.
 
 ## Acceptance is derived, never stored
 
 Delivery states — `unbound`, `draft`, `bound`, `accepted`, `rejected`, `unknown` — are **computed on every invocation**. Nothing is persisted, so a state can never drift from reality.
 
-Evaluation runs eleven gates in order, from cheapest local facts to live GitHub evidence:
+Evaluation runs eleven gates in order, from cheapest local facts to live forge evidence:
 
 1. Record present and valid
 2. Policy present and valid
 3. Completeness (≥1 issue, exactly 1 PR)
 4. Context matches live git
-5. Origin resolves to a GitHub repository
-6. GitHub provider reachable and authenticated
+5. Origin resolves to a repository on the declared platform (`github.com`, or a declared self-managed GitLab)
+6. Platform provider reachable and authenticated (`gh`, or `glab` on a declared GitLab origin)
 7. Issues exist (and are issues, not PRs)
 8. Sequence — when `ordered_issues` is on, no open issue with a smaller number precedes this delivery
 9. PR exists, open or merged, head matches the context branch, same repository
@@ -87,5 +110,5 @@ Consequences worth knowing:
 
 - Not a spec framework: there are no proposal, spec, design, or task artifacts.
 - Not a git wrapper: it reads git facts; it never rewrites history or touches your branches.
-- Not an issue tracker or CI system: it verifies against GitHub and your existing Actions.
-- Not a plugin platform: `init` creates only the policy. No slash commands, instructions, or tool configuration are generated.
+- Not an issue tracker or CI system: it verifies against your forge (GitHub or GitLab) and your existing CI.
+- Not a plugin platform: no third-party plugins or extension points. `init` generates the fixed harness (acceptance workflow, managed AGENTS/CLAUDE block, guard hooks) and `setup` installs fixed agent entry points — all of them regenerated artifacts, none configurable surfaces.

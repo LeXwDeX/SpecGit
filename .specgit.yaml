@@ -1,8 +1,8 @@
 version: 1
-delivery: pin-the-mark
+delivery: reconcile-doc-drift
 context:
   kind: branch
-  branch: docs/326-pin-the-mark
+  branch: docs/328-reconcile-doc-drift
 issues:
-  - 326
-pr: 327
+  - 328
+pr: 329

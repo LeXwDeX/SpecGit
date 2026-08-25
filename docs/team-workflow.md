@@ -2,12 +2,33 @@
 
 Everything else in these docs works identically for one person or twenty. What changes on a team is coordination: whose policy is authoritative, how a delivery maps onto branches and PRs, and what review actually reviews.
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## One delivery = one branch (or worktree) + N issues + one PR + required checks
 
 That aggregate is the team's unit of work and the unit of acceptance:
 
 - **Branch or worktree.** The delivery happens on one branch; parallel checkouts (worktrees) on that branch are equivalent. No delivery ever spans branches.
-- **Issues.** Everything the delivery is "for" is a GitHub issue number in the record — one or many. The issues carry intent and scope; SpecGit only verifies they exist and are closed by the PR.
+- **Issues.** Everything the delivery is "for" is an issue number in the record — one or many (GitHub issues, or GitLab issues on a declared GitLab origin). The issues carry intent and scope; SpecGit only verifies they exist and are closed by the PR.
 - **One PR.** The delivery merges through exactly one pull request. Its body's closing references are the contractual link back to the issues.
 - **Required checks.** The policy is the shared definition of "CI passed" — one list of check names, enforced by branch protection and by SpecGit identically.
 
