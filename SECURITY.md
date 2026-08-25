@@ -12,7 +12,7 @@ Fixes ship in the latest published version on npm. Older versions are not patche
 
 ## Threat model
 
-SpecGit is a local command-line tool. It has no server, no network listener, and no privileged daemon. It reads git state from the repository you run it in and talks to GitHub exclusively through the authenticated `gh` CLI — no direct REST client, and no tokens are stored or logged by SpecGit.
+SpecGit is a local command-line tool. It has no server, no network listener, and no privileged daemon. It reads git state from the repository you run it in and talks to the forge APIs exclusively through your existing authenticated CLI sessions — `gh` for GitHub, `glab` for a declared self-managed GitLab host. No direct REST client, and no tokens are stored or logged by SpecGit.
 
 That shapes what is and isn't a vulnerability here:
 
@@ -21,7 +21,7 @@ That shapes what is and isn't a vulnerability here:
 | Code execution triggered by parsing git, PR, or CI evidence | Reading or writing a file path you passed to the CLI yourself |
 | Escaping the repository SpecGit was pointed at, via untrusted input | Static-analysis findings on file-path joins with no untrusted input |
 | Leaking credentials or file contents through logs or output | Vulnerabilities in devDependencies that don't ship in the published package |
-| Injection into the `git`/`gh` command lines SpecGit builds | Denial of service against your own machine using your own input |
+| Injection into the `git`/`gh`/`glab` command lines SpecGit builds | Denial of service against your own machine using your own input |
 
 If you think something sits on the boundary, report it and we'll work it out together.
 

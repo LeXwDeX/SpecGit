@@ -2,10 +2,33 @@
 
 Welcome. This is the home for everything SpecGit.
 
-SpecGit binds each delivery to real, checkable evidence: **a git branch or worktree, one or more GitHub issues, one pull request, and required CI checks.** Acceptance is derived from live git, PR, and check evidence — never from spec artifacts, task checklists, or self-declared completion.
+SpecGit binds each delivery to real, checkable evidence: **a git branch or worktree, one or more forge issues (GitHub or GitLab), one pull request/merge request, and required CI checks.** Acceptance is derived from live git, PR, and check evidence — never from spec artifacts, task checklists, or self-declared completion.
 
 ```text
 delivery + execution context + issues[] + PR + required checks = accepted
+```
+
+The delivery flow at a glance:
+
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
 ```
 
 If you read nothing else, read these two pages:

@@ -2,6 +2,27 @@
 
 SpecGit keeps the surface deliberately small. There are exactly three things to configure, all in committed files; everything else is fixed by the model.
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## 1. Required checks — the policy
 
 `spec_git/policy.yaml` is the only project-level setting:
@@ -23,13 +44,13 @@ Choosing names well is the real customization; the aggregator pattern in [GitHub
 `.specgit.yaml` is yours to shape per delivery within the schema:
 
 - **Delivery ids** — any kebab-case id your team likes (`add-login-flow`, `fix-124-cache-race`). Set once at first bind.
-- **Issues** — bind as many GitHub issue numbers as the delivery closes; merge more in later with repeated `--issue`.
+- **Issues** — bind as many forge issue numbers as the delivery closes; merge more in later with repeated `--issue`.
 - **Context** — branch or worktree. Worktree labels are the checkout basenames, so teams that standardize worktree naming (`<issue>-<slug>`) get portable, self-describing labels for free.
 - **Extra keys** — the writer preserves unknown keys on rewrite, so you can co-locate your own metadata in the file without breaking SpecGit. Unknown keys are ignored at evaluation.
 
-## 3. Nothing is generated — and that's the setting
+## 3. Everything is generated — and that's the setting
 
-`specgit init` creates the policy and generates the delivery harness — the acceptance workflow and the managed prompt block in `AGENTS.md`/`CLAUDE.md` (rewritten between the `specgit:block` markers on re-init). There are no per-tool instruction variants, slash commands, skill generators, schema registries, or plugin hooks to configure. AI-agent integration is the [managed agent block](supported-tools.md) and the [agent contract](agent-contract.md): run the CLI, read the JSON, trust the verdict.
+`specgit init` creates the policy and generates the delivery harness — the acceptance workflow and the managed prompt block in `AGENTS.md`/`CLAUDE.md` (rewritten between the `specgit:block` markers on re-init); `specgit setup` installs fixed agent entry points (commands for opencode, portable skills elsewhere). None of it takes configuration: no per-tool instruction variants, skill generators, schema registries, or plugin hooks — every generated asset converges to the running version when its writer re-runs. AI-agent integration is the [managed agent block](supported-tools.md) and the [agent contract](agent-contract.md): run the CLI, read the JSON, trust the verdict.
 
 ## Deliberately not customizable
 
@@ -38,7 +59,7 @@ Choosing names well is the real customization; the aggregator pattern in [GitHub
 | Record at repo root, policy under `spec_git/` | One discoverable location per repository; no stores, no ancestor walking. |
 | Context resolved from live git | The verdict must reflect where you actually are; flags cannot override git. |
 | Checks evaluated at the PR head commit | Acceptance is about what will merge, not your local tree. |
-| GitHub issues only, `github.com` origins only | Evidence must be machine-verifiable through one provider seam. |
+| One declared platform per delivery — `github.com`, or a self-managed GitLab declared with `init --gitlab-host` | Evidence must be machine-verifiable through one provider seam, routed per platform (`gh`/`glab`). |
 | Fail-closed verdicts | `unknown` rather than `accepted` whenever evidence is missing. |
 
 If a rule in the right column is in your way, that's a design conversation, not a configuration knob.

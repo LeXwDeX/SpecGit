@@ -2,6 +2,27 @@
 
 You can adopt SpecGit in a repository with years of history in about five minutes, and you never have to touch the past. SpecGit adds a small, well-bounded footprint — two authoritative files, a derived harness, and local hook wiring — and reads everything else from the git and forge accounts you already have.
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## Adopt in four steps
 
 ### 1. Inventory the CI you already trust
@@ -27,7 +48,7 @@ Open the PR and merge it. The acceptance workflow's first run on this PR reports
 
 **Then, after that merge**, set the acceptance check as a required status check in branch protection (`specgit init --force --protect`, or Settings → Branches without weakening existing rules). Ordering matters: while the check is required, no PR can merge without a passing verdict — so requiring it before the adoption PR merges would lock it out (`record_missing` can never pass). This is the one place where "protect first" is wrong: protect after the adoption merge, not before, and the GitHub-side and SpecGit-side contracts never disagree.
 
-One more #292 note for the recipe above: with the default local-asset shielding, the plain `git add spec_git` line silently misses the ignored policy — use `git add -f spec_git/policy.yaml .github/workflows/specgit-accept.yml AGENTS.md CLAUDE.md` (or run `specgit init --no-ignore`), so the adoption PR really carries the policy its own wait step reads.
+One more #292 note for the recipe above: with the default local-asset shielding, the plain `git add spec_git` line silently misses the ignored policy — use `git add -f spec_git/policy.yaml .github/workflows/specgit-accept.yml AGENTS.md` (plus `CLAUDE.md` when it exists; or run `specgit init --no-ignore`), so the adoption PR really carries the policy its own wait step reads.
 
 ### 3. Verify the environment
 
@@ -88,7 +109,7 @@ Commit the PR, merge, done. Nothing else remains: no stores, no caches, no globa
 
 **Our CI is not GitHub Actions.** Fine — SpecGit matches check-run names, not their source. Any CI system that reports check runs (or status checks surfaced as check runs) to the PR head works; the naming guidance in [GitHub Actions](actions.md) still applies to choosing names.
 
-**GitHub Enterprise / non-github.com hosts?** Not supported in v1 — the scope is GitHub.com plus declared self-managed GitLab (see the [GitLab support](gitlab-support.md) ledger). Only `github.com` origins resolve on the GitHub route; a GitLab host declared in `spec_git/providers.yaml` routes through glab (#117). An undeclared `gitlab.com`/`*gitlab*` host fails closed with the dedicated `gitlab_unsupported`, anything else with `origin_unresolvable`.
+**GitHub Enterprise / non-github.com hosts?** GitHub Enterprise is declaration-and-diagnostics only (a v1 evidence non-goal) — the supported scope is GitHub.com plus declared self-managed GitLab (see the [GitLab support](gitlab-support.md) ledger). Only `github.com` origins resolve on the GitHub route; a GitLab host declared in `spec_git/providers.yaml` routes through glab (#117). An undeclared `gitlab.com`/`*gitlab*` host fails closed with the dedicated `gitlab_unsupported`, anything else with `origin_unresolvable`.
 
 **We track work in a non-GitHub tracker.** The delivery must still bind GitHub issue numbers (`--issue` rejects opaque tracker ids). The common bridge: file a thin GitHub issue that links to the tracker item, and bind that number.
 

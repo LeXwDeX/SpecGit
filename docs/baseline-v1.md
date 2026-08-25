@@ -6,11 +6,32 @@ be checked against one page. When the contract changes, this document changes
 first — versioned per major line (`baseline-v1.md`, `baseline-v2.md`, …) and
 referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/SpecGit/milestone/1).
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## Supported platforms and prerequisites
 
 | Dimension | v1 baseline |
 | --- | --- |
-| Hosted forge | **GitHub.com plus GitLab CE/Free self-managed** — the v1 scope is dual-platform per the version policy; GitLab capability landed incrementally per the Phase-2 roadmap and is fully shipped since 1.0.0 ([gitlab-support.md](gitlab-support.md)). Origins parsing to `github.com` (HTTPS, SCP-style SSH, `ssh://`) are served through `gh`; a GitLab host declared in `spec_git/providers.yaml` is served through the `glab` provider (self-managed verified window `>= 19.2.4 < 19.4.0`, CE/Free — outside versions warn, live APIs decide); everything else fails `origin_unresolvable`. |
+| Hosted forge | **GitHub.com plus GitLab CE/Free self-managed** — the v1 scope is dual-platform per the version policy; the GitLab evidence chain (recognition, glab adapter, per-platform routing — ledger Phases 1–2) is fully shipped since 1.0.0, while the generated `.gitlab-ci.yml` acceptance template remains future work (Phase 3) ([gitlab-support.md](gitlab-support.md)). Origins parsing to `github.com` (HTTPS, SCP-style SSH, `ssh://`) are served through `gh`; a GitLab host declared in `spec_git/providers.yaml` is served through the `glab` provider (self-managed verified window `>= 19.2.4 < 19.4.0`, CE/Free — outside versions warn, live APIs decide); everything else fails `origin_unresolvable`. |
 | GitHub access | Exclusively the authenticated `gh` CLI. No direct REST client, no stored or logged tokens. |
 | Git | Required; local facts come from the git binary (`src/gitfacts` seam). Linked worktrees and `core.hooksPath` setups are first-class. |
 | Runtime | Node.js ≥ 20.19 (the `specgit` CLI is an npm package). |

@@ -5,6 +5,25 @@ and how agents drive the same loop. Language note: prose is English-first
 elsewhere in these docs; this file keeps Chinese narrative with English
 commands/terms so both humans and agents can follow it verbatim.
 
+```text
+  specgit init / setup     每仓库一次：policy + 验收 harness + agent 入口点
+        |
+        v
+  specgit issue "..."      每次交付：issues + 分支 + draft PR（Closes #n）
+        |                  + 绑定记录，提交并推送（失败重跑同命令即续）
+        v
+  开发、commit、push -----> PR head 上跑 CI
+        |                  （SpecGit Acceptance job 即 specgit finish --json）
+        v
+  gh pr ready <n>          draft PR 必然不通过验收（pr_draft）
+        |
+        v
+  specgit finish           裁决：十一道门禁，fail-closed
+        |-- exit 0 --> 合并：完成（exit 0 是唯一的 done）
+        |-- exit 1 --> 按门禁点名的项修复（证据已完整）
+        '-- exit 3 --> 先修环境（specgit doctor）
+```
+
 ---
 
 ## 0. 前置条件（每台机器，一次性）
@@ -14,6 +33,7 @@ commands/terms so both humans and agents can follow it verbatim.
 | Node ≥ 20.19 | `node --version` | CLI 运行时 |
 | git | `git --version` | 本地证据来源 |
 | `gh` CLI 已认证 | `gh auth status` | GitHub 证据来源（issues/PR/checks） |
+| `glab` CLI 已认证（仅声明式 GitLab origin） | `glab auth status --hostname <host>` | GitLab 证据来源（issues/MR/pipelines），≥ 1.113.0 |
 
 安装 CLI（发布后）：
 
@@ -30,8 +50,8 @@ ln -sf "$PWD/bin/specgit.js" ~/.local/bin/specgit
 specgit doctor --json
 ```
 
-`doctor` 探测 git / repo / origin / gh / policy 五项，任何一项不对都会
-fail-closed 并给出 fix 提示。
+`doctor` 按 git → repo → origin → provider CLI 在位 → provider CLI 已认证
+→ policy 的顺序探测六项，任何一项不对都会 fail-closed 并给出 fix 提示。
 
 ---
 
@@ -46,7 +66,10 @@ specgit init --required-check "Test (linux-bash)" --required-check "Lint & Type 
 - 自动检测（已上线，#63）：无参时从 `.github/workflows/*.yml`（GitHub 模式）
   静态发现 check 名；仓库完全没有 CI 时 policy 为空列表——分支保护强制
   的验收 job 本身就是门。GitLab 模式检测 `.gitlab-ci.yml` 顶层 job 名。
-- `--force`：policy 已存在时强制重建（默认报 `policy_exists` 拒绝）。
+- `--force`：policy 已存在时重建 harness 与全部生成资产；既有
+  `required_checks`/`language` 默认**原样保留**（#310）——只有显式传
+  `--required-check` 才整体替换该列表。不带 `--force` 的重跑报
+  `policy_exists` 拒绝（exit 2，零写入）。
 - `spec_git/policy.yaml` 默认被 init 写入的 `.gitignore` 托管块屏蔽（#292）；
   它进入 git 的正规路径是交付引导的绑定提交——手动提交需 `git add -f`
   越过屏蔽，或 init 时用 `--no-ignore` 保持经典提交模型。
@@ -136,8 +159,9 @@ Agent 与人类走同一条流程，差异只在驱动者是模型。行为来�
 `specgit init` 注入 `AGENTS.md` 的 **specgit 托管块**
 （`<!-- specgit:block:start/end -->` 之间的内容，re-init 只重写块内
 内容），规范化版本见 [`docs/agent-contract.md`](agent-contract.md)。
-本仓库不再提供 skills 目录或 `.opencode/command/` 命令插件——
-CLI 契约 + AGENTS.md 块就是全部接入面。
+`specgit setup` 另行安装本地便利入口点——`.opencode/command/` 命令与
+`.agents/skills/` portable skills；它们是便利设施而非第二个行为来源，
+也永远不是验收输入。行为契约始终是 CLI 契约 + AGENTS.md 托管块。
 
 ### 3.1 Agent 的标准作业循环
 

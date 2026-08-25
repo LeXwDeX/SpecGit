@@ -2,6 +2,27 @@
 
 Exact schemas, gates, codes, and behavioral rules. Everything here is normative. Templates for both files live in [`schemas/specgit/templates/`](../schemas/specgit/templates), and the schema-facing description of the record and policy lives in [`schemas/specgit/schema.yaml`](../schemas/specgit/schema.yaml).
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## `.specgit.yaml` — delivery binding record
 
 Located at the repository root, committed on the delivery branch.
@@ -90,12 +111,12 @@ Evaluation runs **eleven gates** in order. Gates short-circuit **across** gates 
 | G3 completeness | ≥1 issue, exactly 1 PR | local | `issues_empty`, `pr_missing` |
 | G4 context | record context matches live git | local git | `not_a_git_repo`, `git_unavailable`, `no_commits`, `detached_head`, `branch_mismatch`, `merged_delivery_not_contained`, `merged_lineage_unavailable`, `worktree_mismatch` |
 | G5 origin | `origin` resolves to `owner/repo` | local git | `no_origin`, `origin_unresolvable`, `gitlab_unsupported` |
-| G6 provider | `gh` present and authenticated | gh preflight | `gh_missing`, `gh_unauthenticated`, `gh_transport` |
-| G7 issues | every bound issue exists and is an issue | gh | `issue_not_found`, `issue_is_pull_request` |
-| G8 sequence | issue merge order (when `ordered_issues: true`) | gh | `issue_out_of_order`, `evidence_truncated` |
-| G9 pr | PR exists, not closed-unmerged, not a draft, head branch matches context, same repo | gh | `pr_not_found`, `pr_closed_unmerged`, `pr_draft`, `pr_head_mismatch`, `pr_repo_mismatch` |
+| G6 provider | platform CLI present and authenticated | provider preflight (`gh`/`glab`) | `gh_missing`, `gh_unauthenticated`, `gh_transport`, `glab_missing`, `glab_unauthenticated`, `glab_transport` |
+| G7 issues | every bound issue exists and is an issue | provider (`gh`/`glab`) | `issue_not_found`, `issue_is_pull_request` |
+| G8 sequence | issue merge order (when `ordered_issues: true`) | provider (`gh`/`glab`) | `issue_out_of_order`, `evidence_truncated` |
+| G9 pr | PR exists, not closed-unmerged, not a draft, head branch matches context, same repo | provider (`gh`/`glab`) | `pr_not_found`, `pr_closed_unmerged`, `pr_draft`, `pr_head_mismatch`, `pr_repo_mismatch` |
 | G10 closing refs | PR body closes every bound issue | parsed PR body | `closing_refs_incomplete` |
-| G11 checks | every required check green at PR head | gh | `checks_missing`, `checks_pending`, `checks_failed` (per check name), `evidence_truncated` |
+| G11 checks | every required check green at PR head | provider (`gh`/`glab`) | `checks_missing`, `checks_pending`, `checks_failed` (per check name), `evidence_truncated` |
 
 Draft PRs (G9): a draft is a verdict dimension, not an invisible scaffold state — a draft PR with green checks and complete closing refs still fails with `pr_draft` (factual, exit 1: the evidence is complete and says the PR is a draft; a draft never auto-transitions to mergeable, so exit 0 must not be proclaimed over it). `getPr` collects the `draft` flag; a pull-request payload without it is a transport anomaly and fails closed (`gh_transport`). The accept workflow re-verdicts on the draft→ready transition (its `pull_request` trigger lists `ready_for_review`), so marking the PR ready for review is the repair.
 
@@ -150,7 +171,7 @@ All remote evidence flows through the `gh` CLI — no other endpoint selection e
 
 - `gh` not found ⇒ `gh_missing`; `gh auth status` failing ⇒ `gh_unauthenticated` (remediation text is shown; tokens are never read or printed).
 - The `gh` executable is resolved per invocation: an explicit internal override, then `SPECGIT_GH`, then `gh` on `PATH`. Each call gets a hard timeout — `SPECGIT_GH_TIMEOUT_MS` when set, `15000` ms by default — plus response-size caps, array-form arguments, and JSON-only handling. Strings returned by the API are sanitized (control characters stripped, values truncated) before any terminal rendering.
-- HTTP 404 ⇒ `issue_not_found` / `pr_not_found`; other transport failures and timeouts ⇒ `gh_transport`. Truncation of a list-shaped response (`incomplete_results: true`, a pagination cap hit on a full page) ⇒ `evidence_truncated`. Every failure is evidence; none of them pass acceptance, and there is no silent fallback.
+- HTTP 404 ⇒ `issue_not_found` / `pr_not_found`; a call exceeding its time budget ⇒ `gh_timeout` (exit 3, with attributed causes); other transport failures ⇒ `gh_transport`. Truncation of a list-shaped response (`incomplete_results: true`, a pagination cap hit on a full page) ⇒ `evidence_truncated`. Every failure is evidence; none of them pass acceptance, and there is no silent fallback.
 - The seam is injectable: tests run against a mock provider (and `SPECGIT_GH` can point at a scripted `gh`), so acceptance logic is verifiable offline.
 - How the port itself evolves — required-versus-optional member rules, the deprecation path, and the tracking obligations for alternate providers and test doubles — is the committed [port-compatibility policy](providers.md).
 
