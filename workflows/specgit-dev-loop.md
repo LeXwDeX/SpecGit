@@ -4,6 +4,23 @@ How a delivery-bound issue becomes a merged PR in this repository. The loop
 is binding for agents and humans alike; the tracker that drives it is defined
 in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
 
+```text
+  specgit issue "<type>: <title>"   one command bootstraps the delivery:
+        |                           issues + branch + draft PR (Closes #n)
+        |                           + record, committed and pushed
+        v
+  TDD slices: red -> minimal green -> mutation -> targeted tests + tsc
+        |
+        v
+  push --> CI on the PR head (SpecGit Acceptance runs finish --json)
+        |
+        v
+  gh pr ready <n>  ->  specgit finish  --exit 0--> single push-right
+        |                 (exit 1/3: fix what it names)   checkpoint
+        v
+  merge (--merge --delete-branch) -> unbind --yes -> next delivery
+```
+
 ## Trigger
 
 A **delivery-bound issue** — a GitHub issue on `LeXwDeX/SpecGit`, labeled

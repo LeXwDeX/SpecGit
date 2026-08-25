@@ -5,6 +5,17 @@ https://github.com/LeXwDeX/SpecGit/issues
 
 There is no external board. If it is not a GitHub issue, it is not work.
 
+```text
+  specgit issue "<type>: <title>"   the delivery starts here: issues +
+        |                           branch + draft PR (Closes #n) + record
+        v
+  TDD slices -> push -> CI (SpecGit Acceptance = finish --json)
+        |
+        v
+  gh pr ready <n> -> specgit finish --exit 0--> merge (issues auto-close)
+        '-- exit 1/3 -> fix what the verdict names; never bypass the gate
+```
+
 ## gh CLI workflow
 
 All tracker operations go through the authenticated `gh` CLI — the same
@@ -20,8 +31,10 @@ gh issue view <n> --repo LeXwDeX/SpecGit
 gh issue create --repo LeXwDeX/SpecGit --title "…" --label bug
 gh issue edit <n> --repo LeXwDeX/SpecGit --add-label delivery
 
-# deliver (body must close every bound issue)
-gh pr create --repo LeXwDeX/SpecGit --fill
+# deliver — SpecGit deliveries bootstrap their own PR
+# (specgit issue writes the deterministic scaffold with Closes #n;
+#  never hand-create a delivery PR with `gh pr create --fill`, which
+#  would pull in the repository's own PR template)
 gh pr view <n> --repo LeXwDeX/SpecGit --json state,headRefName
 gh pr checks <n> --repo LeXwDeX/SpecGit
 ```

@@ -2,6 +2,27 @@
 
 Every SpecGit term in one place. Terms are grouped by topic, then alphabetized.
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## The model
 
 **Delivery** — One unit of work, identified by a kebab-case id (`add-login-flow`). A delivery is the aggregate of its execution context, issues, PR, and required checks.
@@ -30,7 +51,7 @@ Every SpecGit term in one place. Terms are grouped by topic, then alphabetized.
 
 **Evidence** — A verified fact or an explicit failure. SpecGit plumbing carries evidence as ok/failure values; there is no silent default.
 
-**Gate** — One of ten ordered verification stages (record, policy, completeness, context, origin, provider, issues, PR, closing refs, checks). Gates short-circuit across stages and collect every failure within one.
+**Gate** — One of eleven ordered verification stages (record, policy, completeness, context, origin, provider, issues, sequence, PR, closing refs, checks). Gates short-circuit across stages and collect every failure within one.
 
 **Code** — The stable identifier of a failure (`closing_refs_incomplete`, `checks_failed`, …). Codes are machine-friendly and never change meaning.
 
@@ -52,7 +73,7 @@ Every SpecGit term in one place. Terms are grouped by topic, then alphabetized.
 
 **`--json`** — Global flag: stdout becomes exactly one JSON document (the envelope), human text goes to stderr.
 
-**Exit-code contract** — `0` accepted/success · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown. Stable across versions.
+**Exit-code contract** — `0` accepted/success · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C interruption exception (stderr `Interrupted.`, no envelope). Stable across versions.
 
 **Envelope** — The JSON document every `--json` command emits: tool metadata, derived state, verdict with gates and evidence, and errors with fixes.
 
