@@ -1,6 +1,28 @@
-# GitLab (glab) Support Roadmap
+# GitLab (glab) Support
 
-**v1 scope: GitHub.com plus GitLab CE/Free self-managed per the version policy below; GitLab capability lands incrementally per the Phase-2 roadmap.** SpecGit derives acceptance from GitHub evidence in v1: issues, pull requests, and check runs flow exclusively through the authenticated `gh` CLI ([the provider seam](../src/github/port.ts)). This document is the version-qualified plan for extending the same evidence model to GitLab through the `glab` CLI. Every behavioral claim below is pinned in the committed [GitLab 19.2 evidence ledger](evidence/gitlab-19.2.md) — claims without a ledger anchor are rejected on review (#94, #100).
+**v1 scope: GitHub.com plus self-managed GitLab CE/Free per the version policy below — both shipped.** Evidence flows exclusively through authenticated CLIs ([the provider seam](../src/github/port.ts)): `gh` on GitHub origins; since the glab adapter (#114) and per-platform routing (#117), a **declared** GitLab origin's issues, merge requests, and pipeline jobs flow through the authenticated `glab` CLI and every gate evaluates there. This document is the version-qualified contract for the GitLab side of that seam. Every behavioral claim below is pinned in the committed [GitLab 19.2 evidence ledger](evidence/gitlab-19.2.md) — claims without a ledger anchor are rejected on review (#94, #100).
+
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,      [GitLab:
+        |                   committed and pushed (idempotent     declare the
+        |                   resume)                               host first]
+        v
+  work, commit, push -----> CI on the PR/MR head
+        |                   (GitHub: SpecGit Acceptance job;
+        |                    GitLab: your pipeline's finish job)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |                   (glab mr update <n> --ready on GitLab)
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
 
 ## Current behavior (deliberate)
 
@@ -16,10 +38,10 @@ A GitLab origin is **recognized, not silently misread**:
 - **Self-managed GitLab has a *verified* window of `>= 19.2.4 < 19.4.0`, CE/Free tier** (#98; widened by the #236 rebaseline; downgraded from a hard gate to an advisory check by #241). The known-good anchors are `v19.2.4-ee` at the floor (tagged 2026-08-14, commit `85f4a2d9`) and `v19.3.0-ee` at the head (tagged 2026-08-20, commit `8f83039b`; rows pinned in [gitlab-19.3.md](evidence/gitlab-19.3.md)). A version outside the window **never blocks**: preflight flags it and the verdict carries the warning `gitlab_version_unverified`, then evaluation proceeds against the live APIs. The fail-closed guarantee is the evidence pass itself — every gate reads real API responses through glab, so an API that fails or returns unparsable shapes still yields `unknown` (exit 3) exactly as before. The window moves only through explicit rebaseline deliveries, never silent drift (procedure: [Rebaseline SOP](#rebaseline-sop-moving-the-version-window)).
 - **The `-ee`/`-ce` suffix is a release-channel marker, not semver pre-release semantics**: naive semver ordering ranks `19.2.4-ee < 19.2.4`, which is wrong. Version comparison strips the suffix first, then compares the `x.y.z` triple (ledger rule 4).
 - **Version discovery uses the authenticated metadata endpoint** (`glab api /metadata`): no unauthenticated version channel is documented at the pinned tag (ledger row 3). `metadata.enterprise` is informational only — never a gate input.
-- **GitLab.com (SaaS) is in scope and is judged by capability probing, never version pinning** (#93): the instance auto-upgrades, so a pinned self-managed range cannot apply. The evidence path probes every API surface the delivery depends on with read-only calls; any probe failure ⇒ verdict `unknown` (planned `gitlab_capability_missing`, exit 3). Missing evidence is UNKNOWN = a blocked path, never an inferred capability.
+- **GitLab.com (SaaS) is in scope and is judged by capability probing, never version pinning** (#93): the instance auto-upgrades, so a pinned self-managed range cannot apply. The evidence path probes every API surface the delivery depends on with read-only calls; any probe failure ⇒ verdict `unknown` (exit 3). Missing evidence is UNKNOWN = a blocked path, never an inferred capability.
 - **glab floor: 1.113.0**, pinned from gitlab-org/cli tag `v1.113.0` (commit `d6288130`). The floor rises to 1.114.0 only if implementation depends on same-host SSH capability, with a cited gitlab-org/cli reference — decided before the first implementation slice. glab authenticates per host (`glab auth status --hostname <host>`; remediation `glab auth login --hostname <host>`; ledger row 8).
 - **Implemented environment contract** (#114, mirroring `SPECGIT_GH`/`SPECGIT_GH_TIMEOUT_MS`): `SPECGIT_GLAB` (glab executable path, default PATH) and `SPECGIT_GLAB_TIMEOUT_MS` (default 15000; timeout ⇒ `glab_transport`, exit 3).
-- **`gitlab.insecure_ssl` is per-host**: `true` in `spec_git/providers.yaml` skips TLS verification for that declared host only — never global, never logged; `false`/absent = full verification. The exact glab host-scoped mechanism is not yet pinned from gitlab-org/cli, so enabling it stays a blocked path until pinned (ledger, open unknowns).
+- **`gitlab.insecure_ssl` is per-host**: `true` in `spec_git/providers.yaml` is reserved to skip TLS verification for that declared host only — never global, never logged; `false`/absent = full verification. The field is declared-but-inert today: the exact glab host-scoped mechanism is not yet pinned from gitlab-org/cli, so enabling it stays a blocked path until pinned (see [Reference](reference.md); ledger, open unknowns).
 
 ## Rebaseline SOP (moving the version window)
 
@@ -48,9 +70,9 @@ A scheduled CI job could periodically poll the declared instance's metadata (`gl
 
 ## Design principles
 
-1. **Mirror the seam, do not fork the gates.** Acceptance evaluation (record → policy → completeness → context → origin → provider → issues → pr → closing → checks) is platform-agnostic. Only evidence *collection* is platform-specific.
-2. **One CLI per platform, authenticated, no tokens in state or logs.** GitHub evidence flows through `gh`; GitLab evidence will flow through `glab`. No direct REST clients.
-3. **Fail-closed carries over.** Missing glab, unauthenticated glab, or an unreachable GitLab yields `unknown`, never `accepted`. An out-of-window server version warns (`gitlab_version_unverified`, #241) but never blocks on its own — the live API operations are the gate, and any of them failing or returning unparsable shapes fails closed. That includes the evidence-completeness rule (#120): every `rel="next"` continuation must run to exhaustion, and a full page without a usable `rel="next"` link — or a continuation that errors mid-list — fails closed (`evidence_truncated`, exit 3) exactly like `gh` today; a silently partial list is never consumed. The `getOpenIssueNumbers` and `getCheckRuns` cells in the method map below are planned under this rule from day one.
+1. **Mirror the seam, do not fork the gates.** Acceptance evaluation (record → policy → completeness → context → origin → provider → issues → sequence → pr → closing → checks) is platform-agnostic. Only evidence *collection* is platform-specific.
+2. **One CLI per platform, authenticated, no tokens in state or logs.** GitHub evidence flows through `gh`; GitLab evidence flows through `glab`. No direct REST clients.
+3. **Fail-closed carries over.** Missing glab, unauthenticated glab, or an unreachable GitLab yields `unknown`, never `accepted`. An out-of-window server version warns (`gitlab_version_unverified`, #241) but never blocks on its own — the live API operations are the gate, and any of them failing or returning unparsable shapes fails closed. That includes the evidence-completeness rule (#120): every `rel="next"` continuation must run to exhaustion, and a full page without a usable `rel="next"` link — or a continuation that errors mid-list — fails closed (`evidence_truncated`, exit 3) exactly like `gh` today; a silently partial list is never consumed. The `getOpenIssueNumbers`, `getOpenIssues`, and `getCheckRuns` cells in the method map below are held under this rule from day one.
 4. **Free-tier primitives only, honestly reported.** Ultimate-only status checks (`only_allow_merge_if_all_status_checks_passed`) are excluded forever (ledger row 22); `requiredChecks` reports the verified pipeline-gate intersection instead of fabricating GitHub semantics (ledger rows 7/20).
 
 ## Phases
@@ -62,18 +84,21 @@ A scheduled CI job could periodically poll the declared instance's metadata (`gl
 
 ### Phase 2 — GlabProvider method map
 
-Interface decision recorded (option B — neutral provider port with internal per-platform adapters). **The adapter landed in #114: `GlabProvider` implements every `GitHubProvider` member at `src/providers/gitlab/glab-cli.ts`** (beside the GitHub adapter's #113 home), held to the port shape by the provider contract test and mirrored against the gh adapter's scripted-CLI contract tests. **The #116 slice landed the checks-gate semantics**: the job→check-run mapping table (ledger row 26) and the Free-tier `requiredChecks` truth — the verified pipeline-gate intersection (rows 7/25), decided per D-4″ (job-level truth + pipeline-level verdict). **Routed in #117: `PlatformRoutingProvider` (`src/providers/routing.ts`) sits at the production composition and dispatches every provider call on the ref's platform marker — gh for GitHub refs, glab for GitLab-declared refs — so acceptance evaluation, bootstrap, repair, and diagnostics all serve a declared GitLab origin through glab** (the GitHub-only `requireGithubRoute` guard was retired with it; the invariant it held now lives in the dispatch). The per-platform adapter home exists since #113: the GitHub adapter lives at `src/providers/github/` (legacy `src/github/gh-cli.ts` / `protection-merge.ts` paths are stable aliases), and the shared CLI transport both adapters spawn through lives at `src/providers/cli-spawn.ts`. The full 12-method map, anchored cell by cell in the ledger (row 24, all 12 cells pinned — `listOpenPrsByHead` closed by FU-4 in #114):
+Interface decision recorded (option B — neutral provider port with internal per-platform adapters). **The adapter landed in #114: `GlabProvider` implements every `GitHubProvider` member at `src/providers/gitlab/glab-cli.ts`** (beside the GitHub adapter's #113 home), held to the port shape by the provider contract test and mirrored against the gh adapter's scripted-CLI contract tests. **The #116 slice landed the checks-gate semantics**: the job→check-run mapping table (ledger row 26) and the Free-tier `requiredChecks` truth — the verified pipeline-gate intersection (rows 7/25), decided per D-4″ (job-level truth + pipeline-level verdict). **Routed in #117: `PlatformRoutingProvider` (`src/providers/routing.ts`) sits at the production composition and dispatches every provider call on the ref's platform marker — gh for GitHub refs, glab for GitLab-declared refs — so acceptance evaluation, bootstrap, repair, and diagnostics all serve a declared GitLab origin through glab** (the GitHub-only `requireGithubRoute` guard was retired with it; the invariant it held now lives in the dispatch). The per-platform adapter home exists since #113: the GitHub adapter lives at `src/providers/github/` (legacy `src/github/gh-cli.ts` / `protection-merge.ts` paths are stable aliases), and the shared CLI transport both adapters spawn through lives at `src/providers/cli-spawn.ts`. The full method map — all **fifteen** `ForgeProvider` members (`ForgeReadPort`'s eleven plus `ForgeAdminPort`'s four): the twelve cells pinned in the ledger at the #114 landing (row 24; `listOpenPrsByHead` closed by FU-4), plus the three members added later that `GlabProvider` implements under the same scripted-CLI discipline — `getOpenIssues` (#77), `getEvidenceAnchor` (#315), `addIssueComment` (#160):
 
-| GitHubProvider method | GitLab equivalent (19.2, Free tier) |
+| ForgeProvider member | GitLab equivalent (19.2, Free tier) |
 | --- | --- |
 | `preflight` | `glab auth status --hostname <host>` (per-host auth, ledger row 8) |
 | `getIssue` | `glab api projects/:id/issues/:iid` |
 | `getOpenIssueNumbers` | `glab api projects/:id/issues?state=opened` with `per_page=100` + `rel="next"` continuation (ledger rows 15/24) |
+| `getOpenIssues` | the same exhausted open-issue listing, carrying the full issue facts (#77) |
 | `getPr` | `glab api projects/:id/merge_requests/:iid` (state machine row 19) |
 | `getCheckRuns` | pipelines by `sha` → per-pipeline jobs, `rel="next"` continuation (rows 15/16); the #116 mapping table (row 26) |
+| `getEvidenceAnchor` | no GitLab reviewable-transition anchor exists — an honest `anchoredAt: null` (#315) |
 | `createIssue` | `glab api projects/:id/issues -f …` |
 | `createDraftPr` | `glab api projects/:id/merge_requests` with `Draft: <title>` (rows 6/18 — `glab mr create` has no structured-output flag) |
 | `listOpenPrsByHead` | MR list filtered by source branch (`source_branch` list parameter, pinned FU-4 — ledger row 24) |
+| `addIssueComment` | `POST projects/:id/issues/:iid/notes` (`-f body=…`; CE notes carry no `web_url`) (#160) |
 | `getBranchProtection` | `GET projects/:id/protected_branches/:name` (Free basic fields, row 20); `requiredChecks` = the verified pipeline-gate intersection (rows 7/25, #116) |
 | `enableBranchProtection` | protect default branch (integer access levels) + set `only_allow_merge_if_pipeline_succeeds` (rows 7/20), then report the same verified intersection (#116) |
 | `getRepoAutomerge` | read `only_allow_merge_if_pipeline_succeeds` from project JSON (row 7) |

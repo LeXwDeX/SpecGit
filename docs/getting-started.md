@@ -2,6 +2,27 @@
 
 This guide takes you from zero to your first **accepted** delivery. For installation details see [Installation](installation.md); for the underlying model see [Concepts](concepts.md).
 
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
+
 ## The loop in one screen
 
 ```bash
@@ -31,7 +52,7 @@ specgit init --required-check "Build"         # or name them explicitly
 
 With no arguments the check names are auto-detected from the repository's CI files (GitHub workflow job names, GitLab CI job keys). A repository with no CI at all gets an empty list — the `SpecGit Acceptance` job itself (never listed in the policy) is then the gate; the usual pattern is to add an aggregator check and re-pin the name. The harness workflow is portable: it installs the published CLI and assumes nothing about this repository's stack.
 
-This creates the policy `spec_git/policy.yaml` and generates the harness: the `SpecGit Acceptance` workflow (`.github/workflows/specgit-accept.yml`, which runs `specgit finish --json` on every PR) and the managed agent block in `AGENTS.md`. Re-running `init` refreshes the harness idempotently and never touches an existing policy.
+This creates the policy `spec_git/policy.yaml` and generates the harness: the `SpecGit Acceptance` workflow (`.github/workflows/specgit-accept.yml`, which runs `specgit finish --json` on every PR) and the managed agent block in `AGENTS.md`. Re-running `init` while a policy exists is refused without writing anything (exit 2, `policy_exists`) — `init --force` is the upgrade path: it rebuilds the harness idempotently and preserves the existing checks and language (#310); pass explicit `--required-check` flags to replace the list deliberately.
 
 ```yaml
 version: 1
@@ -89,7 +110,7 @@ Your CI must produce checks whose names exactly match `required_checks`, reporte
 specgit finish
 ```
 
-SpecGit re-reads the record and policy, probes live git, and asks GitHub (via `gh`) for issue, PR, and check evidence. Every gate either passes with evidence or fails with a code and a fix. Exit `0` means **accepted**: the delivery is bound, every issue is closed by the PR, and every required check is green at the PR head.
+SpecGit re-reads the record and policy, probes live git, and asks the forge (`gh`, or `glab` on a declared GitLab origin) for issue, PR/MR, and check/pipeline evidence. Every gate either passes with evidence or fails with a code and a fix. Exit `0` means **accepted**: the delivery is bound, every issue is closed by the PR, and every required check is green at the PR head.
 
 Add `--json` for machine-readable output; see the [CLI reference](cli.md). When a verdict is rejected, [Troubleshooting](troubleshooting.md) maps each code to its fix.
 

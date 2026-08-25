@@ -1,5 +1,18 @@
 # Quality Loop — REVIEW → DEBUG → FIX until clean, then merge, then release
 
+```text
+  fast rounds (per slice): REVIEW -> findings -> FIX -> targeted gates
+        |
+        v
+  one full two-axis review (standards + spec) -> disposition every finding
+        |
+        v
+  four clean criteria hold -> gh pr ready -> specgit finish
+        |-- exit 0 --> merge --merge --delete-branch -> unbind --yes
+        |                                            -> release (changesets)
+        '-- exit 1/3 -> back to FIX; never weaken a gate to pass
+```
+
 The pre-merge quality loop for a delivery branch. It nests inside
 [specgit-dev-loop.md](specgit-dev-loop.md): it starts where a slice's local
 gates go green and ends after the version is on npm.
@@ -131,9 +144,9 @@ investigated as real. The Windows job never sets the loop's pace.
    `specgit finish` — exit 0 is the only merge licence (a gate, not a
    question; never bypassed).
 2. `gh pr merge --merge --delete-branch`, then `specgit unbind --yes`.
-3. Release follows [CONTRIBUTING.md](../CONTRIBUTING.md) §6: changeset
-   PR → version PR → approve the workflow runs → merge →
-   `npm view specgit version` confirms publication.
+3. Release follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
+   (changesets): changeset PR → version PR → approve the workflow runs →
+   merge → `npm view specgit version` confirms publication.
 
 ## Final brief
 

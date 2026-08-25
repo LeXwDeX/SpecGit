@@ -1,10 +1,32 @@
 # Provider Ports and Compatibility Policy
 
 SpecGit derives acceptance from two TypeScript seams, both behind the
-product contract that GitHub evidence flows exclusively through the
-authenticated `gh` CLI and git facts exclusively from local git
+product contract that forge evidence flows exclusively through the
+authenticated platform CLIs — `gh` on GitHub origins, `glab` on a declared
+self-managed GitLab origin — and git facts exclusively from local git
 ([AGENTS.md](../AGENTS.md), [Reference — the provider
 seam](reference.md#github-provider-seam)):
+
+```text
+  specgit init / setup      once per repository: policy + acceptance
+        |                   harness + agent entry points
+        v
+  specgit issue "..."       per delivery: issues + branch +
+        |                   draft PR (Closes #n) + record,
+        |                   committed and pushed (idempotent resume)
+        v
+  work, commit, push -----> CI on the PR head
+        |                   (the SpecGit Acceptance job runs
+        |                    specgit finish --json)
+        v
+  gh pr ready <n>           a draft PR always fails the verdict
+        |
+        v
+  specgit finish            the verdict: eleven gates, fail-closed
+        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 1 --> fix what the gates named (evidence complete)
+        '-- exit 3 --> fix the environment first (specgit doctor)
+```
 
 - **`GitPort`** (`src/gitfacts/port.ts`) — local git facts and the
   delivery-bootstrap write operations, implemented for production by
