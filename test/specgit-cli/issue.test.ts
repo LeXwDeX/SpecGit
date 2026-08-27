@@ -1333,3 +1333,55 @@ describe('createOrAdoptIssues explicit null guard (#216)', () => {
     }
   });
 });
+
+describe('specgit issue: delivery tags (#330)', () => {
+  it('infers kind::<type> from the first title, seeds it once into the empty pool, and applies to every bound issue', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['fix: infer the kind tag'] },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    // Pool probe → seed (kind::fix, empty pool) → one apply per bound issue.
+    expect(t.gh.calls.filter((c) => c === 'listRepoLabels:LeXwDeX/SpecGit')).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => /^ensureRepoLabels/.test(c))).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => /^ensureRepoLabels.*kind::fix/.test(c))).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => /^addIssueLabels:11:kind::fix$/.test(c))).toHaveLength(1);
+    // The stderr hint stream stays clean; nothing degraded.
+    expect(t.io.stderr.join('\n')).not.toContain('Warning');
+  });
+
+  it('renders the Tags summary line in text mode when tags were part of the run', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      gh: {
+        listRepoLabels: () =>
+          ok({ names: ['kind::feat'] }),
+      },
+    });
+    const outcome = await runIssue(
+      { titles: ['feat: tagged bootstrap'], json: false },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    // kind::feat comes from the pool verbatim: no seed call at all.
+    expect(t.gh.calls.some((c) => c.startsWith('ensureRepoLabels'))).toBe(false);
+    // Human lines render through the outcome (the wrap layer prints them).
+    expect(outcome.human?.join('\n')).toContain('Tags: kind::feat');
+  });
+
+  it('refuses an unknown --tags slug with exit 2 before any issue is created', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      gh: { listRepoLabels: () => ok({ names: ['bug'] }) },
+    });
+    const outcome = await runIssue(
+      { titles: ['feat: never lands'], tags: 'module::ghost' },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(EXIT_USAGE);
+    expect(outcome.errors?.[0]?.code).toBe('issue_tags_unknown');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+  });
+});

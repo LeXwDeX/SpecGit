@@ -18,13 +18,16 @@ import type {
   IssueCommentCreation,
   IssueCreation,
   IssueFact,
+  LabelsAppliedFact,
   OpenIssueFact,
   PrCreation,
   PrFact,
   PrSummary,
   PreflightFact,
   RepoAutomergeFact,
+  RepoLabelsFact,
 } from '../../../src/github/port.js';
+import type { TagSpec } from '../../../src/tags/catalog.js';
 
 export interface MockForgeFixtures {
   preflight?: Evidence<PreflightFact>;
@@ -49,6 +52,12 @@ export interface MockForgeFixtures {
   enableRepoAutomerge?: Evidence<RepoAutomergeFact>;
   openIssueNumbers?: Evidence<number[]>;
   openIssues?: Evidence<OpenIssueFact[]>;
+  /** #330: the repository's label pool as names. */
+  repoLabels?: (repo: RepoRef) => Evidence<RepoLabelsFact>;
+  /** #330: seed specs the ensure call receives; result echoes them. */
+  ensureRepoLabels?: (specs: TagSpec[]) => Evidence<LabelsAppliedFact>;
+  /** #330: per-issue label applies. */
+  addIssueLabels?: (issue: number, slugs: string[]) => Evidence<LabelsAppliedFact>;
 }
 
 function formatRepo(repo: RepoRef): string {
@@ -160,6 +169,27 @@ export class MockForgeProvider implements ForgeProvider {
   async enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
     this.calls.push(`enableRepoAutomerge:${formatRepo(repo)}`);
     return this.fixtures.enableRepoAutomerge ?? ok({ enabled: true });
+  }
+
+  async listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>> {
+    this.calls.push(`listRepoLabels:${formatRepo(repo)}`);
+    return this.fixtures.repoLabels?.(repo) ?? ok({ names: [] });
+  }
+
+  async ensureRepoLabels(repo: RepoRef, specs: TagSpec[]): Promise<Evidence<LabelsAppliedFact>> {
+    this.calls.push(`ensureRepoLabels:${formatRepo(repo)}:${specs.map((s) => s.name).join('|')}`);
+    return this.fixtures.ensureRepoLabels?.(specs) ?? ok({ names: specs.map((spec) => spec.name) });
+  }
+
+  async addIssueLabels(
+    repo: RepoRef,
+    issue: number,
+    slugs: string[]
+  ): Promise<Evidence<LabelsAppliedFact>> {
+    this.calls.push(`addIssueLabels:${formatRepo(repo)}#${issue}:${slugs.join('|')}`);
+    return (
+      this.fixtures.addIssueLabels?.(issue, slugs) ?? ok({ names: slugs })
+    );
   }
 }
 

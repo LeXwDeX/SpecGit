@@ -213,6 +213,10 @@ export function createProgram(
       '--delivery <slug>',
       'Explicit semantic delivery name for the branch (kebab-case ASCII); required when the title yields no slug'
     )
+    .option(
+      '--tags <slugs>',
+      'Comma-separated tag slugs applied to every bound issue (#330): pool labels win first, declared vocabulary is seeded when missing'
+    )
     .action(
       wrap('issue', runIssue as CommandRun, (rest) => ({
         titles: (rest[0] as string[]) ?? [],

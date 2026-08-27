@@ -10,12 +10,15 @@ import type {
   IssueCommentCreation,
   IssueCreation,
   IssueFact,
+  LabelsAppliedFact,
   OpenIssueFact,
   PrCreation,
   PrFact,
   PrSummary,
   RepoAutomergeFact,
+  RepoLabelsFact,
 } from '../../src/github/port.js';
+import type { TagSpec } from '../../src/tags/catalog.js';
 import type { BranchCheckout } from '../../src/gitfacts/port.js';
 import type {
   CommandContext,
@@ -156,6 +159,12 @@ export interface GhScript {
   enableBranchProtection?: Evidence<BranchProtectionFact>;
   repoAutomerge?: Evidence<RepoAutomergeFact>;
   enableRepoAutomerge?: Evidence<RepoAutomergeFact>;
+  /** #330: the repository's label pool. */
+  listRepoLabels?: (repo: RepoRef) => Evidence<RepoLabelsFact>;
+  /** #330: seed specs; the default echoes every spec as confirmed. */
+  ensureRepoLabels?: (repo: RepoRef, specs: TagSpec[]) => Evidence<LabelsAppliedFact>;
+  /** #330: per-issue label applies. */
+  addIssueLabels?: (repo: RepoRef, issue: number, slugs: string[]) => Evidence<LabelsAppliedFact>;
 }
 
 export function makeGhProvider(
@@ -274,6 +283,29 @@ export function makeGhProvider(
         { ok: true, value: { enabled: true } }
       );
     }),
+    listRepoLabels: vi.fn(async (repo: RepoRef): Promise<Evidence<RepoLabelsFact>> => {
+      calls.push(`listRepoLabels:${repo.owner}/${repo.repo}`);
+      return (
+        behavior.listRepoLabels?.(repo) ??
+        // Empty pool by default (#330): selection then seeds from the
+        // built-in kind:: catalog exactly like a fresh repository.
+        { ok: true, value: { names: [] } }
+      );
+    }),
+    ensureRepoLabels: vi.fn(
+      async (repo: RepoRef, specs: TagSpec[]): Promise<Evidence<LabelsAppliedFact>> => {
+        calls.push(`ensureRepoLabels:${specs.map((spec) => spec.name).join('|')}`);
+        return (
+          behavior.ensureRepoLabels?.(repo, specs) ?? { ok: true, value: { names: specs.map((spec) => spec.name) } }
+        );
+      }
+    ),
+    addIssueLabels: vi.fn(
+      async (repo: RepoRef, issue: number, slugs: string[]): Promise<Evidence<LabelsAppliedFact>> => {
+        calls.push(`addIssueLabels:${issue}:${slugs.join('|')}`);
+        return behavior.addIssueLabels?.(repo, issue, slugs) ?? { ok: true, value: { names: slugs } };
+      }
+    ),
   };
 }
 

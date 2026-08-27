@@ -18,13 +18,16 @@ import type {
   IssueCreation,
   IssueCommentCreation,
   IssueFact,
+  LabelsAppliedFact,
   OpenIssueFact,
   PrCreation,
   PrFact,
   PrSummary,
   PreflightFact,
   RepoAutomergeFact,
+  RepoLabelsFact,
 } from '../../github/port.js';
+import type { TagSpec } from '../../tags/catalog.js';
 
 /**
  * The GitLab transport: the `glab` CLI, mirroring GhCliGitHubProvider
@@ -33,10 +36,11 @@ import type {
  * per platform, authenticated per host, tokens owned by glab — never read,
  * stored, or logged here. All failures are evidence: none pass acceptance.
  *
- * Endpoint discipline: read endpoints plus exactly four documented write
+ * Endpoint discipline: read endpoints plus exactly six documented write
  * endpoints — POST issues, POST merge_requests, POST protected_branches,
- * PUT project (the pipeline gate; row 24 method map). GitLab's edit-project
- * endpoint is routed for PUT only — a PATCH returns 404 Not Found.
+ * PUT project (the pipeline gate), POST project labels (#330 seed),
+ * PUT issues/{iid} (add_labels; #330 apply). The edit-project endpoint
+ * is routed for PUT only — a PATCH returns 404 Not Found.
  */
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -63,6 +67,9 @@ const MAX_LIST_PAGES = 10;
 const PIPELINE_FETCH_LIMIT = 10;
 /** MR discovery window for PR repair — same bound as the gh adapter. */
 const MR_LIST_LIMIT = 30;
+
+/** glab's stderr for a duplicate label POST (409) names it (#330). */
+const GLAB_LABEL_ALREADY_EXISTS_PATTERN = /HTTP 409|already been taken|label.{0,10}already.{0,10}exist/i;
 
 const GITLAB_SAAS_HOST = 'gitlab.com';
 
@@ -543,6 +550,59 @@ export class GlabProvider implements ForgeProvider {
   }
 
   /**
+   * Add labels to an issue (#330): PUT with `add_labels` — union
+   * semantics; present names stay. GitLab answers the updated issue
+   * entity whose `labels` array names every carried label; every
+   * requested slug must appear there or the result cannot be verified
+   * (fail-closed).
+   */
+  async addIssueLabels(
+    repo: RepoRef,
+    issue: number,
+    slugs: string[]
+  ): Promise<Evidence<LabelsAppliedFact>> {
+    if (!Number.isInteger(issue) || issue <= 0) {
+      return fail('glab_transport', 'Cannot label an issue without a positive number.');
+    }
+    if (slugs.length === 0 || slugs.some((slug) => !slug.trim())) {
+      return fail('glab_transport', 'Cannot label an issue without at least one non-empty label.');
+    }
+
+    const result = await this.runCreate([
+      'api',
+      ...this.hostArgs(),
+      '-X',
+      'PUT',
+      `projects/${this.projectPath(repo)}/issues/${issue}`,
+      '-f',
+      `add_labels=${slugs.join(',')}`,
+    ]);
+    if (!result.ok) {
+      return this.asFailure(result);
+    }
+    const parsedEv = this.parseJsonOutput(result.value.stdout);
+    if (!parsedEv.ok) {
+      return parsedEv;
+    }
+    const payload = parsedEv.value as { labels?: unknown };
+    if (!Array.isArray(payload.labels)) {
+      return fail('glab_transport', 'GitLab returned an unexpected issue-labels payload.');
+    }
+    const carried = payload.labels.filter(
+      (name): name is string => typeof name === 'string' && name !== ''
+    );
+    for (const slug of slugs) {
+      if (!carried.includes(slug)) {
+        return fail(
+          'glab_transport',
+          `Label '${sanitizeApiText(slug)}' is absent after the apply; the result could not be verified.`
+        );
+      }
+    }
+    return ok({ names: slugs });
+  }
+
+  /**
    * `glab mr create` has no structured-output flag (row 6): the REST
    * create is the only path. Draft state comes from the `Draft: ` title
    * prefix (row 18); the {number, url} fact is mapped from the JSON
@@ -793,6 +853,102 @@ export class GlabProvider implements ForgeProvider {
 
   async enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
     return this.setPipelineGate(repo);
+  }
+
+  /**
+   * Every label title the project carries (#330): the pool tags are
+   * selected from. Project endpoint — group-inherited labels live on
+   * their own API surface and are out of v1 scope (documented in
+   * docs/providers.md); a group-label-only repository reads as an
+   * empty pool and converges through seeding. Completeness rule (#120,
+   * I3b) via paginateList: exhaustion or fail-closed, never partial.
+   */
+  async listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>> {
+    const pagesEv = await this.paginateList(
+      (page) => `projects/${this.projectPath(repo)}/labels?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+      'label-list'
+    );
+    if (!pagesEv.ok) {
+      return pagesEv;
+    }
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of pagesEv.value) {
+      const name = (entry as { name?: unknown }).name;
+      if (typeof name !== 'string' || name === '') {
+        return fail('glab_transport', 'GitLab returned a label entry without a name.');
+      }
+      if (seen.has(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+    return ok({ names });
+  }
+
+  /**
+   * Idempotent seed (#330): create every missing spec at project level,
+   * leave existing names untouched, echo exactly the requested slugs.
+   * GitLab answers 409 ("already been taken") for a duplicate title;
+   * that is presence, not failure. A spec the forge refuses to confirm
+   * fails closed. Color takes the same no-`#` six-hex form GitHub does.
+   */
+  async ensureRepoLabels(
+    repo: RepoRef,
+    specs: TagSpec[]
+  ): Promise<Evidence<LabelsAppliedFact>> {
+    if (specs.length === 0) {
+      return ok({ names: [] });
+    }
+    for (const spec of specs) {
+      if (!spec.name.trim() || !/^[0-9a-fA-F]{6}$/.test(spec.color)) {
+        return fail('glab_transport', 'Cannot seed a label without a name and six-hex color.');
+      }
+    }
+
+    const existingEv = await this.listRepoLabels(repo);
+    if (!existingEv.ok) {
+      return existingEv;
+    }
+    const present = new Set(existingEv.value.names);
+
+    const confirmed: string[] = [];
+    for (const spec of specs) {
+      if (present.has(spec.name)) {
+        confirmed.push(spec.name);
+        continue;
+      }
+      const result = await this.runCreate([
+        'api',
+        ...this.hostArgs(),
+        '-X',
+        'POST',
+        `projects/${this.projectPath(repo)}/labels`,
+        '-f',
+        `name=${spec.name}`,
+        '-f',
+        `color=${spec.color}`,
+      ]);
+      if (!result.ok) {
+        if (!GLAB_LABEL_ALREADY_EXISTS_PATTERN.test(result.message ?? '')) {
+          return this.asFailure(result);
+        }
+        confirmed.push(spec.name);
+        continue;
+      }
+      const parsedEv = this.parseJsonOutput(result.value.stdout);
+      if (!parsedEv.ok) {
+        return parsedEv;
+      }
+      const created = parsedEv.value as { name?: unknown };
+      if (created.name !== spec.name) {
+        return fail(
+          'glab_transport',
+          'Label was applied but the response could not be verified: the created name differs.'
+        );
+      }
+      confirmed.push(spec.name);
+    }
+    return ok({ names: confirmed });
   }
 
   private async setPipelineGate(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> {
