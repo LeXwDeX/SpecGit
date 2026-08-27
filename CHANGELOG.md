@@ -1,5 +1,11 @@
 # specgit
 
+## 1.6.0
+
+### Minor Changes
+
+- [#333](https://github.com/LeXwDeX/SpecGit/pull/333) [`0b7e33e`](https://github.com/LeXwDeX/SpecGit/commit/0b7e33ee1fbb4bdb66160912cdd10b56a6d7b2d5) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Delivery tags ([#330](https://github.com/LeXwDeX/SpecGit/issues/330)): pool-first issue tagging for `specgit issue` — explicit `--tags <a,b>` validated against the repository's label pool before any issue is created, an inferred `kind::<type>` applied best-effort otherwise, and missing labels seeded from the built-in `kind::` catalog or new `policy.yaml` `tags:` declarations. The grammar is the dual-forge compatibility boundary (kebab segments, one `::` axis, ASCII-safe on GitHub and GitLab).
+
 ## 1.5.3
 
 ### Patch Changes
