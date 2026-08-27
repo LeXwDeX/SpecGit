@@ -168,6 +168,26 @@ Each positional argument is a quoted title (a new issue is created from a requir
 
 Before creating from a title, the bootstrap probes the open issues with one title-carrying search (paginated to exhaustion, #77): an open issue whose title exactly matches a pending title argument is that argument's issue — a previous run created it but failed to record it — and is adopted instead of duplicating the WHY. Issue titles are not unique, so an exact match binds only when it is unambiguous: a single candidate, or a sole candidate carrying the deterministic scaffold body this tool writes (`## Why (required)` … `specgit finish must exit 0`), which an unrelated human issue with the same title does not carry. An unresolvable same-title collision is the usage diagnostic `issue_title_ambiguous` (exit 2) listing every candidate — never a silent adoption of an issue that could be unrelated. The probe is skipped entirely for purely numeric arguments and fails closed (exit 3) when the evidence cannot be gathered.
 
+### Delivery tags (#330)
+
+After every bound issue is durable in the record, bootstrap applies delivery tags:
+
+- **Inferred mode** (no flag): the first title's `<type>` becomes `kind::<type>`, applied best-effort to every bound issue.
+- **Explicit mode**: `--tags <a,b>` names the full set; it is resolved **before any issue is created**, so an invalid or unknown slug exits 2 with zero side effects.
+
+Selection is pool-first against a portable grammar (`^[a-z0-9]+(-[a-z0-9]+)*(::[a-z0-9]+(-[a-z0-9]+)*)?$`, ≤64 chars — safe on both GitHub and GitLab, where `::` degrades from scoped-label semantics on Premium to plain text on CE):
+
+1. Form-valid labels already on the repository win verbatim and are never duplicated under another name.
+2. Missing slugs seed only from **declared vocabulary** — the built-in `kind::` catalog (one member per allowed type, same source list as the branch types) or `spec_git/policy.yaml`'s optional `tags:` list (`name` + optional six-hex `color`/`description`). Undeclared, pool-absent vocabulary exits 2 (`issue_tags_unknown`) naming what exists.
+3. Off-spec pool labels are reported on stderr (`tag_pool_dirty` shape: a human warning listing samples) and never renamed or deleted — label migration is a repository owner's decision.
+
+Seeding and applying are idempotent port methods (`ensureRepoLabels`, `addIssueLabels`): re-runs converge. In inferred mode every tag failure (unreadable pool, seeding permission denied on GitLab CE where labels need Planner+ since 17.7, apply failure) degrades to a stderr warning so the quick bootstrap keeps working; explicit mode propagates each failure fail-closed (exit 3). An unreadable policy warns once that its `tags:` vocabulary was ignored. Tags are traceability decoration only — no gate reads them, and `.specgit.yaml` does not record them; the forge itself is their record.
+
+```bash
+specgit issue "fix: token refresh race"                          # tags kind::fix (inferred)
+specgit issue "feat: oauth device flow" --tags kind::feat,module::auth   # explicit set
+```
+
 ```json
 {
   "tool": "specgit",
@@ -185,7 +205,7 @@ Before creating from a title, the bootstrap probes the open issues with one titl
 }
 ```
 
-Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments or `specgit unbind --yes`) / `issue_title_ambiguous` (several open issues share the pending title with no sole scaffold-body match; lists every candidate; fix: adopt one explicitly by number — `specgit issue <number>` — or rename the unrelated issue; exit 2 with zero side effects) / `issue_delivery_name_required` (the title yields no ASCII slug and no name was given or prompted; fix: `--delivery <slug>` or an ASCII title; exit 2 with zero side effects) / `issue_delivery_name_invalid` (the `--delivery` value is not kebab-case ASCII; exit 2) (exit 2; drift, merged-refusal, ambiguity, and naming gaps happen before any create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`, `evidence_truncated` — including the mergedness probe on a PR-bound record, which fails closed and keeps the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
+Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments or `specgit unbind --yes`) / `issue_title_ambiguous` (several open issues share the pending title with no sole scaffold-body match; lists every candidate; fix: adopt one explicitly by number — `specgit issue <number>` — or rename the unrelated issue; exit 2 with zero side effects) / `issue_delivery_name_required` (the title yields no ASCII slug and no name was given or prompted; fix: `--delivery <slug>` or an ASCII title; exit 2 with zero side effects) / `issue_delivery_name_invalid` (the `--delivery` value is not kebab-case ASCII; exit 2) / `issue_tags_invalid` (`--tags` value violates the grammar; exit 2 before any create) / `issue_tags_unknown` (`--tags` value absent from pool, catalog, and policy declarations; exit 2 naming the available universe, before any create) (exit 2; drift, merged-refusal, ambiguity, naming gaps, and tag refusals happen before any create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`, `evidence_truncated` — including the mergedness probe on a PR-bound record and the explicit-mode tag calls, which fail closed and keep the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
 
 ## `specgit finish`
 

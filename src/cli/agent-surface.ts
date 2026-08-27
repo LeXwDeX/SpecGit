@@ -109,9 +109,21 @@ specgit issue "<title>"                 # create one issue and start
 specgit issue "<title A>" "<title B>"   # N issues, one delivery
 specgit issue 42                        # reuse an existing issue
 specgit issue "<no-slug title>" --delivery my-name   # explicit delivery name
+specgit issue "<title>" --tags kind::fix,module::auth  # explicit tag selection
 \`\`\`
 
 New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
+
+## Tagging (choose before you bootstrap)
+
+- Every bootstrap applies the title's \`kind::<type>\` member by default;
+  pass \`--tags <a,b>\` to choose the full set yourself instead.
+- Selection is pool-first: existing on-spec labels win verbatim; anything
+  missing is seeded from the built-in kind:: catalog or the policy's
+  \`tags:\` declarations — unknown vocabulary exits 2 naming what exists.
+- Pick with restraint: at most one label per axis (\`kind::\`,
+  \`module::\`, ...), none when unsure. The pool, not your guess, is the
+  source of truth.
 
 ## What it does (idempotent; re-run resumes)
 

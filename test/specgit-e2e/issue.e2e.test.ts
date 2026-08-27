@@ -32,6 +32,7 @@ import {
   OWNER,
   parseEnvelope,
   prJson,
+  prScaffoldBodies,
   readFakeGhCalls,
   readFakeGhStdin,
   REQUIRED_CHECK,
@@ -147,11 +148,18 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
 
     // The draft PR body is the deterministic scaffold (#87): closing
     // refs for every bound issue first, then the advisory sections.
-    const createdBody = readFakeGhStdin(gh.logPath)[0];
+    // Tag applies share the stdin log since #330; bodies filter by shape.
+    const createdBody = prScaffoldBodies(gh.logPath)[0];
     expect(createdBody).toBe(renderPrScaffold([11, 12]));
     for (const section of ['## Why', '## What changed', '## Evidence', '## Checklist']) {
       expect(createdBody).toContain(section);
     }
+
+    // Inferred tagging (#330): the title's kind:: member was seeded into
+    // the empty pool once and applied to both bound issues.
+    const calls = readFakeGhCalls(gh.logPath);
+    expect(calls.filter((args) => /-X POST repos\/[^/ ]+\/[^/ ]+\/labels( |$)/.test(args))).toHaveLength(1);
+    expect(calls.filter((args) => /issues\/\d+\/labels/.test(args))).toHaveLength(2);
 
     // Traceability edge issue→branch (#160): every bound issue received
     // the delivery branch and PR number as a comment, exactly once each.
@@ -240,7 +248,7 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
       (args) => args.startsWith(`api repos/${OWNER}/${REPO}/issues `)
     );
     expect(createCalls.length).toBe(2);
-    expect(readFakeGhStdin(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
+    expect(prScaffoldBodies(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
     expect(git(repo.bareDir, 'rev-parse', '--verify', 'refs/heads/feat/11-resume-flow').trim()).toBe(
       git(repo.dir, 'rev-parse', 'HEAD').trim()
     );
@@ -301,7 +309,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     );
     expect(creates).toHaveLength(1);
     expect(creates[0]).toContain('title=chore: second wing');
-    expect(readFakeGhStdin(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
+    expect(prScaffoldBodies(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
   });
 
   // Two full bootstraps (fault + heal) with real git work each; the global
@@ -411,7 +419,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     expect(creates).toHaveLength(1);
     expect(creates[0]).toContain('title=fix: beta why');
     expect(git(repo.dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/11-alpha-why');
-    expect(readFakeGhStdin(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
+    expect(prScaffoldBodies(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
   });
 
   it('adopts the open PR for the head branch when the PR response was lost', async () => {
