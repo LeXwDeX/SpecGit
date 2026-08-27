@@ -8,6 +8,16 @@ import { runCLI, type RunCLIResult } from '../helpers/run-cli.js';
 import { createFakeGh, readFakeGhCalls, readFakeGhStdin, type FakeGhRule } from '../specgit/helpers/fake-gh.js';
 
 export { createFakeGh, readFakeGhCalls, readFakeGhStdin };
+
+/**
+ * The stdin payloads that are draft-PR bodies (#330): every bootstrap
+ * also streams tag-apply JSON through `--input -` per bound issue, so
+ * body assertions select on the scaffold's opening closing-reference
+ * instead of trusting list position.
+ */
+export function prScaffoldBodies(logPath: string): string[] {
+  return readFakeGhStdin(logPath).filter((body) => body.startsWith('Closes #'));
+}
 export type { FakeGhRule, RunCLIResult };
 
 export const OWNER = 'LeXwDeX';

@@ -36,6 +36,27 @@ function finish(stdinText) {
     process.exit(1);
   }
   let stdout = rule.stdout;
+  // #330 seam: label-create POSTs answer with the created label object,
+  // echoing the name exactly as requested (the adapter verifies it).
+  if (rule.labelEcho === true && stdout === undefined) {
+    const m = /[ ]name=([^ ]+)/.exec(args);
+    stdout = JSON.stringify({ name: m ? decodeURIComponent(m[1]) : '' });
+  }
+  // #330 seam: issue-label applies read their slugs from stdin JSON and
+  // answer with the resulting label list (union semantics need no merge
+  // here beyond what the request itself already carries).
+  if (rule.issueLabelEcho === true && stdout === undefined) {
+    var requested = [];
+    try {
+      var parsed = JSON.parse(stdinText || '{}');
+      if (Array.isArray(parsed.labels)) requested = parsed.labels;
+    } catch (e) {
+      requested = [];
+    }
+    stdout = JSON.stringify(
+      requested.map(function (/** @type {string} */ n) { return { name: n }; })
+    );
+  }
   if (rule.seq && stdout !== undefined) {
     const state = loadState();
     const n = state[String(ruleIndex)] || 0;

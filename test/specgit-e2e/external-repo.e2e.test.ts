@@ -52,7 +52,7 @@ import {
   rmDir,
   runInstalledSpecgit,
 } from './external-repo-fixture.js';
-import { emptyTimelineRule, readFakeGhStdin } from './helpers.js';
+import { emptyTimelineRule, prScaffoldBodies } from './helpers.js';
 
 interface WorkflowStep {
   name?: string;
@@ -250,8 +250,9 @@ describe('e2e external repository adoption (#87): scaffold vs PR templates', () 
 
       // The draft body is exactly the deterministic scaffold for the
       // bound issue — rendered by the packed (installed) CLI, compared
-      // against the source renderer.
-      const createdBody = readFakeGhStdin(gh.logPath)[0];
+      // against the source renderer. Tag applies share the stdin log
+      // since #330; bodies filter by shape.
+      const createdBody = prScaffoldBodies(gh.logPath)[0];
       expect(createdBody).toBe(renderPrScaffold([7]));
 
       // Template ownership: none of the adopting repo's template decoys

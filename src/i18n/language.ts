@@ -68,6 +68,15 @@ export interface HumanText {
   issueIssues(list: string): string;
   issuePr(pr: number | string): string;
   issueRecorded(filename: string): string;
+  /**
+   * #330: the tag summary line — what was applied to every bound issue,
+   * and which of those names were newly seeded into the pool.
+   */
+  issueTags(applied: string, seeded: string | null): string;
+  /** #330: off-spec labels found in the pool — reported, never rewritten. */
+  tagPoolWarning(sample: string, count: number): string;
+  /** #330: best-effort mode could not read the pool; nothing was tagged. */
+  tagProbeWarning(): string;
   issuePrTitleFallback(delivery: string): string;
   issueTraceabilityComment(branch: string, pr: number | string): string;
   // issue — delivery-name prompt (#246)
@@ -182,6 +191,12 @@ const EN_HUMAN: HumanText = {
   issueIssues: (list) => `  Issues: ${list}`,
   issuePr: (pr) => `  PR: #${pr} (draft)`,
   issueRecorded: (filename) => `  Recorded ${filename}, committed, pushed to origin`,
+  issueTags: (applied, seeded) =>
+    `  Tags: ${applied}${seeded === null ? '' : ` (seeded: ${seeded})`}`,
+  tagPoolWarning: (sample, count) =>
+    `  Warning: ${count} repository label(s) are outside the tag grammar and were left untouched: ${sample}`,
+  tagProbeWarning: () =>
+    '  Warning: the repository label pool could not be read; no tags were applied this run.',
   issuePrTitleFallback: (delivery) => `Delivery ${delivery}`,
   issueTraceabilityComment: (branch, pr) =>
     `SpecGit delivery branch: \`${branch}\` (draft pull request #${pr}).`,
@@ -256,6 +271,11 @@ const ZH_HUMAN: HumanText = {
   issueIssues: (list) => `  议题：${list}`,
   issuePr: (pr) => `  PR：#${pr}（草稿）`,
   issueRecorded: (filename) => `  已记录 ${filename}，已提交并推送到 origin`,
+  issueTags: (applied, seeded) =>
+    `  标签：${applied}${seeded === null ? '' : `（新建：${seeded}）`}`,
+  tagPoolWarning: (sample, count) =>
+    `  警告：仓库中有 ${count} 个标签不符合标签语法，已保持原样不动：${sample}`,
+  tagProbeWarning: () => '  警告：无法读取仓库标签池；本次运行未应用任何标签。',
   issuePrTitleFallback: (delivery) => `交付 ${delivery}`,
   deliveryNamePrompt: () => '请输入交付名（kebab-case ASCII，例如 add-login）：',
   deliveryNameRetry: () => '不是有效的 kebab-case 名称——请重试（例如 add-login）：',

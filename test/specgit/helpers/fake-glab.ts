@@ -7,6 +7,16 @@ export interface FakeGlabRule {
   stdout?: string;
   stderr?: string;
   delayMs?: number;
+  /**
+   * #330 seam: label-create POST answers `{ "name": <requested> }`,
+   * echoing the `-f name=` argument the adapter verifies against.
+   */
+  labelEcho?: boolean;
+  /**
+   * #330 seam: issue-label apply (PUT with `-f add_labels=a,b`) answers
+   * with the updated issue entity carrying a `labels` array of names.
+   */
+  issueLabelEcho?: boolean;
 }
 
 export interface FakeGlab {
@@ -25,8 +35,9 @@ export interface FakeGlab {
  * patterns first; unmatched paths fall through to the scripted rules.
  */
 const GITLAB_API_ROUTES: Array<{ pattern: string; methods: string[] }> = [
+  { pattern: '^projects/[^/]+/labels$', methods: ['GET', 'POST'] },
   { pattern: '^projects/[^/]+/issues/\\d+/notes$', methods: ['POST'] },
-  { pattern: '^projects/[^/]+/issues/\\d+$', methods: ['GET'] },
+  { pattern: '^projects/[^/]+/issues/\\d+$', methods: ['GET', 'PUT'] },
   { pattern: '^projects/[^/]+/issues$', methods: ['GET', 'POST'] },
   { pattern: '^projects/[^/]+/merge_requests/[^/]+$', methods: ['GET'] },
   { pattern: '^projects/[^/]+/merge_requests$', methods: ['GET', 'POST'] },
@@ -56,9 +67,23 @@ function finish(stdinText) {
     process.stderr.write('fake glab: no rule matched: ' + args);
     process.exit(1);
   }
+  var stdout = rule.stdout;
+  // #330 seam: label-create echoes the requested name (no '#' color form
+  // differences matter here — the adapter verifies the name only).
+  if (rule.labelEcho === true && stdout === undefined) {
+    var m = /[ ]name=([^ ]+)/.exec(args);
+    stdout = JSON.stringify({ name: m ? decodeURIComponent(m[1]) : '' });
+  }
+  // #330 seam: the apply answers the updated issue with a labels array.
+  if (rule.issueLabelEcho === true && stdout === undefined) {
+    var requested = [];
+    var lm = /[ ]add_labels=([^ ]+)/.exec(args);
+    if (lm) requested = decodeURIComponent(lm[1]).split(',');
+    stdout = JSON.stringify({ iid: 0, labels: requested });
+  }
   const exitCode = typeof rule.exit === 'number' ? rule.exit : 0;
   const writes = [];
-  if (rule.stdout) writes.push(function (done) { process.stdout.write(rule.stdout, done); });
+  if (stdout) writes.push(function (done) { process.stdout.write(stdout, done); });
   if (rule.stderr) writes.push(function (done) { process.stderr.write(rule.stderr, done); });
   function respond() {
     if (writes.length === 0) {
@@ -169,10 +194,17 @@ export function createFakeGlab(
   fs.mkdirSync(binDir, { recursive: true });
   const configPath = path.join(tempDir, 'fake-glab-config.json');
   const logPath = path.join(tempDir, 'fake-glab-calls.jsonl');
+  // #330 baseline: bootstrap probes the project label pool in inferred
+  // mode. User rules stay first so scenarios can override any behavior.
+  const labelBaseline: FakeGlabRule[] = [
+    { match: '/labels\\?per_page=', stdout: '[]' },
+    { match: '-X POST projects/[^ ]+/labels', labelEcho: true },
+    { match: '-X PUT projects/[^ ]+/issues/[0-9]+', issueLabelEcho: true },
+  ];
   fs.writeFileSync(
     configPath,
     JSON.stringify({
-      rules,
+      rules: [...rules, ...labelBaseline],
       routes: GITLAB_API_ROUTES,
       logPath,
       ...(options.repoDir === undefined ? {} : { repoDir: options.repoDir }),
