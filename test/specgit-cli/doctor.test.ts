@@ -56,10 +56,13 @@ describe('specgit doctor', () => {
         createDraftPr: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         listOpenPrsByHead: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         addIssueComment: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+        addIssueLabels: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         getBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         enableBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         getRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         enableRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+        listRepoLabels: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+        ensureRepoLabels: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
       },
     });
     const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
@@ -154,10 +157,13 @@ describe('specgit doctor', () => {
           createDraftPr: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
           listOpenPrsByHead: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
           addIssueComment: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          addIssueLabels: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
           getBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
           enableBranchProtection: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
           getRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
           enableRepoAutomerge: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          listRepoLabels: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
+          ensureRepoLabels: async () => ({ ok: false, code: 'gh_transport', message: 'unreachable' }),
         },
       });
       const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);

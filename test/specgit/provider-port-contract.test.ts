@@ -53,10 +53,12 @@ describe('provider port contract (#80)', () => {
     expect([...FORGE_PROVIDER_MEMBERS].sort()).toEqual(
       [
         'addIssueComment',
+        'addIssueLabels',
         'createDraftPr',
         'createIssue',
         'enableBranchProtection',
         'enableRepoAutomerge',
+        'ensureRepoLabels',
         'getBranchProtection',
         'getCheckRuns',
         'getEvidenceAnchor',
@@ -66,6 +68,7 @@ describe('provider port contract (#80)', () => {
         'getPr',
         'getRepoAutomerge',
         'listOpenPrsByHead',
+        'listRepoLabels',
         'preflight',
       ].sort()
     );
@@ -87,6 +90,7 @@ describe('provider port contract (#80)', () => {
       expect([...FORGE_READ_PORT_MEMBERS].sort()).toEqual(
         [
           'addIssueComment',
+          'addIssueLabels',
           'createDraftPr',
           'createIssue',
           'getCheckRuns',
@@ -103,8 +107,10 @@ describe('provider port contract (#80)', () => {
         [
           'enableBranchProtection',
           'enableRepoAutomerge',
+          'ensureRepoLabels',
           'getBranchProtection',
           'getRepoAutomerge',
+          'listRepoLabels',
         ].sort()
       );
     });

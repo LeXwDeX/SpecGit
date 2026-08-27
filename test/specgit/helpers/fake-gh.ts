@@ -15,6 +15,16 @@ export interface FakeGhRule {
    * create`-style rules return increasing numbers across invocations.
    */
   seq?: { start: number; step?: number };
+  /**
+   * #330 seam: label-create POST answers with `{ "name": <requested> }`,
+   * echoing the `-f name=` argument the adapter can verify against.
+   */
+  labelEcho?: boolean;
+  /**
+   * #330 seam: issue-label apply answers with the requested slugs as a
+   * label array, parsed from the stdin JSON this call reads (`--input -`).
+   */
+  issueLabelEcho?: boolean;
 }
 
 export interface FakeGh {
@@ -35,7 +45,21 @@ export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
   fs.mkdirSync(binDir, { recursive: true });
   const configPath = path.join(tempDir, 'fake-gh-config.json');
   const logPath = path.join(tempDir, 'fake-gh-calls.jsonl');
-  fs.writeFileSync(configPath, JSON.stringify({ rules, logPath }));
+  // #330 baseline: every bootstrap probes the label pool (inferred tag
+  // mode), so the fake answers it by default — an empty pool plus echo
+  // responders for seed and apply. User rules stay first: a caller may
+  // override any of these behaviors per scenario.
+  const labelBaseline: FakeGhRule[] = [
+    { match: '/labels\\?per_page=', stdout: '[]' },
+    // The issue-apply rule stays ahead of the create rule: its path
+    // (`/issues/<n>/labels`) also ends in `/labels`.
+    { match: '-X POST repos/[^ ]+/issues/[0-9]+/labels', issueLabelEcho: true },
+    { match: '-X POST repos/[^/]+/[^/ ]+/labels( |$)', labelEcho: true },
+  ];
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({ rules: [...rules, ...labelBaseline], logPath })
+  );
 
   const recorderPath = path.join(binDir, 'fake-gh.cjs');
   // The script file carries its own POSIX node shebang; copy it verbatim.

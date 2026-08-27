@@ -219,6 +219,17 @@ already exists); keep manual guidance outside them.
 - Finish with \`specgit finish\`: the verdict, derived from real git, PR,
   and CI evidence. Exit code 0 is the only "done".
 
+### Issue tags
+
+- Every bootstrap applies the title's \`kind::<type>\` member
+  automatically; pass \`--tags <a,b>\` to choose the full set explicitly.
+- Selection is pool-first: existing on-spec labels win verbatim; anything
+  missing is seeded from the built-in \`kind::\` catalog or the policy's
+  \`tags:\` declarations. Unknown vocabulary exits 2 naming the universe.
+- Choose with restraint: at most one label per axis, none when unsure —
+  off-spec pool labels are reported (\`tag_pool_dirty\` warnings are for
+  humans) and never renamed by SpecGit.
+
 ### Repair and diagnostics
 
 - \`specgit pr\` repairs the pull-request binding: with no arguments it

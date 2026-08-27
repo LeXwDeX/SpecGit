@@ -1,5 +1,6 @@
 import type { Evidence } from '../kernel/evidence.js';
 import type { RepoRef } from '../gitfacts/origin.js';
+import type { TagSpec } from '../tags/catalog.js';
 
 export interface IssueFact {
   number: number;
@@ -138,6 +139,26 @@ export interface PreflightFact {
 }
 
 /**
+ * The label pool of a repository (#330): every label title the forge
+ * reports, as bare names. Selection classifies them through the tag
+ * grammar — form-valid names become candidates, off-form ones are
+ * reported (`tag_pool_dirty`) and never rewritten.
+ */
+export interface RepoLabelsFact {
+  names: string[];
+}
+
+/**
+ * Labels confirmed present after an idempotent ensure or apply (#330):
+ * exactly the slugs the call named, each either created or already
+ * carried by the repository / issue. Never a broader echo — a name the
+ * forge refused to confirm is absent from this list.
+ */
+export interface LabelsAppliedFact {
+  names: string[];
+}
+
+/**
  * The read surface of the forge port (#180): evidence collection plus the
  * delivery-lifecycle mutations (issues, pull requests, check runs,
  * comments). This is the surface a platform needs to participate in
@@ -205,6 +226,17 @@ export interface ForgeReadPort {
     issue: number,
     body: string
   ): Promise<Evidence<IssueCommentCreation>>;
+  /**
+   * Add labels to an issue (#330), union semantics — already-present
+   * names stay, requested names join. Idempotent: re-running with the
+   * same slugs converges. The delivery traceability layer's tag apply:
+   * called for every bound issue after the selection resolves.
+   */
+  addIssueLabels(
+    repo: RepoRef,
+    issue: number,
+    slugs: string[]
+  ): Promise<Evidence<LabelsAppliedFact>>;
 }
 
 /**
@@ -223,6 +255,15 @@ export interface ForgeAdminPort {
   ): Promise<Evidence<BranchProtectionFact>>;
   getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
   enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
+  /** Every label title the repository carries (#330) — the pool tags are selected from. */
+  listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>>;
+  /**
+   * Create the named specs that are missing (#330), leave existing ones
+   * untouched, and confirm each — created or already present — in the
+   * returned fact. Idempotent by contract; a spec the forge refused to
+   * confirm fails the call (fail-closed).
+   */
+  ensureRepoLabels(repo: RepoRef, specs: TagSpec[]): Promise<Evidence<LabelsAppliedFact>>;
 }
 
 /**
@@ -260,6 +301,7 @@ const FORGE_READ_PORT_MEMBER_FLAGS = {
   createDraftPr: true,
   listOpenPrsByHead: true,
   addIssueComment: true,
+  addIssueLabels: true,
 } as const satisfies Record<keyof ForgeReadPort, true>;
 
 export const FORGE_READ_PORT_MEMBERS: readonly (keyof ForgeReadPort)[] = Object.freeze(
@@ -276,6 +318,8 @@ const FORGE_ADMIN_PORT_MEMBER_FLAGS = {
   enableBranchProtection: true,
   getRepoAutomerge: true,
   enableRepoAutomerge: true,
+  listRepoLabels: true,
+  ensureRepoLabels: true,
 } as const satisfies Record<keyof ForgeAdminPort, true>;
 
 export const FORGE_ADMIN_PORT_MEMBERS: readonly (keyof ForgeAdminPort)[] = Object.freeze(

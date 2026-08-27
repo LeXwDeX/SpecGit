@@ -119,7 +119,9 @@ specgit doctor                        # all probes green?
 # The loop
 # 3. per delivery — one command bootstraps everything
 #    (creates the issues, branches, opens the draft PR with Closes #n for
-#     every issue, writes .specgit.yaml, commits and pushes; re-run resumes)
+#     every issue, tags them — the title's kind::<type> by default, or
+#     --tags kind::feat,module::auth for an explicit pool-first selection
+#     that seeds declared vocabulary when missing; re-run resumes)
 specgit issue "feat: add login" "Harden the session model"
 
 # 4. work, push; CI runs on the PR — including the acceptance job
@@ -178,7 +180,7 @@ reality.
 
 | Command | Does | Network |
 | --- | --- | --- |
-| `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, record, commit, push (idempotent resume) | yes (`gh`/`glab`) |
+| `specgit issue` | One-command bootstrap: create/reuse issues, branch, draft PR closing every issue, tag them (pool-first, #330), record, commit, push (idempotent resume) | yes (`gh`/`glab`) |
 | `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`/`glab`) |
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`/`glab`) |
 | `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block); by default also shields the local delivery assets in `.gitignore` (`--no-ignore` opts out) | gh (protection probe) |

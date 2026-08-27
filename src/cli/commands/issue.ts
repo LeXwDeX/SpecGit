@@ -48,40 +48,38 @@ import { errorDiagnostic, humanBuilder, issueList, sanitize, type IssueOutcome }
 import { commandLanguage, catalogFor } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { PolicyLanguage } from '../../record/policy.js';
+import { DELIVERY_TYPES } from '../../tags/catalog.js';
 import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
 import type { OpenIssueFact } from '../../github/port.js';
 import { BOOTSTRAP_STEPS, passthrough, recordWriteFailure, runBootstrapSteps } from './bootstrap.js';
+import {
+  applyDeliveryTags,
+  validateExplicitTags,
+  type ResolvedTagSelection,
+} from './tagging.js';
 
 export interface IssueOptions {
   titles?: string[];
   json?: boolean;
   /** Explicit semantic delivery name (#246); wins over the title slug. */
   delivery?: string;
+  /**
+   * Raw `--tags` value (#330): comma-separated tag slugs. Defined ⇔
+   * explicit selection mode (strict); undefined ⇔ inferred mode, which
+   * applies only the title-linked `kind::<type>` candidate best-effort.
+   */
+  tags?: string;
 }
 
 /**
  * Conventional-commit types accepted as the `<type>` of the branch
- * name. The single source of truth (#174): the validator below, the
- * `specgit issue --help` text, the usage-error fix, and the
- * specgit-issue skill all render from this list, so the documented
- * set and the enforced set cannot drift.
+ * name. Re-exported from the tags catalog (#330), which is the single
+ * source of truth (#174): the validator below, the `specgit issue
+ * --help` text, the usage-error fix, and the specgit-issue skill all
+ * render from this list — the same list names the seeded `kind::` axis,
+ * so a title's inferred tag always has a home.
  */
-export const ISSUE_TITLE_TYPES = [
-  'feat',
-  'fix',
-  'refactor',
-  'perf',
-  'docs',
-  'test',
-  'chore',
-  'style',
-  'build',
-  'ci',
-  'revert',
-  'security',
-  'deprecate',
-  'dogfood',
-] as const;
+export const ISSUE_TITLE_TYPES = DELIVERY_TYPES;
 
 const BRANCH_TYPES = new Set<string>(ISSUE_TITLE_TYPES);
 
@@ -449,6 +447,25 @@ export async function runIssue(
   }
   const startIndex = resume !== null ? resume.startIndex : 0;
 
+  // #330: explicit --tags resolves BEFORE any issue is created — a typo
+  // in the selection must never leave a created issue behind. The pool
+  // probe here is a read; its snapshot travels into the apply step.
+  const rawTags = options.tags?.split(',').map((token) => token.trim()).filter((t) => t !== '');
+  let tagPre: ResolvedTagSelection | undefined;
+  if (rawTags !== undefined && rawTags.length > 0) {
+    const validated = await validateExplicitTags({
+      ctx,
+      root,
+      repo: repoEv.value,
+      language,
+      tokens: [...rawTags],
+    });
+    if ('exit' in validated) {
+      return validated;
+    }
+    tagPre = validated.pre;
+  }
+
   // #246: naming is interactive only on a real terminal — a `--json`
   // run keeps stdout a pure parse surface, so it never prompts.
   const interactive = options.json !== true && ctx.stdinIsTTY;
@@ -472,6 +489,29 @@ export async function runIssue(
   let record = created.record;
   const firstTitle = created.firstTitle;
 
+  // #330: the tag step runs after every bound issue is durable in the
+  // record — created, adopted, or resumed alike — and before the PR
+  // chain, so the traceability story lands in one invocation. The
+  // inferred candidate is the title's `<type>` on the kind axis; an
+  // explicit --tags replaces it wholesale (already pre-validated above).
+  const inferredSlug =
+    rawTags !== undefined || firstTitle === null
+      ? null
+      : `kind::${parseIssueTitle(firstTitle).type}`;
+  const tagging = await applyDeliveryTags({
+    ctx,
+    root,
+    repo: repoEv.value,
+    language,
+    issues: record.issues,
+    requested: rawTags === undefined ? undefined : [...rawTags],
+    inferredSlug,
+    ...(tagPre !== undefined ? { pre: tagPre } : {}),
+  });
+  if ('exit' in tagging) {
+    return tagging;
+  }
+
   // #278: the tail chain is data — the DeliveryBootstrap module's
   // ordered steps (checkout → commit binding → push head → bind PR →
   // commit record → push). Each step carries its precondition and
@@ -493,14 +533,25 @@ export async function runIssue(
 
   const target = record.context.branch;
 
+  // #330: one summary line when tags were part of this run; skipped runs
+  // stay silent so the quick bootstrap's stderr keeps its old shape.
+  const builder = humanBuilder()
+    .line(human.issueHeader(resumed, record.delivery))
+    .line(human.issueBranch(target))
+    .line(human.issueIssues(issueList(record.issues)));
+  if (tagging.status === 'applied' || tagging.seeded.length > 0 || tagging.applied.length > 0) {
+    builder.line(
+      human.issueTags(
+        tagging.applied.join(', '),
+        tagging.seeded.length > 0 ? tagging.seeded.join(', ') : null
+      )
+    );
+  }
   return {
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
     record: recordSummary(record),
-    human: humanBuilder()
-      .line(human.issueHeader(resumed, record.delivery))
-      .line(human.issueBranch(target))
-      .line(human.issueIssues(issueList(record.issues)))
+    human: builder
       .line(human.issuePr(record.pr as number | string))
       .line(human.issueRecorded(RECORD_FILENAME))
       .build(),

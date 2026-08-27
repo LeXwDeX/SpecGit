@@ -92,6 +92,7 @@ to those lists member-for-member: change a port, change this page.
 | `createDraftPr` | required | Bootstrap draft PR that closes every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
 | `addIssueComment` | required | Traceability edge issue→branch (#160): the bootstrap posts the delivery branch and PR on every bound issue when the PR binding is first established; `record.pr` is the exactly-once marker. |
+| `addIssueLabels` | required | Tag apply (#330): union-semantics label addition for every bound issue after the selection resolves. Idempotent; the response must confirm every requested slug or the call fails closed. |
 
 ### ForgeAdminPort (src/github/port.ts)
 
@@ -101,6 +102,8 @@ to those lists member-for-member: change a port, change this page.
 | `enableBranchProtection` | required | Turn on the required-check gate on the base branch. |
 | `getRepoAutomerge` | required | Repository auto-merge setting. |
 | `enableRepoAutomerge` | required | Turn on repository auto-merge. |
+| `listRepoLabels` | required | The repository's label pool (#330), the universe the tag selection runs against. Paginated to exhaustion (#120 I3b); truncation fails closed. |
+| `ensureRepoLabels` | required | Idempotent seed (#330): create declared-but-missing tag specs, confirm every requested slug (created or already present); an unconfirmed slug fails closed. GitLab CE labels need a Planner-or-above role since 17.7 — permission failures are evidence, not verdict inputs. |
 
 ### ForgeProvider (src/github/port.ts)
 

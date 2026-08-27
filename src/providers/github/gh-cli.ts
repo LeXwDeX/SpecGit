@@ -24,13 +24,16 @@ import type {
   IssueCreation,
   IssueCommentCreation,
   IssueFact,
+  LabelsAppliedFact,
   OpenIssueFact,
   PrCreation,
   PrFact,
   PrSummary,
   PreflightFact,
   RepoAutomergeFact,
+  RepoLabelsFact,
 } from '../../github/port.js';
+import type { TagSpec } from '../../tags/catalog.js';
 
 /** Map a classic-protection payload to the reported fact (contexts only, never fabricated). */
 function protectionFactFromPayload(payload: unknown): BranchProtectionFact {
@@ -69,6 +72,13 @@ const AUTH_FAILURE_PATTERN = /HTTP 40[13]|Bad credentials|gh auth login|not logg
 /** gh stderr markers that mean the looked-up resource does not exist. */
 const NOT_FOUND_PATTERN = /HTTP 404|Not Found/i;
 
+const LABEL_PAGE_SIZE = 100;
+/** Completeness guard for the label-pool probe (#330), same discipline as the timeline pages. */
+const MAX_LABEL_PAGES = 10;
+
+/** GitHub's 422 validation failure when a label already exists names it in the payload. */
+const LABEL_ALREADY_EXISTS_PATTERN = /already.?exist(s)?/i;
+
 const TIMEOUT_FIX =
   'A timeout this basic points at one of three causes — check in order: ' +
   '(1) network reachability (curl -sI https://api.github.com), ' +
@@ -85,7 +95,7 @@ export interface GhCliGitHubProviderOptions {
   spawnImpl?: SpawnFn;
 }
 
-type CallKind = 'issue' | 'pr' | 'checks' | 'search';
+type CallKind = 'issue' | 'pr' | 'checks' | 'search' | 'labels';
 
 /**
  * The only real GitHub transport: the `gh` CLI. Detection → auth → invoke;
@@ -495,6 +505,69 @@ export class GhCliGitHubProvider implements ForgeProvider {
   }
 
   /**
+   * Add labels to an issue (#330): one POST, union semantics — the API
+   * merges requested names into whatever the issue already carries. The
+   * response lists every label on the issue after the apply; every
+   * requested slug must appear in it or the result cannot be verified
+   * (fail-closed, same discipline as a protection update whose payload
+   * omits the contexts).
+   */
+  async addIssueLabels(
+    repo: RepoRef,
+    issue: number,
+    slugs: string[]
+  ): Promise<Evidence<LabelsAppliedFact>> {
+    if (!Number.isInteger(issue) || issue <= 0) {
+      return fail('gh_transport', 'Cannot label an issue without a positive number.');
+    }
+    if (slugs.length === 0 || slugs.some((slug) => !slug.trim())) {
+      return fail('gh_transport', 'Cannot label an issue without at least one non-empty label.');
+    }
+
+    const body = JSON.stringify({ labels: slugs });
+    const result = await this.runCreateGh(
+      ['api', '-X', 'POST', `repos/${repo.owner}/${repo.repo}/issues/${issue}/labels`, '--input', '-'],
+      body
+    );
+    if (!result.ok) {
+      return result;
+    }
+    const parsed = this.parseJsonOutput(result.value.stdout);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const carried = this.labelNamesFromPayload(parsed.value);
+    if (carried === null) {
+      return fail('gh_transport', 'GitHub returned an unexpected issue-labels payload.');
+    }
+    for (const slug of slugs) {
+      if (!carried.includes(slug)) {
+        return fail(
+          'gh_transport',
+          `Label '${sanitizeApiText(slug)}' is absent after the apply; the result could not be verified.`
+        );
+      }
+    }
+    return ok({ names: slugs });
+  }
+
+  /** Label titles from a GitHub labels payload; null when it is not an array of names. */
+  private labelNamesFromPayload(payload: unknown): string[] | null {
+    if (!Array.isArray(payload)) {
+      return null;
+    }
+    const names: string[] = [];
+    for (const entry of payload) {
+      const name = (entry as { name?: unknown }).name;
+      if (typeof name !== 'string' || name === '') {
+        return null;
+      }
+      names.push(name);
+    }
+    return names;
+  }
+
+  /**
    * Draft PRs cannot be created through the REST pulls API:
    * POST /repos/{owner}/{repo}/pulls has no draft parameter — a draft can
    * only be created via GraphQL createPullRequest(input: { draft: true }),
@@ -697,6 +770,116 @@ export class GhCliGitHubProvider implements ForgeProvider {
     }
     const payload = parsed.value as { allow_auto_merge?: unknown };
     return ok({ enabled: payload.allow_auto_merge === true });
+  }
+
+  /**
+   * Every label title the repository carries (#330): the pool the tag
+   * selection runs against. Paginated to exhaustion — completeness rule
+   * (#120, I3b) applies: a cap-truncated pool fails closed rather than
+   * reading as a silently partial selection universe.
+   */
+  async listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>> {
+    const pagesEv = await paginateToExhaustion<unknown>(
+      {
+        pageSize: LABEL_PAGE_SIZE,
+        maxPages: MAX_LABEL_PAGES,
+        what: 'Repository-label',
+        capMessage:
+          `Label pagination hit its cap (${MAX_LABEL_PAGES * LABEL_PAGE_SIZE} labels); ` +
+          'the label pool may be truncated.',
+      },
+      async (page) => {
+        const endpoint = `repos/${repo.owner}/${repo.repo}/labels?per_page=${LABEL_PAGE_SIZE}&page=${page}`;
+        const result = await this.runApi(endpoint, 'labels');
+        if (!result.ok) {
+          return result;
+        }
+        if (!Array.isArray(result.value)) {
+          return fail('gh_transport', 'GitHub returned an unexpected label-list payload.');
+        }
+        return ok(result.value);
+      }
+    );
+    if (!pagesEv.ok) {
+      return pagesEv;
+    }
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of pagesEv.value) {
+      const name = (entry as { name?: unknown }).name;
+      if (typeof name !== 'string' || name === '') {
+        return fail('gh_transport', 'GitHub returned a label entry without a name.');
+      }
+      if (seen.has(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+    return ok({ names });
+  }
+
+  /**
+   * Idempotent seed (#330): create every missing spec, leave existing
+   * names untouched, and echo exactly the requested slugs as confirmed.
+   * A creation that fails on anything other than already-exists fails
+   * closed — an unconfirmed slug never enters the fact.
+   */
+  async ensureRepoLabels(
+    repo: RepoRef,
+    specs: TagSpec[]
+  ): Promise<Evidence<LabelsAppliedFact>> {
+    if (specs.length === 0) {
+      return ok({ names: [] });
+    }
+    for (const spec of specs) {
+      if (!spec.name.trim() || !/^[0-9a-fA-F]{6}$/.test(spec.color)) {
+        return fail('gh_transport', 'Cannot seed a label without a name and six-hex color.');
+      }
+    }
+
+    const existingEv = await this.listRepoLabels(repo);
+    if (!existingEv.ok) {
+      return existingEv;
+    }
+    const present = new Set(existingEv.value.names);
+
+    const confirmed: string[] = [];
+    for (const spec of specs) {
+      if (present.has(spec.name)) {
+        confirmed.push(spec.name);
+        continue;
+      }
+      const result = await this.runAdminApi([
+        'api',
+        '-X',
+        'POST',
+        `repos/${repo.owner}/${repo.repo}/labels`,
+        '-f',
+        `name=${spec.name}`,
+        '-f',
+        `color=${spec.color}`,
+      ]);
+      if (!result.ok) {
+        // Already-exists (a concurrent seed won the race) is presence.
+        if (!LABEL_ALREADY_EXISTS_PATTERN.test(result.message)) {
+          return result;
+        }
+        confirmed.push(spec.name);
+        continue;
+      }
+      const parsed = this.parseJsonOutput(result.value.stdout);
+      if (!parsed.ok) {
+        return parsed;
+      }
+      const created = parsed.value as { name?: unknown };
+      if (created.name !== spec.name) {
+        return fail(
+          'gh_transport',
+          'Label was applied but the response could not be verified: the created name differs.'
+        );
+      }
+      confirmed.push(spec.name);
+    }
+    return ok({ names: confirmed });
   }
 
   private parseJsonOutput(stdout: string): Evidence<unknown> {

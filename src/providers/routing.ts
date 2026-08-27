@@ -1,5 +1,6 @@
 import type { RepoRef } from '../gitfacts/origin.js';
 import type { ForgeProvider } from '../github/port.js';
+import type { TagSpec } from '../tags/catalog.js';
 
 /**
  * #117 (provider routing): the production composition hands commands one
@@ -149,6 +150,14 @@ export class PlatformRoutingProvider implements ForgeProvider {
     return (await this.forRepo(repo)).addIssueComment(repo, issue, body);
   }
 
+  async addIssueLabels(
+    repo: RepoRef,
+    issue: number,
+    slugs: string[]
+  ): ReturnType<ForgeProvider['addIssueLabels']> {
+    return (await this.forRepo(repo)).addIssueLabels(repo, issue, slugs);
+  }
+
   async getBranchProtection(
     repo: RepoRef,
     branch: string
@@ -172,5 +181,16 @@ export class PlatformRoutingProvider implements ForgeProvider {
     repo: RepoRef
   ): ReturnType<ForgeProvider['enableRepoAutomerge']> {
     return (await this.forRepo(repo)).enableRepoAutomerge(repo);
+  }
+
+  async listRepoLabels(repo: RepoRef): ReturnType<ForgeProvider['listRepoLabels']> {
+    return (await this.forRepo(repo)).listRepoLabels(repo);
+  }
+
+  async ensureRepoLabels(
+    repo: RepoRef,
+    specs: TagSpec[]
+  ): ReturnType<ForgeProvider['ensureRepoLabels']> {
+    return (await this.forRepo(repo)).ensureRepoLabels(repo, specs);
   }
 }
