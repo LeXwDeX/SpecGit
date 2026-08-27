@@ -5,3 +5,4 @@ context:
   branch: feat/330-issue-tags
 issues:
   - 330
+pr: 331
