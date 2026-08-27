@@ -1,8 +1,8 @@
 version: 1
-delivery: issue-tags
+delivery: release-changeset
 context:
   kind: branch
-  branch: feat/330-issue-tags
+  branch: chore/332-release-changeset
 issues:
-  - 330
-pr: 331
+  - 332
+pr: 333
