@@ -1,8 +1,7 @@
 version: 1
-delivery: reconcile-doc-drift
+delivery: issue-tags
 context:
   kind: branch
-  branch: docs/328-reconcile-doc-drift
+  branch: feat/330-issue-tags
 issues:
-  - 328
-pr: 329
+  - 330
