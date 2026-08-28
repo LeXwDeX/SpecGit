@@ -694,6 +694,13 @@ const GIT_PRE_PUSH_BODY = `# SpecGit pre-push guard (managed by specgit init).
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "\$remote_ref" in
     refs/heads/main)
+      # Mirror sync (#343): a commit already contained by origin/main is
+      # accepted history — pushing it to another remote mirrors the
+      # verdict, it bypasses nothing. A zero sha (ref deletion) never
+      # passes this check.
+      if git merge-base --is-ancestor "\$local_sha" refs/remotes/origin/main >/dev/null 2>&1; then
+        continue
+      fi
       echo "specgit: direct push to main is not the delivery path." >&2
       echo "Deliveries go: specgit issue -> PR -> CI -> specgit finish (exit 0) -> merge." >&2
       exit 1
@@ -709,6 +716,9 @@ ${GIT_PRE_PUSH_BODY}`;
 
 const PRE_PUSH_START = '# >>> specgit:start >>>';
 const PRE_PUSH_END = '# <<< specgit:end <<<';
+
+/** Generator-exclusive ownership line: stable across body generations. */
+const GIT_PRE_PUSH_SIGNATURE = '# SpecGit pre-push guard (managed by specgit init).';
 
 /** The marker-delimited guard region (no shebang of its own). */
 function managedPrePushRegion(): string {
@@ -765,6 +775,14 @@ export function mergeGitPrePush(existing: string | null): string {
       managedPrePushRegion().trimEnd(),
       ...trailing,
     ].join('\n');
+  }
+  // An unmarked install carrying the specgit signature line is a legacy
+  // specgit guard from ANY earlier generation (#343): byte-equality with
+  // one frozen historical body would leave every other generation
+  // misread as a user hook and double-guarded. The signature line is
+  // generator-exclusive, so this is proven ownership, not a guess.
+  if (lines.some((line) => line === GIT_PRE_PUSH_SIGNATURE)) {
+    return managedPrePush();
   }
   const remainder = lines.filter((line) => !isMarkerLine(line)).join('\n');
   if (remainder === '') {
