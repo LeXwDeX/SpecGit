@@ -174,7 +174,7 @@ Before creating from a title, the bootstrap probes the open issues with one titl
 
 After every bound issue is durable in the record, bootstrap applies delivery tags:
 
-- **Inferred mode** (no flag): the first title's `<type>` becomes `kind::<type>`, applied best-effort to every bound issue.
+- **Inferred mode** (no flag): each created issue carries its OWN title's `kind::<type>` (#338), recorded per issue in `.specgit.yaml` (`issueKinds`) and applied best-effort. A reused numeric issue — or any issue without a parsable title — carries no kind and never inherits another issue's; a pre-#338 record's consumed issues are likewise left untouched on continuation.
 - **Explicit mode**: `--tags <a,b>` names the full set; it is resolved **before any issue is created**, so an invalid or unknown slug exits 2 with zero side effects.
 
 Selection is pool-first against a portable grammar (`^[a-z0-9]+(-[a-z0-9]+)*(::[a-z0-9]+(-[a-z0-9]+)*)?$`, ≤64 chars — safe on both GitHub and GitLab, where `::` degrades from scoped-label semantics on Premium to plain text on CE):

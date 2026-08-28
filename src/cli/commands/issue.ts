@@ -555,13 +555,15 @@ export async function runIssue(
 
   // #330: the tag step runs after every bound issue is durable in the
   // record — created, adopted, or resumed alike — and before the PR
-  // chain, so the traceability story lands in one invocation. The
-  // inferred candidate is the title's `<type>` on the kind axis; an
-  // explicit --tags replaces it wholesale (already pre-validated above).
-  const inferredSlug =
-    rawTags !== undefined || firstTitle === null
-      ? null
-      : `kind::${parseIssueTitle(firstTitle).type}`;
+  // chain, so the traceability story lands in one invocation. #338: the
+  // inferred candidates are per-issue — each bound issue's OWN title
+  // kind from the record. Issues without a recorded kind (numeric
+  // reuses, or issues consumed by a pre-#338 run) carry none and never
+  // inherit another title's. An explicit --tags replaces inference
+  // wholesale (already pre-validated above).
+  const inferredByIssue = record.issueKinds !== undefined
+    ? new Map(record.issueKinds.map((entry) => [entry.issue, entry.kind]))
+    : undefined;
   const tagging = await applyDeliveryTags({
     ctx,
     root,
@@ -569,7 +571,7 @@ export async function runIssue(
     language,
     issues: record.issues,
     requested: rawTags === undefined ? undefined : [...rawTags],
-    inferredSlug,
+    inferredByIssue,
     ...(tagPre !== undefined ? { pre: tagPre } : {}),
   });
   if ('exit' in tagging) {
@@ -761,6 +763,13 @@ export async function createOrAdoptIssues(deps: {
 }): Promise<IssueOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
   const { ctx, root, repo, language, context } = deps;
   const issues = deps.record !== null ? [...deps.record.issues] : [];
+  // #338: every bound issue carries its OWN title's kind in the record,
+  // so the tag step never makes one issue inherit another's. Kinds ride
+  // the durable per-issue rewrite below; a resume restores them from the
+  // record and continues from the first unconsumed argument.
+  const issueKinds = new Map<number, string>(
+    (deps.record?.issueKinds ?? []).map((entry) => [entry.issue, entry.kind])
+  );
   let record: DeliveryBinding | null = deps.record;
   let firstTitle = deps.firstTitle;
 
@@ -847,6 +856,14 @@ export async function createOrAdoptIssues(deps: {
       }
     }
     issues.push(number);
+    if (reuseNumber === null) {
+      // #338: a title-bound issue records its own kind; a reused numeric
+      // issue contributes none — it never inherits another title's.
+      const { type } = parseIssueTitle(arg);
+      if (type) {
+        issueKinds.set(number, `kind::${type}`);
+      }
+    }
 
     // Durable resumable state: rewrite the record after every issue so
     // any failure heals on the next invocation without re-creating.
@@ -858,6 +875,13 @@ export async function createOrAdoptIssues(deps: {
       delivery,
       context: { ...context, branch },
       issues: [...issues],
+      ...(issueKinds.size > 0
+        ? {
+            issueKinds: [...issueKinds.entries()]
+              .sort((a, b) => a[0] - b[0])
+              .map(([issue, kind]) => ({ issue, kind })),
+          }
+        : {}),
     };
     try {
       await ctx.record.writeRecord(root, record);

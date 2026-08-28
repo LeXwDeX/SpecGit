@@ -43,6 +43,17 @@ export const DeliveryBindingSchema = z
     context: ExecutionContextSchema,
     issues: z.array(z.number().int().positive()).default([]),
     pr: z.union([z.number().int().positive(), z.string().min(1)]).optional(),
+    // #338: each bound issue's own inferred kind slug, so the tag step
+    // never makes one issue inherit another title's kind. Absent on
+    // records written before the field existed (legacy tagging applies).
+    issueKinds: z
+      .array(
+        z.object({
+          issue: z.number().int().positive(),
+          kind: z.string().min(1),
+        })
+      )
+      .optional(),
   })
   .passthrough();
 

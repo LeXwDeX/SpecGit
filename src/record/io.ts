@@ -223,6 +223,12 @@ export async function writeRecord(root: string, binding: DeliveryBinding): Promi
     } else {
       merged.pr = binding.pr;
     }
+    // #338: unlike `pr`, an absent field leaves any on-disk value alone —
+    // surgery writers (bind) that do not know about kinds must never drop
+    // them; the bootstrap always writes the full map it owns.
+    if (binding.issueKinds !== undefined) {
+      merged.issueKinds = binding.issueKinds;
+    }
 
     await writeFileAtomically(target, YAML.stringify(merged));
   });
