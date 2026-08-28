@@ -209,8 +209,14 @@ function adoptionNextActions(gitlab: boolean, text: HumanText): NextAction[] {
     ...(gitlab ? [] : [['adoption_protect', 'specgit init --force --protect'] as [string, string]]),
     ['adoption_setup', 'specgit setup && specgit doctor && specgit status'],
   ];
-  const reasons = text.initAdoptionReasons(gitlab);
-  return spec.map(([code, command], index) => ({ code, command, reason: reasons[index] }));
+  // Keyed by step code, never positional: the localized reasons and the
+  // command list cannot drift out of alignment by reordering.
+  const reasonFor = text.initAdoptionReasons(gitlab);
+  return spec.map(([code, command]) => ({
+    code,
+    command,
+    reason: reasonFor[code] ?? '',
+  }));
 }
 
 /** Assemble the success envelope and human summary for a completed init. */

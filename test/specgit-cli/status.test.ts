@@ -118,6 +118,25 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     ).toBeUndefined();
   });
 
+  // Detached HEAD on a trunk carrying the tracked record is the same
+  // historical signature (#351 review): no branch name, but the tracked
+  // record naming another branch still means merged history riding here.
+  it('reports historical-candidate on a detached HEAD carrying the tracked record (#351)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ branch: null }),
+      gitWrites: { trackedFiles: (paths) => ({ ok: true, value: paths }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.state).toBe('historical-candidate');
+    expect(
+      (envelope.warnings ?? []).find((w: any) => w.code === 'record_historical_candidate')
+    ).toBeDefined();
+  });
+
   it('verifies worktree contexts against the live worktree list', async () => {
     const t = makeCtx({
       record: sampleBinding({ context: { kind: 'worktree', label: '123-login', branch: 'feat/123-login' } }),

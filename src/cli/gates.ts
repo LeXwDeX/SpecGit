@@ -90,10 +90,13 @@ export function deriveLifecycleState(
   facts: GitFacts,
   recordTracked: boolean
 ): 'draft' | 'bound' | 'historical-candidate' {
-  if (deriveBindingState(binding) !== 'bound') {
-    return deriveBindingState(binding);
+  const completeness = deriveBindingState(binding);
+  if (completeness !== 'bound') {
+    return completeness;
   }
-  if (recordTracked && facts.branch !== null && facts.branch !== binding.context.branch) {
+  // A detached HEAD (branch null) over a tracked record naming a branch
+  // is the same historical signature — `null !== context.branch` holds.
+  if (recordTracked && facts.branch !== binding.context.branch) {
     return 'historical-candidate';
   }
   return 'bound';

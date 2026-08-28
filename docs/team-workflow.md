@@ -47,9 +47,10 @@ issue(s) filed ──► specgit issue (branch + draft PR + record) ──► co
                                                                                         │
         specgit finish ◄── closing refs + green checks ◄────────────────────────────────┘
               │
-              ├── accepted ──► merge ──► specgit unbind (or delete .specgit.yaml)
-              ├── rejected ──► fix what the gates named, re-run finish
-              └── unknown  ──► fix record/policy/auth, re-run finish
+              ├── accepted ──► merge ──► completed history on the trunk (the
+               │                        next specgit issue replaces it, #351)
+               ├── rejected ──► fix what the gates named, re-run finish
+               └── unknown  ──► fix record/policy/auth, re-run finish
 ```
 
 The record (`.specgit.yaml`) is committed on the delivery branch, so the binding travels with the work: anyone who checks the branch out — including worktrees on their own machine — can run `specgit status` and `specgit finish` and get the same verdict.
