@@ -102,8 +102,11 @@ already exists); keep manual guidance outside them.
   deterministic scaffold (the `Closes #n` line for every bound issue,
   then Why / What changed / Evidence / Checklist sections), and writes
   `.specgit.yaml`. Re-running resumes; it is idempotent.
-- Fill in the scaffold sections as you deliver. Its placeholders are
-  advisory — the closing references are the only body gate. The PR body
+- Issue bodies are filled at bootstrap, from the conversation: right after
+  `specgit issue` succeeds, edit each issue it created (`gh issue edit <n>`)
+  with the discussed Why / Scope / Approach / Acceptance, then implement.
+  The PR scaffold's placeholders are advisory — fill those sections in as
+  you deliver; the closing references are the only body gate. The PR body
   is written once at creation; no SpecGit command edits an existing PR
   body, and the repository's own pull-request template is never read.
 - A draft pull request always fails the verdict (`pr_draft`): before
@@ -172,11 +175,17 @@ verified on its own evidence, split it before binding.
 - **SpecGit is the default way of working here.** Any non-trivial
   task — a feature, a fix, a refactor, a docs change — is a delivery:
   work items live in this tracker as issues, never in private task
-  lists or conversational checklists. Before starting, turn the work
-  into issue(s) (`specgit issue <type>: <title>...`); mid-conversation
-  inventories ("let me list everything to do") become issues, not
-  chat artifacts. Trivial replies and read-only questions need none
-  of this.
+  lists or conversational checklists. The trigger is the decision to
+  start: the moment the conversation settles and you begin turning
+  the plan into changes, the FIRST action is
+  `specgit issue <type>: <title>...` — before any file edit.
+  Working without a binding is a contract violation, not a style
+  choice. Immediately after bootstrap, fill each issue body
+  (Why / Scope / Approach / Acceptance) from the discussion with
+  `gh issue edit`, then implement. Mid-conversation inventories
+  ("let me list everything to do") become issues, not chat
+  artifacts. Trivial replies and read-only questions need none of
+  this.
 - The one rule: a delivery is done if and only if `specgit finish`
   exits `0`. Never declare completion from task lists, file states, or
   test runs you performed yourself.

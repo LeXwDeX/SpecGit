@@ -1188,8 +1188,13 @@ describe('specgit init hook merging', () => {
     };
     expect(hooksJson.SessionStart).toHaveLength(1);
     expect(hooksJson.custom).toEqual({ kept: true });
-    const bash = hooksJson.PreToolUse.find((entry) => entry.matcher === 'Bash');
-    expect(bash?.hooks).toHaveLength(1);
+    // Located by ownership (the guard command); matcher covers the
+    // file-mutation tools too (#335).
+    const guards = hooksJson.PreToolUse.filter((entry) =>
+      entry.hooks.some((hook) => hook.command === '.opencode/hooks/specgit-merge-guard.sh')
+    );
+    expect(guards).toHaveLength(1);
+    expect(guards[0]?.matcher).toBe('Bash|Edit|Write');
 
     const prePush = read(path.join(gitHooks, 'pre-push'));
     expect(prePush).toContain('./scripts/verify.sh');
