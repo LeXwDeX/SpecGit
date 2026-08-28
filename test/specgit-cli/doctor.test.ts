@@ -3,12 +3,13 @@ import { CODE_INFO } from '../../src/acceptance/codes.js';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
-import { fail } from '../../src/kernel/evidence.js';
+import { fail, ok } from '../../src/kernel/evidence.js';
 import {
   makeCtx,
   makeGhProvider,
   makeGitFacts,
   parseStdoutJson,
+  sampleBinding,
   samplePolicy,
   stdoutText,
 } from './helpers.js';
@@ -221,6 +222,57 @@ describe('specgit doctor', () => {
       expect(code).toBe(EXIT_SUCCESS);
       const envelope = parseStdoutJson(t.io);
       expect(envelope.errors ?? []).toEqual([]);
+    });
+  });
+
+  describe('stray issue probe (#348)', () => {
+    const SCAFFOLD_BODY =
+      '## Why\nsome title\n\n## Scope\n\n## Acceptance\nThe delivery pull request closes this issue; `specgit finish` must exit 0.';
+    const openIssue = {
+      getOpenIssues: () =>
+        ok([
+          { number: 21, title: 'feat: stray one', body: SCAFFOLD_BODY },
+          { number: 22, title: 'human question', body: 'how do I configure X?' },
+        ]),
+    };
+
+    it('warns about a specgit-scaffolded open issue outside any delivery', async () => {
+      const t = makeCtx({ policy: samplePolicy(), gh: makeGhProvider(openIssue) });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      const stray = (envelope.warnings ?? []).find(
+        (w: any) => w.code === 'issue_stray'
+      );
+      expect(stray).toBeDefined();
+      expect(stray.message).toContain('#21');
+      expect(stray.message).not.toContain('#22');
+    });
+
+    it('never flags a bound issue or a human-authored body', async () => {
+      const bound = sampleBinding({ issues: [21] });
+      const t = makeCtx({
+        policy: samplePolicy(),
+        gh: makeGhProvider(openIssue),
+        record: bound,
+      });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.warnings ?? []).toEqual([]);
+    });
+
+    it('degrades silently when open-issue evidence cannot be gathered', async () => {
+      const t = makeCtx({
+        policy: samplePolicy(),
+        gh: makeGhProvider({
+          getOpenIssues: () => fail('gh_transport', 'down'),
+        }),
+      });
+      const code = await runCliWith(['node', 'specgit', 'doctor', '--json'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      const envelope = parseStdoutJson(t.io);
+      expect(envelope.warnings ?? []).toEqual([]);
     });
   });
 });
