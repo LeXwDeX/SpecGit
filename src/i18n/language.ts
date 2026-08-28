@@ -141,10 +141,11 @@ export interface HumanText {
   initRemovedAsset(path: string): string;
   initPreservedAsset(path: string): string;
   initProtectionRequired(branch: string, check: string): string;
-  // init — adoption hand-off (#352); the reasons localize, codes/commands
-  // interpolate verbatim (machine contract). gitlab drops the protect step.
+  // init — adoption hand-off (#352); the reasons localize keyed by the
+  // verbatim step code, so no positional coupling to the command list.
+  // gitlab drops the protect step.
   initNextAdoptionHeadline(): string;
-  initAdoptionReasons(gitlab: boolean): string[];
+  initAdoptionReasons(gitlab: boolean): Record<string, string>;
   initAutomerge(enabled: boolean): string;
   // finish / accept
   finishAccepted(delivery: string, pr: number | null): string;
@@ -268,19 +269,23 @@ const EN_HUMAN: HumanText = {
   initNextAdoptionHeadline: () =>
     'Next: the adoption is not on the default branch yet — finish it before requiring checks:',
   initAdoptionReasons: (gitlab) =>
-    [
-      'Carry the harness and policy to the default branch through a pull request, not a direct push.',
-      'The policy is shielded by .gitignore by default — a plain "git add" silently skips it; the -f is required.',
-      gitlab
+    ({
+      adoption_branch:
+        'Carry the harness and policy to the default branch through a pull request, not a direct push.',
+      adoption_commit:
+        'The policy is shielded by .gitignore by default — a plain "git add" silently skips it; the -f is required.',
+      adoption_pr: gitlab
         ? 'Merge the adoption MR so your CI jobs exist on the default branch.'
         : 'Merge the adoption PR so the acceptance check exists on the default branch.',
       ...(gitlab
-        ? []
-        : [
-            'Only now is requiring the acceptance check safe: PRs can pass it because the workflow is on the default branch.',
-          ]),
-      'Optional: install the agent entry points, then check the environment and the snapshot.',
-    ],
+        ? {}
+        : {
+            adoption_protect:
+              'Only now is requiring the acceptance check safe: PRs can pass it because the workflow is on the default branch.',
+          }),
+      adoption_setup:
+        'Optional: install the agent entry points, then check the environment and the snapshot.',
+    }) as Record<string, string>,
   initAutomerge: (enabled) => `Auto-merge: ${enabled ? 'enabled' : 'already on'}`,
   finishAccepted: (delivery, pr) =>
     `Accepted: delivery '${delivery}'${pr !== null ? ` (PR ${pr})` : ''}.`,
@@ -361,17 +366,17 @@ const ZH_HUMAN: HumanText = {
   initNextAdoptionHeadline: () =>
     '下一步：接入（adoption）尚未落到默认分支——先完成接入，再启用必需检查：',
   initAdoptionReasons: (gitlab) =>
-    [
-      '通过 pull request（而非直接 push）把 harness 与 policy 带到默认分支。',
-      'policy 默认被 .gitignore 屏蔽——普通 "git add" 会静默跳过它；必须加 -f。',
-      gitlab
+    ({
+      adoption_branch: '通过 pull request（而非直接 push）把 harness 与 policy 带到默认分支。',
+      adoption_commit: 'policy 默认被 .gitignore 屏蔽——普通 "git add" 会静默跳过它；必须加 -f。',
+      adoption_pr: gitlab
         ? '合并接入 MR，让你的 CI 作业存在于默认分支上。'
         : '合并接入 PR，让验收检查存在于默认分支上。',
       ...(gitlab
-        ? []
-        : ['只有此时启用必需检查才安全：工作流已在默认分支上，PR 能通过它。']),
-      '可选：安装 agent 入口，然后检查环境与本地快照。',
-    ],
+        ? {}
+        : { adoption_protect: '只有此时启用必需检查才安全：工作流已在默认分支上，PR 能通过它。' }),
+      adoption_setup: '可选：安装 agent 入口，然后检查环境与本地快照。',
+    }) as Record<string, string>,
   initAutomerge: (enabled) => `自动合并：${enabled ? '已启用' : '已开启'}`,
   finishAccepted: (delivery, pr) =>
     `已接受：交付 '${delivery}'${pr !== null ? `（PR ${pr}）` : ''}。`,

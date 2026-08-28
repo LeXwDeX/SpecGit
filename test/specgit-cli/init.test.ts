@@ -209,6 +209,34 @@ describe('specgit init', () => {
     expect(setup.command).toContain('specgit status');
   });
 
+  // #352 review: gitlab mode never writes the GitHub workflow, so the
+  // adoption signal there is the TRACKED POLICY (force-carried by the
+  // adoption commit) — an adopted GitLab repo must not be told to adopt
+  // again on every init --force.
+  it('an adopted gitlab repo (tracked policy) gets no adoption nextActions (#352)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      // Models real git: gitlab mode never writes the GitHub workflow, so
+      // that path is never tracked there; everything else rides commits.
+      gitWrites: {
+        trackedFiles: (paths) => ({
+          ok: true,
+          value: paths.filter((p) => !p.includes('.github')),
+        }),
+      },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.nextActions).toBeUndefined();
+  });
+
   it('reports already-protected without re-enabling', async () => {
     const gh = makeGhProvider({
       branchProtection: { ok: true, value: { protected: true, requiredChecks: ['SpecGit Acceptance'] } },
