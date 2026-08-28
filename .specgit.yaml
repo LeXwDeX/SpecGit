@@ -1,10 +1,8 @@
 version: 1
-delivery: managed-start-gate
+delivery: per-issue-kind-tag
 context:
   kind: branch
-  branch: feat/335-managed-start-gate
+  branch: feat/338-per-issue-kind-tag
 issues:
-  - 335
-  - 336
-  - 339
-pr: 337
+  - 338
+pr: 341
