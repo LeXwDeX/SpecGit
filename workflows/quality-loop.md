@@ -142,10 +142,13 @@ investigated as real. The Windows job never sets the loop's pace.
 
 ## Merge and release (the merge licence, not a checkpoint)
 
-1. All four clean-criteria hold → `gh pr ready` → CI green →
-   `specgit finish` — exit 0 is the only merge licence (a gate, not a
-   question; never bypassed).
-2. `gh pr merge --merge --delete-branch`. The merged record on `main` is
+1. All four clean-criteria hold → `gh pr ready` + `gh pr merge --auto
+   --merge` → CI green → `specgit finish` — exit 0 is the only merge
+   licence (a gate, not a question; never bypassed; auto-merge cannot
+   bypass it either: the verdict is a required check, so GitHub merges
+   only when it is green).
+2. The auto-merge lands the PR as a merge commit and deletes the branch.
+   The merged record on `main` is
    completed history (#351): the next `specgit issue` replaces it
    atomically — `unbind` is only for abandoning or resetting, never the
    post-merge step.
