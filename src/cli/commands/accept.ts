@@ -13,11 +13,14 @@ import { EXIT_UNKNOWN } from '../exit-codes.js';
 import {
   errorDiagnostic,
   humanBuilder,
+  renderNextActionsHuman,
   verdictFailureLine,
   type AcceptOutcome,
+  type NextAction,
 } from '../output.js';
+import { forgeMergeCommand } from '../forge-links.js';
 import { catalogFor, resolveLanguage } from '../language.js';
-import type { CommandContext, Evidence } from '../types.js';
+import type { CommandContext, Evidence, RepoRef } from '../types.js';
 
 export interface AcceptOptions {
   json?: boolean;
@@ -53,14 +56,53 @@ export async function runAccept(
         : text.finishUnknown(verdict.evidence.delivery ?? null);
 
   const failureLines = verdict.gates.flatMap((gate) =>
-    gate.failures.map((failure) => verdictFailureLine(gate.id, failure.code, failure.fix))
+    gate.failures.map((failure) => verdictFailureLine(gate.id, failure.code))
   );
+
+  // #361: an accepted verdict hands off the next step — the merge for a
+  // live delivery (auto-merge per policy), the next bootstrap for
+  // completed history. Rejected/unknown say nothing: their repairs ride
+  // the diagnostics, rendered exactly once (#362). The dialect must be
+  // PROVEN, never guessed: a platform that cannot be resolved gets no
+  // merge command (advisory hand-offs fail closed, like everything else).
+  const reasonFor = text.finishHandoffReasons();
+  let nextActions: NextAction[] | undefined;
+  if (verdict.classification === 'accepted') {
+    if (verdict.state === 'completed') {
+      nextActions = [
+        {
+          code: 'next_delivery',
+          command: 'specgit issue "<type>: <title>"',
+          reason: reasonFor['next_delivery'] ?? '',
+        },
+      ];
+    } else if (verdict.evidence.pr !== null) {
+      const facts = await ctx.git.facts(root.value).catch(() => null);
+      let platform: RepoRef['platform'] | null = null;
+      if (facts?.originUrl) {
+        const parsed = await Promise.resolve(ctx.parseRepoRef(facts.originUrl));
+        if (parsed.ok) {
+          platform = parsed.value.platform;
+        }
+      }
+      if (platform !== null) {
+        nextActions = [
+          {
+            code: 'delivery_merge',
+            command: forgeMergeCommand(platform, verdict.evidence.pr),
+            reason: reasonFor['delivery_merge'] ?? '',
+          },
+        ];
+      }
+    }
+  }
 
   return {
     exit: verdict.exitCode,
     state: verdict.state,
     verdict,
     warnings: verdict.warnings.length > 0 ? verdict.warnings : undefined,
+    ...(nextActions !== undefined ? { nextActions } : {}),
     errors:
       verdict.exitCode === 0
         ? undefined
@@ -71,6 +113,18 @@ export async function runAccept(
                 errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {})
               )
             ),
-    human: humanBuilder().line(headline).append(failureLines).build(),
+    human: humanBuilder()
+      .line(headline)
+      .append(failureLines)
+      // Completed history: the record_of_merged_delivery warning's Next
+      // line already hands off the next delivery — rendering the same
+      // hand-off twice would break the exactly-once intent (#362); the
+      // envelope keeps the structured action for machines.
+      .append(
+        verdict.state === 'completed'
+          ? []
+          : renderNextActionsHuman(text.nextHeadline(), nextActions ?? [])
+      )
+      .build(),
   };
 }

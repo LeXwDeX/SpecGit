@@ -213,6 +213,24 @@ describe('specgit issue: fresh bootstrap', () => {
     });
     expect(outcome.state).toBe('bound');
     expect(outcome.human?.join('\n')).toContain('strict-delivery-harness');
+
+    // #361: the success hand-off — forge URLs and the steps to
+    // review-ready (fill the issue bodies, fill the PR brief, mark ready).
+    expect(outcome.urls).toEqual({
+      issues: [
+        'https://github.com/LeXwDeX/SpecGit/issues/11',
+        'https://github.com/LeXwDeX/SpecGit/issues/12',
+      ],
+      pr: 'https://github.com/LeXwDeX/SpecGit/pull/42',
+    });
+    expect((outcome.nextActions ?? []).map((a) => a.code)).toEqual([
+      'issue_bodies',
+      'pr_brief',
+      'pr_ready',
+    ]);
+    const ready = outcome.nextActions?.find((a) => a.code === 'pr_ready');
+    expect(ready?.command).toContain('gh pr ready 42');
+    expect(outcome.human?.join('\n')).toContain('gh pr ready 42');
   });
 
   it('rejects a title without a type prefix as a usage error', async () => {
