@@ -17,3 +17,4 @@ issueKinds:
     kind: kind::refactor
   - issue: 363
     kind: kind::refactor
+pr: 364
