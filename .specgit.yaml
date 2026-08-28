@@ -5,3 +5,4 @@ context:
   branch: feat/342-release-bot-token
 issues:
   - 342
+pr: 346
