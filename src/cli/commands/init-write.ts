@@ -21,7 +21,14 @@ import {
   type ManagedReconcileReport,
   type ManagedStep,
 } from '../managed-reconcile.js';
-import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome, type NextAction } from '../output.js';
+import {
+  detailLine,
+  errorDiagnostic,
+  humanBuilder,
+  renderNextActionsHuman,
+  type InitOutcome,
+  type NextAction,
+} from '../output.js';
 import { trackedIncludes } from '../gates.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
@@ -288,14 +295,12 @@ export function buildInitOutcome(args: {
     .append(reconciled.removed.map((path) => text.initRemovedAsset(path)))
     .append(reconciled.preserved.map((path) => text.initPreservedAsset(path)))
     .append(protectionHuman);
-  // #352: a fresh adoption hands off the adoption steps — structured in
-  // the envelope, the short form for humans — speaking the platform's
-  // dialect. Built once, rendered twice.
+  // #352/#360: a fresh adoption hands off the adoption steps — structured
+  // in the envelope, the shared short-form renderer for humans — speaking
+  // the platform's dialect. Built once, rendered twice.
   const nextActions = adopted ? null : adoptionNextActions(platform.outcome.mode === 'gitlab', text);
   if (nextActions !== null) {
-    builder
-      .line(text.initNextAdoptionHeadline())
-      .append(nextActions.map((action) => `  ${action.command} — ${action.reason}`));
+    builder.append(renderNextActionsHuman(text.initNextAdoptionHeadline(), nextActions));
   }
   return {
     exit: EXIT_SUCCESS,
