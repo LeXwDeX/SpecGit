@@ -1,5 +1,17 @@
 # specgit
 
+## 1.9.0
+
+### Minor Changes
+
+- [#354](https://github.com/LeXwDeX/SpecGit/pull/354) [`b55531f`](https://github.com/LeXwDeX/SpecGit/commit/b55531f1abd5735bfb7cc43be23a0b03d0f8f07f) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Completed lifecycle state for merged delivery records ([#351](https://github.com/LeXwDeX/SpecGit/issues/351)). `specgit finish` on a trunk that already merged the delivery now reports `state: "completed"` (exit 0 unchanged) instead of `accepted`, and the `record_of_merged_delivery` warning points at the next delivery — `specgit issue "<type>: <title>"` atomically replaces the record — instead of advising `unbind`. `specgit status` reports `state: "historical-candidate"` with the warning `record_historical_candidate` when the record is tracked on a branch other than its recorded context (the local signature of merged history), never `bound` + silent `branch_mismatch` contradiction. `unbind` is repositioned in docs and copy as the abandon/reset/uninstall tool, not the post-merge step; the workflow guides' merge step is now "merge → next `specgit issue`".
+
+- [#354](https://github.com/LeXwDeX/SpecGit/pull/354) [`4e9a424`](https://github.com/LeXwDeX/SpecGit/commit/4e9a42466a1b2d193838339172c743e492083d0d) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Safe branch-protection default and adoption hand-off on fresh init ([#352](https://github.com/LeXwDeX/SpecGit/issues/352)). The interactive protection confirm now defaults to NO on a fresh adoption — the acceptance harness is not on the default branch yet, and requiring a check no PR can pass locks out non-admin merges; the default flips to YES only once the acceptance workflow is tracked (the adoption PR landed). A fresh init also emits structured `nextActions` in the JSON envelope (`adoption_branch` → `adoption_commit` with `git add -f spec_git/policy.yaml` (the policy is gitignored by default; a plain add silently skips it) → `adoption_pr` → `adoption_protect` (`specgit init --force --protect`) → optional `adoption_setup`), rendered in short form in the human summary, so `init` succeeding hands off how to complete the adoption.
+
+### Patch Changes
+
+- [#354](https://github.com/LeXwDeX/SpecGit/pull/354) [`26072bf`](https://github.com/LeXwDeX/SpecGit/commit/26072bf8ed370294ab27bda87236ffe806c2a158) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Executable doc examples enforced by a contract test ([#353](https://github.com/LeXwDeX/SpecGit/issues/353)). The Quick Start multi-issue example in README.md, docs/cli.md, and docs/workflow-guide.md ("Harden the session model", "Extend the harness") lacked the required `<type>:` prefix and exited 2 when copy-pasted; they now read `security: harden the session model` / `refactor: extend the harness`. A new docs-consistency test extracts every concrete `specgit issue "…"` example from code contexts (fenced blocks and inline code spans; placeholders skipped) across README, CONTRIBUTING, docs/, and workflows/, and runs it through the production `validateIssueTitles` — future doc rot of this class fails CI.
+
 ## 1.8.0
 
 ### Minor Changes
