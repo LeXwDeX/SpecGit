@@ -328,6 +328,31 @@ describe('start gate (#335): edits require a delivery binding', () => {
     expect(result.stderr).toMatch(/specgit issue/);
   });
 
+  itOrSkip('a prefix of the recorded branch never satisfies the gate', async () => {
+    // On gate-main with a record for gate-main-extra: a substring match
+    // would let the edit through — the whole-line anchor must not.
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: gate-main-extra\nissues:\n  - 1\n'
+    );
+    const result = await runGuardPayload(editPayload('edit'), gateRepo);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/specgit issue/);
+  });
+
+  itOrSkip('a tool outside the guard matcher falls through untouched', async () => {
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: gate-main\nissues:\n  - 1\n'
+    );
+    const result = await runGuardPayload(
+      { hook_event_name: 'PreToolUse', tool_name: 'grep', tool_input: {} },
+      gateRepo
+    );
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
   itOrSkip('blocks an edit on a detached HEAD even with a record', async () => {
     fs.writeFileSync(
       path.join(gateRepo, '.specgit.yaml'),

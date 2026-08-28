@@ -13,9 +13,10 @@ case "$tool" in
   edit|write|Edit|Write)
     # Start gate (#335): mutating files requires the delivery binding on
     # THIS branch. The record's context.branch is written by specgit and
-    # matched as a fixed string — no YAML parsing, no guessing.
+    # matched as a fixed WHOLE line — no YAML parsing, no prefix collision
+    # (branch "feat/1-a" must never satisfy a record for "feat/1-a2").
     branch=$(git branch --show-current 2>/dev/null)
-    if [ -z "$branch" ] || [ ! -f .specgit.yaml ] || ! grep -qF "  branch: $branch" .specgit.yaml; then
+    if [ -z "$branch" ] || [ ! -f .specgit.yaml ] || ! grep -qFx "  branch: $branch" .specgit.yaml; then
       echo "specgit: start gate - this branch has no delivery binding. Start the delivery first: specgit issue \"<type>: <title>\", then fill each issue body from the discussion, then edit files." >&2
       exit 2
     fi
