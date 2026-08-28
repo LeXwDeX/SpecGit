@@ -1,8 +1,7 @@
 version: 1
-delivery: mirror-sync-allow
+delivery: release-bot-token
 context:
   kind: branch
-  branch: feat/343-mirror-sync-allow
+  branch: feat/342-release-bot-token
 issues:
-  - 343
-pr: 344
+  - 342
