@@ -11,3 +11,4 @@ issueKinds:
     kind: kind::feat
   - issue: 348
     kind: kind::feat
+pr: 349
