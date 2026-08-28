@@ -670,7 +670,9 @@ describe('specgit issue: fail-closed write steps', () => {
   });
 });
 
-function mergedRecordCtx(args: { gh?: GhScript } = {}) {
+function mergedRecordCtx(
+  args: { gh?: GhScript; reconcile?: ReconcileScript } = {}
+) {
   const mergedRecord = sampleBinding({
     delivery: 'strict-delivery-harness',
     context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
@@ -680,6 +682,7 @@ function mergedRecordCtx(args: { gh?: GhScript } = {}) {
   return issueCtx({
     facts: { branch: 'feat/11-strict-delivery-harness' },
     record: mergedRecord,
+    ...(args.reconcile !== undefined ? { reconcile: args.reconcile } : {}),
     gh: {
       getPr: () =>
         ok({
@@ -1453,6 +1456,48 @@ describe('specgit issue: harness currency gate (#339)', () => {
     const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.harness.createdIssues).toHaveLength(1);
+  });
+});
+
+describe('specgit issue: closing-loop gate (#347)', () => {
+  it('refuses a no-args resume of a merged delivery whose bound issue is still open', async () => {
+    const t = mergedRecordCtx({
+      reconcile: { openIssues: [{ number: 12, title: 'docs: half done', body: '## Why' }] },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issues_not_closed');
+    expect(outcome.errors?.[0]?.message).toContain('#12');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+
+  it('refuses a replacement re-bootstrap while a bound issue is still open', async () => {
+    const t = mergedRecordCtx({
+      reconcile: { openIssues: [{ number: 12, title: 'docs: half done' }] },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issues_not_closed');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+
+  it('a merged delivery with every issue closed keeps its existing lifecycle', async () => {
+    const t = mergedRecordCtx({ gh: { getOpenIssues: () => ok([]) } });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
+  });
+
+  it('fails closed when open-issue evidence cannot be gathered', async () => {
+    const t = mergedRecordCtx({
+      reconcile: { openIssuesFail: { code: 'gh_transport', message: 'down' } },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new why'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toHaveLength(0);
   });
 });
 
