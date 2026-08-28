@@ -51,7 +51,14 @@ New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf,
 ## Rules
 
 - Run it from the repository root; context comes from live git.
-- Fill in the scaffold sections as you deliver; placeholders are advisory,
+- The trigger is the decision to start: the moment you begin turning the
+  discussed plan into changes, run this command FIRST — before any file
+  edit. Working without a binding is a contract violation, not a style
+  choice.
+- Immediately after bootstrap succeeds, fill each issue body it created
+  (Why / Scope / Approach / Acceptance) from the discussion with
+  `gh issue edit <n>`, then implement.
+- Fill in the PR scaffold sections as you deliver; placeholders are advisory,
   never gates. Keep the closing references intact.
 - The PR body is written once at creation; no SpecGit command edits it
   afterwards, and the repository's own PR template is never read.

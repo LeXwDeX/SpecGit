@@ -2,7 +2,7 @@
 
 exports[`guard script bytes > is a byte-stable snapshot and spawnable: shebang on line 1 1`] = `
 "#!/bin/sh
-# SpecGit merge guard (managed by specgit init). Exit 2 = block with reason.
+# SpecGit guard (managed by specgit init): start gate + merge guard. Exit 2 = block with reason.
 GUARD_DIR=$(cd "$(dirname "$0")" && pwd)
 export GUARD_DIR
 # Hook payloads arrive as the first argument or on stdin; accept both.
@@ -11,6 +11,20 @@ if [ -n "$1" ]; then
 else
   payload=$(cat)
 fi
+tool=$(printf '%s' "$payload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_name)||'')}catch{process.stdout.write('')}})")
+case "$tool" in
+  edit|write|Edit|Write)
+    # Start gate (#335): mutating files requires the delivery binding on
+    # THIS branch. The record's context.branch is written by specgit and
+    # matched as a fixed string — no YAML parsing, no guessing.
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -z "$branch" ] || [ ! -f .specgit.yaml ] || ! grep -qF "  branch: $branch" .specgit.yaml; then
+      echo "specgit: start gate - this branch has no delivery binding. Start the delivery first: specgit issue \\"<type>: <title>\\", then fill each issue body from the discussion, then edit files." >&2
+      exit 2
+    fi
+    exit 0
+    ;;
+esac
 command=$(printf '%s' "$payload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_input&&j.tool_input.command)||'')}catch{process.stdout.write('')}})")
 
 case "$command" in
@@ -168,7 +182,7 @@ exports[`guard script bytes > the fresh-install hooks.json seed parses and carri
 "{
   "PreToolUse": [
     {
-      "matcher": "Bash",
+      "matcher": "Bash|Edit|Write",
       "hooks": [
         {
           "type": "command",
@@ -477,8 +491,11 @@ already exists); keep manual guidance outside them.
   deterministic scaffold (the \`Closes #n\` line for every bound issue,
   then Why / What changed / Evidence / Checklist sections), and writes
   \`.specgit.yaml\`. Re-running resumes; it is idempotent.
-- Fill in the scaffold sections as you deliver. Its placeholders are
-  advisory — the closing references are the only body gate. The PR body
+- Issue bodies are filled at bootstrap, from the conversation: right after
+  \`specgit issue\` succeeds, edit each issue it created (\`gh issue edit <n>\`)
+  with the discussed Why / Scope / Approach / Acceptance, then implement.
+  The PR scaffold's placeholders are advisory — fill those sections in as
+  you deliver; the closing references are the only body gate. The PR body
   is written once at creation; no SpecGit command edits an existing PR
   body, and the repository's own pull-request template is never read.
 - A draft pull request always fails the verdict (\`pr_draft\`): before
@@ -547,11 +564,17 @@ verified on its own evidence, split it before binding.
 - **SpecGit is the default way of working here.** Any non-trivial
   task — a feature, a fix, a refactor, a docs change — is a delivery:
   work items live in this tracker as issues, never in private task
-  lists or conversational checklists. Before starting, turn the work
-  into issue(s) (\`specgit issue <type>: <title>...\`); mid-conversation
-  inventories ("let me list everything to do") become issues, not
-  chat artifacts. Trivial replies and read-only questions need none
-  of this.
+  lists or conversational checklists. The trigger is the decision to
+  start: the moment the conversation settles and you begin turning
+  the plan into changes, the FIRST action is
+  \`specgit issue <type>: <title>...\` — before any file edit.
+  Working without a binding is a contract violation, not a style
+  choice. Immediately after bootstrap, fill each issue body
+  (Why / Scope / Approach / Acceptance) from the discussion with
+  \`gh issue edit\`, then implement. Mid-conversation inventories
+  ("let me list everything to do") become issues, not chat
+  artifacts. Trivial replies and read-only questions need none of
+  this.
 - The one rule: a delivery is done if and only if \`specgit finish\`
   exits \`0\`. Never declare completion from task lists, file states, or
   test runs you performed yourself.
@@ -579,9 +602,12 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
   开一个预填确定性骨架的草稿拉取请求（每个绑定议题一行 \`Closes #n\`，
   随后是 为什么 / 变更内容 / 证据 / 清单 各节），并写入 \`.specgit.yaml\`。
   重复执行会恢复现场；它是幂等的。
-- 在交付过程中填写骨架各节。占位内容仅是建议——关闭引用是正文里唯一的
-  门槛。PR 正文只在创建时写入一次；任何 SpecGit 命令都不会修改已存在的
-  PR 正文，也从不读取仓库自己的 PR 模板。
+- 议题正文在引导时从对话中填写：\`specgit issue\` 成功后立即用
+  \`gh issue edit <n>\` 把讨论出的 为什么 / 范围 / 做法 / 验收 写进它
+  创建的每条议题，然后再开始实现。PR 骨架的占位内容仅是建议——随交付
+  过程填写即可；关闭引用是正文里唯一的门槛。PR 正文只在创建时写入一次；
+  任何 SpecGit 命令都不会修改已存在的 PR 正文，也从不读取仓库自己的
+  PR 模板。
 - 草稿拉取请求恒使裁决失败（\`pr_draft\`）：在 \`specgit finish\` 之前，
   先把它标为可评审——GitHub 用 \`gh pr ready <number>\`，GitLab 用
   \`glab mr update <number> --ready\`。
@@ -635,10 +661,13 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 
 - **SpecGit 是这里的默认工作方式。** 任何非平凡的任务——新功能、修复、
   重构、文档变更——都是一次交付：工作项作为议题存放在这个 tracker
-  里，绝不放进私人任务清单或对话式清单。开始之前，先把工作变成
-  议题（\`specgit issue <type>: <标题>...\`）；会话中途的盘点（"让我
-  列出所有要做的事"）也应变成议题，而不是聊天产物。平凡的回复与
-  只读提问无需如此。
+  里，绝不放进私人任务清单或对话式清单。触发点是“决定开工”的那一刻：
+  对话收敛、开始把计划变成变更之时，第一个动作就是
+  \`specgit issue <type>: <标题>...\`——先于任何文件编辑。无绑定就动手
+  是违反契约，不是风格偏好。引导完成后，立即用 \`gh issue edit\` 把
+  讨论中的 为什么 / 范围 / 做法 / 验收 填进每条议题正文，然后再开始
+  实现。会话中途的盘点（“让我列出所有要做的事”）也应变成议题，而不是
+  聊天产物。平凡的回复与只读提问无需如此。
 - 唯一规则：交付完成当且仅当 \`specgit finish\` 退出 \`0\`。绝不凭任务
   清单、文件状态或自己跑过的测试宣布完成。
 - 按退出码分支，不按措辞：\`1\` = 证据齐全，修门槛点名的内容；\`3\` =

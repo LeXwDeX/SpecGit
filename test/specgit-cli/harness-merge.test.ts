@@ -88,9 +88,15 @@ describe('mergeHooksJson', () => {
     };
     expect(parsed.SessionStart).toHaveLength(1);
     expect(parsed['custom-top-level']).toEqual({ kept: true });
-    const bash = parsed.PreToolUse.find((entry) => entry.matcher === 'Bash');
-    expect(bash?.hooks).toHaveLength(1);
-    expect(bash?.hooks[0]?.command).toBe('.opencode/hooks/specgit-merge-guard.sh');
+    // The guard is located by its command (ownership), and its matcher
+    // covers the file-mutation tools too (#335).
+    const guards = parsed.PreToolUse.filter((entry) =>
+      entry.hooks.some((hook) => hook.command === '.opencode/hooks/specgit-merge-guard.sh')
+    );
+    expect(guards).toHaveLength(1);
+    expect(guards[0]?.matcher).toBe('Bash|Edit|Write');
+    expect(guards[0]?.hooks).toHaveLength(1);
+    expect(guards[0]?.hooks[0]?.command).toBe('.opencode/hooks/specgit-merge-guard.sh');
   });
 
   it('is byte-stable across repeated merges of its own output', () => {
@@ -226,9 +232,13 @@ describe('writeHarnessAssets', () => {
     };
     expect(merged.SessionStart).toHaveLength(1);
     expect(merged['custom-top-level']).toEqual({ kept: true });
-    const bashEntries = merged.PreToolUse.filter((entry) => entry.matcher === 'Bash');
-    expect(bashEntries).toHaveLength(1);
-    expect(bashEntries[0]?.hooks).toHaveLength(1);
+    // Located by ownership (the guard command), not by matcher (#335).
+    const guardEntries = merged.PreToolUse.filter((entry) =>
+      entry.hooks.some((hook) => hook.command === '.opencode/hooks/specgit-merge-guard.sh')
+    );
+    expect(guardEntries).toHaveLength(1);
+    expect(guardEntries[0]?.matcher).toBe('Bash|Edit|Write');
+    expect(guardEntries[0]?.hooks).toHaveLength(1);
 
     // pre-push: user script still first, managed region appended, executable.
     const prePush = read(path.join(gitHooks, 'pre-push'));
