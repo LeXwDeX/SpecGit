@@ -107,6 +107,8 @@ export interface HumanText {
   statusLiveBranch(branch: string): string;
   statusLiveBranchDetached(): string;
   statusUnbound(): string;
+  // status — merged-history candidate (#351); branch interpolates verbatim
+  statusHistoricalCandidate(branch: string): string;
   // status — generated-asset drift (#308); states/codes/paths/fix commands
   // interpolate verbatim (machine contract, never localized)
   statusAssetsCurrent(): string;
@@ -226,6 +228,8 @@ const EN_HUMAN: HumanText = {
   statusLiveBranchDetached: () => 'Live branch: (detached)',
   statusUnbound: () =>
     'Not bound: no delivery record (.specgit.yaml) exists yet — the normal pre-binding state. Run "specgit issue" to start a delivery.',
+  statusHistoricalCandidate: (branch) =>
+    `Completed-history candidate: the record names branch '${branch}' while this checkout tracks it — likely a merged delivery. Confirm with "specgit finish", or start the next delivery: "specgit issue" replaces the record.`,
   statusAssetsCurrent: () =>
     'Generated assets: current — every desired init/setup output is proven current, absent, or intentionally skipped for this CLI version.',
   statusAssetsDrift: () => 'Generated assets: drift detected — run each surface\'s exact fix:',
@@ -303,6 +307,8 @@ const ZH_HUMAN: HumanText = {
   statusLiveBranchDetached: () => '当前分支：（分离头指针）',
   statusUnbound: () =>
     '尚未绑定：还没有交付记录（.specgit.yaml）——这是引导前的正常状态。运行 "specgit issue" 开始交付。',
+  statusHistoricalCandidate: (branch) =>
+    `已完成历史候选：记录指向分支 '${branch}'，而当前检出跟踪该记录文件——很可能是已合并的交付。用 "specgit finish" 确认，或开始下一次交付："specgit issue" 会原子替换该记录。`,
   statusAssetsCurrent: () =>
     '生成资产：均为最新——所有期望的 init/setup 产物均被证实与当前 CLI 版本一致、未安装或有意跳过。',
   statusAssetsDrift: () => '生成资产：检测到漂移——请逐面执行精确修复命令：',

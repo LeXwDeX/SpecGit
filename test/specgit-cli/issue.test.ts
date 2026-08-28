@@ -726,8 +726,8 @@ describe('specgit issue: replacement validation is non-destructive', () => {
     const outcome = await runIssue({ titles: [] }, t.ctx);
     expect(outcome.exit).toBe(2);
     expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
-    expect(outcome.errors?.[0]?.fix).toContain('specgit unbind --yes');
     expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
+    expect(outcome.errors?.[0]?.fix).not.toContain('unbind');
     expect(t.recordPort.deletes).toEqual([]);
     expect(t.recordPort.recordWrites).toEqual([]);
     expect(t.harness.createdIssues.length).toBe(0);
@@ -850,7 +850,8 @@ describe('specgit issue: a bound PR that does not exist is terminal evidence (#2
     const outcome = await runIssue({ titles: [] }, t.ctx);
     expect(outcome.exit).toBe(2);
     expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
-    expect(outcome.errors?.[0]?.fix).toContain('specgit unbind --yes');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
+    expect(outcome.errors?.[0]?.fix).not.toContain('unbind');
     expect(t.recordPort.deletes).toEqual([]);
     expect(t.harness.createdIssues.length).toBe(0);
     expect(t.gitPort.pushCalls).toEqual([]);

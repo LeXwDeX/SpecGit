@@ -64,6 +64,29 @@ export function deriveBindingState(binding: DeliveryBinding): 'draft' | 'bound' 
   return binding.issues.length > 0 && binding.pr !== undefined ? 'bound' : 'draft';
 }
 
+/**
+ * #351: the status-level lifecycle state, layering the local
+ * merged-history signal over record completeness. A record the index
+ * tracks while the live branch differs from the recorded context is the
+ * local signature of a merged delivery riding this trunk — the binding
+ * commit only reaches a branch through a merge. Offline status reports
+ * it as a candidate for completed history, never `bound`; `specgit
+ * finish` (forge-backed) upgrades the candidate to a verdict.
+ */
+export function deriveLifecycleState(
+  binding: DeliveryBinding,
+  facts: GitFacts,
+  recordTracked: boolean
+): 'draft' | 'bound' | 'historical-candidate' {
+  if (deriveBindingState(binding) !== 'bound') {
+    return deriveBindingState(binding);
+  }
+  if (recordTracked && facts.branch !== null && facts.branch !== binding.context.branch) {
+    return 'historical-candidate';
+  }
+  return 'bound';
+}
+
 function failure(code: string, message: string, extra: { detail?: unknown; fix?: string } = {}): GateFailure {
   return {
     code: code as GateFailure['code'],

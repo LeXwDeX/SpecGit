@@ -13,7 +13,14 @@ import type {
 // re-exported here so this module's public surface is unchanged.
 export type { EvaluateInput, GateFailure, GateId, VerdictEvidence } from './gates/types.js';
 
-export type DeliveryState = 'unbound' | 'draft' | 'bound' | 'accepted' | 'rejected' | 'unknown';
+export type DeliveryState =
+  | 'unbound'
+  | 'draft'
+  | 'bound'
+  | 'accepted'
+  | 'completed'
+  | 'rejected'
+  | 'unknown';
 export type VerdictClassification = 'accepted' | 'rejected' | 'unknown';
 
 /**
@@ -153,7 +160,10 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   } else if (!recordComplete) {
     state = 'draft';
   } else if (classification === 'accepted') {
-    state = 'accepted';
+    // #351: a record judged at its merged history is completed, not
+    // merely accepted — the delivery is done and the record rides the
+    // trunk until the next bootstrap atomically replaces it.
+    state = ctx.mergedRecord ? 'completed' : 'accepted';
   } else if (classification === 'rejected') {
     state = 'rejected';
   } else {
@@ -166,8 +176,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     warnings.push({
       severity: 'warning',
       code: 'record_of_merged_delivery',
-      message: 'This record belongs to a delivery whose pull request is already merged.',
-      fix: 'Run "specgit unbind --yes" to remove the completed record.',
+      message: 'This record is the completed history of a delivery whose pull request is merged.',
+      fix: 'Start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.',
     });
   }
 
