@@ -1,0 +1,5 @@
+---
+'specgit': minor
+---
+
+Batch 2 of the product-flow review: hand-offs, diagnostics, state layers (#360, #361, #362, #363). `nextActions {code, command, reason}` is the shared success hand-off across commands with one human `Next:` renderer (codes/commands stable, reasons localized). `specgit issue` success now carries `urls` (issue and draft-PR web links) and the steps to review-ready (`issue_bodies`, `pr_brief`, `pr_ready` — platform dialect `gh`/`glab`); an accepted `specgit finish` carries `delivery_merge` (auto-merge per policy) or, on completed history, `next_delivery` — never `unbind`. Human diagnostics render exactly once (#362): warnings print their fix as `Next:`, and `finish` failure output no longer duplicates every gate fix between the summary and the diagnostics block. `status --json` answers its three questions separately (#363) — `recordState` (missing/partial/complete), `localContext` (matching/mismatch/unknown), `lifecycle` (active/historical-candidate) — with `state` kept as the compat rollup and the verdict layer staying finish-only.

@@ -34,6 +34,11 @@ describe('specgit status (local evidence only, G1-G5)', () => {
       'context:pass',
       'origin:pass',
     ]);
+    // #363: the state layers — record completeness, checkout context,
+    // lifecycle — each answerable on its own.
+    expect(envelope.recordState).toBe('complete');
+    expect(envelope.localContext).toBe('matching');
+    expect(envelope.lifecycle).toBe('active');
   });
 
   it('reports draft state when the PR is missing but still exits 0', async () => {
@@ -45,6 +50,7 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.state).toBe('draft');
+    expect(envelope.recordState).toBe('partial');
     const completeness = envelope.gates.find((g: any) => g.id === 'completeness');
     expect(completeness.status).toBe('fail');
     expect(completeness.failures.map((f: any) => f.code)).toEqual(['pr_missing']);
@@ -59,6 +65,7 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.state).toBe('draft');
+    expect(envelope.recordState).toBe('partial');
     const completeness = envelope.gates.find((g: any) => g.id === 'completeness');
     expect(completeness.failures.map((f: any) => f.code)).toEqual(['issues_empty']);
   });
@@ -92,6 +99,10 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.state).toBe('historical-candidate');
+    // #363: the layers tell the three stories separately.
+    expect(envelope.recordState).toBe('complete');
+    expect(envelope.localContext).toBe('mismatch');
+    expect(envelope.lifecycle).toBe('historical-candidate');
     const warning = (envelope.warnings ?? []).find((w: any) => w.code === 'record_historical_candidate');
     expect(warning).toBeDefined();
     expect(warning.fix).toContain('specgit finish');
@@ -101,6 +112,22 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     const gate = envelope.gates.find((g: any) => g.id === 'context');
     expect(gate.status).toBe('fail');
     expect(gate.failures.map((f: any) => f.code)).toEqual(['branch_mismatch']);
+  });
+
+  // #362: a warning's fix reaches the human exactly once, as a Next line.
+  it('human mode renders the historical-candidate warning with its fix as Next (#362)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ branch: 'main' }),
+      gitWrites: { trackedFiles: (paths) => ({ ok: true, value: paths }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'status'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const stderr = t.io.stderr.join('\n');
+    expect(stderr).toContain('Warning: ');
+    expect(stderr).toContain('Next: ');
+    expect(stderr).toContain('specgit finish');
   });
 
   it('keeps state bound for an untracked record on a mismatching branch (#351)', async () => {
@@ -132,6 +159,9 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.state).toBe('historical-candidate');
+    // #363: a detached HEAD cannot answer the context question.
+    expect(envelope.localContext).toBe('unknown');
+    expect(envelope.lifecycle).toBe('historical-candidate');
     expect(
       (envelope.warnings ?? []).find((w: any) => w.code === 'record_historical_candidate')
     ).toBeDefined();
@@ -166,6 +196,11 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(envelope.status).toBe('ok');
     expect(envelope.state).toBe('unbound');
     expect(envelope.exit).toBe(EXIT_SUCCESS);
+    // #363: no record — completeness answers 'missing', the other layers
+    // have nothing to describe.
+    expect(envelope.recordState).toBe('missing');
+    expect(envelope.localContext).toBeUndefined();
+    expect(envelope.lifecycle).toBeUndefined();
     const record = envelope.gates.find((g: any) => g.id === 'record');
     expect(record.status).toBe('fail');
     expect(record.failures.map((f: any) => f.code)).toEqual(['record_missing']);
