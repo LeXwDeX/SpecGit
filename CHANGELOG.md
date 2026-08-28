@@ -1,5 +1,11 @@
 # specgit
 
+## 1.8.0
+
+### Minor Changes
+
+- [#349](https://github.com/LeXwDeX/SpecGit/pull/349) [`b1627d5`](https://github.com/LeXwDeX/SpecGit/commit/b1627d5ab32a4afd0d13ba176e197cb0948785dd) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - The closing loop is now harnessed at both ends. A new bootstrap on top of a MERGED delivery refuses with `issues_not_closed` (exit 2, before the record is deleted) when any of its bound issues is still open on the forge — the closing reference never fired, and the next delivery may not start on unproven closure. And `specgit doctor` warns `issue_stray` about open specgit-scaffolded issues bound to no delivery (born outside the pipeline, no closing reference will ever fire); the fix is mechanical: sweep them in with `specgit bind --issue <n>`.
+
 ## 1.7.1
 
 ### Patch Changes
