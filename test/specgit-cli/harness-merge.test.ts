@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -122,6 +123,73 @@ describe('mergeHooksJson', () => {
 });
 
 describe('mergeGitPrePush', () => {
+  // ---- accepted-tip mirror sync (#343): the guard must allow pushing a
+  // ---- commit that is already merged into origin/main, while an
+  // ---- unmerged tip stays blocked. Verified by spawning the generated
+  // ---- body inside a real temp repo with a fake origin ref.
+  describe('accepted-tip mirror sync (#343)', () => {
+    let repo: string;
+    let acceptedSha: string;
+    let unmergedSha: string;
+
+    const git = (args: string[]): string => {
+      const probe = spawnSync('git', args, { cwd: repo });
+      if (probe.status !== 0) {
+        throw new Error(`git ${args.join(' ')} failed: ${probe.stderr.toString()}`);
+      }
+      return probe.stdout.toString();
+    };
+
+    const runHook = (sha: string): number => {
+      const hook = path.join(repo, 'pre-push-guard.sh');
+      fs.writeFileSync(hook, mergeGitPrePush(null), { mode: 0o755 });
+      const probe = spawnSync(
+        'sh',
+        [hook],
+        {
+          cwd: repo,
+          input: `refs/heads/main ${sha} refs/heads/main ${sha}\n`,
+        }
+      );
+      return probe.status ?? -1;
+    };
+
+    beforeEach(() => {
+      repo = makeTempDir('specgit-mirror-sync-');
+      git(['init']);
+      git(['config', 'user.email', 'gate@example.com']);
+      git(['config', 'user.name', 'Gate']);
+      fs.writeFileSync(path.join(repo, 'accepted.txt'), 'accepted\n');
+      git(['add', '.']);
+      git(['commit', '-m', 'accepted']);
+      acceptedSha = git(['rev-parse', 'HEAD']).trim();
+      // A fake origin/main that already contains the accepted commit.
+      git(['update-ref', 'refs/remotes/origin/main', acceptedSha]);
+      // An unmerged commit (the delivery-branch tip a bypass would push).
+      fs.writeFileSync(path.join(repo, 'unmerged.txt'), 'unmerged\n');
+      git(['add', '.']);
+      git(['commit', '-m', 'unmerged']);
+      unmergedSha = git(['rev-parse', 'HEAD']).trim();
+    });
+
+    afterEach(() => {
+      rmDir(repo);
+    });
+
+    it('allows pushing a commit origin/main already contains', () => {
+      expect(runHook(acceptedSha)).toBe(0);
+    });
+
+    it('still blocks pushing an unmerged tip', () => {
+      const status = runHook(unmergedSha);
+      expect(status).not.toBe(0);
+    });
+
+    it('still blocks a zero sha (ref deletion)', () => {
+      expect(runHook('0000000000000000000000000000000000000000')).not.toBe(0);
+    });
+  });
+
   it('fresh install is the guard wrapped in managed markers', () => {
     const managed = mergeGitPrePush(null);
     expect(managed).toContain('# >>> specgit:start >>>');
