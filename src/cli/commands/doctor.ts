@@ -2,19 +2,17 @@
  * `specgit doctor` — environment probes, nothing more. Probes: git binary,
  * git repository, parseable GitHub origin, gh present, gh authenticated,
  * policy present. Exit 0 when every probe passes; exit 3 otherwise
- * (fail-closed).
+ * (fail-closed). One hygiene warning rides the envelope (#348): open
+ * issues that carry the specgit scaffold signature but are bound to no
+ * delivery — born outside the pipeline, so no closing reference will
+ * ever fire for them.
  */
 
 import { CODE_INFO, type SpecGitCode } from '../../acceptance/codes.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
-import {
-  errorDiagnostic,
-  humanBuilder,
-  probeLine,
-  type DoctorOutcome,
-  type ProbeResult,
-} from '../output.js';
-import type { CommandContext } from '../types.js';
+import { errorDiagnostic, humanBuilder, probeLine } from '../output.js';
+import type { CommandContext, Diagnostic, RepoRef } from '../types.js';
+import type { DoctorOutcome, ProbeResult } from '../output.js';
 
 export interface DoctorOptions {
   json?: boolean;
@@ -36,6 +34,7 @@ export async function runDoctor(
   ctx: CommandContext
 ): Promise<DoctorOutcome> {
   const probes: ProbeResult[] = [];
+  const warnings: Diagnostic[] = [];
 
   const gitProbe = await ctx.probeGitBinary();
   probes.push(
@@ -53,15 +52,40 @@ export async function runDoctor(
 
   if (rootEv.ok) {
     const facts = await ctx.git.facts(rootEv.value);
+    let repoRef: RepoRef | null = null;
     if (!facts.originUrl) {
       probes.push({ name: 'origin', ok: false, code: 'no_origin' });
     } else {
       const parsed = await ctx.parseRepoRef(facts.originUrl);
-      probes.push(
-        parsed.ok
-          ? { name: 'origin', ok: true, detail: `${parsed.value.owner}/${parsed.value.repo}` }
-          : { name: 'origin', ok: false, code: parsed.code }
-      );
+      if (parsed.ok) {
+        repoRef = parsed.value;
+        probes.push({
+          name: 'origin',
+          ok: true,
+          detail: `${parsed.value.owner}/${parsed.value.repo}`,
+        });
+      } else {
+        probes.push({ name: 'origin', ok: false, code: parsed.code });
+      }
+    }
+
+    // #348 tracker hygiene: open issues carrying the specgit scaffold
+    // signature but bound to no delivery were born outside the pipeline —
+    // no closing reference will ever fire for them. A warning with a
+    // mechanical fix (bind sweeps it into the next delivery's closing
+    // refs), never an exit-code change: hygiene, not environment.
+    if (repoRef !== null) {
+      const strayEv = await strayIssues(rootEv.value, repoRef, ctx);
+      if (strayEv !== null && strayEv.length > 0) {
+        warnings.push({
+          severity: 'warning',
+          code: 'issue_stray',
+          message: `Open issue(s) ${strayEv
+            .map((n) => `#${n}`)
+            .join(', ')} look like specgit-born deliveries outside any binding.`,
+          fix: 'Sweep into the next delivery with "specgit bind --issue <n>", or close explicitly if the work shipped elsewhere.',
+        });
+      }
     }
   } else {
     probes.push({ name: 'origin', ok: false, code: rootEv.code });
@@ -107,6 +131,7 @@ export async function runDoctor(
   return {
     exit,
     probes,
+    ...(warnings.length > 0 ? { warnings } : {}),
     errors: allOk
       ? undefined
       : failing.map((probe) =>
@@ -116,6 +141,46 @@ export async function runDoctor(
             { fix: fixFor(probe.code) }
           )
         ),
-    human: humanBuilder(probes.map(probeLine)).build(),
+    human: humanBuilder([
+      ...probes.map(probeLine),
+      ...warnings.map((warning) => `  Warning: ${warning.code} — ${warning.message}`),
+    ]).build(),
   };
+}
+
+/**
+ * Numbers of open issues whose body carries the specgit issue-scaffold
+ * signature (#348) and that no current record binds. The signature is the
+ * deterministic acceptance line both language catalogs write — generator-
+ * exclusive, so human-authored issues never match. Any probe failure
+ * degrades to null: hygiene never masquerades as an environment fault.
+ */
+async function strayIssues(
+  root: string,
+  repo: RepoRef,
+  ctx: CommandContext
+): Promise<number[] | null> {
+  const SIGNATURES = ['closes this issue;', '关闭本议题'];
+  const recordEv = await ctx.record.readRecord(root);
+  if (!recordEv.ok && recordEv.code !== 'record_missing') {
+    return null;
+  }
+  let openEv;
+  try {
+    openEv = await ctx.gh.getOpenIssues(repo);
+  } catch {
+    return null;
+  }
+  if (!openEv.ok) {
+    return null;
+  }
+  const bound = new Set(recordEv.ok ? recordEv.value.issues : []);
+  return openEv.value
+    .filter(
+      (fact) =>
+        !bound.has(fact.number) &&
+        typeof fact.body === 'string' &&
+        SIGNATURES.some((signature) => fact.body?.includes(signature))
+    )
+    .map((fact) => fact.number);
 }

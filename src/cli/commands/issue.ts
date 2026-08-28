@@ -378,6 +378,43 @@ async function harnessCurrencyGate(args: {
   };
 }
 
+/**
+ * The closing-loop gate (#347): a merged delivery whose bound issues are
+ * still OPEN has no proven closure — GitHub's auto-close never fired
+ * (refs removed post-merge, cross-repo reference, provider close-semantics).
+ * Starting the next delivery on top of unproven closure is refused with
+ * zero side effects, before the merged record could be deleted. Evidence
+ * that cannot be gathered fails closed (exit 3); the check keys on the
+ * forge, never on prose.
+ */
+async function mergedIssuesClosureGate(
+  ctx: CommandContext,
+  repo: RepoRef,
+  record: DeliveryBinding
+): Promise<IssueOutcome | null> {
+  const openEv = await ctx.gh.getOpenIssues(repo);
+  if (!openEv.ok) {
+    return passthrough(openEv);
+  }
+  const open = new Set(openEv.value.map((fact) => fact.number));
+  const stillOpen = record.issues.filter((issue) => open.has(issue));
+  if (stillOpen.length === 0) {
+    return null;
+  }
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issues_not_closed',
+        `The merged delivery '${record.delivery}' still has unclosed bound issue(s): ${issueList(stillOpen)}. The closing reference never fired on the forge.`,
+        {
+          fix: 'Close them on the tracker — check the merged PR body for removed Closes references — then start the next delivery.',
+        }
+      ),
+    ],
+  };
+}
+
 export async function runIssue(
   options: IssueOptions,
   ctx: CommandContext
@@ -460,7 +497,15 @@ export async function runIssue(
   // A merged record has nothing to resume: no-args resume would re-run
   // the branch/commit/push steps and resurrect the head branch GitHub
   // auto-deleted on merge. End the lifecycle decision before any side
-  // effect, naming the way forward (#75).
+  // effect, naming the way forward (#75). #347: before that refusal —
+  // and before any replacement re-bootstrap below — prove the merged
+  // delivery's issues actually closed on the forge.
+  if (existing !== null && existing.ok && mergedEv.merged) {
+    const closure = await mergedIssuesClosureGate(ctx, repoEv.value, existing.value);
+    if (closure !== null) {
+      return closure;
+    }
+  }
   if (existing !== null && existing.ok && mergedEv.merged && args.length === 0) {
     return mergedDeliveryError(existing.value);
   }
@@ -490,11 +535,18 @@ export async function runIssue(
     }
   }
 
-  // Replace a merged record only with validated replacement arguments.
+  // Replace a merged record only with validated replacement arguments —
+  // and only when the merged delivery's issues are proven closed (#347):
+  // the delete below is the one destructive step, so the gate re-runs
+  // here, immediately before it.
   if (existing !== null && existing.ok && mergedEv.merged && args.length > 0) {
     const invalidReplacement = validateArgsForCreation(args);
     if (invalidReplacement) {
       return invalidReplacement;
+    }
+    const closure = await mergedIssuesClosureGate(ctx, repoEv.value, existing.value);
+    if (closure !== null) {
+      return closure;
     }
     await ctx.record.deleteRecord(root);
     existing = null;

@@ -1,8 +1,14 @@
 version: 1
-delivery: release-bot-token
+delivery: closing-loop-harness
 context:
   kind: branch
-  branch: feat/342-release-bot-token
+  branch: feat/347-closing-loop-harness
 issues:
-  - 342
-pr: 346
+  - 347
+  - 348
+issueKinds:
+  - issue: 347
+    kind: kind::feat
+  - issue: 348
+    kind: kind::feat
+pr: 349
