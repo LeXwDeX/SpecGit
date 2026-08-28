@@ -229,3 +229,161 @@ describe('merge guard diagnostics (#68)', () => {
     expect(result.stderr).toMatch(/not the delivery path/);
   });
 });
+
+// ---- start gate (#335): file-mutation tools require a delivery binding ----
+
+/** Runs the guard with a raw hook payload, optionally inside another cwd. */
+function runGuardPayload(payload: unknown, cwd?: string): Promise<GuardResult> {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const child =
+      launchMode === 'sh'
+        ? spawn('sh', [GUARD], { cwd, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+        : spawn(GUARD, { cwd, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('guard did not exit within 15000ms'));
+    }, 15_000);
+    child.stderr.on('data', (d) => (stderr += d));
+    child.stdout.on('data', (d) => (stdout += d));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stderr, stdout, elapsedMs: Date.now() - started });
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+describe('start gate (#335): edits require a delivery binding', () => {
+  let gateRepo: string;
+
+  const git = (args: string[]): void => {
+    const probe = spawnSync('git', args, { cwd: gateRepo });
+    if (probe.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${probe.stderr.toString()}`);
+    }
+  };
+
+  beforeAll(() => {
+    if (!launchMode) return;
+    gateRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-start-gate-'));
+    git(['init']);
+    git(['checkout', '-b', 'gate-main']);
+    git(['config', 'user.email', 'gate@example.com']);
+    git(['config', 'user.name', 'Gate']);
+    fs.writeFileSync(path.join(gateRepo, 'seed.txt'), 'seed\n');
+    git(['add', '.']);
+    git(['commit', '-m', 'seed']);
+  });
+
+  afterAll(() => {
+    try {
+      fs.rmSync(gateRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      /* temp dir; the OS reclaims it */
+    }
+  });
+
+  const editPayload = (tool: string): unknown => ({
+    hook_event_name: 'PreToolUse',
+    tool_name: tool,
+    tool_input: { file_path: path.join(gateRepo, 'seed.txt') },
+  });
+
+  itOrSkip('blocks an edit with no binding record, naming the way forward', async () => {
+    const result = await runGuardPayload(editPayload('edit'), gateRepo);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/specgit issue/);
+  });
+
+  itOrSkip('blocks a write with no binding record', async () => {
+    const result = await runGuardPayload(editPayload('write'), gateRepo);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/specgit issue/);
+  });
+
+  itOrSkip('passes an edit whose record binds this branch', async () => {
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: gate-main\nissues:\n  - 1\n'
+    );
+    const result = await runGuardPayload(editPayload('edit'), gateRepo);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
+  itOrSkip('blocks an edit whose record binds a different branch', async () => {
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: feat/other\nissues:\n  - 1\n'
+    );
+    const result = await runGuardPayload(editPayload('edit'), gateRepo);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/specgit issue/);
+  });
+
+  itOrSkip('a prefix of the recorded branch never satisfies the gate', async () => {
+    // On gate-main with a record for gate-main-extra: a substring match
+    // would let the edit through — the whole-line anchor must not.
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: gate-main-extra\nissues:\n  - 1\n'
+    );
+    const result = await runGuardPayload(editPayload('edit'), gateRepo);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/specgit issue/);
+  });
+
+  itOrSkip('a tool outside the guard matcher falls through untouched', async () => {
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: gate-main\nissues:\n  - 1\n'
+    );
+    const result = await runGuardPayload(
+      { hook_event_name: 'PreToolUse', tool_name: 'grep', tool_input: {} },
+      gateRepo
+    );
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
+  itOrSkip('blocks an edit on a detached HEAD even with a record', async () => {
+    fs.writeFileSync(
+      path.join(gateRepo, '.specgit.yaml'),
+      'version: 1\ndelivery: gate\ncontext:\n  kind: branch\n  branch: gate-main\nissues:\n  - 1\n'
+    );
+    git(['checkout', '--detach']);
+    const result = await runGuardPayload(editPayload('edit'), gateRepo);
+    git(['checkout', 'gate-main']);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/specgit issue/);
+  });
+
+  itOrSkip('lets non-mutation bash commands through unchanged', async () => {
+    const result = await runGuardPayload(
+      { hook_event_name: 'PreToolUse', tool_name: 'bash', tool_input: { command: 'git status' } },
+      gateRepo
+    );
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
+  itOrSkip('bash merge behaviour is untouched by the start gate', async () => {
+    const result = await runGuardPayload(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'bash',
+        tool_input: { command: 'git push origin main' },
+      },
+      gateRepo
+    );
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/not the delivery path/);
+  });
+});

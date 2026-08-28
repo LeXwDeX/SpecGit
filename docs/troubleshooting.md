@@ -155,6 +155,10 @@ No `spec_git/policy.yaml`. Run `specgit init --required-check "<name>"` and comm
 
 The policy failed validation. Each `required_checks` name must be a non-empty string — the list itself may be empty (the no-CI policy) — and the file must not contain unknown keys (the policy schema is strict). Recreate it with `init` if in doubt.
 
+### `harness_stale` (exit 2)
+
+`specgit issue` refused to bind a new delivery: the generated harness on disk (managed AGENTS block, guard hooks, acceptance workflow, agent entry points) is stale, conflicting, or only partially present for the running CLI version — usually the CLI was upgraded since the last `init`. Refresh the drifted surface the refusal names (`specgit init --force` for the init surface, `specgit setup --tool <tool>` for entry-point drift), then re-run the bootstrap. A repository with no generated assets yet is never stale — bootstrap proceeds. `specgit status` shows the full drift report.
+
 ## Completeness
 
 ### `issues_empty` (rejected)

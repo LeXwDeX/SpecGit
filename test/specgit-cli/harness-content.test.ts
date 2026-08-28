@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { buildAgentSurfaceDesiredState } from '../../src/cli/agent-surface.js';
+import type { ManagedStep } from '../../src/cli/managed-reconcile.js';
 import {
   ACCEPTANCE_CHECK_NAME,
   BLOCK_END_MARKER,
@@ -57,6 +59,57 @@ describe('guard script bytes', () => {
     const parsed = JSON.parse(json) as { PreToolUse: unknown[] };
     expect(Array.isArray(parsed.PreToolUse)).toBe(true);
     expect(json).toMatchSnapshot();
+  });
+
+  it('the hooks.json seed matches Bash and the file-mutation tools (#335)', () => {
+    const { json } = mergeHooksJson(null);
+    const parsed = JSON.parse(json) as { PreToolUse: Array<{ matcher: string }> };
+    expect(parsed.PreToolUse[0].matcher).toBe('Bash|Edit|Write');
+  });
+
+  it('upgrades a legacy Bash-only specgit guard entry to the current matcher, once (#335)', () => {
+    const legacy = JSON.stringify({
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: '.opencode/hooks/specgit-merge-guard.sh', timeout: 600 },
+          ],
+        },
+        { matcher: 'Bash', hooks: [{ type: 'command', command: 'user-own-guard.sh' }] },
+      ],
+    });
+    const once = mergeHooksJson(legacy);
+    expect(once.warning).toBeUndefined();
+    const parsed = JSON.parse(once.json) as {
+      PreToolUse: Array<{ matcher: string; hooks: Array<{ command?: string }> }>;
+    };
+    const guardEntries = parsed.PreToolUse.filter((entry) =>
+      entry.hooks.some((hook) => hook.command === '.opencode/hooks/specgit-merge-guard.sh')
+    );
+    expect(guardEntries).toHaveLength(1);
+    expect(guardEntries[0].matcher).toBe('Bash|Edit|Write');
+    // The user's own entry is preserved verbatim.
+    expect(parsed.PreToolUse[1].matcher).toBe('Bash');
+    // Byte-stable: merging the merge output again is a no-op.
+    expect(mergeHooksJson(once.json).json).toBe(once.json);
+  });
+});
+
+describe('managedPromptBlock: start-of-delivery contract (#336)', () => {
+  it('en binds the trigger to the decision to start and orders bootstrap-time fill', () => {
+    const en = managedPromptBlock('en');
+    expect(en).toMatch(/the FIRST action is\s+`specgit issue <type>: <title>/);
+    expect(en).toMatch(/before any file edit/);
+    expect(en).toMatch(/`gh issue edit/);
+    expect(en).toMatch(/then\s+implement/);
+  });
+
+  it('zh carries the same contract', () => {
+    const zh = managedPromptBlock('zh');
+    expect(zh).toMatch(/第一个动作[^`]*`specgit issue <type>: <标题>/);
+    expect(zh).toMatch(/gh issue edit/);
+    expect(zh).toMatch(/再开始实现|然后再动手/);
   });
 });
 
@@ -116,6 +169,22 @@ describe('injectManagedBlock: pure byte merge', () => {
     expect(once.startsWith(prose)).toBe(true);
     expect(once.endsWith(`\n${block}\n`)).toBe(true);
     expect(injectManagedBlock(once, block)).toBe(once);
+  });
+});
+
+describe('agent surface: issue skill start contract (#336)', () => {
+  it('the specgit-issue skill orders bootstrap-time issue-body fill before implementation', async () => {
+    const desired = await buildAgentSurfaceDesiredState('/repo', 'generic');
+    const step = desired.steps.find(
+      (candidate): candidate is Extract<ManagedStep, { kind: 'write' }> =>
+        candidate.kind === 'write' && candidate.path.includes('specgit-issue')
+    );
+    expect(step).toBeDefined();
+    const bytes = step?.merge(null) ?? '';
+    expect(bytes).toMatch(/run this command FIRST/);
+    expect(bytes).toMatch(/before any file\s+edit/);
+    expect(bytes).toMatch(/`gh issue edit <n>`/);
+    expect(bytes).toMatch(/then implement/);
   });
 });
 
