@@ -234,7 +234,11 @@ cursor, …) the portable entry points live in [`skills/`](skills/) — see
 Releases are automatic, PR-gated, and OIDC-based. A feature/fix branch carries
 its changeset (`.changeset/*.md`); merging it to `main` makes the Release
 workflow open (or update) the **version PR** (`changeset-release/main`) with
-the consumed version bump — the manual batch-decision point. Merging *that*
+the consumed version bump — the manual batch-decision point. The version PR's
+head is pushed by `github-actions[bot]`, whose workflow runs need approval
+unless the repository defines the `RELEASE_BOT_TOKEN` secret (a fine-grained
+PAT or GitHub App token with contents + pull-requests write): with it the
+workflows start on their own and the release runs hands-off. Merging *that*
 PR lands `chore(release): v<version>` on `main`, which builds, verifies the
 packed version, and publishes to npm via **OIDC trusted publishing** (no
 long-lived token, no environment secret; provenance included), then tags
