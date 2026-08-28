@@ -71,7 +71,12 @@ async function acceptJson(
 }
 
 describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
-  it('accepts with exit 0: issues merge across binds, one PR closes all three', async () => {
+  // Two full CLI passes (issue bootstrap with real git transport, finish)
+  // against the fake forge: the default 10s budget intermittently overruns
+  // on the serialized 1-worker windows-pwsh runner (observed 2026-08-28,
+  // run 33137889212) — the same headroom the issue-bootstrap e2e already
+  // carries (issue.e2e.test.ts, 30s). Runtime variance, not a regression.
+  it('accepts with exit 0: issues merge across binds, one PR closes all three', { timeout: 30_000 }, async () => {
     const repo = track(makeRepo('feat/one-pr-n-issues'));
 
     const gh = createFakeGh(repo.dir, greenGhRules({
