@@ -13,11 +13,14 @@ import { EXIT_UNKNOWN } from '../exit-codes.js';
 import {
   errorDiagnostic,
   humanBuilder,
+  renderNextActionsHuman,
   verdictFailureLine,
   type AcceptOutcome,
+  type NextAction,
 } from '../output.js';
+import { forgeMergeCommand } from '../forge-links.js';
 import { catalogFor, resolveLanguage } from '../language.js';
-import type { CommandContext, Evidence } from '../types.js';
+import type { CommandContext, Evidence, RepoRef } from '../types.js';
 
 export interface AcceptOptions {
   json?: boolean;
@@ -53,14 +56,49 @@ export async function runAccept(
         : text.finishUnknown(verdict.evidence.delivery ?? null);
 
   const failureLines = verdict.gates.flatMap((gate) =>
-    gate.failures.map((failure) => verdictFailureLine(gate.id, failure.code, failure.fix))
+    gate.failures.map((failure) => verdictFailureLine(gate.id, failure.code))
   );
+
+  // #361: an accepted verdict hands off the next step — the merge for a
+  // live delivery (auto-merge per policy), the next bootstrap for
+  // completed history. Rejected/unknown say nothing: their repairs ride
+  // the diagnostics, rendered exactly once (#362).
+  let nextActions: NextAction[] | undefined;
+  if (verdict.classification === 'accepted') {
+    if (verdict.state === 'completed') {
+      nextActions = [
+        {
+          code: 'next_delivery',
+          command: 'specgit issue "<type>: <title>"',
+          reason: 'This record is completed history — the next bootstrap atomically replaces it.',
+        },
+      ];
+    } else if (verdict.evidence.pr !== null) {
+      const facts = await ctx.git.facts(root.value).catch(() => null);
+      let platform: RepoRef['platform'] = 'github';
+      if (facts?.originUrl) {
+        const parsed = await Promise.resolve(ctx.parseRepoRef(facts.originUrl));
+        if (parsed.ok) {
+          platform = parsed.value.platform;
+        }
+      }
+      nextActions = [
+        {
+          code: 'delivery_merge',
+          command: forgeMergeCommand(platform, verdict.evidence.pr),
+          reason:
+            'The verdict is green. Auto-merge fires only when every required check — this verdict among them — passes.',
+        },
+      ];
+    }
+  }
 
   return {
     exit: verdict.exitCode,
     state: verdict.state,
     verdict,
     warnings: verdict.warnings.length > 0 ? verdict.warnings : undefined,
+    ...(nextActions !== undefined ? { nextActions } : {}),
     errors:
       verdict.exitCode === 0
         ? undefined
@@ -71,6 +109,10 @@ export async function runAccept(
                 errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {})
               )
             ),
-    human: humanBuilder().line(headline).append(failureLines).build(),
+    human: humanBuilder()
+      .line(headline)
+      .append(failureLines)
+      .append(renderNextActionsHuman(text.nextHeadline(), nextActions ?? []))
+      .build(),
   };
 }

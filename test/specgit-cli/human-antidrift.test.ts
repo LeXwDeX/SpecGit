@@ -67,15 +67,18 @@ describe('human rendering: CODE_INFO pass-through is byte-verbatim (#214)', () =
     const exit = await runCliWith(['node', 'specgit', 'accept'], t.ctx);
     expect(exit).toBe(EXIT_REJECTED);
 
-    // The verdict failure line carries the registry's fix unchanged.
+    // #362: the stdout summary keeps the evidence structure only — the
+    // gate and its code, WITHOUT the fix.
     const stdout = t.io.stdout.join('\n');
-    expect(stdout).toContain(`  ${gateId}: ${code} — ${info.fix}`);
+    expect(stdout).toContain(`  ${gateId}: ${code}`);
 
     // The stderr diagnostic block carries the registry's message and fix
-    // unchanged — no wording owned outside CODE_INFO.
+    // unchanged — no wording owned outside CODE_INFO — and the fix
+    // appears EXACTLY ONCE across the whole human surface.
     const stderr = t.io.stderr.join('\n');
     expect(stderr).toContain(`Error: ${info.message}`);
     expect(stderr).toContain(`Fix: ${info.fix}`);
+    expect(`${stdout}\n${stderr}`.split(String(info.fix))).toHaveLength(2);
   });
 
   it('finish renders the same byte shapes as accept (evaluator parity)', async () => {
@@ -89,7 +92,8 @@ describe('human rendering: CODE_INFO pass-through is byte-verbatim (#214)', () =
     const exit = await runCliWith(['node', 'specgit', 'finish'], t.ctx);
     expect(exit).toBe(EXIT_REJECTED);
     const stdout = t.io.stdout.join('\n');
-    expect(stdout).toContain(`  pr: pr_draft — ${info.fix}`);
+    expect(stdout).toContain('  pr: pr_draft');
+    expect(stdout).not.toContain(String(info.fix));
     expect(t.io.stderr.join('\n')).toContain(`Error: ${info.message}`);
   });
 

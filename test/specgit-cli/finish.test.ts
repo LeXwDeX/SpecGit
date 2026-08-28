@@ -23,6 +23,44 @@ describe('specgit finish: evaluator parity with accept', () => {
     expect(envelope.verdict.accepted).toBe(true);
   });
 
+  // #361: an accepted LIVE delivery hands off the merge (auto-merge per
+  // policy); completed history hands off the next delivery instead.
+  it('accepted live PR: nextActions name the auto-merge (#361)', async () => {
+    const accepted = makeVerdict({
+      accepted: true,
+      state: 'accepted',
+      classification: 'accepted',
+      exitCode: 0,
+      complete: true,
+    });
+    const t = makeCtx({ evaluate: makeEvaluate(accepted) });
+    const code = await runCliWith(['node', 'specgit', 'finish', '--json'], t.ctx);
+    expect(code).toBe(0);
+    const envelope = parseStdoutJson(t.io);
+    const actions = envelope.nextActions ?? [];
+    expect(actions.map((a: any) => a.code)).toEqual(['delivery_merge']);
+    expect(actions[0].command).toContain('gh pr merge 42 --auto --merge');
+    expect(String(actions[0].reason)).not.toContain('unbind');
+  });
+
+  it('completed history: nextActions name the next delivery, never unbind (#361)', async () => {
+    const completed = makeVerdict({
+      accepted: true,
+      state: 'completed',
+      classification: 'accepted',
+      exitCode: 0,
+      complete: true,
+    });
+    const t = makeCtx({ evaluate: makeEvaluate(completed) });
+    const code = await runCliWith(['node', 'specgit', 'finish', '--json'], t.ctx);
+    expect(code).toBe(0);
+    const envelope = parseStdoutJson(t.io);
+    const actions = envelope.nextActions ?? [];
+    expect(actions.map((a: any) => a.code)).toEqual(['next_delivery']);
+    expect(actions[0].command).toContain('specgit issue');
+    expect(String(actions[0].command)).not.toContain('unbind');
+  });
+
   it('propagates rejected verdicts with exit 1 and the gate evidence', async () => {
     const rejected = makeVerdict({
       accepted: false,

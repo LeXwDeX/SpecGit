@@ -20,8 +20,10 @@ import {
   humanBuilder,
   issueList,
   probeLine,
+  renderNextActionsHuman,
   verdictFailureLine,
   warningLine,
+  type NextAction,
 } from '../../src/cli/output.js';
 import { catalogFor } from '../../src/i18n/language.js';
 
@@ -122,11 +124,24 @@ describe('shared line formatters (#190)', () => {
     );
   });
 
-  it('verdictFailureLine renders the accept-surface gate failure', () => {
+  it('verdictFailureLine renders the evidence structure only — the fix belongs to the diagnostics renderer (#362)', () => {
     expect(verdictFailureLine('pr_checks', 'pr_draft')).toBe('  pr_checks: pr_draft');
-    expect(verdictFailureLine('pr_checks', 'checks_pending', 'Wait for CI.')).toBe(
-      '  pr_checks: checks_pending — Wait for CI.'
+    expect(verdictFailureLine('pr_checks', 'checks_pending')).toBe(
+      '  pr_checks: checks_pending'
     );
+  });
+
+  it('renderNextActionsHuman prints the localized headline once, then each command with its reason (#360)', () => {
+    const actions: NextAction[] = [
+      { code: 'adoption_branch', command: 'git checkout -b x', reason: 'Carry the harness.' },
+      { code: 'adoption_commit', command: 'git add -f p', reason: 'Ignored by default.' },
+    ];
+    expect(renderNextActionsHuman('Next:', actions)).toEqual([
+      'Next:',
+      '  git checkout -b x — Carry the harness.',
+      '  git add -f p — Ignored by default.',
+    ]);
+    expect(renderNextActionsHuman('Next:', [])).toEqual([]);
   });
 
   it('issueList joins issue numbers as closing-ref style references', () => {

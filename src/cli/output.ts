@@ -84,6 +84,8 @@ export interface OutcomeBase {
 export interface AcceptOutcome extends OutcomeBase {
   state?: BindingState;
   verdict?: Verdict;
+  /** #361: the accepted/completed hand-off — merge, or the next delivery. */
+  nextActions?: NextAction[];
 }
 
 /** `specgit finish` delegates to the accept evaluation; same shape. */
@@ -104,6 +106,10 @@ export interface UnbindOutcome extends OutcomeBase {
 export interface IssueOutcome extends OutcomeBase {
   state?: BindingState;
   record?: Record<string, unknown>;
+  /** #361: forge web URLs for the bound issues and the draft PR. */
+  urls?: { issues: string[]; pr: string };
+  /** #361: fill the issue bodies and PR brief, then mark ready. */
+  nextActions?: NextAction[];
 }
 
 /** `specgit pr`: the repaired record plus the derived binding state. */
@@ -120,9 +126,22 @@ export interface PrOutcome extends OutcomeBase {
  */
 export type StatusState = 'unbound' | 'draft' | 'bound' | 'historical-candidate' | 'unknown';
 
+/**
+ * #363: the three question-layered states, each answerable on its own —
+ * is the record complete, does the checkout match it, where is the
+ * delivery in its lifecycle. `state` stays as the compat rollup; the
+ * verdict layer belongs to `finish` alone.
+ */
+export type RecordState = 'missing' | 'partial' | 'complete';
+export type LocalContext = 'matching' | 'mismatch' | 'unknown';
+export type Lifecycle = 'active' | 'historical-candidate';
+
 /** `specgit status`: local evidence — gates, context, the asset taxonomy. */
 export interface StatusOutcome extends OutcomeBase {
   state?: StatusState;
+  recordState?: RecordState;
+  localContext?: LocalContext;
+  lifecycle?: Lifecycle;
   gates?: GateResult[];
   evidence?: Record<string, unknown>;
   assets?: Record<string, unknown>;
@@ -139,7 +158,7 @@ export interface SetupOutcome extends OutcomeBase {
 }
 
 /**
- * #352: one structured hand-off step in a command's success output —
+ * #352/#360: one structured hand-off step in a command's success output —
  * what to run next and why. Codes/commands interpolate verbatim (machine
  * contract, never localized); only the surrounding prose localizes.
  */
@@ -147,6 +166,18 @@ export interface NextAction {
   code: string;
   command: string;
   reason: string;
+}
+
+/**
+ * #360: the ONE human renderer for nextActions — a localized headline
+ * (command-specific content) followed by each command with its reason.
+ * No command renders its own next-step list.
+ */
+export function renderNextActionsHuman(headline: string, actions: NextAction[]): string[] {
+  if (actions.length === 0) {
+    return [];
+  }
+  return [headline, ...actions.map((action) => `  ${action.command} — ${action.reason}`)];
 }
 
 /** `specgit init`: policy, harness, platform, detection, protection, local-asset ignore. */
@@ -197,6 +228,9 @@ export function buildEnvelope(
   // documented shape exactly.
   const optional: Array<[string, unknown]> = [];
   if ('state' in outcome) optional.push(['state', outcome.state]);
+  if ('recordState' in outcome) optional.push(['recordState', outcome.recordState]);
+  if ('localContext' in outcome) optional.push(['localContext', outcome.localContext]);
+  if ('lifecycle' in outcome) optional.push(['lifecycle', outcome.lifecycle]);
   if ('verdict' in outcome) optional.push(['verdict', outcome.verdict]);
   if ('gates' in outcome) optional.push(['gates', outcome.gates]);
   if ('evidence' in outcome) optional.push(['evidence', outcome.evidence]);
@@ -211,6 +245,7 @@ export function buildEnvelope(
   if ('reconciled' in outcome) optional.push(['reconciled', outcome.reconciled]);
   if ('ignore' in outcome) optional.push(['ignore', outcome.ignore]);
   if ('nextActions' in outcome) optional.push(['nextActions', outcome.nextActions]);
+  if ('urls' in outcome) optional.push(['urls', outcome.urls]);
   if ('assets' in outcome) optional.push(['assets', outcome.assets]);
   for (const [key, value] of optional) {
     if (value !== undefined) {
@@ -310,9 +345,13 @@ export function gateFailureLine(gateId: string, code: string, fix?: string): str
   return `Gate ${gateId}: ${sanitize(code)}${fix ? ` — ${sanitize(fix)}` : ''}`;
 }
 
-/** The accept/finish-surface gate failure: `  <id>: <code>[ — <fix>]` (fix sanitized). */
-export function verdictFailureLine(gateId: string, code: string, fix?: string): string {
-  return `  ${gateId}: ${code}${fix ? ` — ${sanitize(fix)}` : ''}`;
+/**
+ * The accept/finish-surface gate failure line: `  <id>: <code>`. The
+ * evidence structure only — the fix belongs to the diagnostics renderer
+ * below, which prints it exactly once (#362).
+ */
+export function verdictFailureLine(gateId: string, code: string): string {
+  return `  ${gateId}: ${sanitize(code)}`;
 }
 
 /** Issue numbers as closing-ref style references: `#1, #2`. */
@@ -355,6 +394,11 @@ export function finishOutcome(
     }
     for (const diagnostic of outcome.warnings ?? []) {
       io.stderr(`Warning: ${sanitize(diagnostic.message)}`);
+      // #362: a warning's fix is advisory guidance — it reaches the
+      // human exactly once, as a Next line.
+      if (diagnostic.fix) {
+        io.stderr(`Next: ${sanitize(diagnostic.fix)}`);
+      }
     }
   }
   return outcome.exit;

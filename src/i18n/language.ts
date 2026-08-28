@@ -146,6 +146,8 @@ export interface HumanText {
   // gitlab drops the protect step.
   initNextAdoptionHeadline(): string;
   initAdoptionReasons(gitlab: boolean): Record<string, string>;
+  // generic nextActions headline (#360/#361)
+  nextHeadline(): string;
   initAutomerge(enabled: boolean): string;
   // finish / accept
   finishAccepted(delivery: string, pr: number | null): string;
@@ -268,6 +270,7 @@ const EN_HUMAN: HumanText = {
     `Branch protection: ${branch} now requires "${check}"`,
   initNextAdoptionHeadline: () =>
     'Next: the adoption is not on the default branch yet — finish it before requiring checks:',
+  nextHeadline: () => 'Next:',
   initAdoptionReasons: (gitlab) =>
     ({
       adoption_branch:
@@ -365,6 +368,7 @@ const ZH_HUMAN: HumanText = {
   initProtectionRequired: (branch, check) => `分支保护：${branch} 现在要求 "${check}"`,
   initNextAdoptionHeadline: () =>
     '下一步：接入（adoption）尚未落到默认分支——先完成接入，再启用必需检查：',
+  nextHeadline: () => '下一步：',
   initAdoptionReasons: (gitlab) =>
     ({
       adoption_branch: '通过 pull request（而非直接 push）把 harness 与 policy 带到默认分支。',

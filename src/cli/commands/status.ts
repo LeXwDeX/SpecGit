@@ -123,6 +123,7 @@ export async function runStatus(
       return {
         exit: EXIT_SUCCESS,
         state: 'unbound',
+        recordState: 'missing',
         gates: [recordGate(recordEv)],
         evidence: { root, branch: facts.branch },
         warnings,
@@ -161,6 +162,22 @@ export async function runStatus(
   const recordTracked = trackedIncludes(trackedEv, RECORD_FILENAME);
   const state = deriveLifecycleState(record, facts, recordTracked);
   const historical = state === 'historical-candidate';
+
+  // #363: the question-layered states, each derived from the evidence
+  // status already gathered — record completeness, checkout context
+  // (read off the context gate: mismatch failures vs environment
+  // failures), lifecycle. `state` stays as the compat rollup.
+  const recordState = record.issues.length > 0 && record.pr !== undefined ? 'complete' : 'partial';
+  const contextGateResult = gates.find((gate) => gate.id === 'context');
+  const localContext: 'matching' | 'mismatch' | 'unknown' =
+    contextGateResult === undefined || contextGateResult.status === 'pass'
+      ? 'matching'
+      : contextGateResult.failures.some(
+            (failure) => failure.code === 'branch_mismatch' || failure.code === 'worktree_mismatch'
+          )
+        ? 'mismatch'
+        : 'unknown';
+  const lifecycle = historical ? 'historical-candidate' : 'active';
   const historicalWarning: Diagnostic | null = historical
     ? {
         severity: 'warning',
@@ -201,6 +218,9 @@ export async function runStatus(
     return {
       exit: EXIT_UNKNOWN,
       state,
+      recordState,
+      localContext,
+      lifecycle,
       gates,
       errors: failClosedErrors,
       assets: STATE_ASSET_TAXONOMY as unknown as Record<string, unknown>,
@@ -254,6 +274,9 @@ export async function runStatus(
   return {
     exit: EXIT_SUCCESS,
     state,
+    recordState,
+    localContext,
+    lifecycle,
     gates,
     evidence,
     ...(warnings.length > 0 ? { warnings } : {}),

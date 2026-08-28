@@ -78,6 +78,7 @@ Generated text is language-configurable ([#118](https://github.com/LeXwDeX/SpecG
 - the issue-body scaffold and the draft-PR body scaffold written by `specgit issue` (the closing references `Closes #n` stay English — they are provider grammar, not prose);
 - the managed guidance block `specgit init` injects into `AGENTS.md` / `CLAUDE.md`;
 - success-path human prose on stderr (`specgit issue` / `pr` / `bind` / `unbind` / `status` / `setup` / `init` summaries, the `finish` headline).
+- diagnostics render exactly once each (#362): errors as `Error:` + `Fix:`, warnings as `Warning:` + `Next:` (a warning's fix is advisory guidance); success hand-offs render through the one `Next:` renderer (#360).
 
 Set it at init time (`specgit init --language zh`) or edit the policy in a reviewed PR; `init --force` inherits the existing policy's language unless `--language` overrides it. An unsupported value fails closed (`policy_invalid`) — the strict policy schema lists the supported values in its diagnostic. The supported set is exactly `en`, `zh`; adding a language is a catalog addition in `src/i18n/language.ts`, not a policy-format change.
 
@@ -159,6 +160,8 @@ The scaffold is a pure function of the bound issues: the same binding always ren
 
 Resume matches the arguments onto the record positionally, split by record completeness. A **partial** record (issues recorded, no PR yet) continues issue creation from the first unconsumed argument — numeric arguments for consumed positions must match the bound issues. A **complete** record (PR bound, PR live) is a finished bootstrap: re-running with no arguments or with the original arguments is a healing no-op (commit/push only), while **more arguments than bound issues is drift** — `issue_resume_drift`, exit 2, refused with zero side effects (no issue or PR probes or creates, `.specgit.yaml` left byte-identical). Fewer arguments than bound issues, and numeric arguments not among the bound issues, are drift on any record. A record whose PR already **merged** is completed history, not an active delivery, and its lifecycle ends there: **no-args resume is refused** — `issue_delivery_merged`, exit 2, zero git side effects (the branch GitHub deleted on merge is never re-created or re-pushed) — while **replacement arguments re-bootstrap**: they are validated first, then the record is deleted and a fresh delivery bootstraps. The mergedness probe itself fails closed: if the PR fact cannot be gathered, the command exits 3 with the provider error and keeps the record — it never guesses "not merged" (#75).
 
+Success hands off (#361): the `--json` envelope carries `urls` (every bound issue and the draft PR, platform-dialect web links) and `nextActions` — `issue_bodies` (fill each Why / Scope / Approach / Acceptance), `pr_brief` (fill the scaffold sections; the `Closes #n` lines are the only body gate), `pr_ready` (`gh pr ready <n>` / `glab mr update <n> --ready` — a draft always fails the verdict). Human output renders the short `Next:` form.
+
 ```bash
 specgit issue "feat: add login" "security: harden the session model"   # two new issues, one delivery
 specgit issue 4 "refactor: extend the harness"                     # reuse #4, create one
@@ -220,7 +223,7 @@ specgit finish --json     # machine-readable verdict (what CI parses)
 
 Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` cannot determine (missing record/policy, `gh` absent or unauthenticated, transport failure). See [Reference](reference.md) for the gate table and every code, and [Troubleshooting](troubleshooting.md) for fixes.
 
-**Completed history (#351).** Running `finish` on a trunk that already merged the delivery is not a mismatch: the context gate proves the merged lineage (the PR's merge commit contained by local HEAD) and the verdict reports `state: "completed"` — exit `0` with the warning `record_of_merged_delivery`, whose fix is the next delivery (`specgit issue "<type>: <title>"` atomically replaces the record). `unbind` is not the post-merge step; it is the abandon/reset/uninstall tool.
+**Completed history (#351).** Running `finish` on a trunk that already merged the delivery is not a mismatch: the context gate proves the merged lineage (the PR's merge commit contained by local HEAD) and the verdict reports `state: "completed"` — exit `0` with the warning `record_of_merged_delivery`, whose fix is the next delivery (`specgit issue "<type>: <title>"` atomically replaces the record). `unbind` is not the post-merge step; it is the abandon/reset/uninstall tool. Success hand-offs (#361): an accepted live PR carries `nextActions` naming the merge (`gh pr merge <n> --auto --merge` — auto-merge per policy; `glab mr merge` on GitLab), completed history carries `next_delivery`; both render as short `Next:` lines for humans.
 
 ## `specgit pr`
 
@@ -300,6 +303,15 @@ that merged into this trunk — `status` reports `state:
 reads the pull request, or start the next delivery; `specgit issue`
 replaces the record atomically). Offline status never claims `completed`
 outright — that proof belongs to `finish`.
+
+State layers (#363): alongside the compat `state` rollup, `status --json`
+answers its three questions separately — `recordState` (`missing` |
+`partial` | `complete`: is the binding record filled in), `localContext`
+(`matching` | `mismatch` | `unknown`: does this checkout match the
+recorded context; `unknown` when git cannot answer, e.g. detached HEAD),
+and `lifecycle` (`active` | `historical-candidate`). A missing record
+reports `recordState: "missing"` and omits the other two — there is
+nothing to match or age. The verdict layer stays `finish`-only.
 
 Policy and context problems discovered along the way behave differently: a **missing or invalid policy fails closed** (`policy_missing`/`policy_invalid` → exit 3, listed in `errors`), while evidence *mismatches* (`branch_mismatch`, origin drift, incompleteness, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
 
@@ -422,9 +434,11 @@ Fields:
 - `status` — `ok` | `rejected` | `unknown` | `error`
 - `exit` — the numeric exit code the process exits with (`0` | `1` | `2` | `3`), equal to `status`' mapping; lets a piped caller read the exit code from the document itself
 - `state` — the derived delivery state. `finish`/`accept`: `unbound` | `draft` | `bound` | `accepted` | `completed` | `rejected` | `unknown` (`completed` = the merged-delivery history proven at the trunk, #351). `status`: `unbound` | `draft` | `bound` | `historical-candidate` | `unknown` (`historical-candidate` = a record tracked on a branch other than its recorded context — the offline signature of merged history; confirm with `finish`). The bootstrap commands (`issue`/`pr`/`bind`) report `draft` | `bound`.
+- `recordState` / `localContext` / `lifecycle` — the question-layered status fields (#363), each answerable on its own: `recordState` `missing` | `partial` | `complete`; `localContext` `matching` | `mismatch` | `unknown`; `lifecycle` `active` | `historical-candidate`. Status-only; the verdict layer belongs to `finish`.
+- `urls` — (issue success, #361) forge web URLs for the bound issues and the draft PR.
+- `nextActions[]` — the structured success hand-off (#352/#360/#361): `code`, `command`, `reason`. Fresh `init` carries the adoption steps (`adoption_branch` | `adoption_commit` | `adoption_pr` | `adoption_protect` | `adoption_setup`); `issue` success carries `issue_bodies` | `pr_brief` | `pr_ready`; an accepted `finish` carries `delivery_merge` (live PR, auto-merge per policy) or `next_delivery` (completed history). Codes/commands are stable and never localized; reasons localize with `language`.
 - `verdict.gates[]` — one entry per evaluated gate with `id`, `status`, failure `code`, structured `detail`, and a `fix`
 - `verdict.evidence` — the facts the verdict was derived from (repo, branch, context, PR, PR head SHA)
 - `errors[]` — diagnostics with `severity`, `code`, `message`, `target`, `fix`
-- `nextActions[]` — (init, fresh adoption only, #352) structured hand-off steps: `code` (`adoption_branch` | `adoption_commit` | `adoption_pr` | `adoption_protect` | `adoption_setup`), `command`, `reason`
 
 In `--json` mode nothing else touches stdout; parse the whole document, not fragments.

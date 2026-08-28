@@ -44,7 +44,21 @@
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
-import { errorDiagnostic, humanBuilder, issueList, sanitize, type IssueOutcome } from '../output.js';
+import {
+  errorDiagnostic,
+  humanBuilder,
+  issueList,
+  renderNextActionsHuman,
+  sanitize,
+  type IssueOutcome,
+  type NextAction,
+} from '../output.js';
+import {
+  forgeIssueUrl,
+  forgePrUrl,
+  forgeReadyCommand,
+  forgeWebBase,
+} from '../forge-links.js';
 import { commandLanguage, catalogFor } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { PolicyLanguage } from '../../record/policy.js';
@@ -665,13 +679,51 @@ export async function runIssue(
       )
     );
   }
+  // #361: the success hand-off — forge URLs and the steps to
+  // review-ready (fill the issue bodies, fill the PR brief, mark ready).
+  const platform = repoEv.value.platform;
+  const base = forgeWebBase(facts.originUrl);
+  const urls =
+    base !== null && record.pr !== undefined
+      ? {
+          issues: record.issues.map((n) => forgeIssueUrl(base, platform, n)),
+          pr: forgePrUrl(base, platform, record.pr),
+        }
+      : undefined;
+  const issueEdit = platform === 'gitlab' ? 'glab issue edit' : 'gh issue edit';
+  const prEdit = platform === 'gitlab' ? 'glab mr update' : 'gh pr edit';
+  const nextActions: NextAction[] | undefined =
+    record.pr !== undefined
+      ? [
+          {
+            code: 'issue_bodies',
+            command: record.issues.map((n) => `${issueEdit} ${n} --body-file <file>`).join(' && '),
+            reason:
+              'Fill every issue body (Why / Scope / Approach / Acceptance) — the scaffold body is advisory, the WHY is the contract.',
+          },
+          {
+            code: 'pr_brief',
+            command: `${prEdit} ${record.pr} --body-file <file>`,
+            reason: 'Fill the PR brief sections (Why / What changed / Evidence); keep the Closes #n lines intact.',
+          },
+          {
+            code: 'pr_ready',
+            command: forgeReadyCommand(platform, record.pr),
+            reason: 'A draft always fails the verdict; ready makes the delivery reviewable.',
+          },
+        ]
+      : undefined;
+
   return {
     exit: EXIT_SUCCESS,
     state: deriveBindingState(record),
     record: recordSummary(record),
+    ...(urls !== undefined ? { urls } : {}),
+    ...(nextActions !== undefined ? { nextActions } : {}),
     human: builder
       .line(human.issuePr(record.pr as number | string))
       .line(human.issueRecorded(RECORD_FILENAME))
+      .append(renderNextActionsHuman(human.nextHeadline(), nextActions ?? []))
       .build(),
   };
 }
