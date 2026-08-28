@@ -69,4 +69,4 @@ SpecGit removes the bookkeeping from review (no task checklists to audit, no art
 - **Branch naming.** Anything works; `<type>/<issue>-<slug>` (e.g. `fix/124-flaky-tests`) keeps the context self-describing and matches worktree labels.
 - **Bind early, complete later.** A record with issues but no PR is a valid draft; `status` shows it as such. Binding early makes the delivery discoverable (`git grep` for the issue number finds the branch).
 - **Re-run `accept` after every CI run.** The verdict is a fact about *now*; treat it like that in conversation ("accept was green as of the last push").
-- **Delete the record after merge.** `specgit unbind --yes` keeps merged branches clean if they linger; the binding has already done its job at merge time.
+- **Let merged records ride as history.** After a merge the record on the trunk is completed history (`status`: `historical-candidate`; `finish`: `completed`) — the next `specgit issue` replaces it atomically. `unbind` is only for abandoning a delivery or resetting/uninstalling.

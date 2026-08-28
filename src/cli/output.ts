@@ -112,9 +112,17 @@ export interface PrOutcome extends OutcomeBase {
   record?: Record<string, unknown>;
 }
 
+/**
+ * The status-level state vocabulary (#351): status is offline, so a
+ * merged-delivery record it cannot confirm reads `historical-candidate`;
+ * the forge-backed verdict vocabulary (`BindingState`, with
+ * `accepted`/`completed`/`rejected`/`unknown`) belongs to `finish`.
+ */
+export type StatusState = 'unbound' | 'draft' | 'bound' | 'historical-candidate' | 'unknown';
+
 /** `specgit status`: local evidence — gates, context, the asset taxonomy. */
 export interface StatusOutcome extends OutcomeBase {
-  state?: BindingState;
+  state?: StatusState;
   gates?: GateResult[];
   evidence?: Record<string, unknown>;
   assets?: Record<string, unknown>;
