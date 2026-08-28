@@ -5,3 +5,4 @@ context:
   branch: feat/338-per-issue-kind-tag
 issues:
   - 338
+pr: 341
