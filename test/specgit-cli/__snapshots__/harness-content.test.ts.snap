@@ -687,6 +687,13 @@ exports[`mergeGitPrePush: pure byte merge > a fresh install is the spawnable man
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
     refs/heads/main)
+      # Mirror sync (#343): a commit already contained by origin/main is
+      # accepted history — pushing it to another remote mirrors the
+      # verdict, it bypasses nothing. A zero sha (ref deletion) never
+      # passes this check.
+      if git merge-base --is-ancestor "$local_sha" refs/remotes/origin/main >/dev/null 2>&1; then
+        continue
+      fi
       echo "specgit: direct push to main is not the delivery path." >&2
       echo "Deliveries go: specgit issue -> PR -> CI -> specgit finish (exit 0) -> merge." >&2
       exit 1
