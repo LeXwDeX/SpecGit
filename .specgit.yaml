@@ -1,8 +1,7 @@
 version: 1
-delivery: per-issue-kind-tag
+delivery: mirror-sync-allow
 context:
   kind: branch
-  branch: feat/338-per-issue-kind-tag
+  branch: feat/343-mirror-sync-allow
 issues:
-  - 338
-pr: 341
+  - 343
