@@ -109,12 +109,12 @@ specgit init                          # auto-detects checks from your CI workflo
 specgit init --gitlab-host git.example.com   # self-managed GitLab instead
 specgit setup                         # install agent entry points (commands/skills)
 specgit doctor                        # all probes green?
-#    protection ordering: the init run above offers to require the
-#    acceptance check on the default branch — on a fresh adoption answer
-#    "no" (or pass --no-protect) until the adoption PR (init's output,
-#    committed) has merged; a required check no PR can pass yet locks out
-#    non-admin merges. Re-run `specgit init --force --protect` after that
-#    first merge.
+#    protection ordering: on a fresh adoption init's confirm defaults to
+#    "no" (the harness is not on the default branch yet; a required check
+#    no PR can pass would lock out non-admin merges) and the output lists
+#    the adoption steps — carry the policy with `git add -f` (it is
+#    gitignored by default), merge the adoption PR, then re-run
+#    `specgit init --force --protect` after that first merge.
 
 # The loop
 # 3. per delivery — one command bootstraps everything
@@ -122,7 +122,7 @@ specgit doctor                        # all probes green?
 #     every issue, tags them — the title's kind::<type> by default, or
 #     --tags kind::feat,module::auth for an explicit pool-first selection
 #     that seeds declared vocabulary when missing; re-run resumes)
-specgit issue "feat: add login" "Harden the session model"
+specgit issue "feat: add login" "security: harden the session model"
 
 # 4. work, push; CI runs on the PR — including the acceptance job
 

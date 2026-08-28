@@ -77,6 +77,66 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(gate.failures.map((f: any) => f.code)).toEqual(['branch_mismatch']);
   });
 
+  // #351: a record tracked by the index while the live branch differs is
+  // the local signature of a merged delivery riding the trunk — status is
+  // offline, so it reports the lifecycle as a candidate (never `bound`)
+  // and points at finish (forge proof) or the next bootstrap.
+  it('reports historical-candidate for a tracked record on a mismatching branch (#351)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ branch: 'main' }),
+      gitWrites: { trackedFiles: (paths) => ({ ok: true, value: paths }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.state).toBe('historical-candidate');
+    const warning = (envelope.warnings ?? []).find((w: any) => w.code === 'record_historical_candidate');
+    expect(warning).toBeDefined();
+    expect(warning.fix).toContain('specgit finish');
+    expect(warning.fix).toContain('specgit issue');
+    // The context gate keeps reporting the local fact — mismatch — but it
+    // no longer contradicts the headline state.
+    const gate = envelope.gates.find((g: any) => g.id === 'context');
+    expect(gate.status).toBe('fail');
+    expect(gate.failures.map((f: any) => f.code)).toEqual(['branch_mismatch']);
+  });
+
+  it('keeps state bound for an untracked record on a mismatching branch (#351)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ branch: 'main' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.state).toBe('bound');
+    expect(
+      (envelope.warnings ?? []).find((w: any) => w.code === 'record_historical_candidate')
+    ).toBeUndefined();
+  });
+
+  // Detached HEAD on a trunk carrying the tracked record is the same
+  // historical signature (#351 review): no branch name, but the tracked
+  // record naming another branch still means merged history riding here.
+  it('reports historical-candidate on a detached HEAD carrying the tracked record (#351)', async () => {
+    const t = makeCtx({
+      record: sampleBinding(),
+      policy: samplePolicy(),
+      facts: makeGitFacts({ branch: null }),
+      gitWrites: { trackedFiles: (paths) => ({ ok: true, value: paths }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.state).toBe('historical-candidate');
+    expect(
+      (envelope.warnings ?? []).find((w: any) => w.code === 'record_historical_candidate')
+    ).toBeDefined();
+  });
+
   it('verifies worktree contexts against the live worktree list', async () => {
     const t = makeCtx({
       record: sampleBinding({ context: { kind: 'worktree', label: '123-login', branch: 'feat/123-login' } }),

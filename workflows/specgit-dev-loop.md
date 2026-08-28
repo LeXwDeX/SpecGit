@@ -18,7 +18,10 @@ in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
   gh pr ready <n>  ->  specgit finish  --exit 0--> single push-right
         |                 (exit 1/3: fix what it names)   checkpoint
         v
-  merge (--merge --delete-branch) -> unbind --yes -> next delivery
+  merge (--merge --delete-branch) -> next specgit issue
+        |                        (atomically replaces the
+         v                        completed record, #351)
+  next delivery
 ```
 
 ## Trigger

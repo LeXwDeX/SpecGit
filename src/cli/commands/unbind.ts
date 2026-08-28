@@ -1,5 +1,10 @@
 /**
  * `specgit unbind` — deletes `.specgit.yaml` from the repository root.
+ *
+ * The abandon/reset/uninstall tool (#351): abandoning a delivery,
+ * resetting a checkout, or removing SpecGit. It is NOT the post-merge
+ * step — after a merge the record is completed history and the next
+ * `specgit issue` replaces it atomically.
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';

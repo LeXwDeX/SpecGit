@@ -291,7 +291,7 @@ function driftError(message: string): IssueOutcome {
     exit: EXIT_USAGE,
     errors: [
       errorDiagnostic('issue_resume_drift', message, {
-        fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to start a new delivery.',
+        fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to abandon this delivery and start over.',
       }),
     ],
   };
@@ -713,7 +713,7 @@ function mergedDeliveryError(record: DeliveryBinding): IssueOutcome {
         'issue_delivery_merged',
         `Delivery '${record.delivery}' has no live pull request (PR #${record.pr} is merged or does not exist on this platform); there is nothing to resume.`,
         {
-          fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why", or run "specgit unbind --yes" to clear the terminal record.',
+          fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why" — it atomically replaces this completed record.',
         }
       ),
     ],

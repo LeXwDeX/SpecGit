@@ -21,10 +21,11 @@ import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
 import {
   completenessGate,
   contextGate,
-  deriveBindingState,
+  deriveLifecycleState,
   originGate,
   policyGate,
   recordGate,
+  trackedIncludes,
 } from '../gates.js';
 import {
   errorDiagnostic,
@@ -41,7 +42,7 @@ import {
   type GeneratedAssetsReport,
 } from '../asset-drift.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
-import type { CommandContext, Evidence, GateResult, GitFacts, Policy } from '../types.js';
+import { RECORD_FILENAME, type CommandContext, type Evidence, type GateResult, type GitFacts, type Policy } from '../types.js';
 
 export interface StatusOptions {
   json?: boolean;
@@ -153,7 +154,21 @@ export async function runStatus(
   const origin = await originGate(facts, ctx.parseRepoRef);
   gates.push(origin.gate);
 
-  const state = deriveBindingState(record);
+  // #351: the merged-history signal is a read-only tracked-file probe —
+  // advisory like every #298 probe: a failed probe degrades to today's
+  // plain state naming, never blocks the snapshot.
+  const trackedEv = await ctx.git.trackedFiles(root, [RECORD_FILENAME]);
+  const recordTracked = trackedIncludes(trackedEv, RECORD_FILENAME);
+  const state = deriveLifecycleState(record, facts, recordTracked);
+  const historical = state === 'historical-candidate';
+  const historicalWarning: Diagnostic | null = historical
+    ? {
+        severity: 'warning',
+        code: 'record_historical_candidate',
+        message: `This record names branch '${record.context.branch}' but is tracked on '${facts.branch}' — the local signature of a merged delivery's history.`,
+        fix: 'Run "specgit finish" to confirm the merged lineage (it reads the pull request), or start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.',
+      }
+    : null;
   const evidence: Record<string, unknown> = {
     root,
     repo: origin.repo,
@@ -207,6 +222,7 @@ export async function runStatus(
 
   const human = humanBuilder()
     .line(text.statusDelivery(record.delivery, state))
+    .append(historical ? [text.statusHistoricalCandidate(record.context.branch)] : [])
     .line(
       record.context.kind === 'worktree'
         ? text.statusContextWorktree(record.context.label, record.context.branch)
@@ -231,12 +247,16 @@ export async function runStatus(
     )
     .build();
 
+  const warnings = [historicalWarning, generated.warning].filter(
+    (warning): warning is Diagnostic => warning !== null
+  );
+
   return {
     exit: EXIT_SUCCESS,
     state,
     gates,
     evidence,
-    ...(generated.warning !== null ? { warnings: [generated.warning] } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
     assets: assetsWith(generated.report),
     human,
   };

@@ -84,7 +84,7 @@ specgit init --required-check "Test (linux-bash)" --required-check "Lint & Type 
 ### Step 1 — 一键引导：`specgit issue`
 
 ```bash
-specgit issue "feat: add login" "Harden the session model" --json
+specgit issue "feat: add login" "security: harden the session model" --json
 ```
 
 一个参数 = 一个独立可验证的 WHY：

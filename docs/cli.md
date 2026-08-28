@@ -35,7 +35,7 @@ The delivery flow at a glance:
 | `specgit finish` | The verdict — full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
 | `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
 | `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias; carries the rewrite into git (#299) | git push (no forge) | 0 · 2 · 3 |
-| `specgit unbind` | Delete the delivery record — script alias | no | 0 · 2 |
+| `specgit unbind` | Delete the delivery record — the abandon/reset/uninstall tool; the normal post-merge continuation is the next `specgit issue`, which replaces completed history atomically | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift, generated-asset drift) | no | 0 · 2 · 3 |
 | `specgit accept` | Same evaluation as `finish` — script/CI alias | yes | 0 · 1 · 2 · 3 |
 | `specgit doctor` | Probe prerequisites (git, repo, origin, gh, policy) | forge auth (platform CLI: gh or glab) | 0 · 3 |
@@ -126,7 +126,7 @@ specgit init --force --required-check build --required-check test   # repeatable
 
 **Platform mode.** `init` resolves a platform: a `github.com` origin defaults to GitHub; any other origin asks on an interactive terminal (GitHub or GitLab) or takes an explicit `--gitlab-host`. The declaration persists in `spec_git/providers.yaml` (`gitlab.host` bare hostname, optional `gitlab.port` for a non-default port, `gitlab.insecure_ssl` reserved for the glab roadmap) and is committed, so the team shares one declaration. Origin classification (`parseRepoRef`, the evaluator, `doctor`, `status`) honors the declared endpoint: matching origins resolve through the GitLab origin grammar — `group[/subgroup…]/project` at depth 2–5, `%2F`-encoded separators included (#112) — and, since #117, route: the production composition's provider dispatches on the platform marker, so a declared GitLab origin's evidence (issues, MRs, pipelines) flows through `glab` while GitHub origins keep flowing through `gh`; `init` on gitlab mode writes no GitHub Actions workflow (`gitlab_harness_pending` warns; the repo carries its own `.gitlab-ci.yml`, whose top-level job keys are detected as required checks). Explicit ports follow the #78 rule: a port equal to the scheme default (`:443` https, `:22` ssh) classifies like the portless form; any other port classifies only when the declaration names it (`host:port`). An undeclared non-github origin leaves mode `undecided` with a `platform_undecided` warning; `providers.yaml` bytes that exist but cannot be read as a declaration make `init` refuse heuristic classification with a `platform_providers_invalid` warning instead (mode `undecided`, the broken bytes left untouched for repair) — the same refusal `status` applies to the workflow claim. The `--json` envelope carries a `platform` section (`{ mode, gitlabHost? }`). Evidence providers are the official CLIs only — `gh` for GitHub, `glab` for GitLab (see [gitlab-support.md](gitlab-support.md)).
 
-After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation (default yes) and, when confirmed (or with `--protect` from scripts), requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. The protection update is read-modify-write and never weakens governance: existing required checks, pull-request reviews (including dismissal rules), push restrictions, and admin enforcement are read first and preserved, with `SpecGit Acceptance` the only addition; the reported fact comes from the server's post-update payload. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with non-weakening fix guidance (the settings-UI path that preserves existing rules); pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"` and the remote unchanged.
+After writing the policy and harness, `init` probes the default branch through `gh`: if the check `SpecGit Acceptance` is not a required status check there, the acceptance gate can be bypassed by a direct push or merge — `init` warns. On an interactive terminal it asks for confirmation and, when confirmed (or with `--protect` from scripts), requires `SpecGit Acceptance` on the default branch and enables repository auto-merge. The confirm's default follows the adoption state (#352): **no** on a fresh adoption (the harness is not on the default branch yet — requiring a check no PR can pass locks out non-admin merges), **yes** once the acceptance workflow is tracked (the adoption PR has landed, so PRs can pass the check). A fresh adoption also emits `nextActions` — the structured adoption hand-off (branch → `git add -f spec_git/policy.yaml` + commit → PR → merge → `specgit init --force --protect`, plus optional `setup`/`doctor`) — in the `--json` envelope and, in short form, in the human summary. The protection update is read-modify-write and never weakens governance: existing required checks, pull-request reviews (including dismissal rules), push restrictions, and admin enforcement are read first and preserved, with `SpecGit Acceptance` the only addition; the reported fact comes from the server's post-update payload. Without a TTY it only warns (exit 0) and the `--json` envelope carries a `protection` section with non-weakening fix guidance (the settings-UI path that preserves existing rules); pass `--protect` to apply it from scripts. Protection is a guardrail, not a gate: provider or permission failures leave `init` succeeding with `protection.action: "unavailable"` and the remote unchanged.
 
 ## `specgit setup`
 
@@ -160,8 +160,8 @@ The scaffold is a pure function of the bound issues: the same binding always ren
 Resume matches the arguments onto the record positionally, split by record completeness. A **partial** record (issues recorded, no PR yet) continues issue creation from the first unconsumed argument — numeric arguments for consumed positions must match the bound issues. A **complete** record (PR bound, PR live) is a finished bootstrap: re-running with no arguments or with the original arguments is a healing no-op (commit/push only), while **more arguments than bound issues is drift** — `issue_resume_drift`, exit 2, refused with zero side effects (no issue or PR probes or creates, `.specgit.yaml` left byte-identical). Fewer arguments than bound issues, and numeric arguments not among the bound issues, are drift on any record. A record whose PR already **merged** is completed history, not an active delivery, and its lifecycle ends there: **no-args resume is refused** — `issue_delivery_merged`, exit 2, zero git side effects (the branch GitHub deleted on merge is never re-created or re-pushed) — while **replacement arguments re-bootstrap**: they are validated first, then the record is deleted and a fresh delivery bootstraps. The mergedness probe itself fails closed: if the PR fact cannot be gathered, the command exits 3 with the provider error and keeps the record — it never guesses "not merged" (#75).
 
 ```bash
-specgit issue "feat: add login" "Harden the session model"   # two new issues, one delivery
-specgit issue 4 "Extend the harness"                          # reuse #4, create one
+specgit issue "feat: add login" "security: harden the session model"   # two new issues, one delivery
+specgit issue 4 "refactor: extend the harness"                     # reuse #4, create one
 specgit issue "feat: 添加登录" --delivery add-login           # non-ASCII title, explicit delivery name
 specgit issue                                                 # resume an incomplete bootstrap (no args + no record → exit 2; no args + merged record → exit 2, issue_delivery_merged)
 ```
@@ -207,7 +207,7 @@ specgit issue "feat: oauth device flow" --tags kind::feat,module::auth   # expli
 }
 ```
 
-Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments or `specgit unbind --yes`) / `issues_not_closed` (a merged delivery's bound issues are still open on the forge — the closing reference never fired; exit 2 before the record is deleted, fix: close them on the tracker, then start the next delivery) / `issue_title_ambiguous` (several open issues share the pending title with no sole scaffold-body match; lists every candidate; fix: adopt one explicitly by number — `specgit issue <number>` — or rename the unrelated issue; exit 2 with zero side effects) / `issue_delivery_name_required` (the title yields no ASCII slug and no name was given or prompted; fix: `--delivery <slug>` or an ASCII title; exit 2 with zero side effects) / `issue_delivery_name_invalid` (the `--delivery` value is not kebab-case ASCII; exit 2) / `issue_tags_invalid` (`--tags` value violates the grammar; exit 2 before any create) / `issue_tags_unknown` (`--tags` value absent from pool, catalog, and policy declarations; exit 2 naming the available universe, before any create) / `harness_stale` (generated harness assets stale, conflicting, or partially present for the running CLI version; exit 2 before any forge contact; fix: the drifted surface's own repair — `specgit init --force` for the init surface, `specgit setup --tool <tool>` for entry-point drift) (exit 2; drift, merged-refusal, ambiguity, naming gaps, and tag refusals happen before any create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`, `evidence_truncated` — including the mergedness probe on a PR-bound record and the explicit-mode tag calls, which fail closed and keep the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
+Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments — the next `specgit issue` atomically replaces the completed record) / `issues_not_closed` (a merged delivery's bound issues are still open on the forge — the closing reference never fired; exit 2 before the record is deleted, fix: close them on the tracker, then start the next delivery) / `issue_title_ambiguous` (several open issues share the pending title with no sole scaffold-body match; lists every candidate; fix: adopt one explicitly by number — `specgit issue <number>` — or rename the unrelated issue; exit 2 with zero side effects) / `issue_delivery_name_required` (the title yields no ASCII slug and no name was given or prompted; fix: `--delivery <slug>` or an ASCII title; exit 2 with zero side effects) / `issue_delivery_name_invalid` (the `--delivery` value is not kebab-case ASCII; exit 2) / `issue_tags_invalid` (`--tags` value violates the grammar; exit 2 before any create) / `issue_tags_unknown` (`--tags` value absent from pool, catalog, and policy declarations; exit 2 naming the available universe, before any create) / `harness_stale` (generated harness assets stale, conflicting, or partially present for the running CLI version; exit 2 before any forge contact; fix: the drifted surface's own repair — `specgit init --force` for the init surface, `specgit setup --tool <tool>` for entry-point drift) (exit 2; drift, merged-refusal, ambiguity, naming gaps, and tag refusals happen before any create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport`, `evidence_truncated` — including the mergedness probe on a PR-bound record and the explicit-mode tag calls, which fail closed and keep the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
 
 ## `specgit finish`
 
@@ -219,6 +219,8 @@ specgit finish --json     # machine-readable verdict (what CI parses)
 ```
 
 Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` cannot determine (missing record/policy, `gh` absent or unauthenticated, transport failure). See [Reference](reference.md) for the gate table and every code, and [Troubleshooting](troubleshooting.md) for fixes.
+
+**Completed history (#351).** Running `finish` on a trunk that already merged the delivery is not a mismatch: the context gate proves the merged lineage (the PR's merge commit contained by local HEAD) and the verdict reports `state: "completed"` — exit `0` with the warning `record_of_merged_delivery`, whose fix is the next delivery (`specgit issue "<type>: <title>"` atomically replaces the record). `unbind` is not the post-merge step; it is the abandon/reset/uninstall tool.
 
 ## `specgit pr`
 
@@ -253,7 +255,7 @@ Exits `3` outside a git repository (`not_a_git_repo`). Never calls the forge —
 
 ## `specgit unbind`
 
-Deletes `.specgit.yaml` for the current checkout.
+Deletes `.specgit.yaml` for the current checkout — the **abandon/reset/uninstall** tool: abandoning a delivery, resetting a checkout, or removing SpecGit. It is not the post-merge step; after a merge the record is completed history and the next `specgit issue` replaces it atomically.
 
 ```bash
 specgit unbind --yes
@@ -289,6 +291,15 @@ Genuine evidence failures — `record_invalid`, `policy_missing`,
 `policy_invalid`, `git_unavailable`, `not_a_git_repo` — still fail closed
 with exit `3` and envelope `status: "unknown"`, so the pre-binding case and
 a true unknown stay distinguishable on both the exit code and the state.
+
+Completed history (#351): when the record is tracked on the live branch
+while naming another as its context — the local signature of a delivery
+that merged into this trunk — `status` reports `state:
+"historical-candidate"` (never `bound`) with the warning
+`record_historical_candidate` (fix: confirm with `specgit finish`, which
+reads the pull request, or start the next delivery; `specgit issue`
+replaces the record atomically). Offline status never claims `completed`
+outright — that proof belongs to `finish`.
 
 Policy and context problems discovered along the way behave differently: a **missing or invalid policy fails closed** (`policy_missing`/`policy_invalid` → exit 3, listed in `errors`), while evidence *mismatches* (`branch_mismatch`, origin drift, incompleteness, …) are reported as gate results in the output but do not change the exit code: `status` answers "what does the local evidence say", not "is the delivery acceptable".
 
@@ -410,9 +421,10 @@ Fields:
 
 - `status` — `ok` | `rejected` | `unknown` | `error`
 - `exit` — the numeric exit code the process exits with (`0` | `1` | `2` | `3`), equal to `status`' mapping; lets a piped caller read the exit code from the document itself
-- `state` — derived delivery state: `unbound` | `draft` | `bound` | `accepted` | `rejected` | `unknown`
+- `state` — the derived delivery state. `finish`/`accept`: `unbound` | `draft` | `bound` | `accepted` | `completed` | `rejected` | `unknown` (`completed` = the merged-delivery history proven at the trunk, #351). `status`: `unbound` | `draft` | `bound` | `historical-candidate` | `unknown` (`historical-candidate` = a record tracked on a branch other than its recorded context — the offline signature of merged history; confirm with `finish`). The bootstrap commands (`issue`/`pr`/`bind`) report `draft` | `bound`.
 - `verdict.gates[]` — one entry per evaluated gate with `id`, `status`, failure `code`, structured `detail`, and a `fix`
 - `verdict.evidence` — the facts the verdict was derived from (repo, branch, context, PR, PR head SHA)
 - `errors[]` — diagnostics with `severity`, `code`, `message`, `target`, `fix`
+- `nextActions[]` — (init, fresh adoption only, #352) structured hand-off steps: `code` (`adoption_branch` | `adoption_commit` | `adoption_pr` | `adoption_protect` | `adoption_setup`), `command`, `reason`
 
 In `--json` mode nothing else touches stdout; parse the whole document, not fragments.

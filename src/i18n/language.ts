@@ -107,6 +107,8 @@ export interface HumanText {
   statusLiveBranch(branch: string): string;
   statusLiveBranchDetached(): string;
   statusUnbound(): string;
+  // status — merged-history candidate (#351); branch interpolates verbatim
+  statusHistoricalCandidate(branch: string): string;
   // status — generated-asset drift (#308); states/codes/paths/fix commands
   // interpolate verbatim (machine contract, never localized)
   statusAssetsCurrent(): string;
@@ -139,6 +141,11 @@ export interface HumanText {
   initRemovedAsset(path: string): string;
   initPreservedAsset(path: string): string;
   initProtectionRequired(branch: string, check: string): string;
+  // init — adoption hand-off (#352); the reasons localize keyed by the
+  // verbatim step code, so no positional coupling to the command list.
+  // gitlab drops the protect step.
+  initNextAdoptionHeadline(): string;
+  initAdoptionReasons(gitlab: boolean): Record<string, string>;
   initAutomerge(enabled: boolean): string;
   // finish / accept
   finishAccepted(delivery: string, pr: number | null): string;
@@ -226,6 +233,8 @@ const EN_HUMAN: HumanText = {
   statusLiveBranchDetached: () => 'Live branch: (detached)',
   statusUnbound: () =>
     'Not bound: no delivery record (.specgit.yaml) exists yet — the normal pre-binding state. Run "specgit issue" to start a delivery.',
+  statusHistoricalCandidate: (branch) =>
+    `Completed-history candidate: the record names branch '${branch}' while this checkout tracks it — likely a merged delivery. Confirm with "specgit finish", or start the next delivery: "specgit issue" replaces the record.`,
   statusAssetsCurrent: () =>
     'Generated assets: current — every desired init/setup output is proven current, absent, or intentionally skipped for this CLI version.',
   statusAssetsDrift: () => 'Generated assets: drift detected — run each surface\'s exact fix:',
@@ -257,6 +266,26 @@ const EN_HUMAN: HumanText = {
   initPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initProtectionRequired: (branch, check) =>
     `Branch protection: ${branch} now requires "${check}"`,
+  initNextAdoptionHeadline: () =>
+    'Next: the adoption is not on the default branch yet — finish it before requiring checks:',
+  initAdoptionReasons: (gitlab) =>
+    ({
+      adoption_branch:
+        'Carry the harness and policy to the default branch through a pull request, not a direct push.',
+      adoption_commit:
+        'The policy is shielded by .gitignore by default — a plain "git add" silently skips it; the -f is required.',
+      adoption_pr: gitlab
+        ? 'Merge the adoption MR so your CI jobs exist on the default branch.'
+        : 'Merge the adoption PR so the acceptance check exists on the default branch.',
+      ...(gitlab
+        ? {}
+        : {
+            adoption_protect:
+              'Only now is requiring the acceptance check safe: PRs can pass it because the workflow is on the default branch.',
+          }),
+      adoption_setup:
+        'Optional: install the agent entry points, then check the environment and the snapshot.',
+    }) as Record<string, string>,
   initAutomerge: (enabled) => `Auto-merge: ${enabled ? 'enabled' : 'already on'}`,
   finishAccepted: (delivery, pr) =>
     `Accepted: delivery '${delivery}'${pr !== null ? ` (PR ${pr})` : ''}.`,
@@ -303,6 +332,8 @@ const ZH_HUMAN: HumanText = {
   statusLiveBranchDetached: () => '当前分支：（分离头指针）',
   statusUnbound: () =>
     '尚未绑定：还没有交付记录（.specgit.yaml）——这是引导前的正常状态。运行 "specgit issue" 开始交付。',
+  statusHistoricalCandidate: (branch) =>
+    `已完成历史候选：记录指向分支 '${branch}'，而当前检出跟踪该记录文件——很可能是已合并的交付。用 "specgit finish" 确认，或开始下一次交付："specgit issue" 会原子替换该记录。`,
   statusAssetsCurrent: () =>
     '生成资产：均为最新——所有期望的 init/setup 产物均被证实与当前 CLI 版本一致、未安装或有意跳过。',
   statusAssetsDrift: () => '生成资产：检测到漂移——请逐面执行精确修复命令：',
@@ -332,6 +363,20 @@ const ZH_HUMAN: HumanText = {
   initRemovedAsset: (path) => `已移除过时的 SpecGit 资产 ${path}`,
   initPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initProtectionRequired: (branch, check) => `分支保护：${branch} 现在要求 "${check}"`,
+  initNextAdoptionHeadline: () =>
+    '下一步：接入（adoption）尚未落到默认分支——先完成接入，再启用必需检查：',
+  initAdoptionReasons: (gitlab) =>
+    ({
+      adoption_branch: '通过 pull request（而非直接 push）把 harness 与 policy 带到默认分支。',
+      adoption_commit: 'policy 默认被 .gitignore 屏蔽——普通 "git add" 会静默跳过它；必须加 -f。',
+      adoption_pr: gitlab
+        ? '合并接入 MR，让你的 CI 作业存在于默认分支上。'
+        : '合并接入 PR，让验收检查存在于默认分支上。',
+      ...(gitlab
+        ? {}
+        : { adoption_protect: '只有此时启用必需检查才安全：工作流已在默认分支上，PR 能通过它。' }),
+      adoption_setup: '可选：安装 agent 入口，然后检查环境与本地快照。',
+    }) as Record<string, string>,
   initAutomerge: (enabled) => `自动合并：${enabled ? '已启用' : '已开启'}`,
   finishAccepted: (delivery, pr) =>
     `已接受：交付 '${delivery}'${pr !== null ? `（PR ${pr}）` : ''}。`,
