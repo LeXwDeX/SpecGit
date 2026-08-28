@@ -65,13 +65,25 @@ export function deriveBindingState(binding: DeliveryBinding): 'draft' | 'bound' 
 }
 
 /**
+ * Membership in a tracked-file probe (`git ls-files`), degrading to false
+ * when the probe itself failed — every #298/#351 caller treats the probe
+ * as advisory, so a failed probe must read as "not tracked".
+ */
+export function trackedIncludes(paths: Evidence<string[]>, path: string): boolean {
+  return paths.ok && paths.value.includes(path);
+}
+
+/**
  * #351: the status-level lifecycle state, layering the local
  * merged-history signal over record completeness. A record the index
  * tracks while the live branch differs from the recorded context is the
- * local signature of a merged delivery riding this trunk — the binding
- * commit only reaches a branch through a merge. Offline status reports
- * it as a candidate for completed history, never `bound`; `specgit
- * finish` (forge-backed) upgrades the candidate to a verdict.
+ * local signature of merged delivery history riding this trunk —
+ * normally the binding commit reached this branch through the adoption
+ * or delivery merge. Local git cannot PROVE it (a branch cut from a
+ * still-open delivery branch carries the tracked record too, and
+ * whether the PR merged is forge-side fact), so offline status reports a
+ * CANDIDATE, never `bound` and never `completed`; `specgit finish`
+ * (forge-backed) upgrades the candidate to a verdict.
  */
 export function deriveLifecycleState(
   binding: DeliveryBinding,
