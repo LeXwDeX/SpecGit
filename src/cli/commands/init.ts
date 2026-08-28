@@ -70,6 +70,7 @@ import {
 import { persistGitlabHost, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
 import { selectWorkflowYaml } from './init-workflow.js';
 import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
+import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
 
 export type { InitOptions } from './init-validation.js';
@@ -254,10 +255,18 @@ export async function runInit(
     return { ...written, errors };
   }
 
+  // #352: the adoption signal — a tracked acceptance workflow means the
+  // harness already rode a commit (the adoption PR) into this lineage;
+  // untracked means fresh adoption: the files exist only in the working
+  // tree, so the protection confirm must default to NO and the output
+  // must hand off the adoption steps.
+  const adoptedEv = await ctx.git.trackedFiles(root, [HARNESS_WORKFLOW_PATH]);
+  const adopted = adoptedEv.ok && adoptedEv.value.includes(HARNESS_WORKFLOW_PATH);
+
   let protection: ProtectionOutcome | undefined;
   let protectionHuman: string[] = [];
   if (options.protect !== false) {
-    const guarded = await setupBranchProtection(options, ctx, root, text);
+    const guarded = await setupBranchProtection(options, ctx, root, text, adopted);
     protection = guarded.outcome;
     protectionHuman = guarded.human;
   }
@@ -275,6 +284,7 @@ export async function runInit(
     warnings,
     protection,
     protectionHuman,
+    adopted,
     text,
   });
 }

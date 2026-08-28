@@ -141,6 +141,8 @@ export interface HumanText {
   initRemovedAsset(path: string): string;
   initPreservedAsset(path: string): string;
   initProtectionRequired(branch: string, check: string): string;
+  // init — adoption hand-off (#352); steps interpolate commands verbatim
+  initNextAdoptionHeadline(): string;
   initAutomerge(enabled: boolean): string;
   // finish / accept
   finishAccepted(delivery: string, pr: number | null): string;
@@ -261,6 +263,8 @@ const EN_HUMAN: HumanText = {
   initPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initProtectionRequired: (branch, check) =>
     `Branch protection: ${branch} now requires "${check}"`,
+  initNextAdoptionHeadline: () =>
+    'Next: the adoption is not on the default branch yet — finish it before requiring checks:',
   initAutomerge: (enabled) => `Auto-merge: ${enabled ? 'enabled' : 'already on'}`,
   finishAccepted: (delivery, pr) =>
     `Accepted: delivery '${delivery}'${pr !== null ? ` (PR ${pr})` : ''}.`,
@@ -338,6 +342,8 @@ const ZH_HUMAN: HumanText = {
   initRemovedAsset: (path) => `已移除过时的 SpecGit 资产 ${path}`,
   initPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initProtectionRequired: (branch, check) => `分支保护：${branch} 现在要求 "${check}"`,
+  initNextAdoptionHeadline: () =>
+    '下一步：接入（adoption）尚未落到默认分支——先完成接入，再启用必需检查：',
   initAutomerge: (enabled) => `自动合并：${enabled ? '已启用' : '已开启'}`,
   finishAccepted: (delivery, pr) =>
     `已接受：交付 '${delivery}'${pr !== null ? `（PR ${pr}）` : ''}。`,

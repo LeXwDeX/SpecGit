@@ -43,12 +43,18 @@ const PROTECT_FIX = (branch: string) =>
  * when the acceptance check is not required (or auto-merge is off),
  * enable both after confirmation / --protect, else warn with the
  * non-weakening fix guidance.
+ *
+ * #352: `harnessOnTrunk` sets the interactive confirm's DEFAULT. A fresh
+ * adoption (harness not yet on the default branch) must default to NO —
+ * requiring a check no PR can pass yet locks out non-admin merges; the
+ * protective YES is only the default once the adoption provably landed.
  */
 export async function setupBranchProtection(
   options: InitOptions,
   ctx: CommandContext,
   root: string,
-  text: HumanText
+  text: HumanText,
+  harnessOnTrunk: boolean
 ): Promise<{ outcome?: ProtectionOutcome; human: string[] }> {
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
@@ -121,7 +127,7 @@ export async function setupBranchProtection(
         message:
           `Require "${ACCEPTANCE_CHECK_NAME}" on ${branch} and enable auto-merge (blocks bypassing the acceptance gate)? ` +
           'Adopting a fresh repository: merge the adoption PR first — a required check no PR can pass yet locks out non-admin merges.',
-        default: true,
+        default: harnessOnTrunk,
       },
       { output: process.stderr }
     );

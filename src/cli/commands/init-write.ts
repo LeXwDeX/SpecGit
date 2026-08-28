@@ -21,7 +21,7 @@ import {
   type ManagedReconcileReport,
   type ManagedStep,
 } from '../managed-reconcile.js';
-import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
+import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome, type NextAction } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
@@ -182,6 +182,47 @@ export async function writeHarnessAndPolicy(args: {
   };
 }
 
+/**
+ * #352: the adoption hand-off. `init` succeeding is not adoption
+ * completing — the harness exists only in the working tree until a
+ * commit carries it to the default branch. The steps name the one trap
+ * (the policy is gitignored by default, so a plain `git add` silently
+ * skips it) and the moment protection becomes safe (after the adoption
+ * PR merges).
+ */
+function adoptionNextActions(): NextAction[] {
+  return [
+    {
+      code: 'adoption_branch',
+      command: 'git checkout -b specgit-adoption',
+      reason: 'Carry the harness and policy to the default branch through a pull request, not a direct push.',
+    },
+    {
+      code: 'adoption_commit',
+      command:
+        'git add -A && git add -f spec_git/policy.yaml && git commit -m "chore: adopt SpecGit"',
+      reason:
+        'The policy is shielded by .gitignore by default — a plain "git add" silently skips it; the -f is required.',
+    },
+    {
+      code: 'adoption_pr',
+      command: 'git push -u origin specgit-adoption && gh pr create --fill',
+      reason: 'Merge the adoption PR so the acceptance check exists on the default branch.',
+    },
+    {
+      code: 'adoption_protect',
+      command: 'specgit init --force --protect',
+      reason:
+        'Only now is requiring the acceptance check safe: PRs can pass it because the workflow is on the default branch.',
+    },
+    {
+      code: 'adoption_setup',
+      command: 'specgit setup && specgit doctor',
+      reason: 'Optional: install the agent entry points, then verify the environment.',
+    },
+  ];
+}
+
 /** Assemble the success envelope and human summary for a completed init. */
 export function buildInitOutcome(args: {
   checks: string[];
@@ -197,6 +238,8 @@ export function buildInitOutcome(args: {
   warnings: Diagnostic[];
   protection: ProtectionOutcome | undefined;
   protectionHuman: string[];
+  /** #352: false on a fresh adoption (harness not yet tracked) — emit the adoption nextActions. */
+  adopted: boolean;
   text: HumanText;
 }): InitOutcome {
   const {
@@ -212,6 +255,7 @@ export function buildInitOutcome(args: {
     warnings,
     protection,
     protectionHuman,
+    adopted,
     text,
   } = args;
   const builder = humanBuilder()
@@ -247,7 +291,17 @@ export function buildInitOutcome(args: {
     // preserved unowned ones are the upgrade decisions a user audits.
     .append(reconciled.removed.map((path) => text.initRemovedAsset(path)))
     .append(reconciled.preserved.map((path) => text.initPreservedAsset(path)))
-    .append(protectionHuman);
+    .append(protectionHuman)
+    // #352: a fresh adoption hands off the adoption steps — structured in
+    // the envelope, the short form for humans.
+    .append(
+      adopted
+        ? []
+        : [
+            text.initNextAdoptionHeadline(),
+            ...adoptionNextActions().map((action) => `  ${action.command} — ${action.reason}`),
+          ]
+    );
   return {
     exit: EXIT_SUCCESS,
     policy,
@@ -257,6 +311,7 @@ export function buildInitOutcome(args: {
     ...(ignore !== null ? { ignore } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),
+    ...(!adopted ? { nextActions: adoptionNextActions() } : {}),
     ...(detected !== null
       ? {
           detected: {
