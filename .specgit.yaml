@@ -1,17 +1,13 @@
 version: 1
-delivery: completed-lifecycle-state
+delivery: explain-release-bot
 context:
   kind: branch
-  branch: feat/351-completed-lifecycle-state
+  branch: docs/356-explain-release-bot
 issues:
-  - 351
-  - 352
-  - 353
+  - 356
+  - 357
 issueKinds:
-  - issue: 351
-    kind: kind::feat
-  - issue: 352
-    kind: kind::fix
-  - issue: 353
+  - issue: 356
     kind: kind::docs
-pr: 354
+  - issue: 357
+    kind: kind::docs
