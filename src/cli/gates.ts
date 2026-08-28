@@ -64,6 +64,44 @@ export function deriveBindingState(binding: DeliveryBinding): 'draft' | 'bound' 
   return binding.issues.length > 0 && binding.pr !== undefined ? 'bound' : 'draft';
 }
 
+/**
+ * Membership in a tracked-file probe (`git ls-files`), degrading to false
+ * when the probe itself failed — every #298/#351 caller treats the probe
+ * as advisory, so a failed probe must read as "not tracked".
+ */
+export function trackedIncludes(paths: Evidence<string[]>, path: string): boolean {
+  return paths.ok && paths.value.includes(path);
+}
+
+/**
+ * #351: the status-level lifecycle state, layering the local
+ * merged-history signal over record completeness. A record the index
+ * tracks while the live branch differs from the recorded context is the
+ * local signature of merged delivery history riding this trunk —
+ * normally the binding commit reached this branch through the adoption
+ * or delivery merge. Local git cannot PROVE it (a branch cut from a
+ * still-open delivery branch carries the tracked record too, and
+ * whether the PR merged is forge-side fact), so offline status reports a
+ * CANDIDATE, never `bound` and never `completed`; `specgit finish`
+ * (forge-backed) upgrades the candidate to a verdict.
+ */
+export function deriveLifecycleState(
+  binding: DeliveryBinding,
+  facts: GitFacts,
+  recordTracked: boolean
+): 'draft' | 'bound' | 'historical-candidate' {
+  const completeness = deriveBindingState(binding);
+  if (completeness !== 'bound') {
+    return completeness;
+  }
+  // A detached HEAD (branch null) over a tracked record naming a branch
+  // is the same historical signature — `null !== context.branch` holds.
+  if (recordTracked && facts.branch !== binding.context.branch) {
+    return 'historical-candidate';
+  }
+  return 'bound';
+}
+
 function failure(code: string, message: string, extra: { detail?: unknown; fix?: string } = {}): GateFailure {
   return {
     code: code as GateFailure['code'],

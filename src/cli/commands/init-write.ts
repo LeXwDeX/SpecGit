@@ -21,7 +21,8 @@ import {
   type ManagedReconcileReport,
   type ManagedStep,
 } from '../managed-reconcile.js';
-import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
+import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome, type NextAction } from '../output.js';
+import { trackedIncludes } from '../gates.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
@@ -102,7 +103,7 @@ export async function writeHarnessAndPolicy(args: {
   // --force shows as an uncommitted modification until committed; warn
   // instead of leaving silent residue. Advisory, never a block.
   const policyTrackedEv = await ctx.git.trackedFiles(root, [POLICY_PATH]);
-  const policyWasTracked = policyTrackedEv.ok && policyTrackedEv.value.includes(POLICY_PATH);
+  const policyWasTracked = trackedIncludes(policyTrackedEv, POLICY_PATH);
 
   // ---- One transaction: harness → policy port write → ignore region. ----
   const steps: ManagedStep[] = [
@@ -182,6 +183,42 @@ export async function writeHarnessAndPolicy(args: {
   };
 }
 
+/**
+ * #352: the adoption hand-off. `init` succeeding is not adoption
+ * completing — the harness exists only in the working tree until a
+ * commit carries it to the default branch. The steps name the one trap
+ * (the policy is gitignored by default, so a plain `git add` silently
+ * skips it) and the moment protection becomes safe (after the adoption
+ * PR merges). Codes and commands are the machine contract (verbatim);
+ * the localized reasons come from the language catalog. A declared
+ * GitLab platform drops the gh-only protection step and speaks glab.
+ */
+function adoptionNextActions(gitlab: boolean, text: HumanText): NextAction[] {
+  const spec: Array<[string, string]> = [
+    ['adoption_branch', 'git checkout -b specgit-adoption'],
+    [
+      'adoption_commit',
+      'git add -A && git add -f spec_git/policy.yaml && git commit -m "chore: adopt SpecGit"',
+    ],
+    [
+      'adoption_pr',
+      gitlab
+        ? 'git push -u origin specgit-adoption && glab mr create --fill'
+        : 'git push -u origin specgit-adoption && gh pr create --fill',
+    ],
+    ...(gitlab ? [] : [['adoption_protect', 'specgit init --force --protect'] as [string, string]]),
+    ['adoption_setup', 'specgit setup && specgit doctor && specgit status'],
+  ];
+  // Keyed by step code, never positional: the localized reasons and the
+  // command list cannot drift out of alignment by reordering.
+  const reasonFor = text.initAdoptionReasons(gitlab);
+  return spec.map(([code, command]) => ({
+    code,
+    command,
+    reason: reasonFor[code] ?? '',
+  }));
+}
+
 /** Assemble the success envelope and human summary for a completed init. */
 export function buildInitOutcome(args: {
   checks: string[];
@@ -197,6 +234,8 @@ export function buildInitOutcome(args: {
   warnings: Diagnostic[];
   protection: ProtectionOutcome | undefined;
   protectionHuman: string[];
+  /** #352: false on a fresh adoption (harness not yet tracked) — emit the adoption nextActions. */
+  adopted: boolean;
   text: HumanText;
 }): InitOutcome {
   const {
@@ -212,6 +251,7 @@ export function buildInitOutcome(args: {
     warnings,
     protection,
     protectionHuman,
+    adopted,
     text,
   } = args;
   const builder = humanBuilder()
@@ -248,6 +288,15 @@ export function buildInitOutcome(args: {
     .append(reconciled.removed.map((path) => text.initRemovedAsset(path)))
     .append(reconciled.preserved.map((path) => text.initPreservedAsset(path)))
     .append(protectionHuman);
+  // #352: a fresh adoption hands off the adoption steps — structured in
+  // the envelope, the short form for humans — speaking the platform's
+  // dialect. Built once, rendered twice.
+  const nextActions = adopted ? null : adoptionNextActions(platform.outcome.mode === 'gitlab', text);
+  if (nextActions !== null) {
+    builder
+      .line(text.initNextAdoptionHeadline())
+      .append(nextActions.map((action) => `  ${action.command} — ${action.reason}`));
+  }
   return {
     exit: EXIT_SUCCESS,
     policy,
@@ -257,6 +306,7 @@ export function buildInitOutcome(args: {
     ...(ignore !== null ? { ignore } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),
+    ...(nextActions !== null ? { nextActions } : {}),
     ...(detected !== null
       ? {
           detected: {

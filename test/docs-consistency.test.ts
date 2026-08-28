@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CODE_INFO } from '../src/acceptance/codes.js';
+import { validateIssueTitles } from '../src/cli/commands/issue.js';
 
 // Docs-consistency pins for the 1.0.0 convergence docs (#108). The release
 // gates, the dual-platform scope narrative, and the PR template are contract
@@ -160,5 +161,84 @@ describe('docs consistency (empty required_checks is the no-CI policy, #312)', (
     expect(fix, 'the fix must not require a non-empty list').not.toMatch(/non-empty list/i);
     expect(fix, 'the fix must name the real name rule').toMatch(/non-empty string/);
     expect(fix, 'the fix must keep the empty list truthful').toMatch(/no-CI policy/);
+  });
+});
+
+// #353 — documentation examples are executable CLI contracts: every
+// concrete `specgit issue "title" ...` example in the shipped docs must
+// pass the production title validator. The Quick Start's copy-paste
+// command is the one users run first; an example that exits 2 is a
+// contract break, not a typo. Placeholder invocations (`"..."`,
+// `"<type>: <title>"`) are templates, not examples — they are skipped.
+describe('docs consistency (specgit issue examples pass the production validator, #353)', () => {
+  const DOC_PAGES: string[] = [
+    'README.md',
+    'CONTRIBUTING.md',
+    ...fs
+      .readdirSync(path.join(REPO_ROOT, 'docs'), { recursive: true })
+      .filter((f) => String(f).endsWith('.md'))
+      .map((f) => path.join('docs', String(f))),
+    ...fs
+      .readdirSync(path.join(REPO_ROOT, 'workflows'))
+      .filter((f) => String(f).endsWith('.md'))
+      .map((f) => path.join('workflows', String(f))),
+  ];
+
+  /**
+   * Lines that carry `specgit issue` invocations in CODE context only —
+   * fenced code blocks and inline backtick spans. Prose quoting an
+   * example in double quotes (agent-contract's parentheticals) is not an
+   * executable example and must not be validated.
+   */
+  function issueExampleLines(markdown: string): string[] {
+    const lines: string[] = [];
+    let inFence = false;
+    for (const line of markdown.split('\n')) {
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) {
+        lines.push(line);
+      } else {
+        for (const span of line.matchAll(/`([^`]+)`/g)) {
+          lines.push(span[1]);
+        }
+      }
+    }
+    return lines.filter((l) => /specgit issue /.test(l));
+  }
+
+  /** Concrete quoted titles of one `specgit issue ...` line, placeholders excluded. */
+  function concreteTitles(line: string): string[] {
+    const stripped = line.replace(/\s+#.*$/, '');
+    const quoted = [...stripped.matchAll(/"([^"]*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2] ?? '');
+    return quoted.filter(
+      (title) =>
+        title.trim() !== '' &&
+        title !== '...' &&
+        title !== '…' &&
+        !title.includes('<') &&
+        !title.includes('>')
+    );
+  }
+
+  it('the doc set under test carries at least one concrete specgit issue example', () => {
+    const count = DOC_PAGES.flatMap((page) =>
+      issueExampleLines(read(page)).flatMap((line) => concreteTitles(line))
+    );
+    expect(count.length).toBeGreaterThan(0);
+  });
+
+  it.each(DOC_PAGES)('%s: every concrete example passes validateIssueTitles', (page) => {
+    for (const line of issueExampleLines(read(page))) {
+      const titles = concreteTitles(line);
+      if (titles.length === 0) continue;
+      const first = validateIssueTitles(titles);
+      expect(
+        first,
+        `${page}: the example '${line.trim()}' must be executable — ${first?.message ?? ''}`
+      ).toBeNull();
+    }
   });
 });

@@ -8,9 +8,11 @@
         |
         v
   four clean criteria hold -> gh pr ready -> specgit finish
-        |-- exit 0 --> merge --merge --delete-branch -> unbind --yes
-        |                                            -> release (changesets)
-        '-- exit 1/3 -> back to FIX; never weaken a gate to pass
+         |-- exit 0 --> merge --merge --delete-branch
+         |             -> release (changesets)
+         |             -> next specgit issue (replaces the completed
+         |                record atomically, #351)
+         '-- exit 1/3 -> back to FIX; never weaken a gate to pass
 ```
 
 The pre-merge quality loop for a delivery branch. It nests inside
@@ -143,7 +145,10 @@ investigated as real. The Windows job never sets the loop's pace.
 1. All four clean-criteria hold → `gh pr ready` → CI green →
    `specgit finish` — exit 0 is the only merge licence (a gate, not a
    question; never bypassed).
-2. `gh pr merge --merge --delete-branch`, then `specgit unbind --yes`.
+2. `gh pr merge --merge --delete-branch`. The merged record on `main` is
+   completed history (#351): the next `specgit issue` replaces it
+   atomically — `unbind` is only for abandoning or resetting, never the
+   post-merge step.
 3. Release follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
    (changesets): changeset PR → version PR → approve the workflow runs →
    merge → `npm view specgit version` confirms publication.

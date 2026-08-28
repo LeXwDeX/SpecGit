@@ -112,9 +112,17 @@ export interface PrOutcome extends OutcomeBase {
   record?: Record<string, unknown>;
 }
 
+/**
+ * The status-level state vocabulary (#351): status is offline, so a
+ * merged-delivery record it cannot confirm reads `historical-candidate`;
+ * the forge-backed verdict vocabulary (`BindingState`, with
+ * `accepted`/`completed`/`rejected`/`unknown`) belongs to `finish`.
+ */
+export type StatusState = 'unbound' | 'draft' | 'bound' | 'historical-candidate' | 'unknown';
+
 /** `specgit status`: local evidence — gates, context, the asset taxonomy. */
 export interface StatusOutcome extends OutcomeBase {
-  state?: BindingState;
+  state?: StatusState;
   gates?: GateResult[];
   evidence?: Record<string, unknown>;
   assets?: Record<string, unknown>;
@@ -128,6 +136,17 @@ export interface DoctorOutcome extends OutcomeBase {
 /** `specgit setup`: the installed agent-surface asset set (#168). */
 export interface SetupOutcome extends OutcomeBase {
   assets?: Record<string, unknown>;
+}
+
+/**
+ * #352: one structured hand-off step in a command's success output —
+ * what to run next and why. Codes/commands interpolate verbatim (machine
+ * contract, never localized); only the surrounding prose localizes.
+ */
+export interface NextAction {
+  code: string;
+  command: string;
+  reason: string;
 }
 
 /** `specgit init`: policy, harness, platform, detection, protection, local-asset ignore. */
@@ -146,6 +165,8 @@ export interface InitOutcome extends OutcomeBase {
    * because SpecGit ownership could not be proven.
    */
   reconciled?: { created: string[]; updated: string[]; removed: string[]; preserved: string[] };
+  /** #352: the adoption hand-off steps; present only on a fresh adoption (harness not yet tracked). */
+  nextActions?: NextAction[];
 }
 
 export type CommandOutcome =
@@ -189,6 +210,7 @@ export function buildEnvelope(
   if ('harness' in outcome) optional.push(['harness', outcome.harness]);
   if ('reconciled' in outcome) optional.push(['reconciled', outcome.reconciled]);
   if ('ignore' in outcome) optional.push(['ignore', outcome.ignore]);
+  if ('nextActions' in outcome) optional.push(['nextActions', outcome.nextActions]);
   if ('assets' in outcome) optional.push(['assets', outcome.assets]);
   for (const [key, value] of optional) {
     if (value !== undefined) {

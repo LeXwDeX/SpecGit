@@ -49,7 +49,7 @@ import { EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { errorDiagnostic, type InitOutcome } from '../output.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import { catalogFor } from '../language.js';
-import { SPEC_GIT_DIR, type CommandContext } from '../types.js';
+import { SPEC_GIT_DIR, POLICY_FILENAME, type CommandContext } from '../types.js';
 import {
   restoreManagedSnapshot,
   snapshotManagedFile,
@@ -70,6 +70,8 @@ import {
 import { persistGitlabHost, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
 import { selectWorkflowYaml } from './init-workflow.js';
 import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
+import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
+import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
 
 export type { InitOptions } from './init-validation.js';
@@ -254,10 +256,23 @@ export async function runInit(
     return { ...written, errors };
   }
 
+  // #352: the adoption signal — the tracked status of the file the
+  // platform's adoption commit carries: the acceptance workflow on
+  // GitHub (gitlab mode never writes one), the force-added policy on
+  // GitLab. Tracked means the adoption rode a commit (the adoption PR)
+  // into this lineage; untracked means fresh adoption: the files exist
+  // only in the working tree, so the protection confirm must default to
+  // NO and the output must hand off the adoption steps.
+  const adoptionSignalPath = gitlabMode
+    ? `${SPEC_GIT_DIR}/${POLICY_FILENAME}`
+    : HARNESS_WORKFLOW_PATH;
+  const adoptedEv = await ctx.git.trackedFiles(root, [adoptionSignalPath]);
+  const adopted = trackedIncludes(adoptedEv, adoptionSignalPath);
+
   let protection: ProtectionOutcome | undefined;
   let protectionHuman: string[] = [];
   if (options.protect !== false) {
-    const guarded = await setupBranchProtection(options, ctx, root, text);
+    const guarded = await setupBranchProtection(options, ctx, root, text, adopted);
     protection = guarded.outcome;
     protectionHuman = guarded.human;
   }
@@ -275,6 +290,7 @@ export async function runInit(
     warnings,
     protection,
     protectionHuman,
+    adopted,
     text,
   });
 }

@@ -273,6 +273,7 @@ describe('acceptance evaluator', () => {
     const verdict = await evaluate(input({ git, gh }));
     expect(verdict.accepted).toBe(true);
     expect(verdict.exitCode).toBe(0);
+    expect(verdict.state).toBe('completed');
     expect(git.headContainsCalls).toEqual([MERGE_SHA]);
     expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
   });
@@ -323,10 +324,16 @@ describe('acceptance evaluator', () => {
       expect(verdict.classification).toBe('accepted');
       expect(verdict.accepted).toBe(true);
       expect(verdict.exitCode).toBe(0);
-      expect(verdict.state).toBe('accepted');
+      expect(verdict.state).toBe('completed');
       expect(git.headContainsCalls).toEqual([MERGE_SHA]);
       expect(gate(verdict, 'context').status).toBe('pass');
       expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
+      // The completed-history warning points at the next delivery, never
+      // at unbind (#351): unbind is the abandon/reset tool, not the
+      // post-merge step.
+      const mergedWarning = verdict.warnings.find((w) => w.code === 'record_of_merged_delivery');
+      expect(mergedWarning?.fix).toContain('specgit issue');
+      expect(mergedWarning?.fix).not.toContain('unbind');
     });
 
     it('does-not-contain: rejects when the merge commit is locally known but not in HEAD history', async () => {
@@ -1459,6 +1466,7 @@ describe('merged-delivery lineage against real git (issue #64)', () => {
       const { verdict, lineageCalls } = await evaluateMerged(history, history.mergeCommitSha);
       expect(verdict.classification).toBe('accepted');
       expect(verdict.exitCode).toBe(0);
+      expect(verdict.state).toBe('completed');
       expect(gate(verdict, 'context').status).toBe('pass');
       expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
       // The proof ran against the strategy-invariant base-branch anchor.
