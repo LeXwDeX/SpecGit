@@ -1,8 +1,8 @@
 version: 1
-delivery: release-changeset
+delivery: managed-start-gate
 context:
   kind: branch
-  branch: chore/332-release-changeset
+  branch: feat/335-managed-start-gate
 issues:
-  - 332
-pr: 333
+  - 335
+  - 336
