@@ -1,14 +1,19 @@
 version: 1
-delivery: explain-release-bot
+delivery: unified-nextactions-structure
 context:
   kind: branch
-  branch: docs/356-explain-release-bot
+  branch: feat/360-unified-nextactions-structure
 issues:
-  - 356
-  - 357
+  - 360
+  - 361
+  - 362
+  - 363
 issueKinds:
-  - issue: 356
-    kind: kind::docs
-  - issue: 357
-    kind: kind::docs
-pr: 358
+  - issue: 360
+    kind: kind::feat
+  - issue: 361
+    kind: kind::feat
+  - issue: 362
+    kind: kind::refactor
+  - issue: 363
+    kind: kind::refactor
