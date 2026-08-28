@@ -183,6 +183,32 @@ describe('specgit init', () => {
     expect(envelope.nextActions).toBeUndefined();
   });
 
+  // #352 review finding: the adoption hand-off must speak the platform's
+  // dialect — a declared GitLab origin gets glab mr create and no
+  // gh-only protection step.
+  it('gitlab mode adapts the adoption nextActions to the platform (#352)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const actions = envelope.nextActions ?? [];
+    const codes = actions.map((a: any) => a.code);
+    expect(codes).not.toContain('adoption_protect');
+    const pr = actions.find((a: any) => a.code === 'adoption_pr');
+    expect(pr.command).toContain('glab mr create');
+    expect(pr.command).not.toContain('gh pr create');
+    const setup = actions.find((a: any) => a.code === 'adoption_setup');
+    expect(setup.command).toContain('specgit status');
+  });
+
   it('reports already-protected without re-enabling', async () => {
     const gh = makeGhProvider({
       branchProtection: { ok: true, value: { protected: true, requiredChecks: ['SpecGit Acceptance'] } },

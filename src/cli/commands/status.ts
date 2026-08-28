@@ -25,6 +25,7 @@ import {
   originGate,
   policyGate,
   recordGate,
+  trackedIncludes,
 } from '../gates.js';
 import {
   errorDiagnostic,
@@ -41,8 +42,7 @@ import {
   type GeneratedAssetsReport,
 } from '../asset-drift.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
-import type { CommandContext, Evidence, GateResult, GitFacts, Policy } from '../types.js';
-import { RECORD_FILENAME } from '../types.js';
+import { RECORD_FILENAME, type CommandContext, type Evidence, type GateResult, type GitFacts, type Policy } from '../types.js';
 
 export interface StatusOptions {
   json?: boolean;
@@ -158,7 +158,7 @@ export async function runStatus(
   // advisory like every #298 probe: a failed probe degrades to today's
   // plain state naming, never blocks the snapshot.
   const trackedEv = await ctx.git.trackedFiles(root, [RECORD_FILENAME]);
-  const recordTracked = trackedEv.ok && trackedEv.value.includes(RECORD_FILENAME);
+  const recordTracked = trackedIncludes(trackedEv, RECORD_FILENAME);
   const state = deriveLifecycleState(record, facts, recordTracked);
   const historical = state === 'historical-candidate';
   const historicalWarning: Diagnostic | null = historical

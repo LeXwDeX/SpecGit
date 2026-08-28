@@ -22,6 +22,7 @@ import {
   type ManagedStep,
 } from '../managed-reconcile.js';
 import { detailLine, errorDiagnostic, humanBuilder, type InitOutcome, type NextAction } from '../output.js';
+import { trackedIncludes } from '../gates.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR, type CommandContext, type Policy } from '../types.js';
@@ -102,7 +103,7 @@ export async function writeHarnessAndPolicy(args: {
   // --force shows as an uncommitted modification until committed; warn
   // instead of leaving silent residue. Advisory, never a block.
   const policyTrackedEv = await ctx.git.trackedFiles(root, [POLICY_PATH]);
-  const policyWasTracked = policyTrackedEv.ok && policyTrackedEv.value.includes(POLICY_PATH);
+  const policyWasTracked = trackedIncludes(policyTrackedEv, POLICY_PATH);
 
   // ---- One transaction: harness → policy port write → ignore region. ----
   const steps: ManagedStep[] = [
@@ -188,39 +189,28 @@ export async function writeHarnessAndPolicy(args: {
  * commit carries it to the default branch. The steps name the one trap
  * (the policy is gitignored by default, so a plain `git add` silently
  * skips it) and the moment protection becomes safe (after the adoption
- * PR merges).
+ * PR merges). Codes and commands are the machine contract (verbatim);
+ * the localized reasons come from the language catalog. A declared
+ * GitLab platform drops the gh-only protection step and speaks glab.
  */
-function adoptionNextActions(): NextAction[] {
-  return [
-    {
-      code: 'adoption_branch',
-      command: 'git checkout -b specgit-adoption',
-      reason: 'Carry the harness and policy to the default branch through a pull request, not a direct push.',
-    },
-    {
-      code: 'adoption_commit',
-      command:
-        'git add -A && git add -f spec_git/policy.yaml && git commit -m "chore: adopt SpecGit"',
-      reason:
-        'The policy is shielded by .gitignore by default — a plain "git add" silently skips it; the -f is required.',
-    },
-    {
-      code: 'adoption_pr',
-      command: 'git push -u origin specgit-adoption && gh pr create --fill',
-      reason: 'Merge the adoption PR so the acceptance check exists on the default branch.',
-    },
-    {
-      code: 'adoption_protect',
-      command: 'specgit init --force --protect',
-      reason:
-        'Only now is requiring the acceptance check safe: PRs can pass it because the workflow is on the default branch.',
-    },
-    {
-      code: 'adoption_setup',
-      command: 'specgit setup && specgit doctor',
-      reason: 'Optional: install the agent entry points, then verify the environment.',
-    },
+function adoptionNextActions(gitlab: boolean, text: HumanText): NextAction[] {
+  const spec: Array<[string, string]> = [
+    ['adoption_branch', 'git checkout -b specgit-adoption'],
+    [
+      'adoption_commit',
+      'git add -A && git add -f spec_git/policy.yaml && git commit -m "chore: adopt SpecGit"',
+    ],
+    [
+      'adoption_pr',
+      gitlab
+        ? 'git push -u origin specgit-adoption && glab mr create --fill'
+        : 'git push -u origin specgit-adoption && gh pr create --fill',
+    ],
+    ...(gitlab ? [] : [['adoption_protect', 'specgit init --force --protect'] as [string, string]]),
+    ['adoption_setup', 'specgit setup && specgit doctor && specgit status'],
   ];
+  const reasons = text.initAdoptionReasons(gitlab);
+  return spec.map(([code, command], index) => ({ code, command, reason: reasons[index] }));
 }
 
 /** Assemble the success envelope and human summary for a completed init. */
@@ -291,17 +281,16 @@ export function buildInitOutcome(args: {
     // preserved unowned ones are the upgrade decisions a user audits.
     .append(reconciled.removed.map((path) => text.initRemovedAsset(path)))
     .append(reconciled.preserved.map((path) => text.initPreservedAsset(path)))
-    .append(protectionHuman)
-    // #352: a fresh adoption hands off the adoption steps — structured in
-    // the envelope, the short form for humans.
-    .append(
-      adopted
-        ? []
-        : [
-            text.initNextAdoptionHeadline(),
-            ...adoptionNextActions().map((action) => `  ${action.command} — ${action.reason}`),
-          ]
-    );
+    .append(protectionHuman);
+  // #352: a fresh adoption hands off the adoption steps — structured in
+  // the envelope, the short form for humans — speaking the platform's
+  // dialect. Built once, rendered twice.
+  const nextActions = adopted ? null : adoptionNextActions(platform.outcome.mode === 'gitlab', text);
+  if (nextActions !== null) {
+    builder
+      .line(text.initNextAdoptionHeadline())
+      .append(nextActions.map((action) => `  ${action.command} — ${action.reason}`));
+  }
   return {
     exit: EXIT_SUCCESS,
     policy,
@@ -311,7 +300,7 @@ export function buildInitOutcome(args: {
     ...(ignore !== null ? { ignore } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(protection !== undefined ? { protection } : {}),
-    ...(!adopted ? { nextActions: adoptionNextActions() } : {}),
+    ...(nextActions !== null ? { nextActions } : {}),
     ...(detected !== null
       ? {
           detected: {

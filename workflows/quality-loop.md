@@ -9,9 +9,9 @@
         v
   four clean criteria hold -> gh pr ready -> specgit finish
          |-- exit 0 --> merge --merge --delete-branch
-         |            -> release (changesets)
-         |            -> next specgit issue (replaces the completed
-         |               record atomically, #351)
+         |             -> release (changesets)
+         |             -> next specgit issue (replaces the completed
+         |                record atomically, #351)
          '-- exit 1/3 -> back to FIX; never weaken a gate to pass
 ```
 
