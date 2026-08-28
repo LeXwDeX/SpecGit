@@ -133,6 +133,56 @@ describe('specgit init', () => {
     expect(envelope.protection).toBeUndefined();
   });
 
+  // #352: a fresh init (harness untracked — nothing has ridden a commit
+  // yet) must hand off the adoption: structured nextActions in the JSON
+  // envelope, the policy force-add hint among them.
+  it('fresh init emits adoption nextActions with the policy force-add hint (#352)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const actions = envelope.nextActions ?? [];
+    expect(actions.map((a: any) => a.code)).toEqual([
+      'adoption_branch',
+      'adoption_commit',
+      'adoption_pr',
+      'adoption_protect',
+      'adoption_setup',
+    ]);
+    const commit = actions.find((a: any) => a.code === 'adoption_commit');
+    expect(commit.command).toContain('git add -f spec_git/policy.yaml');
+    expect(commit.reason).toContain('.gitignore');
+    const protectAction = actions.find((a: any) => a.code === 'adoption_protect');
+    expect(protectAction.command).toContain('specgit init --force --protect');
+  });
+
+  it('fresh init renders the adoption handoff for humans too (#352)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const out = stdoutText(t.io);
+    expect(out).toContain('git add -f spec_git/policy.yaml');
+    expect(out).toContain('specgit init --force --protect');
+  });
+
+  it('an adopted repo (tracked harness) gets no adoption nextActions (#352)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      stdinIsTTY: false,
+      gitWrites: { trackedFiles: (paths) => ({ ok: true, value: paths }) },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.nextActions).toBeUndefined();
+  });
+
   it('reports already-protected without re-enabling', async () => {
     const gh = makeGhProvider({
       branchProtection: { ok: true, value: { protected: true, requiredChecks: ['SpecGit Acceptance'] } },
