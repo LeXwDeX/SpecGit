@@ -62,7 +62,10 @@ export async function runAccept(
   // #361: an accepted verdict hands off the next step — the merge for a
   // live delivery (auto-merge per policy), the next bootstrap for
   // completed history. Rejected/unknown say nothing: their repairs ride
-  // the diagnostics, rendered exactly once (#362).
+  // the diagnostics, rendered exactly once (#362). The dialect must be
+  // PROVEN, never guessed: a platform that cannot be resolved gets no
+  // merge command (advisory hand-offs fail closed, like everything else).
+  const reasonFor = text.finishHandoffReasons();
   let nextActions: NextAction[] | undefined;
   if (verdict.classification === 'accepted') {
     if (verdict.state === 'completed') {
@@ -70,26 +73,27 @@ export async function runAccept(
         {
           code: 'next_delivery',
           command: 'specgit issue "<type>: <title>"',
-          reason: 'This record is completed history — the next bootstrap atomically replaces it.',
+          reason: reasonFor['next_delivery'] ?? '',
         },
       ];
     } else if (verdict.evidence.pr !== null) {
       const facts = await ctx.git.facts(root.value).catch(() => null);
-      let platform: RepoRef['platform'] = 'github';
+      let platform: RepoRef['platform'] | null = null;
       if (facts?.originUrl) {
         const parsed = await Promise.resolve(ctx.parseRepoRef(facts.originUrl));
         if (parsed.ok) {
           platform = parsed.value.platform;
         }
       }
-      nextActions = [
-        {
-          code: 'delivery_merge',
-          command: forgeMergeCommand(platform, verdict.evidence.pr),
-          reason:
-            'The verdict is green. Auto-merge fires only when every required check — this verdict among them — passes.',
-        },
-      ];
+      if (platform !== null) {
+        nextActions = [
+          {
+            code: 'delivery_merge',
+            command: forgeMergeCommand(platform, verdict.evidence.pr),
+            reason: reasonFor['delivery_merge'] ?? '',
+          },
+        ];
+      }
     }
   }
 
@@ -112,7 +116,15 @@ export async function runAccept(
     human: humanBuilder()
       .line(headline)
       .append(failureLines)
-      .append(renderNextActionsHuman(text.nextHeadline(), nextActions ?? []))
+      // Completed history: the record_of_merged_delivery warning's Next
+      // line already hands off the next delivery — rendering the same
+      // hand-off twice would break the exactly-once intent (#362); the
+      // envelope keeps the structured action for machines.
+      .append(
+        verdict.state === 'completed'
+          ? []
+          : renderNextActionsHuman(text.nextHeadline(), nextActions ?? [])
+      )
       .build(),
   };
 }

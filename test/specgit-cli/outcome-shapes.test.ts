@@ -272,3 +272,29 @@ describe('buildEnvelope byte-identical emission (#179)', () => {
     expect('human' in envelope).toBe(false);
   });
 });
+
+describe('hand-off envelope emission (#360/#361)', () => {
+  it('issue urls and nextActions ride the envelope; status layers ride it', () => {
+    const issue: IssueOutcome = {
+      exit: 0,
+      state: 'bound',
+      urls: { issues: ['https://github.com/o/r/issues/11'], pr: 'https://github.com/o/r/pull/42' },
+      nextActions: [{ code: 'pr_ready', command: 'gh pr ready 42', reason: 'r' }],
+    };
+    const issueEnvelope = buildEnvelope('issue', VERSION, issue);
+    expect(issueEnvelope.urls).toEqual(issue.urls);
+    expect(issueEnvelope.nextActions).toEqual(issue.nextActions);
+
+    const status: StatusOutcome = {
+      exit: 0,
+      state: 'historical-candidate',
+      recordState: 'complete',
+      localContext: 'mismatch',
+      lifecycle: 'historical-candidate',
+    };
+    const statusEnvelope = buildEnvelope('status', VERSION, status);
+    expect(statusEnvelope.recordState).toBe('complete');
+    expect(statusEnvelope.localContext).toBe('mismatch');
+    expect(statusEnvelope.lifecycle).toBe('historical-candidate');
+  });
+});
