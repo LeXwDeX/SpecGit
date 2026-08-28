@@ -1,5 +1,15 @@
 # specgit
 
+## 1.10.0
+
+### Minor Changes
+
+- [#364](https://github.com/LeXwDeX/SpecGit/pull/364) [`edc60c6`](https://github.com/LeXwDeX/SpecGit/commit/edc60c6e7ed6bea254eed8b617d43154e7620643) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Batch 2 of the product-flow review: hand-offs, diagnostics, state layers ([#360](https://github.com/LeXwDeX/SpecGit/issues/360), [#361](https://github.com/LeXwDeX/SpecGit/issues/361), [#362](https://github.com/LeXwDeX/SpecGit/issues/362), [#363](https://github.com/LeXwDeX/SpecGit/issues/363)). `nextActions {code, command, reason}` is the shared success hand-off across commands with one human `Next:` renderer (codes/commands stable, reasons localized). `specgit issue` success now carries `urls` (issue and draft-PR web links) and the steps to review-ready (`issue_bodies`, `pr_brief`, `pr_ready` — platform dialect `gh`/`glab`); an accepted `specgit finish` carries `delivery_merge` (auto-merge per policy) or, on completed history, `next_delivery` — never `unbind`. Human diagnostics render exactly once ([#362](https://github.com/LeXwDeX/SpecGit/issues/362)): warnings print their fix as `Next:`, and `finish` failure output no longer duplicates every gate fix between the summary and the diagnostics block. `status --json` answers its three questions separately ([#363](https://github.com/LeXwDeX/SpecGit/issues/363)) — `recordState` (missing/partial/complete), `localContext` (matching/mismatch/unknown), `lifecycle` (active/historical-candidate) — with `state` kept as the compat rollup and the verdict layer staying finish-only.
+
+### Patch Changes
+
+- [#358](https://github.com/LeXwDeX/SpecGit/pull/358) [`2c2a1c8`](https://github.com/LeXwDeX/SpecGit/commit/2c2a1c8fff0458fc4d09e79b57640fa36b0539d9) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Docs: release-bot approval and auto-merge policy ([#356](https://github.com/LeXwDeX/SpecGit/issues/356), [#357](https://github.com/LeXwDeX/SpecGit/issues/357)). The README release section names the version PR's bot-pushed head, the approval its workflow runs need, and the `RELEASE_BOT_TOKEN` remedy. The binding workflows make "enable auto-merge (`gh pr merge --auto --merge`) right after `gh pr ready`" the documented merge policy, with the safety rationale: the SpecGit Acceptance verdict is a required check, so auto-merge fires only when the machine verdict is green — it cannot merge a delivery `finish` would reject.
+
 ## 1.9.0
 
 ### Minor Changes
