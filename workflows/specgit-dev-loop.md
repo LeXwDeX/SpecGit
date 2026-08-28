@@ -15,10 +15,11 @@ in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
   push --> CI on the PR head (SpecGit Acceptance runs finish --json)
         |
         v
-  gh pr ready <n>  ->  specgit finish  --exit 0--> single push-right
-        |                 (exit 1/3: fix what it names)   checkpoint
+  gh pr ready <n> + merge --auto  ->  specgit finish  --exit 0--> push-right
+        |                    (exit 1/3: fix what it names) checkpoint
         v
-  merge (--merge --delete-branch) -> next specgit issue
+  auto-merge fires when the required checks (the
+  CI verdict among them) pass -> next specgit issue
         |                        (atomically replaces the
          v                        completed record, #351)
   next delivery
@@ -71,7 +72,13 @@ green at the PR head commit:
 - CI green — every check named in `spec_git/policy.yaml`
 
 Mark the PR ready immediately after the final push (`gh pr ready` on GitHub,
-`glab mr update <number> --ready` on GitLab). A draft always fails the
+`glab mr update <number> --ready` on GitLab), then enable auto-merge on the
+GitHub side (`gh pr merge <n> --auto --merge`): by the time every required
+check — SpecGit Acceptance, the CI-side `finish` verdict, included — is
+green at the head, no human decision remains, so the merge fires the instant
+the last check passes. Auto-merge cannot bypass the gate: branch protection
+only merges when every required check is green, and the verdict is one of
+them. A draft always fails the
 verdict (`pr_draft`), and both required workflows run in cancel-in-progress
 concurrency groups scoped to the ref (#319): the ready transition supersedes
 the push-triggered runs instead of stacking after them, so a well-timed
