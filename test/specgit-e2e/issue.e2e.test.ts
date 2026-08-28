@@ -155,10 +155,11 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
       expect(createdBody).toContain(section);
     }
 
-    // Inferred tagging (#330): the title's kind:: member was seeded into
-    // the empty pool once and applied to both bound issues.
+    // Inferred tagging (#330, #338): each issue's OWN kind:: member was
+    // seeded into the empty pool and applied to its own issue — no kind
+    // is shared across the two titles.
     const calls = readFakeGhCalls(gh.logPath);
-    expect(calls.filter((args) => /-X POST repos\/[^/ ]+\/[^/ ]+\/labels( |$)/.test(args))).toHaveLength(1);
+    expect(calls.filter((args) => /-X POST repos\/[^/ ]+\/[^/ ]+\/labels( |$)/.test(args))).toHaveLength(2);
     expect(calls.filter((args) => /issues\/\d+\/labels/.test(args))).toHaveLength(2);
 
     // Traceability edge issue→branch (#160): every bound issue received
