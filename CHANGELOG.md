@@ -1,5 +1,17 @@
 # specgit
 
+## 1.7.0
+
+### Minor Changes
+
+- [#337](https://github.com/LeXwDeX/SpecGit/pull/337) [`b4e4084`](https://github.com/LeXwDeX/SpecGit/commit/b4e4084406175e3cdb56483a278f6b246a0a07ad) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - `specgit issue` now refuses to bind a new delivery under a stale harness: before any forge contact, a fast local probe compares the repository's generated assets against what the running CLI would generate, and proven drift (stale, conflicting, or partially present) exits 2 with `harness_stale` naming `specgit init --force`. Fresh adopts (no assets yet) and uninspectable environments proceed unchanged.
+
+- [#337](https://github.com/LeXwDeX/SpecGit/pull/337) [`b4e4084`](https://github.com/LeXwDeX/SpecGit/commit/b4e4084406175e3cdb56483a278f6b246a0a07ad) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - init's opencode guard hook now also gates file-mutation tool calls: the hooks.json matcher grows from `Bash` to `Bash|Edit|Write`, and the guard script blocks `edit`/`write` calls on a branch with no delivery binding (`.specgit.yaml` recording that branch) — the start gate. Re-running `specgit init --force` upgrades an existing install's matcher in place instead of appending a second guard entry; the generated agent guidance and the `specgit-issue` entry points now bind the issue-first trigger to the decision to start and order bootstrap-time issue-body fill from the conversation before implementation.
+
+### Patch Changes
+
+- [#341](https://github.com/LeXwDeX/SpecGit/pull/341) [`2bbee8b`](https://github.com/LeXwDeX/SpecGit/commit/2bbee8bf1ad9208db45bcba2edd096800664c107) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Multi-title bootstraps now tag each issue with its OWN title's `kind::<type>` instead of stamping the first title's kind on every bound issue: the record carries `issueKinds` (issue → kind) written durably per issue, reused numeric issues and title-less issues carry no kind rather than inheriting one, and explicit `--tags` behaviour is unchanged.
+
 ## 1.6.0
 
 ### Minor Changes
