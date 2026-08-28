@@ -160,8 +160,8 @@ The scaffold is a pure function of the bound issues: the same binding always ren
 Resume matches the arguments onto the record positionally, split by record completeness. A **partial** record (issues recorded, no PR yet) continues issue creation from the first unconsumed argument — numeric arguments for consumed positions must match the bound issues. A **complete** record (PR bound, PR live) is a finished bootstrap: re-running with no arguments or with the original arguments is a healing no-op (commit/push only), while **more arguments than bound issues is drift** — `issue_resume_drift`, exit 2, refused with zero side effects (no issue or PR probes or creates, `.specgit.yaml` left byte-identical). Fewer arguments than bound issues, and numeric arguments not among the bound issues, are drift on any record. A record whose PR already **merged** is completed history, not an active delivery, and its lifecycle ends there: **no-args resume is refused** — `issue_delivery_merged`, exit 2, zero git side effects (the branch GitHub deleted on merge is never re-created or re-pushed) — while **replacement arguments re-bootstrap**: they are validated first, then the record is deleted and a fresh delivery bootstraps. The mergedness probe itself fails closed: if the PR fact cannot be gathered, the command exits 3 with the provider error and keeps the record — it never guesses "not merged" (#75).
 
 ```bash
-specgit issue "feat: add login" "Harden the session model"   # two new issues, one delivery
-specgit issue 4 "Extend the harness"                          # reuse #4, create one
+specgit issue "feat: add login" "security: harden the session model"   # two new issues, one delivery
+specgit issue 4 "refactor: extend the harness"                     # reuse #4, create one
 specgit issue "feat: 添加登录" --delivery add-login           # non-ASCII title, explicit delivery name
 specgit issue                                                 # resume an incomplete bootstrap (no args + no record → exit 2; no args + merged record → exit 2, issue_delivery_merged)
 ```

@@ -122,7 +122,7 @@ specgit doctor                        # all probes green?
 #     every issue, tags them — the title's kind::<type> by default, or
 #     --tags kind::feat,module::auth for an explicit pool-first selection
 #     that seeds declared vocabulary when missing; re-run resumes)
-specgit issue "feat: add login" "Harden the session model"
+specgit issue "feat: add login" "security: harden the session model"
 
 # 4. work, push; CI runs on the PR — including the acceptance job
 
