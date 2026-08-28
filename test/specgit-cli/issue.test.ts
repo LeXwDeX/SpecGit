@@ -4,6 +4,10 @@
  * draft PR closing every issue → record → commit → push, resumable.
  */
 
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 import type { DeliveryBinding } from '../../src/record/schema.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
@@ -1383,5 +1387,71 @@ describe('specgit issue: delivery tags (#330)', () => {
     expect(outcome.errors?.[0]?.code).toBe('issue_tags_unknown');
     expect(t.harness.createdIssues).toEqual([]);
     expect(t.harness.createdPrs).toEqual([]);
+  });
+});
+
+describe('specgit issue: harness currency gate (#339)', () => {
+  /** A real directory whose managed block predates the current CLI. */
+  const staleRoot = (): string => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));
+    fs.writeFileSync(
+      path.join(root, 'AGENTS.md'),
+      '# Repo\n\n<!-- specgit:block:start -->\nstale guidance from an older CLI\n<!-- specgit:block:end -->\n'
+    );
+    return root;
+  };
+
+  it('refuses with harness_stale (exit 2) before any forge contact', async () => {
+    const root = staleRoot();
+    try {
+      const t = issueCtx();
+      t.ctx.discoverRoot = vi.fn(async () => ok(root));
+      const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
+      expect(outcome.exit).toBe(EXIT_USAGE);
+      expect(outcome.errors?.[0]?.code).toBe('harness_stale');
+      expect(outcome.errors?.[0]?.fix).toMatch(/specgit init/);
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('gates a resume run on a stale harness too', async () => {
+    const root = staleRoot();
+    try {
+      const t = issueCtx({
+        record: sampleBinding({
+          context: { kind: 'branch', branch: 'feat/9-gate' },
+          issues: [9],
+        }),
+      });
+      t.ctx.discoverRoot = vi.fn(async () => ok(root));
+      const outcome = await runIssue({}, t.ctx);
+      expect(outcome.exit).toBe(EXIT_USAGE);
+      expect(outcome.errors?.[0]?.code).toBe('harness_stale');
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('proceeds when the harness is absent (fresh adopt)', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));
+    try {
+      const t = issueCtx();
+      t.ctx.discoverRoot = vi.fn(async () => ok(root));
+      const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
+      expect(outcome.exit).toBe(0);
+      expect(t.harness.createdIssues).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('proceeds silently when the harness is uninspectable (virtual root)', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues).toHaveLength(1);
   });
 });

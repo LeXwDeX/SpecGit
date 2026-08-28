@@ -221,7 +221,7 @@ pinned in the [Product Baseline v1](docs/baseline-v1.md).
 
 | Hook | Layer | What it does |
 | --- | --- | --- |
-| `.opencode/hooks.json` + `.opencode/hooks/specgit-merge-guard.sh` | opencode PreToolUse | Blocks `gh pr merge` / push-to-main tool calls that bypass the verdict, with the iron-rule reason |
+| `.opencode/hooks.json` + `.opencode/hooks/specgit-merge-guard.sh` | opencode PreToolUse (Bash \| Edit \| Write) | Blocks `gh pr merge` / push-to-main tool calls that bypass the verdict, and file-mutation tool calls (`edit`/`write`) on a branch with no delivery binding — the start gate (#335): start with `specgit issue` first |
 | `.git/hooks/pre-push` | git | Refuses direct pushes to `main` — deliveries must go PR → CI → finish |
 
 Event-driven beats periodic prompting: the guard fires exactly at the
