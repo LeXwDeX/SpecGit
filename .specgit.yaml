@@ -11,3 +11,4 @@ issueKinds:
     kind: kind::docs
   - issue: 357
     kind: kind::docs
+pr: 358
