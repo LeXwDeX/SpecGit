@@ -148,6 +148,10 @@ export interface HumanText {
   initAdoptionReasons(gitlab: boolean): Record<string, string>;
   // generic nextActions headline (#360/#361)
   nextHeadline(): string;
+  // issue success hand-off reasons (#361), keyed by step code
+  issueHandoffReasons(): Record<string, string>;
+  // finish accepted hand-off reasons (#361), keyed by step code
+  finishHandoffReasons(): Record<string, string>;
   initAutomerge(enabled: boolean): string;
   // finish / accept
   finishAccepted(delivery: string, pr: number | null): string;
@@ -271,6 +275,21 @@ const EN_HUMAN: HumanText = {
   initNextAdoptionHeadline: () =>
     'Next: the adoption is not on the default branch yet — finish it before requiring checks:',
   nextHeadline: () => 'Next:',
+  issueHandoffReasons: () =>
+    ({
+      issue_bodies:
+        'Fill every issue body (Why / Scope / Approach / Acceptance) — the scaffold body is advisory, the WHY is the contract.',
+      pr_brief:
+        'Fill the PR brief sections (Why / What changed / Evidence); keep the Closes #n lines intact.',
+      pr_ready: 'A draft always fails the verdict; ready makes the delivery reviewable.',
+    }) as Record<string, string>,
+  finishHandoffReasons: () =>
+    ({
+      delivery_merge:
+        'The verdict is green. Auto-merge fires only when every required check — this verdict among them — passes.',
+      next_delivery:
+        'This record is completed history — the next bootstrap atomically replaces it.',
+    }) as Record<string, string>,
   initAdoptionReasons: (gitlab) =>
     ({
       adoption_branch:
@@ -369,6 +388,18 @@ const ZH_HUMAN: HumanText = {
   initNextAdoptionHeadline: () =>
     '下一步：接入（adoption）尚未落到默认分支——先完成接入，再启用必需检查：',
   nextHeadline: () => '下一步：',
+  issueHandoffReasons: () =>
+    ({
+      issue_bodies:
+        '填写每个 issue 正文（Why / Scope / Approach / Acceptance）——骨架正文只是建议，WHY 才是契约。',
+      pr_brief: '填写 PR 简报各节（Why / What changed / Evidence）；保持 Closes #n 行不变。',
+      pr_ready: '草稿永远过不了裁决；ready 之后交付才可评审。',
+    }) as Record<string, string>,
+  finishHandoffReasons: () =>
+    ({
+      delivery_merge: '裁决已绿。auto-merge 只在全部必需检查（含本裁决）通过后触发。',
+      next_delivery: '该记录是已完成的历史——下一次引导会原子替换它。',
+    }) as Record<string, string>,
   initAdoptionReasons: (gitlab) =>
     ({
       adoption_branch: '通过 pull request（而非直接 push）把 harness 与 policy 带到默认分支。',

@@ -45,6 +45,7 @@
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import {
+  detailLine,
   errorDiagnostic,
   humanBuilder,
   issueList,
@@ -692,24 +693,26 @@ export async function runIssue(
       : undefined;
   const issueEdit = platform === 'gitlab' ? 'glab issue edit' : 'gh issue edit';
   const prEdit = platform === 'gitlab' ? 'glab mr update' : 'gh pr edit';
+  const reasonFor = human.issueHandoffReasons();
   const nextActions: NextAction[] | undefined =
     record.pr !== undefined
       ? [
           {
             code: 'issue_bodies',
-            command: record.issues.map((n) => `${issueEdit} ${n} --body-file <file>`).join(' && '),
-            reason:
-              'Fill every issue body (Why / Scope / Approach / Acceptance) — the scaffold body is advisory, the WHY is the contract.',
+            command: record.issues
+              .map((n) => `${issueEdit} ${n} --body-file <file-${n}>`)
+              .join(' && '),
+            reason: reasonFor['issue_bodies'] ?? '',
           },
           {
             code: 'pr_brief',
-            command: `${prEdit} ${record.pr} --body-file <file>`,
-            reason: 'Fill the PR brief sections (Why / What changed / Evidence); keep the Closes #n lines intact.',
+            command: `${prEdit} ${record.pr} --body-file <file-pr>`,
+            reason: reasonFor['pr_brief'] ?? '',
           },
           {
             code: 'pr_ready',
             command: forgeReadyCommand(platform, record.pr),
-            reason: 'A draft always fails the verdict; ready makes the delivery reviewable.',
+            reason: reasonFor['pr_ready'] ?? '',
           },
         ]
       : undefined;
@@ -723,6 +726,7 @@ export async function runIssue(
     human: builder
       .line(human.issuePr(record.pr as number | string))
       .line(human.issueRecorded(RECORD_FILENAME))
+      .append(urls !== undefined ? [detailLine(urls.pr)] : [])
       .append(renderNextActionsHuman(human.nextHeadline(), nextActions ?? []))
       .build(),
   };

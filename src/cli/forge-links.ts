@@ -9,22 +9,33 @@
 
 import type { RepoRef } from '../gitfacts/origin.js';
 
-/** `https://<host>/<owner>/<repo>` from an https or ssh origin URL; null when unparseable. */
+/**
+ * `https://<host>/<project-path>` from an https, ssh, or scp-like origin
+ * URL; null when unparseable. The project path keeps its full depth
+ * (GitLab nested groups, #120); ports and userinfo never reach the web
+ * base; plain `http` never becomes an insecure web link.
+ */
+const WEB_BASE_PATTERNS = [
+  /^https:\/\/[^/@:]+@([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i,
+  /^https:\/\/([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i,
+  /^ssh:\/\/[^/@:]+@([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i,
+  /^git@([^:/]+):(.+?)(?:\.git)?\/?$/i,
+];
+const PROJECT_PATH = /^[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)+$/;
+
 export function forgeWebBase(originUrl: string | null): string | null {
   if (originUrl === null) {
     return null;
   }
-  const https = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(originUrl.trim());
-  if (https) {
-    return `https://${https[1]}/${https[2]}/${https[3]}`;
-  }
-  const scpLike = /^git@([^:/]+):([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(originUrl.trim());
-  if (scpLike) {
-    return `https://${scpLike[1]}/${scpLike[2]}/${scpLike[3]}`;
-  }
-  const sshUrl = /^ssh:\/\/git@([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(originUrl.trim());
-  if (sshUrl) {
-    return `https://${sshUrl[1]}/${sshUrl[2]}/${sshUrl[3]}`;
+  for (const pattern of WEB_BASE_PATTERNS) {
+    const match = pattern.exec(originUrl.trim());
+    if (!match) continue;
+    const segments = match[2].split('/');
+    const pathOk =
+      PROJECT_PATH.test(match[2]) && segments.every((segment) => segment !== '.' && segment !== '..');
+    if (pathOk) {
+      return `https://${match[1].toLowerCase()}/${match[2]}`;
+    }
   }
   return null;
 }
