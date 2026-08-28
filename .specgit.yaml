@@ -1,14 +1,16 @@
 version: 1
-delivery: closing-loop-harness
+delivery: completed-lifecycle-state
 context:
   kind: branch
-  branch: feat/347-closing-loop-harness
+  branch: feat/351-completed-lifecycle-state
 issues:
-  - 347
-  - 348
+  - 351
+  - 352
+  - 353
 issueKinds:
-  - issue: 347
+  - issue: 351
     kind: kind::feat
-  - issue: 348
-    kind: kind::feat
-pr: 349
+  - issue: 352
+    kind: kind::fix
+  - issue: 353
+    kind: kind::docs
