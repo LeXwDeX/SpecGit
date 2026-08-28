@@ -1455,3 +1455,44 @@ describe('specgit issue: harness currency gate (#339)', () => {
     expect(t.harness.createdIssues).toHaveLength(1);
   });
 });
+
+describe('specgit issue: per-issue kind tags (#338)', () => {
+  it('labels each created issue with its own title kind', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['feat: alpha bits', 'docs: beta pages'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gh.calls).toContain('addIssueLabels:11:kind::feat');
+    expect(t.gh.calls).toContain('addIssueLabels:12:kind::docs');
+    // Seeding covers the union of every issue's own kind.
+    expect(t.gh.calls.some((c) => c.startsWith('ensureRepoLabels:kind::feat|kind::docs'))).toBe(
+      true
+    );
+    // The record carries each issue's own kind so resumes re-tag faithfully.
+    const lastWrite = t.recordPort.recordWrites.at(-1);
+    expect(lastWrite?.record.issueKinds).toEqual([
+      { issue: 11, kind: 'kind::feat' },
+      { issue: 12, kind: 'kind::docs' },
+    ]);
+  });
+
+  it('a reused numeric issue inherits no kind from another title', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['21', 'chore: gamma tools'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    // The created issue (fake provider numbers from 11) carries its own kind.
+    expect(t.gh.calls).toContain('addIssueLabels:11:kind::chore');
+    expect(t.gh.calls.some((c) => c.startsWith('addIssueLabels:21:'))).toBe(false);
+  });
+
+  it('a pre-#338 record without issueKinds never inherits a kind on continuation', async () => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [30] }),
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha bits', 'docs: beta pages'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    // The newly created issue carries its own kind; the consumed issue
+    // without a recorded kind is left untouched — never an inheritance.
+    expect(t.gh.calls).toContain('addIssueLabels:11:kind::docs');
+    expect(t.gh.calls.some((c) => c.startsWith('addIssueLabels:30:'))).toBe(false);
+  });
+});

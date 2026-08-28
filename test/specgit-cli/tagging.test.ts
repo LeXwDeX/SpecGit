@@ -90,7 +90,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [7],
       requested: ['bug', 'module::auth'],
-      inferredSlug: null,
     });
     expect(result).toEqual({ status: 'applied', applied: ['bug', 'module::auth'], seeded: [], dirty: [] });
     expect(t.harness.seeded).toEqual([]);
@@ -106,7 +105,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [7],
       requested: ['kind::fix'],
-      inferredSlug: null,
     });
     expect(result).toMatchObject({ status: 'applied', applied: ['kind::fix'] });
     expect(t.harness.seeded).toHaveLength(1);
@@ -123,7 +121,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [7],
       requested: ['module::ghost'],
-      inferredSlug: null,
     });
     expect('exit' in result && result.exit).toBe(EXIT_USAGE);
     expect('errors' in result && result.errors?.[0]?.code).toBe('issue_tags_unknown');
@@ -142,7 +139,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [7],
       requested: ['Kind::X'],
-      inferredSlug: null,
     });
     expect('exit' in result && result.exit).toBe(EXIT_USAGE);
     expect('errors' in result && result.errors?.[0]?.code).toBe('issue_tags_invalid');
@@ -158,7 +154,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [7],
       requested: ['kind::feat'],
-      inferredSlug: null,
     });
     if (!('exit' in result)) throw new Error('expected an IssueOutcome');
     expect(result.exit).toBe(3);
@@ -174,7 +169,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [7],
       requested: ['kind::docs'],
-      inferredSlug: null,
     });
     expect(result).toMatchObject({ status: 'applied', dirty: ['Priority:High', '中文 标签'] });
     expect(t.io.stderr.join('\n')).toContain('outside the tag grammar');
@@ -196,7 +190,6 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [9],
       requested: ['module::auth', 'feature::billing'],
-      inferredSlug: null,
     });
     expect(result).toMatchObject({ status: 'applied' });
     expect(t.harness.seeded).toEqual([
@@ -214,7 +207,7 @@ describe('applyDeliveryTags — explicit mode (--tags)', () => {
       language: 'en',
       issues: [],
       requested: undefined,
-      inferredSlug: 'kind::feat',
+      inferredByIssue: new Map([[7, 'kind::feat']]),
     });
     expect(emptyIssues).toEqual({ status: 'skipped', applied: [], seeded: [], dirty: [] });
     expect(t.gh.calls).toEqual([]);
@@ -235,7 +228,7 @@ describe('applyDeliveryTags — inferred mode (no --tags)', () => {
         language,
         issues: [7],
         requested: undefined,
-        inferredSlug: 'kind::feat',
+        inferredByIssue: new Map([[7, 'kind::feat']]),
       });
       expect(result).toEqual({ status: 'degraded', applied: [], seeded: [], dirty: [] });
       expect(t.io.stderr.join('\n')).toContain(expected);
@@ -251,7 +244,7 @@ describe('applyDeliveryTags — inferred mode (no --tags)', () => {
       language: 'en',
       issues: [7],
       requested: undefined,
-      inferredSlug: 'kind::fix',
+      inferredByIssue: new Map([[7, 'kind::fix']]),
     });
     expect(result).toMatchObject({ status: 'degraded' });
     expect(t.io.stderr.join('\n')).toContain('Warning');
@@ -267,7 +260,7 @@ describe('applyDeliveryTags — inferred mode (no --tags)', () => {
       language: 'en',
       issues: [7],
       requested: undefined,
-      inferredSlug: 'kind::docs',
+      inferredByIssue: new Map([[7, 'kind::docs']]),
     });
     expect(result).toMatchObject({ status: 'applied', applied: ['kind::docs'] });
     expect(t.io.stderr.join('\n')).toContain('its tags vocabulary was ignored');

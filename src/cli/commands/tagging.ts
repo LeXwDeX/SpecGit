@@ -48,7 +48,10 @@ const SAMPLE_LIMIT = 5;
 
 export interface TaggingOutcome {
   status: 'applied' | 'degraded' | 'skipped';
-  /** Slugs confirmed on every bound issue after the apply. */
+  /**
+   * Slugs applied this run: explicit mode puts every one on every bound
+   * issue; inferred mode (#338) is the union of the per-issue slugs.
+   */
   applied: string[];
   /** Slugs newly created in the repository during this run. */
   seeded: string[];
@@ -205,8 +208,12 @@ export async function applyDeliveryTags(deps: {
   issues: number[];
   /** Raw `--tags` split: defined ⇔ explicit mode. */
   requested?: string[];
-  /** The title-derived `kind::<type>` candidate of inferred mode. */
-  inferredSlug: string | null;
+  /**
+   * #338: the inferred-mode candidates, per issue — each bound issue's
+   * OWN title kind. An issue absent from the map carries no kind and
+   * never inherits another's. Absent map ⇔ nothing inferred.
+   */
+  inferredByIssue?: Map<number, string>;
   /** Explicit-mode pre-validation snapshot; absent ⇔ infer-and-probe here. */
   pre?: ResolvedTagSelection;
 }): Promise<TaggingOutcome | IssueOutcome> {
@@ -223,8 +230,19 @@ export async function applyDeliveryTags(deps: {
     declared = deps.pre.declared;
   } else {
     explicit = deps.requested !== undefined;
-    tokens =
-      deps.requested !== undefined ? deps.requested : deps.inferredSlug ? [deps.inferredSlug] : [];
+    if (deps.requested !== undefined) {
+      tokens = [...deps.requested];
+    } else {
+      // The union of every bound issue's own inferred slug, in
+      // first-bound order — the seed universe for this run.
+      tokens = [];
+      for (const issue of issues) {
+        const slug = deps.inferredByIssue?.get(issue);
+        if (slug !== undefined && !tokens.includes(slug)) {
+          tokens.push(slug);
+        }
+      }
+    }
   }
 
   if (issues.length === 0 || tokens.length === 0) {
@@ -280,7 +298,19 @@ export async function applyDeliveryTags(deps: {
   }
 
   for (const issue of issues) {
-    const applyEv = await ctx.gh.addIssueLabels(repo, issue, resolution.tags);
+    // #338: inferred mode applies each issue its OWN slug; an issue with
+    // no inferred kind is left untouched — labels are additive by port
+    // contract, so skipping is the faithful no-inheritance behaviour.
+    const issueTags = explicit
+      ? resolution.tags
+      : (() => {
+          const slug = deps.inferredByIssue?.get(issue);
+          return slug !== undefined ? [slug] : [];
+        })();
+    if (issueTags.length === 0) {
+      continue;
+    }
+    const applyEv = await ctx.gh.addIssueLabels(repo, issue, issueTags);
     if (!applyEv.ok) {
       if (explicit) {
         return passthrough(applyEv);
