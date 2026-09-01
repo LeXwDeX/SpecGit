@@ -1,20 +1,16 @@
 version: 1
-delivery: unified-nextactions-structure
+delivery: align-generated-agent
 context:
   kind: branch
-  branch: feat/360-unified-nextactions-structure
+  branch: fix/368-align-generated-agent
 issues:
-  - 360
-  - 361
-  - 362
-  - 363
+  - 368
+  - 369
+  - 370
 issueKinds:
-  - issue: 360
-    kind: kind::feat
-  - issue: 361
-    kind: kind::feat
-  - issue: 362
-    kind: kind::refactor
-  - issue: 363
-    kind: kind::refactor
-pr: 364
+  - issue: 368
+    kind: kind::fix
+  - issue: 369
+    kind: kind::fix
+  - issue: 370
+    kind: kind::docs
