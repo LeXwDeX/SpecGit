@@ -227,7 +227,7 @@ describe('specgit doctor', () => {
 
   describe('stray issue probe (#348)', () => {
     const SCAFFOLD_BODY =
-      '## Why\nsome title\n\n## Scope\n\n## Acceptance\nThe delivery pull request closes this issue; `specgit finish` must exit 0.';
+      '## Why\nsome title\n\n## Scope\n\n## Approach\n\n## Acceptance\nThe delivery pull request closes this issue; `specgit finish` must exit 0.';
     const openIssue = {
       getOpenIssues: () =>
         ok([

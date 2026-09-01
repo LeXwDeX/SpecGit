@@ -29,7 +29,7 @@ esac
 command=$(printf '%s' "$payload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_input&&j.tool_input.command)||'')}catch{process.stdout.write('')}})")
 
 case "$command" in
-  gh\\ pr\\ merge*)
+  gh\\ pr\\ merge*|glab\\ mr\\ merge*)
     exec node -e '
       const { spawn } = require("child_process");
       const fs = require("fs");
@@ -614,6 +614,16 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
   \`glab mr update <number> --ready\`。
 - 用 \`specgit finish\` 收尾：裁决来自真实的 git、PR 与 CI 证据。退出码
   0 是唯一的"完成"。
+
+### 议题标签
+
+- 每次引导都会自动应用标题的 \`kind::<type>\` 成员；显式传入
+  \`--tags <a,b>\` 可自选完整集合。
+- 选择以池为先：仓库中符合语法的既有标签原样胜出；缺失的名称从内置的
+  \`kind::\` 目录或策略的 \`tags:\` 声明中播种。未知词汇以退出码 2 指名
+  全集。
+- 克制选择：每轴至多一个标签，拿不准就不选——池外标签会被报告
+  （\`tag_pool_dirty\` 警告是给人看的），SpecGit 绝不重命名它们。
 
 ### 修复与诊断
 

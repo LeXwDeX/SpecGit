@@ -256,6 +256,36 @@ unless a check then *fails*.
 
 The named check reported a non-success conclusion at the PR head. Open the run's logs, fix the failure (or the flaky test), push, and re-run acceptance — checks are re-read from the new PR head.
 
+## Agent merge guard (tool-level, never a gate)
+
+`specgit init` installs an opencode PreToolUse hook that intercepts
+`gh pr merge`, `glab mr merge`, and direct push-to-main tool calls and runs
+the verdict before letting them through. The hook is a local agent
+convenience on both platforms — it is never an acceptance input, and CI
+acceptance runs `specgit finish` itself.
+
+### The guard blocked a merge and reported "no verdict" (budget exhausted)
+
+The guard grants the verdict a time budget: by default
+`max(60, 8 × SPECGIT_GH_TIMEOUT_MS ÷ 1000)` seconds (120 s at the 15 s
+per-call default). Expiry is reported as "no verdict" — the fail-closed
+unknown, never a rejection — so nothing is wrong with the delivery; the
+evidence simply was not gathered in time. Recovery, in order:
+
+1. Retry once the network settles (the underlying `gh`/`glab` calls were
+   probably slow, not broken).
+2. Raise the per-call budget the default derives from:
+   `SPECGIT_GH_TIMEOUT_MS=60000` (milliseconds) lifts the guard budget to
+   480 s too.
+3. Or size the guard budget directly: `SPECGIT_GUARD_BUDGET_S` (seconds;
+   hook-only — the CLI never reads it). It never applies below the gh
+   per-call timeout.
+
+If the guard prints a budget/runner mismatch instead, the computed budget
+exceeds the hook runner's own timeout in `.opencode/hooks.json` (checked
+with a 10 s margin): raise the runner `timeout` there, or lower
+`SPECGIT_GUARD_BUDGET_S` to fit.
+
 ## Verdict behaviors
 
 ### Exit 130 after Ctrl-C
@@ -274,6 +304,17 @@ mutations).
 ### `local_head_stale` warning
 
 Informational: your checkout is behind or ahead of the PR head. Acceptance still evaluates the PR head. Push your commits (if they belong in the delivery) or ignore the warning.
+
+### `record_historical_candidate` warning (`specgit status`, exit 0)
+
+The record names branch `A` as its context but is tracked on the live
+branch `B` — the local signature of a delivery whose PR already merged
+into this trunk. Nothing is broken; status just refuses to call the state
+`bound`. Confirm the merged lineage with `specgit finish` (it reads the
+pull request and reports `completed`), or start the next delivery —
+`specgit issue "<type>: <title>"` atomically replaces the completed
+record. Offline status never claims `completed` outright; that proof
+belongs to `finish`.
 
 ### Verdict differs from GitHub's merge-requirement UI
 

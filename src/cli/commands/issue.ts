@@ -230,6 +230,8 @@ function issueBody(title: string, language: PolicyLanguage = 'en'): string {
     '',
     scaffold.issueScope,
     '',
+    scaffold.issueApproach,
+    '',
     scaffold.issueAcceptance,
     scaffold.issueAcceptanceLine,
     '',
