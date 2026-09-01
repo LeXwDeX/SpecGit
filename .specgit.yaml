@@ -1,17 +1,11 @@
 version: 1
-delivery: align-generated-agent
+delivery: add-patch-changeset
 context:
   kind: branch
-  branch: fix/368-align-generated-agent
+  branch: chore/372-add-patch-changeset
 issues:
-  - 368
-  - 369
-  - 370
+  - 372
 issueKinds:
-  - issue: 368
-    kind: kind::fix
-  - issue: 369
-    kind: kind::fix
-  - issue: 370
-    kind: kind::docs
-pr: 371
+  - issue: 372
+    kind: kind::chore
+pr: 373
