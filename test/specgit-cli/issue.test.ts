@@ -159,6 +159,12 @@ describe('specgit issue: fresh bootstrap', () => {
     expect(t.harness.createdIssues[0].body).toContain('## Why');
     expect(t.harness.createdIssues[0].body).toContain('## Why\n');
     expect(t.harness.createdIssues[0].body).toContain('## Scope\n');
+    // #368: the scaffold carries the four sections the guidance names —
+    // Approach sits between Scope and Acceptance, matching the prompts.
+    expect(t.harness.createdIssues[0].body).toContain('## Approach\n');
+    const issueBody = t.harness.createdIssues[0].body;
+    expect(issueBody.indexOf('## Scope')).toBeLessThan(issueBody.indexOf('## Approach'));
+    expect(issueBody.indexOf('## Approach')).toBeLessThan(issueBody.indexOf('## Acceptance'));
     expect(t.harness.createdIssues[0].body).toContain('## Acceptance\n');
     expect(t.harness.createdIssues[0].body).toContain('`specgit finish` must exit 0');
     // branch <type>/<first#>-<slug> with the type from the conventional prefix
@@ -1015,6 +1021,8 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
       title,
       '',
       '## Scope',
+      '',
+      '## Approach',
       '',
       '## Acceptance',
       'The delivery pull request closes this issue; `specgit finish` must exit 0.',

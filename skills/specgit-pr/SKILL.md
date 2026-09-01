@@ -5,8 +5,9 @@ allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
 license: MIT
 metadata:
   author: specgit
-  version: "0.1.0"
 ---
+
+<!-- specgit-managed-entry-point -->
 
 # specgit-pr
 

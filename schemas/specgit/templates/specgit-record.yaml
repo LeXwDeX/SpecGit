@@ -27,3 +27,11 @@ issues: [123]
 # The single pull request merging this delivery. Number or URL verbatim;
 # a later bind replaces it. Acceptance requires exactly one.
 pr: 42
+
+# Optional, written by `specgit issue` (#338): each bound issue's own
+# inferred tag kind, so one issue never inherits another title's kind.
+# Absent is normal on records written before the field existed (legacy
+# tagging applies); the bootstrap keeps it current on rewrite.
+# issueKinds:
+#   - issue: 123
+#     kind: kind::feat

@@ -242,3 +242,65 @@ describe('docs consistency (specgit issue examples pass the production validator
     }
   });
 });
+
+// #368/#369/#370 — the documented environment contract is five variables
+// (four CLI, one hook-only), the schema guide represents every
+// parser-supported authoritative field, and the provider diagnostic-code
+// tables match the runtime adapters. Anchored to the pages this delivery
+// owns; the parsers (src/record/{policy,schema,providers}.ts and the
+// CODE_INFO registry) are the runtime evidence.
+describe('docs consistency (env contract, schema guide, provider codes)', () => {
+  const FIVE_ENV_VARS = [
+    'SPECGIT_GH',
+    'SPECGIT_GH_TIMEOUT_MS',
+    'SPECGIT_GLAB',
+    'SPECGIT_GLAB_TIMEOUT_MS',
+    'SPECGIT_GUARD_BUDGET_S',
+  ] as const;
+
+  it('docs/cli.md documents all five environment variables, distinguishing CLI variables from the hook-only guard budget', () => {
+    const text = read('docs', 'cli.md');
+    for (const variable of FIVE_ENV_VARS) {
+      expect(text, `docs/cli.md must document ${variable}`).toContain(variable);
+    }
+    expect(text, 'the guard budget must be scoped to the merge-guard hook').toMatch(
+      /merge[- ]guard hook/i
+    );
+  });
+
+  it('docs/agent-contract.md names the five-variable environment contract', () => {
+    const text = read('docs', 'agent-contract.md');
+    for (const variable of FIVE_ENV_VARS) {
+      expect(text, `agent-contract.md must name ${variable}`).toContain(variable);
+    }
+  });
+
+  it('README names the guard budget, the glab merge guard, and the actual setup destinations', () => {
+    const text = read('README.md');
+    expect(text).toContain('SPECGIT_GUARD_BUDGET_S');
+    expect(text).toMatch(/glab mr merge/);
+    expect(text).toContain('.agents/skills');
+  });
+
+  it('the schema guide carries every parser-supported authoritative field and provider code', () => {
+    const text = read('schemas', 'specgit', 'schema.yaml');
+    // Record: bootstrap-written per-issue kinds (#338).
+    expect(text).toMatch(/issueKinds/);
+    // Policy: the presentation language (#118) and the declared tag pool (#330).
+    expect(text).toMatch(/\blanguage\b/);
+    expect(text).toMatch(/tags:/);
+    // The providers.yaml declaration schema.
+    expect(text).toMatch(/gitlab:/);
+    expect(text).toContain('providers.yaml');
+    // Provider diagnostic codes match the runtime adapters and the PR gate.
+    for (const code of ['glab_missing', 'glab_unauthenticated', 'glab_transport', 'pr_draft']) {
+      expect(text, `schema gate table must carry ${code}`).toContain(code);
+    }
+  });
+
+  it('the policy template documents the optional language and tags keys', () => {
+    const template = read('schemas', 'specgit', 'templates', 'specgit-policy.yaml');
+    expect(template).toMatch(/language/);
+    expect(template).toMatch(/tags:/);
+  });
+});

@@ -45,6 +45,35 @@ describe('managedPromptBlock', () => {
   it('defaults to en', () => {
     expect(managedPromptBlock()).toBe(managedPromptBlock('en'));
   });
+
+  it('en and zh carry the same section structure (#368)', () => {
+    // The languages are translations of one contract: the `### ` section
+    // sequence must be structurally identical — same count, same order —
+    // or one language's guidance is silently missing a section (observed:
+    // zh lacked the Issue tags section).
+    const sections = (block: string): string[] =>
+      block.split('\n').filter((line) => line.startsWith('### '));
+    expect(sections(managedPromptBlock('en'))).toEqual([
+      '### The delivery story',
+      '### Issue tags',
+      '### Repair and diagnostics',
+      '### The command surface',
+      '### Before creating an issue, check for duplicates',
+      '### Issue granularity',
+      '### Iron rules',
+      '### Agent contract essentials',
+    ]);
+    expect(sections(managedPromptBlock('zh'))).toEqual([
+      '### 交付故事',
+      '### 议题标签',
+      '### 修复与诊断',
+      '### 命令面',
+      '### 建议题之前，先查重',
+      '### 议题粒度',
+      '### 铁律',
+      '### 代理契约要点',
+    ]);
+  });
 });
 
 describe('guard script bytes', () => {
@@ -65,6 +94,13 @@ describe('guard script bytes', () => {
     const { json } = mergeHooksJson(null);
     const parsed = JSON.parse(json) as { PreToolUse: Array<{ matcher: string }> };
     expect(parsed.PreToolUse[0].matcher).toBe('Bash|Edit|Write');
+  });
+
+  it('routes gh and glab merges into the verdict case (#369)', () => {
+    // One delivery evaluates every gate through one platform CLI (gh on
+    // GitHub, glab on a declared GitLab origin); the merge guard must
+    // verdict-route both dialects, never pass `glab mr merge` through.
+    expect(GUARD_SCRIPT).toContain('gh\\ pr\\ merge*|glab\\ mr\\ merge*');
   });
 
   it('upgrades a legacy Bash-only specgit guard entry to the current matcher, once (#335)', () => {
