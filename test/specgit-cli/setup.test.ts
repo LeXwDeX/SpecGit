@@ -484,7 +484,15 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     const first = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
     expect(await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], first.ctx)).toBe(0);
     const refreshed = fs.readFileSync(stalePath, 'utf-8');
-    expect(refreshed).toContain('specgit issue "$ARGUMENTS"');
+    // #368: `$ARGUMENTS` must stay unquoted in the command — quoting folds
+    // N title arguments into one; the skill's "Multiple arguments = N
+    // issues" contract needs each quoted title to arrive as its own argv.
+    expect(refreshed).toContain('specgit issue $ARGUMENTS');
+    expect(refreshed).not.toContain('"$ARGUMENTS"');
+    // The enumeration may wrap across template lines; assert it flattened.
+    expect(refreshed.replace(/\s+/g, ' ')).toContain(
+      'Why / What changed / Evidence / Checklist'
+    );
     expect(refreshed).toContain(ENTRY_POINT_MARKER);
 
     const converged = treeState(tempDir);

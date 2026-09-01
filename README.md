@@ -184,7 +184,7 @@ reality.
 | `specgit finish` | The verdict — full evaluation → accepted / rejected / unknown | yes (`gh`/`glab`) |
 | `specgit pr` | Repair the PR binding: auto-discover by head branch, or bind an explicit PR | yes (`gh`/`glab`) |
 | `specgit init` | Creates the policy `spec_git/policy.yaml` (auto-detects checks from CI workflows; `--gitlab-host` declares a GitLab origin) and generates the harness (acceptance workflow + guard hooks + managed AGENTS block); by default also shields the local delivery assets in `.gitignore` (`--no-ignore` opts out) | gh (protection probe) |
-| `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills for other tools (`--tool opencode \| generic \| all`) | no |
+| `specgit setup` | Installs agent entry points: `.opencode/command/` for opencode, portable skills under `.agents/skills/` for other tools (`--tool opencode \| generic \| all`) | no |
 | `specgit status` | Local evidence snapshot (record, policy, git facts, drift) plus the generated-asset drift report — the local upgrade check: per-surface current/stale/missing/conflict states with the exact fix command (`assets.generated`, #308) | no |
 | `specgit doctor` | Probes prerequisites (git, repo, origin, forge CLI, policy) | forge auth |
 | `specgit bind` / `unbind` / `accept` | Machine aliases for scripts: record edits, and the same evaluation as `finish` | accept: yes (`gh`/`glab`) |
@@ -197,7 +197,9 @@ One documented exception: `specgit status` reports a missing record as the
 healthy pre-binding state — exit `0` with state `unbound` (#175).
 Environment inputs: `SPECGIT_GH` / `SPECGIT_GH_TIMEOUT_MS` and
 `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` (executable path and per-call
-timeout per forge CLI, defaults: `gh`/`glab` on PATH, 15 s). Requirements:
+timeout per forge CLI, defaults: `gh`/`glab` on PATH, 15 s), plus
+hook-only `SPECGIT_GUARD_BUDGET_S` (seconds — the merge-guard hook's
+verdict budget; the CLI never reads it). Requirements:
 Node ≥ 20.19, `git`, and `gh` (authenticated) for GitHub evidence — or
 `glab` (authenticated) for a declared GitLab host. There is no telemetry and
 no configuration beyond the three file tiers. The versioned contract —
@@ -221,13 +223,15 @@ pinned in the [Product Baseline v1](docs/baseline-v1.md).
 
 | Hook | Layer | What it does |
 | --- | --- | --- |
-| `.opencode/hooks.json` + `.opencode/hooks/specgit-merge-guard.sh` | opencode PreToolUse (Bash \| Edit \| Write) | Blocks `gh pr merge` / push-to-main tool calls that bypass the verdict, and file-mutation tool calls (`edit`/`write`) on a branch with no delivery binding — the start gate (#335): start with `specgit issue` first |
+| `.opencode/hooks.json` + `.opencode/hooks/specgit-merge-guard.sh` | opencode PreToolUse (Bash \| Edit \| Write) | Blocks `gh pr merge` / `glab mr merge` / direct push-to-main tool calls that bypass the verdict, and file-mutation tool calls (`edit`/`write`) on a branch with no delivery binding — the start gate (#335): start with `specgit issue` first |
 | `.git/hooks/pre-push` | git | Refuses direct pushes to `main` — deliveries must go PR → CI → finish. Pushing a commit that is already merged into `origin/main` (post-release mirror sync) is allowed (#343) |
 
 Event-driven beats periodic prompting: the guard fires exactly at the
 highest-risk moment, not every N turns. For other tools (codex, pi-agent,
-cursor, …) the portable entry points live in [`skills/`](skills/) — see
-[the skills index](skills/README.md); `specgit setup` installs them.
+cursor, …) the portable entry points live in [`skills/`](skills/) — the
+generated distribution mirror of the entry points `specgit setup` installs
+under `.agents/skills/` in a project; see
+[the skills index](skills/README.md).
 
 ## Releasing
 

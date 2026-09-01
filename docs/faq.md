@@ -86,7 +86,7 @@ There is no migration and no compatibility mode by design — the models don't s
 Declaration-and-diagnostics only in this version (a v1 evidence non-goal): only `github.com` origins resolve on the GitHub route, and other remotes get `origin_unresolvable` unless declared as a self-managed GitLab host — acceptance fails closed either way.
 
 **Does it phone home?**
-No. There is no telemetry; the only environment inputs aim the forge CLIs (`SPECGIT_GH*`, `SPECGIT_GLAB*`). Network calls are `gh api` requests for GitHub evidence and `glab api` requests for a declared GitLab origin — issues, the PR/MR, and check/pipeline runs.
+No. There is no telemetry; the only environment inputs aim the forge CLIs (`SPECGIT_GH*`, `SPECGIT_GLAB*`) or size the local merge guard's verdict budget (`SPECGIT_GUARD_BUDGET_S`, hook-only). Network calls are `gh api` requests for GitHub evidence and `glab api` requests for a declared GitLab origin — issues, the PR/MR, and check/pipeline runs.
 
 **Do AI agents use it?**
 Yes — that's a primary audience. The CLI emits one JSON document per command under `--json`, exit codes are contractual, and the [agent contract](agent-contract.md) defines how agents must treat verdicts.

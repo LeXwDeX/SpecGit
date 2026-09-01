@@ -104,6 +104,11 @@ kebab-case 交付名，脚本环境报 `issue_delivery_name_required` 并指向
 步骤（记录里的 issues → 分支 → PR → commit → push）会被检测并跳过，
 不会重复建 issue、不会重复开 PR。无参数且无记录时退出 2（CLI 不交互）。
 
+**引导后立即补全内容**：命令成功后，用平台 CLI 把讨论沉淀进每个新建
+issue 的 body（Why / Scope / Approach / Acceptance，如 `gh issue edit <n>`）；
+draft PR 脚手架的四个节（Why / What changed / Evidence / Checklist）在
+交付过程中随手填——占位符是提示不是门禁，`Closes #n` 引用保持原样。
+
 ### Step 2 — 开发（TDD）
 
 按 `workflows/specgit-dev-loop.md` 的切片纪律：
@@ -133,7 +138,7 @@ specgit finish --json
 | 0 | accepted | 全绿，可合并 |
 | 1 | rejected | 事实性失败：按 `failures[].fix` 逐条修 |
 | 2 | usage | 参数错误 |
-| 3 | unknown | 证据不可得（gh 未认证/网络）——修环境，绝不改记录 |
+| 3 | unknown | 证据不可得（gh/glab 未认证/网络）——修环境，绝不改记录 |
 
 `checks_pending`：CI 还在跑 → `gh pr checks <PR> --watch` 后重试。
 
@@ -141,7 +146,9 @@ specgit finish --json
 
 - 人工检查点 **push right**：唯一一次人审 = 读 PR brief（what/why/issue+PR+CI
   链接 + `specgit finish` 裁决），批准合并。
-- 机器裁决先行：**verdict ≠ accepted 的 PR 不允许合并**。
+- 机器裁决先行：**verdict ≠ accepted 的 PR 不允许合并**。合并命令按平台：
+  GitHub `gh pr merge`，GitLab `glab mr merge`——工具层的本地 merge guard
+  会在拦截点先要求一份已通过的裁决。
 
 ### Step 5 — 收尾
 
@@ -174,7 +181,7 @@ Agent 与人类走同一条流程，差异只在驱动者是模型。行为来�
      ├─ exit 0  → 输出 PR brief（含 issue/PR/CI run 链接），请人批准合并
      ├─ exit 1  → 读 failures[].fix → 修复 → 回到 4
      └─ exit 3  → 报告环境问题（gh auth/网络），不动代码
-  5. 人批准 → gh pr merge → issues 自动关闭
+   5. 人批准 → gh pr merge（GitLab：glab mr merge）→ issues 自动关闭
 ```
 
 ### 3.2 修复与诊断

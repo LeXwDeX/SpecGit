@@ -21,6 +21,23 @@ version: 1
 required_checks:
   - build
 
+# Optional: generated-text language (#118). `en` is the default (the key may
+# be absent); `zh` renders the issue/PR scaffolds, the managed guidance
+# block, and success prose in Chinese. The machine contract — exit codes,
+# --json field names, diagnostic codes, `Closes #n` — is never localized
+# under any value. Unsupported values fail closed (policy_invalid).
+# language: zh
+
+# Optional: project-declared tag vocabulary (#330) — extra seedable names
+# for the pool-first tag selection beyond the built-in `kind::` catalog.
+# `name` must satisfy the portable tag grammar (lowercase alphanumerics and
+# single hyphens, optional `::axis` scopes, <= 64 chars); `color` is six hex
+# digits without "#"; `description` is at most 300 chars.
+# tags:
+#   - name: module::auth
+#     color: 0ea5e9
+#     description: Authentication subsystem deliveries
+
 # Optional: enforce delivery ordering (the sequence gate, G8). When true, no
 # OPEN issue with a smaller number than this delivery's smallest bound issue
 # may exist (issue_out_of_order). Default is false (gate passes vacuously).

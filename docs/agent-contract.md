@@ -28,7 +28,7 @@ Normative rules for AI agents operating on a SpecGit project. Everything here is
 - All commands run inside the git repository of the delivery. SpecGit resolves the root via `git rev-parse --show-toplevel`.
 - Always pass `--json` when acting programmatically. stdout is exactly one JSON document; anything human-readable was sent to stderr. Parse the envelope, never scrape text.
 - Branch on exit codes, not on output phrasing: `0` accepted/success · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown.
-- Never invent environment configuration: the product's environment variables are exactly `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, and `SPECGIT_GLAB_TIMEOUT_MS` — nothing else is read, and there is no telemetry to disable.
+- Never invent environment configuration: the product's environment variables are exactly `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, `SPECGIT_GLAB_TIMEOUT_MS`, and `SPECGIT_GUARD_BUDGET_S`. The first four are read by the CLI (forge executable path and per-call timeout per platform); the fifth is hook-only — the generated merge-guard hook reads it to size the verdict budget. Nothing else is read, and there is no telemetry to disable.
 
 ## 2. Issue-first delivery
 
@@ -57,7 +57,7 @@ Corollaries:
 | `init` | Policy absent (`spec_git/policy.yaml` missing) | Ask which check names are required; pass every `--required-check` explicitly. Never overwrite an existing policy. Re-init also regenerates the harness (acceptance workflow + AGENTS.md block) idempotently. |
 | `bind` / `unbind` | Script-level record surgery | Only as machine aliases when a script cannot use `issue`/`pr`. `--issue` takes GitHub numbers only; `--delivery` only on first bind. |
 | `status` | Anytime — it is local-only and network-free | Use it for the record/state/context snapshot; never present its output as acceptance. |
-| `doctor` | Diagnosing exit-3 results or first-time setup | Its probe order is the debugging order: git → repo → origin → gh → auth → policy. |
+| `doctor` | Diagnosing exit-3 results or first-time setup | Its probe order is the debugging order: git → repo → origin → forge CLI (`gh`/`glab`) → auth → policy. |
 
 ## 5. Working with the PR and checks
 
