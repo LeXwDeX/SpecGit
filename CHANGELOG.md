@@ -1,5 +1,11 @@
 # specgit
 
+## 1.10.1
+
+### Patch Changes
+
+- [#373](https://github.com/LeXwDeX/SpecGit/pull/373) [`e68ce59`](https://github.com/LeXwDeX/SpecGit/commit/e68ce5915daf28894d793588547f7e1bd4d75ef8) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Align generated agent guidance and config contracts ([#371](https://github.com/LeXwDeX/SpecGit/issues/371)).
+
 ## 1.10.0
 
 ### Minor Changes
