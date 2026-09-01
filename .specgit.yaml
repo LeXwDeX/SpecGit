@@ -14,3 +14,4 @@ issueKinds:
     kind: kind::fix
   - issue: 370
     kind: kind::docs
+pr: 371
