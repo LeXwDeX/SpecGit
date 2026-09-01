@@ -228,6 +228,40 @@ describe('merge guard diagnostics (#68)', () => {
     expect(result.code).toBe(2);
     expect(result.stderr).toMatch(/not the delivery path/);
   });
+
+  itOrSkip('routes a glab merge through the same verdict (#369)', async () => {
+    const result = await runGuard('glab mr merge 82 --squash', {
+      FAKE_SPECGIT_EXIT: '1',
+      FAKE_SPECGIT_STDOUT_FILE: writeEnvelope('rejected-glab', REJECTED_ENVELOPE),
+    });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/rejected/i);
+    expect(result.stderr).toMatch(/pending \(transient/);
+  });
+
+  itOrSkip('blocks every push form that targets main (#369)', async () => {
+    for (const command of [
+      'git push origin main',
+      'git push origin +main',
+      'git push origin HEAD:main',
+    ]) {
+      const result = await runGuard(command);
+      expect(result.code, command).toBe(2);
+      expect(result.stderr, command).toMatch(/not the delivery path/);
+    }
+  });
+
+  itOrSkip('lets a push to a delivery branch through untouched (#369)', async () => {
+    // Negative control: the rejected envelope would exit 2 if the guard
+    // wrongly verdict-routed this command, so exit 0 with empty stderr
+    // proves the passthrough.
+    const result = await runGuard('git push origin fix/368-align-generated-agent', {
+      FAKE_SPECGIT_EXIT: '1',
+      FAKE_SPECGIT_STDOUT_FILE: writeEnvelope('rejected-push', REJECTED_ENVELOPE),
+    });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
 });
 
 // ---- start gate (#335): file-mutation tools require a delivery binding ----

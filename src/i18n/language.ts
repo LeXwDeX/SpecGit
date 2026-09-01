@@ -40,6 +40,7 @@ export interface ScaffoldText {
   /** Issue body section headings. */
   issueWhy: string;
   issueScope: string;
+  issueApproach: string;
   issueAcceptance: string;
   /** The acceptance sentence under the issue body's acceptance heading. */
   issueAcceptanceLine: string;
@@ -167,6 +168,7 @@ export interface LanguageCatalog {
 const EN_SCAFFOLD: ScaffoldText = {
   issueWhy: '## Why',
   issueScope: '## Scope',
+  issueApproach: '## Approach',
   issueAcceptance: '## Acceptance',
   issueAcceptanceLine:
     'The delivery pull request closes this issue; `specgit finish` must exit 0.',
@@ -184,6 +186,7 @@ const EN_SCAFFOLD: ScaffoldText = {
 const ZH_SCAFFOLD: ScaffoldText = {
   issueWhy: '## 为什么',
   issueScope: '## 范围',
+  issueApproach: '## 方法',
   issueAcceptance: '## 验收',
   issueAcceptanceLine: '交付拉取请求会关闭本议题；`specgit finish` 必须以退出码 0 结束。',
   prWhy: '## 为什么',

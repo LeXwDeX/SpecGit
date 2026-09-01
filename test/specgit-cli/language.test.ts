@@ -278,6 +278,10 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     expect(body).toContain('## 为什么\n');
     expect(body).toContain('feat: 添加登录功能');
     expect(body).toContain('## 范围\n');
+    // #368: the zh scaffold carries the same four sections as the guidance.
+    expect(body).toContain('## 方法\n');
+    expect(body.indexOf('## 范围')).toBeLessThan(body.indexOf('## 方法'));
+    expect(body.indexOf('## 方法')).toBeLessThan(body.indexOf('## 验收'));
     expect(body).toContain('## 验收\n');
     expect(body).toContain('`specgit finish`');
   });
@@ -524,6 +528,7 @@ describe('#118 language: the machine contract never localizes', () => {
       const headings = [
         scaffold.issueWhy,
         scaffold.issueScope,
+        scaffold.issueApproach,
         scaffold.issueAcceptance,
       ];
       for (const heading of headings) {
