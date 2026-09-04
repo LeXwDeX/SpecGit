@@ -164,7 +164,9 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
 });
 
 describe('e2e acceptance: worktree mode', () => {
-  it('accepts a linked-worktree delivery with exit 0 and records worktree identity', async () => {
+  // Multiple real git/CLI subprocesses exceeded 10s on Windows (run
+  // 33901785101: 10,016ms); use the neighboring real-CLI case's 30s budget.
+  it('accepts a linked-worktree delivery with exit 0 and records worktree identity', { timeout: 30_000 }, async () => {
     const wt = track(makeWorktree('feat/worktree-delivery'));
 
     const gh = createFakeGh(wt.mainDir, greenGhRules({

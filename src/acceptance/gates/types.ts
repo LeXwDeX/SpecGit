@@ -4,7 +4,7 @@ import type { Policy } from '../../record/policy.js';
 import type { DeliveryBinding } from '../../record/schema.js';
 import type { GitFacts, GitPort } from '../../gitfacts/port.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
-import type { ForgeProvider, PrFact } from '../../github/port.js';
+import type { ForgeEvidencePort, PrFact } from '../../github/port.js';
 import { CODE_INFO, type SpecGitCode } from '../codes.js';
 
 /**
@@ -57,7 +57,7 @@ export interface EvaluateInput {
   policy: Evidence<Policy>;
   git: Pick<GitPort, 'facts' | 'headContains'>;
   gh?: Pick<
-    ForgeProvider,
+    ForgeEvidencePort,
     'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests'
   >;
   /** Declared self-hosted GitLab host (spec_git/providers.yaml), if any. */

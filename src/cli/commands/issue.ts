@@ -66,7 +66,7 @@ import type { Policy, PolicyLanguage } from '../../record/policy.js';
 import { checkLabelConvention, checkTitleConvention } from '../../record/conventions.js';
 import { DELIVERY_TYPES } from '../../tags/catalog.js';
 import type { CommandContext, DeliveryBinding, Diagnostic, Evidence, GitFacts, RepoRef } from '../types.js';
-import type { OpenIssueFact } from '../../github/port.js';
+import { issueBody, prepareIssuePlan, type IssuePlan } from './issue-plan.js';
 import { BOOTSTRAP_STEPS, passthrough, recordWriteFailure, runBootstrapSteps } from './bootstrap.js';
 import {
   applyDeliveryTags,
@@ -232,63 +232,6 @@ export async function resolveDeliveryName(deps: {
     }
   }
   return deliveryNameRequiredError('no valid kebab-case name was entered.');
-}
-
-function issueBody(title: string, language: PolicyLanguage = 'en'): string {
-  const { scaffold } = catalogFor(language);
-  return [
-    scaffold.issueWhy,
-    title,
-    '',
-    scaffold.issueScope,
-    '',
-    scaffold.issueApproach,
-    '',
-    scaffold.issueAcceptance,
-    scaffold.issueAcceptanceLine,
-    '',
-  ].join('\n');
-}
-
-/**
- * Resolve a same-title collision (#77): an exact open-title match is
- * adoptable only when it is unambiguous — a single candidate, or a sole
- * candidate carrying this tool's deterministic scaffold body (the body a
- * specgit-created issue has, which an unrelated human issue with the
- * same title does not). Unresolvable collisions return null: the caller
- * surfaces a usage diagnostic instead of binding an issue that could be
- * unrelated. Never silent, never a guess.
- */
-function disambiguateAdoption(
-  arg: string,
-  candidates: OpenIssueFact[],
-  language: PolicyLanguage
-): { candidate: OpenIssueFact } | { ambiguous: true } | { create: true } {
-  if (candidates.length === 0) {
-    return { create: true };
-  }
-  const unambiguous =
-    candidates.length === 1 ? candidates : candidates.filter((c) => c.body === issueBody(arg, language));
-  if (unambiguous.length === 1) {
-    return { candidate: unambiguous[0] };
-  }
-  return { ambiguous: true };
-}
-
-function adoptionAmbiguousError(arg: string, candidates: OpenIssueFact[]): IssueOutcome {
-  const listing = candidates.map((c) => `  #${c.number} ${c.title ?? arg}`).join('\n');
-  return {
-    exit: EXIT_USAGE,
-    errors: [
-      errorDiagnostic(
-        'issue_title_ambiguous',
-        `Multiple open issues have the title '${sanitize(arg)}':\n${listing}`,
-        {
-          fix: `Adopt one explicitly by number (specgit issue <number>), or rename the unrelated issue so titles are unique, then re-run.`,
-        }
-      ),
-    ],
-  };
 }
 
 function recordSummary(record: DeliveryBinding): Record<string, unknown> {
@@ -682,10 +625,24 @@ export async function runIssue(
     tagPre = validated.pre;
   }
 
-  const conventions = await prepareIssueConventions({
-    ctx, repo: repoEv.value, policy, language, record: liveRecord, args, startIndex, requested: rawTags, issueBodies,
+  if (resolvedDeliveryName === undefined) {
+    return deliveryNameRequiredError('no delivery name could be resolved.');
+  }
+  if (policy !== undefined) {
+    for (const title of args.slice(startIndex).filter((arg) => parseNumericRef(arg) === null)) {
+      const checked = checkTitleConvention(policy, title);
+      if (!checked.ok) return conventionFailure(checked);
+    }
+  }
+  const plan = await prepareIssuePlan({
+    provider: ctx.gh, repo: repoEv.value, language, delivery: resolvedDeliveryName,
+    boundIssues: liveRecord?.issues ?? [], args, startIndex,
   });
-  if ('exit' in conventions) return conventions;
+  if ('exit' in plan) return plan;
+  const conventions = await checkIssuePlanConventions({
+    ctx, repo: repoEv.value, policy, record: liveRecord, plan, requested: rawTags, issueBodies,
+  });
+  if (conventions !== null) return conventions;
 
   const newTitles = args.slice(startIndex).filter((arg) => parseNumericRef(arg) === null);
   if (newTitles.length > 0) {
@@ -710,10 +667,6 @@ export async function runIssue(
     if (occupancy !== null) return occupancy;
   }
 
-  // #246: naming is interactive only on a real terminal — a `--json`
-  // run keeps stdout a pure parse surface, so it never prompts.
-  const interactive = options.json !== true && ctx.stdinIsTTY;
-
   const created = await createOrAdoptIssues({
     ctx,
     root,
@@ -721,12 +674,8 @@ export async function runIssue(
     language,
     context: contextEv.value,
     record: liveRecord,
-    args,
-    startIndex,
+    plan,
     firstTitle: resume !== null ? resume.firstTitle : null,
-    deliveryOverride: resolvedDeliveryName,
-    interactive,
-    openIssues: conventions.openIssues,
     issueBodies,
     closingHost,
   });
@@ -764,8 +713,8 @@ export async function runIssue(
 
   // #278: the tail chain is data — the DeliveryBootstrap module's
   // ordered steps (checkout → commit binding → push head → bind PR →
-  // commit record → push). Each step carries its precondition and
-  // resume marker, so a re-run from any partial state converges;
+  // commit record → push). Preconditions read the current branch and
+  // record, so a re-run from any partial state converges;
   // reordering is a change to BOOTSTRAP_STEPS, reviewable as such.
   const chained = await runBootstrapSteps(BOOTSTRAP_STEPS, {
     ctx,
@@ -989,56 +938,38 @@ async function validateResumeTitles(
   return null;
 }
 
-/** Validate the entire creation/adoption plan before the first issue or record write. */
-async function prepareIssueConventions(deps: {
+function conventionFailure(failure: Extract<Evidence<true>, { ok: false }>): IssueOutcome {
+  return {
+    exit: failure.code === 'title_evidence_missing' || failure.code === 'issue_labels_unavailable' || failure.code === 'body_evidence_missing' ? EXIT_UNKNOWN : EXIT_USAGE,
+    errors: [errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {})],
+  };
+}
+
+/** Validate the chosen issues before the first issue or record write. */
+async function checkIssuePlanConventions(deps: {
   ctx: CommandContext;
   repo: RepoRef;
   policy: Policy | undefined;
-  language: PolicyLanguage;
   record: DeliveryBinding | null;
-  args: string[];
-  startIndex: number;
+  plan: IssuePlan;
   requested: string[] | undefined;
   issueBodies: ReadonlyMap<number, string>;
-}): Promise<IssueOutcome | { openIssues?: OpenIssueFact[] }> {
+}): Promise<IssueOutcome | null> {
   const { policy, ctx, repo, record } = deps;
   if (policy === undefined ||
       (policy.validation?.titles !== true && (policy.validation?.labels ?? 'off') === 'off' &&
-       policy.validation?.bodies !== true && policy.templates?.issue?.required_sections === undefined)) return {};
+       policy.validation?.bodies !== true && policy.templates?.issue?.required_sections === undefined)) return null;
   const labelsEnabled = (policy.validation?.labels ?? 'off') !== 'off';
-  const conventionFailure = (failure: Extract<Evidence<true>, { ok: false }>): IssueOutcome => ({
-    exit: failure.code === 'title_evidence_missing' || failure.code === 'issue_labels_unavailable' || failure.code === 'body_evidence_missing' ? EXIT_UNKNOWN : EXIT_USAGE,
-    errors: [errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {})],
-  });
-  const remaining = deps.args.slice(deps.startIndex);
-  for (const title of remaining.filter((arg) => parseNumericRef(arg) === null)) {
-    const checked = checkTitleConvention(policy, title);
-    if (!checked.ok) return conventionFailure(checked);
-  }
-  let openIssues: OpenIssueFact[] | undefined;
-  if (remaining.some((arg) => parseNumericRef(arg) === null)) {
-    const open = await ctx.gh.getOpenIssues(repo);
-    if (!open.ok) return passthrough(open);
-    openIssues = open.value;
-  }
-  const plans: Array<{ number?: number; title?: string; kind?: string; index?: number }> = (record?.issues ?? []).map((number) => ({
-    number, kind: record?.issueKinds?.find((entry) => entry.issue === number)?.kind,
-  }));
-  const used = new Set(record?.issues ?? []);
-  for (const [offset, arg] of remaining.entries()) {
-    const numeric = parseNumericRef(arg);
-    if (numeric !== null) {
-      plans.push({ number: numeric });
-      used.add(numeric);
-      continue;
-    }
-    const candidates = (openIssues ?? []).filter((issue) => issue.title === arg && !used.has(issue.number));
-    const adopted = disambiguateAdoption(arg, candidates, deps.language);
-    if ('ambiguous' in adopted) return adoptionAmbiguousError(arg, candidates);
-    const number = 'candidate' in adopted ? adopted.candidate.number : undefined;
-    if (number !== undefined) used.add(number);
-    plans.push({ number, title: arg, kind: `kind::${parseIssueTitle(arg).type}`, index: deps.startIndex + offset });
-  }
+  const plans: Array<{ number?: number; kind?: string; index?: number }> = [
+    ...(record?.issues ?? []).map((number) => ({
+      number, kind: record?.issueKinds?.find((entry) => entry.issue === number)?.kind,
+    })),
+    ...deps.plan.entries.map((entry) => ({
+      number: entry.action === 'create' ? undefined : entry.number,
+      kind: entry.action === 'reuse' ? undefined : `kind::${parseIssueTitle(entry.title).type}`,
+      index: entry.index,
+    })),
+  ];
   for (const plan of plans) {
     let existingLabels: string[] = [];
     if (plan.number !== undefined) {
@@ -1069,14 +1000,13 @@ async function prepareIssueConventions(deps: {
       if (!labels.ok) return conventionFailure(labels);
     }
   }
-  return { openIssues };
+  return null;
 }
 
 /**
  * The issue creation loop (#177 extraction): for every unconsumed
- * argument, reuse the number, adopt an unambiguous same-title open issue
- * (#77), or create fresh — then persist the record after every issue so
- * any failure heals on the next invocation without re-creating. The
+ * planned issue, reuse its chosen number or create fresh, then persist
+ * the record so a failure heals on the next invocation without re-creating. The
  * delivery name is resolved once before any remote side effect (#246);
  * a resume keeps the recorded name.
  *
@@ -1090,17 +1020,8 @@ export async function createOrAdoptIssues(deps: {
   language: PolicyLanguage;
   context: DeliveryBinding['context'];
   record: DeliveryBinding | null;
-  args: string[];
-  startIndex: number;
+  plan: IssuePlan;
   firstTitle: string | null;
-  /** Explicit `--delivery` name; wins over the title slug (#246). */
-  deliveryOverride?: string;
-  /** Real-terminal session: the naming gap may be asked (#246). */
-  interactive?: boolean;
-  /** Injectable prompt transport; defaults to the terminal prompt (#246). */
-  promptDeliveryName?: (message: string) => Promise<string | null>;
-  /** The convention preflight's adoption snapshot; absent when validation is disabled. */
-  openIssues?: OpenIssueFact[];
   issueBodies?: ReadonlyMap<number, string>;
   closingHost?: string;
 }): Promise<IssueOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
@@ -1116,97 +1037,25 @@ export async function createOrAdoptIssues(deps: {
   let record: DeliveryBinding | null = deps.record;
   let firstTitle = deps.firstTitle;
 
-  // #246: resolve the delivery name BEFORE any remote side effect — a
-  // nameless bootstrap is a usage error and must never leave a created
-  // issue behind. Precedence: the recorded name on resume (never ask
-  // twice) → explicit `--delivery` → the ASCII title slug → an
-  // interactive prompt → a usage error naming the explicit flag.
-  let delivery: string;
-  if (deps.record !== null) {
-    delivery = deps.record.delivery;
-  } else {
-    const { human } = catalogFor(language);
-    const titleArg = firstTitleArg(deps.args);
-    const cleanTitle = titleArg !== null ? parseIssueTitle(titleArg).cleanTitle : '';
-    const resolved = await resolveDeliveryName({
-      cleanTitle,
-      override: deps.deliveryOverride,
-      interactive: deps.interactive === true,
-      prompt: deps.promptDeliveryName ?? terminalDeliveryNamePrompt,
-      promptText: human.deliveryNamePrompt(),
-      retryText: human.deliveryNameRetry(),
-    });
-    if ('exit' in resolved) {
-      return resolved;
-    }
-    delivery = resolved.name;
-  }
-
-  // Remotely discoverable idempotency marker for issue creation: an open
-  // issue whose title exactly matches a pending title argument is that
-  // argument's issue — a previous run created it but failed to record it
-  // (lost response, crash, or failed record write). Adopt it instead of
-  // duplicating the WHY. One title-carrying scan of the open issues
-  // (#77) replaces the former per-issue probe fan-out, so the probe cost
-  // is bounded by pages, not by the open-issue count. Probe failures
-  // fail closed: never guess.
-  const remaining = deps.args.slice(deps.startIndex);
-  const adoptable = new Map<string, OpenIssueFact[]>();
-  if (remaining.some((arg) => parseNumericRef(arg) === null)) {
-    const openEv = deps.openIssues === undefined
-      ? await ctx.gh.getOpenIssues(repo)
-      : { ok: true as const, value: deps.openIssues };
-    if (!openEv.ok) {
-      return passthrough(openEv);
-    }
-    for (const fact of openEv.value) {
-      if (typeof fact.title === 'string' && fact.title) {
-        const bucket = adoptable.get(fact.title) ?? [];
-        bucket.push(fact);
-        adoptable.set(fact.title, bucket);
-      }
-    }
-  }
-
-  for (let i = deps.startIndex; i < deps.args.length; i += 1) {
-    const arg = deps.args[i];
+  const delivery = deps.plan.delivery;
+  for (const entry of deps.plan.entries) {
     let number: number;
-    const reuseNumber = parseNumericRef(arg);
-    if (reuseNumber !== null) {
-      number = reuseNumber;
+    if (entry.action === 'create') {
+      const created = await ctx.gh.createIssue(repo, entry.title,
+        deps.issueBodies?.get(entry.index) ?? issueBody(entry.title, language));
+      if (!created.ok) return passthrough(created);
+      number = created.value.number;
     } else {
-      // Same-title adoption is disambiguated, never silent (#77): an
-      // exact title match binds only when it is unambiguous — one
-      // candidate, or a sole candidate carrying the deterministic
-      // scaffold body. An issue already bound in this run is not a
-      // candidate again; a repeated title argument creates fresh.
-      const bucket = adoptable.get(arg) ?? [];
-      const unbound = bucket.filter((c) => !issues.includes(c.number));
-      const resolved = disambiguateAdoption(arg, unbound, language);
-      if ('ambiguous' in resolved) {
-        return adoptionAmbiguousError(arg, unbound);
-      }
-      if ('candidate' in resolved) {
-        bucket.splice(bucket.indexOf(resolved.candidate), 1);
-        number = resolved.candidate.number;
-      } else {
-        const created = await ctx.gh.createIssue(repo, arg, deps.issueBodies?.get(i) ?? issueBody(arg, language));
-        if (!created.ok) {
-          return passthrough(created);
-        }
-        number = created.value.number;
-      }
-      if (firstTitle === null) {
-        firstTitle = arg;
-      }
+      number = entry.number;
     }
+    if (entry.action !== 'reuse' && firstTitle === null) firstTitle = entry.title;
     const occupancy = await issueOccupancyGate(ctx, repo, [number], deps.record, deps.closingHost);
     if (occupancy !== null) return occupancy;
     issues.push(number);
-    if (reuseNumber === null) {
+    if (entry.action !== 'reuse') {
       // #338: a title-bound issue records its own kind; a reused numeric
       // issue contributes none — it never inherits another title's.
-      const { type } = parseIssueTitle(arg);
+      const { type } = parseIssueTitle(entry.title);
       if (type) {
         issueKinds.set(number, `kind::${type}`);
       }

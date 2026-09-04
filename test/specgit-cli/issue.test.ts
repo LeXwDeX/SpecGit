@@ -1049,6 +1049,49 @@ describe('specgit issue: a bound PR that does not exist is terminal evidence (#2
 });
 
 describe('specgit issue: exactly-once issue creation (fault injection)', () => {
+  it('resolves every adoption before creating the first issue, even with convention validation off (#415)', async () => {
+    const t = issueCtx({
+      reconcile: { openIssues: [
+        { number: 31, title: 'fix: ambiguous why', body: 'First independent issue.' },
+        { number: 32, title: 'fix: ambiguous why', body: 'Second independent issue.' },
+      ] },
+    });
+    const outcome = await runIssue({ titles: ['feat: new why', 'fix: ambiguous why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_ambiguous');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
+  it('persists mixed reuse, adoption and creation in argument order from one snapshot (#415)', async () => {
+    const t = issueCtx({ reconcile: { openIssues: [{ number: 22, title: 'fix: existing why' }] } });
+    const outcome = await runIssue({ titles: ['21', 'fix: existing why', 'docs: new why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gh.getOpenIssues).toHaveBeenCalledOnce();
+    expect(t.harness.createdIssues.map((issue) => issue.title)).toEqual(['docs: new why']);
+    expect(t.recordPort.recordWrites.slice(0, 3).map(({ record }) => record.issues)).toEqual([
+      [21], [21, 22], [21, 22, 11],
+    ]);
+    expect(t.recordPort.recordWrites[2].record.issueKinds).toEqual([
+      { issue: 11, kind: 'kind::docs' }, { issue: 22, kind: 'kind::fix' },
+    ]);
+  });
+
+  it('rechecks a later planned issue after an earlier record write (#415)', async () => {
+    const t = issueCtx();
+    t.ctx.gh.listIssuePullRequests = vi.fn(async (_repo, issue) => ok(
+      issue === 22 && t.recordPort.recordWrites.length > 0 ? [{
+        number: 90, state: 'open' as const, headBranch: 'other-work', headSha: 'a'.repeat(40),
+        baseBranch: 'main', body: 'Closes #22', draft: true, mergeCommitSha: null,
+      }] : []
+    ));
+    const outcome = await runIssue({ titles: ['21', '22'], delivery: 'dynamic-claims' }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_already_claimed');
+    expect(t.recordPort.recordWrites.map(({ record }) => record.issues)).toEqual([[21]]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+  });
+
   it('persists each created issue incrementally, so a mid-loop failure resumes without duplicates', async () => {
     // Fault: the second createIssue fails after the first succeeded.
     let created = 0;
@@ -1525,12 +1568,8 @@ describe('createOrAdoptIssues explicit null guard (#216)', () => {
       language: 'en',
       context: { kind: 'branch', branch: 'feat/1-guard' },
       record: null,
-      args: [],
-      startIndex: 0,
+      plan: { delivery: 'guard', entries: [] },
       firstTitle: null,
-      // The name resolves before the loop (#246); the explicit override
-      // keeps this test on the null-guard path it exists to prove.
-      deliveryOverride: 'guard',
     });
     expect('exit' in outcome).toBe(true);
     if ('exit' in outcome) {

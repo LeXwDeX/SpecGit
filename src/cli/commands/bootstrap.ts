@@ -1,23 +1,11 @@
 /**
- * The delivery bootstrap chain (#278): the ordered steps `specgit
- * issue` walks after arguments and record are resolved — checkout,
- * commit the binding, push the head, bind the PR, commit the final
- * record, push the commit. The order is a contract (§5 of
- * docs/release-gates.md: a PR/MR for a head branch that was never
- * pushed is refused by both platforms; #323: a PR whose head adds no
- * commit over the base is refused too), so it lives here as data — one
- * registration per step with its precondition, resume marker, and
- * failure code — instead of statement sequence in the highest-churn
- * command file. Reordering the chain is a change to BOOTSTRAP_STEPS,
- * reviewable as such; `runIssue` is a thin facade over
- * `runBootstrapSteps`.
+ * The ordered delivery tail: checkout, commit the binding, push the head,
+ * bind the PR, commit the final record, then push it. The head must have a
+ * binding commit and be pushed before either forge can create the PR.
  *
- * Resume discipline (I4): each step's `resume` probe names the durable
- * marker of its completion — the live branch, the recorded PR number —
- * so a re-run from any partial state converges without repeating a
- * completed step. The two pushes are deliberately marker-less healing
- * steps: git push is idempotent, and re-running them is exactly how a
- * run that died mid-chain heals (#270).
+ * Preconditions read durable state (the current branch and recorded PR).
+ * Commits and pushes run again to heal partial failures; their transports
+ * are idempotent. Failures carry the diagnostic returned by the operation.
  */
 
 import { EXIT_UNKNOWN } from '../exit-codes.js';
@@ -140,22 +128,8 @@ export type BootstrapStepId =
 
 export interface BootstrapStep {
   id: BootstrapStepId;
-  /**
-   * The stable diagnostic code a failure of this step reports — the
-   * code the operator sees when the chain halts here.
-   */
-  failureCode: string;
-  /**
-   * The precondition that must hold before `run` executes; the runner
-   * skips the step when it already holds.
-   */
+  /** Run only while the operation is still needed for the current state. */
   precondition: (state: BootstrapState) => boolean;
-  /**
-   * The durable marker of completion: when it holds on resume, the step
-   * never runs again. null marks a healing step whose idempotent
-   * re-execution IS the resume mechanism (the pushes).
-   */
-  resume: ((state: BootstrapState) => boolean) | null;
   run: (deps: BootstrapStepContext) => Promise<BootstrapOutcome>;
 }
 
@@ -172,9 +146,7 @@ export interface BootstrapStep {
 function recordCommitStep(id: 'commit-binding' | 'commit-record'): BootstrapStep {
   return {
     id,
-    failureCode: 'git_commit_failed',
     precondition: () => true,
-    resume: null,
     run: async ({ ctx, root, state }) => {
       const commit = await ctx.git.commitFile(
         root,
@@ -199,9 +171,7 @@ function recordCommitStep(id: 'commit-binding' | 'commit-record'): BootstrapStep
 export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
   {
     id: 'checkout',
-    failureCode: 'git_checkout_failed',
     precondition: (state) => state.currentBranch !== state.record.context.branch,
-    resume: (state) => state.currentBranch === state.record.context.branch,
     run: async ({ ctx, root, state }) => {
       const checkout = await ctx.git.checkoutOrCreateBranch(root, state.record.context.branch);
       if (!checkout.ok) {
@@ -220,9 +190,7 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
     // It runs after `commit-binding`: the pushed head must differ from
     // the base (#323), not merely exist.
     id: 'push-head',
-    failureCode: 'git_push_failed',
     precondition: () => true,
-    resume: null,
     run: async ({ ctx, root, state }) => {
       const push = await ctx.git.pushBranch(root, state.record.context.branch);
       return push.ok ? { record: state.record } : passthrough(push);
@@ -230,9 +198,7 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
   },
   {
     id: 'bind-pr',
-    failureCode: 'pr_ambiguous',
     precondition: (state) => state.record.pr === undefined,
-    resume: (state) => state.record.pr !== undefined,
     run: async (deps) => {
       const { ctx, root, repo, language, state } = deps;
       const { human } = catalogFor(language);
@@ -258,9 +224,7 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
   recordCommitStep('commit-record'),
   {
     id: 'push-record-commit',
-    failureCode: 'git_push_failed',
     precondition: () => true,
-    resume: null,
     run: async ({ ctx, root, state }) => {
       const push = await ctx.git.pushBranch(root, state.record.context.branch);
       return push.ok ? { record: state.record } : passthrough(push);
@@ -269,9 +233,9 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
 ];
 
 /**
- * Walk the chain in order: skip a step whose precondition already
- * holds, halt on the first failure. Returns the bound record once every
- * step has run.
+ * Walk the chain in order: skip a step whose precondition is false and
+ * halt on the first operation failure. Return the bound record after all
+ * applicable steps finish.
  */
 export async function runBootstrapSteps(
   steps: readonly BootstrapStep[],

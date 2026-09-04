@@ -286,6 +286,33 @@ describe('GhCliGitHubProvider', () => {
   });
 
 
+  describe.each(['issue read', 'label write'] as const)('%s authentication evidence (#441)', (operation) => {
+    const invoke = (provider: GhCliGitHubProvider) => operation === 'issue read'
+      ? provider.getIssue(REPO, 439)
+      : provider.addIssueLabels(REPO, 439, ['kind::fix']);
+    const endpoint = operation === 'issue read'
+      ? '^api repos/LeXwDeX/SpecGit/issues/439$'
+      : '^api -X POST repos/LeXwDeX/SpecGit/issues/439/labels --input -$';
+
+    it.each([
+      'HTTP 403: Resource not accessible by integration',
+      'HTTP 403: You have exceeded a secondary rate limit. Please wait before trying again.',
+    ])('preserves the API refusal without claiming missing authentication: %s', async (reason) => {
+      const { provider, fake } = setup([{ match: endpoint, exit: 1, stderr: `\u001b[31m${reason}\u001b[0m\n` }]);
+      const result = await invoke(provider);
+      expect(result).toMatchObject({ ok: false, code: 'gh_transport', message: `GitHub CLI failed: ${reason}` });
+      expect(JSON.stringify(result)).not.toContain('gh auth login');
+      expect(readFakeGhCalls(fake.logPath)).toHaveLength(1);
+    });
+
+    it('keeps a real 401 authentication failure distinct and does not echo credential text', async () => {
+      const { provider } = setup([{ match: endpoint, exit: 1, stderr: 'HTTP 401: Bad credentials\nToken: test-secret-sentinel' }]);
+      const result = await invoke(provider);
+      expect(result).toMatchObject({ ok: false, code: 'gh_unauthenticated' });
+      expect(JSON.stringify(result)).not.toContain('test-secret-sentinel');
+    });
+  });
+
   it('fails closed with gh_missing when gh is not on PATH', async () => {
     const emptyBin = path.join(tempDir, 'empty-bin');
     fs.mkdirSync(emptyBin, { recursive: true });
@@ -603,6 +630,19 @@ describe('GhCliGitHubProvider', () => {
           workflow(6, 61, { workflow_id: 11, name: 'Security', conclusion: 'failure' })]);
       const result = await provider.getCheckRuns(REPO, SHA);
       expect(result.ok && result.value.map((run) => run.id)).toEqual([1, 3]);
+    });
+
+    it('keeps first-attempt job evidence terminal while all-CI still includes its pending workflow', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)],
+        [workflow(4, 41, { status: 'in_progress', conclusion: null })]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
+        { id: 1, status: 'completed', conclusion: 'success' },
+      ] });
+      const allCi = await provider.getPrChecks(REPO, 436);
+      expect(allCi.ok && allCi.value.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 1, status: 'completed', conclusion: 'success' }),
+        expect.objectContaining({ id: 4, status: 'in_progress', conclusion: null }),
+      ]));
     });
 
     it('keeps terminal jobs pending while their same-suite workflow rerun is running', async () => {
