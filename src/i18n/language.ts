@@ -86,6 +86,8 @@ export interface HumanText {
   // pr
   prBound(pr: number | string, delivery: string): string;
   prIssues(list: string): string;
+  automationCompleted(pr: number, target: string): string;
+  automationHandoffReason(): string;
   // bind
   bindHeader(delivery: string): string;
   bindContextWorktree(label: string, branch: string): string;
@@ -222,6 +224,8 @@ const EN_HUMAN: HumanText = {
     'Not a valid kebab-case name — try again (e.g. add-login): ',
   prBound: (pr, delivery) => `Bound PR #${pr} to delivery '${delivery}':`,
   prIssues: (list) => `  Issues: ${list}`,
+  automationCompleted: (pr, target) => `Merged #${pr} into ${target}; configured issue closure is complete.`,
+  automationHandoffReason: () => 'Verify all CI/CD on the current head, merge into the configured target, and complete configured issue closure.',
   bindHeader: (delivery) => `Bound delivery '${delivery}':`,
   bindContextWorktree: (label, branch) => `Context: worktree ${label} on ${branch}`,
   bindContextBranch: (branch) => `Context: branch ${branch}`,
@@ -337,6 +341,8 @@ const ZH_HUMAN: HumanText = {
     `SpecGit 交付分支：\`${branch}\`（草稿拉取请求 #${pr}）。`,
   prBound: (pr, delivery) => `已将 PR #${pr} 绑定到交付 '${delivery}'：`,
   prIssues: (list) => `  议题：${list}`,
+  automationCompleted: (pr, target) => `已将 #${pr} 合并到 ${target}，配置要求的议题关闭已完成。`,
+  automationHandoffReason: () => '核验当前提交的全部 CI/CD，合并到配置的目标分支，并完成配置要求的议题关闭。',
   bindHeader: (delivery) => `已绑定交付 '${delivery}'：`,
   bindContextWorktree: (label, branch) => `上下文：工作树 ${label}，分支 ${branch}`,
   bindContextBranch: (branch) => `上下文：分支 ${branch}`,

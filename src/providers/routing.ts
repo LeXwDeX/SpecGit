@@ -105,9 +105,10 @@ export class PlatformRoutingProvider implements ForgeProvider {
 
   async getCheckRuns(
     repo: RepoRef,
-    sha: string
+    sha: string,
+    pr?: number
   ): ReturnType<ForgeProvider['getCheckRuns']> {
-    return (await this.forRepo(repo)).getCheckRuns(repo, sha);
+    return (await this.forRepo(repo)).getCheckRuns(repo, sha, pr);
   }
 
   async getEvidenceAnchor(
@@ -115,6 +116,18 @@ export class PlatformRoutingProvider implements ForgeProvider {
     pr: number | string
   ): ReturnType<ForgeProvider['getEvidenceAnchor']> {
     return (await this.forRepo(repo)).getEvidenceAnchor(repo, pr);
+  }
+
+  async getPrChecks(repo: RepoRef, pr: number): ReturnType<ForgeProvider['getPrChecks']> {
+    return (await this.forRepo(repo)).getPrChecks(repo, pr);
+  }
+
+  async mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): ReturnType<ForgeProvider['mergePr']> {
+    return (await this.forRepo(repo)).mergePr(repo, pr, expectedHeadSha);
+  }
+
+  async closeIssue(repo: RepoRef, issue: number): ReturnType<ForgeProvider['closeIssue']> {
+    return (await this.forRepo(repo)).closeIssue(repo, issue);
   }
 
   async createIssue(

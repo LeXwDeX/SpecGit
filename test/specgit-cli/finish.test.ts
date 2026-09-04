@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { runCliWith } from '../../src/cli/index.js';
 import { runFinish } from '../../src/cli/commands/finish.js';
-import { makeCtx, makeEvaluate, makeVerdict, parseStdoutJson } from './helpers.js';
+import { makeCtx, makeEvaluate, makeVerdict, parseStdoutJson, samplePolicy } from './helpers.js';
 
 describe('specgit finish: evaluator parity with accept', () => {
   it('delegates to the same evaluation and reports command "finish"', async () => {
@@ -41,6 +41,19 @@ describe('specgit finish: evaluator parity with accept', () => {
     expect(actions.map((a: any) => a.code)).toEqual(['delivery_merge']);
     expect(actions[0].command).toContain('gh pr merge 42 --auto --merge');
     expect(String(actions[0].reason)).not.toContain('unbind');
+  });
+
+  it.each(['accepted', 'completed'] as const)('configured automation hands off %s without performing writes (#382)', async (state) => {
+    const t = makeCtx({
+      policy: samplePolicy({ automation: { merge: true, target_branch: 'main', close_issues: true } }),
+      evaluate: makeEvaluate(makeVerdict({ state })),
+    });
+    expect(await runCliWith(['node', 'specgit', 'finish', '--json'], t.ctx)).toBe(0);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.nextActions).toMatchObject([{ code: 'delivery_merge', command: 'specgit pr --merge' }]);
+    expect(t.ghProvider.calls).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
   });
 
   it('completed history: nextActions name the next delivery, never unbind (#361)', async () => {

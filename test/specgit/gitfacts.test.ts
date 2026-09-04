@@ -35,6 +35,20 @@ describe('LocalGitAdapter', () => {
     expect(facts.worktrees[0]).toEqual({ label: path.basename(root), branch: 'main' });
   });
 
+  it('requires origin HEAD evidence for an automation target while preserving the legacy fallback', async () => {
+    expect(await adapter.remoteDefaultBranch(root)).toEqual({ ok: true, value: 'main' });
+    expect(await adapter.remoteDefaultBranch(root, { requireEvidence: true })).toMatchObject({
+      ok: false,
+      code: 'git_default_branch_unknown',
+    });
+  });
+
+  it('resolves an explicitly recorded remote default branch in evidence mode', async () => {
+    git(root, ['update-ref', 'refs/remotes/origin/trunk', 'HEAD'], env);
+    git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk'], env);
+    expect(await adapter.remoteDefaultBranch(root, { requireEvidence: true })).toEqual({ ok: true, value: 'trunk' });
+  });
+
   it('reports branch null on detached HEAD while keeping the sha', async () => {
     git(root, ['checkout', '--detach'], env);
     const facts = await adapter.facts(root);

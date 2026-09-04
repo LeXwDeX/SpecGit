@@ -39,6 +39,43 @@ required_checks:
 - Optional `language: en | zh` selects the language of generated text (scaffolds, the managed guidance block, success prose; default `en`) — the machine contract is never localized. See [Language configuration](cli.md#language-configuration).
 - Optional `tags:` declares extra seedable label names for the pool-first tag selection — each entry is `name` (portable tag slug, ≤ 64 chars) plus optional six-hex `color` and `description` (≤ 300 chars). See [Delivery tags](cli.md#delivery-tags-330).
 
+`specgit init` asks whether to enable automatic merge and closure of bound issues.
+The answer defaults to **no**, including on `init --force`; a previous yes never
+becomes the next prompt's default. Scripts pass the user's answer explicitly with
+`--automation yes` or `--automation no`. Without an interactive terminal and
+without that flag, init chooses no and explains the decision on stderr, including
+in JSON mode. A no writes:
+
+```yaml
+automation:
+  merge: false
+  close_issues: false
+```
+
+A yes writes the selected target and enables both operations:
+
+```yaml
+automation:
+  merge: true
+  target_branch: main
+  close_issues: true
+```
+
+Choose the target with `--merge-target <branch>`. When that option is absent,
+init resolves the remote's default branch and refuses to enable automation if it
+cannot establish one; it does not assume `main`. A target must be a branch name,
+such as `main` or `release/stable`, rather than a revision expression, an option,
+or a fully qualified `refs/...` name. Enabling issue closure while merge is
+disabled is invalid. A policy without `automation` keeps automatic merge and
+closure disabled.
+
+The configuration authorizes `specgit pr --merge` to complete a delivery after
+its checks pass and the target matches. Bound issues are closed only after the
+forge confirms the merge. `specgit finish` remains the evidence verdict. To
+change the choice later, run `specgit init --force` and answer again; required
+checks, language, tags, and ordering settings are retained unless an option
+explicitly replaces them.
+
 Choosing names well is the real customization; the aggregator pattern in [GitHub Actions](actions.md) keeps names stable while CI evolves.
 
 ## 2. The platform declaration — `spec_git/providers.yaml`

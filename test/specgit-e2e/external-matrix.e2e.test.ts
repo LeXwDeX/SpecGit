@@ -114,7 +114,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
       const init = runInstalledSpecgit(fixture.dir, ['init', '--no-protect', '--json'], env(preGh));
       expect(init.status, init.stderr).toBe(0);
       const initEnvelope = parseInstalledJson(init);
-      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [] });
+      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [], automation: { merge: false, close_issues: false } });
       expect(initEnvelope.harness).toEqual({ template: 'external' });
 
       // The default branch is genuinely non-main; the generated workflow
@@ -286,7 +286,7 @@ describe('e2e external matrix (#67): main + existing CI', () => {
       const init = runInstalledSpecgit(fixture.dir, ['init', '--no-protect', '--json']);
       expect(init.status, init.stderr).toBe(0);
       const initEnvelope = parseInstalledJson(init);
-      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [EXT_CHECK] });
+      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [EXT_CHECK], automation: { merge: false, close_issues: false } });
       expect(initEnvelope.harness).toEqual({ template: 'external' });
       const workflowPath = path.join(fixture.dir, ...HARNESS_WORKFLOW_PATH.split('/'));
       const workflow = fs.readFileSync(workflowPath, 'utf-8');

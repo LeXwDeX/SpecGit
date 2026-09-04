@@ -18,7 +18,7 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
 - Ten commands. Human story: `specgit issue` (one-command bootstrap,
   idempotent resume) → `specgit finish` (verdict; the CI gate runs this
   in `.github/workflows/specgit-accept.yml`), with `specgit pr`
-  (repair the PR binding: auto-discover by head branch), `specgit
+  (repair the PR binding; `--merge` executes configured automation), `specgit
   setup` (agent entry points: commands/skills), and `specgit
   init` / `status` / `doctor` for setup and diagnostics. Machine
   aliases for scripts: `bind`, `unbind`, `accept` — nothing else is
@@ -36,6 +36,10 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
   evaluator).
 - One issue = one independently verifiable WHY; one delivery binds N
   issues to one PR that closes them all.
+- Automation is opt-in: `init` and `init --force` ask the user yes/no,
+  default no. Agents cannot answer yes for the user. `pr --merge` requires
+  the configured target, accepted evidence and all current CI/CD passing;
+  `finish` and `accept` remain read-only. Details: [docs/cli.md](docs/cli.md).
 - Provider seams: git facts come from **local git** (`src/gitfacts`);
   platform evidence (issues, PRs/MRs, checks) flows exclusively through
   authenticated CLIs — `gh` for GitHub (`src/providers/github/gh-cli.ts`,
@@ -68,7 +72,7 @@ conveniences, never acceptance inputs). Verdicts are never persisted.
 ## Working discipline
 
 - Development loop (binding): [workflows/specgit-dev-loop.md](workflows/specgit-dev-loop.md)
-  — TDD slices, PR to `main`, single push-right checkpoint at the PR brief.
+  — TDD slices, PR to `main`, a reviewable PR brief and existing user authorization.
 - Pre-merge quality loop (binding):
   [workflows/quality-loop.md](workflows/quality-loop.md) — REVIEW →
   DEBUG → FIX until clean (fast rounds, then one full two-axis review),
@@ -112,8 +116,12 @@ already exists); keep manual guidance outside them.
 - A draft pull request always fails the verdict (`pr_draft`): before
   `specgit finish`, mark it ready for review — `gh pr ready <number>`
   on GitHub, `glab mr update <number> --ready` on GitLab.
-- Finish with `specgit finish`: the verdict, derived from real git, PR,
-  and CI evidence. Exit code 0 is the only "done".
+- `specgit finish` is read-only: its verdict comes from real git, PR,
+  and CI evidence; exit 0 is the only acceptance. With automation enabled,
+  continue with `specgit pr --merge --json`: it verifies the policy's
+  `target_branch`, fresh acceptance, and all CI checks passing at the
+  current PR head, then confirms the merge before closing bound issues
+  when configured.
 
 ### Issue tags
 
@@ -143,6 +151,9 @@ already exists); keep manual guidance outside them.
 - `specgit setup` installs the agent entry points (commands for opencode,
   portable skills for other tools); `specgit bind`, `specgit unbind`,
   and `specgit accept` are automation aliases for scripts and CI.
+- Automation defaults to off (`--automation no`). Only when the user personally chooses
+  yes may `specgit init --automation yes --merge-target <branch>` enable it;
+  `init --force` can change that choice. An agent must not answer yes for the user.
 
 ### Before creating an issue, check for duplicates
 
@@ -189,6 +200,11 @@ verified on its own evidence, split it before binding.
 - The one rule: a delivery is done if and only if `specgit finish`
   exits `0`. Never declare completion from task lists, file states, or
   test runs you performed yourself.
+- Use existing user authorization to complete issue bodies, the PR body
+  and ready transition, CI repairs or retries, acceptance, and the authorized
+  merge. When user authorization or platform permission is missing, present
+  the prepared result and name the specific gap. Documentation and entry
+  points do not grant permission themselves.
 - Branch on exit codes, not phrasing: `1` = evidence complete, fix what
   the gates named; `3` = evidence missing, fix the environment first
   (`specgit doctor`). Never present exit `3` as success.

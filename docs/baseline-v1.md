@@ -42,11 +42,11 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 
 | Command | Role |
 | --- | --- |
-| `specgit init` | Public. Create the policy, generate the harness. |
+| `specgit init` | Public. Create the policy, generate the harness, ask the automation choice (yes/no, default no); `--force` regenerates and asks again. |
 | `specgit setup` | Public. Install agent entry points (`--tool opencode \| generic \| all`). |
 | `specgit issue` | Public. One-command delivery bootstrap; idempotent resume. |
-| `specgit pr` | Public. Repair the PR binding. |
-| `specgit finish` | Public. The verdict; the CI gate runs this. |
+| `specgit pr` | Public. Repair the PR binding; `--merge` executes configured, guarded merge and issue closure. |
+| `specgit finish` | Public. Read-only verdict; the CI gate runs this. |
 | `specgit status` | Public. Local evidence only, zero network. |
 | `specgit doctor` | Public. Probe prerequisites. |
 | `specgit bind` | Automation alias. Record edits from scripts. |
@@ -54,6 +54,33 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 | `specgit accept` | Automation alias. The same evaluation as `finish`. |
 
 Nothing else is public surface. Full reference: [cli.md](cli.md).
+
+## Optional merge and closure automation
+
+- Automation defaults to disabled. Interactive `init` and `init --force`
+  ask yes/no with no as the default; scripts may supply the user's answer
+  with `--automation yes|no`. Without a supplied answer, non-interactive
+  initialization records no. Agents cannot answer yes for the user.
+- Policy `automation.merge: true` requires `target_branch`; enabling through
+  init takes `--merge-target` or a proved remote default branch.
+  `close_issues: true` additionally requires merge automation. Existing
+  policy settings survive `init --force`; `--protect` does not enable
+  delivery automation.
+- `pr --merge` requires complete acceptance and all current-head CI/CD to
+  pass, then submits the expected head SHA to the authenticated forge CLI.
+  Only non-required skipped checks are ignored; at least one executed check
+  must succeed. GitLab includes the authoritative MR pipeline and its
+  downstream pipelines. Missing or truncated evidence fails closed.
+- The command verifies the configured target, confirms remote merge, then
+  closes bound issues when configured. Merge closes the PR/MR; it never
+  abandons an unmerged request. Retries reconcile confirmed remote state.
+  The JSON `automation` result distinguishes blocked, pending, unknown and
+  completed outcomes. `finish` and `accept` remain read-only.
+- Platforms atomically enforce the head SHA, but expose no equivalent
+  target-branch compare-and-swap. SpecGit checks target and body before and
+  after merge, stopping further actions on mismatch. Explicit issue closure
+  does not override native forge commit-message closing behavior; see
+  [cli.md](cli.md) for the complete boundary.
 
 ## Exit codes, JSON, and environment
 
@@ -105,6 +132,9 @@ Verdicts and delivery states are derived per invocation and never persisted.
 Releases are automatic, PR-gated, and OIDC-based ([release-prepare.yml](../.github/workflows/release-prepare.yml)):
 
 1. A feature/fix PR carries its changeset (`.changeset/*.md`); merging to `main` opens (or force-updates) the **version PR** `changeset-release/main` with the consumed bump.
+   The version PR remains open by default. Configured merge automation with
+   target `main` waits for all current-head CI and merges with the expected
+   SHA, preserving platform protection.
 2. Merging the version PR lands `chore(release): v<version>` on `main`, which builds, verifies the packed version, and publishes to npm via **OIDC trusted publishing** (no token, no environment secret) with provenance. The publish gate is registry evidence — no pending changesets and `package.json`'s version absent from npm — not the head commit message, so the merge strategy cannot suppress a release; `workflow_dispatch` is the manual retry entry point.
 3. The tag `v<version>` and the GitHub Release follow; every step is idempotent, decided by tag/npm existence — a replay never double-publishes.
 4. Direct pushes to `main` are refused by the pre-push guard, so **every published version traces to a merged PR**. Release candidates are verified without accidental final publish via dry-runs (`npm publish --dry-run`, tarball inspection) and the tag-based idempotence above.

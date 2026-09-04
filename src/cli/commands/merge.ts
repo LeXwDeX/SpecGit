@@ -1,0 +1,226 @@
+/** Configured, exact-head merge execution behind `specgit pr --merge`. */
+import type { CheckRunInfo, PrFact } from '../../github/port.js';
+import { hasUnboundClosingRefs } from '../../github/closing-refs.js';
+import { extractOriginHost } from '../../gitfacts/origin.js';
+import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
+import { errorDiagnostic, humanBuilder, renderNextActionsHuman, type NextAction, type PrAutomation, type PrOutcome } from '../output.js';
+import { catalogFor, resolveLanguage } from '../language.js';
+import type { CommandContext, Evidence } from '../types.js';
+
+const FULL_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+
+function missingChecks(checks: CheckRunInfo[], required: string[]): string | null {
+  if (checks.length === 0) return 'No CI/CD checks were reported for the pull request head.';
+  const names = new Set(checks.map((check) => check.name));
+  const missing = required.filter((name) => !names.has(name));
+  return missing.length > 0 ? `Required checks are missing: ${missing.join(', ')}.` : null;
+}
+
+export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
+  const progress: PrAutomation = { status: 'blocked', merged: false, closedIssues: [] };
+  const stop = (code: string, message: string, exit = EXIT_REJECTED, fix?: string): PrOutcome => ({
+    exit,
+    ...(progress.pr !== undefined ? { state: 'bound' as const } : {}),
+    automation: {
+      ...progress,
+      status: exit === EXIT_UNKNOWN ? 'unknown' : progress.status,
+      closedIssues: [...progress.closedIssues],
+    },
+    errors: [errorDiagnostic(code, message, fix === undefined ? {} : { fix })],
+  });
+  const unavailable = (failure: Extract<Evidence<unknown>, { ok: false }>): PrOutcome =>
+    stop(failure.code, failure.message, EXIT_UNKNOWN, failure.fix);
+
+  const root = await ctx.discoverRoot(ctx.cwd);
+  if (!root.ok) return unavailable(root);
+  const [record, policy] = await Promise.all([
+    ctx.record.readRecord(root.value), ctx.record.readPolicy(root.value),
+  ]);
+  if (!record.ok) return unavailable(record);
+  if (!policy.ok) return unavailable(policy);
+  const automation = policy.value.automation;
+  if (automation?.merge !== true) {
+    return stop('automation_disabled', 'Merge automation is not enabled in spec_git/policy.yaml.', EXIT_USAGE,
+      'Run "specgit init --force" to choose whether to enable it; only the user may answer yes.');
+  }
+  if (automation.target_branch === undefined) {
+    return stop('automation_target_required', 'Configure automation.target_branch before merging.', EXIT_USAGE);
+  }
+  if (record.value.pr === undefined || record.value.issues.length === 0) {
+    return stop('automation_binding_incomplete', 'Bind the delivery issues and pull request before merging.', EXIT_USAGE);
+  }
+  progress.targetBranch = automation.target_branch;
+  const { human } = catalogFor(resolveLanguage(policy.value));
+  const lineageActions: NextAction[] = [{
+    code: 'merge_lineage', command: 'git fetch origin',
+    reason: `Fetch and check out '${automation.target_branch}' containing the merge, then retry specgit pr --merge.`,
+  }];
+  const explainLineage = (outcome: PrOutcome): PrOutcome => ({
+    ...outcome, nextActions: lineageActions,
+    human: renderNextActionsHuman(human.nextHeadline(), lineageActions),
+  });
+
+  const facts = await ctx.git.facts(root.value);
+  if (!facts.originUrl) return stop('no_origin', 'No origin remote is configured.', EXIT_UNKNOWN);
+  const repo = await ctx.parseRepoRef(facts.originUrl);
+  if (!repo.ok) return unavailable(repo);
+  const initial = await ctx.gh.getPr(repo.value, record.value.pr);
+  if (!initial.ok) return unavailable(initial);
+  const observed = initial.value;
+  progress.pr = observed.number;
+  progress.headSha = observed.headSha;
+  progress.merged = observed.state === 'merged';
+  if (!FULL_SHA.test(observed.headSha)) {
+    return stop('automation_head_unavailable', 'The pull request head is not a full commit SHA.', EXIT_UNKNOWN);
+  }
+  if (observed.baseBranch !== automation.target_branch) {
+    return stop('automation_target_mismatch', `The pull request targets '${observed.baseBranch}', but automation permits '${automation.target_branch}'.`);
+  }
+  const originHost = extractOriginHost(facts.originUrl);
+  const nonDefaultPort = originHost?.port !== null && originHost?.port !== undefined &&
+    !((originHost.scheme === 'https' && originHost.port === '443') ||
+      (originHost.scheme === 'ssh' && originHost.port === '22'));
+  const closingHost = originHost === null ? undefined :
+    `${originHost.host}${nonDefaultPort ? `:${originHost.port}` : ''}`;
+  if (hasUnboundClosingRefs(observed.body, repo.value.platform, {
+    projectPath: `${repo.value.owner}/${repo.value.repo}`, host: closingHost,
+  }, record.value.issues)) {
+    return stop('automation_unbound_closing_refs', 'The pull request body contains closing references outside the bound issues. Remove or replace those references before automated merging.');
+  }
+
+  // A resumed closure must prove which merged delivery the checkout
+  // contains, even when the old source branch still exists.
+  if (observed.state === 'merged') {
+    if (!observed.mergeCommitSha) {
+      return explainLineage(stop('merged_lineage_unavailable', 'The merged pull request has no lineage anchor.', EXIT_UNKNOWN));
+    }
+    const lineage = await ctx.git.headContains(root.value, observed.mergeCommitSha);
+    if (!lineage.ok) {
+      return explainLineage(unavailable(lineage));
+    }
+    if (!lineage.value.contained) {
+      return explainLineage(stop('merged_delivery_not_contained', 'Local HEAD does not contain the merged delivery.', EXIT_REJECTED,
+        'Fetch and check out the target branch containing the merge, then retry "specgit pr --merge".'));
+    }
+  }
+
+  const verdict = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  if (verdict.exitCode !== 0 || !verdict.accepted || !verdict.complete) {
+    const failure = verdict.gates.flatMap((gate) => gate.failures)[0];
+    if (failure?.code === 'checks_pending') progress.status = 'pending';
+    return stop(failure?.code ?? 'automation_not_accepted', failure?.message ?? 'Acceptance has not passed.',
+      verdict.exitCode === 0 ? EXIT_UNKNOWN : verdict.exitCode, failure?.fix);
+  }
+  if (verdict.evidence.pr !== observed.number || verdict.evidence.prHead !== observed.headSha) {
+    return stop('automation_head_changed', 'The pull request changed while acceptance was evaluated. Retry with fresh evidence.');
+  }
+
+  const ci = await ctx.gh.getPrChecks(repo.value, observed.number);
+  if (!ci.ok) return unavailable(ci);
+  if (ci.value.headSha !== observed.headSha) {
+    return stop('automation_head_changed', 'CI/CD evidence belongs to a different pull request head.');
+  }
+  const missing = missingChecks(ci.value.checks, policy.value.required_checks);
+  if (missing !== null) return stop('automation_checks_missing', missing);
+  if (repo.value.platform === 'gitlab' && ci.value.pipelineStatus !== 'success') {
+    if (ci.value.pipelineStatus === undefined) {
+      return stop('automation_pipeline_unavailable', 'The GitLab head pipeline status is unavailable.', EXIT_UNKNOWN);
+    }
+    progress.status = ['created', 'pending', 'preparing', 'running', 'waiting_for_resource', 'scheduled', 'manual']
+      .includes(ci.value.pipelineStatus) ? 'pending' : 'blocked';
+    return stop('automation_pipeline_not_successful', `The GitLab head pipeline is ${ci.value.pipelineStatus}.`);
+  }
+  const required = new Set(policy.value.required_checks);
+  let executed = 0;
+  for (const check of ci.value.checks) {
+    if (!required.has(check.name) && check.status === 'completed' && check.conclusion === 'skipped') continue;
+    executed++;
+    if (check.status !== 'completed') {
+      progress.status = 'pending';
+      return stop('automation_checks_pending', `CI/CD check '${check.name}' is ${check.status}.`);
+    }
+    if (check.conclusion !== 'success') {
+      return stop('automation_checks_failed', `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.`);
+    }
+  }
+  if (executed === 0) return stop('automation_checks_missing', 'No executed CI/CD checks prove this head successful.');
+
+  const bindingUnchanged = async (): Promise<PrOutcome | null> => {
+    const [currentRecord, currentPolicy] = await Promise.all([
+      ctx.record.readRecord(root.value), ctx.record.readPolicy(root.value),
+    ]);
+    if (!currentRecord.ok) return unavailable(currentRecord);
+    if (!currentPolicy.ok) return unavailable(currentPolicy);
+    if (JSON.stringify(currentRecord.value) !== JSON.stringify(record.value) ||
+        JSON.stringify(currentPolicy.value) !== JSON.stringify(policy.value)) {
+      return stop('automation_binding_changed', 'The delivery binding or policy changed during automation. Retry with fresh evidence.');
+    }
+    return null;
+  };
+  const changedPr = (current: PrFact): boolean =>
+    current.number !== observed.number || current.headSha !== observed.headSha ||
+    current.headBranch !== observed.headBranch || current.baseBranch !== observed.baseBranch ||
+    current.body !== observed.body || current.draft;
+
+  const localChange = await bindingUnchanged();
+  if (localChange) return localChange;
+  const beforeMerge = await ctx.gh.getPr(repo.value, observed.number);
+  if (!beforeMerge.ok) return unavailable(beforeMerge);
+  if (changedPr(beforeMerge.value)) {
+    return stop('automation_head_changed', 'The pull request changed after CI/CD verification. Retry with fresh evidence.');
+  }
+  if (beforeMerge.value.state !== 'merged') {
+    if (beforeMerge.value.state !== 'open') return stop('pr_closed_unmerged', 'The pull request closed without merging.');
+    const merged = await ctx.gh.mergePr(repo.value, observed.number, observed.headSha);
+    if (!merged.ok) return unavailable(merged);
+    if (!merged.value.merged) {
+      progress.status = 'pending';
+      return stop('automation_merge_pending', 'The platform has not completed the requested merge.');
+    }
+  }
+  const confirmed = await ctx.gh.getPr(repo.value, observed.number);
+  if (!confirmed.ok) return unavailable(confirmed);
+  if (changedPr(confirmed.value)) {
+    return stop('automation_head_changed', 'The merged pull request no longer matches the verified delivery.');
+  }
+  if (confirmed.value.state !== 'merged') {
+    progress.status = 'pending';
+    return stop('automation_merge_unconfirmed', 'The platform has not confirmed the pull request as merged.');
+  }
+  progress.merged = true;
+  const afterMergeChange = await bindingUnchanged();
+  if (afterMergeChange) return afterMergeChange;
+
+  if (automation.close_issues) {
+    for (const number of record.value.issues) {
+      const issue = await ctx.gh.getIssue(repo.value, number);
+      if (!issue.ok) return unavailable(issue);
+      if (issue.value.number !== number || issue.value.pullRequest) {
+        return stop('automation_issue_mismatch', `Bound issue #${number} did not resolve to that issue.`);
+      }
+      if (issue.value.state === 'closed') continue;
+      const changed = await bindingUnchanged();
+      if (changed) return changed;
+      const closed = await ctx.gh.closeIssue(repo.value, number);
+      if (!closed.ok) return unavailable(closed);
+      if (!closed.value.closed) {
+        return stop('automation_issue_close_unconfirmed', `The platform did not confirm issue #${number} closed.`, EXIT_UNKNOWN);
+      }
+      progress.closedIssues.push(number);
+    }
+  }
+  progress.status = 'completed';
+  const nextActions: NextAction[] = [{
+    code: 'next_delivery', command: 'specgit issue "<type>: <title>"',
+    reason: human.finishHandoffReasons()['next_delivery'] ?? '',
+  }];
+  return {
+    exit: EXIT_SUCCESS,
+    state: 'completed',
+    automation: progress,
+    nextActions,
+    human: humanBuilder()
+      .line(human.automationCompleted(observed.number, observed.baseBranch))
+      .append(renderNextActionsHuman(human.nextHeadline(), nextActions)).build(),
+  };
+}

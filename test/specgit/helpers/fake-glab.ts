@@ -36,9 +36,10 @@ export interface FakeGlab {
  */
 const GITLAB_API_ROUTES: Array<{ pattern: string; methods: string[] }> = [
   { pattern: '^projects/[^/]+/labels$', methods: ['GET', 'POST'] },
-  { pattern: '^projects/[^/]+/issues/\\d+/notes$', methods: ['POST'] },
+  { pattern: '^projects/[^/]+/issues/\\d+/notes$', methods: ['GET', 'POST'] },
   { pattern: '^projects/[^/]+/issues/\\d+$', methods: ['GET', 'PUT'] },
   { pattern: '^projects/[^/]+/issues$', methods: ['GET', 'POST'] },
+  { pattern: '^projects/[^/]+/merge_requests/[^/]+/merge$', methods: ['PUT'] },
   { pattern: '^projects/[^/]+/merge_requests/[^/]+$', methods: ['GET'] },
   { pattern: '^projects/[^/]+/merge_requests$', methods: ['GET', 'POST'] },
   { pattern: '^projects/[^/]+/protected_branches/[^/]+$', methods: ['GET'] },
@@ -197,6 +198,7 @@ export function createFakeGlab(
   // #330 baseline: bootstrap probes the project label pool in inferred
   // mode. User rules stay first so scenarios can override any behavior.
   const labelBaseline: FakeGlabRule[] = [
+    { match: '/issues/[0-9]+/notes\\?per_page=', stdout: '[]' },
     { match: '/labels\\?per_page=', stdout: '[]' },
     { match: '-X POST projects/[^ ]+/labels', labelEcho: true },
     { match: '-X PUT projects/[^ ]+/issues/[0-9]+', issueLabelEcho: true },

@@ -5,8 +5,8 @@ name: Release
 #
 # 1. push to main with pending changesets -> open (or force-update) the
 #    branch changeset-release/main carrying the consumed bump commit
-#    "chore(release): v<version>" as a PR held open as the manual
-#    batch-decision point (auto-merge armed off, #102).
+#    "chore(release): v<version>" as a PR. Configured automation (#382)
+#    merges its exact head only after all CI succeeds; default is disabled.
 # 2. that PR merges (SpecGit Acceptance passes via its no-record skip
 #    path) -> push to main with no pending changesets and package.json
 #    version not yet on npm -> publish to npm, tag, GitHub Release.
@@ -130,14 +130,6 @@ jobs:
               }
             fi
           fi
-          # Batch mode (#102): do not arm auto-merge on the version PR.
-          # It stays open as the manual batch-decision point — a human
-          # decides when the batch (nine-issue fixes plus GitLab
-          # evidence) ships as a deliberate rc cut.
-          # Re-arm condition (#107, user ruling 2026-08-20): auto-merge
-          # stays armed off through the 1.0.0 line — every version PR is
-          # the manual batch-decision point; the re-arm decision is
-          # re-evaluated after 1.0.0 ships.
 
       - name: Verify version PR workflows started (not awaiting approval)
         if: steps.pending.outputs.count != '0'
@@ -167,6 +159,19 @@ jobs:
           done
           echo "::error::No workflow runs appeared for the version PR head within 120s; investigate the PR checks manually."
           exit 1
+
+      # #382: automation.merge must be true with target_branch: main.
+      # Disabled policy leaves the proposal open. The script waits at most
+      # 20 minutes for all checks, classic statuses and workflow runs, then
+      # requests a server-side SHA-conditional merge and verifies its state.
+      - name: Merge version pull request when configured
+        if: steps.pending.outputs.count != '0'
+        timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
+        run: |
+          pnpm run build
+          node scripts/merge-version-pr.mjs
 
       # This version is not on npm and carries no tag: publish it.
       - name: Build

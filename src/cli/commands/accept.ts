@@ -43,7 +43,16 @@ export async function runAccept(
     ctx.record.readPolicy(root.value),
   ]);
 
-  const verdict = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  const evaluated = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  const automated = policy.ok && policy.value.automation?.merge === true;
+  const verdict = automated && evaluated.state === 'completed'
+    ? {
+        ...evaluated,
+        warnings: evaluated.warnings.map((warning) => warning.code === 'record_of_merged_delivery'
+          ? { ...warning, fix: 'Complete the configured issue-closure step before starting the next delivery.' }
+          : warning),
+      }
+    : evaluated;
 
   // Success-path headline follows the policy language (#118); the
   // per-gate failure lines are diagnostic evidence and stay English.
@@ -68,7 +77,11 @@ export async function runAccept(
   const reasonFor = text.finishHandoffReasons();
   let nextActions: NextAction[] | undefined;
   if (verdict.classification === 'accepted') {
-    if (verdict.state === 'completed') {
+    if (automated) {
+      nextActions = [{
+        code: 'delivery_merge', command: 'specgit pr --merge', reason: text.automationHandoffReason(),
+      }];
+    } else if (verdict.state === 'completed') {
       nextActions = [
         {
           code: 'next_delivery',
@@ -121,7 +134,7 @@ export async function runAccept(
       // hand-off twice would break the exactly-once intent (#362); the
       // envelope keeps the structured action for machines.
       .append(
-        verdict.state === 'completed'
+        verdict.state === 'completed' && !automated
           ? []
           : renderNextActionsHuman(text.nextHeadline(), nextActions ?? [])
       )

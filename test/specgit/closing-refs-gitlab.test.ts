@@ -33,6 +33,34 @@ const GITLAB_KEYWORDS = [
 ];
 
 describe('parseClosingRefs (gitlab dialect)', () => {
+  it('compares the complete subgroup path and declared host including port (#375)', () => {
+    const scope = { projectPath: 'group/sub/project', host: 'git.example.com:8443' };
+    const body = [
+      'Closes #1, group/sub/project#2',
+      'Resolves https://GIT.EXAMPLE.COM:8443/group/sub/project/-/issues/3',
+      'Closes group/other/project#4',
+      'Closes https://git.example.com/group/sub/project/-/issues/5',
+      'Closes https://git.example.com:9443/group/sub/project/-/issues/6',
+      'Closes https://other.example.com:8443/group/sub/project/-/issues/7',
+      'Closes https://git.example.com:8443/group/other/project/-/issues/8',
+    ].join('\n');
+    expect(parseClosingRefs(body, 'gitlab', scope)).toEqual(new Set([1, 2, 3]));
+  });
+
+  it('normalizes default HTTPS ports and encoded group paths without accepting URL credentials (#375)', () => {
+    const scope = { projectPath: 'group/sub/project', host: 'git.example.com:443' };
+    const body = [
+      'Closes https://git.example.com/group%2Fsub%2Fproject/-/issues/1',
+      'Closes https://git.example.com:0443/group/sub/project/-/issues/2',
+      'Closes https://git.example.com@other.example.com/group/sub/project/-/issues/3',
+      'Closes https://user@git.example.com/group/sub/project/-/issues/4',
+      'Closes https://git.example.com/%ZZ/-/issues/5',
+    ].join('\n');
+    expect(parseClosingRefs(body, 'gitlab', scope)).toEqual(new Set([1, 2]));
+    expect(parseClosingRefs('Closes https://git.example.com/group/sub/project/-/issues/1', 'gitlab', {
+      projectPath: scope.projectPath,
+    })).toEqual(new Set());
+  });
   it('parses all 16 keyword forms in 4 families, lower and initial-case', () => {
     for (const keyword of GITLAB_KEYWORDS) {
       expect(gl(`${keyword} #5`), keyword).toEqual(new Set([5]));

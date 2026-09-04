@@ -31,6 +31,33 @@ export const PolicyTagSchema = z
 
 export type PolicyTag = z.infer<typeof PolicyTagSchema>;
 
+/** A branch name, not a revision expression, option, or fully qualified ref. */
+export function isAutomationTargetBranch(branch: string): boolean {
+  return branch.length > 0 &&
+    branch !== 'HEAD' && branch !== '@' &&
+    !branch.startsWith('-') && !branch.startsWith('refs/') && !branch.endsWith('.') &&
+    !/[\s\p{Cc}\p{Cf}~^:?*\[\\]/u.test(branch) &&
+    !branch.includes('..') && !branch.includes('@{') &&
+    branch.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'));
+}
+
+export const PolicyAutomationSchema = z.object({
+  merge: z.boolean(),
+  target_branch: z.string().refine(isAutomationTargetBranch, {
+    message: 'Use a branch name such as main or release/stable, without revision syntax or options.',
+  }).optional(),
+  close_issues: z.boolean().optional(),
+}).strict().superRefine((automation, ctx) => {
+  if (automation.merge && automation.target_branch === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['target_branch'], message: 'Automatic merge requires an explicit target branch.' });
+  }
+  if (!automation.merge && automation.close_issues === true) {
+    ctx.addIssue({ code: 'custom', path: ['close_issues'], message: 'Automatic issue closure requires automatic merge to be enabled.' });
+  }
+});
+
+export type PolicyAutomation = z.infer<typeof PolicyAutomationSchema>;
+
 export const PolicySchema = z
   .object({
     version: z.literal(1),
@@ -51,6 +78,8 @@ export const PolicySchema = z
      * unknown slug the selection refuses.
      */
     tags: z.array(PolicyTagSchema).optional(),
+    /** Explicit authorization for merge and issue closure; absent means disabled. */
+    automation: PolicyAutomationSchema.optional(),
   })
   .strict();
 

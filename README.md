@@ -46,7 +46,9 @@ repository), execute this protocol — no further questions needed:
    authenticated, ask the user to run the matching `… auth login`)
 3. In the repository root: `specgit init` (auto-detects the required CI
    checks; add `--gitlab-host <hostname>` when the origin is a self-managed
-   GitLab instance) then `specgit setup` (installs your entry points:
+   GitLab instance). Ask the user whether to enable automatic merge and issue
+   closure: **yes/no, default no**. Never answer yes on the user's behalf.
+   Then run `specgit setup` (installs your entry points:
    commands for opencode, portable skills for other tools)
 4. Commit the generated harness (`spec_git/`, the acceptance workflow,
    `AGENTS.md` managed block, hooks) on a branch and open a PR
@@ -54,7 +56,24 @@ repository), execute this protocol — no further questions needed:
 
 From then on, deliveries are two commands: `specgit issue "<title>"` →
 work → `specgit finish` (exit 0 is the only done). The AGENTS.md managed
-block is your behavior contract.
+block is your behavior contract. Once the user authorizes delivery, the agent
+executes the returned `nextActions`, fills the issue/PR bodies from the agreed
+scope, fixes failures, and follows CI through the verified merge and any
+authorized release. Routine commands are agent work; an existing authorization
+does not expire at the merge brief. Missing credentials or a failed gate remain
+explicit blockers. `finish` itself stays a read-only evidence verdict.
+
+Automatic merge and closure are opt-in. Every interactive `specgit init`,
+including `specgit init --force`, asks again with **no** as the default.
+Answering yes saves `automation.merge`, `automation.target_branch`, and
+`automation.close_issues` in the policy. Use `--merge-target <branch>` to
+specify the destination; otherwise init must prove the remote default branch.
+Scripts can supply the user's answer with `--automation yes|no`; without an
+answer, non-interactive init leaves automation disabled and reports that choice.
+Once enabled, `specgit pr --merge` requires acceptance and all current CI/CD
+checks to pass for the exact head, merges into the configured target, confirms
+the merged state, and explicitly closes bound issues. `specgit init --force` lets
+the user enable it later or turn it off again.
 
 ## What SpecGit is
 
@@ -235,14 +254,24 @@ under `.agents/skills/` in a project; see
 
 ## Releasing
 
-Releases are automatic, PR-gated, and OIDC-based. A feature/fix branch carries
-its changeset (`.changeset/*.md`); merging it to `main` makes the Release
-workflow open (or update) the **version PR** (`changeset-release/main`) with
-the consumed version bump — the manual batch-decision point. The version PR's
-head is pushed by `github-actions[bot]`, whose workflow runs need approval
-unless the repository defines the `RELEASE_BOT_TOKEN` secret (a fine-grained
-PAT or GitHub App token with contents + pull-requests write): with it the
-workflows start on their own and the release runs hands-off. Merging *that*
+Releases use version PRs and OIDC trusted publishing. A feature/fix branch
+carries its changeset (`.changeset/*.md`); merging it to `main` makes the
+Release workflow open (or update) the **version PR**
+(`changeset-release/main`) with the consumed version bump. Automatic merging
+is **off by default**. To enable it, run `specgit init --force`, answer
+`yes`, and select `main` as the merge target. The Release workflow reads
+`automation.merge: true` and `automation.target_branch: main` from the
+policy; otherwise it leaves the version PR open and reports that automation
+is disabled. When enabled, it waits up to 20 minutes for all CI on the exact
+version head, including classic statuses and workflow runs. Non-required
+skipped jobs may be omitted; failed or incomplete checks block the merge.
+The merge request is conditional on that SHA and its merged state is
+verified, with branch protection still enforced.
+
+The repository defines `RELEASE_BOT_TOKEN` (a fine-grained PAT or GitHub App
+token with contents + pull-requests write) so version-PR events start CI
+without manual approval. Missing permissions or approval-blocked runs fail
+visibly. Merging that
 PR lands `chore(release): v<version>` on `main`, which builds, verifies the
 packed version, and publishes to npm via **OIDC trusted publishing** (no
 long-lived token, no environment secret; provenance included), then tags

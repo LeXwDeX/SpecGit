@@ -33,7 +33,7 @@ The delivery flow at a glance:
 | `specgit setup` | Install agent entry points (commands for opencode, portable skills for other tools) | no | 0 · 2 · 3 |
 | `specgit issue` | One-command delivery bootstrap (issues, branch, draft PR, record, commit, push) | yes | 0 · 2 · 3 |
 | `specgit finish` | The verdict — full evaluation against git + GitHub | yes | 0 · 1 · 2 · 3 |
-| `specgit pr` | Repair the PR binding (auto-discover by head branch, or bind explicitly) | yes | 0 · 2 · 3 |
+| `specgit pr` | Repair the PR binding; `--merge` executes configured merge and issue closure | yes | 0 · 1 · 2 · 3 |
 | `specgit bind` | Create/update the delivery record (`.specgit.yaml`) — script alias; carries the rewrite into git (#299) | git push (no forge) | 0 · 2 · 3 |
 | `specgit unbind` | Delete the delivery record — the abandon/reset/uninstall tool; the normal post-merge continuation is the next `specgit issue`, which replaces completed history atomically | no | 0 · 2 |
 | `specgit status` | Local evidence only (record, policy, git facts, drift, generated-asset drift) | no | 0 · 2 · 3 |
@@ -95,6 +95,30 @@ Branch names stay ASCII under every language. An ASCII title yields the first-th
 ## `specgit init`
 
 Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates the delivery harness. Initialization is non-destructive:
+
+**Automation choice.** Interactive initialization always asks whether to enable
+automatic merge and issue closure: **yes/no, default no**. `init --force`
+asks again with the same no default, so the user can later choose yes or
+revoke an earlier choice. Agents must present this choice to the user and
+cannot supply yes themselves. Scripts may pass the user's answer as
+`--automation yes|no`; non-interactive init without an answer writes disabled
+automation and explains that decision on stderr. JSON stdout remains one document.
+
+With yes, `--merge-target <branch>` sets the permitted destination. Without
+that flag, init requires evidence of the remote default branch; it never
+guesses a target. The saved configuration is:
+
+```yaml
+automation:
+  merge: true
+  target_branch: main
+  close_issues: true
+```
+
+With no, both booleans are false. Old policies without `automation` remain
+valid and disabled. A forced initialization preserves the existing required
+checks, language, tags and ordering unless their corresponding options replace
+them; it always applies the newly answered automation choice.
 
 - **Validation before mutation.** Every check that can reject the run — flag validation, `--gitlab-host` validation, `policy_exists`, and a root-writability preflight — happens before any filesystem or remote change. A rejected init leaves the repository byte-identical (no probes, no writes).
 - **Error-atomic local writes (#62/#305).** The harness write, the policy write, and the managed `.gitignore` region run inside ONE reversible transaction: all targets are computed first, every mutation is snapshotted (bytes and mode), and if any step fails mid-sequence every prior local mutation is rolled back — including a `spec_git/providers.yaml` declaration persisted earlier in the same run (directories the run created are removed too, so the tree — not just the files — round-trips) — and init exits 3. A failed upgrade never leaves a mixed-version tree, and never a silent one either: a pre-run state that cannot be read fails before any mutation (`providers_snapshot_failed`), and a compensation that cannot complete is reported alongside the triggering failure (`providers_restore_failed`).
@@ -224,7 +248,21 @@ specgit finish --json     # machine-readable verdict (what CI parses)
 
 Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` cannot determine (missing record/policy, `gh` absent or unauthenticated, transport failure). See [Reference](reference.md) for the gate table and every code, and [Troubleshooting](troubleshooting.md) for fixes.
 
-**Completed history (#351).** Running `finish` on a trunk that already merged the delivery is not a mismatch: the context gate proves the merged lineage (the PR's merge commit contained by local HEAD) and the verdict reports `state: "completed"` — exit `0` with the warning `record_of_merged_delivery`, whose fix is the next delivery (`specgit issue "<type>: <title>"` atomically replaces the record). `unbind` is not the post-merge step; it is the abandon/reset/uninstall tool. Success hand-offs (#361): an accepted live PR carries `nextActions` naming the merge (`gh pr merge <n> --auto --merge` — auto-merge per policy; `glab mr merge` on GitLab), completed history carries `next_delivery`; both render as short `Next:` lines for humans.
+**Completed history (#351).** Running `finish` on a trunk that already merged
+the delivery is not a mismatch: the context gate proves that local HEAD contains
+the platform's merged result. The verdict reports `state: "completed"` only
+after every gate runs successfully. A failed evidence read leaves later gates
+`skipped` and `complete: false`. Invalid replacement arguments or a failed first
+write preserve the completed record; `unbind` is the abandon/reset/uninstall tool.
+
+Success hand-offs render as `Next:` lines and structured `nextActions`. With
+automation enabled, both accepted live work and completed history point to
+`specgit pr --merge`, so interrupted issue closure is confirmed before starting
+another delivery. With automation disabled, accepted live work names the forge's
+merge command, while completed history carries `record_of_merged_delivery` and
+points to `specgit issue "<type>: <title>"`, which atomically replaces the record.
+
+**Agent continuation.** The agent executes `nextActions` within the user's existing authorization: fill scaffold prose, prepare the PR, fix failures, follow required CI, and verify the merge and any authorized release. `finish` itself is read-only; it never marks ready or merges. Recheck the verdict after head/body/check changes. Missing credentials, new scope decisions, and exhausted review limits are explicit blockers; routine commands remain agent work. GitLab description edits use `glab issue update` / `glab mr update` with `--description-file`; GitHub uses `gh issue edit` / `gh pr edit` with `--body-file`.
 
 ## `specgit pr`
 
@@ -233,7 +271,46 @@ Repairs the PR binding of the current delivery. Without arguments it auto-discov
 ```bash
 specgit pr                 # auto-discover by head branch
 specgit pr 42              # bind explicitly
+specgit pr --merge         # execute configured merge and bound issue closure
 ```
+
+`--merge` is a distinct execution mode and cannot be combined with a PR number
+or URL. It uses the current binding and requires `automation.merge: true`.
+The PR/MR must target `automation.target_branch`; a complete acceptance verdict
+must exit 0; every executed check for the current head must succeed, including
+checks outside `required_checks`. Skipped non-required jobs are ignored;
+neutral, failed, cancelled, pending, missing or unreadable evidence never
+authorizes a merge. There must be at least one executed CI/CD check. GitLab
+also requires the authoritative head pipeline to report success.
+Its ordinary and trigger jobs, and their linked downstream pipelines, are
+checked to exhaustion. Downstream job failures still block when their pipeline
+allows failure. The graph is bounded to 32 distinct pipelines; incomplete or
+untraceable downstream evidence, unsupported endpoints, and exceeded bounds
+produce unknown evidence rather than authorizing a merge.
+
+The merge request carries an atomic expected-head condition to the platform.
+Binding, policy, head, target, and PR body are checked again before merging;
+the remote PR/MR is checked again afterwards. The forge does not provide an
+atomic condition on the target branch, so a retarget between the final read
+and the merge request cannot be prevented by the head condition. A detected
+change after merging stops further issue closure and reports non-completion.
+After confirming the remote state is merged, `close_issues: true` explicitly closes only the bound issues;
+already closed issues are skipped. Partial closure can be resumed with the
+same command after fetching and checking out the target branch containing the
+merged delivery. Closing an unmerged PR/MR is never used as a substitute.
+
+Automation refuses closing references in the PR/MR body that name an unbound
+issue, including an issue in another repository with the same number. The
+forge's native commit-message closing behavior is independent of
+`close_issues`: that setting controls SpecGit's explicit issue-close calls and
+does not disable or undo implicit platform closure from merged commit messages.
+
+The JSON envelope's `automation` reports `status` (`pending`, `blocked`,
+`unknown`, or `completed`), `merged`, `closedIssues`, and the observed PR,
+head and target when available. Only confirmed completion exits 0. Pending or
+blocked evidence exits 1, invalid usage or disabled automation exits 2, and
+unavailable evidence exits 3. `finish` and `accept` remain read-only; with
+automation enabled their merge continuation points to `specgit pr --merge`.
 
 Diagnostics: `pr_not_found` (zero candidates, with fix), `pr_ambiguous` (several candidates, with the list), `record_missing` (nothing to repair — run `specgit issue` first); all exit 3.
 

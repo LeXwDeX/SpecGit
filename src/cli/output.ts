@@ -112,10 +112,21 @@ export interface IssueOutcome extends OutcomeBase {
   nextActions?: NextAction[];
 }
 
-/** `specgit pr`: the repaired record plus the derived binding state. */
+export interface PrAutomation {
+  status: 'pending' | 'blocked' | 'unknown' | 'completed';
+  pr?: number;
+  headSha?: string;
+  targetBranch?: string;
+  merged: boolean;
+  closedIssues: number[];
+}
+
+/** `specgit pr`: repaired binding or configured merge execution. */
 export interface PrOutcome extends OutcomeBase {
   state?: BindingState;
   record?: Record<string, unknown>;
+  automation?: PrAutomation;
+  nextActions?: NextAction[];
 }
 
 /**
@@ -247,6 +258,7 @@ export function buildEnvelope(
   if ('nextActions' in outcome) optional.push(['nextActions', outcome.nextActions]);
   if ('urls' in outcome) optional.push(['urls', outcome.urls]);
   if ('assets' in outcome) optional.push(['assets', outcome.assets]);
+  if ('automation' in outcome) optional.push(['automation', outcome.automation]);
   for (const [key, value] of optional) {
     if (value !== undefined) {
       envelope[key] = value;
