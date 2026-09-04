@@ -659,6 +659,39 @@ describe('GlabProvider#getPr', () => {
     if (lockedResult.ok) expect(lockedResult.value.state).toBe('open');
   });
 
+  it('retains the squash result as the lineage anchor after a fast-forward squash merge (#377)', async () => {
+    const squashSha = 'b'.repeat(40);
+    const { provider } = setup([{
+      match: '/merge_requests/42$',
+      stdout: mrPayload({ state: 'merged', squash_commit_sha: squashSha }),
+    }]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.mergeCommitSha).toBe(squashSha);
+  });
+
+  it('uses the frozen MR diff head for a confirmed non-squashed fast-forward merge (#377)', async () => {
+    const { provider } = setup([{
+      match: '/merge_requests/42$',
+      stdout: mrPayload({ state: 'merged', squash_commit_sha: null, diff_refs: { head_sha: SHA } }),
+    }]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.mergeCommitSha).toBe(SHA);
+  });
+
+  it.each([
+    { state: 'opened', squash_commit_sha: 'b'.repeat(40), diff_refs: { head_sha: SHA } },
+    { state: 'merged', diff_refs: { head_sha: SHA } },
+    { state: 'merged', squash_commit_sha: null },
+    { state: 'merged', squash_commit_sha: null, diff_refs: null },
+  ])('does not invent a merged anchor from incomplete or unmerged facts: %j (#377)', async (facts) => {
+    const { provider } = setup([{ match: '/merge_requests/42$', stdout: mrPayload(facts) }]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.mergeCommitSha).toBeNull();
+  });
+
   it('collects the draft flag (row 18)', async () => {
     const { provider } = setup([
       { match: `/merge_requests/45$`, stdout: mrPayload({ iid: 45, draft: true, title: 'Draft: T' }) },
@@ -749,6 +782,224 @@ describe('GlabProvider#getCheckRuns', () => {
       }))
     );
   }
+
+  it('reports all jobs and the platform pipeline status for guarded merge (#382)', async () => {
+    const { provider } = setup([
+      { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'pending' } }) },
+      { match: 'projects/99/pipelines/20/jobs', stdout: jobPage(1) },
+      { match: 'projects/99/pipelines/20/trigger_jobs', stdout: '[]' },
+    ]);
+    expect(await provider.getPrChecks(REPO, 42)).toEqual({ ok: true, value: {
+      headSha: SHA,
+      pipelineStatus: 'pending',
+      checks: [{ name: 'job-0', status: 'completed', conclusion: 'success', id: 1000, startedAt: '2026-08-20T00:00:00Z' }],
+    } });
+  });
+
+  it.each(['success', 'failed', 'pending'])(
+    'includes %s trigger jobs even when the parent pipeline reports success (#382)', async (status) => {
+      const { provider } = setup([
+        { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'success' } }) },
+        { match: 'projects/99/pipelines/20/jobs', stdout: jobPage(1) },
+        { match: 'projects/99/pipelines/20/trigger_jobs', stdout: JSON.stringify([
+          { id: 2000, name: 'deploy-child', status, allow_failure: true, started_at: null, downstream_pipeline: null },
+        ]) },
+      ]);
+      expect(await provider.getPrChecks(REPO, 42)).toMatchObject({ ok: true, value: {
+        checks: [
+          { name: 'job-0', conclusion: 'success' },
+          { name: 'deploy-child', allowFailure: true,
+            status: status === 'pending' ? 'pending' : 'completed',
+            conclusion: status === 'success' ? 'success' : status === 'failed' ? 'failure' : null },
+        ],
+        pipelineStatus: 'success',
+      } });
+    }
+  );
+
+  it.each([
+    { stdout: '[null]' },
+    { stdout: '[{"id":2000,"name":"deploy-child","status":"success"}]' },
+    { exit: 1, stderr: 'glab: 404 Not Found' },
+  ])('fails closed when trigger-job evidence is unavailable or malformed: %j (#382)', async (response) => {
+    const { provider } = setup([
+      { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'success' } }) },
+      { match: 'projects/99/pipelines/20/jobs', stdout: jobPage(1) },
+      { match: 'projects/99/pipelines/20/trigger_jobs', ...response },
+    ]);
+    expect(await provider.getPrChecks(REPO, 42)).toMatchObject({ ok: false, code: 'glab_transport' });
+  });
+
+  it('exhausts trigger-job pages so a later failed trigger remains visible (#382)', async () => {
+    const { provider } = setup([
+      { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'success' } }) },
+      { match: 'projects/99/pipelines/20/jobs', stdout: jobPage(1) },
+      { match: 'trigger_jobs\\?per_page=100&page=2$', stdout: JSON.stringify([
+        { id: 2000, name: 'deploy-child', status: 'failed', allow_failure: true, started_at: null, downstream_pipeline: null },
+      ]) },
+      { match: 'trigger_jobs\\?per_page=100&page=1$', stdout: JSON.stringify(
+        JSON.parse(jobPage(100)).map((job: Record<string, unknown>) => ({ ...job, downstream_pipeline: null }))
+      ) },
+    ]);
+    const result = await provider.getPrChecks(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.checks).toHaveLength(102);
+    expect(result.value.checks.at(-1)).toMatchObject({ name: 'deploy-child', conclusion: 'failure', allowFailure: true });
+  });
+
+  it.each(['failed', 'running', 'success'])(
+    'reads the downstream pipeline and its allow-failure jobs when its current state is %s (#382)', async (status) => {
+      const { provider } = setup([
+        { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'success' } }) },
+        { match: 'projects/99/pipelines/20/jobs', stdout: jobPage(1) },
+        { match: 'projects/99/pipelines/20/trigger_jobs', stdout: JSON.stringify([
+          { id: 2000, name: 'deploy-child', status: 'success', allow_failure: false, started_at: null,
+            downstream_pipeline: { id: 30, web_url: `https://${HOST}/group/subgroup/child/${status === 'success' ? '' : '-/'}pipelines/30` } },
+        ]) },
+        { match: 'projects/group%2Fsubgroup%2Fchild/pipelines/30$', stdout: JSON.stringify({ id: 30, project_id: 100, sha: 'b'.repeat(40), status }) },
+        { match: 'projects/100/pipelines/30/jobs', stdout: JSON.stringify([
+          { id: 3000, name: 'job-0', status: 'failed', allow_failure: true, started_at: null },
+        ]) },
+        { match: 'projects/100/pipelines/30/trigger_jobs', stdout: '[]' },
+      ]);
+      const result = await provider.getPrChecks(REPO, 42);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.checks).toContainEqual(expect.objectContaining({
+        name: 'downstream:100/30:job-0', conclusion: 'failure', allowFailure: true,
+      }));
+      expect(result.value.checks).toContainEqual(expect.objectContaining({
+        name: 'downstream:100/30:pipeline',
+        status: status === 'running' ? 'running' : 'completed',
+        conclusion: status === 'success' ? 'success' : status === 'failed' ? 'failure' : null,
+      }));
+    }
+  );
+
+  it.each([
+    undefined,
+    { id: 30 },
+    { id: 30, project_id: 100, web_url: 'https://other.example.com/group/child/-/pipelines/30' },
+    { id: 30, web_url: `https://${HOST}/group/child/-/pipelines/31` },
+  ])('refuses untraceable downstream identity rather than declaring all CI green: %j (#382)', async (downstream) => {
+    const { provider } = setup([
+      { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'success' } }) },
+      { match: 'projects/99/pipelines/20/jobs', stdout: jobPage(1) },
+      { match: 'projects/99/pipelines/20/trigger_jobs', stdout: JSON.stringify([
+        { id: 2000, name: 'deploy-child', status: 'success', allow_failure: false, started_at: null, downstream_pipeline: downstream },
+      ]) },
+    ]);
+    expect(await provider.getPrChecks(REPO, 42)).toMatchObject({ ok: false, code: 'glab_transport' });
+  });
+
+  it('deduplicates downstream cycles and retains evidence from nested pipelines (#382)', async () => {
+    const calls: string[] = [];
+    const provider = new GlabProvider({ hostname: HOST, spawnImpl: async (_command, args) => {
+      const route = args.join(' ');
+      calls.push(route);
+      let body: unknown;
+      if (route.includes('/merge_requests/')) body = { iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99, status: 'success' } };
+      else if (route.endsWith('/pipelines/30')) body = { id: 30, project_id: 99, sha: SHA, status: 'success' };
+      else if (route.includes('/trigger_jobs')) body = [{
+        id: route.includes('/20/') ? 2000 : 3000, name: 'child', status: 'success', allow_failure: false, started_at: null,
+        downstream_pipeline: { id: route.includes('/20/') ? 30 : 20, project_id: 99 },
+      }];
+      else body = [{ id: 1000, name: 'test', status: route.includes('/30/') ? 'failed' : 'success', allow_failure: true, started_at: null }];
+      return { stdout: JSON.stringify(body), stderr: '' };
+    } });
+    const result = await provider.getPrChecks(REPO, 42);
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.value.checks).toContainEqual(expect.objectContaining({ name: 'downstream:99/30:test', conclusion: 'failure' }));
+    expect(calls.filter((call) => call.endsWith('/pipelines/30'))).toHaveLength(1);
+    expect(calls).toHaveLength(6);
+  });
+
+  it('fails closed when a downstream graph exceeds the 32-pipeline evidence bound (#382)', async () => {
+    const provider = new GlabProvider({ hostname: HOST, spawnImpl: async (_command, args) => {
+      const route = args.join(' ');
+      const id = Number(/\/pipelines\/(\d+)/.exec(route)?.[1] ?? 1);
+      const body = route.includes('/merge_requests/')
+        ? { iid: 42, sha: SHA, head_pipeline: { id: 1, sha: SHA, project_id: 99, status: 'success' } }
+        : route.includes('/trigger_jobs') ? [{ id, name: 'child', status: 'success', allow_failure: false, started_at: null,
+          downstream_pipeline: { id: id + 1, project_id: 99 } }]
+          : /\/jobs\?/.test(route) ? [] : { id, project_id: 99, sha: SHA, status: 'success' };
+      return { stdout: JSON.stringify(body), stderr: '' };
+    } });
+    expect(await provider.getPrChecks(REPO, 42)).toMatchObject({ ok: false, code: 'evidence_truncated' });
+  });
+
+  it.each([null, { id: 20, sha: SHA, project_id: 99 }, { id: 20, sha: SHA, project_id: 99, status: '' }])(
+    'refuses guarded-merge evidence without an explicit pipeline status: %j (#382)', async (pipeline) => {
+      const { provider, fake } = setup([{
+        match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: pipeline }),
+      }]);
+      expect(await provider.getPrChecks(REPO, 42)).toMatchObject({ ok: false, code: 'glab_transport' });
+      expect(readFakeGlabCalls(fake.logPath)).toHaveLength(1);
+    }
+  );
+
+  it.each(['pending', 'skipped', 'canceled'])('uses only the MR head pipeline when its required job is %s (#376)', async (status) => {
+    const { provider, fake } = setup([
+      {
+        match: '/merge_requests/42$',
+        stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99 } }),
+      },
+      { match: 'pipelines\\?sha=', stdout: JSON.stringify([{ id: 10, sha: SHA }]) },
+      { match: 'pipelines/10/jobs', stdout: jobPage(1) },
+      {
+        match: 'projects/99/pipelines/20/jobs',
+        stdout: JSON.stringify([{ id: 200, name: 'test', status, started_at: null, allow_failure: false }]),
+      },
+    ]);
+    const result = await provider.getCheckRuns(REPO, SHA, 42);
+    expect(result).toEqual({ ok: true, value: status === 'skipped' ? [] : [{
+      id: 200,
+      name: 'test',
+      status: status === 'canceled' ? 'completed' : 'pending',
+      conclusion: status === 'canceled' ? 'cancelled' : null,
+      startedAt: null,
+    }] });
+    expect(readFakeGlabCalls(fake.logPath).some((call) => call.includes('/pipelines?sha='))).toBe(false);
+  });
+
+  it.each([
+    null,
+    { id: 1, name: 'test', status: 'success' },
+    { id: 1, name: '', status: 'success', started_at: null, allow_failure: false },
+    { id: 1, name: 'test', status: 'success', started_at: 'invalid', allow_failure: false },
+  ])('fails closed on malformed jobs instead of supplying partial evidence: %j (#376)', async (job) => {
+    const { provider } = setup([
+      { match: '/merge_requests/42$', stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA, project_id: 99 } }) },
+      { match: 'projects/99/pipelines/20/jobs', stdout: JSON.stringify([job]) },
+    ]);
+    const result = await provider.getCheckRuns(REPO, SHA, 42);
+    expect(result).toMatchObject({ ok: false, code: 'glab_transport' });
+  });
+
+  it('reports an absent MR head pipeline without borrowing a branch pipeline (#376)', async () => {
+    const { provider, fake } = setup([{
+      match: '/merge_requests/42$',
+      stdout: JSON.stringify({ iid: 42, sha: SHA, head_pipeline: null }),
+    }]);
+    expect(await provider.getCheckRuns(REPO, SHA, 42)).toEqual({ ok: true, value: [] });
+    expect(readFakeGlabCalls(fake.logPath)).toHaveLength(1);
+  });
+
+  it.each([
+    null,
+    { iid: 42, sha: SHA },
+    { iid: 41, sha: SHA, head_pipeline: null },
+    { iid: 42, sha: 'b'.repeat(40), head_pipeline: null },
+    { iid: 42, sha: SHA, head_pipeline: {} },
+    { iid: 42, sha: SHA, head_pipeline: { id: 20, sha: SHA } },
+    { iid: 42, sha: SHA, head_pipeline: { id: 20, sha: 'b'.repeat(40), project_id: 99 } },
+  ])('fails closed on incomplete or mismatched MR pipeline identity: %j (#376)', async (mr) => {
+    const { provider, fake } = setup([{ match: '/merge_requests/42$', stdout: JSON.stringify(mr) }]);
+    expect(await provider.getCheckRuns(REPO, SHA, 42)).toMatchObject({ ok: false, code: 'glab_transport' });
+    expect(readFakeGlabCalls(fake.logPath)).toHaveLength(1);
+  });
 
   it('chains pipelines-by-sha into per-pipeline jobs without include_retried (rows 15/16/17, #116)', async () => {
     const { provider, fake } = setup([
@@ -845,8 +1096,8 @@ describe('GlabProvider#getCheckRuns', () => {
     ]);
   });
 
-  it('collects jobs from every pipeline for the sha across job pages (>100 jobs)', async () => {
-    const secondPipelineJobs = [
+  it('exhausts the newest compatibility pipeline without filling its jobs from older pipelines (>100 jobs)', async () => {
+    const olderPipelineJobs = [
       { id: 5, name: 'extra', status: 'success', allow_failure: false, started_at: '2026-08-20T15:00:00Z' },
     ];
     const { provider } = setup([
@@ -857,14 +1108,15 @@ describe('GlabProvider#getCheckRuns', () => {
           { id: 2, sha: SHA, status: 'failed' },
         ]),
       },
-      { match: 'pipelines/1/jobs\\?per_page=100&page=2$', stdout: jobPage(3) },
-      { match: 'pipelines/1/jobs', stdout: jobPage(100) },
-      { match: 'pipelines/2/jobs', stdout: JSON.stringify(secondPipelineJobs) },
+      { match: 'pipelines/2/jobs\\?per_page=100&page=2$', stdout: jobPage(3) },
+      { match: 'pipelines/2/jobs', stdout: jobPage(100) },
+      { match: 'pipelines/1/jobs', stdout: JSON.stringify(olderPipelineJobs) },
     ]);
     const result = await provider.getCheckRuns(REPO, SHA);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toHaveLength(100 + 3 + 1);
+    expect(result.value).toHaveLength(100 + 3);
+    expect(result.value.some((job) => job.name === 'extra')).toBe(false);
   });
 
   it('returns an empty list when the sha has no pipelines', async () => {
@@ -875,11 +1127,11 @@ describe('GlabProvider#getCheckRuns', () => {
     expect(result).toEqual({ ok: true, value: [] });
   });
 
-  it('bounds the pipeline listing: newest-first by updated_at, one bounded page (#187)', async () => {
+  it('bounds compatibility discovery and selects the highest pipeline id independent of response order (#376)', async () => {
     // #187: the listing is bounded by recency — `order_by=updated_at`
     // `sort=desc`, one page of limit + 1 — so the job pages fetched no
     // longer scale with the sha's total pipeline history. Exactly one
-    // list call happens, and every listed pipeline contributes its jobs.
+    // list call happens, and only the highest id contributes its jobs.
     const pipelines = Array.from({ length: 10 }, (_, i) => ({
       id: 100 + i,
       sha: SHA,
@@ -898,13 +1150,15 @@ describe('GlabProvider#getCheckRuns', () => {
     const result = await provider.getCheckRuns(REPO, SHA);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toHaveLength(10);
+    expect(result.value).toHaveLength(1);
     const calls = readFakeGlabCalls(fake.logPath);
     const listCalls = calls.filter((c) => c.includes(`pipelines?sha=${SHA}`));
     expect(listCalls).toEqual([
       `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines?sha=${SHA}&order_by=updated_at&sort=desc&per_page=11&page=1`,
     ]);
-    expect(calls.filter((c) => c.includes('/jobs'))).toHaveLength(10);
+    expect(calls.filter((c) => c.includes('/jobs'))).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/pipelines/109/jobs?per_page=100&page=1`,
+    ]);
   });
 
   it('fails closed (evidence_truncated) when the sha has more pipelines than the fetch limit (#187)', async () => {
@@ -1111,6 +1365,57 @@ describe('GlabProvider#addIssueComment', () => {
     return { fake, provider };
   }
 
+  it('adopts the original note after a successful POST loses its response (#380)', async () => {
+    const body = 'SpecGit delivery branch: `fix/380-retry` (draft pull request #42).';
+    const notes: Array<{ id: number; body: string }> = [];
+    let posts = 0;
+    const provider = new GlabProvider({ hostname: HOST, spawnImpl: async (_command, args) => {
+      if (args.includes('POST')) {
+        posts += 1;
+        notes.push({ id: 91, body });
+        throw Object.assign(new Error('response lost'), { code: 1, stderr: 'connection reset' });
+      }
+      return { stdout: JSON.stringify(notes), stderr: '' };
+    } });
+    expect(await provider.addIssueComment(REPO, 8, body)).toMatchObject({ ok: false, code: 'glab_transport' });
+    expect(await provider.addIssueComment(REPO, 8, body)).toEqual({
+      ok: true, value: { url: 'https://git.example.com/group/subgroup/project/-/issues/8#note_91' },
+    });
+    expect(posts).toBe(1);
+  });
+
+  it('finds an existing exact-body note on a later page without posting (#380)', async () => {
+    const { provider, fake } = setup([
+      { match: '/notes\\?per_page=100&page=1$', stdout: JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: i + 1, body: `other ${i}` }))) },
+      { match: '/notes\\?per_page=100&page=2$', stdout: JSON.stringify([{ id: 101, body: 'B' }]) },
+    ]);
+    expect(await provider.addIssueComment(REPO, 8, 'B')).toEqual({
+      ok: true, value: { url: 'https://git.example.com/group/subgroup/project/-/issues/8#note_101' },
+    });
+    expect(readFakeGlabCalls(fake.logPath)).toHaveLength(2);
+    expect(readFakeGlabCalls(fake.logPath).some((call) => call.includes('-X POST'))).toBe(false);
+  });
+
+  it.each([
+    { stdout: JSON.stringify([{ id: 1, body: 'B' }, null]) },
+    { stdout: JSON.stringify([{ id: 1 }]) },
+    { exit: 1, stderr: 'glab: HTTP 503' },
+  ])('does not post after incomplete note evidence: %j (#380)', async (response) => {
+    const { provider, fake } = setup([{ match: '/notes\\?per_page=', ...response }]);
+    expect(await provider.addIssueComment(REPO, 8, 'B')).toMatchObject({ ok: false, code: 'glab_transport' });
+    expect(readFakeGlabCalls(fake.logPath).some((call) => call.includes('-X POST'))).toBe(false);
+  });
+
+  it('fails closed when a note scan reaches its cap even if a matching note was seen (#380)', async () => {
+    const { provider, fake } = setup([{
+      match: '/notes\\?per_page=',
+      stdout: JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: i + 1, body: 'B' }))),
+    }]);
+    expect(await provider.addIssueComment(REPO, 8, 'B')).toMatchObject({ ok: false, code: 'evidence_truncated' });
+    expect(readFakeGlabCalls(fake.logPath)).toHaveLength(10);
+    expect(readFakeGlabCalls(fake.logPath).some((call) => call.includes('-X POST'))).toBe(false);
+  });
+
   it('posts a note through glab api -f body and returns {url}', async () => {
     const { provider, fake } = setup([
       {
@@ -1130,6 +1435,7 @@ describe('GlabProvider#addIssueComment', () => {
       value: { url: 'https://git.example.com/group/subgroup/project/-/issues/8#note_1' },
     });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
+      `api --hostname ${HOST} projects/${PROJECT_ID}/issues/8/notes?per_page=100&page=1`,
       `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/issues/8/notes -f body=SpecGit delivery branch: \`feat/8-x\` (draft pull request #9).`,
     ]);
   });
@@ -1190,6 +1496,91 @@ describe('GlabProvider#addIssueComment', () => {
     if (result.ok) return;
     expect(result.code).toBe('glab_transport');
     expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
+  });
+});
+
+describe('GlabProvider guarded delivery mutations (#382)', () => {
+  const mrFact = (state: string, sha: string = SHA) => ({
+    iid: 42, state, sha, draft: false, source_branch: 'feat/test', target_branch: 'main',
+    description: 'Closes #8', merge_commit_sha: state === 'merged' ? 'b'.repeat(40) : null,
+  });
+
+  it('merges the verified head with an atomic SHA condition and confirms the remote result', async () => {
+    const calls: string[][] = [];
+    let merged = false;
+    const provider = new GlabProvider({ hostname: HOST, spawnImpl: async (_command, args) => {
+      calls.push(args);
+      if (args.includes('PUT')) {
+        expect(args).toContain(`sha=${SHA}`);
+        merged = true;
+      }
+      return { stdout: JSON.stringify(mrFact(merged ? 'merged' : 'opened')), stderr: '' };
+    } });
+    expect(await provider.mergePr(REPO, 42, SHA)).toEqual({ ok: true, value: { merged: true } });
+    expect(calls).toEqual([
+      ['api', '--hostname', HOST, `projects/${PROJECT_ID}/merge_requests/42`],
+      ['api', '--hostname', HOST, '-X', 'PUT', `projects/${PROJECT_ID}/merge_requests/42/merge`, '-f', `sha=${SHA}`],
+      ['api', '--hostname', HOST, `projects/${PROJECT_ID}/merge_requests/42`],
+    ]);
+  });
+
+  it('closes an issue with verified post-state and resumes without a second mutation', async () => {
+    let closed = false;
+    const writes: string[][] = [];
+    const provider = new GlabProvider({ hostname: HOST, spawnImpl: async (_command, args) => {
+      if (args.includes('PUT')) {
+        writes.push(args);
+        closed = true;
+      }
+      return { stdout: JSON.stringify({ iid: 8, state: closed ? 'closed' : 'opened' }), stderr: '' };
+    } });
+    expect(await provider.closeIssue(REPO, 8)).toEqual({ ok: true, value: { closed: true } });
+    expect(await provider.closeIssue(REPO, 8)).toEqual({ ok: true, value: { closed: true } });
+    expect(writes).toEqual([[
+      'api', '--hostname', HOST, '-X', 'PUT', `projects/${PROJECT_ID}/issues/8`, '-f', 'state_event=close',
+    ]]);
+  });
+
+  it('refuses a changed head before mutation and lets GitLab reject a race at the SHA condition', async () => {
+    let writes = 0;
+    const changed = new GlabProvider({ spawnImpl: async () => ({ stdout: JSON.stringify(mrFact('opened', 'c'.repeat(40))), stderr: '' }) });
+    expect(await changed.mergePr(REPO, 42, SHA)).toMatchObject({ ok: false, code: 'glab_transport' });
+    const raced = new GlabProvider({ spawnImpl: async (_command, args) => {
+      if (args.includes('PUT')) {
+        writes += 1;
+        expect(args).toContain(`sha=${SHA}`);
+        throw Object.assign(new Error('head changed'), { code: 1, stderr: 'glab: HTTP 409 SHA does not match HEAD of source branch' });
+      }
+      return { stdout: JSON.stringify(mrFact('opened')), stderr: '' };
+    } });
+    expect(await raced.mergePr(REPO, 42, SHA)).toMatchObject({ ok: false, code: 'glab_transport' });
+    expect(writes).toBe(1);
+  });
+
+  it('does not report queued merges or unconfirmed issue closures as complete', async () => {
+    const provider = new GlabProvider({ spawnImpl: async (_command, args) => ({
+      stdout: JSON.stringify(args.some((arg) => arg.includes('merge_requests')) ? mrFact('opened') : { iid: 8, state: 'opened' }),
+      stderr: '',
+    }) });
+    expect(await provider.mergePr(REPO, 42, SHA)).toEqual({ ok: true, value: { merged: false } });
+    expect(await provider.closeIssue(REPO, 8)).toEqual({ ok: true, value: { closed: false } });
+  });
+
+  it('resumes an already merged MR without issuing another PUT', async () => {
+    let calls = 0;
+    const provider = new GlabProvider({ spawnImpl: async (_command, args) => {
+      calls += 1;
+      expect(args).not.toContain('PUT');
+      return { stdout: JSON.stringify(mrFact('merged')), stderr: '' };
+    } });
+    expect(await provider.mergePr(REPO, 42, SHA)).toEqual({ ok: true, value: { merged: true } });
+    expect(calls).toBe(1);
+  });
+
+  it('returns failed evidence when a mutation preflight receives a null resource payload', async () => {
+    const provider = new GlabProvider({ spawnImpl: async () => ({ stdout: 'null', stderr: '' }) });
+    expect(await provider.mergePr(REPO, 42, SHA)).toMatchObject({ ok: false, code: 'glab_transport' });
+    expect(await provider.closeIssue(REPO, 8)).toMatchObject({ ok: false, code: 'glab_transport' });
   });
 });
 

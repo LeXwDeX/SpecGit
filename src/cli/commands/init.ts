@@ -63,8 +63,11 @@ import {
   preflightRootWritable,
   preservedChecksWarning,
   resolveInitLanguage,
+  resolveInitAutomation,
   resolveRequiredChecks,
   validateLanguageOption,
+  validateAutomationOptions,
+  type InitInteraction,
   type InitOptions,
 } from './init-validation.js';
 import { persistGitlabHost, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
@@ -124,11 +127,14 @@ async function runValidationPhase(
 
 export async function runInit(
   options: InitOptions,
-  ctx: CommandContext
+  ctx: CommandContext,
+  interaction: InitInteraction = {}
 ): Promise<InitOutcome> {
   // ---- Input validation (#62: before any mutation). ----
   const languageError = validateLanguageOption(options);
   if (languageError !== null) return languageError;
+  const automationError = validateAutomationOptions(options);
+  if (automationError !== null) return automationError;
 
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
@@ -150,6 +156,13 @@ export async function runInit(
   const resolved = await resolveRequiredChecks(options, ctx, root, existingPolicy);
   if ('exit' in resolved) return resolved;
   const { checks, detected, provenance } = resolved;
+
+  const language = resolveInitLanguage(
+    options,
+    existingPolicy.ok ? existingPolicy.value.language : undefined
+  );
+  const automation = await resolveInitAutomation(options, ctx, root, language, interaction);
+  if ('exit' in automation) return automation;
 
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
   const warnings: Diagnostic[] = [];
@@ -199,10 +212,6 @@ export async function runInit(
 
   // #118: the effective generated-text language — explicit --language,
   // else the existing policy's language on --force, else the default.
-  const language = resolveInitLanguage(
-    options,
-    existingPolicy.ok ? existingPolicy.value.language : undefined
-  );
   const { human: text } = catalogFor(language);
 
   const platform = await resolvePlatformMode(options, ctx, root, warnings, text);
@@ -222,6 +231,8 @@ export async function runInit(
     ctx,
     checks,
     language,
+    existingPolicy: existingPolicy.ok ? existingPolicy.value : undefined,
+    automation: automation.automation,
     workflowYaml: gitlabMode ? null : selection.yaml,
     writeIgnore: options.ignore !== false,
     warnings,

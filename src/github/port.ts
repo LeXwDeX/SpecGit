@@ -30,19 +30,19 @@ export interface PrFact {
    */
   draft: boolean;
   /**
-   * GitHub's merge_commit_sha. Once a PR is merged this is a commit on
-   * the base branch under every merge method — the merge commit, the
-   * squashed commit, or the commit the base was updated to by a rebase —
-   * which makes it the strategy-invariant anchor for proving the merged
-   * delivery is contained by a local HEAD. Before a merge it is
-   * GitHub's throwaway test-merge commit, which no branch contains.
-   * Null when GitHub reports no value.
+   * A platform-proven result commit on the target branch after merge.
+   * Adapters normalize merge, squash and fast-forward strategies here;
+   * acceptance still proves this anchor is contained by local HEAD.
+   * Values for unmerged requests are never lineage evidence. Null means
+   * the platform has not supplied a usable result anchor.
    */
   mergeCommitSha: string | null;
 }
 
 export interface CheckRunInfo {
   name: string;
+  /** Provider identity disambiguates identically named checks from different apps. */
+  source?: string;
   status: string;
   conclusion: string | null;
   /**
@@ -60,6 +60,14 @@ export interface CheckRunInfo {
   id: number;
   /** ISO-8601 started_at; null when GitHub reports no value (treated as oldest). */
   startedAt: string | null;
+}
+
+/** Complete, current PR/MR checks for guarded automation, including classic statuses. */
+export interface MergeChecksFact {
+  headSha: string;
+  checks: CheckRunInfo[];
+  /** GitLab's authoritative head pipeline state; absent on GitHub. */
+  pipelineStatus?: string;
 }
 
 /** A newly created GitHub issue: its number and canonical html URL. */
@@ -89,7 +97,7 @@ export interface PrCreation {
   url: string;
 }
 
-/** A newly posted issue comment: its canonical URL. */
+/** A posted or reconciled issue comment: its canonical URL. */
 export interface IssueCommentCreation {
   url: string;
 }
@@ -188,12 +196,21 @@ export interface ForgeReadPort {
   getOpenIssues(repo: RepoRef): Promise<Evidence<OpenIssueFact[]>>;
   getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>>;
   /**
-   * Check runs reported for a commit. Completeness contract (#120, I3b):
+   * Check runs reported for a commit and optional pull/merge request.
+   * Acceptance always supplies `pr`: GitLab uses its head pipeline,
+   * preventing older or unrelated same-SHA pipelines from filling gaps.
+   * Omitting it retains the commit-scoped library lookup.
+   * Completeness contract (#120, I3b):
    * `ok` means the list was gathered to exhaustion — a provider that
    * cannot prove exhaustion must fail (`evidence_truncated`), never
    * return a silently partial list.
    */
-  getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>>;
+  getCheckRuns(repo: RepoRef, sha: string, pr?: number): Promise<Evidence<CheckRunInfo[]>>;
+  getPrChecks(repo: RepoRef, pr: number): Promise<Evidence<MergeChecksFact>>;
+  /** Merge with a server-enforced expected head; never bypass platform protection. */
+  mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>>;
+  /** Idempotently close one bound issue and confirm its remote state. */
+  closeIssue(repo: RepoRef, issue: number): Promise<Evidence<{ closed: boolean }>>;
   /**
    * The evidence anchor (#315): the platform instant the delivery
    * last became reviewable — the boundary a required check's truth
@@ -214,12 +231,11 @@ export interface ForgeReadPort {
   ): Promise<Evidence<PrCreation>>;
   listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
   /**
-   * Post a comment on an issue. The traceability edge issue→branch: the
-   * bootstrap writes the delivery branch and pull request on every bound
-   * issue the moment the PR binding is first established, so the triple
-   * branch↔issue↔PR is navigable from every node. Called at most once per
-   * binding — `record.pr` in `.specgit.yaml` is the persisted marker that
-   * the comment was posted, which keeps re-runs exactly-once.
+   * Ensure an exact-body comment exists and return its canonical URL.
+   * A complete remote read reconciles retries after partial bootstrap or
+   * a lost POST response. Read failures fail closed. Concurrent writers
+   * are not serialized by this interface; it promises retry convergence,
+   * not transactional exactly-once delivery across independent processes.
    */
   addIssueComment(
     repo: RepoRef,
@@ -296,6 +312,9 @@ const FORGE_READ_PORT_MEMBER_FLAGS = {
   getOpenIssues: true,
   getPr: true,
   getCheckRuns: true,
+  getPrChecks: true,
+  mergePr: true,
+  closeIssue: true,
   getEvidenceAnchor: true,
   createIssue: true,
   createDraftPr: true,

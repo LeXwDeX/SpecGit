@@ -636,7 +636,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     // Exact checks, exact order, and the policy language — all preserved.
     expect(t.recordPort.policyWrites).toEqual([
-      { root, policy: { version: 1, required_checks: four, language: 'zh' } },
+      { root, policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: four, language: 'zh' } },
     ]);
     // The versioned harness assets are still rebuilt: the stale managed
     // block converges to the current generation (in the policy language).
@@ -671,7 +671,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     // Given order, exact strings, the old list entirely replaced.
     expect(t.recordPort.policyWrites).toEqual([
-      { root, policy: { version: 1, required_checks: ['Test (linux-bash)', 'Lint & Type Check', 'Test (macos-bash)'] } },
+      { root, policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test (linux-bash)', 'Lint & Type Check', 'Test (macos-bash)'] } },
     ]);
     const envelope = parseStdoutJson(t.io);
     expect(
@@ -695,7 +695,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     );
     expect(code).toBe(EXIT_SUCCESS);
     expect(t.recordPort.policyWrites).toEqual([
-      { root, policy: { version: 1, required_checks: ['Keep me'] } },
+      { root, policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Keep me'] } },
     ]);
   });
 

@@ -70,6 +70,9 @@ export async function writeHarnessAndPolicy(args: {
   ctx: CommandContext;
   checks: string[];
   language: PolicyLanguage;
+  /** Validated prior policy: preserve fields the init options do not replace. */
+  existingPolicy?: Policy;
+  automation: NonNullable<Policy['automation']>;
   /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
   workflowYaml: string | null;
   /** false (--no-ignore) skips the local-asset .gitignore block (#292). */
@@ -102,10 +105,13 @@ export async function writeHarnessAndPolicy(args: {
   }
 
   const policy: Policy = {
+    ...args.existingPolicy,
     version: 1 as const,
     required_checks: checks,
+    automation: args.automation,
     ...(language !== 'en' ? { language } : {}),
   };
+  if (language === 'en') delete policy.language;
   // #298: probe BEFORE the rewrite — a tracked policy rewritten by
   // --force shows as an uncommitted modification until committed; warn
   // instead of leaving silent residue. Advisory, never a block.

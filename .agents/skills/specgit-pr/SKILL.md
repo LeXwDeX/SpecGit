@@ -1,7 +1,7 @@
 ---
 name: specgit-pr
-description: Repair the SpecGit PR binding — auto-discover the pull request by head branch, or bind an explicit number.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+description: Repair the SpecGit PR binding or complete a configured automatic merge.
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit
@@ -11,13 +11,15 @@ metadata:
 
 # specgit-pr
 
-Repairs the record's PR binding without touching issues or the branch.
+Repairs the record's PR binding. With `--merge`, completes the configured
+merge and issue closure after fresh evidence passes.
 
 ## Usage
 
 ```bash
 specgit pr              # auto-discover the PR for this head branch
 specgit pr 123          # bind an explicit number (no platform round-trip)
+specgit pr --merge --json  # merge the bound PR when automation is enabled
 ```
 
 ## Steps
@@ -39,3 +41,13 @@ specgit pr 123          # bind an explicit number (no platform round-trip)
 
 - `specgit pr` owns the PR binding; never hand-edit `.specgit.yaml`.
 - `--json` is the only parse surface.
+
+Continue within existing user authorization. With automation enabled, run
+`specgit pr --merge --json`: it requires the configured target branch,
+`finish` exit 0, and all CI checks passing at the current PR head; it confirms
+the merge before closing bound issues when configured. `finish` is read-only.
+Automation defaults to no. Only the user's own yes enables it through
+`specgit init --automation yes --merge-target <branch>`; `init --force`
+can change that choice. An agent must not choose yes for the user. When an
+action lacks user authorization or platform permission, report the specific
+missing permission with the prepared result.

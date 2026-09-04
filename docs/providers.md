@@ -74,7 +74,7 @@ to those lists member-for-member: change a port, change this page.
 | `checkoutOrCreateBranch` | required | Bootstrap write: check out the delivery branch, creating it from HEAD when absent. |
 | `commitFile` | required | Bootstrap write: force-staged (`git add -f`), pathspec-limited commit of the authoritative delivery files (#292 — past the tool-installed local-asset ignore); unchanged paths are a successful no-op (idempotent bootstrap). |
 | `pushBranch` | required | Bootstrap write: push the delivery branch with upstream (`git push -u`). |
-| `remoteDefaultBranch` | required | `origin/HEAD` for the PR base; falls back to `main`. |
+| `remoteDefaultBranch` | required | `origin/HEAD` for the PR base; the default bootstrap mode falls back to `main`. Initialization of merge automation requests strict evidence and refuses an unproved target. |
 | `hooksPath` | required | The hooks directory git will actually use (linked-worktree and `core.hooksPath` aware) for guard installation. |
 
 ### ForgeReadPort (src/github/port.ts)
@@ -86,12 +86,15 @@ to those lists member-for-member: change a port, change this page.
 | `getOpenIssueNumbers` | required | Open-issue numbers for the ordered-issues sequencing gate, derived from the complete `getOpenIssues` scan. |
 | `getOpenIssues` | required | Title-carrying open-issue facts for the bootstrap adoption probe (#77): one paginated scan (complete to exhaustion, #120 I3b) replaces the per-issue lookup fan-out, so probe cost is bounded by pages. Same-title collisions are disambiguated by the scaffold body, never silently adopted (`issue_title_ambiguous`). |
 | `getPr` | required | PR fact: state, head/base, body, `mergeCommitSha`. |
-| `getCheckRuns` | required | Check runs at the head sha (G6 evidence sufficiency). |
+| `getCheckRuns` | required | Check runs at the head SHA, with optional PR/MR number. Acceptance supplies the number; GitLab verifies the MR head pipeline and its SHA before reading jobs. Omitting the number retains commit-scoped library lookup. |
+| `getPrChecks` | required | Complete CI/CD evidence tied to the current PR/MR head for automation. GitHub includes check runs, classic statuses and workflow runs (including approval waits with no jobs); GitLab includes authoritative pipeline status and jobs. Superseded attempts cannot replace current evidence. |
+| `mergePr` | required | Merge with a server-enforced expected head SHA and report whether the platform confirmed merging. Never bypasses protection or closes an unmerged request as a substitute. |
+| `closeIssue` | required | Idempotently close a bound issue and confirm its remote state; already closed issues need no write. The command calls it only after confirmed merge and successful CI/CD. |
 | `getEvidenceAnchor` | required | Check-freshness anchor (#315): the platform instant the delivery last became reviewable. `anchoredAt: null` is a legal answer (no boundary set — e.g. glab); a failed envelope fails closed. |
 | `createIssue` | required | Bootstrap create for new WHYs. |
 | `createDraftPr` | required | Bootstrap draft PR that closes every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
-| `addIssueComment` | required | Traceability edge issue→branch (#160): the bootstrap posts the delivery branch and PR on every bound issue when the PR binding is first established; `record.pr` is the exactly-once marker. |
+| `addIssueComment` | required | Ensure an exact-body traceability comment exists. Complete remote evidence reconciles retries before posting and returns the existing URL. Read failures and truncation fail closed; independent concurrent writers are not serialized. |
 | `addIssueLabels` | required | Tag apply (#330): union-semantics label addition for every bound issue after the selection resolves. Idempotent; the response must confirm every requested slug or the call fails closed. |
 
 ### ForgeAdminPort (src/github/port.ts)
@@ -143,8 +146,9 @@ satisfy both surfaces, exactly as before the split.
 | `OpenIssueFact.body` (optional) | The issue cannot win same-title scaffold disambiguation (#77): if a title collision has no sole scaffold-body match, adoption refuses with the `issue_title_ambiguous` usage diagnostic (exit 2) instead of binding an issue that could be unrelated. |
 
 Required-but-nullable is a different, already-covered case:
-`PrFact.mergeCommitSha` is required `string \| null`; `null` (GitHub
-reports no value) routes the merged-lineage gate to fail-closed
+`PrFact.mergeCommitSha` is required `string \| null`; adapters normalize the
+platform-proven target-branch result (merge, squash, or fast-forward). `null`
+(the platform supplies no usable anchor) routes the merged-lineage gate to fail-closed
 `merged_lineage_unavailable`, never to an inferred verdict.
 
 ## Deprecation path

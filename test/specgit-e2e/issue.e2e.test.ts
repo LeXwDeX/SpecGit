@@ -168,7 +168,9 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
       args.startsWith(`api repos/${OWNER}/${REPO}/issues/`)
     );
     expect(comments).toEqual([
+      `api repos/${OWNER}/${REPO}/issues/11/comments?per_page=100&page=1`,
       `api repos/${OWNER}/${REPO}/issues/11/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft pull request #77).`,
+      `api repos/${OWNER}/${REPO}/issues/12/comments?per_page=100&page=1`,
       `api repos/${OWNER}/${REPO}/issues/12/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft pull request #77).`,
     ]);
 

@@ -25,6 +25,7 @@ import type {
   IssueCommentCreation,
   IssueFact,
   LabelsAppliedFact,
+  MergeChecksFact,
   OpenIssueFact,
   PrCreation,
   PrFact,
@@ -34,6 +35,7 @@ import type {
   RepoLabelsFact,
 } from '../../github/port.js';
 import type { TagSpec } from '../../tags/catalog.js';
+import { isLaterCheckRun } from '../../github/check-runs.js';
 
 /** Map a classic-protection payload to the reported fact (contexts only, never fabricated). */
 function protectionFactFromPayload(payload: unknown): BranchProtectionFact {
@@ -75,6 +77,8 @@ const NOT_FOUND_PATTERN = /HTTP 404|Not Found/i;
 const LABEL_PAGE_SIZE = 100;
 /** Completeness guard for the label-pool probe (#330), same discipline as the timeline pages. */
 const MAX_LABEL_PAGES = 10;
+const COMMENT_PAGE_SIZE = 100;
+const MAX_COMMENT_PAGES = 10;
 
 /** GitHub's 422 validation failure when a label already exists names it in the payload. */
 const LABEL_ALREADY_EXISTS_PATTERN = /already.?exist(s)?/i;
@@ -175,7 +179,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       title?: unknown;
       pull_request?: unknown;
     };
-    if (typeof parsed.number !== 'number' || (parsed.state !== 'open' && parsed.state !== 'closed')) {
+    if (!parsed || parsed.number !== n || (parsed.state !== 'open' && parsed.state !== 'closed')) {
       return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
     }
 
@@ -286,7 +290,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       body?: unknown;
     };
     if (
-      typeof parsed.number !== 'number' ||
+      !parsed || parsed.number !== Number(ref) ||
       (parsed.state !== 'open' && parsed.state !== 'closed') ||
       typeof parsed.draft !== 'boolean'
     ) {
@@ -334,9 +338,12 @@ export class GhCliGitHubProvider implements ForgeProvider {
           return result;
         }
 
-        const parsed = result.value as { check_runs?: unknown };
-        if (!Array.isArray(parsed.check_runs)) {
+        const parsed = result.value as { check_runs?: unknown } | null;
+        if (!Array.isArray(parsed?.check_runs)) {
           return fail('gh_transport', 'GitHub returned an unexpected check-runs payload.');
+        }
+        if (parsed.check_runs.some((run) => run === null || typeof run !== 'object')) {
+          return fail('gh_transport', 'GitHub returned a malformed check run.');
         }
 
         return ok(
@@ -347,6 +354,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
               conclusion?: unknown;
               id?: unknown;
               started_at?: unknown;
+              app?: { id?: unknown };
             };
             return {
               name: typeof item.name === 'string' ? item.name : '',
@@ -354,11 +362,114 @@ export class GhCliGitHubProvider implements ForgeProvider {
               conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
               id: typeof item.id === 'number' ? item.id : 0,
               startedAt: typeof item.started_at === 'string' ? item.started_at : null,
+              ...(typeof item.app?.id === 'number' && Number.isSafeInteger(item.app.id) && item.app.id > 0
+                ? { source: `app:${item.app.id}` } : {}),
             };
           })
         );
       }
     );
+  }
+
+  async getPrChecks(repo: RepoRef, pr: number): Promise<Evidence<MergeChecksFact>> {
+    const request = await this.getPr(repo, pr);
+    if (!request.ok) return request;
+    const headSha = request.value.headSha;
+    const runs = await this.getCheckRuns(repo, headSha);
+    if (!runs.ok) return runs;
+    const checks = new Map<string, CheckRunInfo>();
+    for (const run of runs.value) {
+      if (!run.name || !run.status || !run.source || !Number.isSafeInteger(run.id) || run.id <= 0 ||
+          (run.status === 'completed' && !run.conclusion)) {
+        return fail('gh_transport', 'GitHub returned incomplete check-run evidence.');
+      }
+      const key = `${run.source ?? 'check'}:${run.name}`;
+      const previous = checks.get(key);
+      if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
+    }
+    // Classic commit statuses and workflow runs are independent evidence:
+    // a workflow awaiting approval can have no check jobs at all (#265).
+    for (const kind of ['statuses', 'workflows'] as const) {
+      const rows = await paginateToExhaustion<unknown>(
+        { pageSize: 100, maxPages: 10, what: kind === 'statuses' ? 'Commit-status' : 'Workflow-run' },
+        async (page) => {
+          const endpoint = kind === 'statuses'
+            ? `repos/${repo.owner}/${repo.repo}/commits/${headSha}/statuses?per_page=100&page=${page}`
+            : `repos/${repo.owner}/${repo.repo}/actions/runs?head_sha=${headSha}&per_page=100&page=${page}`;
+          const result = await this.runApi(endpoint, 'checks');
+          if (!result.ok) return result;
+          const values = kind === 'statuses' ? result.value
+            : (result.value as { workflow_runs?: unknown } | null)?.workflow_runs;
+          return Array.isArray(values) ? ok(values)
+            : fail('gh_transport', `GitHub returned an unexpected ${kind} payload.`);
+        }
+      );
+      if (!rows.ok) return rows;
+      for (const row of rows.value) {
+        if (row === null || typeof row !== 'object') return fail('gh_transport', 'GitHub returned malformed CI evidence.');
+        const value = row as Record<string, unknown>;
+        if (typeof value.id !== 'number' || !Number.isSafeInteger(value.id) || value.id <= 0) {
+          return fail('gh_transport', 'GitHub returned CI evidence without an attempt identity.');
+        }
+        let key: string;
+        let run: CheckRunInfo;
+        if (kind === 'statuses') {
+          if (typeof value.context !== 'string' || !value.context ||
+              !['pending', 'success', 'failure', 'error'].includes(String(value.state))) {
+            return fail('gh_transport', 'GitHub returned an unexpected commit status.');
+          }
+          key = `status:${value.context}`;
+          run = { name: value.context, status: value.state === 'pending' ? 'in_progress' : 'completed',
+            conclusion: value.state === 'pending' ? null : String(value.state), id: value.id,
+            startedAt: typeof value.created_at === 'string' ? value.created_at : null };
+        } else {
+          if (value.head_sha !== headSha || typeof value.workflow_id !== 'number' ||
+              !Number.isSafeInteger(value.workflow_id) || value.workflow_id <= 0 ||
+              typeof value.event !== 'string' || typeof value.name !== 'string' ||
+              typeof value.status !== 'string' ||
+              (value.status === 'completed' && typeof value.conclusion !== 'string')) {
+            return fail('gh_transport', 'GitHub returned incomplete or stale workflow evidence.');
+          }
+          key = `workflow:${value.workflow_id}:${value.event}`;
+          run = { name: `workflow: ${value.name} (${value.event})`, status: value.status,
+            conclusion: typeof value.conclusion === 'string' ? value.conclusion : null, id: value.id,
+            startedAt: typeof value.run_started_at === 'string' ? value.run_started_at : null };
+        }
+        const previous = checks.get(key);
+        if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
+      }
+    }
+    return ok({ headSha, checks: [...checks.values()] });
+  }
+
+  async mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>> {
+    if (!Number.isSafeInteger(pr) || pr <= 0 || !/^[0-9a-f]{40}$/i.test(expectedHeadSha)) {
+      return fail('gh_transport', 'A pull request and full expected head SHA are required to merge.');
+    }
+    const result = await this.runCreateGh(
+      ['api', '-X', 'PUT', `repos/${repo.owner}/${repo.repo}/pulls/${pr}/merge`, '--input', '-'],
+      JSON.stringify({ sha: expectedHeadSha, merge_method: 'merge' })
+    );
+    if (!result.ok) return result;
+    const payload = this.parseJsonOutput(result.value.stdout);
+    if (!payload.ok) return payload;
+    const merged = (payload.value as { merged?: unknown } | null)?.merged;
+    return typeof merged === 'boolean' ? ok({ merged })
+      : fail('gh_transport', 'GitHub did not confirm the merge result.');
+  }
+
+  async closeIssue(repo: RepoRef, issue: number): Promise<Evidence<{ closed: boolean }>> {
+    const before = await this.getIssue(repo, issue);
+    if (!before.ok) return before;
+    if (before.value.pullRequest) return fail('gh_transport', 'Issue closure cannot close an unmerged pull request.');
+    if (before.value.state === 'closed') return ok({ closed: true });
+    const result = await this.runCreateGh(
+      ['api', '-X', 'PATCH', `repos/${repo.owner}/${repo.repo}/issues/${issue}`, '--input', '-'],
+      JSON.stringify({ state: 'closed' })
+    );
+    if (!result.ok) return result;
+    const after = await this.getIssue(repo, issue);
+    return after.ok ? ok({ closed: after.value.state === 'closed' && !after.value.pullRequest }) : after;
   }
 
   /**
@@ -483,6 +594,35 @@ export class GhCliGitHubProvider implements ForgeProvider {
     if (!body.trim()) {
       return fail('gh_transport', 'Cannot post an empty issue comment.');
     }
+
+    // #380: a successful POST may lose its response, or a later issue may
+    // fail. Reconcile remote comments before retrying either partial run.
+    const existing = await paginateToExhaustion<unknown>(
+      { pageSize: COMMENT_PAGE_SIZE, maxPages: MAX_COMMENT_PAGES, what: 'Issue-comment' },
+      async (page) => {
+        const result = await this.runApi(
+          `repos/${repo.owner}/${repo.repo}/issues/${issue}/comments?per_page=${COMMENT_PAGE_SIZE}&page=${page}`,
+          'issue'
+        );
+        if (!result.ok) return result;
+        return Array.isArray(result.value)
+          ? ok(result.value)
+          : fail('gh_transport', 'GitHub returned an unexpected issue-comment list.');
+      }
+    );
+    if (!existing.ok) return existing;
+    let matchingUrl: string | undefined;
+    for (const entry of existing.value) {
+      if (typeof entry !== 'object' || entry === null) {
+        return fail('gh_transport', 'GitHub returned an unexpected issue-comment entry.');
+      }
+      const comment = entry as { body?: unknown; html_url?: unknown };
+      if (typeof comment.body !== 'string' || typeof comment.html_url !== 'string' || !comment.html_url) {
+        return fail('gh_transport', 'GitHub returned an unexpected issue-comment entry.');
+      }
+      if (comment.body === body) matchingUrl ??= comment.html_url;
+    }
+    if (matchingUrl !== undefined) return ok({ url: matchingUrl });
 
     const result = await this.runCreateGh([
       'api',

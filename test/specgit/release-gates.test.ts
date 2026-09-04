@@ -110,32 +110,23 @@ describe('release-prepare gates (#71)', () => {
     expect(openPrStep?.run).toMatch(/[Ss]uperseded/);
   });
 
-  it('holds the version PR open as the manual batch-decision point (#102)', () => {
-    // Batch mode: the version PR must not arm auto-merge — a human
-    // decides when the batch ships as a deliberate rc cut. The workflow
-    // comment must state the rationale and the re-arm condition so the
-    // arm-off cannot decay into an undocumented gap.
-    const openPrStep = (parsed.jobs?.release?.steps ?? []).find((step) =>
-      (step.run ?? '').includes('changeset-release/main')
-    );
-    expect(openPrStep).toBeDefined();
-    expect(openPrStep?.run).not.toContain('--auto');
-    expect(openPrStep?.run).toMatch(/[Bb]atch/);
-    expect(openPrStep?.run).toMatch(/[Rr]e-arm/);
+  it('runs the configured version merge gate after preparation with the release actor (#382)', () => {
+    const steps = parsed.jobs?.release?.steps ?? [];
+    const mergeStep = steps.find((step) => (step.run ?? '').includes('node scripts/merge-version-pr.mjs'));
+    expect(mergeStep).toBeDefined();
+    expect(mergeStep?.if).toBe("steps.pending.outputs.count != '0'");
+    expect(mergeStep?.run).toContain('pnpm run build');
+    expect(mergeStep?.env?.GH_TOKEN).toBe('${{ secrets.RELEASE_BOT_TOKEN || github.token }}');
+    expect(steps.indexOf(mergeStep!)).toBeGreaterThan(steps.findIndex((step) => step.name === 'Open version pull request'));
+    expect(raw).not.toContain('--admin');
+    expect(raw).not.toMatch(/gh pr merge .*--auto/);
   });
 
-  it('names the actual re-arm point: re-evaluated after 1.0.0 (#107)', () => {
-    // User ruling 2026-08-20: auto-merge stays armed off through the 1.0.0
-    // line; the re-arm decision is re-evaluated after 1.0.0 ships. The old
-    // condition ("as part of the deliberate 1.0.0-rc.1 cut") was satisfied
-    // by the rc.1 cut without a re-arm — leaving it in place would record a
-    // condition that already came due and went unmet.
-    const openPrStep = (parsed.jobs?.release?.steps ?? []).find((step) =>
-      (step.run ?? '').includes('changeset-release/main')
-    );
-    expect(openPrStep).toBeDefined();
-    expect(openPrStep?.run).toMatch(/re-evaluated after 1\.0\.0/i);
-    expect(openPrStep?.run).not.toMatch(/1\.0\.0-rc\.1 cut/);
+  it('documents the opt-in gate replacing the historical batch hold', () => {
+    expect(raw).toContain('#382');
+    expect(raw).toContain('automation.merge');
+    expect(raw).toContain('target_branch: main');
+    expect(raw).not.toContain('manual batch-decision point');
   });
 });
 

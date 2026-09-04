@@ -7,17 +7,19 @@
  * binds directly without contacting GitHub.
  */
 
-import { EXIT_SUCCESS, EXIT_UNKNOWN } from '../exit-codes.js';
+import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { CODE_INFO } from '../../acceptance/codes.js';
 import { deriveBindingState } from '../gates.js';
 import { errorDiagnostic, humanBuilder, issueList, type PrOutcome } from '../output.js';
 import { coercePrRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import { carryRecordToBranch } from './bootstrap.js';
+import { runMerge } from './merge.js';
 import type { CommandContext, DeliveryBinding } from '../types.js';
 
 export interface PrOptions {
   ref?: string;
+  merge?: boolean;
   json?: boolean;
 }
 
@@ -26,6 +28,15 @@ function bindPr(record: DeliveryBinding, pr: number | string): DeliveryBinding {
 }
 
 export async function runPr(options: PrOptions, ctx: CommandContext): Promise<PrOutcome> {
+  if (options.merge) {
+    if (options.ref !== undefined) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [errorDiagnostic('automation_ref_conflict', 'Use "specgit pr --merge" with the existing binding; an explicit PR reference cannot be combined with --merge.')],
+      };
+    }
+    return runMerge(ctx);
+  }
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return {

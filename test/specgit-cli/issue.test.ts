@@ -10,6 +10,7 @@ import * as path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import type { DeliveryBinding } from '../../src/record/schema.js';
+import { deleteRecord, readRecord, recordPath, writeRecord } from '../../src/record/io.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
 import type { PrSummary } from '../../src/github/port.js';
 import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
@@ -146,6 +147,34 @@ describe('specgit issue: usage', () => {
 });
 
 describe('specgit issue: fresh bootstrap', () => {
+  it.each([
+    {
+      platform: 'GitHub',
+      origin: 'https://github.com/LeXwDeX/SpecGit.git',
+      issueCommand: 'gh issue edit',
+      prCommand: 'gh pr edit',
+      fileFlag: '--body-file',
+    },
+    {
+      platform: 'GitLab',
+      origin: 'git@git.ycgame.com:suntao/specgit.git',
+      issueCommand: 'glab issue update',
+      prCommand: 'glab mr update',
+      fileFlag: '--description-file',
+    },
+  ])('renders executable $platform body-edit next actions', async ({ origin, issueCommand, prCommand, fileFlag }) => {
+    const t = issueCtx({ facts: { branch: 'main', originUrl: origin } });
+    t.ctx.parseRepoRef = (url) => parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+    const outcome = await runIssue({ titles: ['feat: first why', 'fix: second why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(outcome.nextActions?.find((a) => a.code === 'issue_bodies')?.command).toBe(
+      `${issueCommand} 11 ${fileFlag} <file-11> && ${issueCommand} 12 ${fileFlag} <file-12>`
+    );
+    expect(outcome.nextActions?.find((a) => a.code === 'pr_brief')?.command).toBe(
+      `${prCommand} 42 ${fileFlag} <file-pr>`
+    );
+  });
+
   it('creates every title issue, derives branch/delivery, opens the draft PR, records, commits, pushes', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue(
@@ -724,7 +753,106 @@ function mergedRecordCtx(
   });
 }
 
+async function withCompletedRecordOnDisk(
+  check: (t: ReturnType<typeof mergedRecordCtx>, root: string, originalBytes: string) => Promise<void>
+): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-completed-record-'));
+  try {
+    const t = mergedRecordCtx();
+    const original = await t.recordPort.readRecord(root);
+    if (!original.ok) throw new Error(original.message);
+    await writeRecord(root, {
+      ...original.value,
+      issueKinds: [{ issue: 11, kind: 'kind::fix' }],
+    });
+    fs.appendFileSync(recordPath(root), 'auditNote: preserve this extension\n');
+    const originalBytes = fs.readFileSync(recordPath(root), 'utf8');
+    t.ctx.discoverRoot = vi.fn(async () => ok(root));
+    t.recordPort.readRecord = readRecord;
+    t.recordPort.writeRecord = writeRecord;
+    t.recordPort.deleteRecord = vi.fn(deleteRecord);
+    await check(t, root, originalBytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe('specgit issue: replacement validation is non-destructive', () => {
+  it('preserves completed record bytes when explicit tags are invalid', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      const outcome = await runIssue(
+        { titles: ['feat: next delivery'], tags: 'module::ghost' }, t.ctx
+      );
+      expect(outcome.errors?.[0]?.code).toBe('issue_tags_unknown');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+      expect(t.harness.createdIssues).toEqual([]);
+    });
+  });
+
+  it('preserves completed record bytes when a Chinese title needs a delivery name', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      const outcome = await runIssue({ titles: ['feat: 下一次交付'], json: true }, t.ctx);
+      expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+      expect(t.harness.createdIssues).toEqual([]);
+    });
+  });
+
+  it('preserves completed record bytes when the first issue creation fails', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      t.gh.createIssue = vi.fn<typeof t.gh.createIssue>(async () => fail('gh_transport', 'offline'));
+      const outcome = await runIssue({ titles: ['feat: next delivery'] }, t.ctx);
+      expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+      expect(t.harness.createdPrs).toEqual([]);
+    });
+  });
+
+  it('preserves completed record bytes after a first-write failure and adopts the issue on retry', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      t.gh.createIssue = vi.fn(async () => ok({ number: 21, url: 'https://example.com/issues/21' }));
+      failRecordWrites(t, 1);
+      const first = await runIssue({ titles: ['feat: next delivery'] }, t.ctx);
+      expect(first.errors?.[0]?.code).toBe('record_write_failed');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+
+      t.gh.getOpenIssues = vi.fn(async () => ok([{ number: 21, title: 'feat: next delivery' }]));
+      const retried = await runIssue({ titles: ['feat: next delivery'] }, t.ctx);
+      expect(retried.exit).toBe(0);
+      expect(t.gh.createIssue).toHaveBeenCalledTimes(1);
+      expect(await readRecord(root)).toMatchObject({ ok: true, value: { issues: [21] } });
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toContain('auditNote: preserve this extension');
+    });
+  });
+
+  it('atomically replaces completed fields with a resumable numeric delivery and preserves extensions', async () => {
+    await withCompletedRecordOnDisk(async (t, root) => {
+      const checkout = t.gitPort.checkoutOrCreateBranch;
+      t.gitPort.checkoutOrCreateBranch = vi.fn<typeof t.gitPort.checkoutOrCreateBranch>(
+        async () => fail('git_checkout_failed', 'interrupted')
+      );
+      const first = await runIssue({ titles: ['77'], delivery: 'next-delivery' }, t.ctx);
+      expect(first.errors?.[0]?.code).toBe('git_checkout_failed');
+      expect(await readRecord(root)).toEqual(ok({
+        version: 1,
+        delivery: 'next-delivery',
+        context: { kind: 'branch', branch: 'feat/77-next-delivery' },
+        issues: [77],
+        issueKinds: [],
+        auditNote: 'preserve this extension',
+      }));
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toContain('auditNote: preserve this extension');
+      expect(t.recordPort.deleteRecord).not.toHaveBeenCalled();
+
+      t.gitPort.checkoutOrCreateBranch = checkout;
+      const resumed = await runIssue({}, t.ctx);
+      expect(resumed.exit).toBe(0);
+      expect(t.harness.createdIssues).toEqual([]);
+      expect(t.harness.createdPrs).toHaveLength(1);
+      expect(t.harness.createdPrs[0].body).toContain('Closes #77');
+    });
+  });
+
   it('never deletes a merged record for invalid replacement arguments (type)', async () => {
     const t = mergedRecordCtx();
     const outcome = await runIssue({ titles: ['bogus replacement'] }, t.ctx);
@@ -761,7 +889,7 @@ describe('specgit issue: replacement validation is non-destructive', () => {
     expect(t.gitPort.pushCalls).toEqual([]);
   });
 
-  it('deletes the merged record only after replacement arguments validate', async () => {
+  it('replaces the merged record without deleting it after replacement arguments validate', async () => {
     const t = issueCtx({
       facts: { branch: 'feat/77-brand-new-work' },
       record: sampleBinding({
@@ -786,7 +914,7 @@ describe('specgit issue: replacement validation is non-destructive', () => {
     });
     const outcome = await runIssue({ titles: ['feat: brand new work'] }, t.ctx);
     expect(outcome.exit).toBe(0);
-    expect(t.recordPort.deletes).toEqual(['/repo']);
+    expect(t.recordPort.deletes).toEqual([]);
     expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: brand new work']);
   });
 });
@@ -861,11 +989,11 @@ describe('specgit issue: a bound PR that does not exist is terminal evidence (#2
     });
   }
 
-  it('replacement arguments delete the stale record and bootstrap the next delivery', async () => {
+  it('replacement arguments overwrite the stale record and bootstrap the next delivery', async () => {
     const t = missingPrCtx();
     const outcome = await runIssue({ titles: ['feat: next why'] }, t.ctx);
     expect(outcome.exit).toBe(0);
-    expect(t.recordPort.deletes).toEqual(['/repo']);
+    expect(t.recordPort.deletes).toEqual([]);
     expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: next why']);
   });
 

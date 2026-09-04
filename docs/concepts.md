@@ -18,7 +18,8 @@ This guide explains the core ideas behind SpecGit and how they fit together. For
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted; configured pr --merge confirms merge
+        |                         then closes bound issues when enabled
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -31,7 +32,7 @@ fail-closed not hopeful  — anything unverifiable is "unknown", never "accepted
 git is the contract      — the branch, the PR, and the checks are the deliverable
 ```
 
-SpecGit does not manage plans, specs, or task lists. By the time SpecGit looks at your work, the work already exists as a branch, issues, a pull request, and CI checks. SpecGit's only job is to verify — from real evidence — that the delivery is complete. A checklist that says "done" is not evidence; a green required check on the PR head commit is.
+SpecGit binds a delivery to issues, a branch, and a pull request, then verifies acceptance from real git and CI evidence. A checklist that says "done" is not evidence; a green required check on the PR head commit is. `finish` only reads evidence. When the user has enabled automation, `pr --merge` uses fresh acceptance and all CI checks at that head to complete the merge and configured issue closure.
 
 ## The delivery binding aggregate
 
@@ -41,15 +42,15 @@ Every delivery is one aggregate, declared in a single record file (`.specgit.yam
 | --- | --- | --- |
 | Delivery | A kebab-case id for the work (`add-login-flow`) | record |
 | Execution context | Where the work happens: a branch, or a linked worktree plus its branch | live git |
-| Issues | 1..N GitHub issue numbers the delivery closes | record → GitHub |
-| Pull request | Exactly one PR that merges the delivery | record → GitHub |
-| Required checks | CI check names that must pass at the PR head | policy → GitHub |
+| Issues | 1..N issue numbers in the delivery repository | record → forge |
+| Pull request | Exactly one PR/MR that merges the delivery | record → forge |
+| Required checks | CI check names that must pass at the PR head | policy → forge |
 
 The record declares; git and the forge substantiate. Acceptance means every part was verified against the real thing.
 
 ### One PR may close N issues
 
-`issues` is a list: a single PR can close any number of issues (`Closes #123`, `Fixes #124`, ...). Every bound issue must be closed by the PR's closing references — acceptance fails with the missing numbers listed if even one is absent. Only GitHub issue numbers are accepted; opaque tracker references are rejected at bind time.
+`issues` is a list: a single PR can close any number of issues (`Closes #123`, `Fixes #124`, ...). Every bound issue must be covered by the PR's closing references in the delivery repository — acceptance fails with the missing numbers listed if even one is absent. Issue numbers resolve on the declared forge; opaque tracker references are rejected at bind time. Configured automatic issue closure occurs only after the platform confirms the merge, including when a non-default target branch does not close references automatically.
 
 ## Execution context: branch or worktree
 
@@ -65,12 +66,12 @@ If HEAD is detached, the live branch disagrees with the record, or the worktree 
 ```text
 repo root/
 ├── spec_git/
-│   ├── policy.yaml       # required_checks — shared by every delivery
+│   ├── policy.yaml       # required_checks and optional automation
 │   └── providers.yaml    # optional — a declared self-managed GitLab host
 └── .specgit.yaml         # this delivery's binding — committed on the delivery branch
 ```
 
-- **Policy** (`spec_git/policy.yaml`): the project-level contract — the list of CI check names every delivery must pass. An empty list is the no-CI policy: the generated acceptance job remains the gate. Created by `specgit init`, versioned like code.
+- **Policy** (`spec_git/policy.yaml`): the project-level contract — required CI check names and optional automation. An empty required list is the no-CI policy: the generated acceptance job remains the gate. Automation defaults to off; only the user's own yes enables `init --automation yes --merge-target <branch>`. `init --force` lets the user change the choice; agents cannot answer yes for them. `automation.target_branch` constrains the merge destination, and configured issue closure follows a confirmed merge.
 - **Declaration** (`spec_git/providers.yaml`, optional): present only when `init --gitlab-host` declared the origin as self-managed GitLab; committed so the team shares it.
 - **Record** (`.specgit.yaml`): the delivery-level binding. Written by `specgit issue` (script alias: `bind`), removed by `specgit unbind`. Unknown keys are preserved on rewrite so other tools can coexist in the file.
 
@@ -105,10 +106,11 @@ Consequences worth knowing:
 - `specgit finish` (alias `accept`) offline can return `unknown`, never `accepted`. Acceptance requires the provider by design.
 - A dirty working tree is reported as evidence but never fails acceptance — acceptance is about the PR head, not your local edits.
 - If your local HEAD differs from the PR head, you get an informational `local_head_stale` warning; checks are evaluated at the **PR head commit**, because that is what will be merged.
+- `specgit pr --merge` additionally requires every executed CI check to pass, including checks outside the required list; GitLab also requires the authoritative MR pipeline to succeed. It submits the expected head SHA so a new push cannot reuse an earlier approval of evidence.
 
 ## What SpecGit deliberately is not
 
 - Not a spec framework: there are no proposal, spec, design, or task artifacts.
-- Not a git wrapper: it reads git facts; it never rewrites history or touches your branches.
+- Not a general git wrapper: bootstrap creates the delivery branch and carries its record; acceptance reads git facts without rewriting history.
 - Not an issue tracker or CI system: it verifies against your forge (GitHub or GitLab) and your existing CI.
 - Not a plugin platform: no third-party plugins or extension points. `init` generates the fixed harness (acceptance workflow, managed AGENTS/CLAUDE block, guard hooks) and `setup` installs fixed agent entry points — all of them regenerated artifacts, none configurable surfaces.

@@ -19,6 +19,7 @@ import type {
   IssueCommentCreation,
   IssueFact,
   LabelsAppliedFact,
+  MergeChecksFact,
   OpenIssueFact,
   PrCreation,
   PrFact,
@@ -36,11 +37,9 @@ import type { TagSpec } from '../../tags/catalog.js';
  * per platform, authenticated per host, tokens owned by glab — never read,
  * stored, or logged here. All failures are evidence: none pass acceptance.
  *
- * Endpoint discipline: read endpoints plus exactly six documented write
- * endpoints — POST issues, POST merge_requests, POST protected_branches,
- * PUT project (the pipeline gate), POST project labels (#330 seed),
- * PUT issues/{iid} (add_labels; #330 apply). The edit-project endpoint
- * is routed for PUT only — a PATCH returns 404 Not Found.
+ * Writes cover issue/MR lifecycle, notes, labels, branch protection and
+ * the project pipeline gate. MR merge sends the expected SHA atomically;
+ * the provider never bypasses platform protection. Project edits use PUT.
  */
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -57,6 +56,7 @@ const DEFAULT_MAX_BUFFER = 4 * 1024 * 1024;
 const LIST_PAGE_SIZE = 100;
 /** Completeness guard: pagination beyond this cap fails closed. */
 const MAX_LIST_PAGES = 10;
+const MAX_MERGE_PIPELINES = 32;
 /**
  * The checks-gate pipeline bound (#187): the newest pipelines by
  * `updated_at` for the sha — job pages fetched no longer scale with the
@@ -149,6 +149,22 @@ export interface GlabProviderOptions {
 }
 
 type RunOutcome = CliRunOutcome;
+
+interface MrPipelineFact {
+  headSha: string;
+  pipeline: { id: number; projectId: number; status: string | null } | null;
+}
+
+interface PipelineRef {
+  id: number;
+  project: string;
+  projectId?: number;
+}
+
+interface PipelineJobsFact {
+  checks: CheckRunInfo[];
+  downstream: unknown[];
+}
 
 /**
  * The GitLab transport: the authenticated `glab` CLI (#114). Implements
@@ -272,8 +288,8 @@ export class GlabProvider implements ForgeProvider {
     if (!result.ok) {
       return result;
     }
-    const parsed = result.value as { iid?: unknown; state?: unknown; title?: unknown };
-    if (typeof parsed.iid !== 'number' || (parsed.state !== 'opened' && parsed.state !== 'closed')) {
+    const parsed = result.value as { iid?: unknown; state?: unknown; title?: unknown } | null;
+    if (parsed === null || typeof parsed !== 'object' || typeof parsed.iid !== 'number' || (parsed.state !== 'opened' && parsed.state !== 'closed')) {
       return fail('glab_transport', 'GitLab returned an unexpected issue payload.');
     }
     return ok({
@@ -353,8 +369,11 @@ export class GlabProvider implements ForgeProvider {
       sha?: unknown;
       description?: unknown;
       merge_commit_sha?: unknown;
-    };
+      squash_commit_sha?: unknown;
+      diff_refs?: { head_sha?: unknown } | null;
+    } | null;
     if (
+      parsed === null || typeof parsed !== 'object' ||
       typeof parsed.iid !== 'number' ||
       typeof parsed.draft !== 'boolean' ||
       (parsed.state !== 'opened' &&
@@ -366,6 +385,20 @@ export class GlabProvider implements ForgeProvider {
     }
     const state: PrFact['state'] =
       parsed.state === 'merged' ? 'merged' : parsed.state === 'closed' ? 'closed' : 'open';
+    // GitLab fast-forward merges have no merge_commit_sha. Its frozen
+    // squash result (or explicitly unsquashed diff head) is the base anchor.
+    let mergeCommitSha =
+      typeof parsed.merge_commit_sha === 'string' && parsed.merge_commit_sha.length > 0
+        ? parsed.merge_commit_sha
+        : null;
+    if (mergeCommitSha === null && state === 'merged') {
+      if (typeof parsed.squash_commit_sha === 'string' && parsed.squash_commit_sha.length > 0) {
+        mergeCommitSha = parsed.squash_commit_sha;
+      } else if (parsed.merge_commit_sha === null && parsed.squash_commit_sha === null &&
+          typeof parsed.diff_refs?.head_sha === 'string' && parsed.diff_refs.head_sha.length > 0) {
+        mergeCommitSha = parsed.diff_refs.head_sha;
+      }
+    }
     return ok({
       number: parsed.iid,
       state,
@@ -373,33 +406,26 @@ export class GlabProvider implements ForgeProvider {
       headSha: typeof parsed.sha === 'string' ? parsed.sha : '',
       baseBranch: typeof parsed.target_branch === 'string' ? parsed.target_branch : '',
       body: typeof parsed.description === 'string' ? parsed.description : '',
-      mergeCommitSha:
-        typeof parsed.merge_commit_sha === 'string' && parsed.merge_commit_sha.length > 0
-          ? parsed.merge_commit_sha
-          : null,
+      mergeCommitSha,
       draft: parsed.draft,
     });
   }
 
   /**
-   * Pipelines for the sha, then per-pipeline jobs (the sha→pipelines→jobs
-   * chain, row 15). The pipeline listing is bounded by recency (#187):
-   * `order_by=updated_at`, `sort=desc`, one page of
-   * `PIPELINE_FETCH_LIMIT + 1` — an overflow fails closed
-   * (`evidence_truncated`), so the bound never turns missing evidence
-   * into a pass. Retried jobs stay omitted (`include_retried` never
-   * passed, row 16) so latest-attempt semantics are native. The #116
-   * mapping (ledger rows 16/17/26): final states complete the run —
-   * success/'success', failed/'failure' with the platform
-   * `allow_failure` boolean carried as job-level truth, canceled/
-   * 'cancelled' (gate-failing, §8.4.2); `skipped` jobs produce no
-   * check-run at all (intentionally not run ⇒ absent); every other
-   * status stays non-completed ⇒ the gate reads it as pending
-   * (manual included: it never ran).
+   * Acceptance uses the bound MR's head_pipeline, including its source
+   * project. Other pipelines at the same SHA never contribute jobs.
+   * Two-argument callers retain bounded discovery and receive only the
+   * highest pipeline id; acceptance always supplies the MR iid (#376).
    */
-  async getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>> {
+  async getCheckRuns(repo: RepoRef, sha: string, pr?: number): Promise<Evidence<CheckRunInfo[]>> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
       return fail('glab_transport', 'Cannot query pipelines without a valid commit SHA.');
+    }
+    if (pr !== undefined) {
+      const mrEv = await this.readMrPipeline(repo, pr, sha);
+      if (!mrEv.ok) return mrEv;
+      const { pipeline } = mrEv.value;
+      return pipeline === null ? ok([]) : this.checkRunsForPipeline(String(pipeline.projectId), pipeline.id);
     }
     const listEv = await this.runApi(
       `projects/${this.projectPath(repo)}/pipelines?sha=${sha}&order_by=updated_at&sort=desc&per_page=${PIPELINE_FETCH_LIMIT + 1}&page=1`
@@ -415,51 +441,248 @@ export class GlabProvider implements ForgeProvider {
         `pipeline-list returned more than the ${PIPELINE_FETCH_LIMIT} most recent pipelines for this sha; the job evidence would be incomplete.`
       );
     }
-    const runs: CheckRunInfo[] = [];
+    let newestId: number | undefined;
     for (const entry of listEv.value) {
-      const pipelineId = (entry as { id?: unknown }).id;
-      if (typeof pipelineId !== 'number') continue;
-      const jobsEv = await this.paginateList(
-        (page) =>
-          `projects/${this.projectPath(repo)}/pipelines/${pipelineId}/jobs?per_page=${LIST_PAGE_SIZE}&page=${page}`,
-        'pipeline-job-list'
-      );
-      if (!jobsEv.ok) {
-        return jobsEv;
+      const pipeline = entry as { id?: unknown; sha?: unknown } | null;
+      if (pipeline === null || typeof pipeline !== 'object' ||
+          !Number.isSafeInteger(pipeline.id) || (pipeline.id as number) <= 0 || pipeline.sha !== sha) {
+        return fail('glab_transport', 'GitLab returned an incomplete or mismatched pipeline-list entry.');
       }
-      for (const job of jobsEv.value) {
-        const item = job as {
-          name?: unknown;
-          status?: unknown;
-          id?: unknown;
-          started_at?: unknown;
-          allow_failure?: unknown;
-        };
-        const jobStatus = typeof item.status === 'string' ? item.status : '';
-        // Decided #116: skipped ⇒ absent — the job was intentionally
-        // not run, so it contributes no evidence object.
-        if (jobStatus === 'skipped') continue;
-        runs.push({
-          name: typeof item.name === 'string' ? item.name : '',
-          status:
-            jobStatus === 'success' || jobStatus === 'failed' || jobStatus === 'canceled'
-              ? 'completed'
-              : jobStatus,
-          conclusion:
-            jobStatus === 'success'
-              ? 'success'
-              : jobStatus === 'failed'
-                ? 'failure'
-                : jobStatus === 'canceled'
-                  ? 'cancelled'
-                  : null,
-          ...(item.allow_failure === true ? { allowFailure: true } : {}),
-          id: typeof item.id === 'number' ? item.id : 0,
-          startedAt: typeof item.started_at === 'string' ? item.started_at : null,
-        });
+      const id = pipeline.id as number;
+      if (newestId === undefined || id > newestId) newestId = id;
+    }
+    return newestId === undefined ? ok([]) : this.checkRunsForPipeline(this.projectPath(repo), newestId);
+  }
+
+  async getPrChecks(repo: RepoRef, pr: number): Promise<Evidence<MergeChecksFact>> {
+    const mrEv = await this.readMrPipeline(repo, pr);
+    if (!mrEv.ok) return mrEv;
+    const { headSha, pipeline } = mrEv.value;
+    if (pipeline === null || pipeline.status === null) {
+      return fail('glab_transport', 'GitLab did not report the MR head pipeline status required for merge.');
+    }
+    const checksEv = await this.collectMergePipelineChecks(pipeline);
+    if (!checksEv.ok) return checksEv;
+    return ok({ headSha, checks: checksEv.value, pipelineStatus: pipeline.status });
+  }
+
+  /** All jobs in the linked pipeline graph, bounded and namespaced by identity. */
+  private async collectMergePipelineChecks(root: { id: number; projectId: number }): Promise<Evidence<CheckRunInfo[]>> {
+    const queue: PipelineRef[] = [{ id: root.id, project: String(root.projectId), projectId: root.projectId }];
+    const visited = new Set<string>();
+    const checks: CheckRunInfo[] = [];
+    while (queue.length > 0) {
+      const ref = queue.shift()!;
+      if (ref.projectId !== undefined && visited.has(`${ref.projectId}/${ref.id}`)) continue;
+      const isRoot = visited.size === 0;
+      let projectId = ref.projectId;
+      let pipelineStatus: string | undefined;
+      if (!isRoot) {
+        const pipelineEv = await this.runApi(`projects/${ref.project}/pipelines/${ref.id}`);
+        if (!pipelineEv.ok) return pipelineEv;
+        const fact = pipelineEv.value as { id?: unknown; project_id?: unknown; sha?: unknown; status?: unknown } | null;
+        if (fact === null || typeof fact !== 'object' || fact.id !== ref.id ||
+            !Number.isSafeInteger(fact.project_id) || (fact.project_id as number) <= 0 ||
+            (projectId !== undefined && fact.project_id !== projectId) ||
+            typeof fact.sha !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(fact.sha) ||
+            typeof fact.status !== 'string' || fact.status === '') {
+          return fail('glab_transport', 'GitLab returned incomplete or mismatched downstream pipeline evidence.');
+        }
+        projectId = fact.project_id as number;
+        pipelineStatus = fact.status;
+      }
+      const key = `${projectId}/${ref.id}`;
+      if (visited.has(key)) continue;
+      if (visited.size >= MAX_MERGE_PIPELINES) {
+        return evidenceTruncated(`The downstream pipeline graph exceeds the ${MAX_MERGE_PIPELINES}-pipeline merge evidence bound.`);
+      }
+      visited.add(key);
+      const prefix = isRoot ? '' : `downstream:${key}:`;
+      if (pipelineStatus !== undefined) {
+        const terminal = ['success', 'failed', 'canceled', 'skipped'].includes(pipelineStatus);
+        checks.push({ name: `${prefix}pipeline`, id: ref.id, startedAt: null, status: terminal ? 'completed' : pipelineStatus,
+          conclusion: pipelineStatus === 'success' ? 'success' : terminal ? 'failure' : null });
+      }
+      for (const collection of ['jobs', 'trigger_jobs'] as const) {
+        const jobsEv = await this.readPipelineJobs(String(projectId), ref.id, collection);
+        if (!jobsEv.ok) return jobsEv;
+        checks.push(...jobsEv.value.checks.map((check) => ({ ...check, name: `${prefix}${check.name}` })));
+        for (const downstream of jobsEv.value.downstream) {
+          if (downstream === null) continue;
+          const refEv = this.downstreamPipelineRef(downstream);
+          if (!refEv.ok) return refEv;
+          queue.push(refEv.value);
+        }
       }
     }
-    return ok(runs);
+    return ok(checks);
+  }
+
+  private downstreamPipelineRef(value: unknown): Evidence<PipelineRef> {
+    const fact = value as { id?: unknown; project_id?: unknown; web_url?: unknown } | null;
+    if (fact === null || typeof fact !== 'object' || !Number.isSafeInteger(fact.id) || (fact.id as number) <= 0) {
+      return fail('glab_transport', 'GitLab did not identify a downstream pipeline.');
+    }
+    let projectPath: string | undefined;
+    if (fact.web_url !== undefined) {
+      try {
+        if (typeof fact.web_url !== 'string') throw new Error('Missing URL');
+        const url = new URL(fact.web_url);
+        const host = new URL(`https://${this.hostname ?? GITLAB_SAAS_HOST}`).host;
+        const suffix = url.pathname.endsWith(`/-/pipelines/${fact.id}`)
+          ? `/-/pipelines/${fact.id}` : `/pipelines/${fact.id}`;
+        if (!['https:', 'http:'].includes(url.protocol) || url.host !== host || url.username || url.password ||
+            !url.pathname.endsWith(suffix)) throw new Error('Mismatched pipeline URL');
+        const project = decodeURIComponent(url.pathname.slice(1, -suffix.length));
+        if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/.test(project) ||
+            project.split('/').some((part) => part === '.' || part === '..')) throw new Error('Invalid project path');
+        projectPath = encodeURIComponent(project);
+      } catch {
+        return fail('glab_transport', 'GitLab returned an invalid or cross-host downstream pipeline URL.');
+      }
+    }
+    if (fact.project_id !== undefined) {
+      if (!Number.isSafeInteger(fact.project_id) || (fact.project_id as number) <= 0) {
+        return fail('glab_transport', 'GitLab returned an invalid downstream project identity.');
+      }
+      return ok({ id: fact.id as number, projectId: fact.project_id as number, project: String(fact.project_id) });
+    }
+    return projectPath === undefined
+      ? fail('glab_transport', 'GitLab did not identify the downstream project.')
+      : ok({ id: fact.id as number, project: projectPath });
+  }
+
+  async mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>> {
+    if (!Number.isSafeInteger(pr) || pr <= 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(expectedHeadSha)) {
+      return fail('glab_transport', 'Cannot merge without a positive MR iid and a full expected commit SHA.');
+    }
+    const current = await this.getPr(repo, pr);
+    if (!current.ok) return current;
+    if (current.value.number !== pr || current.value.headSha !== expectedHeadSha) {
+      return fail('glab_transport', 'The merge request head changed after its evidence was verified.');
+    }
+    if (current.value.state === 'merged') return ok({ merged: true });
+    if (current.value.state !== 'open') return ok({ merged: false });
+    const result = await this.runCreate([
+      'api', ...this.hostArgs(), '-X', 'PUT',
+      `projects/${this.projectPath(repo)}/merge_requests/${pr}/merge`, '-f', `sha=${expectedHeadSha}`,
+    ]);
+    if (!result.ok) return this.asFailure(result);
+    const confirmed = await this.getPr(repo, pr);
+    if (!confirmed.ok) return confirmed;
+    if (confirmed.value.number !== pr || confirmed.value.headSha !== expectedHeadSha) {
+      return fail('glab_transport', 'The merge response could not be verified against the expected MR head.');
+    }
+    return ok({ merged: confirmed.value.state === 'merged' });
+  }
+
+  async closeIssue(repo: RepoRef, issue: number): Promise<Evidence<{ closed: boolean }>> {
+    if (!Number.isSafeInteger(issue) || issue <= 0) {
+      return fail('glab_transport', 'Cannot close an issue without a positive iid.');
+    }
+    const current = await this.getIssue(repo, issue);
+    if (!current.ok) return current;
+    if (current.value.number !== issue) {
+      return fail('glab_transport', 'GitLab returned a different issue from the requested closure.');
+    }
+    if (current.value.state === 'closed') return ok({ closed: true });
+    const result = await this.runCreate([
+      'api', ...this.hostArgs(), '-X', 'PUT',
+      `projects/${this.projectPath(repo)}/issues/${issue}`, '-f', 'state_event=close',
+    ]);
+    if (!result.ok) return this.asFailure(result);
+    const confirmed = await this.getIssue(repo, issue);
+    if (!confirmed.ok) return confirmed;
+    if (confirmed.value.number !== issue) {
+      return fail('glab_transport', 'The issue closure response did not identify the requested issue.');
+    }
+    return ok({ closed: confirmed.value.state === 'closed' });
+  }
+
+  private async readMrPipeline(repo: RepoRef, pr: number, expectedSha?: string): Promise<Evidence<MrPipelineFact>> {
+    if (!Number.isSafeInteger(pr) || pr <= 0) {
+      return fail('glab_transport', 'Cannot query MR pipeline evidence without a positive MR iid.');
+    }
+    const mrEv = await this.runApi(`projects/${this.projectPath(repo)}/merge_requests/${pr}`, 'pr');
+    if (!mrEv.ok) return mrEv;
+    const mr = mrEv.value as { iid?: unknown; sha?: unknown; head_pipeline?: unknown } | null;
+    if (mr === null || typeof mr !== 'object' || mr.iid !== pr ||
+        typeof mr.sha !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(mr.sha) ||
+        (expectedSha !== undefined && mr.sha !== expectedSha)) {
+      return fail('glab_transport', 'GitLab returned an MR identity or head SHA that differs from the requested evidence.');
+    }
+    if (mr.head_pipeline === null) return ok({ headSha: mr.sha, pipeline: null });
+    const pipeline = mr.head_pipeline as { id?: unknown; sha?: unknown; project_id?: unknown; status?: unknown } | undefined;
+    if (pipeline === undefined || typeof pipeline !== 'object' ||
+        typeof pipeline.id !== 'number' || !Number.isSafeInteger(pipeline.id) || pipeline.id <= 0 ||
+        typeof pipeline.project_id !== 'number' || !Number.isSafeInteger(pipeline.project_id) || pipeline.project_id <= 0 ||
+        pipeline.sha !== mr.sha ||
+        (pipeline.status !== undefined && (typeof pipeline.status !== 'string' || pipeline.status === ''))) {
+      return fail('glab_transport', 'GitLab returned an incomplete or stale MR head pipeline.');
+    }
+    return ok({ headSha: mr.sha, pipeline: {
+      id: pipeline.id, projectId: pipeline.project_id, status: pipeline.status ?? null,
+    } });
+  }
+
+  private async checkRunsForPipeline(
+    project: string, pipelineId: number, collection: 'jobs' | 'trigger_jobs' = 'jobs'
+  ): Promise<Evidence<CheckRunInfo[]>> {
+    const jobsEv = await this.readPipelineJobs(project, pipelineId, collection);
+    return jobsEv.ok ? ok(jobsEv.value.checks) : jobsEv;
+  }
+
+  private async readPipelineJobs(
+    project: string, pipelineId: number, collection: 'jobs' | 'trigger_jobs'
+  ): Promise<Evidence<PipelineJobsFact>> {
+    const jobsEv = await this.paginateList(
+      (page) => `projects/${project}/pipelines/${pipelineId}/${collection}?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+      'pipeline-job-list'
+    );
+    if (!jobsEv.ok) return jobsEv;
+    const runs: CheckRunInfo[] = [];
+    const downstream: unknown[] = [];
+    for (const job of jobsEv.value) {
+      const item = job as {
+        name?: unknown;
+        status?: unknown;
+        id?: unknown;
+        started_at?: unknown;
+        allow_failure?: unknown;
+        downstream_pipeline?: unknown;
+      } | null;
+      if (item === null || typeof item !== 'object' ||
+          typeof item.id !== 'number' || !Number.isSafeInteger(item.id) || item.id <= 0 ||
+          typeof item.name !== 'string' || item.name === '' ||
+          typeof item.status !== 'string' || item.status === '' ||
+          typeof item.allow_failure !== 'boolean' ||
+          (item.started_at !== null && (typeof item.started_at !== 'string' || Number.isNaN(Date.parse(item.started_at))))) {
+        return fail('glab_transport', 'GitLab returned an incomplete or malformed pipeline job.');
+      }
+      const jobStatus = item.status;
+      if (collection === 'trigger_jobs') downstream.push(item.downstream_pipeline);
+      // Skipped is absent in this pipeline; no earlier pipeline fills it.
+      if (jobStatus === 'skipped') continue;
+      runs.push({
+        name: item.name,
+        status:
+          jobStatus === 'success' || jobStatus === 'failed' || jobStatus === 'canceled'
+            ? 'completed'
+            : jobStatus,
+        conclusion:
+          jobStatus === 'success'
+            ? 'success'
+            : jobStatus === 'failed'
+              ? 'failure'
+              : jobStatus === 'canceled'
+                ? 'cancelled'
+                : null,
+        ...(item.allow_failure ? { allowFailure: true } : {}),
+        id: item.id,
+        startedAt: item.started_at,
+      });
+    }
+    return ok({ checks: runs, downstream });
   }
 
   /**
@@ -521,6 +744,25 @@ export class GlabProvider implements ForgeProvider {
     if (!body.trim()) {
       return fail('glab_transport', 'Cannot post an empty issue comment.');
     }
+    const existingEv = await this.paginateList(
+      (page) => `projects/${this.projectPath(repo)}/issues/${issue}/notes?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+      'issue-note-list'
+    );
+    if (!existingEv.ok) return existingEv;
+    let existingUrl: string | undefined;
+    for (const entry of existingEv.value) {
+      const note = entry as { id?: unknown; body?: unknown; web_url?: unknown } | null;
+      if (note === null || typeof note !== 'object' || typeof note.body !== 'string' ||
+          !Number.isSafeInteger(note.id) || (note.id as number) <= 0) {
+        return fail('glab_transport', 'GitLab returned an incomplete issue-note entry.');
+      }
+      if (note.body === body && existingUrl === undefined) {
+        existingUrl = typeof note.web_url === 'string' && note.web_url
+          ? note.web_url
+          : this.noteDeepLink(repo, issue, note.id as number);
+      }
+    }
+    if (existingUrl !== undefined) return ok({ url: existingUrl });
     const result = await this.runCreate([
       'api',
       ...this.hostArgs(),

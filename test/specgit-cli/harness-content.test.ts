@@ -149,6 +149,39 @@ describe('managedPromptBlock: start-of-delivery contract (#336)', () => {
   });
 });
 
+describe('agent guidance: authorized delivery automation (#382)', () => {
+  it('keeps opt-in, read-only finish, and guarded merge in both managed languages', () => {
+    for (const language of ['en', 'zh'] as const) {
+      const block = managedPromptBlock(language);
+      for (const literal of ['--automation yes', '--automation no', '--force', 'specgit pr --merge --json', 'target_branch']) {
+        expect(block).toContain(literal);
+      }
+    }
+    expect(managedPromptBlock('en')).toMatch(/user personally chooses/);
+    expect(managedPromptBlock('en')).toMatch(/finish` is read-only/);
+    expect(managedPromptBlock('en')).toMatch(/existing user authorization/);
+    expect(managedPromptBlock('zh')).toMatch(/用户本人选择/);
+    expect(managedPromptBlock('zh')).toMatch(/finish` 只读/);
+    expect(managedPromptBlock('zh')).toMatch(/已有用户授权/);
+  });
+
+  it('finish and pr entry points continue authorized work on both installed surfaces', async () => {
+    const desired = await buildAgentSurfaceDesiredState('/repo', 'all');
+    const entries = desired.steps.filter(
+      (candidate): candidate is Extract<ManagedStep, { kind: 'write' }> =>
+        candidate.kind === 'write' && /specgit-(finish|pr)(?:\.md|\/SKILL\.md)$/.test(candidate.path)
+    );
+    expect(entries).toHaveLength(4);
+    for (const entry of entries) {
+      const bytes = entry.merge(null);
+      expect(bytes).toContain('specgit pr --merge --json');
+      expect(bytes).toContain('existing user authorization');
+      expect(bytes).toContain('read-only');
+      expect(bytes).not.toMatch(/ask the (?:user|human) to approve/);
+    }
+  });
+});
+
 describe('injectManagedBlock: pure byte merge', () => {
   const block = `${BLOCK_START_MARKER}\nbody\n${BLOCK_END_MARKER}`;
 

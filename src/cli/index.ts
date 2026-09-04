@@ -184,12 +184,14 @@ export function createProgram(
     .command('init')
     .description('Create spec_git/policy.yaml with the required CI check names and generate the harness')
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
-    .option('--force', 'Rebuild spec_git/policy.yaml even when it already exists')
+    .option('--force', 'Regenerate the harness and ask about automation again; preserve other policy settings')
     .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
     .option('--gitlab-host <hostname>', 'Declare a self-hosted GitLab host (bare hostname, or host:port for a non-default port, matching the origin)')
     .option('--language <lang>', 'Language of generated text: en | zh (default en; persisted in spec_git/policy.yaml)')
+    .option('--automation <yes|no>', 'Supply the user\'s automation answer: yes | no (default no)')
+    .option('--merge-target <branch>', 'Target branch for configured merge automation')
     .option('--no-ignore', 'Skip the .gitignore block for the local delivery assets (.specgit.yaml, spec_git/)')
-    .option('--protect', 'Enable branch protection + auto-merge without asking')
+    .option('--protect', 'Enable branch protection and forge auto-merge capability; does not enable delivery automation')
     .option('--no-protect', 'Skip the branch-protection probe and warning entirely')
     .option('--json', 'Output as JSON')
     .action(wrap('init', runInit as CommandRun));
@@ -226,8 +228,9 @@ export function createProgram(
 
   program
     .command('pr')
-    .description('Repair the PR binding: auto-discover by head branch, or bind an explicit PR')
+    .description('Repair the PR binding, or execute configured delivery automation with --merge')
     .argument('[ref]', 'Pull request number or URL; omit to auto-discover by head branch')
+    .option('--merge', 'Execute policy-enabled merge after acceptance and all CI/CD checks pass')
     .option('--json', 'Output as JSON')
     .action(
       wrap('pr', runPr as CommandRun, (rest) => ({

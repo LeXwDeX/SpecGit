@@ -108,8 +108,12 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
           stdout: '[]',
         },
         {
-          match: `^api --hostname ${GITLAB_HOST} -X POST projects/${project}/issues`,
+          match: `^api --hostname ${GITLAB_HOST} -X POST projects/${project}/issues `,
           stdout: payload('probe-project/tp_issue.json', { iid: 7, state: 'opened' }),
+        },
+        {
+          match: `^api --hostname ${GITLAB_HOST} -X POST projects/${project}/issues/7/notes `,
+          stdout: JSON.stringify({ id: 91 }),
         },
         {
           match: api(
@@ -144,7 +148,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
       expect(init.status, init.stderr).toBe(0);
       const initEnvelope = JSON.parse(init.stdout);
       expect(initEnvelope.platform).toEqual({ mode: 'gitlab', gitlabHost: GITLAB_HOST });
-      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [GITLAB_CHECK] });
+      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [GITLAB_CHECK], automation: { merge: false, close_issues: false } });
       expect(initEnvelope.detected.sources).toEqual(['.gitlab-ci.yml']);
       expect(initEnvelope.harness).toEqual({ template: 'gitlab-pending' });
       expect(
@@ -205,18 +209,26 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
             work_in_progress: false,
             source_branch: 'feat/7-gitlab-delivery-story',
             sha: headSha,
+            head_pipeline: { id: 29616, project_id: 1313, sha: headSha },
             description: renderPrScaffold([7]),
           }),
         },
         {
           match: api(`projects/${project}/pipelines\\?sha=${headSha}&order_by=updated_at&sort=desc&per_page=11&page=1$`),
           stdout: `[${payload('probe-project/tp_pipeline2_detail.json', {
+            id: 29614,
             sha: headSha,
             status: 'success',
           })}]`,
         },
         {
-          match: api(`projects/${project}/pipelines/29616/jobs\\?per_page=100&page=1$`),
+          match: api(`projects/${project}/pipelines/29614/jobs\\?per_page=100&page=1$`),
+          stdout: `[${payload('probe-project/tp_job.json', {
+            name: GITLAB_CHECK, status: 'success', started_at: '2026-08-20T05:00:00Z', allow_failure: false,
+          })}]`,
+        },
+        {
+          match: api('projects/1313/pipelines/29616/jobs\\?per_page=100&page=1$'),
           stdout: `[${payload('probe-project/tp_job.json', {
             name: GITLAB_CHECK,
             status: 'success',
@@ -258,10 +270,39 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         expect(gate.status, `gate ${gate.id} should pass`).toBe('pass');
       }
 
+      // A successful older pipeline is still discoverable by SHA, but the
+      // bound MR's current attempt alone decides each repeated verdict.
+      const readyConfig = JSON.parse(fs.readFileSync(readyGlab.configPath, 'utf-8'));
+      const jobsRule = readyConfig.rules.find((rule: { match: string }) => rule.match.includes('pipelines/29616/jobs'));
+      const successJobs = jobsRule.stdout;
+      for (const [status, diagnostic] of [
+        ['pending', 'checks_pending'],
+        ['skipped', 'checks_missing'],
+        ['canceled', 'checks_failed'],
+      ]) {
+        jobsRule.stdout = JSON.stringify([{
+          id: 200,
+          name: GITLAB_CHECK,
+          status,
+          started_at: null,
+          allow_failure: false,
+        }]);
+        fs.writeFileSync(readyGlab.configPath, JSON.stringify(readyConfig));
+        const retry = runInstalledSpecgit(fixture.dir, ['finish', '--json'], finishEnv);
+        expect(retry.status, retry.stderr).toBe(1);
+        const retryEnvelope = JSON.parse(retry.stdout);
+        expect(retryEnvelope.verdict.classification).toBe('rejected');
+        expect(retryEnvelope.verdict.gates.some((gate: { failures: Array<{ code: string }> }) =>
+          gate.failures.some((item) => item.code === diagnostic))).toBe(true);
+      }
+      jobsRule.stdout = successJobs;
+      fs.writeFileSync(readyGlab.configPath, JSON.stringify(readyConfig));
+
       // The verdict came from glab alone: every recorded call in the
       // finish phase is the glab CLI (host-scoped api or its own
       // auth/version probes) — and no gh binary was ever reachable.
       const finishCalls = readCalls(readyGlab.logPath).map((call) => call.args);
+      expect(finishCalls.some((call) => call.includes('/pipelines?sha='))).toBe(false);
       expect(finishCalls.length).toBeGreaterThan(0);
       for (const call of finishCalls) {
         expect(

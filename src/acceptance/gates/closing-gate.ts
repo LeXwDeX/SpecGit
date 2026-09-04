@@ -13,7 +13,10 @@ export function closingGate(ctx: GateContext): GateFailure[] {
   // references with GitLab's default pattern, everything else with the
   // GitHub grammar. Gate vocabulary is unchanged either way.
   const dialect = ctx.repoRef!.platform === 'gitlab' ? 'gitlab' : 'github';
-  const closed = parseClosingRefs(ctx.prFact!.body, dialect);
+  const closed = parseClosingRefs(ctx.prFact!.body, dialect, {
+    projectPath: `${ctx.repoRef!.owner}/${ctx.repoRef!.repo}`,
+    host: dialect === 'gitlab' ? ctx.input.gitlabHost : 'github.com',
+  });
   const missing = ctx.binding!.issues.filter((n) => !closed.has(n));
   if (missing.length > 0) {
     return [makeFailure('closing_refs_incomplete', { missing })];

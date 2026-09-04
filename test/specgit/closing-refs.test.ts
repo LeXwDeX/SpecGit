@@ -36,6 +36,21 @@ describe('parseClosingRefs', () => {
     );
   });
 
+  it('keeps local and same-repository references while excluding foreign issue identities (#375)', () => {
+    const body = [
+      'Closes #1',
+      'Fixes acme/web#2',
+      'Resolves https://github.com/ACME/WEB/issues/3',
+      'Closes other/web#4',
+      'Fixes acme/other#5',
+      'Closes https://github.com/other/web/issues/6',
+    ].join('\n');
+    expect(parseClosingRefs(body, 'github', { projectPath: 'acme/web', host: 'github.com' }))
+      .toEqual(new Set([1, 2, 3]));
+    // Existing consumers can still ask for the unscoped numeric grammar.
+    expect(parseClosingRefs(body)).toEqual(new Set([1, 2, 3, 4, 5, 6]));
+  });
+
   it('collects multiple refs from one body and dedupes', () => {
     const body = 'Closes #5, fixes owner/repo#6.\nResolves #5.\nPlain #7 mentioned.';
     expect(parseClosingRefs(body)).toEqual(new Set([5, 6]));

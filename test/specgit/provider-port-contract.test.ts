@@ -56,6 +56,7 @@ describe('provider port contract (#80)', () => {
         'addIssueLabels',
         'createDraftPr',
         'createIssue',
+        'closeIssue',
         'enableBranchProtection',
         'enableRepoAutomerge',
         'ensureRepoLabels',
@@ -66,9 +67,11 @@ describe('provider port contract (#80)', () => {
         'getOpenIssueNumbers',
         'getOpenIssues',
         'getPr',
+        'getPrChecks',
         'getRepoAutomerge',
         'listOpenPrsByHead',
         'listRepoLabels',
+        'mergePr',
         'preflight',
       ].sort()
     );
@@ -93,13 +96,16 @@ describe('provider port contract (#80)', () => {
           'addIssueLabels',
           'createDraftPr',
           'createIssue',
+          'closeIssue',
           'getCheckRuns',
           'getEvidenceAnchor',
           'getIssue',
           'getOpenIssueNumbers',
           'getOpenIssues',
           'getPr',
+          'getPrChecks',
           'listOpenPrsByHead',
+          'mergePr',
           'preflight',
         ].sort()
       );
