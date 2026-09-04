@@ -24,6 +24,21 @@ function fixture() {
   return { gh, input, issues };
 }
 describe('failed PR repair issue lifecycle', () => {
+  it('creates and reconciles a repair with only the six capabilities it consumes', async () => {
+    const t = fixture();
+    const forge = {
+      getPr: t.gh.getPr,
+      getOpenIssues: t.gh.getOpenIssues,
+      ensureRepoLabels: t.gh.ensureRepoLabels,
+      createIssue: t.gh.createIssue,
+      addIssueLabels: t.gh.addIssueLabels,
+      addIssueComment: t.gh.addIssueComment,
+    };
+    expect(await ensureFailureIssues(t.input, forge)).toEqual(ok({ issues: [200] }));
+    expect(await ensureFailureIssues(t.input, forge)).toEqual(ok({ issues: [200] }));
+    expect(t.issues).toHaveLength(1);
+    expect(t.issues[0].body).toContain('Related PR: #42');
+  });
   it('fills required project template delivery content and preserves repair identity on retry', async () => {
     const t = fixture();
     t.input.policy = samplePolicy({ templates: { issue: {
@@ -100,6 +115,21 @@ describe('failed PR repair issue lifecycle', () => {
     expect(await ensureFailureIssues(t.input, t.gh)).toEqual(ok({ issues: [200] }));
     expect(t.gh.addIssueLabels).toHaveBeenCalledWith(repo, 200, ['module::auth']);
   });
+  it('reuses a created repair issue when labels fail, then completes its labels on retry', async () => {
+    const t = fixture();
+    const apply = vi.spyOn(t.gh, 'addIssueLabels');
+    apply.mockResolvedValueOnce(fail('gh_transport', 'HTTP 403: Resource not accessible by integration'));
+    expect(await ensureFailureIssues(t.input, t.gh)).toMatchObject({ ok: false, code: 'gh_transport' });
+    expect(t.issues).toHaveLength(1);
+    expect(t.gh.addIssueComment).not.toHaveBeenCalled();
+
+    expect(await ensureFailureIssues(t.input, t.gh)).toEqual(ok({ issues: [200] }));
+    expect(t.gh.createIssue).toHaveBeenCalledOnce();
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenLastCalledWith(repo, 200, ['kind::fix']);
+    expect(t.gh.addIssueComment).toHaveBeenCalledOnce();
+  });
+
   it('reuses a remotely created repair issue after a lost creation response', async () => {
     const t = fixture();
     const create = t.gh.createIssue.getMockImplementation()!;

@@ -182,14 +182,11 @@ export interface LabelsAppliedFact {
 }
 
 /**
- * The read surface of the forge port (#180): evidence collection plus the
- * delivery-lifecycle mutations (issues, pull requests, check runs,
- * comments). This is the surface a platform needs to participate in
- * evidence gathering and delivery bootstrap — repository administration
- * lives on {@link ForgeAdminPort}, so a future platform whose gate paths
- * never consume admin evidence can implement this surface alone.
+ * Read-only forge evidence (#412), including repository configuration
+ * facts. Callers select the facts their decision consumes with Pick;
+ * this capability grants no delivery or administration writes.
  */
-export interface ForgeReadPort {
+export interface ForgeEvidencePort {
   preflight(): Promise<Evidence<PreflightFact>>;
   /** The platform's configured CI entry path, or null for its default entry point. */
   getCiConfigPath(repo: RepoRef): Promise<Evidence<string | null>>;
@@ -228,10 +225,6 @@ export interface ForgeReadPort {
    */
   getCheckRuns(repo: RepoRef, sha: string, pr?: number): Promise<Evidence<CheckRunInfo[]>>;
   getPrChecks(repo: RepoRef, pr: number): Promise<Evidence<MergeChecksFact>>;
-  /** Merge with a server-enforced expected head; never bypass platform protection. */
-  mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>>;
-  /** Idempotently close one bound issue and confirm its remote state. */
-  closeIssue(repo: RepoRef, issue: number): Promise<Evidence<{ closed: boolean }>>;
   /**
    * The evidence anchor (#315): the platform instant the delivery
    * last became reviewable — the boundary a required check's truth
@@ -242,6 +235,19 @@ export interface ForgeReadPort {
    * is an adapter concern; this surface stays provider-neutral.
    */
   getEvidenceAnchor(repo: RepoRef, pr: number | string): Promise<Evidence<EvidenceAnchorFact>>;
+  listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
+  getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>>;
+  getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
+  /** Every label title the repository carries (#330) — the pool tags are selected from. */
+  listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>>;
+}
+
+/** Delivery-lifecycle mutations (#412); every write confirms its remote result. */
+export interface ForgeDeliveryWritePort {
+  /** Merge with a server-enforced expected head; never bypass platform protection. */
+  mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>>;
+  /** Idempotently close one bound issue and confirm its remote state. */
+  closeIssue(repo: RepoRef, issue: number): Promise<Evidence<{ closed: boolean }>>;
   createIssue(repo: RepoRef, title: string, body: string): Promise<Evidence<IssueCreation>>;
   createDraftPr(
     repo: RepoRef,
@@ -250,7 +256,6 @@ export interface ForgeReadPort {
     title: string,
     body: string
   ): Promise<Evidence<PrCreation>>;
-  listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
   /**
    * Ensure an exact-body comment exists and return its canonical URL.
    * A complete remote read reconciles retries after partial bootstrap or
@@ -277,23 +282,17 @@ export interface ForgeReadPort {
 }
 
 /**
- * The admin surface of the forge port (#180): repository administration —
- * branch protection and auto-merge configuration, consumed by the
- * guarded-merge story (`specgit init` / `doctor`). These members change
- * repository settings rather than gather delivery evidence, which is why
- * they live apart from {@link ForgeReadPort}.
+ * Repository-administration mutations (#412): protection, auto-merge
+ * configuration and label definitions. Read-only configuration facts
+ * belong to {@link ForgeEvidencePort}.
  */
-export interface ForgeAdminPort {
-  getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>>;
+export interface ForgeAdminWritePort {
   enableBranchProtection(
     repo: RepoRef,
     branch: string,
     requiredCheck: string
   ): Promise<Evidence<BranchProtectionFact>>;
-  getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
   enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
-  /** Every label title the repository carries (#330) — the pool tags are selected from. */
-  listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>>;
   /**
    * Create the named specs that are missing (#330), leave existing ones
    * untouched, and confirm each — created or already present — in the
@@ -304,6 +303,23 @@ export interface ForgeAdminPort {
 }
 
 /**
+ * The original #180 surface, retaining exactly its evidence and delivery
+ * write members for existing consumers.
+ * @deprecated Select from {@link ForgeEvidencePort} and {@link ForgeDeliveryWritePort}.
+ */
+export interface ForgeReadPort extends
+  Omit<ForgeEvidencePort, 'getBranchProtection' | 'getRepoAutomerge' | 'listRepoLabels'>,
+  ForgeDeliveryWritePort {}
+
+/**
+ * The original #180 administration surface, retaining its reads and writes.
+ * @deprecated Select from {@link ForgeEvidencePort} and {@link ForgeAdminWritePort}.
+ */
+export interface ForgeAdminPort extends
+  Pick<ForgeEvidencePort, 'getBranchProtection' | 'getRepoAutomerge' | 'listRepoLabels'>,
+  ForgeAdminWritePort {}
+
+/**
  * The platform-neutral provider port (#169): forge evidence and mutations
  * for whichever platform the origin declares — implemented today by the
  * gh adapter (`GhCliGitHubProvider`), the glab adapter (`GlabProvider`),
@@ -311,13 +327,9 @@ export interface ForgeAdminPort {
  * name `GitHubProvider` contradicted the dual-platform reality; it stays
  * importable as the compatibility alias below.
  *
- * Since #180 the port is the composition of two surfaces: the read
- * surface ({@link ForgeReadPort}) and the admin surface
- * ({@link ForgeAdminPort}). Every member is still required on both
- * surfaces today — the split is the seam that lets a future platform
- * implement the read surface alone once no gate in its path consumes
- * admin evidence; the intersection type keeps every existing consumer
- * (`implements ForgeProvider`) compiling unchanged.
+ * All members remain required for a full adapter. The #180 composition
+ * stays source-compatible; new callers use the three #412 capabilities
+ * to request only the evidence and writes their decision consumes.
  */
 export interface ForgeProvider extends ForgeReadPort, ForgeAdminPort {}
 
@@ -347,6 +359,7 @@ const FORGE_READ_PORT_MEMBER_FLAGS = {
   addIssueLabels: true,
 } as const satisfies Record<keyof ForgeReadPort, true>;
 
+/** @deprecated Compatibility inventory for {@link ForgeReadPort}. */
 export const FORGE_READ_PORT_MEMBERS: readonly (keyof ForgeReadPort)[] = Object.freeze(
   Object.keys(FORGE_READ_PORT_MEMBER_FLAGS) as Array<keyof ForgeReadPort>
 );
@@ -365,6 +378,7 @@ const FORGE_ADMIN_PORT_MEMBER_FLAGS = {
   ensureRepoLabels: true,
 } as const satisfies Record<keyof ForgeAdminPort, true>;
 
+/** @deprecated Compatibility inventory for {@link ForgeAdminPort}. */
 export const FORGE_ADMIN_PORT_MEMBERS: readonly (keyof ForgeAdminPort)[] = Object.freeze(
   Object.keys(FORGE_ADMIN_PORT_MEMBER_FLAGS) as Array<keyof ForgeAdminPort>
 );

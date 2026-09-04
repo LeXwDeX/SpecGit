@@ -11,6 +11,7 @@
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { GateFailure, GateResult } from '../acceptance/evaluate.js';
 import type { DeliveryBinding, ExecutionContext } from '../record/schema.js';
+import { bindingContextMismatch } from '../record/context-match.js';
 import type { Policy } from '../record/policy.js';
 import type { GitFacts } from '../gitfacts/port.js';
 import type { RepoRef } from '../gitfacts/origin.js';
@@ -187,7 +188,8 @@ export function contextGate(binding: DeliveryBinding, facts: GitFacts): GateResu
     };
   }
   const { context } = binding;
-  if (context.branch !== facts.branch) {
+  const mismatch = bindingContextMismatch(context, facts);
+  if (mismatch === 'branch_mismatch') {
     return {
       id: 'context',
       status: 'fail',
@@ -199,25 +201,17 @@ export function contextGate(binding: DeliveryBinding, facts: GitFacts): GateResu
       ],
     };
   }
-  if (context.kind === 'worktree') {
-    const entry = facts.worktrees.find((candidate) => candidate.label === context.label && candidate.branch === context.branch);
-    const inWorktree =
-      facts.isLinkedWorktree === true &&
-      facts.worktreeLabel === context.label &&
-      entry !== undefined &&
-      entry.branch === context.branch;
-    if (!inWorktree) {
-      return {
-        id: 'context',
-        status: 'fail',
-        failures: [
-          failure('worktree_mismatch', 'The live checkout does not match the recorded worktree.', {
-            detail: { label: context.label, branch: context.branch },
-            fix: 'Run this command from the worktree checkout named in the record.',
-          }),
-        ],
-      };
-    }
+  if (mismatch === 'worktree_mismatch' && context.kind === 'worktree') {
+    return {
+      id: 'context',
+      status: 'fail',
+      failures: [
+        failure('worktree_mismatch', 'The live checkout does not match the recorded worktree.', {
+          detail: { label: context.label, branch: context.branch },
+          fix: 'Run this command from the worktree checkout named in the record.',
+        }),
+      ],
+    };
   }
   return { id: 'context', status: 'pass', failures: [] };
 }

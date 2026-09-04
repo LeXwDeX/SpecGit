@@ -1,4 +1,5 @@
 import { parseRepoRef, type RepoRef } from '../../gitfacts/origin.js';
+import { bindingContextMismatch } from '../../record/context-match.js';
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
 
 function repoRefForMergedCheck(originUrl: string | null, gitlabHost?: string): RepoRef | null {
@@ -37,7 +38,8 @@ export async function contextGate(ctx: GateContext): Promise<GateFailure[]> {
   if (facts.branch === null) {
     return [makeFailure('detached_head')];
   }
-  if (facts.branch !== binding!.context.branch) {
+  const mismatch = bindingContextMismatch(binding!.context, facts);
+  if (mismatch === 'branch_mismatch') {
     // The record may belong to a delivery whose PR already merged —
     // running finish on main afterwards is then a completed history,
     // not a mismatch. Historical acceptance still requires proof that
@@ -84,16 +86,5 @@ export async function contextGate(ctx: GateContext): Promise<GateFailure[]> {
     }
     return [makeFailure('branch_mismatch')];
   }
-  if (binding!.context.kind === 'worktree') {
-    const expectedLabel = binding!.context.label;
-    if (facts.isLinkedWorktree !== true || facts.worktreeLabel !== expectedLabel) {
-      return [makeFailure('worktree_mismatch')];
-    }
-    const entry = facts.worktrees.find((w) =>
-      w.label === expectedLabel && w.branch === binding!.context.branch);
-    if (!entry) {
-      return [makeFailure('worktree_mismatch')];
-    }
-  }
-  return [];
+  return mismatch === null ? [] : [makeFailure(mismatch)];
 }
