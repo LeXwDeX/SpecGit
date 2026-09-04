@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { classifyPaths } from '../scripts/ci-change-scope.mjs';
 
 // #370 — pnpm reports the package.json `pnpm` field as no longer read
 // (the wrapper-generation engines print the ignored-keys warning on every
@@ -80,7 +81,8 @@ describe('pnpm workspace configuration', () => {
     );
 
     expect(flake).toContain('./pnpm-workspace.yaml');
-    expect(ci).toContain("- 'pnpm-workspace.yaml'");
-    expect(security).toContain("- '**/pnpm-workspace.yaml'");
+    expect(classifyPaths(['pnpm-workspace.yaml'])).toMatchObject({ build: true, nix: true, dependencies: true });
+    expect(ci).toContain('node scripts/ci-change-scope.mjs');
+    expect(security).toContain('node scripts/ci-change-scope.mjs');
   });
 });

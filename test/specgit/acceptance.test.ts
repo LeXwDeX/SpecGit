@@ -38,6 +38,12 @@ type ContainmentScript = (sha: string) => Evidence<{ contained: boolean }>;
 
 class StubGitPort implements GitPort {
   readonly headContainsCalls: string[] = [];
+  async readFileAtRemoteRef(): Promise<never> {
+    throw new Error('Policy resolution is supplied before evaluation.');
+  }
+  async readFileBeforeMerge(): Promise<never> {
+    throw new Error('Policy resolution is supplied before evaluation.');
+  }
 
   constructor(
     private readonly f: GitFacts,
@@ -326,7 +332,7 @@ describe('acceptance evaluator', () => {
     const verdict = await evaluate(input({ git, gh }));
     expect(verdict.accepted).toBe(true);
     expect(verdict.exitCode).toBe(0);
-    expect(verdict.state).toBe('completed');
+    expect(verdict.state).toBe('closure_pending');
     expect(verdict.complete).toBe(true);
     expect(verdict.gates.every((g) => g.status === 'pass')).toBe(true);
     expect(git.headContainsCalls).toEqual([MERGE_SHA]);
@@ -406,6 +412,7 @@ describe('acceptance evaluator', () => {
 
     it('contains: historical acceptance only after proving the merge commit is contained by local HEAD', async () => {
       const gh = new MockForgeProvider({
+        defaultIssue: (number) => ok({ number, state: 'closed', pullRequest: false }),
         pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
         checkRuns: ok([makeCheckRun('All checks passed')]),
       });

@@ -11,7 +11,7 @@ describe('init automation choice', () => {
   let root: string;
   beforeEach(() => { root = makeTempDir('specgit-init-automation-'); });
   afterEach(() => { rmDir(root); });
-  const options = { requiredCheck: ['build'], protect: false };
+  const options = { requiredCheck: ['build'], protect: false, language: 'en', titleCheck: 'no', labelCheck: 'off' };
   const disabled = { merge: false, close_issues: false };
 
   it('defaults to no without a TTY and explains the decision on stderr even in JSON mode', async () => {
@@ -95,31 +95,47 @@ describe('init automation choice', () => {
     expect(fs.readdirSync(root)).toEqual([]);
   });
 
-  it.each(['yes', 'no'])('reselects %s on force while preserving other project policy fields', async (answer) => {
+  it.each([true, false])('preserves configured automation and rules on a plain force (TTY=%s)', async (stdinIsTTY) => {
     const previous = samplePolicy({
       required_checks: ['Existing'], language: 'zh', ordered_issues: true,
       tags: [{ name: 'module::auth' }],
-      automation: { merge: true, target_branch: 'old-target', close_issues: true },
+      validation: { titles: true, labels: 'kind' },
+      automation: { merge: true, target_branch: 'old-target', close_issues: false },
     });
-    const t = makeCtx({ root: ok(root), cwd: root, stdinIsTTY: true, policy: previous });
-    const promptAutomation = vi.fn(async () => answer);
+    const t = makeCtx({ root: ok(root), cwd: root, stdinIsTTY, policy: previous });
+    const promptAutomation = vi.fn(async () => 'no');
     const outcome = await runInit({ force: true, protect: false }, t.ctx, { promptAutomation });
     expect(outcome.exit).toBe(0);
-    expect(outcome.policy).toEqual({
-      ...previous,
-      automation: answer === 'yes'
-        ? { merge: true, target_branch: 'main', close_issues: true }
-        : disabled,
-    });
-    expect(promptAutomation).toHaveBeenCalledOnce();
+    expect(outcome.policy).toEqual(previous);
+    expect(promptAutomation).not.toHaveBeenCalled();
   });
 
-  it('defaults to no on noninteractive force even if the previous policy enabled automation', async () => {
+  it('changes automation only after an explicit replacement answer', async () => {
     const t = makeCtx({ root: ok(root), cwd: root, policy: samplePolicy({
       automation: { merge: true, target_branch: 'main', close_issues: true },
     }) });
-    const outcome = await runInit({ force: true, protect: false }, t.ctx);
+    const outcome = await runInit({ force: true, protect: false, automation: 'no' }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(outcome.policy?.automation).toEqual(disabled);
+  });
+
+  it('changes an enabled target explicitly without asking again or changing closure', async () => {
+    const t = makeCtx({ root: ok(root), cwd: root, stdinIsTTY: true, policy: samplePolicy({
+      automation: { merge: true, target_branch: 'main', close_issues: false },
+    }) });
+    const promptAutomation = vi.fn(async () => 'no');
+    const outcome = await runInit({ force: true, protect: false, mergeTarget: 'Dev' }, t.ctx, { promptAutomation });
+    expect(outcome.exit).toBe(0);
+    expect(outcome.policy?.automation).toEqual({ merge: true, target_branch: 'Dev', close_issues: false });
+    expect(promptAutomation).not.toHaveBeenCalled();
+  });
+
+  it('retains the configured target when explicitly re-enabling automation', async () => {
+    const t = makeCtx({ root: ok(root), cwd: root, policy: samplePolicy({
+      automation: { merge: true, target_branch: 'Dev', close_issues: true },
+    }), gitWrites: { remoteDefaultBranch: () => ok('main') } });
+    const outcome = await runInit({ force: true, protect: false, automation: 'yes' }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(outcome.policy?.automation?.target_branch).toBe('Dev');
   });
 });

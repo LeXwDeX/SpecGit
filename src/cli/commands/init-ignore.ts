@@ -27,7 +27,15 @@
  */
 
 /** Rooted so a nested `spec_git/` directory elsewhere is never matched. */
-export const LOCAL_ASSET_IGNORE_ENTRIES = ['/.specgit.yaml', '/spec_git/'] as const;
+export const LOCAL_ASSET_IGNORE_ENTRIES = [
+  '/.specgit.yaml', '/spec_git/',
+  '/.opencode/hooks/specgit-merge-guard.sh',
+  ...['issue', 'finish', 'doctor', 'pr', 'status'].flatMap((command) => [
+    `/.opencode/command/specgit-${command}.md`,
+    `/.agents/skills/specgit-${command}/SKILL.md`,
+  ]),
+  '/.local/state/', '/.local/cache/',
+] as const;
 
 /** The pre-#305 managed block: a single marker line above the entries. */
 export const LOCAL_ASSET_IGNORE_MARKER =
@@ -46,8 +54,9 @@ export interface LocalAssetIgnoreResult {
 }
 
 /** The current managed region: start marker, complete entry set, end marker. */
-export function managedIgnoreBlock(): string {
-  return [LOCAL_ASSET_IGNORE_START, ...LOCAL_ASSET_IGNORE_ENTRIES, LOCAL_ASSET_IGNORE_END].join(
+export function managedIgnoreBlock(outsideRegion: string | null = null): string {
+  const present = entryLines(outsideRegion ?? '');
+  return [LOCAL_ASSET_IGNORE_START, ...LOCAL_ASSET_IGNORE_ENTRIES.filter((entry) => !present.has(entry)), LOCAL_ASSET_IGNORE_END].join(
     '\n'
   );
 }
@@ -100,7 +109,7 @@ function replaceLines(content: string, start: number, end: number): string {
   const lines = content.split('\n');
   const rebuilt = [
     ...lines.slice(0, start),
-    ...managedIgnoreBlock().split('\n'),
+    ...managedIgnoreBlock([...lines.slice(0, start), ...lines.slice(end)].join('\n')).split('\n'),
     ...lines.slice(end),
   ];
   return rebuilt.join('\n');
@@ -147,7 +156,8 @@ export function reconcileLocalAssetIgnore(existing: string | null): string {
       // so subsequent refreshes cannot expand the replaced region.
       const before = lines.slice(0, startIndex).filter((line) =>
         !isMarkerLine(line, LOCAL_ASSET_IGNORE_START) && !isMarkerLine(line, LOCAL_ASSET_IGNORE_END));
-      return [...before, ...block.split('\n'), ...lines.slice(endIndex + 1)].join('\n');
+      const after = lines.slice(endIndex + 1);
+      return [...before, ...managedIgnoreBlock([...before, ...after].join('\n')).split('\n'), ...after].join('\n');
     }
     // Start marker without its end (damaged region): migrate from the
     // marker through the known entries, same proof as the legacy shape.
@@ -167,7 +177,7 @@ export function reconcileLocalAssetIgnore(existing: string | null): string {
   }
 
   const separator = existing.endsWith('\n') || existing.length === 0 ? '' : '\n';
-  return `${existing}${separator}${block}\n`;
+  return `${existing}${separator}${managedIgnoreBlock(existing)}\n`;
 }
 
 /**

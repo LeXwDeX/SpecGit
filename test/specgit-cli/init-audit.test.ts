@@ -50,7 +50,9 @@ describe('init audit: usable platform checks and onboarding', () => {
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
       facts: makeGitFacts({ originUrl: 'https://git.example.com:8443/team/app.git' }) });
     const selectPlatform = vi.fn(async () => mode);
-    const result = await runInit({ protect: false, automation: 'no' }, t.ctx, { selectPlatform });
+    const result = await runInit({ protect: false, automation: 'no' }, t.ctx, {
+      selectPlatform, selectRule: async (_message, _choices, current) => current,
+    });
     expect(result.exit).toBe(0);
     expect(result.platform?.mode).toBe(mode);
     expect(result.policy?.required_checks).toEqual([`${mode}-only`]);
@@ -83,7 +85,8 @@ describe('init audit: usable platform checks and onboarding', () => {
       facts: makeGitFacts({ originUrl: 'git@git.example.com:team/app.git' }) });
     const selectPlatform = vi.fn(async () => 'gitlab' as const);
     const result = await runInit({ protect: false }, t.ctx, {
-      selectPlatform, promptAutomation: async () => 'invalid',
+      selectPlatform, selectRule: async (_message, _choices, current) => current,
+      promptAutomation: async () => 'invalid',
     });
     expect(result.exit).toBe(2);
     expect(selectPlatform).toHaveBeenCalledOnce();

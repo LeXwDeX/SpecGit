@@ -24,6 +24,7 @@ import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
 
 import { DELIVERY_TYPES } from '../tags/catalog.js';
+import { reconcileLocalAssetIgnore } from './commands/init-ignore.js';
 import {
   reconcileManagedAssets,
   type ManagedReconcileReport,
@@ -34,13 +35,24 @@ export type SetupTool = 'opencode' | 'generic' | 'all';
 
 const ISSUE_TYPE_LIST = DELIVERY_TYPES.join(', ');
 
-const MERGE_GUIDANCE = `Continue within existing user authorization. With automation enabled, run
-\`specgit pr --merge --json\`: it requires the configured target branch,
-\`finish\` exit 0, and all CI checks passing at the current PR head; it confirms
-the merge before closing bound issues when configured. \`finish\` is read-only.
+const LOCAL_MAINTENANCE_GUIDANCE = `Local CLI installation, upgrades, and \`init\` / \`setup\` refreshes need no
+issue, PR, product build, or release when no product or shared-rule change is
+intended for commit. Review tracked diffs before choosing what to share.
+For intended deliveries, follow the host project's verification policy for
+the actual changed inputs; documentation may itself be a product input.
+Ignore rules are never CI exemptions. Publishing requires explicit authorization.`;
+
+const MERGE_GUIDANCE = `Continue within existing user authorization. With automation enabled, the
+trusted remote completion workflow continues after CI without another user
+confirmation. \`specgit pr --merge --json\` is its recovery path. It requires
+the approved target policy, \`finish\` exit 0, and all CI checks passing at the
+current PR head. Completion means the merge and every bound issue closure are
+confirmed; a partial closure remains recoverable. \`finish\` is read-only and
+exit 0 means accepted, not necessarily completed. A failed delivery is tracked
+by a repair issue; retries reuse that cause and preserve the original PR.
 Automation defaults to no. Only the user's own yes enables it through
-\`specgit init --automation yes --merge-target <branch>\`; \`init --force\`
-can change that choice. An agent must not choose yes for the user. When an
+\`specgit init --automation yes --merge-target <branch>\`; ordinary \`init --force\`
+preserves that choice and target. An agent must not choose yes for the user. When an
 action lacks user authorization or platform permission, report the specific
 missing permission with the prepared result.`;
 
@@ -53,10 +65,15 @@ description: Start a SpecGit delivery from a title or existing issue number
 Thin trigger for the delivery bootstrap. The canonical behavior lives in the
 AGENTS.md SpecGit block; this command only launches it.
 
+${LOCAL_MAINTENANCE_GUIDANCE}
+
 ## Steps
 
 1. Collect the argument: \`$ARGUMENTS\` is either an issue title (create) or a
    pure number (reuse). Multiple arguments = N issues in one delivery.
+   If policy selects body validation or required sections, prepare complete
+   content first and include \`--body-file <path>\` per title and
+   \`--pr-body-file <path>\` for the request.
 2. Run from the repo root — keep \`$ARGUMENTS\` UNQUOTED so each quoted title
    arrives as its own argument:
 
@@ -64,12 +81,13 @@ AGENTS.md SpecGit block; this command only launches it.
    specgit issue $ARGUMENTS --json
    \`\`\`
 
-3. On success report the brief: issue URL(s), PR URL (draft), branch name —
-   then fill each issue body it created (Why / Scope / Approach /
-   Acceptance) from the discussion with \`gh issue edit <n>\`, then
+3. On success report the issue URL(s), draft PR URL and branch name.
+   Verify the issue bodies contain the discussed Why / Scope / Approach /
+   Acceptance, fill only missing content, preserve remote edits, then
    implement. Fill in the draft PR's scaffold (Why / What changed /
-   Evidence / Checklist) as you deliver; its placeholders are advisory,
-   never gates, and the closing references stay intact.
+   Evidence / Checklist) as you deliver when no body rules were selected.
+   Enabled content rules must pass; preserve every closing reference and
+   existing remote body on resume.
 4. Switch to the delivery branch and begin the TDD loop.
 5. On error, read \`errors[].fix\` and follow it — never bypass the record.
 `;
@@ -119,6 +137,8 @@ metadata:
 The delivery bootstrap. One command binds the whole aggregate: N issues, one
 branch, one draft pull request, one record (\`.specgit.yaml\`).
 
+${LOCAL_MAINTENANCE_GUIDANCE}
+
 ## Usage
 
 \`\`\`bash
@@ -160,15 +180,18 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 ## Rules
 
 - Run it from the repository root; context comes from live git.
-- The trigger is the decision to start: the moment you begin turning the
-  discussed plan into changes, run this command FIRST — before any file
-  edit. Working without a binding is a contract violation, not a style
+- The trigger is the decision to deliver an intended tracked change:
+  when you begin implementing that delivery, run this command FIRST, before tracked
+  implementation edits. Preparing temporary body files belongs to bootstrap.
+  Working without a binding is a contract violation, not a style
   choice.
-- Immediately after bootstrap succeeds, fill each issue body it created
-  (Why / Scope / Approach / Acceptance) from the discussion with
-  \`gh issue edit <n>\`, then implement.
-- Fill in the PR scaffold sections as you deliver; placeholders are advisory,
-  never gates. Keep the closing references intact.
+- After bootstrap, verify each issue contains the discussed Why / Scope /
+  Approach / Acceptance. Fill missing content with \`gh issue edit <n>\` or
+  \`glab issue update <n>\`, preserve complete remote bodies, then implement.
+- With selected body rules, prepare complete content before creation using
+  \`--body-file\` and \`--pr-body-file\`. Otherwise fill the built-in scaffold
+  during delivery. Enabled content rules must pass; keep closing references
+  and existing remote edits intact.
 - The PR body is written once at creation; no SpecGit command edits it
   afterwards, and the repository's own PR template is never read.
 - If it fails mid-chain, re-run the same command — completed steps are
@@ -180,7 +203,7 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 
 const FINISH_SKILL = `---
 name: specgit-finish
-description: Run the SpecGit evidence verdict — fail-closed acceptance derived from real git, PR, and CI evidence; exit 0 is the only done.
+description: Run the SpecGit evidence verdict — fail-closed acceptance derived from real git, PR, and CI evidence; exit 0 means accepted; completion requires confirmed merge and issue closure.
 allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
@@ -631,6 +654,7 @@ export async function buildAgentSurfaceDesiredState(
         kind: 'write',
         path: `${OPENCODE_COMMAND_DIR}/${rel}`,
         mode: 0o644,
+        isOwned: isSpecGitOwnedEntryPoint,
         // The current template wholesale: a setup-owned entry point is
         // regenerated, local drift repaired.
         merge: () => content,
@@ -660,6 +684,7 @@ export async function buildAgentSurfaceDesiredState(
         kind: 'write',
         path: `${GENERIC_SKILLS_DIR}/${rel}`,
         mode: 0o644,
+        isOwned: isSpecGitOwnedEntryPoint,
         merge: () => content,
       });
       installed.push(`${GENERIC_SKILLS_DIR}/${rel}`);
@@ -696,6 +721,8 @@ export async function buildAgentSurfaceDesiredState(
  */
 export async function writeAgentSurface(root: string, tool: SetupTool): Promise<SetupWriteResult> {
   const desired = await buildAgentSurfaceDesiredState(root, tool);
-  const reconciled = await reconcileManagedAssets(root, { steps: desired.steps });
+  const reconciled = await reconcileManagedAssets(root, { steps: [...desired.steps, {
+    kind: 'write', path: '.gitignore', mode: 0o644, merge: reconcileLocalAssetIgnore,
+  }] });
   return { tool, installed: desired.installed, reconciled };
 }

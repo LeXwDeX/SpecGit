@@ -22,7 +22,7 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -42,7 +42,7 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 
 | Command | Role |
 | --- | --- |
-| `specgit init` | Public. Create the policy, generate the harness, ask the automation choice (yes/no, default no); `--force` regenerates and asks again. |
+| `specgit init` | Public. Create the policy, generate the harness, ask the automation choice (yes/no, default no); `--force` regenerates and preserves the saved choice unless explicitly changed. |
 | `specgit setup` | Public. Install agent entry points (`--tool opencode \| generic \| all`). |
 | `specgit issue` | Public. One-command delivery bootstrap; idempotent resume. |
 | `specgit pr` | Public. Repair the PR binding; `--merge` executes configured, guarded merge and issue closure. |

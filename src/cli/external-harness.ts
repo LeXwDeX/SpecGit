@@ -119,6 +119,14 @@ jobs:
         # adopting project's dependencies or running its lifecycle scripts.
         run: npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@${input.version}
 
+      - name: Prepare approved policy for acceptance
+        env:
+          GH_TOKEN: \${{ github.token }}
+          SPECGIT_WAIT_POLICY: \${{ runner.temp }}/specgit-policy.yaml
+        run: |
+          gh auth setup-git
+          node "$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/workflow-policy.js"
+
 ${waitStepYaml('gh')}
 
       - name: specgit finish

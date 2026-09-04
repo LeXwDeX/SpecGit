@@ -64,10 +64,12 @@ afterAll(() => {
  * no network, origin still parses to OWNER/REPO.
  */
 function makePushableRepo(branch: string): RepoFixture & { bareDir: string } {
-  const repo = makeRepo(branch);
+  const repo = makeRepo(branch, 'feature.txt', false);
   const bareDir = path.join(os.tmpdir(), `specgit-e2e-bare-${randomUUID().slice(0, 8)}.git`);
   git(repo.dir, 'init', '--bare', bareDir);
   git(repo.dir, 'config', `url.${bareDir}.insteadOf`, `https://github.com/${OWNER}/${REPO}.git`);
+  git(repo.dir, 'push', 'origin', 'HEAD:refs/heads/main');
+  git(repo.dir, '--git-dir', bareDir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
   cleanupDirs.push(bareDir, repo.dir);
   return { ...repo, bareDir };
 }
@@ -79,7 +81,7 @@ function makePushableRepo(branch: string): RepoFixture & { bareDir: string } {
 function makeGh(rules: FakeGhRule[]) {
   const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-e2e-issue-gh-'));
   cleanupDirs.push(fakeDir);
-  return createFakeGh(fakeDir, rules);
+  return createFakeGh(fakeDir, [...rules, emptyTimelineRule()]);
 }
 
 /**
@@ -94,7 +96,7 @@ const COMMENT_RULE: FakeGhRule = {
 
 /** Fake gh for the bootstrap: issues created as #11, #12, …; draft PR #<pr>. */
 function bootstrapRules(pr: number | undefined): FakeGhRule[] {  return [
-    { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+    { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
     {
       match: `^api repos/${OWNER}/${REPO}/issues `,
       stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
@@ -162,7 +164,7 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
     // Traceability edge issue→branch (#160): every bound issue received
     // the delivery branch and PR number as a comment, exactly once each.
     const comments = readFakeGhCalls(gh.logPath).filter((args) =>
-      args.startsWith(`api repos/${OWNER}/${REPO}/issues/`)
+      args.startsWith(`api repos/${OWNER}/${REPO}/issues/`) && /\/comments(?:\?| )/.test(args)
     );
     expect(comments).toEqual([
       `api repos/${OWNER}/${REPO}/issues/11/comments?per_page=100&page=1`,
@@ -267,7 +269,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     // exits 1 — the client sees a transport failure. The issue exists,
     // nothing is recorded.
     const ghLost = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,
         stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
@@ -290,7 +292,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     const ghWhole = makeGh([
       {
         match: '^api search/issues',
-        stdout: JSON.stringify({ items: [{ number: 11, title: 'feat: phoenix flow' }] }),
+        stdout: JSON.stringify({ total_count: 1, incomplete_results: false, items: [{ number: 11, title: 'feat: phoenix flow', state: 'open', body: 'An existing delivery requirement.', html_url: `https://github.com/${OWNER}/${REPO}/issues/11` }] }),
       },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,
@@ -324,7 +326,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     const lockDir = path.join(repo.dir, '.specgit.yaml.lock');
     fs.mkdirSync(lockDir);
     const ghCreated = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,
         stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
@@ -345,7 +347,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     const ghHealed = makeGh([
       {
         match: '^api search/issues',
-        stdout: JSON.stringify({ items: [{ number: 11, title: 'feat: durable state model' }] }),
+        stdout: JSON.stringify({ total_count: 1, incomplete_results: false, items: [{ number: 11, title: 'feat: durable state model', state: 'open', body: 'An existing delivery requirement.', html_url: `https://github.com/${OWNER}/${REPO}/issues/11` }] }),
       },
       { match: '^pr list ', stdout: '[]' },
       { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
@@ -370,7 +372,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     // Run 1: the first WHY is created and recorded; the second creation
     // fails — a partial record with issues [11] survives on disk.
     const ghBroken = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
       {
         match: `^api repos/${OWNER}/${REPO}/issues .*title=feat: alpha why`,
         stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,
@@ -395,7 +397,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
       { match: `^api repos/${OWNER}/${REPO}/issues/11$`, stdout: JSON.stringify({ number: 11, state: 'open', title: 'renamed by a teammate' }) },
       {
         match: '^api search/issues',
-        stdout: JSON.stringify({ items: [{ number: 11, title: 'renamed by a teammate' }] }),
+        stdout: JSON.stringify({ total_count: 1, incomplete_results: false, items: [{ number: 11, title: 'renamed by a teammate', state: 'open', body: 'An existing delivery requirement.', html_url: `https://github.com/${OWNER}/${REPO}/issues/11` }] }),
       },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,
@@ -435,7 +437,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     // Run 1: the issue is created and recorded; the PR is created remotely
     // (conceptually) but the client sees a failure — no PR number recorded.
     const ghBroken = makeGh([
-      { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+      { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
       {
         match: `^api repos/${OWNER}/${REPO}/issues `,
         stdout: `{"number":%SEQ%,"html_url":"https://github.com/${OWNER}/${REPO}/issues/%SEQ%"}`,

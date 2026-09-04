@@ -107,6 +107,14 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
           stdout: '[]',
         },
         {
+          match: api(`projects/${project}/issues\\?scope=all&state=all&search=`),
+          stdout: '[]',
+        },
+        {
+          match: api(`projects/${project}/issues/[0-9]+/related_merge_requests\\?per_page=100&page=1$`),
+          stdout: '[]',
+        },
+        {
           match: `^api --hostname ${GITLAB_HOST} -X POST projects/${project}/issues `,
           stdout: payload('probe-project/tp_issue.json', { iid: 7, state: 'opened' }),
         },
@@ -198,6 +206,10 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         { match: `^auth status --hostname ${GITLAB_HOST}$`, stdout: 'Logged in\n' },
         { match: api('/metadata$'), stdout: payload('nested/metadata.json', {}) },
         { match: api(`projects/${project}/issues/7$`), stdout: payload('probe-project/tp_issue.json', { iid: 7, state: 'opened' }) },
+        {
+          match: api(`projects/${project}/issues/7/related_merge_requests\\?per_page=100&page=1$`),
+          stdout: '[]',
+        },
         {
           match: api(`projects/${project}/merge_requests/9$`),
           stdout: payload('probe-project/tp_mr.json', {

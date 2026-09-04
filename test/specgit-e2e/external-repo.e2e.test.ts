@@ -230,7 +230,8 @@ describe('e2e external repository adoption (#87): scaffold vs PR templates', () 
       const gh = createFakeGh(ghDir, [
         { match: '^--version$', stdout: 'gh version 2.60.0-external-fixture\n' },
         { match: '^auth status', stdout: 'Logged in to github.com as external-fixture\n' },
-        { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+        { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
+        emptyTimelineRule(EXT_OWNER, EXT_REPO),
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues `,
           stdout: `{"number":%SEQ%,"html_url":"https://github.com/${EXT_OWNER}/${EXT_REPO}/issues/%SEQ%"}`,

@@ -115,13 +115,15 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
     throw new Error(`${label}: workflow_dispatch trigger missing`);
   }
   const steps = allSteps(doc);
-  const finish = steps.find((step) => (step.run ?? '').includes('node bin/specgit.js finish --json'));
-  if (!finish) {
+  const finishes = steps.filter((step) => (step.run ?? '').includes('finish --json'));
+  if (finishes.length === 0) {
     throw new Error(`${label}: specgit finish step missing`);
   }
-  const token = finish.env?.GH_TOKEN;
-  if (typeof token !== 'string' || !token.includes('github.token')) {
-    throw new Error(`${label}: finish step must use GH_TOKEN: \${{ github.token }}`);
+  for (const finish of finishes) {
+    const token = finish.env?.GH_TOKEN;
+    if (typeof token !== 'string' || !token.includes('github.token')) {
+      throw new Error(`${label}: finish step must use GH_TOKEN: \${{ github.token }}`);
+    }
   }
   const headCheckout = steps.find(
     (step) => typeof step.with?.ref === 'string' && step.with.ref.includes('github.head_ref'),
@@ -344,7 +346,6 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   const acceptTemplate = harnessWorkflowYaml().replace(/\r\n/g, '\n');
   const ciFile = readWorkflow('ci.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
-  const policyFile = readFileSync(path.join(__dirname, '..', '..', 'spec_git', 'policy.yaml'), 'utf-8');
 
   it('re-adding cache to the gate is detected (file and generated template)', () => {
     const mutation = "node-version: '20.19.0'\n          cache: 'pnpm'";
@@ -357,17 +358,20 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('an actions/cache step in the gate is detected', () => {
+    const anchor = '      - name: Install classifier dependencies';
+    expect(acceptFile).toContain(anchor);
     const mutant = acceptFile.replace(
-      '      - name: Install dependencies',
+      anchor,
       [
         '      - name: Warm the store',
         '        uses: actions/cache/restore@v5',
         '        with:',
         '          path: ~/.local/share/pnpm/store',
         '          key: pnpm-store',
-        '      - name: Install dependencies',
+        anchor,
       ].join('\n'),
     );
+    expect(mutant).not.toBe(acceptFile);
     expect(() => assertNoCacheMechanism(mutant, 'mutant')).toThrow();
   });
 
@@ -401,6 +405,15 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/edited/);
   });
 
+  it('removing the trusted metadata verdict token is detected', () => {
+    const mutant = acceptTemplate.replace(
+      /(- name: specgit finish with trusted CLI[\s\S]*?env:\n)          GH_TOKEN: [^\n]+/,
+      '$1          GH_TOKEN: missing',
+    );
+    expect(mutant).not.toBe(acceptTemplate);
+    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/GH_TOKEN/);
+  });
+
   it('re-merging the self-hosted leg into the required matrix is detected', () => {
     const mutant = ciFile.replace(
       [
@@ -425,7 +438,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
 
   it('re-adding the retired self-hosted shadow job is detected (#105)', () => {
     const mutant = ciFile.replace(
-      '  test_pr_required:',
+      '  lint:',
       [
         '  test_selfhosted:',
         '    name: Test (self-hosted-linux)',
@@ -434,7 +447,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
         '    steps:',
         '      - name: Checkout code',
         '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '  test_pr_required:',
+        '  lint:',
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
@@ -449,28 +462,33 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(matrixMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(matrixMutant, 'mutant')).toThrow(/matrix/);
     const envMutant = ciFile.replace(
-      '    name: Lint & Type Check\n    runs-on: ubuntu-latest',
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    if: env.LINT_SKIP != '1'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: env.LINT_SKIP != '1'",
     );
     expect(envMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(envMutant, 'mutant')).toThrow(/env/);
     const stepsMutant = ciFile.replace(
-      '    name: Lint & Type Check\n    runs-on: ubuntu-latest',
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    if: steps.setup.outputs.ok == 'true'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: steps.setup.outputs.ok == 'true'",
     );
     expect(stepsMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(stepsMutant, 'mutant')).toThrow(/steps/);
   });
 
   it('renaming a required check out of existence is detected', () => {
+    const summary = ciFile.replace('name: Required verification', 'name: Verification');
+    expect(summary).not.toBe(ciFile);
+    expect(() => assertRequiredChecksDerivable(summary, 'required_checks: [Required verification]', 'mutant')).toThrow(/Required verification/);
+    // A configured legacy policy still needs its exact names during migration.
+    const legacyPolicy = 'required_checks: [Test (macos-bash), Lint & Type Check]';
     const mutant = ciFile.replace('label: macos-bash', 'label: macos');
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertRequiredChecksDerivable(mutant, policyFile, 'mutant')).toThrow(
+    expect(() => assertRequiredChecksDerivable(mutant, legacyPolicy, 'mutant')).toThrow(
       /Test \(macos-bash\)/,
     );
     const renamedLint = ciFile.replace('name: Lint & Type Check', 'name: Lint');
     expect(renamedLint).not.toBe(ciFile);
-    expect(() => assertRequiredChecksDerivable(renamedLint, policyFile, 'mutant')).toThrow(
+    expect(() => assertRequiredChecksDerivable(renamedLint, legacyPolicy, 'mutant')).toThrow(
       /Lint & Type Check/,
     );
   });

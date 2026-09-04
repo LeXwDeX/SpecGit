@@ -51,7 +51,8 @@ describe('release-prepare gates (#71)', () => {
   });
 
   it('refuses release dispatches from unmerged branches or tags (#411)', () => {
-    expect(parsed.jobs?.release?.if).toBe("github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'");
+    expect(parsed.jobs?.scope?.if).toBe("github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'");
+    expect(parsed.jobs?.release?.if).toBe("github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main' && needs.scope.outputs.eligible == 'true'");
   });
 
   it('gates publish on an unpublished version, never on the head commit message (#227)', () => {
@@ -146,8 +147,11 @@ describe('rc-verify is a safe RC path (#71)', () => {
     >;
   };
 
-  it('exists and runs on pull requests and manual dispatch only', () => {
-    expect(Object.keys(parsed.on ?? {}).sort()).toEqual(['pull_request', 'workflow_dispatch']);
+  it('runs through the required CI caller or explicit manual dispatch', () => {
+    expect(Object.keys(parsed.on ?? {}).sort()).toEqual(['workflow_call', 'workflow_dispatch']);
+    const ci = parse(readWorkflow('ci.yml'));
+    expect(ci.jobs.rc_verify.uses).toBe('./.github/workflows/rc-verify.yml');
+    expect(ci.jobs.required_verification.needs).toContain('rc_verify');
   });
 
   it('never publishes: every npm publish is a dry-run over a staged RC version', () => {

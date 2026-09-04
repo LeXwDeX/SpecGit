@@ -42,6 +42,7 @@ import type { DetectionReport } from '../detect-checks.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import type { PlatformOutcome } from './init-platform.js';
 import type { ProtectionOutcome } from './init-protection.js';
+import type { CompletionSelection } from './init-workflow.js';
 
 const POLICY_PATH = `${SPEC_GIT_DIR}/${POLICY_FILENAME}`;
 const IGNORE_PATH = '.gitignore';
@@ -77,6 +78,7 @@ export async function writeHarnessAndPolicy(args: {
   tags?: Policy['tags'];
   /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
   workflowYaml: string | null;
+  completion?: CompletionSelection | null;
   /** false (--no-ignore) skips the local-asset .gitignore block (#292). */
   writeIgnore: boolean;
   warnings: Diagnostic[];
@@ -88,13 +90,17 @@ export async function writeHarnessAndPolicy(args: {
     if (hooksEv.ok) {
       return hooksEv.value;
     }
+    if (hooksEv.code === 'git_hooks_external' || hooksEv.code === 'git_hooks_unverified') {
+      warnings.push({ severity: 'warning', code: hooksEv.code, message: hooksEv.message, ...(hooksEv.fix ? { fix: hooksEv.fix } : {}) });
+      return null;
+    }
     return legacyGitHooksDir(repoRoot);
   };
 
   // ---- Plan the harness desired state (reads + merges, no writes). ----
   let desired: HarnessDesiredState;
   try {
-    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, language });
+    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, language, completion: args.completion });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -113,9 +119,8 @@ export async function writeHarnessAndPolicy(args: {
     automation: args.automation,
     ...(args.validation !== undefined ? { validation: args.validation } : {}),
     ...(args.tags !== undefined ? { tags: args.tags } : {}),
-    ...(language !== 'en' ? { language } : {}),
+    ...(language !== 'en' || args.existingPolicy?.language !== undefined ? { language } : {}),
   };
-  if (language === 'en') delete policy.language;
   // #298: probe BEFORE the rewrite — a tracked policy rewritten by
   // --force shows as an uncommitted modification until committed; warn
   // instead of leaving silent residue. Advisory, never a block.
@@ -297,6 +302,7 @@ export function buildInitOutcome(args: {
     // #269: a skipped workflow write (GitLab platform mode) claims
     // nothing — the gitlab_harness_pending warning is the only statement.
     .append(harness.workflow ? [text.initCreatedHook(harness.workflow)] : [])
+    .append(harness.completionWorkflow ? [text.initCreatedHook(harness.completionWorkflow)] : [])
     .append(harness.hooks.map((hookPath) => text.initCreatedHook(hookPath)))
     .append(harness.gitHook ? [text.initGitHook(harness.gitHook)] : [])
     .append(harness.prompts.map((filename) => text.initManagedRefreshed(filename)))
@@ -315,7 +321,7 @@ export function buildInitOutcome(args: {
   return {
     exit: EXIT_SUCCESS,
     policy,
-    harness: { template },
+    harness: { template, ...(harness.completionWorkflow ? { completion: harness.completionWorkflow } : {}) },
     reconciled,
     platform: platform.outcome,
     ...(ignore !== null ? { ignore } : {}),

@@ -25,7 +25,9 @@ import { errorDiagnostic, type IssueOutcome } from '../output.js';
 import { renderPrScaffold } from '../../github/pr-scaffold.js';
 import { POLICY_FILENAME, PROVIDERS_FILENAME, RECORD_FILENAME } from '../../record/schema.js';
 import { SPEC_GIT_DIR } from '../types.js';
-import type { PolicyLanguage } from '../../record/policy.js';
+import type { Policy, PolicyLanguage } from '../../record/policy.js';
+import { checkBodyConvention, renderDeliveryTemplate } from '../../record/templates.js';
+import { checkTitleConvention } from '../../record/conventions.js';
 import type { CommandContext, DeliveryBinding, Evidence, RepoRef } from '../types.js';
 import { catalogFor } from '../language.js';
 import type { GitFacts } from '../../gitfacts/port.js';
@@ -121,6 +123,8 @@ export interface BootstrapStepContext {
   repo: RepoRef;
   language: PolicyLanguage;
   state: BootstrapState;
+  policy?: Policy;
+  prBody?: string;
 }
 
 /** The chain result: the bound record, or a fail-closed diagnostic. */
@@ -241,6 +245,8 @@ export const BOOTSTRAP_STEPS: readonly BootstrapStep[] = [
         record: state.record,
         branch: state.record.context.branch,
         firstTitle: state.firstTitle,
+        policy: deps.policy,
+        prBody: deps.prBody,
       });
       if ('exit' in bound) {
         return bound;
@@ -277,6 +283,8 @@ export async function runBootstrapSteps(
     record: DeliveryBinding;
     firstTitle: string | null;
     facts: GitFacts;
+    policy?: Policy;
+    prBody?: string;
   }
 ): Promise<BootstrapOutcome> {
   const state: BootstrapState = {
@@ -294,6 +302,8 @@ export async function runBootstrapSteps(
       repo: deps.repo,
       language: deps.language,
       state,
+      policy: deps.policy,
+      prBody: deps.prBody,
     });
     if ('exit' in outcome) {
       return outcome;
@@ -319,6 +329,8 @@ async function bindPullRequest(deps: {
   record: DeliveryBinding;
   branch: string;
   firstTitle: string | null;
+  policy?: Policy;
+  prBody?: string;
 }): Promise<IssueOutcome | { record: DeliveryBinding }> {
   const { ctx, root, repo, language, human, branch, firstTitle } = deps;
   let record = deps.record;
@@ -358,8 +370,20 @@ async function bindPullRequest(deps: {
     // The scaffold is written exactly once, here on the fresh-creation
     // path (no PR bound, none adoptable): resume and repair bind or
     // adopt what already exists and never rewrite a PR body (#87).
-    const prBody = renderPrScaffold(record.issues, language);
-    const prEv = await ctx.gh.createDraftPr(repo, branch, baseEv.value, prTitle, prBody);
+    const selectedPolicy = deps.policy ?? { version: 1 as const, required_checks: [], language };
+    const rendered = renderDeliveryTemplate(selectedPolicy, 'pr', {
+      title: prTitle, body: deps.prBody ?? renderPrScaffold(record.issues, language),
+      delivery: record.delivery, issues: record.issues,
+    });
+    if (!rendered.ok) return { exit: 2, errors: [errorDiagnostic(rendered.code, rendered.message)] };
+    const body = deps.prBody !== undefined || deps.policy?.templates?.pr
+      ? [...record.issues.map((n) => `Closes #${n}`), '', rendered.value.body].join('\n')
+      : rendered.value.body;
+    for (const result of [checkTitleConvention(selectedPolicy, rendered.value.title), checkBodyConvention(selectedPolicy, 'pr', body)]) {
+      if (!result.ok) return { exit: 2, errors: [errorDiagnostic(result.code, result.message)] };
+    }
+    const target = selectedPolicy.automation?.target_branch ?? baseEv.value;
+    const prEv = await ctx.gh.createDraftPr(repo, branch, target, rendered.value.title, body);
     if (!prEv.ok) {
       return passthrough(prEv);
     }

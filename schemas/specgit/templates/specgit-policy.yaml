@@ -12,7 +12,7 @@
 # real checks whenever they exist.
 #
 # Upgrades (#310): a no-argument `specgit init --force` PRESERVES this list
-# (and the language) exactly — it rebuilds the versioned harness assets and
+# (and language, validation, templates, tags and automation) exactly — it rebuilds the versioned harness assets and
 # never lets auto-detection replace a working policy. The one intentional
 # replacement path is explicit: `specgit init --force --required-check <name>`
 # (repeatable), which fully replaces the list with the names given.
@@ -38,8 +38,8 @@ required_checks:
 #     color: 0ea5e9
 #     description: Authentication subsystem deliveries
 
-# Optional: project conventions (#407). Defaults are titles: false and
-# labels: off; absence preserves existing behavior. Configure interactively
+# Optional: project conventions. Defaults are titles: false, bodies: false
+# and labels: off; absence preserves existing behavior. Configure interactively
 # with `specgit init --force --configure-rules`, or use --language en|zh,
 # --title-check yes|no, --label-check kind|project|off, and repeatable
 # --allowed-label <slug>. Ordinary upgrades preserve these settings.
@@ -52,6 +52,33 @@ required_checks:
 # validation:
 #   titles: true
 #   labels: kind
+#   bodies: true
+#
+# bodies checks nonempty required level-two sections and unfilled prose
+# placeholders. Without a custom required_sections list, the language's
+# built-in issue/PR section names apply. This validates structure, not the
+# adequacy of the work or whether a human reviewed it.
+
+# Optional: inline issue/PR templates. Each selected kind requires body;
+# title and required_sections are optional. An omitted kind uses the built-in
+# language scaffold. Variables: {{title}}, {{summary}}, {{body}}, {{delivery}},
+# {{issues}}. Supplied prose is inserted once, never evaluated as a template.
+# A selected required_sections list enables body validation for that kind,
+# even when validation.bodies is false. PR closing references are preserved.
+# The example expects --body-file / --pr-body-file content for its sections:
+# templates:
+#   issue:
+#     title: '{{title}}'
+#     body: |
+#       ## Requirement
+#       {{body}}
+#     required_sections: [Requirement]
+#   pr:
+#     title: '{{title}}'
+#     body: |
+#       ## Delivery evidence
+#       {{body}}
+#     required_sections: [Delivery evidence]
 
 # Optional: enforce delivery ordering (the sequence gate, G8). When true, no
 # OPEN issue with a smaller number than this delivery's smallest bound issue
@@ -60,11 +87,15 @@ required_checks:
 
 # Optional: authorize merging an accepted delivery into one named branch,
 # then close its bound issues after the forge confirms the merge.
-# `init` and `init --force` ask yes/no, default no, on every invocation.
-# Scripts may supply the user's answer with --automation yes|no. Without
-# a TTY or an explicit answer, init writes merge: false / close_issues: false.
+# Fresh init asks yes/no, default no. Ordinary init --force preserves the
+# existing choice, target and closure setting; it does not ask again or
+# silently turn automation off. Scripts may supply the user's explicit
+# answer with --automation yes|no. Agents cannot choose yes for the user.
 # A yes uses --merge-target <branch> or the proven remote default branch;
-# it never guesses main. Other policy fields survive an init --force.
+# it never guesses main. A target alone cannot enable disabled automation.
+# Approved target-branch policy authorizes completion; a PR's proposed rule
+# changes cannot authorize that PR's own merge. finish/accept remain read-only
+# acceptance checks. Final completion also requires merge and issue closure.
 # The settings below are an opt-in example, not the default:
 # automation:
 #   merge: true

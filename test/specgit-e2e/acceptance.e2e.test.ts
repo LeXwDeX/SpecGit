@@ -128,7 +128,7 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
     }
   });
 
-  it('queries exactly one PR endpoint for N bound issues (single-PR aggregate)', async () => {
+  it('uses one PR identity for N bound issues while checking each issue occupancy', async () => {
     const repo = track(makeRepo('feat/aggregate'));
 
     const gh = createFakeGh(repo.dir, greenGhRules({
@@ -149,11 +149,17 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
     expect(result.exitCode).toBe(0);
 
     const calls = readFakeGhCalls(gh.logPath);
-    expect(calls.filter((call) => call.includes('/pulls/42'))).toHaveLength(1);
-    expect(calls.filter((call) => call.includes('/issues/101'))).toHaveLength(1);
-    expect(calls.filter((call) => call.includes('/issues/102'))).toHaveLength(1);
+    // Approved-policy resolution and acceptance read the same bound PR;
+    // issue cardinality must not introduce a separate PR per issue.
+    const prReads = calls.filter((call) => /\/pulls\/[0-9]+$/.test(call));
+    expect(prReads).toHaveLength(2);
+    expect([...new Set(prReads)]).toEqual([`api repos/${OWNER}/${REPO}/pulls/42`]);
+    for (const issue of [101, 102]) {
+      expect(calls.filter((call) => call === `api repos/${OWNER}/${REPO}/issues/${issue}`)).toHaveLength(1);
+      expect(calls.filter((call) => call.startsWith(`api repos/${OWNER}/${REPO}/issues/${issue}/timeline?`))).toHaveLength(1);
+    }
     expect(calls.filter((call) => call.includes('/check-runs'))).toHaveLength(1);
-    expect(calls.filter((call) => call.startsWith('api '))).toHaveLength(5);
+    expect(calls.filter((call) => call.startsWith('api '))).toHaveLength(8);
   });
 });
 
@@ -332,7 +338,7 @@ describe('e2e acceptance: provider failures fail closed (exit 3)', () => {
     const gh = createFakeGh(repo.dir, [
       { match: '^--version$', stdout: 'gh version 2.60.0-fake\n' },
       {
-        match: '^auth status',
+        match: '^auth status|^api repos/.*/pulls/4$',
         exit: 1,
         stderr: 'You are not logged into any GitHub hosts. TOKEN=ghs_supersecret\n',
       },

@@ -47,6 +47,7 @@ import type { GitPort } from '../gitfacts/port.js';
 import type { RepoRef } from '../gitfacts/origin.js';
 import type { ForgeProvider } from '../github/port.js';
 import type { EvaluateInput, Verdict } from '../acceptance/evaluate.js';
+import type { EffectivePolicy } from '../record/effective-policy.js';
 
 // -----------------------------------------------------------------------------
 // Record/policy persistence as seen from the CLI. Implemented by
@@ -84,6 +85,8 @@ export interface CommandContext {
   git: GitPort;
   gh: ForgeProvider;
   record: RecordPort;
+  /** Approved target-branch policy; proposed workspace bytes are never merge authority. */
+  resolvePolicy(root: string, record: Evidence<DeliveryBinding>, options?: { requireApproved?: boolean }): Promise<Evidence<EffectivePolicy>>;
   evaluate: EvaluateFn;
   parseRepoRef(originUrl: string): Evidence<RepoRef> | Promise<Evidence<RepoRef>>;
   /** Read through a validated, unpersisted declaration without changing this context. */

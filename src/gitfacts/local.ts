@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { lstat, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -48,6 +49,27 @@ function sanitizeGitText(text: string): string {
   return flat.length > MAX_EMBEDDED_TEXT ? `${flat.slice(0, MAX_EMBEDDED_TEXT)}…` : flat;
 }
 
+/** Resolve absent leaf directories without treating a dangling symlink as an absent directory. */
+async function physicalHooksPath(target: string): Promise<string> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const entry = await lstat(target).catch((statError: unknown) => {
+      if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw statError;
+    });
+    const parent = path.dirname(target);
+    if (entry !== null || parent === target) throw error;
+    return path.join(await physicalHooksPath(parent), path.basename(target));
+  }
+}
+
+function withinDirectory(target: string, directory: string): boolean {
+  const relative = path.relative(directory, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
 export interface LocalGitAdapterOptions {
   env?: NodeJS.ProcessEnv;
   spawnImpl?: SpawnFn;
@@ -65,6 +87,62 @@ export class LocalGitAdapter implements GitPort {
   constructor(options: LocalGitAdapterOptions = {}) {
     this.env = options.env;
     this.spawn = options.spawnImpl ?? defaultSpawn;
+  }
+
+  async readFileAtRemoteRef(root: string, branch: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+    if (!branch || branch.startsWith('-') || branch.startsWith('refs/') || /[\s~^:?*\[\\]/.test(branch) ||
+        branch.includes('..') || branch.includes('@{') || branch.split('/').some((part) => !part || part.startsWith('.')) ||
+        !relativePath || relativePath.startsWith('/') || relativePath.includes('\\') ||
+        relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
+      return fail('policy_ref_invalid', 'A branch name and repository-relative policy path are required.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      const ref = `refs/heads/${branch}`;
+      const remote = await this.spawn('git', ['-C', root, 'ls-remote', '--exit-code', 'origin', ref], options);
+      const rows = remote.stdout.trim().split(/\r?\n/);
+      const [sha, returnedRef] = (rows[0] ?? '').split(/\s+/);
+      if (rows.length !== 1 || !HEX_OBJECT_ID.test(sha ?? '') || returnedRef !== ref) {
+        return fail('policy_ref_unavailable', 'Origin did not identify exactly one approved policy revision.');
+      }
+      const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
+      if (tree.stdout === '') return ok({ sha, content: null });
+      if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {
+        return fail('policy_ref_invalid', 'The approved policy must be a regular committed file.');
+      }
+      const file = await this.spawn('git', ['-C', root, 'show', `${sha}:${relativePath}`], options);
+      return ok({ sha, content: file.stdout });
+    } catch {
+      return fail('policy_ref_unavailable', 'The approved target-branch policy is unavailable locally.',
+        'Fetch origin and retry. An adoption must put its policy on the target branch before it can authorize a delivery.');
+    }
+  }
+
+  async readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+    if (!HEX_OBJECT_ID.test(mergeSha) || !HEX_OBJECT_ID.test(headSha) || relativePath !== 'spec_git/policy.yaml') {
+      return fail('policy_history_unavailable', 'Historical authorization requires full merge/head identities and the policy path.');
+    }
+    const contained = await this.headContains(root, mergeSha);
+    if (!contained.ok || !contained.value.contained) return fail('policy_history_unavailable', 'The checkout does not prove containment of the merged delivery.');
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      const result = await this.spawn('git', ['-C', root, 'rev-list', '--parents', '-n', '1', mergeSha], options);
+      const parents = result.stdout.trim().split(/\s+/);
+      if (parents.length !== 3 || parents[0] !== mergeSha || parents[2] !== headSha || !HEX_OBJECT_ID.test(parents[1])) {
+        return fail('policy_history_unavailable', 'The merge does not prove its original target parent. Squash, rebase and fast-forward recovery require explicit historical evidence.',
+          'Inspect the merge strategy and approved policy history; never enable automation in a new policy to bypass this check.');
+      }
+      const sha = parents[1];
+      const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
+      if (tree.stdout === '') return ok({ sha, content: null });
+      if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {
+        return fail('policy_history_unavailable', 'The original approved policy is not a regular file.');
+      }
+      const file = await this.spawn('git', ['-C', root, 'show', `${sha}:${relativePath}`], options);
+      return ok({ sha, content: file.stdout });
+    } catch {
+      return fail('policy_history_unavailable', 'The original approved merge policy could not be read.', 'Fetch the merge and its parents, then retry completion.');
+    }
   }
 
   async facts(root: string): Promise<GitFacts> {
@@ -317,10 +395,9 @@ export class LocalGitAdapter implements GitPort {
   }
 
   async hooksPath(root: string): Promise<Evidence<string>> {
-    // One probe covers the three layouts: plain repo (.git/hooks), linked
-    // worktree (the common dir's hooks), and core.hooksPath overrides
-    // (husky/lefthook). Relative results resolve against the worktree
-    // root — the CWD git would use for `-C root`.
+    // Relative results resolve against the worktree root. Shared worktree
+    // hooks are permitted only inside this repository's common gitdir;
+    // a global core.hooksPath must never alter another repository's guard.
     const resolved = await this.write('hooks', ['-C', root, 'rev-parse', '--git-path', 'hooks']);
     if (!resolved.ok) {
       return resolved;
@@ -329,9 +406,25 @@ export class LocalGitAdapter implements GitPort {
     if (!raw) {
       return fail('git_hooks_failed', 'git rev-parse --git-path hooks returned an empty path.');
     }
-    // git emits forward slashes even on Windows; normalize so the value
-    // matches the platform's path.join-produced expectations everywhere.
-    return ok(path.normalize(path.isAbsolute(raw) ? raw : path.resolve(root, raw)));
+    const target = path.normalize(path.isAbsolute(raw) ? raw : path.resolve(root, raw));
+    const common = await this.write('hooks', ['-C', root, 'rev-parse', '--git-common-dir']);
+    if (!common.ok || common.value.replace(/\r?\n$/, '') === '') {
+      return fail('git_hooks_unverified', 'The repository ownership of its hooks directory could not be verified; git hook installation was skipped.');
+    }
+    try {
+      const commonPath = path.resolve(root, common.value.replace(/\r?\n$/, ''));
+      const [physicalTarget, physicalRoot, physicalCommon] = await Promise.all([
+        physicalHooksPath(target), realpath(root), realpath(commonPath),
+      ]);
+      if (!withinDirectory(physicalTarget, physicalRoot) && !withinDirectory(physicalTarget, physicalCommon)) {
+        return fail('git_hooks_external', 'The configured hooks directory is outside this repository and its common gitdir; git hook installation was skipped.',
+          'Keep the shared hooks unchanged, or explicitly configure a repository-owned core.hooksPath.');
+      }
+      return ok(target);
+    } catch {
+      return fail('git_hooks_unverified', 'The physical ownership of the hooks directory could not be verified; git hook installation was skipped.',
+        'Repair inaccessible paths or dangling symlinks before installing a repository-local hook.');
+    }
   }
 
   /**
