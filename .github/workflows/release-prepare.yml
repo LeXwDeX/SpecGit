@@ -183,11 +183,11 @@ jobs:
 
       # #382: automation.merge must be true with target_branch: main.
       # Disabled policy leaves the proposal open. The script waits at most
-      # 20 minutes for all checks, classic statuses and workflow runs, then
+      # 35 minutes for all checks, classic statuses and workflow runs, then
       # requests a server-side SHA-conditional merge and verifies its state.
       - name: Merge version pull request when configured
         if: steps.pending.outputs.count != '0'
-        timeout-minutes: 25
+        timeout-minutes: 40
         env:
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
         run: |
