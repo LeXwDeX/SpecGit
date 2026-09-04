@@ -259,7 +259,9 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
 });
 
 describe('e2e issue: exactly-once across partial failures (fault injection)', () => {
-  it('adopts the remotely created issue when the creation response was lost', async () => {
+  // Two real CLI passes exceeded the global 10s budget on windows-pwsh
+  // (run 33835966803); match the neighboring recovery case's 30s bound.
+  it('adopts the remotely created issue when the creation response was lost', { timeout: 30_000 }, async () => {
     const repo = makePushableRepo('main');
 
     // Run 1: the fake allocates #11 remotely (seq state consumed) but
