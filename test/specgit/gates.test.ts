@@ -450,7 +450,9 @@ describe('pr gate', () => {
   });
 
   it('publishes the PR fact and evidence on a clean PR', async () => {
-    const ctx = makeContext({ repoRef: REPO, gh: forgeStub({ getPr: async () => ok(PR_FACT) }) });
+    const ctx = makeContext({ repoRef: REPO, gh: forgeStub({
+      getPr: async () => ok(PR_FACT), listIssuePullRequests: async () => ok([]),
+    }) });
     expect(await prGate(ctx)).toEqual([]);
     expect(ctx.prFact).toBe(PR_FACT);
     expect(ctx.evidence.pr).toBe(42);

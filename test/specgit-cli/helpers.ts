@@ -10,6 +10,7 @@ import type {
   IssueCommentCreation,
   IssueCreation,
   IssueFact,
+  IssueHistoryFact,
   LabelsAppliedFact,
   OpenIssueFact,
   PrCreation,
@@ -137,6 +138,7 @@ export interface RecordingForgeProvider extends ForgeProvider {
 }
 
 export interface GhScript {
+  getCiConfigPath?: (repo: RepoRef) => Evidence<string | null>;
   getIssue?: (repo: RepoRef, issue: number) => Evidence<IssueFact>;
   getPr?: (repo: RepoRef, ref: number | string) => Evidence<PrFact>;
   getPrChecks?: (repo: RepoRef, ref: number | string) => Evidence<{ headSha: string; checks: CheckRunInfo[]; pipelineStatus?: string }>;
@@ -144,6 +146,8 @@ export interface GhScript {
   closeIssue?: (repo: RepoRef, issue: number) => Evidence<{ closed: boolean }>;
   getOpenIssueNumbers?: (repo: RepoRef) => Evidence<number[]>;
   getOpenIssues?: (repo: RepoRef) => Evidence<OpenIssueFact[]>;
+  searchIssueHistory?: (repo: RepoRef, query: string) => Evidence<IssueHistoryFact[]>;
+  listIssuePullRequests?: (repo: RepoRef, issue: number) => Evidence<PrFact[]>;
   /**
    * Check-freshness anchor (#315); the default is the no-boundary fact
    * so CLI fixtures that predate #315 keep their verdict unchanged.
@@ -187,6 +191,10 @@ export function makeGhProvider(
       calls.push('preflight');
       return preflight;
     }),
+    getCiConfigPath: vi.fn(async (repo: RepoRef): Promise<Evidence<string | null>> => {
+      calls.push(`getCiConfigPath:${repo.owner}/${repo.repo}`);
+      return behavior.getCiConfigPath?.(repo) ?? { ok: true, value: null };
+    }),
     getIssue: vi.fn(async (repo: RepoRef, n: number): Promise<Evidence<IssueFact>> => {
       calls.push('getIssue');
       return behavior.getIssue?.(repo, n) ?? { ok: false, code: 'gh_transport', message: 'not configured in fake' };
@@ -206,6 +214,14 @@ export function makeGhProvider(
         // Empty remote by default: no open issues to adopt.
         { ok: true, value: [] }
       );
+    }),
+    searchIssueHistory: vi.fn(async (repo: RepoRef, query: string): Promise<Evidence<IssueHistoryFact[]>> => {
+      calls.push(`searchIssueHistory:${query}`);
+      return behavior.searchIssueHistory?.(repo, query) ?? { ok: true, value: [] };
+    }),
+    listIssuePullRequests: vi.fn(async (repo: RepoRef, issue: number): Promise<Evidence<PrFact[]>> => {
+      calls.push(`listIssuePullRequests:${issue}`);
+      return behavior.listIssuePullRequests?.(repo, issue) ?? { ok: true, value: [] };
     }),
     getPr: vi.fn(async (repo: RepoRef, ref: number | string): Promise<Evidence<PrFact>> => {
       calls.push(`getPr:${String(ref)}`);
@@ -357,6 +373,8 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       port.factsCalls.push(root);
       return facts;
     }),
+    readFileAtRemoteRef: vi.fn(async () => ({ ok: false as const, code: 'policy_ref_unavailable', message: 'Approved policy not configured in fake.' })),
+    readFileBeforeMerge: vi.fn(async () => ({ ok: false as const, code: 'policy_history_unavailable', message: 'Historical policy not configured in fake.' })),
     checkoutOrCreateBranch: vi.fn(async (_root: string, branch: string): Promise<Evidence<BranchCheckout>> => {
       port.checkoutCalls.push(branch);
       return writes.checkoutOrCreateBranch?.(branch) ?? { ok: true, value: { branch, created: true } };
@@ -485,6 +503,10 @@ export function makeCtx(options: CtxOptions = {}): TestCtx {
     gh: options.gh ?? ghProvider,
     record: recordPort,
     evaluate: (options.evaluate ?? makeEvaluate()) as CommandContext['evaluate'],
+    resolvePolicy: async (root) => {
+      const policy = await recordPort.readPolicy(root);
+      return policy.ok ? { ok: true, value: { policy: policy.value, source: 'approved', branch: 'main', sha: 'a'.repeat(40) } } : policy;
+    },
     parseRepoRef: options.parseRepoRef ?? parseRepoRef,
   };
 

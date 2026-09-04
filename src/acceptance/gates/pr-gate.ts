@@ -1,6 +1,8 @@
 import { formatRepoRef, parsePrUrl, sameRepoRef } from '../../gitfacts/origin.js';
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
 import { checkTitleConvention } from '../../record/conventions.js';
+import { checkBodyConvention } from '../../record/templates.js';
+import { findIssueOccupancy } from '../../github/issue-occupancy.js';
 
 /**
  * Gate 9 — pr: the bound pull request exists, is mergeable (not closed
@@ -46,6 +48,8 @@ export async function prGate(ctx: GateContext): Promise<GateFailure[]> {
   const failures: GateFailure[] = [];
   const title = checkTitleConvention(ctx.policy!, fact.title);
   if (!title.ok) failures.push(makeFailure(title, { pr: fact.number }));
+  const body = checkBodyConvention(ctx.policy!, 'pr', fact.body);
+  if (!body.ok) failures.push(makeFailure(body, { pr: fact.number }));
   if (fact.state === 'closed') {
     failures.push(makeFailure('pr_closed_unmerged', { pr: fact.number }));
   }
@@ -61,6 +65,16 @@ export async function prGate(ctx: GateContext): Promise<GateFailure[]> {
         boundBranch: ctx.binding!.context.branch,
       })
     );
+  }
+  if (fact.state === 'open' && failures.length === 0) {
+    const occupancy = await findIssueOccupancy(ctx.input.gh!, ctx.repoRef!, ctx.binding!.issues, {
+      pr: fact.number, host: ctx.input.gitlabHost,
+    });
+    if (!occupancy.ok) {
+      failures.push(makeFailure({ ...occupancy, code: 'issue_occupancy_unknown' }, { cause: occupancy.code }));
+    } else if (occupancy.value.length > 0) {
+      failures.push(makeFailure('issue_already_claimed', occupancy.value));
+    }
   }
   return failures;
 }

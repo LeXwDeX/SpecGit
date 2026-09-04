@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { classifyPaths } from '../scripts/ci-change-scope.mjs';
 
 // #370 — pnpm reports the package.json `pnpm` field as no longer read
 // (the wrapper-generation engines print the ignored-keys warning on every
@@ -43,6 +46,27 @@ function readYaml(relativePath: string): Record<string, any> {
 }
 
 describe('pnpm workspace configuration', () => {
+  it('keeps the imported classifier byte-identical in Windows-style Git checkouts', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-classifier-checkout-'));
+    const relative = 'scripts/ci-change-scope.mjs';
+    const source = fs.readFileSync(path.join(projectRoot, relative), 'utf8').replace(/\r\n/g, '\n');
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'core.autocrlf=true', ...args], {
+      cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    try {
+      fs.mkdirSync(path.join(root, 'scripts'));
+      fs.writeFileSync(path.join(root, '.gitattributes'), fs.readFileSync(path.join(projectRoot, '.gitattributes')));
+      fs.writeFileSync(path.join(root, relative), source);
+      git('init', '--quiet');
+      git('add', '.gitattributes', relative);
+      fs.unlinkSync(path.join(root, relative));
+      git('checkout-index', '--force', '--all');
+      expect(fs.readFileSync(path.join(root, relative), 'utf8')).toBe(source);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps build approval and security overrides in the verified workspace home', () => {
     const packageJson = readJson('package.json');
     const lockfile = readYaml('pnpm-lock.yaml');
@@ -80,7 +104,8 @@ describe('pnpm workspace configuration', () => {
     );
 
     expect(flake).toContain('./pnpm-workspace.yaml');
-    expect(ci).toContain("- 'pnpm-workspace.yaml'");
-    expect(security).toContain("- '**/pnpm-workspace.yaml'");
+    expect(classifyPaths(['pnpm-workspace.yaml'])).toMatchObject({ build: true, nix: true, dependencies: true });
+    expect(ci).toContain('node scripts/ci-change-scope.mjs');
+    expect(security).toContain('node scripts/ci-change-scope.mjs');
   });
 });

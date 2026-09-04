@@ -16,7 +16,7 @@
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -67,38 +67,62 @@ specgit init
 
 Creates `spec_git/policy.yaml` and the delivery harness. Required-check names are auto-detected from CI files — only names static reading can prove; matrix fan-out and reusable-workflow calls are reported as ambiguous, never guessed (#310). A no-CI repository gets the empty list (the acceptance job itself is the gate). Choose check names with care; [GitHub Actions](actions.md) explains the naming model and the recommended aggregator pattern.
 
+Local initialization does not itself require an issue, PR, product build or
+release. Review the tracked changes before deciding to share the SpecGit
+workflow or project rules; [CI scope](ci-scope.md) distinguishes shared adoption
+from local maintenance. Init/setup preserve the project's business workflows,
+build commands and dependencies, but can update shared agent files and hooks.
+
 ## Upgrade to a newer CLI version
 
-After `npm install -g specgit` brings in a new version, one numbered sequence converges each repository — all local, zero forge calls:
+After `npm install -g specgit` brings in a new version, refresh the installed
+surfaces and inspect the result. `status` and `setup` are local; `init` can make
+forge probes or protection changes, so `--no-protect` skips the protection step.
+Preserve the user's automation choice when supplying `--automation` in scripts.
 
 ```bash
 specgit status --json          # 1. see the drift: assets.generated names every
                                #    stale / missing / conflict state and the
                                #    exact per-surface fix command
-specgit init --force           # 2. converge the init-owned tier (workflow,
+specgit init --force --no-protect # 2. converge the init-owned tier (workflow,
                                #    managed AGENTS.md block, guard hooks,
                                #    managed .gitignore region) — the policy's
                                #    required checks and language are PRESERVED;
                                #    pass explicit --required-check to replace them
-specgit setup --tool all       # 3. converge both agent surfaces (or the exact
-                               #    per-surface command status named)
+specgit setup --tool generic   # 3. use the exact installed surface status named;
+                               #    opencode or all when those are intended
 specgit status --json          # 4. assets.generated.clean must be true
                                #    (clean implies complete — an incomplete
                                #    report never claims current; resolve any
                                #    uninspected code first)
-git add -A && git commit       # 5. commit the intended derived assets
+git diff                      # 5. inspect tracked changes before choosing to share
 ```
 
-Between 4 and 5: a `conflict` state is a file at a managed path that does not prove SpecGit ownership (no managed markers) — review it and, if it is a leftover, delete it yourself; the commands never delete unproven files. After the commit, `git status --porcelain` is empty: no generated legacy or ignored residue reappears. What "intended" means is decided by the three asset tiers — see [State and assets](reference.md#state-and-assets) and the [status reference](cli.md#specgit-status).
+Review any `conflict` before removing a file: retirement removes only proven
+SpecGit-owned assets. Current canonical generated files are refreshed by their
+writers, so review local customizations before running the upgrade. Commit only
+the shared changes the user intends, using a delivery when required; local
+maintenance alone stops after verification and does not require CI or release.
+See [State and assets](reference.md#state-and-assets) and [CI scope](ci-scope.md).
 
 ## Uninstall
 
-Remove the CLI and, if you want the project clean of SpecGit:
+To remove only the globally installed CLI:
 
 ```bash
 npm uninstall -g specgit
-specgit unbind --yes      # removes .specgit.yaml for the current delivery
-git rm spec_git/policy.yaml
 ```
 
-The record and policy are plain committed files; there is no hidden state to clean up.
+This leaves project integration assets in place. For full project removal,
+first retire the shared acceptance/protection requirements deliberately, then
+run `specgit unbind --yes` while the CLI is still installed if abandoning the
+current binding. Remove SpecGit-owned workflow, policy/provider files, managed
+AGENTS/CLAUDE blocks, agent entry points and hook entries while preserving user
+content. Inspect the effective Git hooks directory (`git rev-parse --git-path
+hooks`), which may be shared through `core.hooksPath` or linked worktrees.
+Uninstall the CLI last. There is currently no automatic project-uninstall command.
+
+Removing the CLI or policy does not disable the installed Git pre-push guard.
+An agent host that invokes the merge guard can also remain blocked when the CLI
+or policy is missing. Review those integrations as part of removal; deleting
+only `spec_git/policy.yaml` does not uninstall SpecGit from the project.

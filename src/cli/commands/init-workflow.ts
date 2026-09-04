@@ -16,6 +16,9 @@ import { harnessWorkflowYaml } from '../harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../external-harness.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { CommandContext } from '../types.js';
+import { completionWorkflowYaml, gitlabRoutingWorkflowYaml } from '../completion-workflow.js';
+import { fail, ok, type Evidence } from '../../kernel/evidence.js';
+import { errorDiagnostic, type InitOutcome } from '../output.js';
 
 /** The root package name that marks the SpecGit repository itself. */
 const SELF_PACKAGE_NAME = 'specgit';
@@ -76,4 +79,60 @@ export async function selectWorkflowYaml(
     template: 'external',
     ...(warning !== undefined ? { warning } : {}),
   };
+}
+
+export interface CompletionSelection {
+  platform: 'github' | 'gitlab';
+  yaml: string;
+  routingYaml?: string;
+}
+
+/** Verify the actual project entry point without changing its remote CI settings. */
+export async function validateGitlabCiConfig(
+  ctx: CommandContext, root: string, gitlabHost?: string
+): Promise<InitOutcome | null> {
+  const facts = await ctx.git.facts(root);
+  if (!facts.originUrl) {
+    return { exit: 3, errors: [errorDiagnostic('gitlab_ci_config_unknown', 'GitLab CI configuration requires a readable origin.')] };
+  }
+  const forge = gitlabHost === undefined ? ctx : ctx.withGitlabHost?.(gitlabHost) ?? ctx;
+  const repo = await forge.parseRepoRef(facts.originUrl);
+  if (!repo.ok) return { exit: 3, errors: [errorDiagnostic(repo.code, repo.message, repo.fix ? { fix: repo.fix } : {})] };
+  const config = await forge.gh.getCiConfigPath(repo.value);
+  if (!config.ok) return { exit: 3, errors: [errorDiagnostic(config.code, config.message, config.fix ? { fix: config.fix } : {})] };
+  if (config.value !== null && config.value !== '' && config.value !== '.gitlab-ci.yml') {
+    return { exit: 2, errors: [errorDiagnostic('gitlab_ci_config_unsupported', 'The GitLab project uses a custom CI configuration path; automatic completion cannot safely replace its root entry point.', {
+      fix: 'Keep the custom configuration unchanged. Configure an independently reviewed completion integration for that entry point.',
+    })] };
+  }
+  return null;
+}
+
+/** A write-capable continuation must run on the proven remote default branch. */
+export async function selectCompletionWorkflow(
+  ctx: CommandContext,
+  root: string,
+  platform: 'github' | 'gitlab' | 'undecided',
+  enabled: boolean
+): Promise<Evidence<CompletionSelection | null>> {
+  if (!enabled) return ok(null);
+  if (platform === 'undecided') {
+    return fail('automation_platform_unknown', 'Automatic completion requires a declared repository platform.',
+      'Choose the origin platform during init before enabling automatic completion.');
+  }
+  const branch = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+  if (!branch.ok) {
+    return fail('automation_default_branch_unknown', 'Automatic completion requires a proven remote default branch.',
+      'Fetch origin and establish origin/HEAD, then retry. The merge target does not identify the trusted default branch.');
+  }
+  try {
+    const input = {
+      defaultBranch: branch.value, version: ctx.version, selfHosted: await isSelfRepository(root), platform,
+    };
+    return ok({ platform, yaml: completionWorkflowYaml(input),
+      ...(platform === 'gitlab' ? { routingYaml: gitlabRoutingWorkflowYaml(input) } : {}),
+    });
+  } catch (error) {
+    return fail('automation_workflow_invalid', error instanceof Error ? error.message : String(error));
+  }
 }

@@ -28,10 +28,11 @@ every change is a delivery bound to issues and judged by evidence.
   pnpm test
   ```
 
-- **Everyday checks:** `pnpm run lint` (ESLint over `src/`), `pnpm exec tsc
-  --noEmit` (typecheck), `pnpm test` (Vitest, single run). CI runs all of
-  these plus the SpecGit Acceptance gate; a PR is not done until they are
-  green.
+- **Product checks:** `pnpm run lint` (ESLint over `src/`), `pnpm exec tsc
+  --noEmit`, `pnpm run typecheck:test`, and `pnpm test` (Vitest, single run).
+  Product changes require these checks and the build. Recognized metadata
+  changes use the lightweight checks in [CI scope](docs/ci-scope.md).
+  Required verification and SpecGit Acceptance remain merge gates.
 
 ## How changes happen (the delivery workflow)
 
@@ -51,14 +52,16 @@ This repo dogfoods SpecGit — you will use it to change it:
 
    This creates the issue, the branch, the draft PR (with `Closes #n`), and
    the record; re-running resumes.
-4. **Work in slices.** Commit early, push often; CI — including SpecGit
-   Acceptance — runs on every push.
+4. **Work in slices.** Commit early, push often. CI classifies each complete
+   change and runs the applicable verification; SpecGit Acceptance checks
+   the delivery's current platform evidence.
 5. **Gate on the verdict.** `specgit finish` must exit `0` before you request
    review/merge. If it names failures, fix the delivery, not the gate: never
    weaken `spec_git/policy.yaml` or edit `.specgit.yaml` to flip a verdict.
-6. **Every user-visible PR carries a changeset.** Run `pnpm exec changeset`
-   and commit the `.changeset/*.md` file with your change. Releases are
-   version-PR based; a PR without a changeset ships nothing.
+6. **Releases require explicit intent.** A package behavior change carries a
+   changeset (`pnpm exec changeset`). Local installation, init/setup, policy
+   and documentation maintenance do not require a release. An authorized
+   release proceeds through the version PR and actual publication evidence.
 
 ## What we look for in reviews
 

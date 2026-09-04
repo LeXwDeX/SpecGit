@@ -13,6 +13,8 @@ export interface IssueFact {
    * record, instead of duplicating the WHY.
    */
   title?: string;
+  /** Complete remote body, used only when project content rules are enabled. */
+  body?: string;
   /** Complete issue label names; absent when the provider did not supply valid label evidence. */
   labels?: string[];
 }
@@ -93,6 +95,15 @@ export interface OpenIssueFact {
   title?: string;
   /** Issue body when the provider surfaces it; absent bodies never win scaffold disambiguation. */
   body?: string;
+}
+
+/** A related historical issue; search matches are candidates, never a reuse decision. */
+export interface IssueHistoryFact {
+  number: number;
+  title: string;
+  body: string;
+  state: 'open' | 'closed';
+  url: string;
 }
 
 /** A newly created draft pull request: its number and canonical URL. */
@@ -180,6 +191,8 @@ export interface LabelsAppliedFact {
  */
 export interface ForgeReadPort {
   preflight(): Promise<Evidence<PreflightFact>>;
+  /** The platform's configured CI entry path, or null for its default entry point. */
+  getCiConfigPath(repo: RepoRef): Promise<Evidence<string | null>>;
   getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>>;
   /**
    * Numbers of all open issues (for the ordered_issues sequencing gate and
@@ -198,6 +211,10 @@ export interface ForgeReadPort {
    * fails (`evidence_truncated`).
    */
   getOpenIssues(repo: RepoRef): Promise<Evidence<OpenIssueFact[]>>;
+  /** Complete results for a bounded keyword query across open and closed issues; truncation fails closed. */
+  searchIssueHistory(repo: RepoRef, query: string): Promise<Evidence<IssueHistoryFact[]>>;
+  /** Complete same-project requests referenced by this issue, refreshed from current PR/MR facts. */
+  listIssuePullRequests(repo: RepoRef, issue: number): Promise<Evidence<PrFact[]>>;
   getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>>;
   /**
    * Check runs reported for a commit and optional pull/merge request.
@@ -311,9 +328,12 @@ export interface ForgeProvider extends ForgeReadPort, ForgeAdminPort {}
  */
 const FORGE_READ_PORT_MEMBER_FLAGS = {
   preflight: true,
+  getCiConfigPath: true,
   getIssue: true,
   getOpenIssueNumbers: true,
   getOpenIssues: true,
+  searchIssueHistory: true,
+  listIssuePullRequests: true,
   getPr: true,
   getCheckRuns: true,
   getPrChecks: true,

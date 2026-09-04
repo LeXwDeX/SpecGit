@@ -99,6 +99,18 @@ export class PlatformRoutingProvider implements ForgeProvider {
     return (await this.forRepo(repo)).getOpenIssues(repo);
   }
 
+  async searchIssueHistory(repo: RepoRef, query: string): ReturnType<ForgeProvider['searchIssueHistory']> {
+    return (await this.forRepo(repo)).searchIssueHistory(repo, query);
+  }
+
+  async getCiConfigPath(repo: RepoRef): ReturnType<ForgeProvider['getCiConfigPath']> {
+    return (await this.forRepo(repo)).getCiConfigPath(repo);
+  }
+
+  async listIssuePullRequests(repo: RepoRef, issue: number): ReturnType<ForgeProvider['listIssuePullRequests']> {
+    return (await this.forRepo(repo)).listIssuePullRequests(repo, issue);
+  }
+
   async getPr(repo: RepoRef, pr: number | string): ReturnType<ForgeProvider['getPr']> {
     return (await this.forRepo(repo)).getPr(repo, pr);
   }

@@ -69,36 +69,74 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Check out the PR head branch by name so HEAD is on the branch
-          # (not the detached merge ref): the execution context gate reads
-          # live git. Falls back to the default ref on non-PR events.
-          ref: \${{ github.head_ref || github.ref }}
+          # Pin execution to this event; a newer branch push must not change
+          # the code tested by an older run. Manual dispatch uses its own SHA.
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - name: Restore the event branch
+        if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+        env:
+          SPECGIT_BRANCH: \${{ github.head_ref || github.ref_name }}
+        run: |
+          git check-ref-format --branch "$SPECGIT_BRANCH" >/dev/null
+          git switch --create "$SPECGIT_BRANCH"
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
+          package-manager-cache: false
           # No dependency cache here, by design (#66): this job checks out
           # and executes untrusted PR code (install scripts, build, the CLI
           # under verdict), so it must never write to or restore from the
           # repository cache (CodeQL alerts 7-9). ci.yml keeps the warm,
           # branch-scoped cache.
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Install classifier dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Classify CI scope
+        id: scope
+        run: node scripts/ci-change-scope.mjs
+
+      - name: Validate CI scope
+        env:
+          CI_BUILD: \${{ steps.scope.outputs.build }}
+        run: test "$CI_BUILD" = true || test "$CI_BUILD" = false
 
       - name: Build CLI
+        if: steps.scope.outputs.build == 'true'
         run: pnpm run build
 
-${waitStepYaml('rest')}
+      - name: Install trusted CLI for metadata validation
+        if: steps.scope.outputs.build == 'false'
+        run: npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --ignore-scripts --no-audit --no-fund "specgit@$(node -p \"require('./package.json').version\")"
+
+      - name: Prepare approved policy for acceptance
+        env:
+          GH_TOKEN: \${{ github.token }}
+          SPECGIT_WAIT_POLICY: \${{ runner.temp }}/specgit-policy.yaml
+          SPECGIT_POLICY_ENTRY: \${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli/node_modules/specgit/dist/automation/workflow-policy.js', runner.temp) || 'dist/automation/workflow-policy.js' }}
+        run: |
+          gh auth setup-git
+          node "$SPECGIT_POLICY_ENTRY"
+
+${waitStepYaml('gh', "\${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli', runner.temp) || '' }}")}
 
       - name: specgit finish
+        if: steps.scope.outputs.build == 'true'
         run: node bin/specgit.js finish --json
+        env:
+          GH_TOKEN: \${{ github.token }}
+
+      - name: specgit finish with trusted CLI
+        if: steps.scope.outputs.build == 'false'
+        run: '"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json'
         env:
           GH_TOKEN: \${{ github.token }}
 `;
@@ -126,19 +164,20 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
   开一个预填确定性骨架的草稿拉取请求（每个绑定议题一行 \`Closes #n\`，
   随后是 为什么 / 变更内容 / 证据 / 清单 各节），并写入 \`.specgit.yaml\`。
   重复执行会恢复现场；它是幂等的。
-- 议题正文在引导时从对话中填写：\`specgit issue\` 成功后立即用
-  \`gh issue edit <n>\` 把讨论出的 为什么 / 范围 / 做法 / 验收 写进它
-  创建的每条议题，然后再开始实现。PR 骨架的占位内容仅是建议——随交付
-  过程填写即可；关闭引用是正文里唯一的门槛。PR 正文只在创建时写入一次；
-  任何 SpecGit 命令都不会修改已存在的 PR 正文，也从不读取仓库自己的
-  PR 模板。
+- 使用策略明确选择的 issue/PR 模板。启用 \`validation.bodies\` 或
+  \`required_sections\` 时，先从对话准备完整正文，创建时通过
+  \`--body-file <path>\`（每个新标题一份）和 \`--pr-body-file <path>\` 传入。
+  未启用正文规则时，内置骨架可在创建后填写。保留所有 \`Closes #n\`；
+  创建及验收都会检查启用的正文规则。恢复交付保留已有远端正文，
+  不会覆盖用户修改，也不会暗中加载未选择的仓库模板。
 - 草稿拉取请求恒使裁决失败（\`pr_draft\`）：在 \`specgit finish\` 之前，
   先把它标为可评审——GitHub 用 \`gh pr ready <number>\`，GitLab 用
   \`glab mr update <number> --ready\`。
 - \`specgit finish\` 只读：裁决来自真实的 git、PR 与 CI 证据，退出码
-  0 是唯一的验收通过。已启用自动化时，继续运行
-  \`specgit pr --merge --json\`；它验证策略的 \`target_branch\`、重新验收
-  通过及当前 PR 头的全部 CI 检查通过，确认合并后才按配置关闭绑定议题。
+  0 表示验收通过。已启用自动化时，可信远端工作流在 CI 结束后自动续行，
+  无需再次人工确认；\`specgit pr --merge --json\` 是恢复入口。它验证已批准
+  策略的 \`target_branch\`、重新验收及当前 PR 头的全部 CI 检查，确认合并
+  与全部绑定议题关闭后才报告 completed；关闭失败保留可恢复的待收尾状态。
 
 ### 议题标签
 
@@ -174,7 +213,7 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
   脚本与 CI 的自动化别名。
 - 自动化默认关闭（\`--automation no\`）。只有用户本人选择 yes，才能用
   \`specgit init --automation yes --merge-target <branch>\` 开启；
-  \`init --force\` 可重新选择。代理不得替用户回答 yes。
+  普通 \`init --force\` 保留这个选择与目标；代理不得替用户回答 yes。
 
 ### 建议题之前，先查重
 
@@ -202,17 +241,25 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
 
 ### 代理契约要点
 
-- **SpecGit 是这里的默认工作方式。** 任何非平凡的任务——新功能、修复、
-  重构、文档变更——都是一次交付：工作项作为议题存放在这个 tracker
+- **SpecGit 是这里的默认交付方式。** 有意提交的新功能、修复、重构、
+  文档变更与共享规则变更需要交付绑定：工作项作为议题存放在这个 tracker
   里，绝不放进私人任务清单或对话式清单。触发点是“决定开工”的那一刻：
   对话收敛、开始把计划变成变更之时，第一个动作就是
-  \`specgit issue <type>: <标题>...\`——先于任何文件编辑。无绑定就动手
-  是违反契约，不是风格偏好。引导完成后，立即用 \`gh issue edit\` 把
-  讨论中的 为什么 / 范围 / 做法 / 验收 填进每条议题正文，然后再开始
+  \`specgit issue <type>: <标题>...\`——先于受跟踪的实现变更；为引导准备
+  临时正文文件属于这一步。无绑定就实现是违反契约。引导完成后，检查
+  议题是否包含讨论中的 为什么 / 范围 / 做法 / 验收，只用 \`gh issue edit\`
+  或 \`glab issue update\` 补全缺失内容，再开始
   实现。会话中途的盘点（“让我列出所有要做的事”）也应变成议题，而不是
   聊天产物。平凡的回复与只读提问无需如此。
-- 唯一规则：交付完成当且仅当 \`specgit finish\` 退出 \`0\`。绝不凭任务
-  清单、文件状态或自己跑过的测试宣布完成。
+- 本地维护：安装或升级 CLI、运行 \`init\` / \`setup\` 刷新本地配置与入口，
+  在没有计划提交产品或共享规则变更时，无需议题、PR、产品构建或发布。
+  先检查跟踪文件的差异，再决定哪些变更需要共享；忽略规则不是 CI 豁免名单。
+  按宿主项目对真实变更输入的验证政策运行检查，文档也可能是产品输入。
+  发布包必须有明确发布意图，并在已有用户授权范围内执行；本地维护与合并本身不代表发布。
+- \`specgit finish\` 退出 \`0\` 表示 accepted；只有配置目标上的合并和全部
+  绑定议题关闭均经核验，才能报告 completed。绝不凭任务清单、文件状态或
+  自己跑过的测试宣布完成。失败 PR 用新的修复议题承接，重复原因复用已有
+  开放修复议题，不要求废弃原 PR。
 - 沿用已有用户授权完成议题正文、PR 正文与 ready、CI 修复或重试、验收
   以及授权范围内的合并闭环。只在缺少用户授权或平台权限时，携已准备好的
   结果说明具体缺口；文档与入口指引本身不授予权限。
@@ -238,22 +285,23 @@ already exists); keep manual guidance outside them.
   deterministic scaffold (the \`Closes #n\` line for every bound issue,
   then Why / What changed / Evidence / Checklist sections), and writes
   \`.specgit.yaml\`. Re-running resumes; it is idempotent.
-- Issue bodies are filled at bootstrap, from the conversation: right after
-  \`specgit issue\` succeeds, edit each issue it created (\`gh issue edit <n>\`)
-  with the discussed Why / Scope / Approach / Acceptance, then implement.
-  The PR scaffold's placeholders are advisory — fill those sections in as
-  you deliver; the closing references are the only body gate. The PR body
-  is written once at creation; no SpecGit command edits an existing PR
-  body, and the repository's own pull-request template is never read.
+- Use the issue/PR templates explicitly selected by policy. With
+  \`validation.bodies\` or \`required_sections\`, prepare complete content from
+  the discussion before bootstrap and supply \`--body-file <path>\` per new
+  title and \`--pr-body-file <path>\`. Without body rules, built-in scaffolds
+  can be filled after creation. Preserve every \`Closes #n\`; enabled body
+  rules apply at creation and acceptance. Resume keeps existing remote bodies
+  and user edits. Unselected repository templates are not silently loaded.
 - A draft pull request always fails the verdict (\`pr_draft\`): before
   \`specgit finish\`, mark it ready for review — \`gh pr ready <number>\`
   on GitHub, \`glab mr update <number> --ready\` on GitLab.
 - \`specgit finish\` is read-only: its verdict comes from real git, PR,
-  and CI evidence; exit 0 is the only acceptance. With automation enabled,
-  continue with \`specgit pr --merge --json\`: it verifies the policy's
-  \`target_branch\`, fresh acceptance, and all CI checks passing at the
-  current PR head, then confirms the merge before closing bound issues
-  when configured.
+  and CI evidence; exit 0 means accepted. With automation enabled, the trusted
+  remote workflow continues after CI without another confirmation.
+  \`specgit pr --merge --json\` is the recovery path: it verifies the approved
+  \`target_branch\`, fresh acceptance, and all current-head CI, then confirms
+  the merge and every bound issue closure before reporting completed.
+  A failed closure remains recoverable and is never reported as completed.
 
 ### Issue tags
 
@@ -292,7 +340,7 @@ already exists); keep manual guidance outside them.
   and \`specgit accept\` are automation aliases for scripts and CI.
 - Automation defaults to off (\`--automation no\`). Only when the user personally chooses
   yes may \`specgit init --automation yes --merge-target <branch>\` enable it;
-  \`init --force\` can change that choice. An agent must not answer yes for the user.
+  ordinary \`init --force\` preserves that choice and target. An agent must not answer yes for the user.
 
 ### Before creating an issue, check for duplicates
 
@@ -322,23 +370,35 @@ verified on its own evidence, split it before binding.
 
 ### Agent contract essentials
 
-- **SpecGit is the default way of working here.** Any non-trivial
-  task — a feature, a fix, a refactor, a docs change — is a delivery:
+- **SpecGit is the default delivery workflow here.** An intended tracked
+  change — a feature, a fix, a refactor, a docs change, or shared rules — is a delivery:
   work items live in this tracker as issues, never in private task
   lists or conversational checklists. The trigger is the decision to
   start: the moment the conversation settles and you begin turning
   the plan into changes, the FIRST action is
-  \`specgit issue <type>: <title>...\` — before any file edit.
+  \`specgit issue <type>: <title>...\` — before tracked implementation edits.
+  Preparing temporary body files for bootstrap is part of this first step.
   Working without a binding is a contract violation, not a style
-  choice. Immediately after bootstrap, fill each issue body
-  (Why / Scope / Approach / Acceptance) from the discussion with
-  \`gh issue edit\`, then implement. Mid-conversation inventories
+  choice. After bootstrap, verify each issue contains the discussed
+  Why / Scope / Approach / Acceptance and fill only missing content with
+  \`gh issue edit\` or \`glab issue update\`,
+  then implement. Mid-conversation inventories
   ("let me list everything to do") become issues, not chat
   artifacts. Trivial replies and read-only questions need none of
   this.
-- The one rule: a delivery is done if and only if \`specgit finish\`
-  exits \`0\`. Never declare completion from task lists, file states, or
-  test runs you performed yourself.
+- Local maintenance: installing or upgrading the CLI and running \`init\` /
+  \`setup\` to refresh local configuration and entry points need no issue, PR,
+  product build, or release when no product or shared-rule change is intended
+  for commit. Review tracked diffs before choosing what to share; ignore rules
+  are never CI exemptions. Follow the host project's verification policy for
+  the actual changed inputs; documentation may itself be a product input.
+  Publishing requires explicit release intent within existing user authorization;
+  local maintenance and merging do not imply publication.
+- \`specgit finish\` exit \`0\` means accepted. Report completed only after
+  the configured target merge and every bound issue closure are confirmed.
+  Never declare completion from task lists, file states, or tests alone.
+  Track a failed PR with a new repair issue; repeated causes reuse an open
+  repair issue and do not require abandoning the original PR.
 - Use existing user authorization to complete issue bodies, the PR body
   and ready transition, CI repairs or retries, acceptance, and the authorized
   merge. When user authorization or platform permission is missing, present

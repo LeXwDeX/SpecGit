@@ -7,3 +7,7 @@ skills/** text eol=lf
 # shebang: CRLF checkout on Windows would corrupt the shebang line, so pin
 # LF exactly like the skills distribution files above.
 test/specgit/helpers/fake-gh-script.cjs text eol=lf
+
+# Vite's SSR shebang removal requires LF; this executable is also imported
+# by the workspace configuration tests on Windows (#432).
+scripts/ci-change-scope.mjs text eol=lf

@@ -28,10 +28,14 @@ export type SpecGitCode =
   | 'evidence_truncated'
   | 'issue_not_found'
   | 'issue_is_pull_request'
+  | 'issue_already_claimed'
+  | 'issue_occupancy_unknown'
   | 'title_language_mismatch'
   | 'title_evidence_missing'
   | 'issue_labels_invalid'
   | 'issue_labels_unavailable'
+  | 'body_evidence_missing'
+  | 'body_content_incomplete'
   | 'pr_not_found'
   | 'pr_closed_unmerged'
   | 'pr_draft'
@@ -59,6 +63,22 @@ export interface CodeInfo {
  * (unknown, exit 3).
  */
 export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
+  issue_already_claimed: {
+    kind: 'factual', message: 'A bound issue is already claimed by another active pull or merge request.',
+    fix: 'Continue the existing delivery or resolve its binding before accepting another request for the same issue.',
+  },
+  issue_occupancy_unknown: {
+    kind: 'evidence', message: 'Complete current issue occupancy could not be verified.',
+    fix: 'Restore the forge evidence and retry; do not infer that the issue is unclaimed.',
+  },
+  body_evidence_missing: {
+    kind: 'evidence', message: 'The forge did not provide the complete body required by project rules.',
+    fix: 'Retry after the remote issue or PR/MR body is available.',
+  },
+  body_content_incomplete: {
+    kind: 'factual', message: 'The body has empty required sections or unfilled placeholders.',
+    fix: 'Fill the selected project template with the actual delivery content.',
+  },
   title_language_mismatch: {
     kind: 'factual',
     message: 'The title violates the explicitly selected project language rule.',

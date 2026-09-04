@@ -28,14 +28,13 @@ gh issue list --repo LeXwDeX/SpecGit --state open
 gh issue view <n> --repo LeXwDeX/SpecGit
 
 # create/reuse the issue and establish the delivery binding before edits
-specgit issue "fix: describe the verified defect"
+specgit issue "fix: describe the verified defect" --body-file <prepared-body.md>
 # fill the issue body from the agreed Why / Scope / Approach / Acceptance
 gh issue edit <n> --repo LeXwDeX/SpecGit --body-file <prepared-body.md>
 
 # deliver — SpecGit deliveries bootstrap their own PR
-# (specgit issue writes the deterministic scaffold with Closes #n;
-#  never hand-create a delivery PR with `gh pr create --fill`, which
-#  would pull in the repository's own PR template)
+# (specgit issue uses the selected policy template or built-in scaffold,
+#  preserves every Closes #n reference, and never overwrites an existing PR body)
 gh pr view <n> --repo LeXwDeX/SpecGit --json state,headRefName
 gh pr checks <n> --repo LeXwDeX/SpecGit
 ```
@@ -45,7 +44,7 @@ Closing references follow the CLI contract: `Closes #N`, `Fixes #N`,
 
 ## Duplicate check before creation
 
-Before creating a new issue, search for similar open work (`gh issue list`,
+Before creating a new issue, search for similar open and closed work (`gh issue list`,
 `gh search issues` with title keywords), read every plausible candidate
 (`gh issue view <n>`), and compare the WHY — not the wording. Same WHY:
 continue the existing issue. Close but different: say how they differ.
@@ -75,3 +74,9 @@ One PR may close N issues; every bound issue needs its own closing reference
 or `specgit finish` rejects with `closing_refs_incomplete`. Follow
 [the development loop](../../workflows/specgit-dev-loop.md) for execution and
 [the quality loop](../../workflows/quality-loop.md) for review and acceptance.
+
+Closed history is evidence for regressions, not an issue to silently reopen.
+Link relevant history when starting a new regression. An issue already claimed
+by another open PR/MR cannot be bound to a competing delivery. Terminal failed
+ready PRs create repair issues by cause; reuse an unresolved repair issue and
+keep the original business issues open until delivery.

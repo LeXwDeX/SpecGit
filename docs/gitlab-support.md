@@ -19,7 +19,7 @@
         |                   (glab mr update <n> --ready on GitLab)
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -33,6 +33,37 @@ A GitLab origin is **recognized, not silently misread**:
 - `specgit doctor` surfaces `gitlab_unsupported` on the `origin` probe while still probing `gh`, so the report shows both facts.
 - `specgit init` already classifies the platform from the origin URL (`github | gitlab | unknown`, no network), reads `.gitlab-ci.yml` job keys when no GitHub workflows exist, and reports `glab` presence on PATH (reported only). Policy generation therefore already works for GitLab CI.
 
+## Independent completion after MR verification
+
+With an approved `automation.merge` policy, init installs a native MR trigger
+and a separate default-branch completion pipeline. The trigger only starts the
+continuation; it does not wait for it. The continuation uses authenticated glab
+facts to verify the project, executing pipeline and job, current MR head pipeline,
+and the exact upstream trigger relationship before excluding its own pipeline
+from recursive checks. The original MR pipeline and every other downstream
+pipeline still require success. A matching job name or environment variable is
+insufficient evidence. Merging and issue closure retain the expected-SHA and
+approved-target-policy checks; `finish` remains read-only.
+
+The default `.gitlab-ci.yml` becomes a managed conditional router. Original
+business YAML is preserved byte-for-byte in `.gitlab/specgit-business.yml` and
+included for ordinary pipelines. The completion route includes only
+`.gitlab/specgit-complete.yml`, so it neither reruns business builds nor waits on
+itself. Disabling automation restores the current business file to the root.
+GitLab resolves static local includes from the repository root, so their path
+base is preserved. Init verifies the complete supported local include tree and
+rejects ownership collisions, custom `ci_config_path`, dynamic or external
+includes, pipeline inputs and other unprovable migrations before writing.
+Existing business rules remain authoritative and must permit a real MR pipeline;
+SpecGit does not change those rules to force a passing result.
+
+The completion runner must already provide Node/npm, git and authenticated glab
+with the permissions needed for the configured merge and issue closure. Init
+never reads or stores a token. Its runtime is installed at the exact configured
+SpecGit version; a missing completion protocol reports `runtime_upgrade_required`
+instead of executing candidate MR source. Initial adoption therefore requires
+an already published compatible CLI and an approved default-branch integration.
+
 ## Supported-version policy (self-managed)
 
 - **Self-managed GitLab has a *verified* window of `>= 19.2.4 < 19.4.0`, CE/Free tier** (#98; widened by the #236 rebaseline; downgraded from a hard gate to an advisory check by #241). The known-good anchors are `v19.2.4-ee` at the floor (tagged 2026-08-14, commit `85f4a2d9`) and `v19.3.0-ee` at the head (tagged 2026-08-20, commit `8f83039b`; rows pinned in [gitlab-19.3.md](evidence/gitlab-19.3.md)). A version outside the window **never blocks**: preflight flags it and the verdict carries the warning `gitlab_version_unverified`, then evaluation proceeds against the live APIs. The fail-closed guarantee is the evidence pass itself — every gate reads real API responses through glab, so an API that fails or returns unparsable shapes still yields `unknown` (exit 3) exactly as before. The window moves only through explicit rebaseline deliveries, never silent drift (procedure: [Rebaseline SOP](#rebaseline-sop-moving-the-version-window)).
@@ -45,7 +76,7 @@ A GitLab origin is **recognized, not silently misread**:
 
 ## Rebaseline SOP (moving the version window)
 
-The window above is hard-coded by design and moves **only** through an explicit rebaseline delivery — an ordinary SpecGit delivery: one issue, one branch, one PR/MR, done if and only if `specgit finish` exits 0 (#181, audit finding A-4). Since #241 the window is advisory — an outside version warns (`gitlab_version_unverified`) instead of blocking — so a rebaseline moves the *verified* marker (and retires the warning) rather than unblocking users; the evidence discipline is unchanged. Every new self-managed GitLab release or unverified-version warning follows this procedure; no ad-hoc archaeology, no silent drift.
+The window above is hard-coded by design and moves **only** through an explicit rebaseline delivery — an ordinary SpecGit delivery: one or more independently verifiable issues bound to one branch and PR/MR; `specgit finish` exit 0 establishes acceptance, followed by confirmed merge and closure of every bound issue (#181, audit finding A-4). Since #241 the window is advisory — an outside version warns (`gitlab_version_unverified`) instead of blocking — so a rebaseline moves the *verified* marker (and retires the warning) rather than unblocking users; the evidence discipline is unchanged. Every new self-managed GitLab release or unverified-version warning follows this procedure; no ad-hoc archaeology, no silent drift.
 
 **Triggers**
 
@@ -84,14 +115,17 @@ A scheduled CI job could periodically poll the declared instance's metadata (`gl
 
 ### Phase 2 — GlabProvider method map
 
-Interface decision recorded (option B — neutral provider port with internal per-platform adapters). **The adapter landed in #114: `GlabProvider` implements every `GitHubProvider` member at `src/providers/gitlab/glab-cli.ts`** (beside the GitHub adapter's #113 home), held to the port shape by the provider contract test and mirrored against the gh adapter's scripted-CLI contract tests. **The #116 slice landed the checks-gate semantics**: the job→check-run mapping table (ledger row 26) and the Free-tier `requiredChecks` truth — the verified pipeline-gate intersection (rows 7/25), decided per D-4″ (job-level truth + pipeline-level verdict). **Routed in #117: `PlatformRoutingProvider` (`src/providers/routing.ts`) sits at the production composition and dispatches every provider call on the ref's platform marker — gh for GitHub refs, glab for GitLab-declared refs — so acceptance evaluation, bootstrap, repair, and diagnostics all serve a declared GitLab origin through glab** (the GitHub-only `requireGithubRoute` guard was retired with it; the invariant it held now lives in the dispatch). The per-platform adapter home exists since #113: the GitHub adapter lives at `src/providers/github/` (legacy `src/github/gh-cli.ts` / `protection-merge.ts` paths are stable aliases), and the shared CLI transport both adapters spawn through lives at `src/providers/cli-spawn.ts`. The full method map — all **twenty-one** `ForgeProvider` members (`ForgeReadPort`'s fifteen plus `ForgeAdminPort`'s six): the twelve cells pinned in the ledger at the #114 landing (row 24; `listOpenPrsByHead` closed by FU-4), plus the members added later that `GlabProvider` implements under the same scripted-CLI discipline — `getOpenIssues` (#77), `getEvidenceAnchor` (#315), `addIssueComment` (#160), and the #330 tag trio (`addIssueLabels`, `listRepoLabels`, `ensureRepoLabels`; the last two are admin-surface seeds for issue tags, Free-tier project labels, Planner-or-above role required to create since 17.7):
+Interface decision recorded (option B — neutral provider port with internal per-platform adapters). **The adapter landed in #114: `GlabProvider` implements every `GitHubProvider` member at `src/providers/gitlab/glab-cli.ts`** (beside the GitHub adapter's #113 home), held to the port shape by the provider contract test and mirrored against the gh adapter's scripted-CLI contract tests. **The #116 slice landed the checks-gate semantics**: the job→check-run mapping table (ledger row 26) and the Free-tier `requiredChecks` truth — the verified pipeline-gate intersection (rows 7/25), decided per D-4″ (job-level truth + pipeline-level verdict). **Routed in #117: `PlatformRoutingProvider` (`src/providers/routing.ts`) sits at the production composition and dispatches every provider call on the ref's platform marker — gh for GitHub refs, glab for GitLab-declared refs — so acceptance evaluation, bootstrap, repair, and diagnostics all serve a declared GitLab origin through glab** (the GitHub-only `requireGithubRoute` guard was retired with it; the invariant it held now lives in the dispatch). The per-platform adapter home exists since #113: the GitHub adapter lives at `src/providers/github/` (legacy `src/github/gh-cli.ts` / `protection-merge.ts` paths are stable aliases), and the shared CLI transport both adapters spawn through lives at `src/providers/cli-spawn.ts`. The method map follows the current [provider port inventory](providers.md#port-inventory): the twelve cells pinned in the ledger at the #114 landing (row 24; `listOpenPrsByHead` closed by FU-4), plus the members added later that `GlabProvider` implements under the same scripted-CLI discipline — `getOpenIssues` (#77), `getEvidenceAnchor` (#315), `addIssueComment` (#160), and the #330 tag trio (`addIssueLabels`, `listRepoLabels`, `ensureRepoLabels`; the last two are admin-surface seeds for issue tags, Free-tier project labels, Planner-or-above role required to create since 17.7):
 
 | ForgeProvider member | GitLab equivalent (19.2, Free tier) |
 | --- | --- |
 | `preflight` | `glab auth status --hostname <host>` (per-host auth, ledger row 8) |
+| `getCiConfigPath` | `glab api projects/:id`; verify project identity and `ci_config_path` before routing initialization |
 | `getIssue` | `glab api projects/:id/issues/:iid` |
 | `getOpenIssueNumbers` | `glab api projects/:id/issues?state=opened` with `per_page=100` + `rel="next"` continuation (ledger rows 15/24) |
 | `getOpenIssues` | the same exhausted open-issue listing, carrying the full issue facts (#77) |
+| `searchIssueHistory` | exhausted issue search across open and closed states; title/body history supports WHY comparison |
+| `listIssuePullRequests` | exhausted issue-related MR listing, refreshed from current MR facts; scoped closing references establish occupancy |
 | `getPr` | `glab api projects/:id/merge_requests/:iid` (state machine row 19); merged lineage uses the merge commit, squash commit, or explicitly unsquashed frozen diff head (row 28) |
 | `getCheckRuns` | with the bound MR iid, read that MR's `head_pipeline` and exhaust only its jobs; verify both MR and pipeline SHA (row 27). Two-argument compatibility calls select the highest id from the bounded SHA listing. |
 | `getPrChecks` | read the MR head pipeline and its linked downstream graph, exhaust ordinary and trigger jobs, return all executed jobs plus downstream pipeline states for the opt-in merge gate (rows 27/31) |
@@ -122,7 +156,7 @@ Project identity is addressed by full path URL-encoded (`/`→`%2F`) as `:id` (r
 
 ### Phase 3 — parity and harness
 
-- The acceptance workflow template gains a GitLab CI variant running `specgit finish` as a pipeline job. CI-job-token evidence gathering is blocked on the live cell (ledger row 10b) — **FU-5 applied in the #117 dogfood**: a read-only project access token (`scopes: [read_api]`) as a masked CI variable authenticates glab inside the job, and the CI-side `specgit finish` exited 0 on the real probe delivery (evidence: [gitlab-dogfood-117.md](evidence/gitlab-dogfood-117.md)). The generated `.gitlab-ci.yml` template itself remains future work.
+- The acceptance workflow template gains a GitLab CI variant running `specgit finish` as a pipeline job. CI-job-token evidence gathering is blocked on the live cell (ledger row 10b) — **FU-5 applied in the #117 dogfood**: a read-only project access token (`scopes: [read_api]`) as a masked CI variable authenticates glab inside the job, and the CI-side `specgit finish` exited 0 on the real probe delivery (evidence: [gitlab-dogfood-117.md](evidence/gitlab-dogfood-117.md)). The business acceptance job remains project-owned. Opt-in completion now generates a conditional root router and an independent completion job, as described below.
 - `specgit issue` bootstrap **works against GitLab since #117** (proven on the real nested-group probe and offline in `test/specgit-e2e/gitlab-delivery.e2e.test.ts`): draft MRs are created with the `Draft:` prefix (row 18) after the branch push, and MR bodies use the **common subset** closing references (`Closes #<iid>`, `Fixes #<iid>`) — valid on both platforms. Parsing is provider-parameterized: GitLab's default closing pattern (pinned at 19.2, ledger rows 12–14) accepts a superset — the `implement*` family, gerunds, an optional colon or `issue(s)` word between keyword and reference, comma/`and` multi-reference continuations, `group[/subgroup]/project#iid` full-path references, and `/-/issues/<iid>` URLs — and is subject to the pinned cautions (default-branch trigger, per-project auto-close setting, first-push disable, admin-replaceable pattern).
 - The generated `AGENTS.md` managed block gains the GitLab-flavored surface when the adapter lands; the ten-command/two-state-file documentation sync is tracked in #91 and merged there — not duplicated here.
 

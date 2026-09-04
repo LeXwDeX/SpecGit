@@ -24,6 +24,7 @@ import type {
   IssueCreation,
   IssueCommentCreation,
   IssueFact,
+  IssueHistoryFact,
   LabelsAppliedFact,
   MergeChecksFact,
   OpenIssueFact,
@@ -167,6 +168,10 @@ export class GhCliGitHubProvider implements ForgeProvider {
     return ok({ authenticated: true });
   }
 
+  async getCiConfigPath(_repo: RepoRef): Promise<Evidence<string | null>> {
+    return ok(null);
+  }
+
   async getIssue(repo: RepoRef, n: number): Promise<Evidence<IssueFact>> {
     const result = await this.runApi(`repos/${repo.owner}/${repo.repo}/issues/${n}`, 'issue');
     if (!result.ok) {
@@ -179,6 +184,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       title?: unknown;
       labels?: unknown;
       pull_request?: unknown;
+      body?: unknown;
     };
     if (!parsed || parsed.number !== n || (parsed.state !== 'open' && parsed.state !== 'closed')) {
       return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
@@ -189,6 +195,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       state: parsed.state,
       pullRequest: parsed.pull_request != null,
       title: typeof parsed.title === 'string' ? parsed.title : undefined,
+      ...(typeof parsed.body === 'string' ? { body: parsed.body } : parsed.body === null ? { body: '' } : {}),
       ...(Array.isArray(parsed.labels) && parsed.labels.every((label) =>
         label !== null && typeof label === 'object' && typeof label.name === 'string')
         ? { labels: parsed.labels.map((label: { name: string }) => label.name) } : {}),
@@ -268,7 +275,74 @@ export class GhCliGitHubProvider implements ForgeProvider {
     return ok(issues.value.map((fact) => fact.number));
   }
 
+  async searchIssueHistory(repo: RepoRef, query: string): Promise<Evidence<IssueHistoryFact[]>> {
+    if (!/^[\p{L}\p{N} ]{1,160}$/u.test(query) || !query.trim()) {
+      return fail('issue_history_query_invalid', 'History queries must contain bounded plain keywords.');
+    }
+    const pages = await paginateToExhaustion<unknown>(
+      { pageSize: ISSUE_SEARCH_PAGE_SIZE, maxPages: MAX_ISSUE_SEARCH_PAGES, what: 'GitHub issue history search' },
+      async (page) => {
+        const result = await this.runApi(`search/issues?q=repo:${repo.owner}/${repo.repo}+is:issue+in:title,body+${encodeURIComponent(query)}&per_page=${ISSUE_SEARCH_PAGE_SIZE}&page=${page}`, 'search');
+        if (!result.ok) return result;
+        const data = result.value as { items?: unknown; incomplete_results?: unknown } | null;
+        if (data?.incomplete_results === true) return evidenceTruncated('GitHub issue history search reported incomplete results.');
+        if (data?.incomplete_results !== false || !Array.isArray(data.items)) return fail('gh_transport', 'GitHub returned incomplete history-search evidence.');
+        return ok(data.items);
+      }
+    );
+    if (!pages.ok) return pages;
+    const issues = new Map<number, IssueHistoryFact>();
+    for (const item of pages.value) {
+      const row = item as { number?: unknown; title?: unknown; body?: unknown; state?: unknown; html_url?: unknown; pull_request?: unknown } | null;
+      if (!row || typeof row.number !== 'number' || !Number.isSafeInteger(row.number) || row.number <= 0 ||
+          typeof row.title !== 'string' || !row.title.trim() || (row.body !== null && typeof row.body !== 'string') ||
+          (row.state !== 'open' && row.state !== 'closed') || typeof row.html_url !== 'string' || row.pull_request !== undefined ||
+          row.html_url.toLowerCase() !== `https://github.com/${repo.owner}/${repo.repo}/issues/${row.number}`.toLowerCase()) {
+        return fail('gh_transport', 'GitHub returned a malformed historical issue.');
+      }
+      issues.set(row.number, { number: row.number, title: row.title, body: row.body ?? '', state: row.state, url: row.html_url });
+    }
+    return ok([...issues.values()]);
+  }
+
+  async listIssuePullRequests(repo: RepoRef, issue: number): Promise<Evidence<PrFact[]>> {
+    if (!Number.isSafeInteger(issue) || issue <= 0) return fail('issue_occupancy_unknown', 'A positive issue number is required.');
+    const timeline = await paginateToExhaustion<unknown>(
+      { pageSize: TIMELINE_PAGE_SIZE, maxPages: MAX_TIMELINE_PAGES, what: 'Issue-related request timeline' },
+      async (page) => {
+        const result = await this.runApi(`repos/${repo.owner}/${repo.repo}/issues/${issue}/timeline?per_page=${TIMELINE_PAGE_SIZE}&page=${page}`, 'issue');
+        if (!result.ok) return result;
+        return Array.isArray(result.value) ? ok(result.value) : fail('gh_transport', 'GitHub returned an unexpected issue timeline.');
+      }
+    );
+    if (!timeline.ok) return timeline;
+    const numbers = new Set<number>();
+    for (const item of timeline.value) {
+      const event = item as { event?: unknown; source?: { issue?: { number?: unknown; repository_url?: unknown; pull_request?: { url?: unknown } } } } | null;
+      if (!event || typeof event.event !== 'string') return fail('gh_transport', 'GitHub returned a malformed issue timeline event.');
+      if (event.event !== 'cross-referenced') continue;
+      const linked = event.source?.issue;
+      if (!linked || typeof linked.number !== 'number' || !Number.isSafeInteger(linked.number) || linked.number <= 0) return fail('gh_transport', 'GitHub omitted the referenced request identity.');
+      if (linked.pull_request === undefined) continue;
+      if (typeof linked.repository_url !== 'string' || typeof linked.pull_request?.url !== 'string') return fail('gh_transport', 'GitHub omitted the referenced request repository.');
+      if (linked.repository_url.toLowerCase() !== `https://api.github.com/repos/${repo.owner}/${repo.repo}`.toLowerCase()) continue;
+      if (linked.pull_request.url.toLowerCase() !== `${linked.repository_url}/pulls/${linked.number}`.toLowerCase()) return fail('gh_transport', 'GitHub returned conflicting request identity.');
+      numbers.add(linked.number);
+    }
+    const requests: PrFact[] = [];
+    for (const number of numbers) {
+      const current = await this.readPr(repo, number, true);
+      if (!current.ok) return current;
+      requests.push(current.value);
+    }
+    return ok(requests);
+  }
+
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {
+    return this.readPr(repo, pr);
+  }
+
+  private async readPr(repo: RepoRef, pr: number | string, requireBody = false): Promise<Evidence<PrFact>> {
     const ref = String(pr);
     if (!/^\d+$/.test(ref)) {
       return fail(
@@ -297,7 +371,8 @@ export class GhCliGitHubProvider implements ForgeProvider {
     if (
       !parsed || parsed.number !== Number(ref) ||
       (parsed.state !== 'open' && parsed.state !== 'closed') ||
-      typeof parsed.draft !== 'boolean'
+      typeof parsed.draft !== 'boolean' ||
+      (requireBody && parsed.body !== null && typeof parsed.body !== 'string')
     ) {
       return fail('gh_transport', 'GitHub returned an unexpected pull request payload.');
     }

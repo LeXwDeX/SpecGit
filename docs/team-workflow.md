@@ -18,7 +18,7 @@ Everything else in these docs works identically for one person or twenty. What c
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```

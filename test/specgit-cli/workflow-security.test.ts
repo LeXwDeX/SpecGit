@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'yaml';
 
 import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
+import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 
 // #66: security invariants for the workflows that execute untrusted code.
 // Invariants throw (instead of returning booleans) so the mutation tests
@@ -21,6 +24,7 @@ const readWorkflow = (name: string): string =>
 
 interface Step {
   name?: string;
+  if?: string;
   uses?: string;
   with?: Record<string, unknown>;
   run?: string;
@@ -51,8 +55,11 @@ const cacheSteps = (doc: Workflow): string[] =>
   allSteps(doc)
     .filter((step) => {
       if (typeof step.uses === 'string' && step.uses.startsWith('actions/cache')) return true;
+      // setup-node also infers npm caching from package.json, which is
+      // controlled by the checked-out candidate even without a cache input.
+      if (step.uses?.startsWith('actions/setup-node') && step.with?.['package-manager-cache'] !== false) return true;
       const cache = step.with?.cache;
-      return cache !== undefined && cache !== '' && cache !== 'none';
+      return cache !== undefined && cache !== false && cache !== 'false' && cache !== '' && cache !== 'none';
     })
     .map((step) => step.name ?? step.uses ?? 'unnamed');
 
@@ -115,19 +122,22 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
     throw new Error(`${label}: workflow_dispatch trigger missing`);
   }
   const steps = allSteps(doc);
-  const finish = steps.find((step) => (step.run ?? '').includes('node bin/specgit.js finish --json'));
-  if (!finish) {
+  const finishes = steps.filter((step) => (step.run ?? '').includes('finish --json'));
+  if (finishes.length === 0) {
     throw new Error(`${label}: specgit finish step missing`);
   }
-  const token = finish.env?.GH_TOKEN;
-  if (typeof token !== 'string' || !token.includes('github.token')) {
-    throw new Error(`${label}: finish step must use GH_TOKEN: \${{ github.token }}`);
+  for (const finish of finishes) {
+    const token = finish.env?.GH_TOKEN;
+    if (typeof token !== 'string' || !token.includes('github.token')) {
+      throw new Error(`${label}: finish step must use GH_TOKEN: \${{ github.token }}`);
+    }
   }
-  const headCheckout = steps.find(
-    (step) => typeof step.with?.ref === 'string' && step.with.ref.includes('github.head_ref'),
-  );
-  if (!headCheckout) {
-    throw new Error(`${label}: head-ref checkout missing (execution-context gate reads live git)`);
+  const headCheckout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  const branch = steps.find((step) => step.name === 'Restore the event branch');
+  if (headCheckout?.with?.ref !== '${{ github.event.pull_request.head.sha || github.sha }}' ||
+      branch?.if !== "github.event_name == 'pull_request' || github.ref_type == 'branch'" ||
+      branch.env?.SPECGIT_BRANCH !== '${{ github.head_ref || github.ref_name }}') {
+    throw new Error(`${label}: immutable event checkout and branch context restoration are required`);
   }
 };
 
@@ -257,6 +267,7 @@ const assertOidcTokenNeverLogged = (text: string, label: string): void => {
 describe('workflow security invariants (#66, #69, #71)', () => {
   const acceptFile = readWorkflow('specgit-accept.yml');
   const acceptTemplate = harnessWorkflowYaml().replace(/\r\n/g, '\n');
+  const externalTemplate = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.2.3' });
   const ciFile = readWorkflow('ci.yml');
   const securityFile = readWorkflow('security.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
@@ -268,12 +279,14 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('the untrusted acceptance gate keeps zero cache mechanisms (file and generated template)', () => {
     assertNoCacheMechanism(acceptFile, 'specgit-accept.yml');
     assertNoCacheMechanism(acceptTemplate, 'harnessWorkflowYaml()');
+    assertNoCacheMechanism(externalTemplate, 'externalAcceptanceWorkflowYaml()');
   });
 
   it('untrusted-trigger workflows grant read-only token scopes', () => {
     const surfaces: Array<[string, string]> = [
       ['specgit-accept.yml', acceptFile],
       ['harnessWorkflowYaml()', acceptTemplate],
+      ['externalAcceptanceWorkflowYaml()', externalTemplate],
       ['ci.yml', ciFile],
       ['security.yml', securityFile],
     ];
@@ -286,6 +299,7 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     const surfaces: Array<[string, string]> = [
       ['specgit-accept.yml', acceptFile],
       ['harnessWorkflowYaml()', acceptTemplate],
+      ['externalAcceptanceWorkflowYaml()', externalTemplate],
       ['ci.yml', ciFile],
       ['security.yml', securityFile],
     ];
@@ -297,6 +311,36 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('acceptance gate semantics survive the hardening (triggers, head-ref checkout, finish, token)', () => {
     assertAcceptanceGateSemantics(acceptFile, 'specgit-accept.yml');
     assertAcceptanceGateSemantics(acceptTemplate, 'harnessWorkflowYaml()');
+    assertAcceptanceGateSemantics(externalTemplate, 'externalAcceptanceWorkflowYaml()');
+  });
+
+  it.skipIf(process.platform === 'win32').each([
+    ['self', acceptTemplate], ['external', externalTemplate],
+  ])('%s restores the branch without following a newer remote head and rejects invalid names', (_label, template) => {
+    const workflow = parse(template) as Workflow;
+    const step = allSteps(workflow).find((item) => item.name === 'Restore the event branch');
+    expect(step?.run).toBeDefined();
+    const root = mkdtempSync(path.join(tmpdir(), 'specgit-event-branch-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    try {
+      git('init', '--quiet');
+      git('-c', 'user.name=SpecGit Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'event');
+      const event = git('rev-parse', 'HEAD');
+      git('-c', 'user.name=SpecGit Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'newer');
+      git('update-ref', 'refs/remotes/origin/fix/event', git('rev-parse', 'HEAD'));
+      git('checkout', '--detach', event);
+      const run = (name: string) => execFileSync('bash', ['-e', '-c', step!.run!], {
+        cwd: root, env: { ...process.env, SPECGIT_BRANCH: name }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      expect(() => run('-invalid')).toThrow();
+      expect(git('rev-parse', 'HEAD')).toBe(event);
+      run('fix/event');
+      expect(git('branch', '--show-current')).toBe('fix/event');
+      expect(git('rev-parse', 'HEAD')).toBe(event);
+      expect(git('rev-parse', 'origin/fix/event')).not.toBe(event);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('the product CI re-verdicts on the draft→ready transition (#316)', () => {
@@ -344,7 +388,6 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   const acceptTemplate = harnessWorkflowYaml().replace(/\r\n/g, '\n');
   const ciFile = readWorkflow('ci.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
-  const policyFile = readFileSync(path.join(__dirname, '..', '..', 'spec_git', 'policy.yaml'), 'utf-8');
 
   it('re-adding cache to the gate is detected (file and generated template)', () => {
     const mutation = "node-version: '20.19.0'\n          cache: 'pnpm'";
@@ -357,18 +400,29 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('an actions/cache step in the gate is detected', () => {
+    const anchor = '      - name: Install classifier dependencies';
+    expect(acceptFile).toContain(anchor);
     const mutant = acceptFile.replace(
-      '      - name: Install dependencies',
+      anchor,
       [
         '      - name: Warm the store',
         '        uses: actions/cache/restore@v5',
         '        with:',
         '          path: ~/.local/share/pnpm/store',
         '          key: pnpm-store',
-        '      - name: Install dependencies',
+        anchor,
       ].join('\n'),
     );
+    expect(mutant).not.toBe(acceptFile);
     expect(() => assertNoCacheMechanism(mutant, 'mutant')).toThrow();
+  });
+
+  it('implicit npm cache inferred from candidate package metadata is detected', () => {
+    for (const text of [acceptFile, acceptTemplate]) {
+      const mutant = text.replace('          package-manager-cache: false\n', '');
+      expect(mutant).not.toBe(text);
+      expect(() => assertNoCacheMechanism(mutant, 'mutant')).toThrow();
+    }
   });
 
   it('write-permission creep is detected', () => {
@@ -382,7 +436,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('removing the head-ref checkout (breaking the gate) is detected', () => {
-    const mutant = acceptFile.replace('          ref: ${{ github.head_ref || github.ref }}\n', '');
+    const mutant = acceptFile.replace('          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n', '');
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow();
   });
 
@@ -399,6 +453,15 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     const mutant = acceptTemplate.replace(', edited]', ']');
     expect(mutant).not.toBe(acceptTemplate);
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/edited/);
+  });
+
+  it('removing the trusted metadata verdict token is detected', () => {
+    const mutant = acceptTemplate.replace(
+      /(- name: specgit finish with trusted CLI[\s\S]*?env:\n)          GH_TOKEN: [^\n]+/,
+      '$1          GH_TOKEN: missing',
+    );
+    expect(mutant).not.toBe(acceptTemplate);
+    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/GH_TOKEN/);
   });
 
   it('re-merging the self-hosted leg into the required matrix is detected', () => {
@@ -425,7 +488,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
 
   it('re-adding the retired self-hosted shadow job is detected (#105)', () => {
     const mutant = ciFile.replace(
-      '  test_pr_required:',
+      '  lint:',
       [
         '  test_selfhosted:',
         '    name: Test (self-hosted-linux)',
@@ -434,7 +497,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
         '    steps:',
         '      - name: Checkout code',
         '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '  test_pr_required:',
+        '  lint:',
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
@@ -449,28 +512,33 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(matrixMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(matrixMutant, 'mutant')).toThrow(/matrix/);
     const envMutant = ciFile.replace(
-      '    name: Lint & Type Check\n    runs-on: ubuntu-latest',
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    if: env.LINT_SKIP != '1'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: env.LINT_SKIP != '1'",
     );
     expect(envMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(envMutant, 'mutant')).toThrow(/env/);
     const stepsMutant = ciFile.replace(
-      '    name: Lint & Type Check\n    runs-on: ubuntu-latest',
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    if: steps.setup.outputs.ok == 'true'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: steps.setup.outputs.ok == 'true'",
     );
     expect(stepsMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(stepsMutant, 'mutant')).toThrow(/steps/);
   });
 
   it('renaming a required check out of existence is detected', () => {
+    const summary = ciFile.replace('name: Required verification', 'name: Verification');
+    expect(summary).not.toBe(ciFile);
+    expect(() => assertRequiredChecksDerivable(summary, 'required_checks: [Required verification]', 'mutant')).toThrow(/Required verification/);
+    // A configured legacy policy still needs its exact names during migration.
+    const legacyPolicy = 'required_checks: [Test (macos-bash), Lint & Type Check]';
     const mutant = ciFile.replace('label: macos-bash', 'label: macos');
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertRequiredChecksDerivable(mutant, policyFile, 'mutant')).toThrow(
+    expect(() => assertRequiredChecksDerivable(mutant, legacyPolicy, 'mutant')).toThrow(
       /Test \(macos-bash\)/,
     );
     const renamedLint = ciFile.replace('name: Lint & Type Check', 'name: Lint');
     expect(renamedLint).not.toBe(ciFile);
-    expect(() => assertRequiredChecksDerivable(renamedLint, policyFile, 'mutant')).toThrow(
+    expect(() => assertRequiredChecksDerivable(renamedLint, legacyPolicy, 'mutant')).toThrow(
       /Lint & Type Check/,
     );
   });

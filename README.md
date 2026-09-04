@@ -29,7 +29,7 @@ The flow at a glance:
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted → merge → confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -50,12 +50,14 @@ repository), execute this protocol — no further questions needed:
    closure: **yes/no, default no**. Never answer yes on the user's behalf.
    Then run `specgit setup` (installs your entry points:
    commands for opencode, portable skills for other tools)
-4. Commit the generated harness (`spec_git/`, the acceptance workflow,
-   `AGENTS.md` managed block, hooks) on a branch and open a PR
+4. Review the generated changes. Local initialization or an entry-point refresh
+   does not itself require an issue, PR, build, or release. If the user intends
+   to share the acceptance workflow or project rules, deliver those selected
+   tracked changes through a PR; keep local hooks and device state local
 5. Confirm with `specgit doctor --json` and report the result
 
 From then on, deliveries are two commands: `specgit issue "<title>"` →
-work → `specgit finish` (exit 0 is the only done). The AGENTS.md managed
+work → `specgit finish` (exit 0 is acceptance before merge). The AGENTS.md managed
 block is your behavior contract. Once the user authorizes delivery, the agent
 executes the returned `nextActions`, fills the issue/PR bodies from the agreed
 scope, fixes failures, and follows CI through the verified merge and any
@@ -63,17 +65,34 @@ authorized release. Routine commands are agent work; an existing authorization
 does not expire at the merge brief. Missing credentials or a failed gate remain
 explicit blockers. `finish` itself stays a read-only evidence verdict.
 
-Automatic merge and closure are opt-in. Every interactive `specgit init`,
-including `specgit init --force`, asks again with **no** as the default.
+Choose verification from the intended tracked diff, not from the command that
+created it. Shared documentation and project rules receive lightweight checks;
+CLI source, shipped templates, schemas, build dependencies, and unknown or mixed
+changes receive product CI. `.gitignore` controls tracking, never CI exemptions.
+Publishing requires explicit release intent. The binding classification is
+[CI scope](docs/ci-scope.md).
+
+Initialization creates SpecGit's own acceptance workflow and local integration
+assets; sharing that workflow is an adoption decision. It must not rewrite an
+adopting project's business workflows, build commands, or dependencies. Current
+init/setup are not a local-only installation mode: they can update tracked
+shared files, which must be reviewed before committing.
+
+Automatic merge and closure are opt-in. First interactive initialization asks
+with **no** as the default. A normal `init --force` preserves the saved choice;
+explicit `--automation yes|no` changes it.
 Answering yes saves `automation.merge`, `automation.target_branch`, and
 `automation.close_issues` in the policy. Use `--merge-target <branch>` to
 specify the destination; otherwise init must prove the remote default branch.
 Scripts can supply the user's answer with `--automation yes|no`; without an
-answer, non-interactive init leaves automation disabled and reports that choice.
+answer, first non-interactive init leaves automation disabled and reports that choice.
 Once enabled, `specgit pr --merge` requires acceptance and all current CI/CD
 checks to pass for the exact head, merges into the configured target, confirms
 the merged state, and explicitly closes bound issues. `specgit init --force` lets
-the user enable it later or turn it off again.
+the user explicitly enable it later or turn it off again. Enabled projects use
+a trusted remote completion runner, so closing the agent conversation does not
+interrupt merge and closure. Failed ready PRs produce repair issues; the original
+business issues remain open until their delivery is confirmed.
 
 ## Project title and label rules
 
@@ -176,7 +195,8 @@ gh pr ready <number>                  # GitLab: glab mr update <number> --ready
 specgit finish                       # exit 0 → merge; else fix what it names
 ```
 
-`specgit finish` exit `0` is the *only* definition of done. The full
+`specgit finish` exit `0` means accepted. A delivery is completed only after
+the platform confirms the merge and every bound issue is closed. The full
 walkthrough (worktrees, N issues per PR, the agent operating loop) is in the
 [Workflow Guide](docs/workflow-guide.md).
 
@@ -284,8 +304,10 @@ under `.agents/skills/` in a project; see
 
 ## Releasing
 
-Releases use version PRs and OIDC trusted publishing. A feature/fix branch
-carries its changeset (`.changeset/*.md`); merging it to `main` makes the
+Releases use version PRs and OIDC trusted publishing. An explicitly authorized
+package release carries a changeset (`.changeset/*.md`); local maintenance,
+shared-rule edits, and an ordinary merge do not imply publication. Merging a
+release-intent changeset to `main` makes the
 Release workflow open (or update) the **version PR**
 (`changeset-release/main`) with the consumed version bump. Automatic merging
 is **off by default**. To enable it, run `specgit init --force`, answer

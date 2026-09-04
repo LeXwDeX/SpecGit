@@ -7,18 +7,23 @@ name: Release
 #    branch changeset-release/main carrying the consumed bump commit
 #    "chore(release): v<version>" as a PR. Configured automation (#382)
 #    merges its exact head only after all CI succeeds; default is disabled.
-# 2. that PR merges (SpecGit Acceptance passes via its no-record skip
-#    path) -> push to main with no pending changesets and package.json
-#    version not yet on npm -> publish to npm, tag, GitHub Release.
+# 2. that PR merges -> a version-changing push to main with no pending
+#    changesets and a version not yet on npm -> publish, tag, GitHub Release.
 #
 # The publish gate is registry evidence, never the head commit message
 # (#227): a merge-commit merge leaves "Merge pull request #N..." as the
-# head, and workflow_dispatch has no head commit at all. Dispatch is the
-# manual retry entry point for a version that failed to publish.
+# head. Ordinary metadata pushes never start release work; a nonempty
+# changeset is explicit release intent. Manual dispatch remains an explicit
+# release entry point, with an optional package version guard.
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Optional exact package.json version guard for this explicit release run'
+        required: false
+        type: string
 
 permissions:
   contents: write # tag push + GitHub Release + version branch
@@ -30,9 +35,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  scope:
     if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      eligible: ${{ steps.plan.outputs.eligible }}
+      version: ${{ steps.plan.outputs.version }}
+      pending: ${{ steps.plan.outputs.pending }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - name: Install verification dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Classify the complete change
+        id: changes
+        run: node scripts/ci-change-scope.mjs
+      - name: Resolve explicit release intent
+        id: plan
+        env:
+          SPECGIT_RELEASE_INTENT: ${{ steps.changes.outputs.release_intent }}
+          SPECGIT_RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-state.mjs --plan
+
+  release:
+    needs: scope
+    if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main' && needs.scope.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    env:
+      SPECGIT_RELEASE_VERSION: ${{ needs.scope.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,15 +88,9 @@ jobs:
 
       - name: Count pending changesets
         id: pending
-        run: |
-          # Pre-mode aware: changesets consumed into a prerelease are
-          # recorded in .changeset/pre.json and STAY on disk (they are
-          # re-applied on `changeset pre exit`). They are not pending.
-          # Count only changesets pre.json does not list; without pre.json
-          # this is identical to counting every non-README *.md.
-          COUNT=$(node -e "const fs=require('fs');let consumed=[];try{consumed=JSON.parse(fs.readFileSync('.changeset/pre.json','utf8')).changesets||[]}catch{};let files=[];try{files=fs.readdirSync('.changeset')}catch{};const pending=files.filter(f=>f.endsWith('.md')&&f!=='README.md').map(f=>f.replace(/\.md$/,'')).filter(id=>!consumed.includes(id));console.log(pending.length)")
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "Pending changesets: $COUNT"
+        env:
+          PENDING_CHANGESETS: ${{ needs.scope.outputs.pending }}
+        run: echo "count=$PENDING_CHANGESETS" >> "$GITHUB_OUTPUT"
 
       # No pending changesets: publish iff this version is not on npm yet.
       - name: Check publication and release metadata

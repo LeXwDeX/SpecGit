@@ -1,10 +1,113 @@
-import { describe, expect, it } from 'vitest';
-import { readReleaseState, finalizeRelease } from '../../scripts/release-state.mjs';
+import { afterEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readReleaseState, finalizeRelease, planRelease, pendingChangesets } from '../../scripts/release-state.mjs';
 
 const version = '1.2.3';
 const publishedSha = 'a'.repeat(40);
 const currentSha = 'b'.repeat(40);
 const missing = () => Object.assign(new Error('Not published'), { stdout: JSON.stringify({ error: { code: 'E404' } }) });
+
+describe('explicit release intent (#423)', () => {
+  const roots: string[] = [];
+  const releaseRoot = () => {
+    const root = mkdtempSync(join(tmpdir(), 'specgit-release-plan-'));
+    roots.push(root);
+    mkdirSync(join(root, '.changeset'));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ version }));
+    return root;
+  };
+  afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
+
+  it('does not start release work for a metadata push, even with pending changesets', () => {
+    expect(planRelease({ event: 'push', version, releaseIntent: false, pending: ['feature'] }))
+      .toEqual({ eligible: false, version, pending: 1 });
+  });
+
+  it('prepares an intended changeset push and publishes an intended version push', () => {
+    expect(planRelease({ event: 'push', version, releaseIntent: true, pending: ['feature'] }))
+      .toEqual({ eligible: true, version, pending: 1 });
+    expect(planRelease({ event: 'push', version, releaseIntent: true, pending: [] }))
+      .toEqual({ eligible: true, version, pending: 0 });
+  });
+
+  it('preserves explicit dispatch with optional version pinning and pending changesets', () => {
+    const request = { event: 'workflow_dispatch', version, releaseIntent: false, pending: [] };
+    expect(planRelease(request)).toEqual({ eligible: true, version, pending: 0 });
+    expect(() => planRelease({ ...request, requestedVersion: '9.9.9' })).toThrow(/match/i);
+    expect(planRelease({ ...request, requestedVersion: version, pending: ['feature'] }))
+      .toEqual({ eligible: true, version, pending: 1 });
+  });
+
+  it.each(['pull_request', 'schedule', 'merge_group'])('does not release on %s', (event) => {
+    expect(planRelease({ event, version, releaseIntent: true, pending: [] }).eligible).toBe(false);
+  });
+
+  it('preserves the explicit package release entry point and its tarball guard', () => {
+    const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'));
+    expect(pkg.scripts.release).toBe('pnpm run release:ci');
+    expect(pkg.scripts['release:ci']).toBe('pnpm run check:pack-version && pnpm exec changeset publish');
+  });
+
+  it('counts only unconsumed changesets and refuses malformed prerelease state', () => {
+    const root = releaseRoot();
+    for (const name of ['README.md', 'consumed.md', 'pending.md']) writeFileSync(join(root, '.changeset', name), '---\nspecgit: patch\n---\nChange.\n');
+    writeFileSync(join(root, '.changeset/pre.json'), JSON.stringify({ mode: 'pre', changesets: ['consumed'] }));
+    expect(pendingChangesets(root)).toEqual(['pending']);
+    writeFileSync(join(root, '.changeset/pre.json'), '{');
+    expect(() => pendingChangesets(root)).toThrow();
+  });
+
+  it('plans metadata pushes and explicit recovery without installing or calling npm', () => {
+    const root = releaseRoot();
+    const output = join(root, 'github-output');
+    const script = fileURLToPath(new URL('../../scripts/release-state.mjs', import.meta.url));
+    const run = (event: string, requestedVersion = '') => spawnSync(process.execPath, [script, '--plan'], {
+      cwd: root, encoding: 'utf8', env: {
+        ...process.env, PATH: '', GITHUB_OUTPUT: output, GITHUB_EVENT_NAME: event,
+        SPECGIT_RELEASE_INTENT: 'false', SPECGIT_RELEASE_VERSION: requestedVersion,
+      },
+    });
+    expect(run('push').status).toBe(0);
+    expect(readFileSync(output, 'utf8')).toBe(`eligible=false\nversion=${version}\npending=0\n`);
+    writeFileSync(output, '');
+    expect(run('workflow_dispatch').status).toBe(0);
+    expect(readFileSync(output, 'utf8')).toBe(`eligible=true\nversion=${version}\npending=0\n`);
+    writeFileSync(output, '');
+    expect(run('workflow_dispatch', version).status).toBe(0);
+    expect(readFileSync(output, 'utf8')).toBe(`eligible=true\nversion=${version}\npending=0\n`);
+  });
+
+  it('refuses changed package versions before a registry probe or finalization', () => {
+    const root = releaseRoot();
+    const script = fileURLToPath(new URL('../../scripts/release-state.mjs', import.meta.url));
+    for (const args of [[], ['--finalize']]) {
+      const result = spawnSync(process.execPath, [script, ...args], {
+        cwd: root, encoding: 'utf8', env: { ...process.env, PATH: '', SPECGIT_RELEASE_VERSION: '9.9.9' },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('no longer matches');
+      expect(result.stderr).not.toContain('ENOENT');
+    }
+  });
+
+  it.each(['', 'TRUE', '0', 'undefined'])('refuses invalid classifier release intent %j', (intent) => {
+    const root = releaseRoot();
+    const output = join(root, 'github-output');
+    const script = fileURLToPath(new URL('../../scripts/release-state.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [script, '--plan'], {
+      cwd: root, encoding: 'utf8', env: {
+        ...process.env, PATH: '', GITHUB_OUTPUT: output, GITHUB_EVENT_NAME: 'push',
+        SPECGIT_RELEASE_INTENT: intent,
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/classifier.*boolean/i);
+  });
+});
 
 function fixture(options: { published?: boolean; tag?: string; release?: boolean; npmError?: Error; npmOutput?: string } = {}) {
   const { published = true, tag, release = false, npmError, npmOutput } = options;

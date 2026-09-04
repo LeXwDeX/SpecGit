@@ -1,12 +1,11 @@
 version: 1
 required_checks:
-  - Test (linux-bash)
-  - Test (macos-bash)
-  - Test (windows-pwsh)
-  - Lint & Type Check
+  - Required verification
+language: en
 validation:
   titles: true
   labels: kind
 automation:
-  merge: false
-  close_issues: false
+  merge: true
+  target_branch: main
+  close_issues: true

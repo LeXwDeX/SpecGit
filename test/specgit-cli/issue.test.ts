@@ -1593,6 +1593,99 @@ describe('specgit issue: delivery tags (#330)', () => {
 });
 
 describe('specgit issue: harness currency gate (#339)', () => {
+  it('uses project templates and supplied bodies while preserving closing references and the configured target', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-template-bodies-'));
+    try {
+      const issuePath = path.join(root, 'issue.md');
+      const prPath = path.join(root, 'pr.md');
+      fs.writeFileSync(issuePath, 'A real login regression.');
+      fs.writeFileSync(prPath, 'Reproduced the failure and verified the repair.');
+      const t = issueCtx();
+      t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+        automation: { merge: true, target_branch: 'dev', close_issues: true },
+        templates: {
+          issue: { title: 'fix: {{summary}}', body: '## Why\n{{body}}', required_sections: ['Why'] },
+          pr: { body: '## Evidence\n{{body}}', required_sections: ['Evidence'] },
+        },
+      });
+      const result = await runIssue({ titles: ['feat: correct login'], bodyFile: [issuePath], prBodyFile: prPath }, t.ctx);
+      expect(result.exit).toBe(0);
+      expect(t.harness.createdIssues).toEqual([{ title: 'fix: correct login', body: '## Why\nA real login regression.' }]);
+      expect(t.harness.createdPrs[0]).toMatchObject({ base: 'dev', body: 'Closes #11\n\n## Evidence\nReproduced the failure and verified the repair.' });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('renders the resolved delivery name in a selected issue body before validation', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { body: '## Why\nRepair delivery {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['fix: restore login'], delivery: 'login-repair' }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues[0].body).toBe('## Why\nRepair delivery login-repair.');
+  });
+
+  it('infers the fresh delivery from the raw title before rendering its title template', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { title: 'feat: {{delivery}}', body: '## Why\nDeliver {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['feat: add login'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues).toEqual([{ title: 'feat: add-login', body: '## Why\nDeliver add-login.' }]);
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('add-login');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-add-login');
+  });
+
+  it('never uses a completed record delivery in a new issue title template', async () => {
+    const t = mergedRecordCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { title: 'fix: {{delivery}}', body: '## Why\nRepair {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['fix: restore billing'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues).toEqual([{ title: 'fix: restore-billing', body: '## Why\nRepair restore-billing.' }]);
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('restore-billing');
+    expect(t.harness.createdPrs[0].head).toBe('fix/11-restore-billing');
+  });
+
+  it('resumes an active request under approved rules while candidate content rules are changing', async () => {
+    const record = sampleBinding({ pr: 42 });
+    const t = issueCtx({ record, gh: { getPr: () => ok({
+      number: 42, state: 'open', headBranch: record.context.branch, headSha: 'a'.repeat(40),
+      baseBranch: 'main', body: record.issues.map((n) => `Closes #${n}`).join('\n'), draft: true, mergeCommitSha: null,
+    }) } });
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [], validation: { bodies: true } });
+    t.ctx.resolvePolicy = vi.fn(async () => ok({ policy: { version: 1 as const, required_checks: [] }, source: 'approved' as const, branch: 'main', sha: 'b'.repeat(40) }));
+    const result = await runIssue({}, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.ctx.resolvePolicy).toHaveBeenCalled();
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+
+  it('rejects an incomplete configured issue body before creating any remote work', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [], validation: { bodies: true } });
+    const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+    expect(result.exit).toBe(2);
+    expect(result.errors?.[0]?.code).toBe('body_content_incomplete');
+    expect(t.harness.createdIssues).toHaveLength(0);
+    expect(t.harness.createdPrs).toHaveLength(0);
+  });
+
+  it('continues to reject a conflicting remote acceptance workflow', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-remote-gate-'));
+    try {
+      fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.github/workflows/specgit-accept.yml'), 'Unrecognized workflow content');
+      const t = issueCtx();
+      t.ctx.discoverRoot = async () => ok(root);
+      const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+      expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   /** A real directory whose managed block predates the current CLI. */
   const staleRoot = (): string => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));
@@ -1603,22 +1696,21 @@ describe('specgit issue: harness currency gate (#339)', () => {
     return root;
   };
 
-  it('refuses with harness_stale (exit 2) before any forge contact', async () => {
+  it('allows delivery with an advisory when only local guidance is stale', async () => {
     const root = staleRoot();
     try {
       const t = issueCtx();
       t.ctx.discoverRoot = vi.fn(async () => ok(root));
       const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
-      expect(outcome.exit).toBe(EXIT_USAGE);
-      expect(outcome.errors?.[0]?.code).toBe('harness_stale');
-      expect(outcome.errors?.[0]?.fix).toMatch(/specgit init/);
-      expect(t.harness.createdIssues).toHaveLength(0);
+      expect(outcome.exit).toBe(0);
+      expect(outcome.warnings?.[0]?.code).toBe('local_assets_stale');
+      expect(t.harness.createdIssues).toHaveLength(1);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('gates a resume run on a stale harness too', async () => {
+  it('allows a valid resume despite stale local guidance', async () => {
     const root = staleRoot();
     try {
       const t = issueCtx({
@@ -1626,11 +1718,12 @@ describe('specgit issue: harness currency gate (#339)', () => {
           context: { kind: 'branch', branch: 'feat/9-gate' },
           issues: [9],
         }),
+        gh: { getPr: () => ok({ number: 42, state: 'open', headBranch: 'feat/9-gate', headSha: 'a'.repeat(40), baseBranch: 'main', body: 'Closes #9', draft: true, mergeCommitSha: null }) },
       });
       t.ctx.discoverRoot = vi.fn(async () => ok(root));
       const outcome = await runIssue({}, t.ctx);
-      expect(outcome.exit).toBe(EXIT_USAGE);
-      expect(outcome.errors?.[0]?.code).toBe('harness_stale');
+      expect(outcome.exit).toBe(0);
+      expect(outcome.warnings?.[0]?.code).toBe('local_assets_stale');
       expect(t.harness.createdIssues).toHaveLength(0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1739,5 +1832,38 @@ describe('specgit issue: per-issue kind tags (#338)', () => {
     // without a recorded kind is left untouched — never an inheritance.
     expect(t.gh.calls).toContain('addIssueLabels:11:kind::docs');
     expect(t.gh.calls.some((c) => c.startsWith('addIssueLabels:30:'))).toBe(false);
+  });
+});
+
+describe('issue history and active claims', () => {
+  it('links matching closed history and reports similar open work without a similarity veto', async () => {
+    const t = issueCtx();
+    t.ctx.gh.searchIssueHistory = vi.fn(async () => ok([
+      { number: 6, state: 'closed' as const, title: 'fix: restore login', body: 'Earlier regression.', url: 'https://github.com/LeXwDeX/SpecGit/issues/6' },
+      { number: 7, state: 'open' as const, title: 'feat: add login provider', body: 'A different WHY.', url: 'https://github.com/LeXwDeX/SpecGit/issues/7' },
+    ]));
+    const result = await runIssue({ titles: ['fix: restore login'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues[0].body).toContain('Related closed history: #6');
+    expect(result.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'issue_history_candidates' })]));
+  });
+  it('rejects a numeric issue claimed by a different open request before recording or branching', async () => {
+    const t = issueCtx();
+    t.ctx.gh.listIssuePullRequests = vi.fn(async () => ok([{
+      number: 90, state: 'open' as const, headBranch: 'other-work', headSha: 'a'.repeat(40),
+      baseBranch: 'main', body: 'Closes #15', draft: true, mergeCommitSha: null,
+    }]));
+    const result = await runIssue({ titles: ['15'], delivery: 'restore-login' }, t.ctx);
+    expect(result.exit).toBe(2);
+    expect(result.errors?.[0]?.code).toBe('issue_already_claimed');
+    expect(t.harness.createdPrs).toHaveLength(0);
+    expect(t.ctx.record.writeRecord).not.toHaveBeenCalled();
+  });
+  it('does not create a new issue when history evidence is unavailable', async () => {
+    const t = issueCtx();
+    t.ctx.gh.searchIssueHistory = vi.fn(async () => fail<never>('issue_history_unavailable', 'Search is unavailable.'));
+    const result = await runIssue({ titles: ['fix: restore login'] }, t.ctx);
+    expect(result.exit).toBe(3);
+    expect(t.harness.createdIssues).toHaveLength(0);
   });
 });

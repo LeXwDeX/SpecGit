@@ -26,13 +26,17 @@ in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
 
 ## Trigger
 
-A user-authorized delivery starts the loop. Reuse or create its tracker
-issues with `specgit issue` before editing files; the conversation's agreed
-scope supplies the issue bodies. Read-only questions need no binding.
+A user-authorized intended tracked product or shared-rule change starts the
+loop. Reuse or create its tracker issues with `specgit issue` before implementing
+that change; the conversation's agreed scope supplies the issue bodies.
+Read-only questions and local CLI installation, upgrade or init/setup refresh
+need no binding when no tracked change is intended for delivery. Review their
+tracked diffs before deciding to share them. [CI scope](../docs/ci-scope.md)
+defines the binding verification classification; ignore rules grant no exemption.
 
 ## Slice discipline (TDD)
 
-Every delivery is cut into slices small enough to be proven individually.
+Behavior-changing deliveries are cut into slices small enough to be proven individually.
 Per slice, in order:
 
 1. **Red** — write a failing test that pins the slice's observable
@@ -44,7 +48,9 @@ Per slice, in order:
    proves nothing.
 4. **Targeted checks** — run the slice's focused tests plus
    `pnpm exec tsc --noEmit` and `pnpm run typecheck:test`. The full gate
-   set runs at PR time.
+   set runs at PR time for product changes. Metadata-only changes use lightweight
+   validation and review; do not add synthetic tests or build the product solely
+   for prose or local entry-point refreshes.
 
 ## Branch and binding
 
@@ -65,13 +71,17 @@ Per slice, in order:
 
 ## PR and gates
 
-One PR per delivery, targeting `main`. Merge is blocked until every gate is
-green at the PR head commit:
+One PR per delivery, targeting `main`. Select the applicable local checks using
+[CI scope](../docs/ci-scope.md). Product changes require:
 
 - red-green test suite (`pnpm test`)
 - `pnpm exec tsc --noEmit` and `pnpm run typecheck:test` (test tree)
 - `pnpm run lint`
 - CI green — every check named in `spec_git/policy.yaml`
+
+Metadata-only changes require lightweight validation instead of installing
+project dependencies or compiling. Required CI check names still report a
+result for the PR head, and `specgit finish` must pass before any delivery merges.
 
 Mark the PR ready after the final push (`gh pr ready` on GitHub,
 `glab mr update <number> --ready` on GitLab); a draft fails the verdict
@@ -96,7 +106,7 @@ permission is missing, name that gap with the prepared result.
 
 Automation defaults to no. The user must personally choose yes for
 `specgit init --automation yes --merge-target main`; an agent cannot answer
-on their behalf. `init --force` allows the user to reconsider the choice.
+on their behalf. `init --force` preserves it unless the user explicitly changes it.
 Without enabled automation, `pr --merge` refuses; these workflow instructions
 do not enable it or grant platform permissions.
 
@@ -110,7 +120,7 @@ cap-breach escalation brief are binding:
 
 ## Machine verdict
 
-`specgit finish` is the machine verdict and the only definition of done
+`specgit finish` is the read-only acceptance verdict
 (`specgit accept` is the script alias running the same evaluation):
 
 - exit `0` → accepted; continue the authorized merge with configured automation;
@@ -120,6 +130,9 @@ cap-breach escalation brief are binding:
 
 `finish` remains read-only. A merge requires its exit `0`; automated merge
 also requires all CI checks to pass and the target branch to match policy.
+Local maintenance without a delivery ends with its relevant verification;
+it does not need a delivery verdict. A merge does not imply a package release:
+publication requires explicit release intent under [CI scope](../docs/ci-scope.md).
 
 ## Merge method and lifecycle (the traceability triple)
 
@@ -139,3 +152,9 @@ after the merge, so the merge method is pinned:
 - **Issue-side link.** The bootstrap comments the delivery branch and PR
   number on every bound issue (#160), so the triple is navigable from
   the issue side too — including while the PR is still open.
+
+A completed delivery requires a platform-confirmed merge and all bound issues
+closed. Terminal failures on a ready PR/MR create repair issues per independent
+cause; recurring unresolved causes reuse their repair issue. Keep original
+business issues open, preserve the PR and branch, and bind the repair work before
+editing. Draft, pending, and superseded evidence are not terminal failures.

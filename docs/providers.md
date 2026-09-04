@@ -23,7 +23,7 @@ seam](reference.md#github-provider-seam)):
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted → merge → confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -70,6 +70,8 @@ to those lists member-for-member: change a port, change this page.
 | --- | --- | --- |
 | `facts` | required | Read side: repo, toplevel, branch, HEAD sha, dirty state, worktree layout, origin URL, upstream drift, git availability. Feeds the context and drift gates. |
 | `headContains` | required | Ancestor-or-equal containment of a full hex object id (40 or 64 hex chars) in local HEAD history; proves merged-delivery lineage (G4). A non-hex anchor (empty, padded, ref-like, abbreviated) fails closed as `merged_lineage_unavailable` without invoking git (#76); containment behavior is unchanged for valid anchors. |
+| `readFileAtRemoteRef` | required | Resolve the current remote branch SHA, then read its file from local Git objects. Proven absence is distinct from unavailable objects; this read never fetches or changes refs. Supplies approved target policy. |
+| `readFileBeforeMerge` | required | Recover the pre-merge policy only from a locally contained two-parent merge whose second parent is the proven PR head. Ambiguous squash/rebase/fast-forward history remains unknown. |
 | `trackedFiles` | required | Which of the given repo-relative paths the index tracks (`git ls-files --`); read-only intersection. Feeds the merged-delivery lifecycle warnings (#298): a tracked record/policy that gets deleted or rewritten warns instead of leaving silent working-tree residue. Fails closed as `tracked_probe_failed`; callers treat a failed probe as advisory. |
 | `checkoutOrCreateBranch` | required | Bootstrap write: check out the delivery branch, creating it from HEAD when absent. |
 | `commitFile` | required | Bootstrap write: force-staged (`git add -f`), pathspec-limited commit of the authoritative delivery files (#292 — past the tool-installed local-asset ignore); unchanged paths are a successful no-op (idempotent bootstrap). |
@@ -82,9 +84,12 @@ to those lists member-for-member: change a port, change this page.
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `preflight` | required | gh present and authenticated (G6). |
-| `getIssue` | required | Issue fact: state and `pullRequest` classification, plus real title and label evidence for enabled project rules. |
+| `getCiConfigPath` | required | Configured platform CI entry path, or null for the platform default. GitHub has its fixed workflow discovery convention; GitLab reads and validates the project's configured entry path before installing an automation wrapper. |
+| `getIssue` | required | Issue fact: state and `pullRequest` classification, plus real title, body and label evidence for enabled project rules. |
 | `getOpenIssueNumbers` | required | Open-issue numbers for the ordered-issues sequencing gate, derived from the complete `getOpenIssues` scan. |
 | `getOpenIssues` | required | Title-carrying open-issue facts for the bootstrap adoption probe (#77): one paginated scan (complete to exhaustion, #120 I3b) replaces the per-issue lookup fan-out, so probe cost is bounded by pages. Same-title collisions are disambiguated by the scaffold body, never silently adopted (`issue_title_ambiguous`). |
+| `searchIssueHistory` | required | Paginated relevant open and closed issue facts for history review; incomplete coverage fails closed. Similarity is advisory, never semantic proof of the same WHY. |
+| `listIssuePullRequests` | required | Related PR/MR facts refreshed from the platform; scoped closing references establish active issue occupancy. |
 | `getPr` | required | PR fact: state, head/base, body, `mergeCommitSha`, plus real title evidence for enabled project rules. |
 | `getCheckRuns` | required | Check runs at the head SHA, with optional PR/MR number. Acceptance supplies the number; GitLab verifies the MR head pipeline and its SHA before reading jobs. Omitting the number retains commit-scoped library lookup. |
 | `getPrChecks` | required | Complete CI/CD evidence tied to the current PR/MR head for automation. GitHub includes check runs, classic statuses and workflow runs (including approval waits with no jobs); GitLab includes authoritative pipeline status, jobs and downstream pipelines. Superseded attempts cannot replace current evidence. When multiple GitHub attempts share an identity and their start times cannot be ordered, the adapter returns unknown evidence rather than choosing an older green result. |
@@ -143,6 +148,7 @@ satisfy both surfaces, exactly as before the split.
 | --- | --- |
 | `IssueFact.title` (optional) | With `validation.titles` enabled, absence or an empty value gives `title_evidence_missing` (exit 3). Title-based resume also needs a current nonempty title; without it resume is unknown. Numeric/no-argument resume can avoid the identity comparison, but cannot bypass enabled title validation. Otherwise no title-language gate runs. |
 | `IssueFact.labels` (optional) | With `validation.labels` enabled, absence gives `issue_labels_unavailable` (exit 3). An empty array is complete evidence of no labels and rejects the enabled rule. With validation off, the field adds no acceptance requirement. |
+| `IssueFact.body` (optional) | With `validation.bodies` or issue-template `required_sections` enabled, absence gives `body_evidence_missing` (exit 3). An empty or incomplete body is gathered evidence and rejects the enabled rule. Otherwise no issue-body gate runs. |
 | `PrFact.title` (optional) | With `validation.titles` enabled, absence or an empty value gives `title_evidence_missing` (exit 3); otherwise it adds no acceptance requirement. |
 | `OpenIssueFact.title` (optional) | The issue is excluded from title-match adoption: `specgit issue` cannot adopt a previously created but unrecorded issue by exact open-title match and creates a new issue instead (`src/cli/commands/issue.ts`). Numeric reuse and record-based resume are unaffected. |
 | `OpenIssueFact.body` (optional) | The issue cannot win same-title scaffold disambiguation (#77): if a title collision has no sole scaffold-body match, adoption refuses with the `issue_title_ambiguous` usage diagnostic (exit 2) instead of binding an issue that could be unrelated. |

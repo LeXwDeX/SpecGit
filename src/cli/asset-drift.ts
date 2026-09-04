@@ -49,7 +49,8 @@ import {
   type ManagedAssetState,
 } from './managed-reconcile.js';
 import { classifyPlatformMode } from './commands/init-platform.js';
-import { selectWorkflowYaml } from './commands/init-workflow.js';
+import { selectCompletionWorkflow, selectWorkflowYaml } from './commands/init-workflow.js';
+import { COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH } from './completion-workflow.js';
 import {
   hasManagedIgnoreRegion,
   reconcileLocalAssetIgnore,
@@ -57,6 +58,7 @@ import {
 import { resolveLanguage } from './language.js';
 import type { Evidence } from '../kernel/evidence.js';
 import type { CommandContext, GitFacts, Policy } from './types.js';
+import { buildGitlabRoutingSteps, GitlabRoutingError } from './gitlab-routing.js';
 
 export type { ManagedAssetFinding, ManagedAssetState } from './managed-reconcile.js';
 
@@ -199,7 +201,7 @@ async function ignoreClaim(
 export async function inspectGeneratedAssets(args: {
   root: string;
   ctx: CommandContext;
-  /** The already-read policy evidence: language only, never a gate here. */
+  /** Already-read configuration determines language and authorized generated assets. */
   policy: Evidence<Policy>;
   facts: GitFacts;
 }): Promise<GeneratedAssetsReport> {
@@ -237,9 +239,26 @@ export async function inspectGeneratedAssets(args: {
     );
   }
 
+  const completionEnabled = policy.ok && policy.value.automation?.merge === true;
+  const completion = platform === 'providers_invalid' && completionEnabled
+    ? { ok: false as const, code: 'automation_platform_unknown' }
+    : await selectCompletionWorkflow(ctx, root, platform === 'providers_invalid' ? 'undecided' : platform, completionEnabled);
+  if (!completion.ok) uninspected.push(completion.code);
+  let routingSteps: Awaited<ReturnType<typeof buildGitlabRoutingSteps>> = [];
+  if (completion.ok) {
+    try {
+      routingSteps = await buildGitlabRoutingSteps(root, completion.value?.routingYaml ?? null);
+    } catch (error) {
+      uninspected.push(error instanceof GitlabRoutingError ? error.code : 'gitlab_ci_unreadable');
+    }
+  }
   const harness = await buildHarnessDesiredState(root, {
     resolveHooksDir: async (repoRoot) => {
       const hooksEv = await ctx.git.hooksPath(repoRoot);
+      if (!hooksEv.ok && (hooksEv.code === 'git_hooks_external' || hooksEv.code === 'git_hooks_unverified')) {
+        (hooksEv.code === 'git_hooks_external' ? skipped : uninspected).push(hooksEv.code);
+        return null;
+      }
       return hooksEv.ok ? hooksEv.value : legacyGitHooksDir(repoRoot);
     },
     // buildHarnessDesiredState demands a definite workflow desire (bytes or
@@ -247,16 +266,17 @@ export async function inspectGeneratedAssets(args: {
     // filtered out before inspection — it is never compared, never written.
     workflowYaml: workflowYaml === undefined ? harnessWorkflowYaml() : workflowYaml,
     language,
+    completion: completion.ok ? completion.value : null,
+    routingSteps,
   });
   // Harness-builder warnings mark desired steps the writer itself cannot
   // converge (an unmergeable hooks.json): no claim, by code.
   for (const warning of harness.warnings) {
     uninspected.push(warning.code);
   }
-  const initSteps =
-    workflowYaml === undefined
-      ? harness.steps.filter((step) => step.path !== HARNESS_WORKFLOW_PATH)
-      : [...harness.steps];
+  const initSteps = harness.steps.filter((step) =>
+    (workflowYaml !== undefined || step.path !== HARNESS_WORKFLOW_PATH) &&
+    (completion.ok || (step.path !== COMPLETION_WORKFLOW_PATH && step.path !== GITLAB_COMPLETION_WORKFLOW_PATH)));
 
   const claim = await ignoreClaim(root, ctx);
   if (claim === 'inspect') {

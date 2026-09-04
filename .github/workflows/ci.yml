@@ -22,35 +22,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Detect which files changed to enable path-based filtering
+  # Always classify the complete diff. Metadata uses locked verification
+  # dependencies without lifecycle scripts or product compilation.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
     outputs:
-      nix: ${{ steps.filter.outputs.nix }}
+      build: ${{ steps.scope.outputs.build }}
+      metadata: ${{ steps.scope.outputs.metadata }}
+      nix: ${{ steps.scope.outputs.nix }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Check for Nix-related changes
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
-        id: filter
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Setup Node.js for classification
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          filters: |
-            nix:
-              - 'flake.nix'
-              - 'flake.lock'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - 'scripts/update-flake.sh'
-              - '.github/workflows/ci.yml'
+          node-version: '20.19.0'
+
+      - name: Install verification dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Classify verification scope
+        id: scope
+        run: node scripts/ci-change-scope.mjs
+
+      - name: Verify classification outputs
+        env:
+          BUILD: ${{ steps.scope.outputs.build }}
+          METADATA: ${{ steps.scope.outputs.metadata }}
+          NIX: ${{ steps.scope.outputs.nix }}
+        run: node -e "if (!['true','false'].includes(process.env.BUILD) || process.env.METADATA !== String(process.env.BUILD === 'false') || !['true','false'].includes(process.env.NIX) || (process.env.BUILD === 'false' && process.env.NIX !== 'false')) process.exit(1)"
 
   test_matrix:
     name: Test (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     # Headroom for the #67 install/external e2e on the slowest leg:
     # hosted Windows runners execute npm/git fixtures 3-5x slower than
     # linux, and the suite's test-time sum grew past the old budget.
@@ -92,9 +106,11 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
+        if: needs.changes.outputs.build == 'true'
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - name: Setup Node.js
+        if: needs.changes.outputs.build == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
@@ -105,79 +121,72 @@ jobs:
           node -p "JSON.stringify({ platform: process.platform, arch: process.arch, shell: process.env.SHELL || process.env.ComSpec || '' })"
 
       - name: Install dependencies
+        if: needs.changes.outputs.build == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Build project
+        if: needs.changes.outputs.build == 'true'
         run: pnpm run build
 
       - name: Run tests
+        if: needs.changes.outputs.build == 'true'
         env:
           VITEST_MAX_WORKERS: ${{ matrix.vitest_workers }}
         run: pnpm test
 
       - name: Upload test coverage
-        if: matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.build == 'true' && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-report-${{ github.event_name }}
           path: coverage/
           retention-days: 7
 
-  # The experimental self-hosted-linux shadow leg was retired here
-  # (#105, W2 retirement line 2026-08-21): never green since introduction
-  # — every run crashed at job initialization inside the runner container
-  # (zero steps, tool-cache permission) — an infrastructure-side failure
-  # outside the repository's reach. Disposition recorded on the issue and
-  # referenced from docs/release-gates.md §3; the retirement is pinned by
-  # test/specgit-cli/workflow-security.test.ts.
-  test_pr_required:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: [test_matrix]
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    steps:
-      - name: Verify matrix tests passed
-        run: |
-          if [[ "${{ needs.test_matrix.result }}" != "success" ]]; then
-            echo "Matrix test job failed"
-            exit 1
-          fi
-          echo "All matrix tests passed!"
-
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup pnpm
+        if: needs.changes.outputs.build == 'true'
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - name: Setup Node.js
+        if: needs.changes.outputs.build == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
           cache: 'pnpm'
 
       - name: Install dependencies
+        if: needs.changes.outputs.build == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Build project
+        if: needs.changes.outputs.build == 'true'
         run: pnpm run build
 
       - name: Type check
+        if: needs.changes.outputs.build == 'true'
         run: pnpm exec tsc --noEmit
 
       - name: Type check tests
+        if: needs.changes.outputs.build == 'true'
         run: pnpm run typecheck:test
 
       - name: Lint
+        if: needs.changes.outputs.build == 'true'
         run: pnpm lint
 
       - name: Check for build artifacts
+        if: needs.changes.outputs.build == 'true'
         run: |
           if [ ! -d "dist" ]; then
             echo "Error: dist directory not found after build"
@@ -247,105 +256,68 @@ jobs:
         if: always()
         run: git checkout -- flake.nix || true
 
-  validate-changesets:
-    name: Validate Release Tracking
+  metadata:
+    name: Metadata contracts
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    needs: changes
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Determine release tracking
-        id: changed-changesets
-        run: |
-          changed_changesets="$(git diff --name-only --diff-filter=ACMRT origin/main...HEAD -- '.changeset/*.md' ':!.changeset/README.md')"
-          if [[ -n "$changed_changesets" ]]; then
-            echo "has_changesets=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "files<<EOF"
-              echo "$changed_changesets"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "has_changesets=false" >> "$GITHUB_OUTPUT"
-            echo "This PR follows the normal release cadence; continuing with standard validation"
-          fi
-
-      - name: Setup pnpm
-        if: steps.changed-changesets.outputs.has_changesets == 'true'
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-
-      - name: Setup Node.js
-        if: steps.changed-changesets.outputs.has_changesets == 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
-          cache: 'pnpm'
+      - name: Install verification dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Validate policy, records, generated assets and documentation
+        run: node scripts/ci-metadata-check.mjs
 
-      - name: Install dependencies
-        if: steps.changed-changesets.outputs.has_changesets == 'true'
-        run: pnpm install --frozen-lockfile
+  rc_verify:
+    name: Package verification
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/rc-verify.yml
 
-      - name: Validate release-tracked changesets
-        if: steps.changed-changesets.outputs.has_changesets == 'true'
+  required_verification:
+    name: Required verification
+    runs-on: ubuntu-latest
+    needs: [changes, metadata, test_matrix, lint, nix-flake-validate, rc_verify]
+    if: always()
+    steps:
+      - name: Require every applicable verification result
         env:
-          CHANGESET_FILES: ${{ steps.changed-changesets.outputs.files }}
+          CLASSIFIER_RESULT: ${{ needs.changes.result }}
+          METADATA_RESULT: ${{ needs.metadata.result }}
+          BUILD_REQUIRED: ${{ needs.changes.outputs.build }}
+          NIX_REQUIRED: ${{ needs.changes.outputs.nix }}
+          MATRIX_RESULT: ${{ needs.test_matrix.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          RC_RESULT: ${{ needs.rc_verify.result }}
+          NIX_RESULT: ${{ needs.nix-flake-validate.result }}
         run: |
-          echo "Validating changed changesets:"
-          printf '%s\n' "$CHANGESET_FILES"
-          pnpm exec changeset status --since=origin/main
-
-  required-checks-pr:
-    name: All checks passed
-    runs-on: ubuntu-latest
-    needs: [test_matrix, lint, nix-flake-validate]
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    steps:
-      - name: Verify all checks passed
-        run: |
-          if [[ "${{ needs.test_matrix.result }}" != "success" ]]; then
-            echo "Matrix test job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.lint.result }}" != "success" ]]; then
-            echo "Lint job failed"
-            exit 1
-          fi
-          # Nix validation may be skipped if no Nix-related files changed
-          if [[ "${{ needs.nix-flake-validate.result }}" != "success" && "${{ needs.nix-flake-validate.result }}" != "skipped" ]]; then
-            echo "Nix flake validation job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.nix-flake-validate.result }}" == "skipped" ]]; then
-            echo "Nix flake validation skipped (no Nix-related changes)"
-          fi
-          echo "All required checks passed!"
-
-  required-checks-main:
-    name: All checks passed
-    runs-on: ubuntu-latest
-    needs: [test_matrix, lint, nix-flake-validate]
-    if: always() && github.event_name == 'push'
-    steps:
-      - name: Verify all checks passed
-        run: |
-          if [[ "${{ needs.test_matrix.result }}" != "success" ]]; then
-            echo "Matrix test job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.lint.result }}" != "success" ]]; then
-            echo "Lint job failed"
-            exit 1
-          fi
-          # Nix validation may be skipped if no Nix-related files changed
-          if [[ "${{ needs.nix-flake-validate.result }}" != "success" && "${{ needs.nix-flake-validate.result }}" != "skipped" ]]; then
-            echo "Nix flake validation job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.nix-flake-validate.result }}" == "skipped" ]]; then
-            echo "Nix flake validation skipped (no Nix-related changes)"
-          fi
-          echo "All required checks passed!"
+          node --input-type=module <<'NODE'
+          const { CLASSIFIER_RESULT, METADATA_RESULT, BUILD_REQUIRED, NIX_REQUIRED } = process.env;
+          if (CLASSIFIER_RESULT !== 'success' || METADATA_RESULT !== 'success' ||
+              !['true', 'false'].includes(BUILD_REQUIRED) || !['true', 'false'].includes(NIX_REQUIRED) ||
+              (BUILD_REQUIRED === 'false' && NIX_REQUIRED !== 'false')) {
+            console.error('Complete classification and metadata validation are required.');
+            process.exit(1);
+          }
+          for (const [name, required] of Object.entries({
+            MATRIX_RESULT: BUILD_REQUIRED, LINT_RESULT: BUILD_REQUIRED,
+            RC_RESULT: BUILD_REQUIRED, NIX_RESULT: NIX_REQUIRED,
+          })) {
+            const expected = required === 'true' ? 'success' : 'skipped';
+            if (process.env[name] !== expected) {
+              console.error(`${name}: expected ${expected}, got ${process.env[name]}`);
+              process.exit(1);
+            }
+          }
+          console.log('All applicable verification passed; non-applicable product jobs were not executed.');
+          NODE

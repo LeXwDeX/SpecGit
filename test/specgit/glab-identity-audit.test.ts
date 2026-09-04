@@ -43,6 +43,7 @@ async function verdict(fault?: 'issue' | 'mr') {
       preflight: async () => ok({ authenticated: true }),
       getIssue: (project, number) => provider.getIssue(project, number),
       getPr: (project, number) => provider.getPr(project, number),
+      listIssuePullRequests: async () => ok([]),
       getOpenIssueNumbers: async () => ok([]),
       getCheckRuns: async () => ok([]),
       getEvidenceAnchor: async () => ok({ anchoredAt: null }),
