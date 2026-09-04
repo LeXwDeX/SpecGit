@@ -134,7 +134,7 @@ export async function waitForPublishedRelease({
   let waitedMs = 0;
   while (true) {
     const state = readReleaseState({ version, run });
-    if (!state.needsPublish) return state;
+    if (!state.needsPublish) return { ...state, needsPublish: false };
     if (waitedMs >= timeoutMs) {
       throw new Error(`specgit@${version} is not published after waiting ${timeoutMs}ms; refusing to create release metadata.`);
     }
