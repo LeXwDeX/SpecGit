@@ -1,5 +1,17 @@
 # specgit
 
+## 1.13.0
+
+### Minor Changes
+
+- [#424](https://github.com/LeXwDeX/SpecGit/pull/424) [`3676a83`](https://github.com/LeXwDeX/SpecGit/commit/3676a83fe088d0ce9b797c39c3e6217fc2fdebc1) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Separate configuration validation from product compilation, preserve project choices and repository-local integrations during refresh, and evaluate deliveries against approved target rules. Add selected content templates, issue history and occupancy checks, remote completion, and repair issue tracking for terminal failures.
+
+- [#443](https://github.com/LeXwDeX/SpecGit/pull/443) [`c836890`](https://github.com/LeXwDeX/SpecGit/commit/c8368905b093945d1287ee3282b906d3d85d3ec7) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Expose separate evidence, delivery-write and administration-write provider capabilities while retaining compatible legacy port interfaces. Share branch/worktree identity, platform input classification and GitHub Actions ownership rules across their callers. Plan all issue selections before remote creation, preserve incremental recovery and remove unused bootstrap metadata. Preserve forbidden GitHub API evidence during repair issue recovery instead of misreporting every HTTP 403 as missing authentication. Use the configured release actor consistently for checkout-backed git pushes and version PR operations, removing competing credentials from the remote URL.
+
+### Patch Changes
+
+- [#436](https://github.com/LeXwDeX/SpecGit/pull/436) [`941a211`](https://github.com/LeXwDeX/SpecGit/commit/941a211157109d8569cd534a1764f405a8b22d33) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Wait for current-head CI to settle before finalizing automatic failure or repair issues, exclude superseded workflow jobs from current evidence, preserve the original PR change scope when resuming completion after a merge, and give acceptance enough bounded time for supported sibling CI. Final non-success checks remain blocking, and metadata-only completion never falls back to product compilation.
+
 ## 1.12.0
 
 ### Minor Changes
