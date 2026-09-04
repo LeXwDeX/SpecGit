@@ -1,16 +1,13 @@
 version: 1
-delivery: robust-release-finalization
+delivery: reconcile-docs-wiki
 context:
   kind: branch
-  branch: fix/448-robust-release-finalization
+  branch: docs/454-reconcile-docs-wiki
 issues:
-  - 448
-  - 449
-  - 451
-  - 452
+  - 454
+  - 455
 issueKinds:
-  - issue: 448
-    kind: kind::fix
-  - issue: 449
-    kind: kind::fix
-pr: 450
+  - issue: 454
+    kind: kind::docs
+  - issue: 455
+    kind: kind::docs
