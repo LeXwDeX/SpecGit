@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'child_process';
-import { existsSync, rmSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -24,6 +24,11 @@ console.log('Compiling TypeScript...');
 try {
   runTsc(['--version']);
   runTsc();
+  // The provider imports this module; workflow generators embed these same bytes.
+  mkdirSync('dist/harness-runtime', { recursive: true });
+  for (const file of ['actions-ownership.mjs', 'actions-ownership.d.mts']) {
+    copyFileSync(`src/harness-runtime/${file}`, `dist/harness-runtime/${file}`);
+  }
   console.log('\n✅ Build completed successfully!');
 } catch (error) {
   console.error('\n❌ Build failed!');
