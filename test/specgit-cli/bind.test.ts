@@ -4,6 +4,45 @@ import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes
 import { makeCtx, makeGitFacts, parseStdoutJson, sampleBinding } from './helpers.js';
 
 describe('specgit bind', () => {
+  it('rejects another repository issue URL before writes or git mutations (#391)', async () => {
+    const t = makeCtx();
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'audit', '--issue', 'https://github.com/other/project/issues/7', '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    expect(parseStdoutJson(t.io).errors[0].code).toBe('issue_ref_repo_mismatch');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+
+  it.each(['0', '9007199254740993'])('rejects an unsafe issue URL number %s before writing (#391)', async (number) => {
+    const t = makeCtx();
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'audit', '--issue', `https://github.com/LeXwDeX/SpecGit/issues/${number}`, '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
+  it('fails closed when an issue URL repository cannot be resolved from origin (#391)', async () => {
+    const t = makeCtx({ facts: makeGitFacts({ originUrl: null }) });
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'audit', '--issue', 'https://github.com/LeXwDeX/SpecGit/issues/7', '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_UNKNOWN);
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
+  it('accepts the same GitHub repository URL with case differences (#391)', async () => {
+    const t = makeCtx();
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'audit', '--issue', 'https://github.com/lexwdex/specgit/issues/7', '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.recordWrites[0].record.issues).toEqual([7]);
+  });
+
   it('writes a new record with delivery, auto-resolved branch context, and coerced issue refs', async () => {
     const t = makeCtx();
     const code = await runCliWith(

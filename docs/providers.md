@@ -82,10 +82,10 @@ to those lists member-for-member: change a port, change this page.
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `preflight` | required | gh present and authenticated (G6). |
-| `getIssue` | required | Issue fact: state and `pullRequest` classification for every bound issue. |
+| `getIssue` | required | Issue fact: state and `pullRequest` classification, plus real title and label evidence for enabled project rules. |
 | `getOpenIssueNumbers` | required | Open-issue numbers for the ordered-issues sequencing gate, derived from the complete `getOpenIssues` scan. |
 | `getOpenIssues` | required | Title-carrying open-issue facts for the bootstrap adoption probe (#77): one paginated scan (complete to exhaustion, #120 I3b) replaces the per-issue lookup fan-out, so probe cost is bounded by pages. Same-title collisions are disambiguated by the scaffold body, never silently adopted (`issue_title_ambiguous`). |
-| `getPr` | required | PR fact: state, head/base, body, `mergeCommitSha`. |
+| `getPr` | required | PR fact: state, head/base, body, `mergeCommitSha`, plus real title evidence for enabled project rules. |
 | `getCheckRuns` | required | Check runs at the head SHA, with optional PR/MR number. Acceptance supplies the number; GitLab verifies the MR head pipeline and its SHA before reading jobs. Omitting the number retains commit-scoped library lookup. |
 | `getPrChecks` | required | Complete CI/CD evidence tied to the current PR/MR head for automation. GitHub includes check runs, classic statuses and workflow runs (including approval waits with no jobs); GitLab includes authoritative pipeline status, jobs and downstream pipelines. Superseded attempts cannot replace current evidence. When multiple GitHub attempts share an identity and their start times cannot be ordered, the adapter returns unknown evidence rather than choosing an older green result. |
 | `mergePr` | required | Merge with a server-enforced expected head SHA and report whether the platform confirmed merging. Never bypasses protection or closes an unmerged request as a substitute. |
@@ -102,7 +102,7 @@ to those lists member-for-member: change a port, change this page.
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `getBranchProtection` | required | Protection state and required checks for the guarded-merge story. |
-| `enableBranchProtection` | required | Turn on the required-check gate on the base branch. |
+| `enableBranchProtection` | required | Add the acceptance check on the base branch by preserving existing mutable protection settings, including check App bindings, review bypass actors, branch creation/lock and fork-sync options. Confirm the server response. |
 | `getRepoAutomerge` | required | Repository auto-merge setting. |
 | `enableRepoAutomerge` | required | Turn on repository auto-merge. |
 | `listRepoLabels` | required | The repository's label pool (#330), the universe the tag selection runs against. Paginated to exhaustion (#120 I3b); truncation fails closed. |
@@ -141,12 +141,21 @@ satisfy both surfaces, exactly as before the split.
 
 | Member | Fallback when absent |
 | --- | --- |
-| `IssueFact.title` (optional) | Informational only — gates read state and `pullRequest`; adoption matches titles on `OpenIssueFact` (via `getOpenIssues`), not here. |
+| `IssueFact.title` (optional) | With `validation.titles` enabled, absence or an empty value gives `title_evidence_missing` (exit 3). Title-based resume also needs a current nonempty title; without it resume is unknown. Numeric/no-argument resume can avoid the identity comparison, but cannot bypass enabled title validation. Otherwise no title-language gate runs. |
+| `IssueFact.labels` (optional) | With `validation.labels` enabled, absence gives `issue_labels_unavailable` (exit 3). An empty array is complete evidence of no labels and rejects the enabled rule. With validation off, the field adds no acceptance requirement. |
+| `PrFact.title` (optional) | With `validation.titles` enabled, absence or an empty value gives `title_evidence_missing` (exit 3); otherwise it adds no acceptance requirement. |
 | `OpenIssueFact.title` (optional) | The issue is excluded from title-match adoption: `specgit issue` cannot adopt a previously created but unrecorded issue by exact open-title match and creates a new issue instead (`src/cli/commands/issue.ts`). Numeric reuse and record-based resume are unaffected. |
 | `OpenIssueFact.body` (optional) | The issue cannot win same-title scaffold disambiguation (#77): if a title collision has no sole scaffold-body match, adoption refuses with the `issue_title_ambiguous` usage diagnostic (exit 2) instead of binding an issue that could be unrelated. |
 | `CheckRunInfo.source` (optional) | Acceptance retains its check-name truth-attempt selection. GitHub automation requires an app identity for check runs and returns unknown evidence if it is absent; classic statuses, workflow runs and GitLab jobs use their own adapter-local identities without this field. |
 | `CheckRunInfo.allowFailure` (optional) | Absence is false: a failed required check rejects acceptance. GitLab acceptance honors an explicit true for failure only; merge automation still rejects every executed failure regardless of this field. |
 | `MergeChecksFact.pipelineStatus` (optional) | GitHub has no overall pipeline state and relies on its complete check/status/workflow evidence. On GitLab, absence blocks automation with `automation_pipeline_unavailable` (exit 3); a successful pipeline state is required in addition to successful executed checks. |
+
+The production `gh` and `glab` adapters collect titles and complete issue-label
+sets from the real issue/PR/MR responses. They omit unavailable or malformed
+fields instead of inventing empty values. Optional fields preserve compatibility
+for alternate providers and test doubles; enabling a rule requires those
+providers to supply its evidence. GitLab issue creation sends its scaffold via
+the API's `description` parameter.
 
 Required-but-nullable is a different, already-covered case:
 `PrFact.mergeCommitSha` is required `string \| null`; adapters normalize the

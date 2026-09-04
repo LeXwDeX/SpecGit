@@ -133,14 +133,18 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 
 ## Tagging (choose before you bootstrap)
 
+- Follow the policy's \`language\` for issue/PR prose. Enabled
+  \`validation\` rules check live titles and labels. In \`kind\` mode,
+  select exactly one catalog kind plus only declared extras; in \`project\`
+  mode, select only from policy \`tags\`.
 - Every bootstrap applies the title's \`kind::<type>\` member by default;
   pass \`--tags <a,b>\` to choose the full set yourself instead.
 - Selection is pool-first: existing on-spec labels win verbatim; anything
   missing is seeded from the built-in kind:: catalog or the policy's
   \`tags:\` declarations — unknown vocabulary exits 2 naming what exists.
-- Pick with restraint: at most one label per axis (\`kind::\`,
-  \`module::\`, ...), none when unsure. The pool, not your guess, is the
-  source of truth.
+- Pick at most one label per axis (\`kind::\`, \`module::\`, ...).
+  Omit uncertain optional labels; the selected policy determines which
+  labels are required. An existing pool label cannot override that policy.
 
 ## What it does (idempotent; re-run resumes)
 
@@ -226,7 +230,8 @@ specgit finish --json
 
 ## Rules
 
-- Evidence only: file contents can never change the verdict.
+- Policy defines the requirements; real git, PR, issue, and CI evidence
+  decides the verdict. Task lists and specification prose are not acceptance evidence.
 - Never weaken \`spec_git/policy.yaml\` to make a verdict pass.
 - \`--json\` is the only parse surface.
 
@@ -565,7 +570,28 @@ async function dirExists(target: string): Promise<boolean> {
 }
 
 export async function detectSetupTool(root: string): Promise<'opencode' | 'generic'> {
-  return (await dirExists(path.join(root, '.opencode'))) ? 'opencode' : 'generic';
+  const opencode = path.join(root, '.opencode');
+  if (!(await dirExists(opencode))) return 'generic';
+  const entries = await fs.readdir(opencode);
+  if (entries.length === 0 || entries.some((name) => name !== 'hooks' && name !== 'hooks.json')) {
+    return 'opencode';
+  }
+  const hooks = await readdirEntries(path.join(opencode, 'hooks'));
+  if (hooks.some((entry) => entry.name !== 'specgit-merge-guard.sh')) return 'opencode';
+  // init creates these guard assets for every adopter. Their presence
+  // alone cannot identify the user's agent tool.
+  try {
+    const config = JSON.parse(await fs.readFile(path.join(opencode, 'hooks.json'), 'utf8')) as Record<string, unknown>;
+    if (Object.keys(config).some((key) => key !== 'PreToolUse')) return 'opencode';
+    if (!Array.isArray(config.PreToolUse) || config.PreToolUse.some((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null || !('hooks' in entry) || !Array.isArray(entry.hooks)) return true;
+      return entry.hooks.some((hook: unknown) => typeof hook !== 'object' || hook === null ||
+        !('command' in hook) || hook.command !== '.opencode/hooks/specgit-merge-guard.sh');
+    })) return 'opencode';
+  } catch {
+    return 'opencode';
+  }
+  return 'generic';
 }
 
 /** List a directory for removal-candidate discovery; absent means empty. */

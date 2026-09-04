@@ -52,7 +52,8 @@ specgit finish --json
 
 ## Rules
 
-- Evidence only: file contents can never change the verdict.
+- Policy defines the requirements; real git, PR, issue, and CI evidence
+  decides the verdict. Task lists and specification prose are not acceptance evidence.
 - Never weaken `spec_git/policy.yaml` to make a verdict pass.
 - `--json` is the only parse surface.
 

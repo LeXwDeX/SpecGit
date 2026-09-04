@@ -5,8 +5,9 @@ on:
     branches: [main]
     # A draft PR fails the verdict (pr_draft), so the draft→ready
     # transition must re-verdict. Listing types replaces the defaults,
-    # so the default activity types are listed alongside.
-    types: [opened, synchronize, reopened, ready_for_review]
+    # so the default activity types are listed alongside. Title and body
+    # edits change live acceptance evidence even when the head is unchanged.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
 
 permissions:

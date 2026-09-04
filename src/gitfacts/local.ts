@@ -100,7 +100,7 @@ export class LocalGitAdapter implements GitPort {
       gitAvailable,
     };
 
-    const toplevel = (await probe(['rev-parse', '--show-toplevel']))?.trim();
+    const toplevel = (await probe(['rev-parse', '--show-toplevel']))?.replace(/\r?\n$/, '');
     if (!toplevel) {
       return { ...empty, gitAvailable };
     }
@@ -111,8 +111,8 @@ export class LocalGitAdapter implements GitPort {
     const status = await probe(['status', '--porcelain']);
     const dirty = status === null ? null : status.trim().length > 0;
 
-    const absoluteGitDir = (await probe(['rev-parse', '--absolute-git-dir']))?.trim() || null;
-    const commonDir = (await probe(['rev-parse', '--git-common-dir']))?.trim() || null;
+    const absoluteGitDir = (await probe(['rev-parse', '--absolute-git-dir']))?.replace(/\r?\n$/, '') || null;
+    const commonDir = (await probe(['rev-parse', '--git-common-dir']))?.replace(/\r?\n$/, '') || null;
     let isLinkedWorktree: boolean | null = null;
     if (absoluteGitDir && commonDir) {
       const resolvedCommon = path.isAbsolute(commonDir)
@@ -325,7 +325,7 @@ export class LocalGitAdapter implements GitPort {
     if (!resolved.ok) {
       return resolved;
     }
-    const raw = resolved.value.trim();
+    const raw = resolved.value.replace(/\r?\n$/, '');
     if (!raw) {
       return fail('git_hooks_failed', 'git rev-parse --git-path hooks returned an empty path.');
     }
@@ -374,7 +374,7 @@ export class LocalGitAdapter implements GitPort {
   private async listWorktrees(
     probe: (args: string[]) => Promise<string | null>
   ): Promise<Array<{ label: string; branch: string | null }>> {
-    const raw = await probe(['worktree', 'list', '--porcelain']);
+    const raw = await probe(['worktree', 'list', '--porcelain', '-z']);
     if (raw === null) return [];
 
     const worktrees: Array<{ label: string; branch: string | null }> = [];
@@ -389,10 +389,10 @@ export class LocalGitAdapter implements GitPort {
       currentBranch = null;
     };
 
-    for (const line of raw.split('\n')) {
+    for (const line of raw.split('\0')) {
       if (line.startsWith('worktree ')) {
         flush();
-        currentPath = line.slice('worktree '.length).trim();
+        currentPath = line.slice('worktree '.length);
       } else if (line.startsWith('branch ')) {
         currentBranch = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '');
       } else if (line.trim() === 'detached') {

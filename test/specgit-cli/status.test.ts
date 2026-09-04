@@ -17,6 +17,37 @@ import {
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 describe('specgit status (local evidence only, G1-G5)', () => {
+  it.each([false, true])('fails closed when repository evidence disappears after discovery (bound=%s) (#389)', async (bound) => {
+    const t = makeCtx({
+      ...(bound ? { record: sampleBinding() } : {}),
+      policy: samplePolicy(), facts: makeGitFacts({ repo: false }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors.some((error: { code: string }) => error.code === 'not_a_git_repo')).toBe(true);
+    expect(envelope.assets?.generated).toBeUndefined();
+  });
+
+  it.each(['invalid', 'none'] as const)('fails closed for %s policy even before binding (#389)', async (policy) => {
+    const t = makeCtx({ policy });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('unknown');
+    expect(envelope.errors[0].code).toBe(policy === 'invalid' ? 'policy_invalid' : 'policy_missing');
+    expect(envelope.assets?.generated).toBeUndefined();
+  });
+
+  it('fails closed for unavailable git even before binding (#389)', async () => {
+    const t = makeCtx({ policy: samplePolicy(), facts: makeGitFacts({ gitAvailable: false }) });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('git_unavailable');
+    expect(envelope.assets?.generated).toBeUndefined();
+  });
+
   it('reports a bound state with all local gates passing', async () => {
     const t = makeCtx({ record: sampleBinding(), policy: samplePolicy() });
     const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
@@ -185,6 +216,19 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(gate.failures.map((f: any) => f.code)).toEqual(['worktree_mismatch']);
   });
 
+  it('matches both branch and label when worktrees share a basename (#396)', async () => {
+    const t = makeCtx({
+      record: sampleBinding({ context: { kind: 'worktree', label: 'delivery', branch: 'feat/123-login' } }),
+      policy: samplePolicy(),
+      facts: makeGitFacts({
+        isLinkedWorktree: true, worktreeLabel: 'delivery',
+        worktrees: [{ label: 'delivery', branch: 'other' }, { label: 'delivery', branch: 'feat/123-login' }],
+      }),
+    });
+    await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(parseStdoutJson(t.io).localContext).toBe('matching');
+  });
+
   // #175: a missing record is the normal pre-binding state, not a
   // fail-closed unknown — exit 0 with state `unbound`, the record gate
   // still reports `record_missing`, and the fix rides a warning.
@@ -334,6 +378,18 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     ]);
     expect(envelope.assets.authoritativeCommitted.paths).toContain('spec_git/policy.yaml');
     expect(envelope.assets.derivedCommittedHarness.paths).toContain('.github/workflows/specgit-accept.yml');
+  });
+
+  it.each([false, true])('reports guard hooks as optional local integration (bound=%s) (#417)', async (bound) => {
+    const t = makeCtx({ ...(bound ? { record: sampleBinding() } : {}), policy: samplePolicy() });
+    expect(await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx)).toBe(EXIT_SUCCESS);
+    const assets = parseStdoutJson(t.io).assets;
+    for (const hook of ['.opencode/hooks.json (specgit guard entry)',
+      '.opencode/hooks/specgit-merge-guard.sh', 'git pre-push hook (specgit managed markers)']) {
+      expect(assets.localIntegrationAssets.paths).toContain(hook);
+      expect(assets.derivedCommittedHarness.paths).not.toContain(hook);
+    }
+    expect(assets.derivedCommittedHarness.paths).toContain('.github/workflows/specgit-accept.yml');
   });
 
   // #308: assets.generated is the drift report — computed for every

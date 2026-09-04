@@ -1,4 +1,5 @@
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
+import { checkLabelConvention, checkTitleConvention } from '../../record/conventions.js';
 
 /**
  * Gate 7 — issues: every bound issue exists and is an issue, not a pull
@@ -19,6 +20,11 @@ export async function issuesGate(ctx: GateContext): Promise<GateFailure[]> {
     }
     if (issue.value.pullRequest) {
       failures.push(makeFailure('issue_is_pull_request', { issue: issueNumber }));
+      continue;
+    }
+    for (const result of [checkTitleConvention(ctx.policy!, issue.value.title),
+      checkLabelConvention(ctx.policy!, issue.value.labels)]) {
+      if (!result.ok) failures.push(makeFailure(result, { issue: issueNumber }));
     }
   }
   return failures;
