@@ -28,6 +28,7 @@ issues:
   - 409
   - 410
   - 411
+  - 416
 issueKinds:
   - issue: 387
     kind: kind::docs
