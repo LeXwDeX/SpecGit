@@ -91,8 +91,11 @@ checks to pass for the exact head, merges into the configured target, confirms
 the merged state, and explicitly closes bound issues. `specgit init --force` lets
 the user explicitly enable it later or turn it off again. Enabled projects use
 a trusted remote completion runner, so closing the agent conversation does not
-interrupt merge and closure. Failed ready PRs produce repair issues; the original
-business issues remain open until their delivery is confirmed.
+interrupt merge and closure. Automatic runners wait for the current head's CI
+to settle before recording CI failures as repair issues; final neutral or failed
+checks still prevent merging. Independently proven non-CI failures remain
+actionable during that wait. The original business issues remain open until
+their delivery is confirmed.
 
 ## Project title and label rules
 
@@ -314,7 +317,7 @@ is **off by default**. To enable it, run `specgit init --force`, answer
 `yes`, and select `main` as the merge target. The Release workflow reads
 `automation.merge: true` and `automation.target_branch: main` from the
 policy; otherwise it leaves the version PR open and reports that automation
-is disabled. When enabled, it waits up to 20 minutes for all CI on the exact
+is disabled. When enabled, it waits up to 35 minutes for all CI on the exact
 version head, including classic statuses and workflow runs. Non-required
 skipped jobs may be omitted; failed or incomplete checks block the merge.
 The merge request is conditional on that SHA and its merged state is

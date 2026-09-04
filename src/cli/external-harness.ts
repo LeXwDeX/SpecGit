@@ -29,7 +29,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { HARNESS_WORKFLOW_PATH } from './harness-placement.js';
-import { waitStepYaml } from './wait-step.js';
+import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
 
 export interface ExternalHarnessInput {
   /** The adopting repository's remote default branch (e.g. `main`, `master`, `trunk`). */
@@ -95,7 +95,7 @@ jobs:
     # project's own toolchain (package manager, lockfile, build, layout)
     # is never assumed and never invoked.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${ACCEPTANCE_JOB_MINUTES}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

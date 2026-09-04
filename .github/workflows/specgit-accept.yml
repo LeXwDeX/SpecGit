@@ -29,7 +29,7 @@ jobs:
     # Hosted pool on purpose: a required check must not hinge on one
     # self-hosted container.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -249,7 +249,7 @@ jobs:
               if (!Array.isArray(events) || events.length < PER_PAGE) return anchor;
             }
           };
-          // Poll deadline sits BELOW the job's timeout-minutes (15) on
+          // Poll deadline sits BELOW the job's timeout-minutes (30) on
 
           // purpose: when the deadline loses the race against a slow
 
@@ -257,7 +257,7 @@ jobs:
 
           // being killed by the job timeout mid-line.
 
-          const deadline = Date.now() + 13 * 60 * 1000;
+          const deadline = Date.now() + 25 * 60 * 1000;
           while (Date.now() < deadline) {
             // #315: re-read the anchor every cycle — the transition
 
