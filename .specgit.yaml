@@ -5,6 +5,16 @@ context:
   branch: docs/387-full-project-audit
 issues:
   - 387
+  - 389
+  - 390
+  - 391
+  - 392
+  - 393
+  - 394
+  - 395
+  - 396
+  - 397
+  - 398
 issueKinds:
   - issue: 387
     kind: kind::docs
