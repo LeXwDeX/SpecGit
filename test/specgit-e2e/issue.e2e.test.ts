@@ -45,6 +45,13 @@ import {
 
 const cleanupDirs: string[] = [];
 
+// Every scenario runs at least two real CLI passes plus real git work.
+// Windows runs 33835966803 and 33837497600 exceeded the global 10s budget;
+// the response-loss scenario passed in 11.206s once given more headroom.
+// Keep a bounded 30s ceiling for each complete scenario in this file.
+// Individual CLI timeouts and all behavioral assertions remain unchanged.
+const DELIVERY_TEST_TIMEOUT_MS = 30_000;
+
 afterAll(() => {
   for (const dir of cleanupDirs) {
     rmDir(dir);
@@ -104,17 +111,7 @@ function bootstrapRules(pr: number | undefined): FakeGhRule[] {  return [
 }
 
 describe('e2e issue: one-command bootstrap closes both new issues after merge', () => {
-  // Three full CLI passes (issue bootstrap with real git transport, init,
-  // finish) plus ~10 direct git spawns: the global 10s test budget cannot
-  // hold three passes that each may legally run up to the 30s per-CLI
-  // limit (run-cli DEFAULT_CLI_TIMEOUT_MS), and it intermittently overruns
-  // on the serialized 1-worker windows-pwsh runner (observed 2026-08-23,
-  // run 32643134007 / job 97203205775) — the same headroom the
-  // bootstrap-pair test below already needed (30s, runs
-  // 32438687376/32438704880). Runtime variance, not a regression: this
-  // test passed the windows-pwsh leg before 588f245e, which never touched
-  // the bootstrap/finish path.
-  it('bootstraps two issues → branch → binding commit → draft PR → record commit → push, then finish accepts post-merge', { timeout: 30_000 }, async () => {
+  it('bootstraps two issues → branch → binding commit → draft PR → record commit → push, then finish accepts post-merge', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
     const deliveryBranch = 'feat/11-strict-delivery-harness';
 
@@ -213,7 +210,7 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
 });
 
 describe('e2e issue: idempotent resume after a failure between steps', () => {
-  it('re-runs the same command after PR-creation failure without duplicating issues', async () => {
+  it('re-runs the same command after PR-creation failure without duplicating issues', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
 
     // First run: issue creation succeeds, PR creation has no gh rule
@@ -259,9 +256,7 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
 });
 
 describe('e2e issue: exactly-once across partial failures (fault injection)', () => {
-  // Two real CLI passes exceeded the global 10s budget on windows-pwsh
-  // (run 33835966803); match the neighboring recovery case's 30s bound.
-  it('adopts the remotely created issue when the creation response was lost', { timeout: 30_000 }, async () => {
+  it('adopts the remotely created issue when the creation response was lost', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
 
     // Run 1: the fake allocates #11 remotely (seq state consumed) but
@@ -317,11 +312,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     expect(prScaffoldBodies(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
   });
 
-  // Two full bootstraps (fault + heal) with real git work each; the global
-  // 10s budget intermittently overruns on the slower windows-pwsh runner
-  // (observed 2026-08-21, runs 32438687376/32438704880) — neighbors with
-  // one bootstrap pass at 2.7–5.9s there.
-  it('reconciles by title when the record write failed after creation', { timeout: 30_000 }, async () => {
+  it('reconciles by title when the record write failed after creation', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
 
     // Fault: a directory where the record lock file belongs makes every
@@ -369,7 +360,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     ).toHaveLength(0);
   });
 
-  it('resumes from the durable partial record even when the remote title drifted', async () => {
+  it('resumes from the durable partial record even when the remote title drifted', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
 
     // Run 1: the first WHY is created and recorded; the second creation
@@ -427,7 +418,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     expect(prScaffoldBodies(ghWhole.logPath)).toEqual([renderPrScaffold([11, 12])]);
   });
 
-  it('adopts the open PR for the head branch when the PR response was lost', async () => {
+  it('adopts the open PR for the head branch when the PR response was lost', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
 
     // Run 1: the issue is created and recorded; the PR is created remotely
@@ -486,7 +477,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
 });
 
 describe('e2e pr: auto-discovery repairs the binding', () => {
-  it('binds the single open PR found for the head branch', async () => {
+  it('binds the single open PR found for the head branch', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('feat/55-repair-binding');
 
     const gh = makeGh([
