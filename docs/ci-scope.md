@@ -119,8 +119,11 @@ runtime fails closed; metadata verification does not fall back to compilation.
 
 Both paths resolve the approved target-branch policy and wait through authenticated
 `gh` for its required checks
-at the exact PR head and the same ready-for-review freshness boundary. Both
-then run `finish --json`. Classification, installation, waiting, or verdict
+at the exact PR head and the same ready-for-review freshness boundary. They
+associate Actions checks with their current workflow execution; an obsolete
+cancelled run cannot provide the successor's required aggregate, even if its
+last job starts after readiness. Missing provenance fails closed. Each path
+then runs `finish --json`. Classification, installation, waiting, or verdict
 failure fails the job; an absent classification cannot select a success path.
 Generated acceptance waits up to 25 minutes for sibling checks within a
 30-minute job, covering this repository's 20-minute test window with setup and
