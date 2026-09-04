@@ -48,7 +48,7 @@ export interface GitWritePort {
    * when the symbolic ref is unset locally — the same default `gh`
    * would resolve server-side for `--base`.
    */
-  remoteDefaultBranch(root: string): Promise<Evidence<string>>;
+  remoteDefaultBranch(root: string, options?: { requireEvidence?: boolean }): Promise<Evidence<string>>;
   /**
    * The directory git would actually run hooks from, absolute:
    * `git rev-parse --git-path hooks`. Respects linked-worktree layout

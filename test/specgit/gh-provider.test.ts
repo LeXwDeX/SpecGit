@@ -764,6 +764,35 @@ describe('GhCliGitHubProvider#addIssueComment', () => {
     return { fake, provider };
   }
 
+  it('reuses an exact existing comment after a lost response instead of posting again', async () => {
+    const body = 'SpecGit delivery branch: `feat/8-x` (draft pull request #9).';
+    const url = 'https://github.com/LeXwDeX/SpecGit/issues/8#issuecomment-1';
+    const { provider, fake } = setup([
+      { match: '/comments\\?per_page=100&page=1$', stdout: JSON.stringify([{ body, html_url: url }]) },
+    ]);
+    expect(await provider.addIssueComment(REPO, 8, body)).toEqual({ ok: true, value: { url } });
+    expect(readFakeGhCalls(fake.logPath)).toHaveLength(1);
+  });
+
+  it('finds a previous comment beyond the first page', async () => {
+    const body = 'delivery trace';
+    const url = 'https://github.com/LeXwDeX/SpecGit/issues/8#issuecomment-101';
+    const { provider, fake } = setup([
+      { match: '/comments\\?per_page=100&page=1$', stdout: JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ body: `other ${i}`, html_url: `https://example.test/${i}` }))) },
+      { match: '/comments\\?per_page=100&page=2$', stdout: JSON.stringify([{ body, html_url: url }]) },
+    ]);
+    expect(await provider.addIssueComment(REPO, 8, body)).toEqual({ ok: true, value: { url } });
+    expect(readFakeGhCalls(fake.logPath)).toHaveLength(2);
+  });
+
+  it('does not post when existing comment evidence is malformed', async () => {
+    const { provider, fake } = setup([
+      { match: '/comments\\?per_page=', stdout: JSON.stringify([{ html_url: 'https://example.test/comment' }]) },
+    ]);
+    expect(await provider.addIssueComment(REPO, 8, 'B')).toMatchObject({ ok: false, code: 'gh_transport', message: 'GitHub returned an unexpected issue-comment entry.' });
+    expect(readFakeGhCalls(fake.logPath)).toEqual(['api repos/LeXwDeX/SpecGit/issues/8/comments?per_page=100&page=1']);
+  });
+
   it('posts a comment through gh api -f body and returns {url}', async () => {
     const { provider, fake } = setup([
       {
@@ -783,6 +812,7 @@ describe('GhCliGitHubProvider#addIssueComment', () => {
       value: { url: 'https://github.com/LeXwDeX/SpecGit/issues/8#issuecomment-1' },
     });
     expect(readFakeGhCalls(fake.logPath)).toEqual([
+      'api repos/LeXwDeX/SpecGit/issues/8/comments?per_page=100&page=1',
       'api repos/LeXwDeX/SpecGit/issues/8/comments -f body=SpecGit delivery branch: `feat/8-x` (draft pull request #9).',
     ]);
   });

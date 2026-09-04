@@ -35,6 +35,9 @@ export interface MockForgeFixtures {
   defaultIssue?: (n: number) => Evidence<IssueFact>;
   pr?: Evidence<PrFact>;
   checkRuns?: Evidence<CheckRunInfo[]>;
+  prChecks?: Evidence<{ headSha: string; checks: CheckRunInfo[]; pipelineStatus?: string }>;
+  mergePr?: (pr: number | string, expectedHeadSha: string) => Evidence<{ merged: boolean }>;
+  closeIssue?: (issue: number) => Evidence<{ closed: boolean }>;
   /**
    * Check-freshness anchor (#315). The default is the no-boundary fact
    * (`anchoredAt: null`) so every fixture that predates #315 keeps its
@@ -101,6 +104,21 @@ export class MockForgeProvider implements ForgeProvider {
   async getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>> {
     this.calls.push(`getCheckRuns:${formatRepo(repo)}@${sha}`);
     return this.fixtures.checkRuns ?? ok([]);
+  }
+
+  async getPrChecks(repo: RepoRef, pr: number | string): Promise<Evidence<{ headSha: string; checks: CheckRunInfo[]; pipelineStatus?: string }>> {
+    this.calls.push(`getPrChecks:${formatRepo(repo)}#${pr}`);
+    return this.fixtures.prChecks ?? fail('gh_transport', 'getPrChecks not configured in mock');
+  }
+
+  async mergePr(repo: RepoRef, pr: number | string, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>> {
+    this.calls.push(`mergePr:${formatRepo(repo)}#${pr}@${expectedHeadSha}`);
+    return this.fixtures.mergePr?.(pr, expectedHeadSha) ?? fail('gh_transport', 'mergePr not configured in mock');
+  }
+
+  async closeIssue(repo: RepoRef, issue: number): Promise<Evidence<{ closed: boolean }>> {
+    this.calls.push(`closeIssue:${formatRepo(repo)}#${issue}`);
+    return this.fixtures.closeIssue?.(issue) ?? fail('gh_transport', 'closeIssue not configured in mock');
   }
 
   async getEvidenceAnchor(

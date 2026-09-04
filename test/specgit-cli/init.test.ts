@@ -49,7 +49,7 @@ describe('specgit init', () => {
     expect(t.recordPort.policyWrites).toHaveLength(1);
     expect(t.recordPort.policyWrites[0]).toEqual({
       root,
-      policy: { version: 1, required_checks: ['Test', 'All checks passed'] },
+      policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test', 'All checks passed'] },
     });
     expect(t.recordPort.recordWrites).toHaveLength(0);
   });
@@ -73,7 +73,7 @@ describe('specgit init', () => {
     const envelope = parseStdoutJson(t.io);
     expect(envelope.status).toBe('ok');
     expect(envelope.command).toBe('init');
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Test'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test'] });
   });
 
   it('probes protection after writing the policy and warns without a TTY (no changes)', async () => {
@@ -124,7 +124,7 @@ describe('specgit init', () => {
   it('--no-protect skips the probe entirely', async () => {
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--automation', 'no', '--json'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
@@ -465,10 +465,9 @@ describe('specgit init', () => {
       stdinIsTTY: true,
       facts: makeGitFacts({}),
     });
-    // --no-protect keeps this test on the platform path only (protection
-    // would ask its own TTY question).
+    // Explicitly decline automation and protection to isolate platform selection.
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--automation', 'no', '--json'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
@@ -501,7 +500,7 @@ describe('specgit init', () => {
     // as a check-run: it would deadlock the wait step and make the
     // verdict unsatisfiable. Zero checks + branch protection on the
     // acceptance job is the only satisfiable no-CI policy.
-    expect(envelope.policy).toEqual({ version: 1, required_checks: [] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: [] });
     expect(envelope.detected.fallback).toBe(true);
     // The wait step in the generated workflow completes immediately with
     // zero required checks: the empty policy is one the harness itself
@@ -522,7 +521,7 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['build', 'Test (linux)'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['build', 'Test (linux)'] });
     expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
     expect(envelope.detected.fallback).toBe(false);
   });
@@ -535,7 +534,7 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['build-job', 'test-job'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['build-job', 'test-job'] });
     expect(envelope.detected.sources).toEqual(['.gitlab-ci.yml']);
   });
 
@@ -562,7 +561,7 @@ describe('specgit init', () => {
     // The placeholder never appears in real check-runs, and the #39 job-id
     // fallback is NOT the expanded check-run name either — neither is
     // proven. The job stays out of the policy and is surfaced as ambiguous.
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Lint'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Lint'] });
     expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: unit']);
     const warning = (envelope.warnings ?? []).find(
       (w: { code: string }) => w.code === 'checks_name_ambiguous'
@@ -597,7 +596,7 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Build'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Build'] });
     expect(envelope.detected.ambiguousJobs).toEqual([
       '.github/workflows/ci.yml: legs',
       '.github/workflows/ci.yml: reuse',
@@ -630,7 +629,7 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['Lint'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Lint'] });
     expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: legs']);
     expect(
       (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
@@ -659,6 +658,7 @@ describe('specgit init', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(envelope.policy).toEqual({
+      automation: { merge: false, close_issues: false },
       version: 1,
       required_checks: ['All checks passed', 'Lint'],
     });
@@ -681,7 +681,7 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: [] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: [] });
     expect(envelope.detected.fallback).toBe(true);
     expect(
       (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
@@ -705,7 +705,7 @@ describe('specgit init', () => {
     const envelope = parseStdoutJson(t.io);
     // Dispatch-only workflows never run on a PR head, so their jobs cannot
     // appear as check runs there.
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['test'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['test'] });
     expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
     // #121: dispatch-only is one shape of "never reports on a PR head" —
     // reported, not silently dropped.
@@ -737,7 +737,7 @@ describe('specgit init', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     // Only the PR-triggered workflow's jobs are required-check candidates.
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['build'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['build'] });
     expect(envelope.detected.sources).toEqual(['.github/workflows/verify.yml']);
     // The never-on-PR workflows are reported, not silently dropped.
     expect(envelope.detected.nonPrWorkflows).toEqual([
@@ -775,7 +775,7 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ version: 1, required_checks: ['checks', 'guard'] });
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['checks', 'guard'] });
     expect(envelope.detected.sources).toEqual(['.github/workflows/default.yml', '.github/workflows/guard.yml']);
     expect(envelope.detected.nonPrWorkflows).toEqual([]);
     expect(
@@ -814,7 +814,7 @@ describe('specgit init', () => {
     );
     expect(code).toBe(EXIT_SUCCESS);
     expect(t.recordPort.policyWrites).toEqual([
-      { policy: { version: 1, required_checks: ['New'] }, root },
+      { policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['New'] }, root },
     ]);
   });
 
@@ -1041,7 +1041,7 @@ describe('specgit init harness generation', () => {
     expect(block).toContain('glab mr update');
     expect(block).toContain('--ready');
     // The fix path lands before the finish guidance in the delivery story.
-    expect(block.indexOf('pr_draft')).toBeLessThan(block.indexOf('Finish with `specgit finish`'));
+    expect(block.indexOf('pr_draft')).toBeLessThan(block.indexOf('`specgit finish` is read-only'));
     // The written AGENTS.md carries the same guidance.
     expect(read(AGENTS_ABS(root))).toContain('gh pr ready');
   });
@@ -1140,7 +1140,7 @@ describe('specgit init harness generation', () => {
     // fix path deterministically.
     expect(read(AGENTS_ABS(root))).toContain('gh pr ready');
     expect(second.recordPort.policyWrites).toEqual([
-      { root, policy: { version: 1, required_checks: ['Test'] } },
+      { root, policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test'] } },
     ]);
   });
 
@@ -1342,6 +1342,7 @@ describe('specgit init --language (#118)', () => {
     );
     expect(code).toBe(EXIT_SUCCESS);
     expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
       version: 1,
       required_checks: ['Test'],
       language: 'zh',
@@ -1377,6 +1378,7 @@ describe('specgit init --language (#118)', () => {
     const t = makeCtx({ root: { ok: true, value: root } });
     await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
     expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
       version: 1,
       required_checks: ['Test'],
     });
@@ -1427,6 +1429,7 @@ describe('specgit init --language (#118)', () => {
     );
     expect(code).toBe(EXIT_SUCCESS);
     expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
       version: 1,
       required_checks: ['Test'],
       language: 'zh',
@@ -1445,6 +1448,7 @@ describe('specgit init --language (#118)', () => {
     );
     expect(code).toBe(EXIT_SUCCESS);
     expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
       version: 1,
       required_checks: ['Test'],
     });

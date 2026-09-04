@@ -52,8 +52,11 @@ export interface EvaluateInput {
   root: Evidence<string>;
   record: Evidence<DeliveryBinding>;
   policy: Evidence<Policy>;
-  git: GitPort;
-  gh?: ForgeProvider;
+  git: Pick<GitPort, 'facts' | 'headContains'>;
+  gh?: Pick<
+    ForgeProvider,
+    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor'
+  >;
   /** Declared self-hosted GitLab host (spec_git/providers.yaml), if any. */
   gitlabHost?: string;
 }

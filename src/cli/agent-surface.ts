@@ -23,7 +23,7 @@ import * as fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
 
-import { ISSUE_TYPE_LIST } from './commands/issue.js';
+import { DELIVERY_TYPES } from '../tags/catalog.js';
 import {
   reconcileManagedAssets,
   type ManagedReconcileReport,
@@ -31,6 +31,18 @@ import {
 } from './managed-reconcile.js';
 
 export type SetupTool = 'opencode' | 'generic' | 'all';
+
+const ISSUE_TYPE_LIST = DELIVERY_TYPES.join(', ');
+
+const MERGE_GUIDANCE = `Continue within existing user authorization. With automation enabled, run
+\`specgit pr --merge --json\`: it requires the configured target branch,
+\`finish\` exit 0, and all CI checks passing at the current PR head; it confirms
+the merge before closing bound issues when configured. \`finish\` is read-only.
+Automation defaults to no. Only the user's own yes enables it through
+\`specgit init --automation yes --merge-target <branch>\`; \`init --force\`
+can change that choice. An agent must not choose yes for the user. When an
+action lacks user authorization or platform permission, report the specific
+missing permission with the prepared result.`;
 
 const ISSUE_COMMAND = `---
 description: Start a SpecGit delivery from a title or existing issue number
@@ -73,28 +85,30 @@ AGENTS.md SpecGit block; this command only launches it.
 
 ## Steps
 
-1. Run from the delivery branch:
+1. Complete the authorized PR body and mark the PR ready for review, then
+   run from the delivery branch:
 
    \`\`\`bash
    specgit finish --json
    \`\`\`
 
 2. Branch on the exit code:
-   - \`exit 0\` → produce the merge brief (issues + PR + CI run links + the
-     verdict) and ask the user to approve the merge. Do not merge yourself
-     without approval.
+   - \`exit 0\` → report issues, PR, CI run links, and the verdict; continue
+     the authorized merge through the guidance below.
    - \`exit 1\` → read \`errors[].fix\` / gate failures, fix exactly what they
      name, re-run. Loop until exit 0.
-   - \`exit 3\` → report the environment problem (gh auth / network); never
-     edit the record or the policy to work around it.
+   - \`exit 3\` → run \`specgit doctor --json\`, repair the named evidence
+     failure within your permissions, and retry the verdict.
 3. Iron rules: never weaken \`spec_git/policy.yaml\` to pass; \`--json\` is the
    only parse surface; a non-zero verdict never merges.
+
+${MERGE_GUIDANCE}
 `;
 
 const ISSUE_SKILL = `---
 name: specgit-issue
 description: Start a SpecGit delivery — create or reuse GitHub issues, branch, draft PR that closes them, and record the binding, in one command.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit
@@ -163,7 +177,7 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 const FINISH_SKILL = `---
 name: specgit-finish
 description: Run the SpecGit evidence verdict — fail-closed acceptance derived from real git, PR, and CI evidence; exit 0 is the only done.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit
@@ -203,16 +217,20 @@ specgit finish --json
 
 ## Exit contract
 
-- \`0\` accepted — produce the merge brief and ask the human to approve.
+- \`0\` accepted — report the verdict and continue the authorized merge
+  through the guidance below.
 - \`1\` rejected — each failure carries a \`fix\`; fix what the gates name,
   re-run until 0.
-- \`3\` unknown — fix the environment; never touch the record or policy.
+- \`3\` unknown — run \`specgit doctor --json\`, fix the named evidence
+  failure within your permissions, then retry.
 
 ## Rules
 
 - Evidence only: file contents can never change the verdict.
 - Never weaken \`spec_git/policy.yaml\` to make a verdict pass.
 - \`--json\` is the only parse surface.
+
+${MERGE_GUIDANCE}
 `;
 
 // #165: exit 3 is the one verdict outcome an agent cannot fix by editing
@@ -244,7 +262,7 @@ the AGENTS.md SpecGit block; this command only launches it.
 `;
 
 const PR_COMMAND = `---
-description: Repair the SpecGit PR binding — auto-discover by head branch or bind explicitly
+description: Repair the SpecGit PR binding or complete a configured automatic merge
 ---
 
 # /specgit-pr
@@ -268,6 +286,8 @@ AGENTS.md SpecGit block; this command only launches it.
      explicitly: \`specgit pr <number>\`.
 3. \`specgit pr\` owns the PR binding; never hand-edit \`.specgit.yaml\`.
    \`--json\` is the only parse surface.
+
+${MERGE_GUIDANCE}
 `;
 
 const STATUS_COMMAND = `---
@@ -301,7 +321,7 @@ AGENTS.md SpecGit block; this command only launches it.
 const DOCTOR_SKILL = `---
 name: specgit-doctor
 description: Resolve a SpecGit exit 3 — run the doctor probes, apply each fix, re-run until the verdict can run again.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit
@@ -349,8 +369,8 @@ the failing gate; the loop below resolves it.
 
 const PR_SKILL = `---
 name: specgit-pr
-description: Repair the SpecGit PR binding — auto-discover the pull request by head branch, or bind an explicit number.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+description: Repair the SpecGit PR binding or complete a configured automatic merge.
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit
@@ -358,13 +378,15 @@ metadata:
 
 # specgit-pr
 
-Repairs the record's PR binding without touching issues or the branch.
+Repairs the record's PR binding. With \`--merge\`, completes the configured
+merge and issue closure after fresh evidence passes.
 
 ## Usage
 
 \`\`\`bash
 specgit pr              # auto-discover the PR for this head branch
 specgit pr 123          # bind an explicit number (no platform round-trip)
+specgit pr --merge --json  # merge the bound PR when automation is enabled
 \`\`\`
 
 ## Steps
@@ -386,6 +408,8 @@ specgit pr 123          # bind an explicit number (no platform round-trip)
 
 - \`specgit pr\` owns the PR binding; never hand-edit \`.specgit.yaml\`.
 - \`--json\` is the only parse surface.
+
+${MERGE_GUIDANCE}
 `;
 
 const STATUS_SKILL = `---

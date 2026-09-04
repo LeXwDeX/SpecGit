@@ -137,7 +137,11 @@ export interface RecordingForgeProvider extends ForgeProvider {
 }
 
 export interface GhScript {
+  getIssue?: (repo: RepoRef, issue: number) => Evidence<IssueFact>;
   getPr?: (repo: RepoRef, ref: number | string) => Evidence<PrFact>;
+  getPrChecks?: (repo: RepoRef, ref: number | string) => Evidence<{ headSha: string; checks: CheckRunInfo[]; pipelineStatus?: string }>;
+  mergePr?: (repo: RepoRef, ref: number | string, expectedHeadSha: string) => Evidence<{ merged: boolean }>;
+  closeIssue?: (repo: RepoRef, issue: number) => Evidence<{ closed: boolean }>;
   getOpenIssueNumbers?: (repo: RepoRef) => Evidence<number[]>;
   getOpenIssues?: (repo: RepoRef) => Evidence<OpenIssueFact[]>;
   /**
@@ -183,9 +187,9 @@ export function makeGhProvider(
       calls.push('preflight');
       return preflight;
     }),
-    getIssue: vi.fn(async (_repo: RepoRef, _n: number): Promise<Evidence<IssueFact>> => {
+    getIssue: vi.fn(async (repo: RepoRef, n: number): Promise<Evidence<IssueFact>> => {
       calls.push('getIssue');
-      return { ok: false, code: 'gh_transport', message: 'not configured in fake' };
+      return behavior.getIssue?.(repo, n) ?? { ok: false, code: 'gh_transport', message: 'not configured in fake' };
     }),
     getOpenIssueNumbers: vi.fn(async (repo: RepoRef): Promise<Evidence<number[]>> => {
       calls.push(`getOpenIssueNumbers:${repo.owner}/${repo.repo}`);
@@ -213,6 +217,18 @@ export function makeGhProvider(
     getCheckRuns: vi.fn(async (_repo: RepoRef, _sha: string): Promise<Evidence<CheckRunInfo[]>> => {
       calls.push('getCheckRuns');
       return { ok: false, code: 'gh_transport', message: 'not configured in fake' };
+    }),
+    getPrChecks: vi.fn(async (repo: RepoRef, ref: number | string) => {
+      calls.push(`getPrChecks:${String(ref)}`);
+      return behavior.getPrChecks?.(repo, ref) ?? { ok: false as const, code: 'gh_transport', message: 'getPrChecks not configured in fake' };
+    }),
+    mergePr: vi.fn(async (repo: RepoRef, ref: number | string, expectedHeadSha: string) => {
+      calls.push(`mergePr:${String(ref)}:${expectedHeadSha}`);
+      return behavior.mergePr?.(repo, ref, expectedHeadSha) ?? { ok: false as const, code: 'gh_transport', message: 'mergePr not configured in fake' };
+    }),
+    closeIssue: vi.fn(async (repo: RepoRef, issue: number) => {
+      calls.push(`closeIssue:${issue}`);
+      return behavior.closeIssue?.(repo, issue) ?? { ok: false as const, code: 'gh_transport', message: 'closeIssue not configured in fake' };
     }),
     getEvidenceAnchor: vi.fn(
       async (repo: RepoRef, ref: number | string): Promise<Evidence<EvidenceAnchorFact>> => {
@@ -316,7 +332,7 @@ export interface GitWriteScript {
     message: string
   ) => Evidence<{ committed: boolean }>;
   pushBranch?: (branch: string) => Evidence<{ pushed: boolean }>;
-  remoteDefaultBranch?: () => Evidence<string>;
+  remoteDefaultBranch?: (options?: { requireEvidence?: boolean }) => Evidence<string>;
   hooksPath?: () => Evidence<string>;
   /** #298: paths the fake index reports as tracked (default: none). */
   trackedFiles?: (paths: string[]) => Evidence<string[]>;
@@ -353,9 +369,9 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       port.pushCalls.push(branch);
       return writes.pushBranch?.(branch) ?? { ok: true, value: { pushed: true } };
     }),
-    remoteDefaultBranch: vi.fn(async (_root: string): Promise<Evidence<string>> => {
+    remoteDefaultBranch: vi.fn(async (_root: string, options?: { requireEvidence?: boolean }): Promise<Evidence<string>> => {
       port.defaultBranchCalls.push(_root);
-      return writes.remoteDefaultBranch?.() ?? { ok: true, value: 'main' };
+      return writes.remoteDefaultBranch?.(options) ?? { ok: true, value: 'main' };
     }),
     headContains: vi.fn(async (): Promise<Evidence<{ contained: boolean }>> =>
       // Fail-closed default: the fake answers no lineage question unless

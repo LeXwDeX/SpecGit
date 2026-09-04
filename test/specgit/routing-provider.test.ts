@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { ForgeProvider } from '../../src/github/port.js';
 
 import type { RepoRef } from '../../src/gitfacts/origin.js';
 import { PlatformRoutingProvider } from '../../src/providers/routing.js';
@@ -30,6 +31,13 @@ function makeRouter(originPlatform: 'github' | 'gitlab' | 'undecided') {
 }
 
 describe('PlatformRoutingProvider (#117)', () => {
+  it('preserves the merge-request identity when routing check evidence', async () => {
+    const { router, gitlab } = makeRouter('gitlab');
+    const read = vi.spyOn(gitlab, 'getCheckRuns');
+    const provider: ForgeProvider = router;
+    await provider.getCheckRuns(gitlabRef, 'a'.repeat(40), 9);
+    expect(read).toHaveBeenCalledWith(gitlabRef, 'a'.repeat(40), 9);
+  });
   it('routes every repo-carrying call by the ref platform marker', async () => {
     const { github, gitlab, router } = makeRouter('github');
 

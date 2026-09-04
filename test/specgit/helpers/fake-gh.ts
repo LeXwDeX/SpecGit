@@ -50,6 +50,9 @@ export function createFakeGh(tempDir: string, rules: FakeGhRule[]): FakeGh {
   // responders for seed and apply. User rules stay first: a caller may
   // override any of these behaviors per scenario.
   const labelBaseline: FakeGhRule[] = [
+    // Fresh bootstrap has no prior traceability comment. Scenario rules
+    // can supply existing comments or failures before this baseline.
+    { match: '/issues/[0-9]+/comments\\?per_page=', stdout: '[]' },
     { match: '/labels\\?per_page=', stdout: '[]' },
     // The issue-apply rule stays ahead of the create rule: its path
     // (`/issues/<n>/labels`) also ends in `/labels`.

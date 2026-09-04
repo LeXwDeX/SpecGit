@@ -1,4 +1,5 @@
 import type { CheckRunInfo } from '../../github/port.js';
+import { isLaterCheckRun } from '../../github/check-runs.js';
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
 
 /**
@@ -11,18 +12,9 @@ function truthRun(runs: CheckRunInfo[], name: string): CheckRunInfo | undefined 
   let best: CheckRunInfo | undefined;
   for (const run of runs) {
     if (run.name !== name) continue;
-    if (best === undefined || isLaterRun(run, best)) best = run;
+    if (best === undefined || isLaterCheckRun(run, best)) best = run;
   }
   return best;
-}
-
-function isLaterRun(a: CheckRunInfo, b: CheckRunInfo): boolean {
-  const keyA = a.startedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(a.startedAt);
-  const keyB = b.startedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(b.startedAt);
-  const timeA = Number.isNaN(keyA) ? Number.NEGATIVE_INFINITY : keyA;
-  const timeB = Number.isNaN(keyB) ? Number.NEGATIVE_INFINITY : keyB;
-  if (timeA !== timeB) return timeA > timeB;
-  return a.id > b.id;
 }
 
 /**
@@ -70,7 +62,7 @@ async function fetchAnchor(
  * present (see `GATE_FNS` in `index.ts`).
  */
 export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
-  const runs = await ctx.input.gh!.getCheckRuns(ctx.repoRef!, ctx.prFact!.headSha);
+  const runs = await ctx.input.gh!.getCheckRuns(ctx.repoRef!, ctx.prFact!.headSha, ctx.prFact!.number);
   if (!runs.ok) {
     return [makeFailure(runs)];
   }

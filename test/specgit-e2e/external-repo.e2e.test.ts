@@ -134,7 +134,7 @@ describe('e2e external repository adoption (#63)', () => {
       expect(init.status, init.stderr).toBe(0);
       const initEnvelope = JSON.parse(init.stdout);
       expect(initEnvelope.status).toBe('ok');
-      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [EXT_CHECK] });
+      expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [EXT_CHECK], automation: { merge: false, close_issues: false } });
       // The wired template selection (#63): an adopting repository gets
       // the portable external template, not the SpecGit-local one.
       expect(initEnvelope.harness).toEqual({ template: 'external' });

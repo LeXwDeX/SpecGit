@@ -7,6 +7,7 @@
 
 import * as fsConstants from 'node:fs';
 import { access } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 
 import { EXIT_USAGE, EXIT_UNKNOWN } from '../exit-codes.js';
 import { errorDiagnostic, type InitOutcome } from '../output.js';
@@ -14,7 +15,7 @@ import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { Evidence } from '../../kernel/evidence.js';
 import type { CommandContext, Policy } from '../types.js';
 import { detectInitInputs, type DetectionReport } from '../detect-checks.js';
-import { POLICY_LANGUAGES, type PolicyLanguage } from '../../record/policy.js';
+import { POLICY_LANGUAGES, isAutomationTargetBranch, type PolicyAutomation, type PolicyLanguage } from '../../record/policy.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR } from '../types.js';
 
 export interface InitOptions {
@@ -29,7 +30,104 @@ export interface InitOptions {
   language?: string;
   /** false (--no-ignore): skip the local-asset .gitignore block (#292); default writes it. */
   ignore?: boolean;
+  /** Explicit user answer to the automation question. Absent defaults to no off a TTY. */
+  automation?: string;
+  /** Merge destination chosen by the user; otherwise resolve the remote default after a yes. */
+  mergeTarget?: string;
   json?: boolean;
+}
+
+export interface InitInteraction {
+  promptAutomation?: (message: string) => Promise<string | null>;
+}
+
+function terminalAutomationPrompt(message: string): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const terminal = createInterface({ input: process.stdin, output: process.stderr });
+    terminal.once('SIGINT', () => {
+      const error = new Error('Interrupted.');
+      error.name = 'ExitPromptError';
+      reject(error);
+      terminal.close();
+    });
+    terminal.once('close', () => resolve(null));
+    terminal.question(message, (answer) => {
+      resolve(answer);
+      terminal.close();
+    });
+  });
+}
+
+export function validateAutomationOptions(options: InitOptions): InitOutcome | null {
+  if (options.automation !== undefined && options.automation !== 'yes' && options.automation !== 'no') {
+    return {
+      exit: EXIT_USAGE,
+      errors: [errorDiagnostic('automation_invalid', 'Automation must be answered yes or no.', {
+        fix: 'Pass --automation yes or --automation no; the default is no.',
+      })],
+    };
+  }
+  if (options.mergeTarget !== undefined && !isAutomationTargetBranch(options.mergeTarget)) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [errorDiagnostic('automation_target_invalid', 'The automation target must be a branch name.', {
+        fix: 'Pass --merge-target <branch>, such as main or release/stable, without revision syntax or options.',
+      })],
+    };
+  }
+  return null;
+}
+
+/** Every init invocation asks anew; a previous yes is never the prompt default. */
+export async function resolveInitAutomation(
+  options: InitOptions,
+  ctx: CommandContext,
+  root: string,
+  language: PolicyLanguage,
+  interaction: InitInteraction
+): Promise<InitOutcome | { automation: PolicyAutomation }> {
+  let answer = options.automation;
+  let defaulted = answer === undefined;
+  if (answer === undefined && ctx.stdinIsTTY) {
+    const question = language === 'zh'
+      ? '启用自动化合并和关闭已绑定 issue？ [yes/no]（默认 no）： '
+      : 'Enable automatic merge and closure of bound issues? [yes/no] (default no): ';
+    const response = (await (interaction.promptAutomation ?? terminalAutomationPrompt)(question))?.trim().toLowerCase();
+    defaulted = !response;
+    answer = response || 'no';
+    if (answer !== 'yes' && answer !== 'no') {
+      return {
+        exit: EXIT_USAGE,
+        errors: [errorDiagnostic('automation_invalid', 'Automation must be answered yes or no.', {
+          fix: 'Re-run init and answer yes or no (default no), or pass --automation yes|no.',
+        })],
+      };
+    }
+  }
+  if (answer !== 'yes') {
+    ctx.io.stderr(language === 'zh'
+      ? `自动化合并和关闭：no（${defaulted ? '默认；未明确选择 yes' : '已选择 no'}）。`
+      : `Automatic merge and issue closure: no (${defaulted ? 'default; no explicit yes was supplied' : 'selected no'}).`);
+    return { automation: { merge: false, close_issues: false } };
+  }
+
+  let target = options.mergeTarget;
+  if (target === undefined) {
+    const branch = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+    if (!branch.ok || !isAutomationTargetBranch(branch.value)) {
+      return {
+        exit: EXIT_UNKNOWN,
+        errors: [errorDiagnostic('automation_target_unknown', 'Cannot prove a valid remote default branch for automation.', {
+          fix: 'Check the remote HEAD, or pass the intended branch explicitly with --merge-target <branch>.',
+        })],
+      };
+    }
+    target = branch.value;
+  }
+  ctx.io.stderr(language === 'zh'
+    ? `自动化合并和关闭：yes；目标分支 ${target}。`
+    : `Automatic merge and issue closure: yes; target branch ${target}.`);
+  return { automation: { merge: true, target_branch: target, close_issues: true } };
 }
 
 /** Where the resolved required checks came from — the selection provenance (#310). */

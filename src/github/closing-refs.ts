@@ -16,6 +16,13 @@
  */
 export type ClosingRefsDialect = 'github' | 'gitlab';
 
+/** The repository whose issue numbers a scoped parse may return. */
+export interface ClosingRefScope {
+  projectPath: string;
+  /** Forge web host, including its declared non-default port. */
+  host?: string;
+}
+
 const GITHUB_CLOSING_REF_PATTERN =
   /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:#(\d+)|([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)|https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/(\d+))/gi;
 
@@ -67,17 +74,37 @@ function stripFencedCodeBlocks(body: string): string {
     .join('\n');
 }
 
-/**
- * Pure parser over a PR body: extracts issue numbers closed by the
- * platform's closing keywords. No network, no provider calls. The
- * dialect selects the grammar; the default keeps the historical GitHub
- * behavior byte-for-byte.
- */
-export function parseClosingRefs(body: string, dialect: ClosingRefsDialect = 'github'): Set<number> {
-  const refs = new Set<number>();
-  if (!body) {
-    return refs;
+function referenceMatchesScope(
+  scope: ClosingRefScope,
+  projectPath: string | undefined,
+  issueUrl: string | undefined
+): boolean {
+  if (issueUrl !== undefined) {
+    if (scope.host === undefined) return false;
+    try {
+      const url = new URL(issueUrl);
+      const expected = new URL(`https://${scope.host}`);
+      if (url.origin !== expected.origin || url.username !== '' || url.password !== '') return false;
+      projectPath = decodeURIComponent(url.pathname)
+        .replace(/^\//, '')
+        .replace(/\/(?:-\/)?issues\/\d+$/i, '');
+    } catch {
+      return false;
+    }
   }
+  // Bare #n is relative to the body repository; qualified references
+  // retain their project identity until this comparison (#375).
+  return projectPath === undefined || projectPath.toLowerCase() === scope.projectPath.toLowerCase();
+}
+
+interface ClosingReference {
+  number: number;
+  projectPath?: string;
+  issueUrl?: string;
+}
+
+function closingReferences(body: string, dialect: ClosingRefsDialect): ClosingReference[] {
+  const refs: ClosingReference[] = [];
   const searchable = stripFencedCodeBlocks(body);
   if (dialect === 'gitlab') {
     for (const phrase of searchable.matchAll(GITLAB_CLOSING_PHRASE)) {
@@ -85,8 +112,9 @@ export function parseClosingRefs(body: string, dialect: ClosingRefsDialect = 'gi
         // Group map: 1 = URL iid, 3 = full-path iid (2 is the path itself),
         // 4 = local iid — same shape as the GitHub extraction.
         const number = ref[1] ?? ref[3] ?? ref[4];
+        const issueUrl = ref[1] !== undefined ? ref[0] : undefined;
         if (number !== undefined) {
-          refs.add(Number(number));
+          refs.push({ number: Number(number), projectPath: ref[2], issueUrl });
         }
       }
     }
@@ -94,9 +122,38 @@ export function parseClosingRefs(body: string, dialect: ClosingRefsDialect = 'gi
   }
   for (const match of searchable.matchAll(GITHUB_CLOSING_REF_PATTERN)) {
     const number = match[1] ?? match[3] ?? match[4];
+    const issueUrl = match[4] !== undefined
+      ? match[0].slice(match[0].toLowerCase().indexOf('https://'))
+      : undefined;
     if (number !== undefined) {
-      refs.add(Number(number));
+      refs.push({ number: Number(number), projectPath: match[2], issueUrl });
     }
   }
   return refs;
+}
+
+/**
+ * Pure parser over a PR body. The historical two-argument numeric API
+ * is unchanged; acceptance supplies the optional repository scope.
+ */
+export function parseClosingRefs(
+  body: string,
+  dialect: ClosingRefsDialect = 'github',
+  scope?: ClosingRefScope
+): Set<number> {
+  return new Set(closingReferences(body, dialect)
+    .filter((ref) => scope === undefined || referenceMatchesScope(scope, ref.projectPath, ref.issueUrl))
+    .map((ref) => ref.number));
+}
+
+/** Automation refuses body references that could close unrelated issues. */
+export function hasUnboundClosingRefs(
+  body: string,
+  dialect: ClosingRefsDialect,
+  scope: ClosingRefScope,
+  issues: readonly number[]
+): boolean {
+  const bound = new Set(issues);
+  return closingReferences(body, dialect).some((ref) =>
+    !bound.has(ref.number) || !referenceMatchesScope(scope, ref.projectPath, ref.issueUrl));
 }

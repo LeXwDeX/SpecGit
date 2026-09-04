@@ -317,7 +317,7 @@ function driftError(message: string): IssueOutcome {
 /**
  * Usage validation for arguments that would create issues: non-empty and
  * conventionally typed. Runs before any side effect so invalid arguments
- * can never delete a record or create an issue.
+ * can never replace a record or create an issue.
  */
 function validateArgsForCreation(args: string[]): IssueOutcome | null {
   for (const arg of args) {
@@ -400,7 +400,7 @@ async function harnessCurrencyGate(args: {
  * still OPEN has no proven closure — GitHub's auto-close never fired
  * (refs removed post-merge, cross-repo reference, provider close-semantics).
  * Starting the next delivery on top of unproven closure is refused with
- * zero side effects, before the merged record could be deleted. Evidence
+ * zero side effects, before the merged record could be replaced. Evidence
  * that cannot be gathered fails closed (exit 3); the check keys on the
  * forge, never on prose.
  */
@@ -527,14 +527,14 @@ export async function runIssue(
     return mergedDeliveryError(existing.value);
   }
 
-  // Validate arguments BEFORE any destructive side effect, scoped to what
+  // Validate arguments BEFORE any write, scoped to what
   // those arguments would actually do:
   //  - fresh bootstrap: every argument is validated (today's contract);
-  //  - merged-record replacement: validated before the record is deleted;
+  //  - merged-record replacement: validated before starting fresh;
   //  - live resume: arguments are resume keys, not titles-to-create —
   //    only the still-unconsumed arguments of a partial record, the ones
   //    that would create issues, are validated.
-  // Invalid or absent arguments never delete or mutate the record.
+  // Invalid or absent arguments never mutate the record.
   if (existing === null) {
     if (args.length === 0) {
       return {
@@ -552,10 +552,10 @@ export async function runIssue(
     }
   }
 
-  // Replace a merged record only with validated replacement arguments —
-  // and only when the merged delivery's issues are proven closed (#347):
-  // the delete below is the one destructive step, so the gate re-runs
-  // here, immediately before it.
+  // Start fresh only after validation and proven closure (#347). Keep the
+  // completed record on disk until the first new issue is durable: the
+  // atomic writer replaces it, so naming, tag, forge, or write failures
+  // before that point preserve the completed delivery (#378).
   if (existing !== null && existing.ok && mergedEv.merged && args.length > 0) {
     const invalidReplacement = validateArgsForCreation(args);
     if (invalidReplacement) {
@@ -565,7 +565,6 @@ export async function runIssue(
     if (closure !== null) {
       return closure;
     }
-    await ctx.record.deleteRecord(root);
     existing = null;
   }
 
@@ -693,8 +692,9 @@ export async function runIssue(
           pr: forgePrUrl(base, platform, record.pr),
         }
       : undefined;
-  const issueEdit = platform === 'gitlab' ? 'glab issue edit' : 'gh issue edit';
+  const issueEdit = platform === 'gitlab' ? 'glab issue update' : 'gh issue edit';
   const prEdit = platform === 'gitlab' ? 'glab mr update' : 'gh pr edit';
+  const bodyFileFlag = platform === 'gitlab' ? '--description-file' : '--body-file';
   const reasonFor = human.issueHandoffReasons();
   const nextActions: NextAction[] | undefined =
     record.pr !== undefined
@@ -702,13 +702,13 @@ export async function runIssue(
           {
             code: 'issue_bodies',
             command: record.issues
-              .map((n) => `${issueEdit} ${n} --body-file <file-${n}>`)
+              .map((n) => `${issueEdit} ${n} ${bodyFileFlag} <file-${n}>`)
               .join(' && '),
             reason: reasonFor['issue_bodies'] ?? '',
           },
           {
             code: 'pr_brief',
-            command: `${prEdit} ${record.pr} --body-file <file-pr>`,
+            command: `${prEdit} ${record.pr} ${bodyFileFlag} <file-pr>`,
             reason: reasonFor['pr_brief'] ?? '',
           },
           {
@@ -985,13 +985,12 @@ export async function createOrAdoptIssues(deps: {
       delivery,
       context: { ...context, branch },
       issues: [...issues],
-      ...(issueKinds.size > 0
-        ? {
-            issueKinds: [...issueKinds.entries()]
-              .sort((a, b) => a[0] - b[0])
-              .map(([issue, kind]) => ({ issue, kind })),
-          }
-        : {}),
+      // The writer preserves omitted kinds for surgery callers. Bootstrap
+      // owns the full map, including empty, so a replaced delivery cannot
+      // inherit kinds from its completed predecessor.
+      issueKinds: [...issueKinds.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([issue, kind]) => ({ issue, kind })),
     };
     try {
       await ctx.record.writeRecord(root, record);

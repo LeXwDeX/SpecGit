@@ -129,19 +129,13 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
   const gates: GateResult[] = GATE_ORDER.map((id) => {
     const failures = results.get(id);
     if (failures === undefined) {
-      // A merged record on main has no live delivery gates left to run —
-      // mark them passed-by-history rather than skipped so the verdict is
-      // complete.
-      if (ctx.mergedRecord) {
-        return { id, status: 'pass', failures: [] };
-      }
       return { id, status: 'skipped', failures: [] };
     }
     return { id, status: failures.length > 0 ? 'fail' : 'pass', failures };
   });
 
   const allFailures = [...results.values()].flat();
-  const evaluatedAll = ctx.mergedRecord || GATE_ORDER.every((id) => results.has(id));
+  const evaluatedAll = GATE_ORDER.every((id) => results.has(id));
   const evidenceBlocked = allFailures.some((f) => isEvidenceKind(f.code));
   const classification: VerdictClassification = evidenceBlocked
     ? 'unknown'
