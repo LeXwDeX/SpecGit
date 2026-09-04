@@ -1,36 +1,10 @@
 version: 1
-delivery: full-project-audit
+delivery: support-npm-12
 context:
   kind: branch
-  branch: docs/387-full-project-audit
+  branch: fix/419-support-npm-12
 issues:
-  - 387
-  - 389
-  - 390
-  - 391
-  - 392
-  - 393
-  - 394
-  - 395
-  - 396
-  - 397
-  - 398
-  - 399
-  - 400
-  - 401
-  - 402
-  - 403
-  - 404
-  - 405
-  - 406
-  - 407
-  - 408
-  - 409
-  - 410
-  - 411
-  - 416
-  - 417
+  - 419
 issueKinds:
-  - issue: 387
-    kind: kind::docs
-pr: 388
+  - issue: 419
+    kind: kind::fix
