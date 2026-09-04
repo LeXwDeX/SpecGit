@@ -1,5 +1,11 @@
 # specgit
 
+## 1.13.1
+
+### Patch Changes
+
+- [#450](https://github.com/LeXwDeX/SpecGit/pull/450) [`fc7766d`](https://github.com/LeXwDeX/SpecGit/commit/fc7766dc79beb9a51347be540fd0bcd06a5dfb25) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Exclude the repository's generated version proposal from bound-delivery completion, and wait through bounded npm registry propagation before creating release tags and GitHub Release metadata. Give real acceptance e2e subprocess scenarios an explicit bounded Windows budget while retaining the stricter unit-test default, and make generated-workflow parity checks independent of Git's platform newline conversion.
+
 ## 1.13.0
 
 ### Minor Changes
