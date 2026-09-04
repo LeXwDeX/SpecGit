@@ -5,6 +5,7 @@ context:
   branch: fix/435-wait-for-settled
 issues:
   - 435
+  - 437
 issueKinds:
   - issue: 435
     kind: kind::fix
