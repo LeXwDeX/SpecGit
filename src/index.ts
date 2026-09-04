@@ -73,6 +73,7 @@ export type {
   IssueFact,
   PrFact,
   CheckRunInfo,
+  MergeChecksFact,
   IssueCreation,
   PrCreation,
   IssueCommentCreation,

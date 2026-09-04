@@ -1,7 +1,7 @@
 ---
 name: specgit-issue
 description: Start a SpecGit delivery — create or reuse GitHub issues, branch, draft PR that closes them, and record the binding, in one command.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit

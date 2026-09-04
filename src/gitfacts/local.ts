@@ -54,8 +54,9 @@ export interface LocalGitAdapterOptions {
 }
 
 /**
- * Read-only local git facts. Every probe is null-on-failure; the adapter
- * never writes to git and never touches the network.
+ * Local git facts and delivery-scoped writes. Fact probes are read-only
+ * and null-on-failure; explicit write methods handle branch, commit and
+ * push operations through git.
  */
 export class LocalGitAdapter implements GitPort {
   private readonly env: NodeJS.ProcessEnv | undefined;
@@ -205,7 +206,7 @@ export class LocalGitAdapter implements GitPort {
     return push.ok ? ok({ pushed: true }) : push;
   }
 
-  async remoteDefaultBranch(root: string): Promise<Evidence<string>> {
+  async remoteDefaultBranch(root: string, options: { requireEvidence?: boolean } = {}): Promise<Evidence<string>> {
     const resolved = await this.write('branch', [
       '-C',
       root,
@@ -215,9 +216,16 @@ export class LocalGitAdapter implements GitPort {
     ]);
     if (resolved.ok) {
       const name = resolved.value.trim().replace(/^origin\//, '');
-      if (name) {
+      if (name && (!options.requireEvidence || (resolved.value.trim().startsWith('origin/') && name !== 'HEAD'))) {
         return ok(name);
       }
+    }
+    if (options.requireEvidence) {
+      return fail(
+        'git_default_branch_unknown',
+        'The local origin/HEAD does not prove a remote default branch.',
+        'Resolve origin/HEAD from the remote, or explicitly choose the intended target branch.'
+      );
     }
     // origin/HEAD is a local convenience ref and is often unset in fresh
     // clones; `gh` would resolve the default branch server-side. `main`

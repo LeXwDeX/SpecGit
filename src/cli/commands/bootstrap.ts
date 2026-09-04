@@ -306,7 +306,7 @@ export async function runBootstrapSteps(
  * PR binding: discover, adopt, or create the draft PR for the head
  * branch — the open PR for the branch is the remotely discoverable
  * idempotency marker — then post the traceability comment (#160) on
- * every bound issue and persist the number as the exactly-once marker.
+ * every bound issue and persist the number as a durable resume marker.
  * The scaffold body is written exactly once, on the fresh-creation path
  * (#87).
  */
@@ -367,10 +367,11 @@ async function bindPullRequest(deps: {
   }
   // Traceability edge issue→branch (#160): the moment the PR binding is
   // first established, every bound issue gets the branch and PR as a
-  // comment. `record.pr` below is the persisted exactly-once marker —
+  // comment. `record.pr` below is the durable resume marker —
   // a comment failure fails closed *before* the number lands in the
   // record, so a re-run re-enters this block (fresh or adopt path) and
-  // posts it; a completed binding never comments again.
+  // reconciles each exact-body comment through the provider; a completed
+  // binding never comments again. Concurrent processes are not serialized.
   const commentBody = human.issueTraceabilityComment(branch, prNumber);
   for (const issueNumber of record.issues) {
     const commentEv = await ctx.gh.addIssueComment(repo, issueNumber, commentBody);

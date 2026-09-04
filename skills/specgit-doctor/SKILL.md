@@ -1,7 +1,7 @@
 ---
 name: specgit-doctor
 description: Resolve a SpecGit exit 3 — run the doctor probes, apply each fix, re-run until the verdict can run again.
-allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
   author: specgit

@@ -144,6 +144,59 @@ describe('acceptance evaluator', () => {
     expect(verdict.evidence.prHead).toBe(HEAD);
   });
 
+  it.each([
+    'Closes unrelated/repository#123',
+    'Closes https://github.com/unrelated/repository/issues/123',
+  ])('rejects a same-number closing reference to another repository: %s (#375)', async (body) => {
+    const verdict = await evaluate(input({
+      gh: new MockForgeProvider({
+        pr: ok(makePrFact({ headSha: HEAD, body })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      }),
+    }));
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.exitCode).toBe(1);
+    expect(gate(verdict, 'closing').failures).toMatchObject([
+      { code: 'closing_refs_incomplete', detail: { missing: [123] } },
+    ]);
+  });
+
+  it.each([
+    'Closes #123',
+    'Closes LeXwDeX/SpecGit#123',
+    'Closes https://github.com/lexwdex/specgit/issues/123',
+  ])('accepts a same-repository GitHub reference: %s (#375)', async (body) => {
+    const verdict = await evaluate(input({
+      gh: new MockForgeProvider({
+        pr: ok(makePrFact({ headSha: HEAD, body })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      }),
+    }));
+    expect(verdict.accepted).toBe(true);
+    expect(gate(verdict, 'closing').status).toBe('pass');
+  });
+
+  it.each([
+    ['Closes #123', true],
+    ['Closes group/sub/project#123', true],
+    ['Closes https://git.example.com:8443/group/sub/project/-/issues/123', true],
+    ['Closes group/other/project#123', false],
+    ['Closes https://other.example.com:8443/group/sub/project/-/issues/123', false],
+    ['Closes https://git.example.com/group/sub/project/-/issues/123', false],
+  ])('scopes a GitLab closing reference to the declared repository: %s (#375)', async (body, accepted) => {
+    const verdict = await evaluate(input({
+      git: new StubGitPort(facts({ originUrl: 'https://git.example.com:8443/group/sub/project.git' })),
+      gitlabHost: 'git.example.com:8443',
+      gh: new MockForgeProvider({
+        pr: ok(makePrFact({ headSha: HEAD, body })),
+        checkRuns: ok([makeCheckRun('All checks passed')]),
+      }),
+    }));
+    expect(verdict.accepted).toBe(accepted);
+    expect(verdict.exitCode).toBe(accepted ? 0 : 1);
+    expect(gate(verdict, 'closing').status).toBe(accepted ? 'pass' : 'fail');
+  });
+
   it('ordered_issues rejects when a smaller open issue exists (issue_out_of_order)', async () => {
     const gh = new MockForgeProvider({
       issues: {
@@ -274,9 +327,35 @@ describe('acceptance evaluator', () => {
     expect(verdict.accepted).toBe(true);
     expect(verdict.exitCode).toBe(0);
     expect(verdict.state).toBe('completed');
+    expect(verdict.complete).toBe(true);
+    expect(verdict.gates.every((g) => g.status === 'pass')).toBe(true);
     expect(git.headContainsCalls).toEqual([MERGE_SHA]);
     expect(verdict.warnings.map((w) => w.code)).toContain('record_of_merged_delivery');
   });
+
+  it.each(['provider', 'issues'] as const)(
+    'keeps historical evidence incomplete when the %s gate cannot finish (#379)',
+    async (failedGate) => {
+      const unavailable = fail<never>('gh_transport', 'evidence unavailable');
+      const gh = new MockForgeProvider({
+        pr: ok(makePrFact({ state: 'merged', mergeCommitSha: MERGE_SHA })),
+        ...(failedGate === 'provider' ? { preflight: unavailable } : { issues: { 123: unavailable } }),
+      });
+      const git = new StubGitPort(facts({ branch: 'main' }), () => ok({ contained: true }));
+      const verdict = await evaluate(input({ git, gh }));
+      expect(verdict.classification).toBe('unknown');
+      expect(verdict.exitCode).toBe(3);
+      expect(verdict.accepted).toBe(false);
+      expect(verdict.state).toBe('bound');
+      expect(verdict.complete).toBe(false);
+      expect(gate(verdict, 'context').status).toBe('pass');
+      expect(gate(verdict, failedGate).status).toBe('fail');
+      for (const id of ['sequence', 'pr', 'closing', 'checks'] as const) {
+        expect(gate(verdict, id).status).toBe('skipped');
+      }
+      expect(verdict.warnings.map((w) => w.code)).not.toContain('record_of_merged_delivery');
+    }
+  );
 
   it('keeps branch_mismatch when the bound PR is open, not merged', async () => {
     const gh = new MockForgeProvider({

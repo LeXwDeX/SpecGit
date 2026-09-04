@@ -8,8 +8,9 @@
         |
         v
   four clean criteria hold -> gh pr ready -> specgit finish
-         |-- exit 0 --> merge --merge --delete-branch
-         |             -> release (changesets)
+         |-- exit 0 --> enabled specgit pr --merge (all CI + target match)
+         |             -> confirmed merge -> configured bound issue closure
+         |             -> authorized release (changesets)
          |             -> next specgit issue (replaces the completed
          |                record atomically, #351)
          '-- exit 1/3 -> back to FIX; never weaken a gate to pass
@@ -112,8 +113,9 @@ their judgements.
 
 At most **3 fast rounds** between full reviews, at most **2 full
 reviews** per loop run. A cap breach is fail-closed: the loop stops,
-no merge, and the human is asked exactly once — **late, with
-everything prepared**. The escalation brief contains:
+no merge. If existing user authorization covers a bounded extension or
+deferral, apply it and record the decision; otherwise present the missing
+decision with everything prepared. The escalation brief contains:
 
 - Rounds spent per tier; which cap broke.
 - Every unresolved finding, each already dispositioned into one of
@@ -121,7 +123,7 @@ everything prepared**. The escalation brief contains:
 - The clean-criteria checklist showing exactly which of the four
   still fails.
 
-The human picks one, and only one:
+The decision resolves one of these paths:
 
 1. **Grant more rounds** — one bounded extension (e.g. one more full
    review + its fast rounds), with a stated reason.
@@ -135,24 +137,30 @@ Silent convergence is never faked; neither is an unbounded loop.
 
 ### DEBUG discipline
 
-CI red after local green: reproduce locally first. A locally
-reproducible failure is fixed and verified locally before another
-push; a flaky failure gets one `gh run rerun --failed` before it is
-investigated as real. The Windows job never sets the loop's pace.
+CI red after local green: reproduce locally first. Fix and verify a locally
+reproducible failure before another push. A transient failure gets one
+authenticated CLI retry before investigation. Use existing delivery
+authorization for repairs and retries; if the platform requires a permission
+the current session lacks, report that specific blocker. Every CI result is
+a merge input, including Windows jobs.
 
 ## Merge and release (the merge licence, not a checkpoint)
 
-1. All four clean-criteria hold → `gh pr ready` + `gh pr merge --auto
-   --merge` → CI green → `specgit finish` — exit 0 is the only merge
-   licence (a gate, not a question; never bypassed; auto-merge cannot
-   bypass it either: the verdict is a required check, so GitHub merges
-   only when it is green).
-2. The auto-merge lands the PR as a merge commit and deletes the branch.
-   The merged record on `main` is
+1. Complete the authorized PR body and ready transition, wait for CI, and
+   run `specgit finish --json`. Exit 0 supplies acceptance; `finish` is
+   read-only. Once all four clean criteria hold and automation is enabled,
+   continue with `specgit pr --merge --json`. It requires the configured
+   target branch and all current-head CI checks to pass, submits the expected
+   SHA, and confirms the platform merge before closing bound issues when
+   configured. Existing user authorization needs no repeat approval.
+2. Automation defaults to no and requires the user's own yes during
+   `init --automation yes --merge-target main`; `init --force` permits a new
+   choice. Agents cannot answer yes for the user. Platform permissions and
+   protection remain binding. After the confirmed merge, the record on `main` is
    completed history (#351): the next `specgit issue` replaces it
    atomically — `unbind` is only for abandoning or resetting, never the
    post-merge step.
-3. Release follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
+3. An authorized release follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
    (changesets): changeset PR → version PR → approve the workflow runs →
    merge → `npm view specgit version` confirms publication.
 

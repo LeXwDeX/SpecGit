@@ -1,11 +1,32 @@
 version: 1
-delivery: add-patch-changeset
+delivery: reliable-automated-delivery
 context:
   kind: branch
-  branch: chore/372-add-patch-changeset
+  branch: fix/375-reliable-automated-delivery
 issues:
-  - 372
+  - 375
+  - 376
+  - 377
+  - 378
+  - 379
+  - 380
+  - 381
+  - 382
 issueKinds:
-  - issue: 372
-    kind: kind::chore
-pr: 373
+  - issue: 375
+    kind: kind::fix
+  - issue: 376
+    kind: kind::fix
+  - issue: 377
+    kind: kind::fix
+  - issue: 378
+    kind: kind::fix
+  - issue: 379
+    kind: kind::fix
+  - issue: 380
+    kind: kind::fix
+  - issue: 381
+    kind: kind::refactor
+  - issue: 382
+    kind: kind::feat
+pr: 383

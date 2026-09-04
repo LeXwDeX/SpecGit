@@ -42,3 +42,16 @@ required_checks:
 # OPEN issue with a smaller number than this delivery's smallest bound issue
 # may exist (issue_out_of_order). Default is false (gate passes vacuously).
 # ordered_issues: true
+
+# Optional: authorize merging an accepted delivery into one named branch,
+# then close its bound issues after the forge confirms the merge.
+# `init` and `init --force` ask yes/no, default no, on every invocation.
+# Scripts may supply the user's answer with --automation yes|no. Without
+# a TTY or an explicit answer, init writes merge: false / close_issues: false.
+# A yes uses --merge-target <branch> or the proven remote default branch;
+# it never guesses main. Other policy fields survive an init --force.
+# The settings below are an opt-in example, not the default:
+# automation:
+#   merge: true
+#   target_branch: main
+#   close_issues: true

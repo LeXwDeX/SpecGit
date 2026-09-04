@@ -21,8 +21,8 @@ export interface GateRegistration {
   run: GateFn;
   /**
    * Whether this gate applies at this point in the walk. An inapplicable
-   * gate ends the walk unrecorded — later gates then read as skipped
-   * (or passed-by-history for a merged record), never as failures.
+   * gate ends the walk unrecorded — later gates then read as skipped,
+   * never as proved passes or failures.
    */
   applies?: (context: GateContext) => boolean;
 }

@@ -15,21 +15,20 @@ in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
   push --> CI on the PR head (SpecGit Acceptance runs finish --json)
         |
         v
-  gh pr ready <n> + merge --auto  ->  specgit finish  --exit 0--> push-right
-        |                    (exit 1/3: fix what it names) checkpoint
+  gh pr ready <n> -> CI green -> specgit finish --exit 0--> accepted
+        |                    (exit 1/3: repair and retry)
         v
-  auto-merge fires when the required checks (the
-  CI verdict among them) pass -> next specgit issue
-        |                        (atomically replaces the
-         v                        completed record, #351)
+  enabled specgit pr --merge -> confirmed merge + bound issue closure
+        |                     (current head, configured target, all CI)
+        v
   next delivery
 ```
 
 ## Trigger
 
-A **delivery-bound issue** — a GitHub issue on `LeXwDeX/SpecGit`, labeled
-`delivery` and assigned for work — starts the loop. Nothing else does: no
-verbal requests, no drive-by fixes, no self-filed TODOs.
+A user-authorized delivery starts the loop. Reuse or create its tracker
+issues with `specgit issue` before editing files; the conversation's agreed
+scope supplies the issue bodies. Read-only questions need no binding.
 
 ## Slice discipline (TDD)
 
@@ -60,6 +59,9 @@ Per slice, in order:
   writes the record, commits, and pushes. Re-run the same command to
   resume an interrupted bootstrap; `specgit bind` remains as the
   script alias for record surgery.
+- Fill each created issue's Why / Scope / Approach / Acceptance immediately
+  after bootstrap, then implement. Update the PR body with the delivered
+  changes and evidence, retaining every bound closing reference.
 
 ## PR and gates
 
@@ -71,31 +73,32 @@ green at the PR head commit:
 - `pnpm run lint`
 - CI green — every check named in `spec_git/policy.yaml`
 
-Mark the PR ready immediately after the final push (`gh pr ready` on GitHub,
-`glab mr update <number> --ready` on GitLab), then enable auto-merge on the
-GitHub side (`gh pr merge <n> --auto --merge`): by the time every required
-check — SpecGit Acceptance, the CI-side `finish` verdict, included — is
-green at the head, no human decision remains, so the merge fires the instant
-the last check passes. Auto-merge cannot bypass the gate: branch protection
-only merges when every required check is green, and the verdict is one of
-them. A draft always fails the
-verdict (`pr_draft`), and both required workflows run in cancel-in-progress
-concurrency groups scoped to the ref (#319): the ready transition supersedes
-the push-triggered runs instead of stacking after them, so a well-timed
-delivery costs one effective matrix. Delaying the ready only donates partial
-runner time to runs the transition will cancel.
+Mark the PR ready after the final push (`gh pr ready` on GitHub,
+`glab mr update <number> --ready` on GitLab); a draft fails the verdict
+(`pr_draft`). Follow CI to completion, repair failures or retry a transient
+failure within the existing authorization, and run `specgit finish --json`.
+With automation enabled, `specgit pr --merge --json` then rechecks acceptance,
+the configured target branch, and all CI at the current head before submitting
+the merge with that head SHA. Platform protection remains in force.
 
-## Push-right: one checkpoint
+## Authorization and the PR brief
 
-The single human checkpoint is the **PR brief**, approved once, prepared
-only when the gates are green:
+The **PR brief** records the reviewable result:
 
 - **what** changed — slice-by-slice summary
 - **why** — the issue(s) the delivery closes
 - **links** — issue(s), PR, CI run at the PR head
 
-No intermediate plan sign-offs, status pings, or approvals before it. After
-the brief is approved, do not push decisions upward again.
+Existing user authorization remains valid through issue and PR edits,
+readiness, CI repair or retry, acceptance, and the authorized merge. The brief
+does not create another approval checkpoint. If authorization or platform
+permission is missing, name that gap with the prepared result.
+
+Automation defaults to no. The user must personally choose yes for
+`specgit init --automation yes --merge-target main`; an agent cannot answer
+on their behalf. `init --force` allows the user to reconsider the choice.
+Without enabled automation, `pr --merge` refuses; these workflow instructions
+do not enable it or grant platform permissions.
 
 ## Pre-merge quality loop
 
@@ -110,12 +113,13 @@ cap-breach escalation brief are binding:
 `specgit finish` is the machine verdict and the only definition of done
 (`specgit accept` is the script alias running the same evaluation):
 
-- exit `0` → the human may merge;
+- exit `0` → accepted; continue the authorized merge with configured automation;
 - exit `1` → fix exactly what the gates named and re-run;
 - exit `3` → evidence is missing; run `specgit doctor`, fix the
   environment, then re-run.
 
-Human merge happens **after** `finish` exits `0` — never instead of it.
+`finish` remains read-only. A merge requires its exit `0`; automated merge
+also requires all CI checks to pass and the target branch to match policy.
 
 ## Merge method and lifecycle (the traceability triple)
 
@@ -129,8 +133,9 @@ after the merge, so the merge method is pinned:
 - **Auto-delete the branch.** `delete_branch_on_merge` is on: once the PR
   merges, the delivery branch is deleted by GitHub; its commits remain
   reachable through the merge commit.
-- **Issues close via the scaffold.** The `Closes #n` closing references
-  the bootstrap wrote close every bound issue at merge time.
+- **Issues close after merge.** The scaffold retains `Closes #n` for every
+  bound issue. Configured automation confirms the merge before closing those
+  issues explicitly; existing closed issues make a retry idempotent.
 - **Issue-side link.** The bootstrap comments the delivery branch and PR
   number on every bound issue (#160), so the triple is navigable from
   the issue side too — including while the PR is still open.
