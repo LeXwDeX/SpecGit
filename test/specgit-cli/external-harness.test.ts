@@ -114,12 +114,13 @@ describe('external acceptance harness template', () => {
       'pnpm',
       'bin/specgit.js',
       'frozen-lockfile',
-      'cache:',
       'run build',
       'build cli',
     ]) {
       expect(lower).not.toContain(banned);
     }
+    expect(lower).not.toMatch(/^\s+cache:/m);
+    expect(lower).toContain('package-manager-cache: false');
   });
 
   it('runs the verdict through the installed CLI, not a workspace path', () => {

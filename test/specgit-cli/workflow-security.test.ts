@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'yaml';
 
 import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
+import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 
 // #66: security invariants for the workflows that execute untrusted code.
 // Invariants throw (instead of returning booleans) so the mutation tests
@@ -21,6 +24,7 @@ const readWorkflow = (name: string): string =>
 
 interface Step {
   name?: string;
+  if?: string;
   uses?: string;
   with?: Record<string, unknown>;
   run?: string;
@@ -128,11 +132,12 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
       throw new Error(`${label}: finish step must use GH_TOKEN: \${{ github.token }}`);
     }
   }
-  const headCheckout = steps.find(
-    (step) => typeof step.with?.ref === 'string' && step.with.ref.includes('github.head_ref'),
-  );
-  if (!headCheckout) {
-    throw new Error(`${label}: head-ref checkout missing (execution-context gate reads live git)`);
+  const headCheckout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  const branch = steps.find((step) => step.name === 'Restore the event branch');
+  if (headCheckout?.with?.ref !== '${{ github.event.pull_request.head.sha || github.sha }}' ||
+      branch?.if !== "github.event_name == 'pull_request' || github.ref_type == 'branch'" ||
+      branch.env?.SPECGIT_BRANCH !== '${{ github.head_ref || github.ref_name }}') {
+    throw new Error(`${label}: immutable event checkout and branch context restoration are required`);
   }
 };
 
@@ -262,6 +267,7 @@ const assertOidcTokenNeverLogged = (text: string, label: string): void => {
 describe('workflow security invariants (#66, #69, #71)', () => {
   const acceptFile = readWorkflow('specgit-accept.yml');
   const acceptTemplate = harnessWorkflowYaml().replace(/\r\n/g, '\n');
+  const externalTemplate = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.2.3' });
   const ciFile = readWorkflow('ci.yml');
   const securityFile = readWorkflow('security.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
@@ -273,12 +279,14 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('the untrusted acceptance gate keeps zero cache mechanisms (file and generated template)', () => {
     assertNoCacheMechanism(acceptFile, 'specgit-accept.yml');
     assertNoCacheMechanism(acceptTemplate, 'harnessWorkflowYaml()');
+    assertNoCacheMechanism(externalTemplate, 'externalAcceptanceWorkflowYaml()');
   });
 
   it('untrusted-trigger workflows grant read-only token scopes', () => {
     const surfaces: Array<[string, string]> = [
       ['specgit-accept.yml', acceptFile],
       ['harnessWorkflowYaml()', acceptTemplate],
+      ['externalAcceptanceWorkflowYaml()', externalTemplate],
       ['ci.yml', ciFile],
       ['security.yml', securityFile],
     ];
@@ -291,6 +299,7 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     const surfaces: Array<[string, string]> = [
       ['specgit-accept.yml', acceptFile],
       ['harnessWorkflowYaml()', acceptTemplate],
+      ['externalAcceptanceWorkflowYaml()', externalTemplate],
       ['ci.yml', ciFile],
       ['security.yml', securityFile],
     ];
@@ -302,6 +311,36 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('acceptance gate semantics survive the hardening (triggers, head-ref checkout, finish, token)', () => {
     assertAcceptanceGateSemantics(acceptFile, 'specgit-accept.yml');
     assertAcceptanceGateSemantics(acceptTemplate, 'harnessWorkflowYaml()');
+    assertAcceptanceGateSemantics(externalTemplate, 'externalAcceptanceWorkflowYaml()');
+  });
+
+  it.skipIf(process.platform === 'win32').each([
+    ['self', acceptTemplate], ['external', externalTemplate],
+  ])('%s restores the branch without following a newer remote head and rejects invalid names', (_label, template) => {
+    const workflow = parse(template) as Workflow;
+    const step = allSteps(workflow).find((item) => item.name === 'Restore the event branch');
+    expect(step?.run).toBeDefined();
+    const root = mkdtempSync(path.join(tmpdir(), 'specgit-event-branch-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    try {
+      git('init', '--quiet');
+      git('-c', 'user.name=SpecGit Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'event');
+      const event = git('rev-parse', 'HEAD');
+      git('-c', 'user.name=SpecGit Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'newer');
+      git('update-ref', 'refs/remotes/origin/fix/event', git('rev-parse', 'HEAD'));
+      git('checkout', '--detach', event);
+      const run = (name: string) => execFileSync('bash', ['-e', '-c', step!.run!], {
+        cwd: root, env: { ...process.env, SPECGIT_BRANCH: name }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      expect(() => run('-invalid')).toThrow();
+      expect(git('rev-parse', 'HEAD')).toBe(event);
+      run('fix/event');
+      expect(git('branch', '--show-current')).toBe('fix/event');
+      expect(git('rev-parse', 'HEAD')).toBe(event);
+      expect(git('rev-parse', 'origin/fix/event')).not.toBe(event);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('the product CI re-verdicts on the draft→ready transition (#316)', () => {
@@ -397,7 +436,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('removing the head-ref checkout (breaking the gate) is detected', () => {
-    const mutant = acceptFile.replace('          ref: ${{ github.head_ref || github.ref }}\n', '');
+    const mutant = acceptFile.replace('          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n', '');
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow();
   });
 
