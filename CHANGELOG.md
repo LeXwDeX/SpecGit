@@ -1,5 +1,17 @@
 # specgit
 
+## 1.12.0
+
+### Minor Changes
+
+- [#388](https://github.com/LeXwDeX/SpecGit/pull/388) [`5fe3cca`](https://github.com/LeXwDeX/SpecGit/commit/5fe3cca707fe122071cc7decf2067317fb06999a) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Add explicitly selected project title and issue-label rules, configured through interactive choices or script flags. Validate real forge titles and labels during acceptance and reject invalid choices before bootstrap writes.
+
+  Repair delivery recovery and reference validation, GitLab scaffolds and CI detection, generic agent setup, portable generated workflows, preservation of user hooks and symlink rollback, git path handling, diagnostic redaction, branch protection preservation, and partial release recovery.
+
+### Patch Changes
+
+- [#420](https://github.com/LeXwDeX/SpecGit/pull/420) [`4f34b02`](https://github.com/LeXwDeX/SpecGit/commit/4f34b02cfce20fc5321c40bc7e287be566ac3636) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Support npm 12 JSON metadata in package verification and release recovery while retaining compatibility with older npm versions. Reject ambiguous package results and keep exact version, source commit, and publication-absence checks intact.
+
 ## 1.11.0
 
 ### Minor Changes
