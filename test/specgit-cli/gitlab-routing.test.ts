@@ -32,7 +32,7 @@ describe('GitLab completion routing transaction', () => {
   }
   function files(): Record<string, string> {
     return Object.fromEntries(fs.readdirSync(root, { recursive: true }).filter((name) =>
-      fs.statSync(path.join(root, String(name))).isFile()).map((name) => [String(name), fs.readFileSync(path.join(root, String(name)), 'base64')]));
+      fs.statSync(path.join(root, String(name))).isFile()).map((name) => [String(name).split(path.sep).join('/'), fs.readFileSync(path.join(root, String(name)), 'base64')]));
   }
   const enabled = { requiredCheck: ['build'], protect: false, automation: 'yes', mergeTarget: 'main' };
 
