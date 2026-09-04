@@ -6,6 +6,7 @@ context:
 issues:
   - 448
   - 449
+  - 451
 issueKinds:
   - issue: 448
     kind: kind::fix
