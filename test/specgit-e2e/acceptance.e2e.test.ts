@@ -47,6 +47,13 @@ import {
 
 const cleanupDirs: string[] = [];
 
+// Every scenario in this file crosses real git and CLI process boundaries. Hosted
+// Windows runs 33901785101 and 33906138650 independently exceeded the 10s unit
+// budget; keep that default strict elsewhere and bound these subprocess cases at 30s.
+const acceptanceIt = (name: string, run: () => Promise<void>): void => {
+  it(name, { timeout: 30_000 }, run);
+};
+
 function track<T extends { dir?: string; mainDir?: string; worktreeDir?: string }>(
   fixture: T
 ): T {
@@ -71,12 +78,7 @@ async function acceptJson(
 }
 
 describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
-  // Two full CLI passes (issue bootstrap with real git transport, finish)
-  // against the fake forge: the default 10s budget intermittently overruns
-  // on the serialized 1-worker windows-pwsh runner (observed 2026-08-28,
-  // run 33137889212) — the same headroom the issue-bootstrap e2e already
-  // carries (issue.e2e.test.ts, 30s). Runtime variance, not a regression.
-  it('accepts with exit 0: issues merge across binds, one PR closes all three', { timeout: 30_000 }, async () => {
+  acceptanceIt('accepts with exit 0: issues merge across binds, one PR closes all three', async () => {
     const repo = track(makeRepo('feat/one-pr-n-issues'));
 
     const gh = createFakeGh(repo.dir, greenGhRules({
@@ -128,7 +130,7 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
     }
   });
 
-  it('uses one PR identity for N bound issues while checking each issue occupancy', async () => {
+  acceptanceIt('uses one PR identity for N bound issues while checking each issue occupancy', async () => {
     const repo = track(makeRepo('feat/aggregate'));
 
     const gh = createFakeGh(repo.dir, greenGhRules({
@@ -164,9 +166,7 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
 });
 
 describe('e2e acceptance: worktree mode', () => {
-  // Multiple real git/CLI subprocesses exceeded 10s on Windows (run
-  // 33901785101: 10,016ms); use the neighboring real-CLI case's 30s budget.
-  it('accepts a linked-worktree delivery with exit 0 and records worktree identity', { timeout: 30_000 }, async () => {
+  acceptanceIt('accepts a linked-worktree delivery with exit 0 and records worktree identity', async () => {
     const wt = track(makeWorktree('feat/worktree-delivery'));
 
     const gh = createFakeGh(wt.mainDir, greenGhRules({
@@ -199,7 +199,7 @@ describe('e2e acceptance: worktree mode', () => {
     expect(fs.existsSync(path.join(wt.mainDir, '.specgit.yaml'))).toBe(false);
   });
 
-  it('rejects when the bound worktree record is evaluated from the wrong checkout', async () => {
+  acceptanceIt('rejects when the bound worktree record is evaluated from the wrong checkout', async () => {
     const wt = track(makeWorktree('feat/wt-context'));
 
     const gh = createFakeGh(wt.mainDir, greenGhRules({
@@ -264,13 +264,13 @@ describe('e2e acceptance: CI evidence drives the verdict', () => {
     return acceptJson(repo.dir, gh.env());
   }
 
-  it('successful CI accepts (exit 0)', async () => {
+  acceptanceIt('successful CI accepts (exit 0)', async () => {
     const { result, envelope } = await runWithChecks([{ name: REQUIRED_CHECK }]);
     expect(result.exitCode).toBe(0);
     expect(envelope.verdict.classification).toBe('accepted');
   });
 
-  it('failed CI rejects (exit 1, checks_failed)', async () => {
+  acceptanceIt('failed CI rejects (exit 1, checks_failed)', async () => {
     const { result, envelope } = await runWithChecks([
       { name: REQUIRED_CHECK, conclusion: 'failure' },
     ]);
@@ -281,7 +281,7 @@ describe('e2e acceptance: CI evidence drives the verdict', () => {
     );
   });
 
-  it('pending CI rejects (exit 1, checks_pending)', async () => {
+  acceptanceIt('pending CI rejects (exit 1, checks_pending)', async () => {
     const { result, envelope } = await runWithChecks([
       { name: REQUIRED_CHECK, status: 'in_progress', conclusion: null },
     ]);
@@ -292,7 +292,7 @@ describe('e2e acceptance: CI evidence drives the verdict', () => {
     );
   });
 
-  it('a required check that never ran rejects (exit 1, checks_missing)', async () => {
+  acceptanceIt('a required check that never ran rejects (exit 1, checks_missing)', async () => {
     const { result, envelope } = await runWithChecks([
       { name: 'some-other-job', conclusion: 'success' },
     ]);
@@ -304,7 +304,7 @@ describe('e2e acceptance: CI evidence drives the verdict', () => {
 });
 
 describe('e2e acceptance: provider failures fail closed (exit 3)', () => {
-  it('a gh transport error yields unknown, never an accept', async () => {
+  acceptanceIt('a gh transport error yields unknown, never an accept', async () => {
     const repo = track(makeRepo('feat/provider-down'));
 
     const gh = createFakeGh(repo.dir, [
@@ -334,7 +334,7 @@ describe('e2e acceptance: provider failures fail closed (exit 3)', () => {
     );
   });
 
-  it('an unauthenticated gh fails closed without leaking gh stderr (exit 3)', async () => {
+  acceptanceIt('an unauthenticated gh fails closed without leaking gh stderr (exit 3)', async () => {
     const repo = track(makeRepo('feat/no-auth'));
 
     const gh = createFakeGh(repo.dir, [
@@ -359,7 +359,7 @@ describe('e2e acceptance: provider failures fail closed (exit 3)', () => {
     expect(result.stderr).not.toContain('ghs_supersecret');
   });
 
-  it('a missing gh binary fails closed (exit 3)', async () => {
+  acceptanceIt('a missing gh binary fails closed (exit 3)', async () => {
     const repo = track(makeRepo('feat/no-gh'));
     const gitOnly = gitOnlyPathDir(repo.dir);
 
@@ -380,7 +380,7 @@ describe('e2e acceptance: provider failures fail closed (exit 3)', () => {
 });
 
 describe('e2e acceptance: missing links reject with complete evidence', () => {
-  it('rejects when the PR body does not close every bound issue', async () => {
+  acceptanceIt('rejects when the PR body does not close every bound issue', async () => {
     const repo = track(makeRepo('feat/unclosed'));
 
     const gh = createFakeGh(repo.dir, greenGhRules({
@@ -413,7 +413,7 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
     expect(closingFailure!.detail).toEqual({ missing: [72] });
   });
 
-  it('rejects when a bound issue does not exist (issue_not_found)', async () => {
+  acceptanceIt('rejects when a bound issue does not exist (issue_not_found)', async () => {
     const repo = track(makeRepo('feat/ghost-issue'));
 
     const gh = createFakeGh(repo.dir, [
@@ -451,7 +451,7 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
     );
   });
 
-  it('rejects when a bound issue number is actually a pull request', async () => {
+  acceptanceIt('rejects when a bound issue number is actually a pull request', async () => {
     const repo = track(makeRepo('feat/issue-is-pr'));
 
     const rules = greenGhRules({
@@ -483,7 +483,7 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
     );
   });
 
-  it('rejects a PR url bound from a different repository (pr_repo_mismatch)', async () => {
+  acceptanceIt('rejects a PR url bound from a different repository (pr_repo_mismatch)', async () => {
     const repo = track(makeRepo('feat/foreign-pr'));
 
     const gh = createFakeGh(repo.dir, [
@@ -515,7 +515,7 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
     );
   });
 
-  it('accept without any record fails closed (unbound, exit 3)', async () => {
+  acceptanceIt('accept without any record fails closed (unbound, exit 3)', async () => {
     const repo = track(makeRepo('feat/unbound'));
     const gh = createFakeGh(repo.dir, [
       { match: '^--version$', stdout: 'gh version 2.60.0-fake\n' },
@@ -535,7 +535,7 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
 });
 
 describe('e2e acceptance: spec/task artifacts can never change acceptance', () => {
-  it('fabricated done-tasks/spec files cannot forge acceptance (still rejected, exit 1)', async () => {
+  acceptanceIt('fabricated done-tasks/spec files cannot forge acceptance (still rejected, exit 1)', async () => {
     const repo = track(makeRepo('feat/forge-attempt'));
 
     const failingChecks = checkRunsJson([
@@ -577,7 +577,7 @@ describe('e2e acceptance: spec/task artifacts can never change acceptance', () =
     expect(JSON.stringify(afterEnvelope)).toContain('checks_failed');
   });
 
-  it('fabricated artifacts cannot block a genuine acceptance (still exit 0)', async () => {
+  acceptanceIt('fabricated artifacts cannot block a genuine acceptance (still exit 0)', async () => {
     const repo = track(makeRepo('feat/artifact-noise'));
 
     const gh = createFakeGh(repo.dir, greenGhRules({
