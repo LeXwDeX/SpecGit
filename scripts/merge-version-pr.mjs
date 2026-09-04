@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { classifyCiEligibility } from '../dist/automation/ci-eligibility.js';
+
 const DISABLED_MESSAGE = 'Version PR automatic merge is disabled. Run specgit init --force and answer yes with main as the merge target to enable it.';
 
 /**
@@ -33,23 +35,19 @@ export async function mergeVersionPullRequest(options) {
   };
   const { now = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), timeoutMs = 20 * 60 * 1000, pollIntervalMs = 10_000 } = options;
   const deadline = now() + timeoutMs;
-  const required = new Set(policy.required_checks);
   for (;;) {
     const current = requireEvidence(await provider.getPr(repo, number));
     checkIdentity(current);
     if (current.state === 'merged') return { status: 'merged', pr: number };
     const ci = requireEvidence(await provider.getPrChecks(repo, number));
     if (ci.headSha !== expectedHeadSha) throw new Error('CI evidence belongs to a different version PR head.');
-    const names = new Set(ci.checks.map((check) => check.name));
-    let pending = ci.checks.length === 0 || [...required].some((name) => !names.has(name));
-    let executed = 0;
-    for (const check of ci.checks) {
-      if (!required.has(check.name) && check.status === 'completed' && check.conclusion === 'skipped') continue;
-      executed++;
-      if (check.status !== 'completed') { pending = true; continue; }
-      if (check.conclusion !== 'success') throw new Error(`CI check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.`);
+    const eligibility = classifyCiEligibility(ci.checks, policy.required_checks);
+    const failure = eligibility.problems.find((problem) => problem.kind === 'failed');
+    if (failure !== undefined) {
+      const { check } = failure;
+      throw new Error(`CI check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.`);
     }
-    if (!pending && executed > 0) break;
+    if (eligibility.eligible) break;
     const remaining = deadline - now();
     if (remaining <= 0) throw new Error('Timed out waiting for complete, successful version PR checks.');
     log(`Waiting for all CI checks on version PR #${number} at ${expectedHeadSha}.`);

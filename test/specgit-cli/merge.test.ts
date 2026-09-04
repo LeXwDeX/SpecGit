@@ -135,6 +135,37 @@ describe('specgit pr --merge: configured delivery automation (#382)', () => {
     expect(t.gh.closeIssue).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { order: ['pending', 'failed'], code: 'automation_checks_pending', status: 'pending', message: "CI/CD check 'Waiting' is queued." },
+    { order: ['failed', 'pending'], code: 'automation_checks_failed', status: 'blocked', message: "CI/CD check 'Broken' concluded failure." },
+  ])('reports the first problem in mixed CI evidence: $order', async ({ order, code, status, message }) => {
+    const t = mergeCtx();
+    const problems = order.map((kind) => kind === 'pending'
+      ? makeCheckRun('Waiting', { status: 'queued', conclusion: null })
+      : makeCheckRun('Broken', { conclusion: 'failure' }));
+    t.gh.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks: [...t.remote.checks, ...problems] }));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.errors?.[0]).toMatchObject({ code, message });
+    expect(result.automation?.status).toBe(status);
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+  });
+
+  it('reports missing required names before an optional failed check', async () => {
+    const t = mergeCtx();
+    t.gh.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks: [makeCheckRun('Broken', { conclusion: 'failure' })] }));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.errors?.[0]).toMatchObject({ code: 'automation_checks_missing', message: 'Required checks are missing: All checks passed.' });
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+  });
+
+  it('requires executed evidence when every optional check is skipped', async () => {
+    const t = mergeCtx(samplePolicy({ automation, required_checks: [] }));
+    t.gh.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks: [makeCheckRun('Optional', { conclusion: 'skipped' })] }));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.errors?.[0]).toMatchObject({ code: 'automation_checks_missing', message: 'No executed CI/CD checks prove this head successful.' });
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+  });
+
   it('permits a platform-skipped optional job, but a required skipped job cannot pass', async () => {
     const t = mergeCtx();
     t.remote.checks.push(makeCheckRun('Optional deployment', { conclusion: 'skipped' }));
@@ -143,6 +174,14 @@ describe('specgit pr --merge: configured delivery automation (#382)', () => {
     required.remote.checks = [makeCheckRun('All checks passed', { conclusion: 'skipped' })];
     expect((await runPr({ merge: true }, required.ctx)).exit).toBe(1);
     expect(required.gh.mergePr).not.toHaveBeenCalled();
+  });
+
+  it('rejects a required skip in all-CI evidence after acceptance has passed', async () => {
+    const t = mergeCtx();
+    t.gh.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks: [makeCheckRun('All checks passed', { conclusion: 'skipped' })] }));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.errors?.[0]).toMatchObject({ code: 'automation_checks_failed', message: "CI/CD check 'All checks passed' concluded skipped." });
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
   });
 
   it.each([{ checks: [] }, { checks: [makeCheckRun('Other workflow')] }])('refuses missing required all-CI evidence', async ({ checks }) => {
