@@ -264,6 +264,32 @@ const assertOidcTokenNeverLogged = (text: string, label: string): void => {
   }
 };
 
+// #446: checkout's persisted Authorization header wins over URL credentials.
+// Git and gh must select the same release actor before the version branch push.
+const assertReleaseActorCredentials = (text: string, label: string): void => {
+  const doc = parse(text) as Workflow;
+  const steps = doc.jobs?.release?.steps ?? [];
+  const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  const proposal = steps.find((step) => step.name === 'Open version pull request');
+  const selectedActor = '${{ secrets.RELEASE_BOT_TOKEN || github.token }}';
+  if (checkout?.with?.token !== selectedActor ||
+      proposal?.env?.GH_TOKEN !== selectedActor || proposal.env.GITHUB_TOKEN !== selectedActor) {
+    throw new Error(`${label}: checkout and version PR creation must use the selected release actor`);
+  }
+  if (checkout.with['persist-credentials'] === false || checkout.with['persist-credentials'] === 'false') {
+    throw new Error(`${label}: version and tag pushes need the selected checkout credentials`);
+  }
+  if (proposal.env.PUSH_TOKEN !== undefined ||
+      steps.some((step) => /git\s+remote\s+set-url\s+origin\s+[^\n]*https:\/\/[^\n]*@/.test(step.run ?? ''))) {
+    throw new Error(`${label}: release must not override credentials through an origin URL`);
+  }
+  const finalize = steps.find((step) => step.name === 'Tag and create GitHub Release');
+  if (finalize?.env?.GH_TOKEN !== '${{ github.token }}' ||
+      finalize.run !== 'node scripts/release-state.mjs --finalize') {
+    throw new Error(`${label}: tag finalization must retain its authenticated release entry point`);
+  }
+};
+
 describe('workflow security invariants (#66, #69, #71)', () => {
   const acceptFile = readWorkflow('specgit-accept.yml');
   const acceptTemplate = harnessWorkflowYaml().replace(/\r\n/g, '\n');
@@ -381,6 +407,10 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('rc-verify.yml never logs the raw OIDC token (derived claims or length only)', () => {
     assertOidcTokenNeverLogged(rcVerifyFile, 'rc-verify.yml');
   });
+
+  it('release git pushes and PR creation use the selected actor while tag finalization stays authenticated', () => {
+    assertReleaseActorCredentials(readWorkflow('release-prepare.yml'), 'release-prepare.yml');
+  });
 });
 
 describe('mutation sensitivity: every invariant rejects its known-bad mutant (#66, #69, #71)', () => {
@@ -388,6 +418,28 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   const acceptTemplate = harnessWorkflowYaml().replace(/\r\n/g, '\n');
   const ciFile = readWorkflow('ci.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
+
+  it('losing the selected checkout actor or its persisted credentials is detected', () => {
+    const releaseFile = readWorkflow('release-prepare.yml');
+    const tokenLine = '          token: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}';
+    expect(releaseFile).toContain(tokenLine);
+    assertReleaseActorCredentials(releaseFile, 'baseline');
+    const wrongActor = releaseFile.replace(tokenLine, '          token: ${{ github.token }}');
+    expect(() => assertReleaseActorCredentials(wrongActor, 'mutant')).toThrow(/selected release actor/);
+    const implicitActor = releaseFile.replace(`${tokenLine}\n`, '');
+    expect(() => assertReleaseActorCredentials(implicitActor, 'mutant')).toThrow(/selected release actor/);
+    const missingPushAuth = releaseFile.replace(tokenLine, `${tokenLine}\n          persist-credentials: false`);
+    expect(() => assertReleaseActorCredentials(missingPushAuth, 'mutant')).toThrow(/pushes need/);
+  });
+
+  it('reintroducing release credentials in the origin URL is detected', () => {
+    const releaseFile = readWorkflow('release-prepare.yml');
+    const push = '          git push --force origin changeset-release/main';
+    expect(releaseFile).toContain(push);
+    const mutant = releaseFile.replace(push,
+      '          git remote set-url origin "https://x-access-token:dummy@github.com/acme/repo.git"\n' + push);
+    expect(() => assertReleaseActorCredentials(mutant, 'mutant')).toThrow(/origin URL/);
+  });
 
   it('re-adding cache to the gate is detected (file and generated template)', () => {
     const mutation = "node-version: '20.19.0'\n          cache: 'pnpm'";
