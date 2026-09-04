@@ -378,14 +378,25 @@ export class GhCliGitHubProvider implements ForgeProvider {
     const runs = await this.getCheckRuns(repo, headSha);
     if (!runs.ok) return runs;
     const checks = new Map<string, CheckRunInfo>();
+    const recordAttempt = (key: string, run: CheckRunInfo): Evidence<true> => {
+      const previous = checks.get(key);
+      // Workflow reruns keep their creation ID. An undated attempt cannot
+      // be proven older than a green run, even when its ID is lower.
+      if (previous && [previous, run].some((attempt) =>
+        attempt.startedAt === null || !Number.isFinite(Date.parse(attempt.startedAt)))) {
+        return fail('gh_transport', 'Cannot order multiple CI attempts without valid start timestamps.');
+      }
+      if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
+      return ok(true);
+    };
     for (const run of runs.value) {
       if (!run.name || !run.status || !run.source || !Number.isSafeInteger(run.id) || run.id <= 0 ||
           (run.status === 'completed' && !run.conclusion)) {
         return fail('gh_transport', 'GitHub returned incomplete check-run evidence.');
       }
       const key = `${run.source ?? 'check'}:${run.name}`;
-      const previous = checks.get(key);
-      if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
+      const selected = recordAttempt(key, run);
+      if (!selected.ok) return selected;
     }
     // Classic commit statuses and workflow runs are independent evidence:
     // a workflow awaiting approval can have no check jobs at all (#265).
@@ -435,8 +446,8 @@ export class GhCliGitHubProvider implements ForgeProvider {
             conclusion: typeof value.conclusion === 'string' ? value.conclusion : null, id: value.id,
             startedAt: typeof value.run_started_at === 'string' ? value.run_started_at : null };
         }
-        const previous = checks.get(key);
-        if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
+        const selected = recordAttempt(key, run);
+        if (!selected.ok) return selected;
       }
     }
     return ok({ headSha, checks: [...checks.values()] });
