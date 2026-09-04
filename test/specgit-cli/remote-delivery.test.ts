@@ -287,7 +287,9 @@ describe('completion workflow trust boundary', () => {
   it('keeps the checked-in self-hosted workflow synchronized with its generator', () => {
     const version = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).version;
     const expected = completionWorkflowYaml({ defaultBranch: 'main', version, selfHosted: true });
-    expect(readFileSync(join(process.cwd(), '.github/workflows/specgit-complete.yml'), 'utf8')).toBe(expected);
+    const checkedIn = readFileSync(join(process.cwd(), '.github/workflows/specgit-complete.yml'), 'utf8')
+      .replace(/\r\n/g, '\n');
+    expect(checkedIn).toBe(expected);
   });
   it('preserves ordinary business CI and routes only an independent default-branch continuation', () => {
     const workflow = parse(gitlabRoutingWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: false, platform: 'gitlab' }));
