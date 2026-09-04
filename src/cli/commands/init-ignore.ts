@@ -128,19 +128,32 @@ export function reconcileLocalAssetIgnore(existing: string | null): string {
 
   const lines = existing.split('\n');
 
-  const startIndex = lines.findIndex((line) => isMarkerLine(line, LOCAL_ASSET_IGNORE_START));
+  let startIndex = -1;
+  let pairedEnd = -1;
+  for (let index = 0; index < lines.length; index++) {
+    if (isMarkerLine(lines[index], LOCAL_ASSET_IGNORE_START)) startIndex = index;
+    else if (startIndex !== -1 && isMarkerLine(lines[index], LOCAL_ASSET_IGNORE_END)) {
+      pairedEnd = index;
+      break;
+    }
+  }
   if (startIndex !== -1) {
     // An end marker BEFORE the start marker is a stray from an older
     // damage — only an end marker AFTER the start closes this region.
-    const endIndex = lines.findIndex(
-      (line, index) => index > startIndex && isMarkerLine(line, LOCAL_ASSET_IGNORE_END)
-    );
+    const endIndex = pairedEnd;
     if (endIndex !== -1) {
-      return replaceLines(existing, startIndex, endIndex + 1);
+      // A stray start before the nearest complete pair is only a marker,
+      // never ownership of intervening user rules. Consume stray markers
+      // so subsequent refreshes cannot expand the replaced region.
+      const before = lines.slice(0, startIndex).filter((line) =>
+        !isMarkerLine(line, LOCAL_ASSET_IGNORE_START) && !isMarkerLine(line, LOCAL_ASSET_IGNORE_END));
+      return [...before, ...block.split('\n'), ...lines.slice(endIndex + 1)].join('\n');
     }
     // Start marker without its end (damaged region): migrate from the
     // marker through the known entries, same proof as the legacy shape.
-    return replaceMarkerAndKnownEntries(existing, startIndex);
+    const before = lines.slice(0, startIndex).filter((line) =>
+      !isMarkerLine(line, LOCAL_ASSET_IGNORE_START) && !isMarkerLine(line, LOCAL_ASSET_IGNORE_END));
+    return [...before, replaceMarkerAndKnownEntries(lines.slice(startIndex).join('\n'), 0)].join('\n');
   }
 
   const legacyIndex = lines.findIndex((line) => isMarkerLine(line, LOCAL_ASSET_IGNORE_MARKER));

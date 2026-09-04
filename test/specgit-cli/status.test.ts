@@ -17,6 +17,37 @@ import {
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 describe('specgit status (local evidence only, G1-G5)', () => {
+  it.each([false, true])('fails closed when repository evidence disappears after discovery (bound=%s) (#389)', async (bound) => {
+    const t = makeCtx({
+      ...(bound ? { record: sampleBinding() } : {}),
+      policy: samplePolicy(), facts: makeGitFacts({ repo: false }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors.some((error: { code: string }) => error.code === 'not_a_git_repo')).toBe(true);
+    expect(envelope.assets?.generated).toBeUndefined();
+  });
+
+  it.each(['invalid', 'none'] as const)('fails closed for %s policy even before binding (#389)', async (policy) => {
+    const t = makeCtx({ policy });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('unknown');
+    expect(envelope.errors[0].code).toBe(policy === 'invalid' ? 'policy_invalid' : 'policy_missing');
+    expect(envelope.assets?.generated).toBeUndefined();
+  });
+
+  it('fails closed for unavailable git even before binding (#389)', async () => {
+    const t = makeCtx({ policy: samplePolicy(), facts: makeGitFacts({ gitAvailable: false }) });
+    const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('git_unavailable');
+    expect(envelope.assets?.generated).toBeUndefined();
+  });
+
   it('reports a bound state with all local gates passing', async () => {
     const t = makeCtx({ record: sampleBinding(), policy: samplePolicy() });
     const code = await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
@@ -183,6 +214,19 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     const gate = envelope.gates.find((g: any) => g.id === 'context');
     expect(gate.status).toBe('fail');
     expect(gate.failures.map((f: any) => f.code)).toEqual(['worktree_mismatch']);
+  });
+
+  it('matches both branch and label when worktrees share a basename (#396)', async () => {
+    const t = makeCtx({
+      record: sampleBinding({ context: { kind: 'worktree', label: 'delivery', branch: 'feat/123-login' } }),
+      policy: samplePolicy(),
+      facts: makeGitFacts({
+        isLinkedWorktree: true, worktreeLabel: 'delivery',
+        worktrees: [{ label: 'delivery', branch: 'other' }, { label: 'delivery', branch: 'feat/123-login' }],
+      }),
+    });
+    await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx);
+    expect(parseStdoutJson(t.io).localContext).toBe('matching');
   });
 
   // #175: a missing record is the normal pre-binding state, not a

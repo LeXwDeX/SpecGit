@@ -50,7 +50,8 @@ export async function contextGate(ctx: GateContext): Promise<GateFailure[]> {
     const repoForMerged = repoRefForMergedCheck(facts.originUrl, input.gitlabHost);
     if (repoForMerged && binding!.pr !== undefined && input.gh) {
       const prEv = await input.gh.getPr(repoForMerged, binding!.pr);
-      if (prEv.ok && prEv.value.state === 'merged') {
+      if (!prEv.ok) return [makeFailure(prEv)];
+      if (prEv.value.state === 'merged') {
         ctx.evidence.prHead = prEv.value.headSha;
         const mergeCommitSha = prEv.value.mergeCommitSha;
         if (!mergeCommitSha) {
@@ -88,8 +89,9 @@ export async function contextGate(ctx: GateContext): Promise<GateFailure[]> {
     if (facts.isLinkedWorktree !== true || facts.worktreeLabel !== expectedLabel) {
       return [makeFailure('worktree_mismatch')];
     }
-    const entry = facts.worktrees.find((w) => w.label === expectedLabel);
-    if (!entry || entry.branch !== binding!.context.branch) {
+    const entry = facts.worktrees.find((w) =>
+      w.label === expectedLabel && w.branch === binding!.context.branch);
+    if (!entry) {
       return [makeFailure('worktree_mismatch')];
     }
   }

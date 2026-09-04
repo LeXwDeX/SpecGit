@@ -9,6 +9,30 @@ import {
 } from '../../src/gitfacts/origin.js';
 
 describe('parseRepoRef', () => {
+  it.each([
+    'https://audit-user:sentinel-password@example.invalid/o/r.git',
+    'https://github.com/o/r?token=sentinel-password',
+    'https://github.com/o/r#sentinel-password',
+    'https://audit-user:sentinel-password@' + 'x'.repeat(4100),
+  ])('keeps rejected URL secrets out of diagnostics', (url) => {
+    for (const result of [parseRepoRef(url), parsePrUrl(url)]) {
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain('sentinel-password');
+      expect(JSON.stringify(result)).not.toContain('audit-user');
+    }
+  });
+
+  it.each(['git@gitlab.com:group/repo.git', 'git@gitlab.com:group/sub/repo.git'])(
+    'explains the missing declaration for %s without denying implemented support', (url) => {
+      const result = parseRepoRef(url);
+      expect(result).toMatchObject({ ok: false, code: 'gitlab_unsupported' });
+      if (result.ok) return;
+      expect(result.message).toContain('not declared');
+      expect(result.message).not.toContain('not implemented');
+      expect(result.fix).toContain('specgit init --gitlab-host');
+      expect(result.fix).not.toContain('roadmap');
+    }
+  );
   const goodCases: Array<[string, { owner: string; repo: string }]> = [
     ['https://github.com/LeXwDeX/SpecGit', { owner: 'LeXwDeX', repo: 'SpecGit' }],
     ['https://github.com/LeXwDeX/SpecGit.git', { owner: 'LeXwDeX', repo: 'SpecGit' }],

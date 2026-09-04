@@ -102,7 +102,7 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
   // #122: a draft PR fails the verdict (pr_draft), so the draft→ready
   // transition must re-verdict. `types` replaces the defaults, so the
   // default activity types must be listed alongside ready_for_review.
-  const requiredTypes = ['opened', 'synchronize', 'reopened', 'ready_for_review'];
+  const requiredTypes = ['opened', 'synchronize', 'reopened', 'ready_for_review', 'edited'];
   if (
     !Array.isArray(pullRequest.types) ||
     !requiredTypes.every((t) => pullRequest.types!.includes(t))
@@ -388,11 +388,17 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
 
   it('dropping ready_for_review from the accept trigger (breaking draft re-verdict) is detected', () => {
     const mutant = acceptFile.replace(
-      '    types: [opened, synchronize, reopened, ready_for_review]\n',
+      /    types: \[[^\n]+\]\n/,
       ''
     );
     expect(mutant).not.toBe(acceptFile);
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/ready_for_review/);
+  });
+
+  it('dropping edited from the acceptance trigger is detected', () => {
+    const mutant = acceptTemplate.replace(', edited]', ']');
+    expect(mutant).not.toBe(acceptTemplate);
+    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/edited/);
   });
 
   it('re-merging the self-hosted leg into the required matrix is detected', () => {

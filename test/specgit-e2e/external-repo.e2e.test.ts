@@ -151,7 +151,13 @@ describe('e2e external repository adoption (#63)', () => {
         jobs: Record<string, { steps: WorkflowStep[] }>;
       };
       expect(parsed.on.pull_request.branches).toEqual(['master']);
-      expect(workflow).toContain(`npm install --no-save --no-audit --no-fund specgit@${version}`);
+      expect(workflow).toContain(`npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@${version}`);
+
+      const runnerTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-external-runner-'));
+      cleanup.push(runnerTemp);
+      const isolatedCli = path.join(runnerTemp, 'specgit-cli');
+      fs.mkdirSync(isolatedCli);
+      fs.symlinkSync(path.join(fixture.dir, 'node_modules'), path.join(isolatedCli, 'node_modules'), 'junction');
 
       const steps = parsed.jobs['specgit-acceptance'].steps;
 
@@ -168,6 +174,7 @@ describe('e2e external repository adoption (#63)', () => {
           ...env,
           WAIT_REPO: `${EXT_OWNER}/${EXT_REPO}`,
           WAIT_SHA: fixture.headSha,
+          SPECGIT_CLI_DIR: isolatedCli,
         },
       });
       expect(wait.status, wait.stderr).toBe(0);
@@ -183,12 +190,11 @@ describe('e2e external repository adoption (#63)', () => {
       expect(bind.status, bind.stderr).toBe(0);
 
       const finishStep = steps.find((step) => step.name === 'specgit finish');
-      expect(finishStep?.run).toBe('npx --no-install specgit finish --json');
-      const finish = spawnSync(finishStep!.run!, {
+      expect(finishStep?.run).toBe('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+      const finish = spawnSync('sh', ['-c', finishStep!.run!], {
         cwd: fixture.dir,
-        shell: true,
         encoding: 'utf-8',
-        env,
+        env: { ...env, RUNNER_TEMP: runnerTemp },
       });
       expect(finish.status, finish.stderr).toBe(0);
       const envelope = JSON.parse(finish.stdout);

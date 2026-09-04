@@ -100,6 +100,14 @@ export async function validateGitlabHost(
   const host = match[1];
   const port = match[2] ?? null;
   if (origin !== null) {
+    if (origin.host === 'github.com' && endpointUsesDefaultPort(origin)) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [errorDiagnostic('gitlab_host_invalid',
+          'The origin is already a github.com repository; declaring a GitLab host makes no sense.',
+          { fix: 'Drop --gitlab-host: github.com origins are GitHub by default.' })],
+      };
+    }
     const declaredEffective = port ?? origin.defaultPort;
     const originEffective = endpointEffectivePort(origin);
     if (host !== origin.host || declaredEffective !== originEffective) {

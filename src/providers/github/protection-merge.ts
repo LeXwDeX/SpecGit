@@ -12,7 +12,7 @@
 
 export interface BranchProtectionUpdateBody {
   [key: string]: unknown;
-  required_status_checks: { strict: boolean; contexts: string[] };
+  required_status_checks: { strict: boolean; contexts: string[]; checks?: Array<{ context: string; app_id?: number }> };
   enforce_admins: boolean;
   required_pull_request_reviews: unknown;
   restrictions: unknown;
@@ -71,6 +71,9 @@ function mapReviews(value: unknown): unknown {
   if (value.dismissal_restrictions !== undefined) {
     mapped.dismissal_restrictions = actorRestrictions(value.dismissal_restrictions);
   }
+  if (value.bypass_pull_request_allowances !== undefined) {
+    mapped.bypass_pull_request_allowances = actorRestrictions(value.bypass_pull_request_allowances);
+  }
   return mapped;
 }
 
@@ -107,12 +110,33 @@ export function buildProtectionUpdateBody(
     restrictions: actorRestrictions(restrictions),
   };
 
+  if (Array.isArray(rsc?.checks)) {
+    // GET null means any app; PUT -1 preserves that choice. Omitting an
+    // app_id would reassociate the context with whichever app ran recently.
+    const checks: Array<{ context: string; app_id?: number }> = rsc.checks
+      .filter((check) => isPlainObject(check) && typeof check.context === 'string')
+      .map((check) => ({
+        context: check.context as string,
+        ...(check.app_id === null ? { app_id: -1 }
+          : typeof check.app_id === 'number' ? { app_id: check.app_id } : {}),
+      }));
+    for (const context of contexts) {
+      if (!checks.some((check) => check.context === context)) checks.push({ context });
+    }
+    // Send the complete explicit list; no name-only duplicate can replace
+    // its app identity through the deprecated contexts parameter.
+    body.required_status_checks = { strict, contexts: [], checks };
+  }
+
   // Boolean rule dimensions the classic API reports as {enabled} objects.
   for (const dimension of [
     'required_linear_history',
     'allow_force_pushes',
     'allow_deletions',
     'required_conversation_resolution',
+    'block_creations',
+    'lock_branch',
+    'allow_fork_syncing',
   ] as const) {
     const enabled = enabledOf(base[dimension]);
     if (enabled !== undefined) body[dimension] = enabled;

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LocalGitAdapter } from '../../src/gitfacts/local.js';
+import { discoverRepoRoot } from '../../src/record/root.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 describe('LocalGitAdapter', () => {
@@ -89,6 +90,20 @@ describe('LocalGitAdapter', () => {
     const facts = await adapter.facts(root);
     expect(facts.originUrl).toBe('https://github.com/LeXwDeX/SpecGit.git');
   });
+
+  it.skipIf(process.platform === 'win32').each(['trailing ', 'line\nbreak'])(
+    'preserves a worktree path named %j', async (name) => {
+      const worktree = path.join(tempDir, name);
+      git(root, ['worktree', 'add', '-b', 'fix/path-bytes', worktree], env);
+      const canonical = fs.realpathSync(worktree);
+      expect(await discoverRepoRoot(worktree)).toEqual({ ok: true, value: canonical });
+      const result = await adapter.facts(worktree);
+      expect(result.toplevel).toBe(canonical);
+      expect(result.isLinkedWorktree).toBe(true);
+      expect(result.worktreeLabel).toBe(name);
+      expect(result.worktrees).toContainEqual({ label: name, branch: 'fix/path-bytes' });
+    }
+  );
 
   it('sets gitAvailable false when the git binary cannot be spawned', async () => {
     const noGitAdapter = new LocalGitAdapter({ env: { PATH: tempDir } });

@@ -100,8 +100,8 @@ export function parseRepoRef(
     if (repo) {
       return fail(
         'gitlab_unsupported',
-        `Origin "${truncateUrl(url)}" points at a GitLab repository; GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
-        'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.'
+        `Origin "${truncateUrl(url)}" points at a GitLab repository whose host is not declared.`,
+        'Declare the platform with "specgit init --gitlab-host <hostname>" and authenticate glab for that host; see docs/gitlab-support.md.'
       );
     }
     // #95: a path naming a nested group (or %2F-encoded separators,
@@ -111,8 +111,8 @@ export function parseRepoRef(
     if (gitlabRef !== null) {
       return fail(
         'gitlab_unsupported',
-        `Origin "${truncateUrl(url)}" points at a nested-group GitLab repository (group/subgroup/project); nested groups are recognized, but GitLab evidence (issues, MRs, pipelines) requires glab support, which is not implemented yet.`,
-        'Nested-group GitLab origins are recognized but unsupported until the glab provider lands; declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the roadmap.'
+        `Origin "${truncateUrl(url)}" points at a nested-group GitLab repository whose host is not declared.`,
+        'Declare the platform with "specgit init --gitlab-host <hostname>" and authenticate glab for that host; nested groups are supported. See docs/gitlab-support.md.'
       );
     }
   }
@@ -244,5 +244,10 @@ export function parsePrUrl(url: string): Evidence<{ repo: RepoRef; pr: number }>
 }
 
 function truncateUrl(value: string): string {
+  // Rejected input need not be a parseable URL. Never echo credentials or
+  // query/fragment payloads even when URL parsing itself would fail.
+  if (/[?#]/.test(value) || (value.includes('@') && !/^git@[^@:/]+:[^@]*$/.test(value))) {
+    return '[redacted URL]';
+  }
   return value.length > 200 ? `${value.slice(0, 200)}…` : value;
 }

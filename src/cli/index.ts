@@ -151,7 +151,7 @@ export function createProgram(
       const json = allOpts.json === true;
       const opts: Record<string, unknown> = extractOptions
         ? { ...extractOptions(rest), json: allOpts.json }
-        : (rest[0] as Record<string, unknown>) ?? {};
+        : { ...((rest[0] as Record<string, unknown>) ?? {}), json: allOpts.json };
 
       const resolution = await resolve();
       if ('failure' in resolution) {
@@ -188,6 +188,10 @@ export function createProgram(
     .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
     .option('--gitlab-host <hostname>', 'Declare a self-hosted GitLab host (bare hostname, or host:port for a non-default port, matching the origin)')
     .option('--language <lang>', 'Language of generated text: en | zh (default en; persisted in spec_git/policy.yaml)')
+    .option('--configure-rules', 'Choose project language, title validation, and issue label convention interactively')
+    .option('--title-check <yes|no>', 'Validate remote issue and PR titles against the project language')
+    .option('--label-check <mode>', 'Issue label validation: off | kind | project')
+    .option('--allowed-label <slug>', 'Allowed project label; repeatable, replaces the selected vocabulary', collect)
     .option('--automation <yes|no>', 'Supply the user\'s automation answer: yes | no (default no)')
     .option('--merge-target <branch>', 'Target branch for configured merge automation')
     .option('--no-ignore', 'Skip the .gitignore block for the local delivery assets (.specgit.yaml, spec_git/)')

@@ -252,12 +252,12 @@ describe('context gate', () => {
     expect(codes(await contextGate(ctx))).toEqual(['merged_lineage_unavailable']);
   });
 
-  it('keeps the fail-closed mismatch when the provider call fails', async () => {
+  it('preserves the unknown provider failure when lineage cannot be determined', async () => {
     const ctx = makeContext({
       git: gitStub({ ...FACTS, branch: 'main' }),
       gh: forgeStub({ getPr: async () => fail('gh_transport', 'down') }),
     });
-    expect(codes(await contextGate(ctx))).toEqual(['branch_mismatch']);
+    expect(codes(await contextGate(ctx))).toEqual(['gh_transport']);
   });
 
   it('verifies the worktree context for worktree bindings', async () => {

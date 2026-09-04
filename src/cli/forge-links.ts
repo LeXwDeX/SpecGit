@@ -12,12 +12,13 @@ import type { RepoRef } from '../gitfacts/origin.js';
 /**
  * `https://<host>/<project-path>` from an https, ssh, or scp-like origin
  * URL; null when unparseable. The project path keeps its full depth
- * (GitLab nested groups, #120); ports and userinfo never reach the web
+ * (GitLab nested groups, #120); HTTPS service ports are retained, while
+ * SSH transport ports and userinfo never reach the web
  * base; plain `http` never becomes an insecure web link.
  */
 const WEB_BASE_PATTERNS = [
-  /^https:\/\/[^/@:]+@([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i,
-  /^https:\/\/([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i,
+  /^https:\/\/[^/@:]+@([^/:]+(?::\d+)?)\/(.+?)(?:\.git)?\/?$/i,
+  /^https:\/\/([^/:]+(?::\d+)?)\/(.+?)(?:\.git)?\/?$/i,
   /^ssh:\/\/[^/@:]+@([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/i,
   /^git@([^:/]+):(.+?)(?:\.git)?\/?$/i,
 ];

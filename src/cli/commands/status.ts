@@ -104,6 +104,29 @@ export async function runStatus(
 
   if (!recordEv.ok) {
     if (recordEv.code === 'record_missing') {
+      const errors: Diagnostic[] = [];
+      if (!policyEv.ok) {
+        errors.push(errorDiagnostic(policyEv.code, policyEv.message, policyEv.fix ? { fix: policyEv.fix } : {}));
+      }
+      if (!facts.gitAvailable) {
+        errors.push(errorDiagnostic('git_unavailable', 'The git executable could not be spawned.', {
+          fix: 'Install git and ensure it is on PATH.',
+        }));
+      }
+      if (!facts.repo) {
+        errors.push(errorDiagnostic('not_a_git_repo', 'The checkout no longer resolves to a git repository.', {
+          fix: 'Run this command from a valid git checkout.',
+        }));
+      }
+      if (errors.length > 0) {
+        return {
+          exit: EXIT_UNKNOWN,
+          state: 'unknown',
+          recordState: 'missing',
+          gates: [recordGate(recordEv), policyGate(policyEv)],
+          errors,
+        };
+      }
       // Pre-binding is a determinable, healthy state, not a fail-closed
       // unknown (#175): exit 0, state `unbound`, the record gate still
       // reports `record_missing`, and the next step rides a warning.
@@ -213,6 +236,11 @@ export async function runStatus(
         fix: 'Install git and ensure it is on PATH.',
       })
     );
+  }
+  if (!facts.repo) {
+    failClosedErrors.push(errorDiagnostic('not_a_git_repo', 'The checkout no longer resolves to a git repository.', {
+      fix: 'Run this command from a valid git checkout.',
+    }));
   }
   if (failClosedErrors.length > 0) {
     return {

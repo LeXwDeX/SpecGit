@@ -216,6 +216,8 @@ export async function applyDeliveryTags(deps: {
   inferredByIssue?: Map<number, string>;
   /** Explicit-mode pre-validation snapshot; absent ⇔ infer-and-probe here. */
   pre?: ResolvedTagSelection;
+  /** Enabled project label rules make inferred label writes acceptance-relevant. */
+  strictEvidence?: boolean;
 }): Promise<TaggingOutcome | IssueOutcome> {
   const { ctx, root, repo, language, issues } = deps;
 
@@ -252,7 +254,7 @@ export async function applyDeliveryTags(deps: {
   if (poolNames === null || declared === null) {
     const listEv = await ctx.gh.listRepoLabels(repo);
     if (!listEv.ok) {
-      if (explicit) {
+      if (explicit || deps.strictEvidence) {
         return passthrough(listEv);
       }
       warnPoolUnreadable(ctx, language);
@@ -286,7 +288,7 @@ export async function applyDeliveryTags(deps: {
   if (seeds.length > 0) {
     const ensureEv = await ctx.gh.ensureRepoLabels(repo, seeds);
     if (!ensureEv.ok) {
-      if (explicit) {
+      if (explicit || deps.strictEvidence) {
         return passthrough(ensureEv);
       }
       warnPoolUnreadable(ctx, language);
@@ -312,7 +314,7 @@ export async function applyDeliveryTags(deps: {
     }
     const applyEv = await ctx.gh.addIssueLabels(repo, issue, issueTags);
     if (!applyEv.ok) {
-      if (explicit) {
+      if (explicit || deps.strictEvidence) {
         return passthrough(applyEv);
       }
       warnPoolUnreadable(ctx, language);

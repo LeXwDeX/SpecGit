@@ -34,7 +34,7 @@ export async function discoverRepoRoot(cwd: string = process.cwd()): Promise<Evi
 
   try {
     const { stdout } = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd });
-    const toplevel = stdout.trim();
+    const toplevel = stdout.replace(/\r?\n$/, '');
     if (!toplevel) {
       return fail(
         'not_a_git_repo',

@@ -58,7 +58,7 @@ function makeAdoptingLayout(dir: string): void {
 
 describe('external acceptance harness template', () => {
   it('parameterizes the default branch into the pull_request trigger', () => {
-    for (const branch of ['master', 'trunk', 'release/1.x']) {
+    for (const branch of ['master', 'trunk', 'release/1.x', 'release,stable', '!release']) {
       const yaml = externalAcceptanceWorkflowYaml({ defaultBranch: branch, version: '1.2.3' });
       const parsed = parse(yaml) as {
         on: { pull_request: { branches: string[]; types: string[] } };
@@ -69,14 +69,42 @@ describe('external acceptance harness template', () => {
         'synchronize',
         'reopened',
         'ready_for_review',
+        'edited',
       ]);
     }
-    expect(externalAcceptanceWorkflowYaml(INPUT)).toContain('branches: [master]');
+    expect(externalAcceptanceWorkflowYaml(INPUT)).toContain('branches: ["master"]');
+  });
+
+  it('installs in runner storage without interpreting the adopting workspace manifest', () => {
+    const root = makeTempDir('specgit-isolated-install-');
+    try {
+      const runner = path.join(root, 'runner');
+      const fixture = path.join(root, 'fixture-cli');
+      fs.mkdirSync(fixture, { recursive: true });
+      fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({ name: 'specgit', version: '1.2.3' }));
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+        name: 'adopter', private: true, dependencies: { '@example/local': 'workspace:*' },
+      }));
+      const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
+        jobs: Record<string, { steps: Array<{ name: string; run?: string }> }>;
+      };
+      const command = parsed.jobs['specgit-acceptance'].steps.find((step) => step.name === 'Install pinned SpecGit CLI')?.run;
+      expect(command).toBeDefined();
+      const quotedFixture = `'${fixture.replace(/'/g, `'\\''`)}'`;
+      const install = spawnSync('sh', ['-c', command!.replace('specgit@1.2.3', quotedFixture)], {
+        cwd: root, encoding: 'utf8', timeout: 15_000,
+        env: { ...process.env, RUNNER_TEMP: runner, npm_config_cache: path.join(root, 'cache'), npm_config_offline: 'true' },
+      });
+      expect(install.status, install.stderr).toBe(0);
+      expect(fs.existsSync(path.join(runner, 'specgit-cli/node_modules/specgit/package.json'))).toBe(true);
+      expect(fs.existsSync(path.join(root, 'node_modules'))).toBe(false);
+      expect(fs.existsSync(path.join(root, 'package-lock.json'))).toBe(false);
+    } finally { rmDir(root); }
   });
 
   it('installs and pins the published CLI, independent of the adopting stack', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
-    expect(yaml).toContain('npm install --no-save --no-audit --no-fund specgit@1.2.3');
+    expect(yaml).toContain('npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@1.2.3');
     expect(yaml).not.toContain('specgit@^');
     expect(yaml).not.toContain('specgit@~');
     // Stack independence: nothing may assume the adopting repository is
@@ -96,8 +124,27 @@ describe('external acceptance harness template', () => {
 
   it('runs the verdict through the installed CLI, not a workspace path', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
-    expect(yaml).toContain('npx --no-install specgit finish --json');
+    expect(yaml).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
     expect(yaml).toContain('GH_TOKEN: ${{ github.token }}');
+  });
+
+  it('loads the wait parser from the isolated CLI when the adopter has no node_modules', () => {
+    const root = makeTempDir('specgit-isolated-wait-');
+    try {
+      makeAdoptingLayout(root);
+      fs.writeFileSync(path.join(root, 'spec_git/policy.yaml'), 'version: 1\nrequired_checks: []\n');
+      const cliDir = path.join(root, 'runner storage', 'specgit-cli');
+      fs.mkdirSync(cliDir, { recursive: true });
+      fs.renameSync(path.join(root, 'node_modules'), path.join(cliDir, 'node_modules'));
+      fs.mkdirSync(path.join(cliDir, 'node_modules/specgit'));
+      const gh = createFakeGh(root, [{ match: '^api repos/.*/commits/.*/check-runs', stdout: JSON.stringify({ check_runs: [] }) }]);
+      const result = spawnSync(process.execPath, ['--input-type=module'], {
+        cwd: root, input: waitScript(), encoding: 'utf8', timeout: 5_000,
+        env: gh.env({ SPECGIT_CLI_DIR: cliDir, WAIT_REPO: 'test/adopter', WAIT_SHA: 'a'.repeat(40), WAIT_PR: '' }),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('All required checks are in a terminal state.');
+    } finally { rmDir(root); }
   });
 
   it('contributes exactly the acceptance check name with read-only permissions', () => {

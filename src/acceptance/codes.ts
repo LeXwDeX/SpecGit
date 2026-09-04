@@ -28,6 +28,10 @@ export type SpecGitCode =
   | 'evidence_truncated'
   | 'issue_not_found'
   | 'issue_is_pull_request'
+  | 'title_language_mismatch'
+  | 'title_evidence_missing'
+  | 'issue_labels_invalid'
+  | 'issue_labels_unavailable'
   | 'pr_not_found'
   | 'pr_closed_unmerged'
   | 'pr_draft'
@@ -55,6 +59,26 @@ export interface CodeInfo {
  * (unknown, exit 3).
  */
 export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
+  title_language_mismatch: {
+    kind: 'factual',
+    message: 'The title violates the explicitly selected project language rule.',
+    fix: 'Edit the issue or pull request title to match the project language, then re-run specgit finish.',
+  },
+  title_evidence_missing: {
+    kind: 'evidence',
+    message: 'The forge did not provide the title required for validation.',
+    fix: 'Retry when the issue and pull request titles are available from the forge.',
+  },
+  issue_labels_invalid: {
+    kind: 'factual',
+    message: 'The issue labels violate the selected project vocabulary or axis rule.',
+    fix: 'Choose labels from the policy and remove conflicting labels, then re-run specgit finish.',
+  },
+  issue_labels_unavailable: {
+    kind: 'evidence',
+    message: 'The forge did not provide the issue labels required for validation.',
+    fix: 'Retry when the complete issue label set is available from the forge.',
+  },
   record_missing: {
     kind: 'evidence',
     message: 'No .specgit.yaml delivery binding found.',

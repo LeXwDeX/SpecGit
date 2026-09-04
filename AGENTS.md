@@ -125,6 +125,10 @@ already exists); keep manual guidance outside them.
 
 ### Issue tags
 
+- Follow the project's `language` for issues and PRs. Enabled `validation`
+  rules check titles and labels before creation and during `finish`.
+  Select labels from policy `tags`; users choose rule changes with
+  `specgit init --force --configure-rules`.
 - Every bootstrap applies the title's `kind::<type>` member
   automatically; pass `--tags <a,b>` to choose the full set explicitly.
 - Selection is pool-first: existing on-spec labels win verbatim; anything

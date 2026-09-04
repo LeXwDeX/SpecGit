@@ -205,8 +205,9 @@ on:
     branches: [main]
     # A draft PR fails the verdict (pr_draft), so the draft→ready
     # transition must re-verdict. Listing types replaces the defaults,
-    # so the default activity types are listed alongside.
-    types: [opened, synchronize, reopened, ready_for_review]
+    # so the default activity types are listed alongside. Title and body
+    # edits change live acceptance evidence even when the head is unchanged.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
 
 permissions:
@@ -511,6 +512,10 @@ already exists); keep manual guidance outside them.
 
 ### Issue tags
 
+- Follow the project's \`language\` for issues and PRs. Enabled \`validation\`
+  rules check titles and labels before creation and during \`finish\`.
+  Select labels from policy \`tags\`; users choose rule changes with
+  \`specgit init --force --configure-rules\`.
 - Every bootstrap applies the title's \`kind::<type>\` member
   automatically; pass \`--tags <a,b>\` to choose the full set explicitly.
 - Selection is pool-first: existing on-spec labels win verbatim; anything
@@ -631,6 +636,9 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 
 ### 议题标签
 
+- 按项目策略的 \`language\` 填写 issue/PR；\`validation\` 启用的标题与
+  标签规则在创建前和 \`finish\` 中校验。按策略 \`tags\` 选择标签；需要
+  更改规则时，由用户通过 \`specgit init --force --configure-rules\` 选择。
 - 每次引导都会自动应用标题的 \`kind::<type>\` 成员；显式传入
   \`--tags <a,b>\` 可自选完整集合。
 - 选择以池为先：仓库中符合语法的既有标签原样胜出；缺失的名称从内置的
@@ -713,6 +721,10 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 exports[`mergeGitPrePush: pure byte merge > a fresh install is the spawnable managed file; re-merge is byte-stable 1`] = `
 "#!/bin/sh
 # >>> specgit:start >>>
+# Run first in a subshell and replay stdin for the user's hook.
+specgit_pre_push_refs=$(mktemp) || exit 1
+cat > "$specgit_pre_push_refs" || { rm -f "$specgit_pre_push_refs"; exit 1; }
+(
 # SpecGit pre-push guard (managed by specgit init).
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
@@ -731,6 +743,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   esac
 done
 exit 0
+) < "$specgit_pre_push_refs"
+specgit_pre_push_status=$?
+exec < "$specgit_pre_push_refs"
+rm -f "$specgit_pre_push_refs"
+if [ "$specgit_pre_push_status" -ne 0 ]; then
+  exit "$specgit_pre_push_status"
+fi
+unset specgit_pre_push_refs specgit_pre_push_status
 # <<< specgit:end <<<
 "
 `;

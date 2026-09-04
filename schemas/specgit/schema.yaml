@@ -120,6 +120,41 @@ documents:
           diagnostic codes, closing references (`Closes #n`) — is never
           localized under any value. Adding a language is a catalog
           addition in src/i18n/language.ts, not a policy-format change.
+      validation:
+        type: strict object (optional titles, optional labels)
+        required: false
+        fields:
+          titles:
+            type: boolean
+            default: false
+            notes: >-
+              When true, issue and PR/MR titles are required evidence. English
+              forbids Unicode Han characters; Chinese requires at least one.
+              Missing/empty title is title_evidence_missing (exit 3); a known
+              violation is title_language_mismatch (exit 1 at acceptance).
+          labels:
+            type: enum off | kind | project
+            default: off
+            notes: >-
+              kind requires exactly one catalog kind:: label plus only policy
+              tags extras. project requires a nonempty subset of a nonempty
+              policy tags vocabulary. Both allow at most one member per scoped
+              axis. Missing labels are issue_labels_unavailable (exit 3),
+              violations issue_labels_invalid (exit 1 at acceptance).
+        notes: >-
+          Creation preflight and live acceptance (G7/G9) enforce enabled rules.
+          Absent settings retain legacy behavior. Configure with init
+          --force --configure-rules, or explicit --title-check yes|no,
+          --label-check off|kind|project and repeatable --allowed-label.
+      automation:
+        type: strict object (required merge, optional target_branch and close_issues)
+        required: false
+        notes: >-
+          Disabled when absent. A present object requires merge; omitted close_issues is disabled.
+          merge true requires a nonempty target_branch; close_issues true
+          requires merge true. Init asks yes/no each time, default no;
+          agents cannot answer yes for the user. Other policy settings
+          survive ordinary init --force.
       tags:
         type: array of strict objects (name, optional color, optional description)
         required: false
@@ -182,9 +217,9 @@ acceptance:
     - g4_context       # not_a_git_repo, git_unavailable, no_commits, detached_head, branch_mismatch, merged_delivery_not_contained, merged_lineage_unavailable, worktree_mismatch
     - g5_origin        # no_origin, origin_unresolvable, gitlab_unsupported
     - g6_provider      # gh_missing, gh_unauthenticated, gh_transport on the GitHub route; glab_missing, glab_unauthenticated, glab_transport on a declared GitLab origin
-    - g7_issues        # issue_not_found, issue_is_pull_request
+    - g7_issues        # issue_not_found, issue_is_pull_request; enabled title/label rules
     - g8_sequence      # issue_out_of_order (only when policy.ordered_issues is true)
-    - g9_pr            # pr_not_found, pr_closed_unmerged, pr_draft, pr_head_mismatch, pr_repo_mismatch
+    - g9_pr            # pr_not_found, pr_closed_unmerged, pr_draft, pr_head_mismatch, pr_repo_mismatch; enabled title rule
     - g10_closing_refs # closing_refs_incomplete
     - g11_checks       # checks_missing, checks_pending, checks_failed (per check name)
   semantics: >-
@@ -212,13 +247,13 @@ state_assets:
         - .github/workflows/specgit-accept.yml
         - AGENTS.md (specgit managed block)
         - CLAUDE.md (specgit managed block, when present)
-        - .opencode/hooks.json (specgit guard entry)
-        - .opencode/hooks/specgit-merge-guard.sh
-        - git pre-push hook (specgit managed markers)
       written_by: specgit init
       rule: regenerate (init --force) instead of hand-editing
     local_integration_assets:
       paths:
+        - .opencode/hooks.json (specgit guard entry)
+        - .opencode/hooks/specgit-merge-guard.sh
+        - git pre-push hook (specgit managed markers)
         - .opencode/command/specgit-issue.md
         - .opencode/command/specgit-finish.md
         - .opencode/command/specgit-doctor.md
@@ -229,7 +264,7 @@ state_assets:
         - .agents/skills/specgit-doctor/SKILL.md
         - .agents/skills/specgit-pr/SKILL.md
         - .agents/skills/specgit-status/SKILL.md
-      written_by: specgit setup
+      written_by: specgit init (hooks), specgit setup (entry points)
       rule: agent conveniences only; never acceptance inputs
   drift_report: >-
     #308: `specgit status` reports, under `assets.generated`, whether each

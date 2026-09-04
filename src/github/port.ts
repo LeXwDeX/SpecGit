@@ -13,10 +13,14 @@ export interface IssueFact {
    * record, instead of duplicating the WHY.
    */
   title?: string;
+  /** Complete issue label names; absent when the provider did not supply valid label evidence. */
+  labels?: string[];
 }
 
 export interface PrFact {
   number: number;
+  /** The live request title; absent when title evidence was not supplied. */
+  title?: string;
   state: 'open' | 'closed' | 'merged';
   headBranch: string;
   headSha: string;

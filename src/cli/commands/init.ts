@@ -70,12 +70,13 @@ import {
   type InitInteraction,
   type InitOptions,
 } from './init-validation.js';
-import { persistGitlabHost, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
+import { declaredEndpointName, persistGitlabHost, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
 import { selectWorkflowYaml } from './init-workflow.js';
 import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
 import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
+import { resolveProjectRules } from './init-rules.js';
 
 export type { InitOptions } from './init-validation.js';
 
@@ -157,10 +158,15 @@ export async function runInit(
   if ('exit' in resolved) return resolved;
   const { checks, detected, provenance } = resolved;
 
-  const language = resolveInitLanguage(
+  const initialLanguage = resolveInitLanguage(
     options,
     existingPolicy.ok ? existingPolicy.value.language : undefined
   );
+  const rules = await resolveProjectRules(options, ctx, root, initialLanguage,
+    existingPolicy.ok ? existingPolicy.value : undefined, interaction,
+    declaredEndpoint === null ? undefined : declaredEndpointName(declaredEndpoint.host, declaredEndpoint.port));
+  if ('exit' in rules) return rules;
+  const { language } = rules;
   const automation = await resolveInitAutomation(options, ctx, root, language, interaction);
   if ('exit' in automation) return automation;
 
@@ -233,6 +239,8 @@ export async function runInit(
     language,
     existingPolicy: existingPolicy.ok ? existingPolicy.value : undefined,
     automation: automation.automation,
+    validation: rules.validation,
+    tags: rules.tags,
     workflowYaml: gitlabMode ? null : selection.yaml,
     writeIgnore: options.ignore !== false,
     warnings,
