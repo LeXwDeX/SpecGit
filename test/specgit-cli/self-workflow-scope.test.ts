@@ -19,6 +19,9 @@ const steps = (): Step[] => (parse(harnessWorkflowYaml()) as {
 
 const selectedSteps = (build: 'true' | 'false' | ''): Step[] => steps().filter((step) => {
   if (step.if === undefined) return true;
+  // These scope scenarios model pull_request runs; branch restoration is
+  // unconditional for that event and is exercised with real git separately.
+  if (step.if === "github.event_name == 'pull_request' || github.ref_type == 'branch'") return true;
   if (step.if === "steps.scope.outputs.build == 'true'") return build === 'true';
   if (step.if === "steps.scope.outputs.build == 'false'") return build === 'false';
   throw new Error(`Unverified workflow condition: ${step.if}`);
