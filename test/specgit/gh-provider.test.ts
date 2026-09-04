@@ -574,6 +574,138 @@ describe('GhCliGitHubProvider', () => {
     expect(readFakeGhCalls(fake.logPath)).toEqual([]);
   });
 
+  describe('current Actions workflow generation', () => {
+    const started = '2026-09-04T16:19:01Z';
+    const workflow = (id: number, suite: number, extra: Record<string, unknown> = {}) => ({
+      id, workflow_id: 10, check_suite_id: suite, run_attempt: 1, name: 'CI', event: 'pull_request',
+      head_sha: SHA, status: 'completed', conclusion: 'success', run_started_at: started, ...extra,
+    });
+    const check = (id: number, name: string, suite: number, extra: Record<string, unknown> = {}) => ({
+      id, name, check_suite: { id: suite }, app: { id: 15368, slug: 'github-actions' },
+      status: 'completed', conclusion: 'success', started_at: '2026-09-04T16:19:04Z', ...extra,
+    });
+    function generationProvider(checks: unknown[], workflows: unknown[], extra: Record<string, unknown> = {}) {
+      return setup([
+        { match: 'pulls/436$', stdout: JSON.stringify({ number: 436, state: 'open', draft: false,
+          head: { ref: 'fix/generation', sha: SHA }, base: { ref: 'main' } }) },
+        { match: 'check-runs', stdout: JSON.stringify({ check_runs: checks }) },
+        { match: 'actions/runs', stdout: JSON.stringify({ total_count: workflows.length, workflow_runs: workflows, ...extra }) },
+        { match: '/statuses', stdout: '[]' },
+      ]);
+    }
+
+    it.each(['acceptance', 'all CI'])('removes superseded Actions jobs but retains external apps for %s', async (surface) => {
+      const { provider, fake } = generationProvider([
+        check(1, 'Required verification', 41, { conclusion: 'failure' }),
+        check(2, 'Test (${{ matrix.label }})', 41, { conclusion: 'cancelled' }),
+        check(3, 'Required verification', 51),
+        check(4, 'Test (${{ matrix.label }})', 41, { app: { id: 42, slug: 'external-quality' }, conclusion: 'failure' }),
+      ], [workflow(4, 41, { conclusion: 'cancelled' }), workflow(5, 51)]);
+      const result = surface === 'acceptance' ? await provider.getCheckRuns(REPO, SHA) : await provider.getPrChecks(REPO, 436);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const checks = Array.isArray(result.value) ? result.value : result.value.checks;
+      expect(checks.filter((run) => run.source?.startsWith('app:')).map((run) => run.id)).toEqual([3, 4]);
+      expect(checks.find((run) => run.id === 4)?.conclusion).toBe('failure');
+      expect(readFakeGhCalls(fake.logPath).filter((call) => call.includes('actions/runs'))).toHaveLength(1);
+    });
+
+    it('keeps successor workflow pending when its required job has not registered', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41, { conclusion: 'failure' })],
+        [workflow(4, 41, { conclusion: 'cancelled' }), workflow(5, 51, { status: 'in_progress', conclusion: null })]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toEqual({ ok: true, value: [] });
+      expect(await provider.getPrChecks(REPO, 436)).toMatchObject({ ok: true, value: { checks: [
+        { id: 5, name: 'workflow: CI (pull_request)', status: 'in_progress', conclusion: null },
+      ] } });
+    });
+
+    it.each(['neutral', 'failure', 'cancelled'])('retains the current workflow job concluding %s', async (conclusion) => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41, { conclusion })], [workflow(4, 41, { conclusion })]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [{ id: 1, conclusion }] });
+    });
+
+    it('uses workflow start time before run id and preserves independent workflow groups', async () => {
+      const { provider } = generationProvider([check(1, 'Test', 41), check(2, 'Test', 51), check(3, 'Security', 61, { conclusion: 'failure' })],
+        [workflow(4, 41, { run_started_at: '2026-09-04T16:20:01Z' }), workflow(5, 51),
+          workflow(6, 61, { workflow_id: 11, name: 'Security', conclusion: 'failure' })]);
+      const result = await provider.getCheckRuns(REPO, SHA);
+      expect(result.ok && result.value.map((run) => run.id)).toEqual([1, 3]);
+    });
+
+    it('keeps terminal jobs pending while their same-suite workflow rerun is running', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)],
+        [workflow(4, 41, { run_attempt: 2, status: 'in_progress', conclusion: null })]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
+        { id: 1, status: 'in_progress', conclusion: null },
+      ] });
+    });
+
+    it('retains previously successful jobs after a partial workflow rerun settles', async () => {
+      const { provider } = generationProvider([
+        check(1, 'Build', 41, { started_at: '2026-09-04T15:00:00Z' }), check(2, 'Tests', 41),
+      ], [workflow(4, 41, { run_attempt: 2 })]);
+      const result = await provider.getCheckRuns(REPO, SHA);
+      expect(result.ok && result.value.map((run) => [run.id, run.conclusion])).toEqual([[1, 'success'], [2, 'success']]);
+    });
+
+    it.each([
+      ['missing check suite', [check(1, 'Test', 41, { check_suite: undefined })], [workflow(4, 41)]],
+      ['missing owner', [check(1, 'Test', 41)], []],
+      ['missing workflow suite', [check(1, 'Test', 41)], [workflow(4, 41, { check_suite_id: undefined })]],
+      ['missing attempt', [check(1, 'Test', 41)], [workflow(4, 41, { run_attempt: undefined })]],
+      ['invalid timestamp', [check(1, 'Test', 41)], [workflow(4, 41, { run_started_at: 'invalid' })]],
+      ['wrong head', [check(1, 'Test', 41)], [workflow(4, 41, { head_sha: 'b'.repeat(40) })]],
+      ['duplicate suite', [check(1, 'Test', 41)], [workflow(4, 41), workflow(5, 41)]],
+      ['duplicate run', [check(1, 'Test', 41)], [workflow(4, 41), workflow(4, 51)]],
+      ['unknown workflow status', [check(1, 'Test', 41)], [workflow(4, 41, { status: 'mystery' })]],
+    ])('fails closed on %s Actions ownership', async (_name, checks, workflows) => {
+      const { provider } = generationProvider(checks as unknown[], workflows as unknown[]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false, code: 'gh_transport' });
+    });
+
+    it.each([undefined, -1, 2, 1001])('fails closed on an incomplete Actions workflow count: %s', async (total_count) => {
+      const { provider } = generationProvider([check(1, 'Test', 41)], [workflow(4, 41)], { total_count });
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false });
+    });
+
+    it.each([SHA.slice(0, 7), SHA.slice(0, 7).toUpperCase()])('resolves abbreviated commit %s before reading its Actions workflows', async (short) => {
+      const { provider, fake } = setup([
+        { match: `/commits/${short}$`, stdout: JSON.stringify({ sha: SHA }) },
+        { match: 'check-runs', stdout: JSON.stringify({ check_runs: [check(1, 'Test', 41)] }) },
+        { match: `actions/runs\\?head_sha=${SHA}&`, stdout: JSON.stringify({ total_count: 1, workflow_runs: [workflow(4, 41)] }) },
+      ]);
+      expect(await provider.getCheckRuns(REPO, short)).toMatchObject({ ok: true, value: [{ id: 1 }] });
+      expect(readFakeGhCalls(fake.logPath)).toContain(`api repos/LeXwDeX/SpecGit/commits/${short}`);
+    });
+
+    it('rejects a commit resolution that does not match the requested abbreviation', async () => {
+      const short = SHA.slice(0, 7);
+      const { provider } = setup([
+        { match: `/commits/${short}$`, stdout: JSON.stringify({ sha: 'b'.repeat(40) }) },
+        { match: 'check-runs', stdout: JSON.stringify({ check_runs: [check(1, 'Test', 41)] }) },
+      ]);
+      expect(await provider.getCheckRuns(REPO, short)).toMatchObject({ ok: false, code: 'gh_transport' });
+    });
+
+    it('finds the successor workflow beyond the first page before discarding any checks', async () => {
+      const first = [workflow(4, 41), ...Array.from({ length: 99 }, (_, i) => workflow(100 + i, 200 + i, { workflow_id: 100 + i }))];
+      const { provider, fake } = setup([
+        { match: 'check-runs', stdout: JSON.stringify({ check_runs: [check(1, 'Test', 41), check(2, 'Test', 51)] }) },
+        { match: 'actions/runs.*page=1$', stdout: JSON.stringify({ total_count: 101, workflow_runs: first }) },
+        { match: 'actions/runs.*page=2$', stdout: JSON.stringify({ total_count: 101, workflow_runs: [workflow(5, 51)] }) },
+      ]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [{ id: 2 }] });
+      expect(readFakeGhCalls(fake.logPath).filter((call) => call.includes('actions/runs'))).toHaveLength(2);
+    });
+
+    it('fails closed when workflow pagination reaches a full tenth page', async () => {
+      const page = Array.from({ length: 100 }, (_, i) => workflow(100 + i, 200 + i, { workflow_id: 100 + i }));
+      const { provider, fake } = generationProvider([check(1, 'Test', 41)], page, { total_count: 1000 });
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false, code: 'evidence_truncated' });
+      expect(readFakeGhCalls(fake.logPath).filter((call) => call.includes('actions/runs'))).toHaveLength(10);
+    });
+  });
+
   it('paginates check-runs across pages', async () => {
     const pageOne = Array.from({ length: 100 }, (_, i) => ({
       name: `run-${i}`,

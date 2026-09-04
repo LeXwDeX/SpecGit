@@ -1,13 +1,126 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { parse } from 'yaml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runInit } from '../../src/cli/commands/init.js';
 import { inspectGeneratedAssets } from '../../src/cli/asset-drift.js';
-import { COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH } from '../../src/cli/completion-workflow.js';
+import { completionWorkflowYaml, COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH } from '../../src/cli/completion-workflow.js';
 import { fail, ok } from '../../src/kernel/evidence.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import { makeCtx, makeGitFacts } from './helpers.js';
-import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+import { commitFile, git, initRepo, makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+
+describe('completion scope preserves the original request', () => {
+  let root: string;
+  beforeEach(() => { root = makeTempDir('specgit-completion-scope-'); });
+  afterEach(() => { rmDir(root); });
+
+  function classifyRequest(options: { merged?: boolean; files?: unknown[]; after?: Record<string, unknown>; count?: number; pages?: unknown[] } = {}) {
+    const repo = initRepo(root);
+    const base = git(repo.root, ['rev-parse', 'HEAD'], repo.env).trim();
+    git(repo.root, ['checkout', '-b', 'product-change'], repo.env);
+    const head = commitFile(repo.root, 'src/product.ts', 'export const product = true;\n', repo.env);
+    git(repo.root, ['checkout', 'main'], repo.env);
+    if (options.merged !== false) git(repo.root, ['merge', '--no-ff', 'product-change', '-m', 'Merge product change'], repo.env);
+    const files = options.files ?? [{ filename: 'src/product.ts', status: 'added' }];
+    const before = { number: 437, head: { sha: head }, base: { sha: base }, changed_files: options.count ?? files.length };
+    const responses = { before, after: { ...before, ...options.after }, pages: options.pages ?? [files] };
+    const fixture = path.join(root, 'github-responses.json');
+    fs.writeFileSync(fixture, JSON.stringify(responses));
+    fs.mkdirSync(path.join(root, 'specgit-runtime/scripts'), { recursive: true });
+    for (const file of ['ci-change-scope.mjs', 'ci-changesets.mjs']) {
+      fs.copyFileSync(path.resolve('scripts', file), path.join(root, 'specgit-runtime/scripts', file));
+    }
+    fs.symlinkSync(path.resolve('node_modules'), path.join(root, 'specgit-runtime/node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.12.0', selfHosted: true }));
+    const step = workflow.jobs.complete.steps.find((item: { id?: string }) => item.id === 'scope');
+    const script = step.run.replace("import { execFileSync } from 'node:child_process';", `
+      import { readFileSync as readFixture } from 'node:fs';
+      const fixture = JSON.parse(readFixture(process.env.SPECGIT_SCOPE_FIXTURE, 'utf8'));
+      let reads = 0;
+      const execFileSync = (command, args) => {
+        if (command !== 'gh' || args[0] !== 'api') throw new Error('Unexpected external command');
+        const endpoint = args[1];
+        if (endpoint === 'repos/owner/repo/pulls/437') return JSON.stringify(reads++ === 0 ? fixture.before : fixture.after);
+        const match = /^repos\\/owner\\/repo\\/pulls\\/437\\/files\\?per_page=100&page=(\\d+)$/.exec(endpoint);
+        if (!match) throw new Error('Unexpected API endpoint: ' + endpoint);
+        return JSON.stringify(fixture.pages[Number(match[1]) - 1] ?? []);
+      };
+    `);
+    const output = path.join(root, 'scope-output');
+    // Execute the same script file boundary as Actions. On Windows, passing
+    // source through bash -c makes MSYS consume pairs of regex backslashes.
+    const scriptFile = path.join(root, 'scope-step.sh');
+    fs.writeFileSync(scriptFile, script, 'utf8');
+    const run = spawnSync('bash', ['-e', scriptFile.split(path.sep).join('/')], { cwd: repo.root, encoding: 'utf8', env: {
+      ...process.env, ...repo.env, REQUEST_PR: '437', REQUEST_HEAD: head,
+      GITHUB_REPOSITORY: 'owner/repo', GITHUB_OUTPUT: output, SPECGIT_SCOPE_FIXTURE: fixture,
+    } });
+    return { ...run, output: fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '' };
+  }
+
+  it('retains product scope after the request head is already merged into the trusted checkout', () => {
+    const result = classifyRequest();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain('build=true\n');
+  });
+
+  it('classifies an open product request from the same authenticated evidence', () => {
+    const result = classifyRequest({ merged: false });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toBe('build=true\n');
+  });
+
+  it.each([
+    ['configuration', [{ filename: 'spec_git/policy.yaml', status: 'modified' }], false],
+    ['deleted documentation', [{ filename: 'docs/obsolete.md', status: 'removed' }], false],
+    ['deleted local state', [{ filename: '.local/cache.json', status: 'removed' }], false],
+    ['deleted source', [{ filename: 'src/obsolete.ts', status: 'removed' }], true],
+    ['source renamed into documentation', [{ filename: 'docs/example.md', previous_filename: 'src/product.ts', status: 'renamed' }], true],
+  ])('preserves %s scope after merge', (_name, files, build) => {
+    const result = classifyRequest({ files });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toBe(`build=${build}\n`);
+  });
+
+  it('reads the page containing the final product file before deciding scope', () => {
+    const docs = Array.from({ length: 100 }, (_, i) => ({ filename: `docs/${i}.md`, status: 'modified' }));
+    const result = classifyRequest({ count: 101, pages: [docs, [{ filename: 'src/product.ts', status: 'modified' }]] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toBe('build=true\n');
+  });
+
+  it('accepts exactly the documented file limit only with matching complete evidence', () => {
+    const pages = Array.from({ length: 30 }, (_, page) => Array.from({ length: 100 }, (_, i) => ({ filename: `docs/${page}-${i}.md`, status: 'modified' })));
+    const result = classifyRequest({ count: 3000, pages });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toBe('build=false\n');
+  });
+
+  it.each([
+    ['head moved', { after: { head: { sha: 'b'.repeat(40) } } }],
+    ['base moved', { after: { base: { sha: 'c'.repeat(40) } } }],
+    ['request changed', { after: { number: 438 } }],
+    ['count changed', { after: { changed_files: 2 } }],
+    ['truncated files', { count: 2 }],
+    ['API limit exceeded', { count: 3001 }],
+    ['invalid count', { count: -1 }],
+    ['non-array page', { pages: [{ files: [] }] }],
+    ['duplicate files', { files: [{ filename: 'docs/a.md', status: 'modified' }, { filename: 'docs/a.md', status: 'modified' }] }],
+    ['missing previous path', { files: [{ filename: 'docs/a.md', status: 'renamed' }] }],
+    ['unknown status', { files: [{ filename: 'docs/a.md', status: 'unknown' }] }],
+    ['unsafe path', { files: [{ filename: '../docs/a.md', status: 'modified' }] }],
+    ['backslash path', { files: [{ filename: 'src\\product.ts', status: 'modified' }] }],
+    ['control character path', { files: [{ filename: 'docs/control\u0001.md', status: 'modified' }] }],
+    ['missing file', { files: [null] }],
+    ['local state added', { files: [{ filename: '.local/cache.json', status: 'added' }] }],
+  ])('fails before emitting a classification when %s', (_name, options) => {
+    const result = classifyRequest(options);
+    expect(result.status, result.stderr).not.toBe(0);
+    expect(result.output).toBe('');
+  });
+});
 
 describe('configured completion installation', () => {
   let root: string;

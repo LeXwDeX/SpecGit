@@ -27,18 +27,31 @@ export function matchesBoundRequest(record: DeliveryBinding, repo: RepoRef, pr: 
   return parsed.ok && parsed.value.repo.platform === repo.platform && sameRepoRef(parsed.value.repo, repo) && parsed.value.pr === pr;
 }
 
-/** Collect independent current causes, even when a sibling check is still pending. */
-async function currentFailures(input: RemoteDeliveryInput, ctx: CommandContext, root: string, policy: Policy): Promise<Evidence<DeliveryFailure[]>> {
+const CI_REJECTIONS = new Set([
+  'checks_pending', 'checks_missing', 'checks_failed',
+  'automation_checks_pending', 'automation_checks_missing', 'automation_checks_failed',
+  'automation_pipeline_not_successful',
+]);
+
+/** CI failures become repair work only after all current checks have settled. */
+async function currentFailures(input: RemoteDeliveryInput, ctx: CommandContext, root: string, policy: Policy): Promise<Evidence<{ failures: DeliveryFailure[]; retryCi: boolean }>> {
   const checks = await ctx.gh.getPrChecks(input.repo, input.pr);
   if (!checks.ok) return checks;
   if (checks.value.headSha !== input.headSha) return fail('automation_head_changed', 'Failure evidence belongs to a different request head.');
+  if (input.repo.platform === 'gitlab' && checks.value.pipelineStatus === undefined) {
+    return fail('automation_pipeline_unavailable', 'The GitLab head pipeline status is unavailable.');
+  }
   const anchor = await ctx.gh.getEvidenceAnchor(input.repo, input.pr);
   if (!anchor.ok) return anchor;
   const boundary = anchor.value.anchoredAt == null ? null : Date.parse(anchor.value.anchoredAt);
   if (boundary !== null && !Number.isFinite(boundary)) return fail('automation_evidence_unknown', 'The failure evidence anchor is unavailable.');
+  const eligibility = classifyCiEligibility(checks.value.checks, policy.required_checks);
+  const ciPending = eligibility.problems.some((problem) => problem.kind === 'pending') ||
+    (input.repo.platform === 'gitlab' && ['created', 'pending', 'preparing', 'running', 'waiting_for_resource', 'scheduled', 'manual']
+      .includes(checks.value.pipelineStatus ?? ''));
   const failures: DeliveryFailure[] = [];
-  for (const problem of classifyCiEligibility(checks.value.checks, policy.required_checks).problems) {
-    if (problem.kind !== 'failed') continue;
+  for (const problem of eligibility.problems) {
+    if (ciPending || problem.kind !== 'failed') continue;
     const { check } = problem;
     const started = check.startedAt === null ? Number.NaN : Date.parse(check.startedAt);
     if (boundary !== null && (!Number.isFinite(started) || started < boundary)) continue;
@@ -55,7 +68,10 @@ async function currentFailures(input: RemoteDeliveryInput, ctx: CommandContext, 
       failures.push({ code: failure.code, message: failure.message, ...(target ? { target } : {}) });
     }
   }
-  return ok(failures);
+  // A rejection can become stale between the merge verdict and this refresh.
+  // Successful fresh CI still needs a new complete merge verdict before mutation.
+  const ciSucceeded = eligibility.eligible && (input.repo.platform !== 'gitlab' || checks.value.pipelineStatus === 'success');
+  return ok({ failures, retryCi: ciPending || ciSucceeded });
 }
 
 /** The workflow serializes by repository/request; this driver is shared by gh and glab runners. */
@@ -87,6 +103,7 @@ export async function runRemoteDelivery(
     if (current.value.state === 'merged' && options.prepareMerged) await options.prepareMerged();
     outcome = await runMerge(boundContext);
     if (outcome.exit === 0) return outcome;
+    let waitingForCi = false;
     if (outcome.exit === 1 && !outcome.automation?.merged && current.value.state === 'open') {
       const root = await ctx.discoverRoot(ctx.cwd);
       if (!root.ok) return outcome;
@@ -94,16 +111,21 @@ export async function runRemoteDelivery(
       if (!approved.ok) return outcome;
       const failures = await currentFailures(input, boundContext, root.value, approved.value.policy);
       if (!failures.ok) return blocked(failures.code, failures.message);
-      if (failures.value.length > 0) {
+      if (failures.value.failures.length > 0) {
         const repairs = await ensureFailureIssues({ repo: input.repo, pr: current.value,
           delivery: input.record.delivery, issueNumbers: input.record.issues,
-          failures: failures.value, policy: approved.value.policy }, ctx.gh);
+          failures: failures.value.failures, policy: approved.value.policy }, ctx.gh);
         if (!repairs.ok) return blocked(repairs.code, repairs.message);
         return { ...outcome, exit: 1, ...(outcome.automation ? { automation: { ...outcome.automation, status: 'blocked' } } : {}),
-          errors: failures.value.map((failure) => ({ severity: 'error', ...failure })) };
+          errors: failures.value.failures.map((failure) => ({ severity: 'error', ...failure })) };
+      }
+      waitingForCi = failures.value.retryCi && (outcome.errors?.length ?? 0) > 0 &&
+        outcome.errors?.every((error) => CI_REJECTIONS.has(error.code)) === true;
+      if (waitingForCi && outcome.automation) {
+        outcome = { ...outcome, automation: { ...outcome.automation, status: 'pending' } };
       }
     }
-    const waiting = outcome.automation?.status === 'pending' ||
+    const waiting = waitingForCi || outcome.automation?.status === 'pending' ||
       (outcome.automation?.merged === true && outcome.exit === 3 && outcome.errors?.[0]?.code !== 'policy_history_unavailable');
     if (!waiting) {
       return outcome;

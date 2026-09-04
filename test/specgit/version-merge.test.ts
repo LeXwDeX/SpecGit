@@ -65,14 +65,41 @@ describe('configured version PR merge', () => {
   });
 
   it.each([
-    { checks: [check('Test', null, 'queued'), check('Broken', 'failure')] },
-    { checks: [check('Broken', 'failure'), check('Test', null, 'queued')] },
     { checks: [check('Broken', 'failure')] },
-  ])('fails immediately despite pending or missing evidence: $checks', async ({ checks }) => {
+  ])('rejects a settled failed check even when required evidence is missing: $checks', async ({ checks }) => {
     const { provider, calls, options } = fixture();
     provider.getPrChecks = async () => ok({ headSha: sha, checks });
     await expect(mergeVersionPullRequest(options)).rejects.toThrow("CI check 'Broken' concluded failure.");
     expect(options.now()).toBe(0);
+    expect(calls.some((call) => call.startsWith('merge:'))).toBe(false);
+  });
+
+  it.each(['neutral', 'failure'].flatMap((conclusion) => [
+    { conclusion, reversed: false }, { conclusion, reversed: true },
+  ]))('waits for mixed CI to settle before merging: $conclusion, reversed=$reversed', async ({ conclusion, reversed }) => {
+    const { provider, calls, options } = fixture();
+    let polls = 0;
+    provider.getPrChecks = async () => {
+      const checks = ++polls === 1
+        ? [check('Test', null, 'in_progress'), check('CodeQL', conclusion)]
+        : [check('Test'), check('CodeQL')];
+      return ok({ headSha: sha, checks: reversed ? checks.reverse() : checks });
+    };
+    expect(await mergeVersionPullRequest(options)).toEqual({ status: 'merged', pr: 42 });
+    expect(polls).toBe(2);
+    expect(options.now()).toBe(10);
+    expect(calls.filter((call) => call.startsWith('merge:'))).toEqual([`merge:42:${sha}`]);
+  });
+
+  it.each(['neutral', 'failure'])('rejects a non-success result that remains after CI settles: %s', async (conclusion) => {
+    const { provider, calls, options } = fixture();
+    let polls = 0;
+    provider.getPrChecks = async () => ok({ headSha: sha, checks: [
+      ++polls === 1 ? check('Test', null, 'queued') : check('Test'), check('CodeQL', conclusion),
+    ] });
+    await expect(mergeVersionPullRequest(options)).rejects.toThrow(`CI check 'CodeQL' concluded ${conclusion}.`);
+    expect(polls).toBe(2);
+    expect(options.now()).toBe(10);
     expect(calls.some((call) => call.startsWith('merge:'))).toBe(false);
   });
 
@@ -86,7 +113,18 @@ describe('configured version PR merge', () => {
     expect(calls.filter((call) => call.startsWith('merge:'))).toEqual([`merge:42:${sha}`]);
   });
 
-  it.each([[], [check('Optional')], [check('Test', null, 'queued')]].map((checks) => ({ checks })))('times out while required evidence is incomplete: $checks', async ({ checks }) => {
+  it('waits through the acceptance job window with the default release budget', async () => {
+    const { provider, calls, options } = fixture();
+    provider.getPrChecks = async () => ok({ headSha: sha, checks: [
+      options.now() < 30 * 60_000 ? check('Test', null, 'in_progress') : check('Test'),
+    ] });
+    expect(await mergeVersionPullRequest({ ...options, timeoutMs: undefined, pollIntervalMs: 60_000 }))
+      .toEqual({ status: 'merged', pr: 42 });
+    expect(options.now()).toBe(30 * 60_000);
+    expect(calls.filter((call) => call.startsWith('merge:'))).toEqual([`merge:42:${sha}`]);
+  });
+
+  it.each([[], [check('Optional')], [check('Test', null, 'queued')], [check('Test', null, 'queued'), check('CodeQL', 'neutral')]].map((checks) => ({ checks })))('times out while required evidence is incomplete: $checks', async ({ checks }) => {
     const { provider, calls, options } = fixture();
     provider.getPrChecks = async () => ok({ headSha: sha, checks });
     await expect(mergeVersionPullRequest(options)).rejects.toThrow(/Timed out/);
@@ -116,6 +154,16 @@ describe('configured version PR merge', () => {
     let reads = 0;
     provider.getPr = async () => ok({ ...pr, headSha: ++reads === 1 ? sha : 'd'.repeat(40) });
     await expect(mergeVersionPullRequest(options)).rejects.toThrow(/identity/);
+    expect(calls.some((call) => call.startsWith('merge:'))).toBe(false);
+  });
+
+  it('refuses a changed head while waiting for CI to settle', async () => {
+    const { provider, calls, options } = fixture();
+    let reads = 0;
+    provider.getPr = async () => ok({ ...pr, headSha: ++reads === 1 ? sha : 'd'.repeat(40) });
+    provider.getPrChecks = async () => ok({ headSha: sha, checks: [check('Test', null, 'queued'), check('CodeQL', 'neutral')] });
+    await expect(mergeVersionPullRequest(options)).rejects.toThrow(/identity/);
+    expect(options.now()).toBe(10);
     expect(calls.some((call) => call.startsWith('merge:'))).toBe(false);
   });
 

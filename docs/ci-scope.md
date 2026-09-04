@@ -119,9 +119,17 @@ runtime fails closed; metadata verification does not fall back to compilation.
 
 Both paths resolve the approved target-branch policy and wait through authenticated
 `gh` for its required checks
-at the exact PR head and the same ready-for-review freshness boundary. Both
-then run `finish --json`. Classification, installation, waiting, or verdict
+at the exact PR head and the same ready-for-review freshness boundary. They
+associate Actions checks with their current workflow execution; an obsolete
+cancelled run cannot provide the successor's required aggregate, even if its
+last job starts after readiness. Missing provenance fails closed. Each path
+then runs `finish --json`. Classification, installation, waiting, or verdict
 failure fails the job; an absent classification cannot select a success path.
+Generated acceptance waits up to 25 minutes for sibling checks within a
+30-minute job, covering this repository's 20-minute test window with setup and
+verdict headroom. Version automation waits up to 35 minutes within its 40-minute
+step so it cannot expire ahead of that acceptance window. These are bounded
+waits: incomplete evidence at the deadline still prevents completion.
 Changing policy in the PR cannot grant that PR permission to weaken its own
 checks or enable automatic merging. First adoption can use candidate policy
 for read-only acceptance when no approved policy exists; automatic completion
@@ -136,6 +144,11 @@ protocol, not a permanent 1.12.0 pin or `latest`. In this product repository,
 only a product change may use the approved source-build fallback when the
 published completion runtime is unavailable. Metadata changes instead report
 `runtime_upgrade_required` until a compatible runtime is published.
+The completion runner classifies the original PR's complete file changes, even
+after that PR has merged. It verifies the PR identity and head/base revisions
+around paginated file reads; missing, truncated, or changing evidence fails
+closed. A merge must not collapse a product delivery into an empty metadata
+change, and metadata-only deliveries remain ineligible for source compilation.
 
 ## Adopting projects
 
