@@ -6,14 +6,15 @@ const publishedSha = 'a'.repeat(40);
 const currentSha = 'b'.repeat(40);
 const missing = () => Object.assign(new Error('Not published'), { stdout: JSON.stringify({ error: { code: 'E404' } }) });
 
-function fixture(options: { published?: boolean; tag?: string; release?: boolean; npmError?: Error } = {}) {
-  const { published = true, tag, release = false, npmError } = options;
+function fixture(options: { published?: boolean; tag?: string; release?: boolean; npmError?: Error; npmOutput?: string } = {}) {
+  const { published = true, tag, release = false, npmError, npmOutput } = options;
   const calls: string[][] = [];
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
     if (command === 'npm') {
       if (npmError) throw npmError;
       if (!published) throw missing();
+      if (npmOutput !== undefined) return npmOutput;
       return JSON.stringify({ version, gitHead: publishedSha });
     }
     if (command === 'git' && args[0] === 'rev-parse') return currentSha;
@@ -30,6 +31,29 @@ function fixture(options: { published?: boolean; tag?: string; release?: boolean
 }
 
 describe('release state and partial publication recovery (#392)', () => {
+  it('recovers the exact published commit from npm 12 singleton-array metadata (#419)', () => {
+    const { run, calls } = fixture({ npmOutput: JSON.stringify([{ version, gitHead: publishedSha }]) });
+    expect(readReleaseState({ version, run })).toEqual({ needsPublish: false, releaseSha: publishedSha, tagExists: false });
+    finalizeRelease({ version, run });
+    expect(calls).toContainEqual(['git', 'tag', `v${version}`, publishedSha]);
+    expect(calls.some((call) => call[0] === 'npm' && call[1] === 'publish')).toBe(false);
+  });
+
+  it.each([
+    { name: 'empty results', value: [] },
+    { name: 'multiple results', value: [{ version, gitHead: publishedSha }, { version, gitHead: currentSha }] },
+    { name: 'nested results', value: [[{ version, gitHead: publishedSha }]] },
+    { name: 'null result', value: [null] },
+    { name: 'wrong version', value: [{ version: '9.9.9', gitHead: publishedSha }] },
+    { name: 'missing source', value: [{ version }] },
+    { name: 'invalid source', value: [{ version, gitHead: 'not-a-commit' }] },
+    { name: 'error payload', value: [{ error: { code: 'E404' } }] },
+  ])('refuses $name in successful npm metadata without release writes (#419)', ({ value }) => {
+    const { run, calls } = fixture({ npmOutput: JSON.stringify(value) });
+    expect(() => finalizeRelease({ version, run })).toThrow();
+    expect(calls.some((call) => call[0] === 'gh' || ['tag', 'push'].includes(call[1]))).toBe(false);
+  });
+
   it('plans publication only for an explicit registry E404 with no existing tag', () => {
     const { run } = fixture({ published: false });
     expect(readReleaseState({ version, run })).toEqual({ needsPublish: true, releaseSha: currentSha, tagExists: false });

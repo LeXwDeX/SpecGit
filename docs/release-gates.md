@@ -188,3 +188,8 @@ tag must match. The GitHub Release can then be completed without republishing.
 Only an explicit registry 404 proves a version absent; other lookup failures
 stop the run. Manual release dispatch is restricted to the canonical repository
 on `main` (#411). These checks preserve the version-PR and protection gates.
+
+The publication checks accept both older npm object metadata and npm 12's
+single-result array (#419), retaining exact version and source-commit checks.
+Package verification likewise accepts legacy pack arrays and npm 12's
+package-keyed objects; empty or ambiguous results cannot select an artifact.

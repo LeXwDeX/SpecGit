@@ -19,6 +19,12 @@ export function readReleaseState({ version, run = runCommand }) {
   let published;
   try {
     published = JSON.parse(run('npm', ['view', `specgit@${version}`, 'version', 'gitHead', '--json']));
+    if (Array.isArray(published)) {
+      if (published.length !== 1) {
+        throw new Error('Registry lookup must return exactly one published version.');
+      }
+      [published] = published;
+    }
   } catch (error) {
     let code;
     try {
