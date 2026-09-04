@@ -60,7 +60,7 @@ function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '-');
 }
 
-export function makeRepo(branch: string, deliveryFile = 'feature.txt'): RepoFixture {
+export function makeRepo(branch: string, deliveryFile = 'feature.txt', withRemote = true): RepoFixture {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `specgit-e2e-${safeName(branch)}-`));
   git(dir, 'init', '-b', branch);
   git(dir, 'config', 'user.name', GIT_IDENTITY.name);
@@ -77,6 +77,13 @@ export function makeRepo(branch: string, deliveryFile = 'feature.txt'): RepoFixt
     '-m',
     `deliver ${branch}`
   );
+  if (withRemote) {
+    const bare = path.join(dir, '.git', 'specgit-e2e-origin.git');
+    git(dir, 'init', '--bare', bare);
+    git(dir, 'config', `url.${bare}.insteadOf`, REPO_URL);
+    git(dir, 'push', 'origin', 'HEAD:refs/heads/main');
+    git(dir, '--git-dir', bare, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  }
   // #299: bind now force-carries the record as a commit — HEAD moves
   // after fixture creation, so `sha` must always read live.
   const fixture = { dir, branch } as RepoFixture;
@@ -138,7 +145,7 @@ export function prJson(pr: PrShape): string {
 }
 
 export function issueJson(issue: number, state: 'open' | 'closed' = 'open'): string {
-  return JSON.stringify({ number: issue, state });
+  return JSON.stringify({ number: issue, state, body: `Delivery requirement #${issue}.` });
 }
 
 export interface CheckShape {

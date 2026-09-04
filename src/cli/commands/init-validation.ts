@@ -34,9 +34,10 @@ export interface InitOptions {
   titleCheck?: string;
   labelCheck?: string;
   allowedLabel?: string[];
+  repairLabel?: string[];
   /** false (--no-ignore): skip the local-asset .gitignore block (#292); default writes it. */
   ignore?: boolean;
-  /** Explicit user answer to the automation question. Absent defaults to no off a TTY. */
+  /** Explicit automation choice; omitted on upgrades preserves the configured choice. */
   automation?: string;
   /** Merge destination chosen by the user; otherwise resolve the remote default after a yes. */
   mergeTarget?: string;
@@ -85,17 +86,32 @@ export function validateAutomationOptions(options: InitOptions): InitOutcome | n
   return null;
 }
 
-/** Every init invocation asks anew; a previous yes is never the prompt default. */
+/** Configure once; an ordinary asset upgrade preserves the user's authorized choice. */
 export async function resolveInitAutomation(
   options: InitOptions,
   ctx: CommandContext,
   root: string,
   language: PolicyLanguage,
-  interaction: InitInteraction
+  interaction: InitInteraction,
+  existingPolicy?: Policy
 ): Promise<InitOutcome | { automation: PolicyAutomation }> {
+  if (options.automation === undefined && existingPolicy !== undefined) {
+    const automation = existingPolicy.automation ?? { merge: false, close_issues: false };
+    if (options.mergeTarget !== undefined && !automation.merge) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [errorDiagnostic('automation_target_disabled', 'A merge target cannot enable disabled automation.', {
+          fix: 'Keep the current choice, or explicitly enable automation with --automation yes --merge-target <branch>.',
+        })],
+      };
+    }
+    return { automation: { ...automation,
+      ...(options.mergeTarget !== undefined ? { target_branch: options.mergeTarget } : {}),
+    } };
+  }
   let answer = options.automation;
   let defaulted = answer === undefined;
-  if (answer === undefined && ctx.stdinIsTTY) {
+  if (answer === undefined && ctx.stdinIsTTY && !options.json) {
     const question = language === 'zh'
       ? '启用自动化合并和关闭已绑定 issue？ [yes/no]（默认 no）： '
       : 'Enable automatic merge and closure of bound issues? [yes/no] (default no): ';
@@ -118,7 +134,7 @@ export async function resolveInitAutomation(
     return { automation: { merge: false, close_issues: false } };
   }
 
-  let target = options.mergeTarget;
+  let target = options.mergeTarget ?? existingPolicy?.automation?.target_branch;
   if (target === undefined) {
     const branch = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
     if (!branch.ok || !isAutomationTargetBranch(branch.value)) {

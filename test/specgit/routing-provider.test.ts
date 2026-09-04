@@ -42,7 +42,10 @@ describe('PlatformRoutingProvider (#117)', () => {
     const { github, gitlab, router } = makeRouter('github');
 
     await router.getIssue(gitlabRef, 7);
+    await router.getCiConfigPath(gitlabRef);
     await router.getOpenIssues(gitlabRef);
+    await router.searchIssueHistory(gitlabRef, 'retry delivery');
+    await router.listIssuePullRequests(gitlabRef, 7);
     await router.getOpenIssueNumbers(gitlabRef);
     await router.getPr(gitlabRef, 9);
     await router.getCheckRuns(gitlabRef, 'a'.repeat(40));
@@ -56,7 +59,7 @@ describe('PlatformRoutingProvider (#117)', () => {
     await router.enableRepoAutomerge(gitlabRef);
 
     // Every GitLab call reached the glab delegate…
-    expect(gitlab.calls.length).toBe(13);
+    expect(gitlab.calls.length).toBe(16);
     // …and NO group/subgroup ref ever reached the github delegate (#112).
     expect(github.calls).toEqual([]);
   });

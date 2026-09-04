@@ -479,7 +479,7 @@ describe('specgit setup: version-upgrade convergence (#307)', () => {
     gitInit(tempDir);
     const stalePath = path.join(tempDir, '.opencode', 'command', 'specgit-issue.md');
     fs.mkdirSync(path.dirname(stalePath), { recursive: true });
-    fs.writeFileSync(stalePath, 'stale bytes\n');
+    fs.writeFileSync(stalePath, `${ENTRY_POINT_MARKER}\nstale bytes\n`);
 
     const first = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
     expect(await runCliWith(['node', 'specgit', 'setup', '--tool', 'all', '--json'], first.ctx)).toBe(0);

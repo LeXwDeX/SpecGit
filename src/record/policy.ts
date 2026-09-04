@@ -47,6 +47,7 @@ export const PolicyAutomationSchema = z.object({
     message: 'Use a branch name such as main or release/stable, without revision syntax or options.',
   }).optional(),
   close_issues: z.boolean().optional(),
+  repair_labels: z.array(z.string().refine(isTagSlug, { message: TAG_GRAMMAR_FIX })).min(1).optional(),
 }).strict().superRefine((automation, ctx) => {
   if (automation.merge && automation.target_branch === undefined) {
     ctx.addIssue({ code: 'custom', path: ['target_branch'], message: 'Automatic merge requires an explicit target branch.' });
@@ -57,6 +58,12 @@ export const PolicyAutomationSchema = z.object({
 });
 
 export type PolicyAutomation = z.infer<typeof PolicyAutomationSchema>;
+
+const DeliveryTemplateSchema = z.object({
+  title: z.string().min(1).optional(),
+  body: z.string().min(1),
+  required_sections: z.array(z.string().trim().min(1)).optional(),
+}).strict();
 
 export const PolicySchema = z
   .object({
@@ -78,10 +85,16 @@ export const PolicySchema = z
      * unknown slug the selection refuses.
      */
     tags: z.array(PolicyTagSchema).optional(),
+    /** Explicit project templates; the built-in scaffold is the fallback for an omitted kind. */
+    templates: z.object({
+      issue: DeliveryTemplateSchema.optional(),
+      pr: DeliveryTemplateSchema.optional(),
+    }).strict().optional(),
     /** Explicitly selected project conventions, checked against live forge facts. */
     validation: z.object({
       titles: z.boolean().optional(),
       labels: z.enum(['off', 'kind', 'project']).optional(),
+      bodies: z.boolean().optional(),
     }).strict().optional(),
     /** Explicit authorization for merge and issue closure; absent means disabled. */
     automation: PolicyAutomationSchema.optional(),

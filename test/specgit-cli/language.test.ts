@@ -379,7 +379,7 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     expect(parseClosingRefs(en).size).toBe(0);
   });
 
-  it('both languages make non-trivial mutations issue-first, with trivial and read-only work exempt (#309)', () => {
+  it('both languages bind intended tracked changes and exempt local maintenance', () => {
     const en = managedPromptBlock('en');
     const zh = managedPromptBlock('zh');
     // The rule lands in each language's agent-contract essentials.
@@ -388,7 +388,7 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     // Non-trivial mutations become tracker issues via the real command
     // grammar before development starts…
     expect(en).toContain('a feature, a fix, a refactor, a docs change');
-    expect(zh).toContain('任何非平凡的任务');
+    expect(zh).toContain('有意提交的新功能');
     expect(zh).toContain('文档变更');
     for (const block of [en, zh]) {
       expect(block).toContain('specgit issue <type>:');
@@ -406,6 +406,14 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     // …and the trivial/read-only exemption is explicit.
     expect(en).toContain('Trivial replies and read-only questions');
     expect(zh).toContain('只读提问无需如此');
+    expect(en).toContain('Local maintenance:');
+    expect(en).toContain('entry points need no issue, PR,');
+    expect(en).toContain('Publishing requires explicit release intent');
+    expect(en).toContain('within existing user authorization');
+    expect(zh).toContain('本地维护：');
+    expect(zh).toContain('无需议题、PR、产品构建或发布');
+    expect(zh).toContain('发布包必须有明确发布意图');
+    expect(zh).toContain('在已有用户授权范围内执行');
     // The rule is prose: it introduces no closing references.
     expect(parseClosingRefs(en).size).toBe(0);
     expect(parseClosingRefs(zh).size).toBe(0);
@@ -555,4 +563,3 @@ describe('#118 language: the machine contract never localizes', () => {
     expect(zh.envelope.errors[0].code).toMatch(/^[\x20-\x7E]+$/);
   });
 });
-

@@ -15,6 +15,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import type { PolicyLanguage } from '../record/policy.js';
+import { COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH } from './completion-workflow.js';
+import type { CompletionSelection } from './commands/init-workflow.js';
 import {
   AGENTS_FILENAME,
   CLAUDE_FILENAME,
@@ -59,6 +61,7 @@ export interface HarnessWriteResult {
    * workflow is REMOVED there instead, reported via `removed`).
    */
   workflow: string | null;
+  completionWorkflow: string | null;
   prompts: string[];
   hooks: string[];
   gitHook: string | null;
@@ -104,6 +107,8 @@ export interface HarnessWriteOptions {
    * does not prove SpecGit ownership is preserved and reported.
    */
   workflowYaml?: string | null;
+  /** Authorized completion only; disabled or wrong-platform owned copies are retired. */
+  completion?: CompletionSelection | null;
   /**
    * Guidance language (#118): the managed prompt block renders in the
    * policy's language. Defaults to `en`; the workflow YAML and guard
@@ -134,10 +139,15 @@ export function isSpecGitOwnedWorkflow(content: string): boolean {
   return content.includes('name: SpecGit Acceptance') && content.includes('specgit finish');
 }
 
+export function isSpecGitOwnedCompletion(content: string): boolean {
+  return /^# Managed by SpecGit: (?:trusted delivery completion\.|include in a trusted default-branch pipeline\.)\r?\n/.test(content);
+}
+
 export interface HarnessDesiredState {
   /** Ordered reconciliation steps for every harness asset (#305). */
   steps: ManagedStep[];
   workflowWritten: boolean;
+  completionWorkflow: string | null;
   prompts: string[];
   hooksJsonWritten: boolean;
   gitHook: string | null;
@@ -159,12 +169,24 @@ export async function buildHarnessDesiredState(
   const steps: ManagedStep[] = [];
   const prompts: string[] = [];
 
+  const completionWorkflow = options.completion
+    ? (options.completion.platform === 'github' ? COMPLETION_WORKFLOW_PATH : GITLAB_COMPLETION_WORKFLOW_PATH)
+    : null;
+  const completionBytes = options.completion?.yaml;
+  for (const completionPath of [COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH]) {
+    steps.push(completionPath === completionWorkflow && completionBytes !== undefined ? {
+      kind: 'write', path: completionPath, mode: 0o644,
+      isOwned: isSpecGitOwnedCompletion, merge: () => completionBytes,
+    } : { kind: 'remove', path: completionPath, isOwned: isSpecGitOwnedCompletion });
+  }
+
   const workflowWritten = options.workflowYaml !== null;
   if (workflowWritten) {
     steps.push({
       kind: 'write',
       path: HARNESS_WORKFLOW_PATH,
       mode: 0o644,
+      isOwned: isSpecGitOwnedWorkflow,
       // The current template wholesale: an init-owned artifact is
       // regenerated, local drift repaired.
       merge: () => options.workflowYaml ?? harnessWorkflowYaml(),
@@ -214,6 +236,7 @@ export async function buildHarnessDesiredState(
     kind: 'write',
     path: GUARD_HOOK_PATH,
     mode: 0o755,
+    isOwned: (content) => /^#!\/bin\/sh\r?\n# SpecGit guard \(managed by specgit init\):/.test(content),
     merge: () => GUARD_SCRIPT,
   });
 
@@ -233,7 +256,7 @@ export async function buildHarnessDesiredState(
     gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
   }
 
-  return { steps, workflowWritten, prompts, hooksJsonWritten, gitHook, warnings };
+  return { steps, workflowWritten, completionWorkflow, prompts, hooksJsonWritten, gitHook, warnings };
 }
 
 /** Assemble the #280 result shape from the desired state and the #305 report. */
@@ -244,6 +267,7 @@ export function harnessResultFrom(
   const hooks = [...(desired.hooksJsonWritten ? [HOOKS_JSON_PATH] : []), GUARD_HOOK_PATH];
   return {
     workflow: desired.workflowWritten ? HARNESS_WORKFLOW_PATH : null,
+    completionWorkflow: desired.completionWorkflow,
     prompts: desired.prompts,
     hooks,
     gitHook: desired.gitHook,

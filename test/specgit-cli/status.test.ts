@@ -407,11 +407,14 @@ describe('specgit status (local evidence only, G1-G5)', () => {
       rmDir(root);
     });
 
-    it('reports actionable old/missing states with exact fixes, without failing the snapshot', async () => {
+    it.each([
+      { owned: false, surfaceState: 'conflict', workflowState: 'conflict', code: 'asset_conflict' },
+      { owned: true, surfaceState: 'missing', workflowState: 'stale', code: 'asset_stale' },
+    ])('reports workflow ownership=$owned accurately without failing the snapshot', async ({ owned, surfaceState, workflowState, code: assetCode }) => {
       fs.mkdirSync(path.join(root, '.github', 'workflows'), { recursive: true });
       fs.writeFileSync(
         path.join(root, ...HARNESS_WORKFLOW_PATH.split('/')),
-        'name: SpecGit Acceptance\n\nold owned workflow bytes\n'
+        `name: SpecGit Acceptance\n\nold workflow bytes\n${owned ? 'runs specgit finish --json\n' : ''}`
       );
       fs.mkdirSync(path.join(root, '.opencode', 'command'), { recursive: true });
       fs.writeFileSync(
@@ -431,13 +434,13 @@ describe('specgit status (local evidence only, G1-G5)', () => {
       expect(envelope.assets.generated.clean).toBe(false);
       const surfaces = envelope.assets.generated.surfaces;
       const init = surfaces.find((s: any) => s.surface === 'init');
-      // The fixture mixes a stale workflow with absent required assets:
-      // missing outranks stale in the aggregate.
-      expect(init.state).toBe('missing');
+      // A name alone does not prove ownership. A foreign collision outranks
+      // missing assets; a proven older workflow is stale, so missing wins.
+      expect(init.state).toBe(surfaceState);
       expect(init.fix).toBe('specgit init --force');
       expect(
         init.assets.find((a: any) => a.path === HARNESS_WORKFLOW_PATH)
-      ).toMatchObject({ state: 'stale', code: 'asset_stale' });
+      ).toMatchObject({ state: workflowState, code: assetCode });
       const opencode = surfaces.find((s: any) => s.surface === 'opencode');
       expect(opencode.state).toBe('missing'); // one stale entry, the other four absent
       expect(opencode.fix).toBe('specgit setup --tool opencode');

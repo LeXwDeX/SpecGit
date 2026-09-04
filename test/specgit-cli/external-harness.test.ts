@@ -170,7 +170,18 @@ describe('external acceptance harness template', () => {
 
   it('waits for sibling checks through the gh seam, never raw REST', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
-    expect(yaml).toContain("readFileSync('spec_git/policy.yaml', 'utf8')");
+    const parsed = parse(yaml) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string; env?: Record<string, string> }> }>;
+    };
+    const steps = parsed.jobs['specgit-acceptance'].steps;
+    const prepare = steps.findIndex((step) => step.name === 'Prepare approved policy for acceptance');
+    const wait = steps.findIndex((step) => step.name === 'Wait for sibling checks');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(wait).toBeGreaterThan(prepare);
+    expect(steps[prepare].run).toContain('$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/workflow-policy.js');
+    expect(steps[prepare].env?.SPECGIT_WAIT_POLICY).toBe('${{ runner.temp }}/specgit-policy.yaml');
+    expect(steps[wait].env?.WAIT_POLICY).toBe(steps[prepare].env?.SPECGIT_WAIT_POLICY);
+    expect(yaml).toContain("readFileSync(policyPath, 'utf8')");
     // The query rides --field args (gh builds the query string itself):
     // a raw "?a=1&b=2" URL would be split by cmd.exe's "&" separator on
     // Windows, where gh.cmd needs a shell (#300).
@@ -185,12 +196,34 @@ describe('external acceptance harness template', () => {
     expect(yaml).not.toContain('authorization');
   });
 
-  it('renders the wait step from the shared #300 generator, one transport seam apart', () => {
+  it.each([true, false])('honors the resolved policy path without silently falling back when present=%s', (present) => {
+    const root = makeTempDir('specgit-approved-wait-');
+    try {
+      makeAdoptingLayout(root);
+      const approvedPath = path.join(root, 'approved-policy.yaml');
+      if (present) fs.writeFileSync(approvedPath, 'version: 1\nrequired_checks: [Approved Check]\n');
+      const gh = createFakeGh(root, [{
+        match: '^api repos/.*/commits/.*/check-runs',
+        stdout: JSON.stringify({ check_runs: [{
+          name: present ? 'Approved Check' : 'Sibling Check',
+          status: 'completed', conclusion: 'success', started_at: '2026-09-04T00:00:00Z', id: 1,
+        }] }),
+      }]);
+      const result = spawnSync(process.execPath, ['--input-type=module'], {
+        cwd: root, input: waitScript(), encoding: 'utf8', timeout: WAIT_PROCESS_TIMEOUT_MS,
+        env: gh.env({ WAIT_POLICY: approvedPath, WAIT_REPO: 'test/adopter', WAIT_SHA: 'a'.repeat(40), WAIT_PR: '' }),
+      });
+      expect(result.status, result.stderr).toBe(present ? 0 : 1);
+      if (present) expect(result.stdout).toContain('All required checks are in a terminal state.');
+      else expect(result.stderr).toContain('policy.yaml is absent');
+    } finally { rmDir(root); }
+  });
+
+  it('renders both wait steps through authenticated gh with the shared evidence rules', () => {
     const external = externalAcceptanceWorkflowYaml(INPUT);
     const self = harnessWorkflowYaml();
     // The shared skeleton (pagination, truth-run rule, absent-policy
-    // diagnosis) is identical in both templates byte-for-byte; only the
-    // transport block differs.
+    // diagnosis) and transport are shared by both templates.
     for (const shared of [
       'fetchAllCheckRuns',
       'const truth = new Map();',
@@ -201,8 +234,8 @@ describe('external acceptance harness template', () => {
       expect(self).toContain(shared);
     }
     expect(external).toContain("'gh',");
-    expect(self).toContain('api.github.com');
-    expect(self).not.toContain("'gh',");
+    expect(self).not.toContain('api.github.com');
+    expect(self).toContain("'gh',");
     expect(external).not.toContain('api.github.com');
   });
 

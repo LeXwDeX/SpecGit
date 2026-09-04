@@ -30,7 +30,8 @@ import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import * as recordIo from '../record/io.js';
 import { readPolicy, readProviders } from '../record/io.js';
 import { discoverRepoRoot } from '../record/root.js';
-import type { CommandContext } from './types.js';
+import { resolveEffectivePolicy } from '../record/effective-policy.js';
+import type { CommandContext, RecordPort } from './types.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -84,9 +85,12 @@ export async function probeGitBinary(): Promise<Evidence<string>> {
 export interface WiringOverrides {
   /** Repo-root discovery; defaults to real `git rev-parse --show-toplevel`. */
   discoverRoot?: (cwd: string) => Promise<Evidence<string>>;
+  /** A trusted workflow may evaluate an immutable PR-head binding while reading merged git history. */
+  record?: RecordPort;
 }
 
 export function createDefaultContext(overrides: WiringOverrides = {}): CommandContext {
+  const recordApi = overrides.record ?? recordIo;
   let version = '0.0.0';
   try {
     version = readPackageJson().version;
@@ -165,8 +169,16 @@ export function createDefaultContext(overrides: WiringOverrides = {}): CommandCo
       try {
         const rootEv = await resolveRoot(process.cwd());
         if (!rootEv.ok) return undefined;
-        const policy = await policyFor(rootEv.value);
-        return policy.ok ? policy.value.required_checks : undefined;
+        const record = await recordApi.readRecord(rootEv.value);
+        const policy = await resolveEffectivePolicy({
+          root: rootEv.value, record, git,
+          forge: { getPr: async (repo, pr) => repo.platform === 'gitlab'
+            ? new GlabProvider({ hostname: await declaredGitlabHost() }).getPr(repo, pr)
+            : gh.getPr(repo, pr) },
+          parseRepoRef: async (origin) => parseRepoRef(origin, { gitlabHost: await declaredGitlabHost() }),
+          readCandidate: () => policyFor(rootEv.value),
+        });
+        return policy.ok ? policy.value.policy.required_checks : undefined;
       } catch {
         return undefined;
       }
@@ -211,7 +223,9 @@ export function createDefaultContext(overrides: WiringOverrides = {}): CommandCo
     probeGitBinary,
     git,
     gh: routingProvider,
-    record: recordIo,
+    record: recordApi,
+    resolvePolicy: (root, record, options) => resolveEffectivePolicy({ root, record, git, forge: routingProvider,
+      parseRepoRef: parseRepoRefWithProviders, readCandidate: () => recordApi.readPolicy(root), ...options }),
     evaluate: (async (input: Parameters<typeof evaluate>[0]) =>
       evaluate(
         input.gitlabHost === undefined

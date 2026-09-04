@@ -25,6 +25,7 @@ import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 import {
   LOCAL_ASSET_IGNORE_MARKER,
+  LOCAL_ASSET_IGNORE_ENTRIES,
   LOCAL_ASSET_IGNORE_START,
   managedIgnoreBlock,
 } from '../../src/cli/commands/init-ignore.js';
@@ -727,7 +728,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(envelope.reconciled?.preserved ?? []).toEqual([]);
     expect(envelope.ignore).toEqual({
       path: '.gitignore',
-      entries: ['/.specgit.yaml', '/spec_git/'],
+      entries: [...LOCAL_ASSET_IGNORE_ENTRIES],
       created: false,
     });
   });

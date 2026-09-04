@@ -314,6 +314,21 @@ describe('LocalGitAdapter', () => {
   });
 
   describe('hooksPath', () => {
+    it('refuses a configured hooks directory shared with unrelated repositories', async () => {
+      const shared = path.join(tempDir, 'global-hooks');
+      fs.mkdirSync(shared);
+      git(root, ['config', 'core.hooksPath', shared], env);
+      expect(await adapter.hooksPath(root)).toMatchObject({ ok: false, code: 'git_hooks_external' });
+    });
+
+    it.skipIf(process.platform === 'win32')('refuses an in-repository symlink escaping to shared hooks', async () => {
+      const shared = path.join(tempDir, 'global-hooks');
+      fs.mkdirSync(shared);
+      fs.symlinkSync(shared, path.join(root, '.hooks'), 'dir');
+      git(root, ['config', 'core.hooksPath', '.hooks'], env);
+      expect(await adapter.hooksPath(root)).toMatchObject({ ok: false, code: 'git_hooks_external' });
+    });
+
     it('resolves the absolute .git/hooks directory of a plain repository', async () => {
       const result = await adapter.hooksPath(root);
       expect(result).toEqual({

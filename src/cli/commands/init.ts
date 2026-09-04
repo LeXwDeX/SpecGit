@@ -71,12 +71,12 @@ import {
   type InitOptions,
 } from './init-validation.js';
 import { persistGitlabHost, platformSelectionHuman, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
-import { selectWorkflowYaml } from './init-workflow.js';
+import { selectCompletionWorkflow, selectWorkflowYaml, validateGitlabCiConfig } from './init-workflow.js';
 import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
 import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
-import { resolveProjectRules } from './init-rules.js';
+import { resolveProjectRules, resolveRepairLabels } from './init-rules.js';
 
 export type { InitOptions } from './init-validation.js';
 
@@ -177,8 +177,25 @@ export async function runInit(
     platformSelection.outcome.gitlabHost);
   if ('exit' in rules) return rules;
   const { language } = rules;
-  const automation = await resolveInitAutomation(options, ctx, root, language, interaction);
+  const automation = await resolveInitAutomation(options, ctx, root, language, interaction,
+    existingPolicy.ok ? existingPolicy.value : undefined);
   if ('exit' in automation) return automation;
+  const repair = await resolveRepairLabels(options, ctx, {
+    ...(existingPolicy.ok ? existingPolicy.value : {}), version: 1, required_checks: checks, language,
+    validation: rules.validation ?? (existingPolicy.ok ? existingPolicy.value.validation : undefined),
+    tags: rules.tags ?? (existingPolicy.ok ? existingPolicy.value.tags : undefined),
+    automation: automation.automation,
+  }, interaction, existingPolicy.ok ? existingPolicy.value.automation?.repair_labels : undefined);
+  if ('exit' in repair) return repair;
+  const completion = await selectCompletionWorkflow(ctx, root, platformSelection.outcome.mode, automation.automation.merge);
+  if (!completion.ok) {
+    return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(completion.code, completion.message,
+      completion.fix ? { fix: completion.fix } : {})] };
+  }
+  if (completion.value?.platform === 'gitlab') {
+    const configurationError = await validateGitlabCiConfig(ctx, root, platformSelection.outcome.gitlabHost);
+    if (configurationError !== null) return configurationError;
+  }
 
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
   if (selection.warning !== undefined) warnings.push(selection.warning);
@@ -242,6 +259,12 @@ export async function runInit(
         'The GitLab CI harness template is not generated yet; a GitHub Actions workflow would be wrong-platform output here — carry your own .gitlab-ci.yml.',
       fix: 'Its top-level job keys become the required checks (detect from the file or pass --required-check); see docs/gitlab-support.md.',
     });
+    if (completion.value !== null) {
+      warnings.push({ severity: 'warning', code: 'gitlab_completion_handoff',
+        message: 'The generated .gitlab/specgit-complete.yml needs inclusion in a trusted default-branch pipeline and an authenticated completion trigger.',
+        fix: 'Configure the runner with authenticated glab/git and trigger that pipeline with SPECGIT_PR and the exact SPECGIT_HEAD after MR CI completes; keep write credentials out of MR jobs.',
+      });
+    }
   }
 
   const written = await writeHarnessAndPolicy({
@@ -250,10 +273,11 @@ export async function runInit(
     checks,
     language,
     existingPolicy: existingPolicy.ok ? existingPolicy.value : undefined,
-    automation: automation.automation,
+    automation: repair.automation,
     validation: rules.validation,
     tags: rules.tags,
     workflowYaml: gitlabMode ? null : selection.yaml,
+    completion: completion.value,
     writeIgnore: options.ignore !== false,
     warnings,
   });
