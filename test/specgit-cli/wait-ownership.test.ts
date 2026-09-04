@@ -72,6 +72,15 @@ describe('required Actions checks belong to the current workflow execution', () 
     expect(result.stdout).toContain('"elapsed":10000');
   });
 
+  it.each(workflows)('waits for the owner even when its first-attempt required job is already terminal: %s', (_name, generate) => {
+    const result = executeWait(generate, [
+      { checks: [{ ...oldCheck, conclusion: 'success' }], workflows: [{ ...oldWorkflow, status: 'in_progress' }] },
+      { checks: [{ ...oldCheck, conclusion: 'success' }], workflows: [oldWorkflow] },
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('"elapsed":10000');
+  });
+
   it.each(workflows)('does not reuse completed jobs while their same run is rerunning: %s', (_name, generate) => {
     const rerun = { ...oldWorkflow, run_attempt: 2, status: 'queued' };
     const result = executeWait(generate, [

@@ -33,10 +33,10 @@ seam](reference.md#github-provider-seam)):
   `LocalGitAdapter` (`src/gitfacts/local.ts`).
 - **`ForgeProvider`** (`src/github/port.ts`) — platform-neutral forge
   evidence and mutations (#169; the pre-#169 name `GitHubProvider` stays
-  importable as a compatibility type alias), composed since #180 of two
-  surfaces — the read surface `ForgeReadPort` (evidence collection and
-  delivery-lifecycle operations) and the admin surface `ForgeAdminPort`
-  (branch-protection and auto-merge administration) — implemented for
+  importable as a compatibility type alias). Since #412, callers select
+  from three capabilities: `ForgeEvidencePort` for reads,
+  `ForgeDeliveryWritePort` for delivery mutations, and `ForgeAdminWritePort`
+  for repository configuration mutations. The full provider is implemented for
   production by `GhCliGitHubProvider`
   (`src/providers/github/gh-cli.ts`, the per-platform adapter home since
   #113; `src/github/gh-cli.ts` remains a deprecated alias module) and by
@@ -45,8 +45,10 @@ seam](reference.md#github-provider-seam)):
 
 The full port vocabulary is exported from the public API
 (`src/index.ts`), including the stable port names `GitPort` and
-`ForgeProvider` plus its two #180 surfaces `ForgeReadPort` /
-`ForgeAdminPort` (the pre-#169 name `GitHubProvider` stays exported as a
+`ForgeProvider` plus the three #412 capabilities. The two #180 surfaces
+`ForgeReadPort` / `ForgeAdminPort` remain exported as deprecated compatibility
+compositions with exactly their original members (the pre-#169 name
+`GitHubProvider` stays exported as a
 `@deprecated` compatibility alias), their auxiliary types (`GitWritePort`,
 `BranchCheckout`, `BranchProtectionFact`, `RepoAutomergeFact`), and the
 member inventories `GIT_PORT_MEMBERS` / `FORGE_PROVIDER_MEMBERS` with the
@@ -54,6 +56,29 @@ surface inventories `FORGE_READ_PORT_MEMBERS` / `FORGE_ADMIN_PORT_MEMBERS`
 (`GITHUB_PROVIDER_MEMBERS` remains as the deprecated alias of
 `FORGE_PROVIDER_MEMBERS`).
 This document is the compatibility policy for how those ports evolve (#80).
+
+## Selecting capabilities
+
+| Capability | Members and effect |
+| --- | --- |
+| `ForgeEvidencePort` | All forge reads, including `getBranchProtection`, `getRepoAutomerge` and `listRepoLabels`. No mutation methods. |
+| `ForgeDeliveryWritePort` | `mergePr`, `closeIssue`, `createIssue`, `createDraftPr`, `addIssueComment` and `addIssueLabels`. |
+| `ForgeAdminWritePort` | `enableBranchProtection`, `enableRepoAutomerge` and `ensureRepoLabels`. |
+
+Callers use `Pick` to request only the members their decision consumes.
+`EvaluateInput.gh` selects its seven evidence methods from `ForgeEvidencePort`.
+The repair-issue flow combines just six methods: `getPr`, `getOpenIssues`,
+`createIssue`, `addIssueLabels`, `addIssueComment` and `ensureRepoLabels`.
+Its caller can supply those methods without implementing merge, protection
+or auto-merge configuration. These type boundaries do not grant runtime
+authorization; every platform operation still uses authenticated `gh` or
+`glab` and returns the same fail-closed `Evidence` contract.
+
+The deprecated `ForgeReadPort` retains delivery reads and writes;
+`ForgeAdminPort` retains the three administration reads and three writes.
+Their frozen inventories retain the original members and order, and
+`GITHUB_PROVIDER_MEMBERS` remains the same object as `FORGE_PROVIDER_MEMBERS`.
+No member or method signature was removed by the capability split.
 
 ## Port inventory
 
@@ -81,6 +106,9 @@ to those lists member-for-member: change a port, change this page.
 
 ### ForgeReadPort (src/github/port.ts)
 
+Deprecated compatibility composition → select `ForgeEvidencePort` and
+`ForgeDeliveryWritePort` members for new callers. Its inventory is preserved.
+
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `preflight` | required | gh present and authenticated (G6). |
@@ -104,6 +132,9 @@ to those lists member-for-member: change a port, change this page.
 
 ### ForgeAdminPort (src/github/port.ts)
 
+Deprecated compatibility composition → select `ForgeEvidencePort` and
+`ForgeAdminWritePort` members for new callers. Its inventory is preserved.
+
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `getBranchProtection` | required | Protection state and required checks for the guarded-merge story. |
@@ -115,17 +146,15 @@ to those lists member-for-member: change a port, change this page.
 
 ### ForgeProvider (src/github/port.ts)
 
-`ForgeProvider` is the composition `ForgeReadPort & ForgeAdminPort`
-(#180): every in-tree implementation implements the composed port, and
-every member of both surfaces is **required** today. There are no
+`ForgeProvider` retains the composition `ForgeReadPort & ForgeAdminPort`
+(#180), structurally equivalent to `ForgeEvidencePort & ForgeDeliveryWritePort &
+ForgeAdminWritePort` (#412). Every full in-tree adapter implements the
+composed port, and every member is **required**. There are no
 optional port members: each method feeds a gate or bootstrap decision
 that cannot proceed without an answer, and each returns an `Evidence`
 envelope so a runtime failure is classified evidence that fails closed —
-never a silent skip. The split is the seam for partial platform support:
-a future platform whose gate paths never consume admin evidence can
-implement `ForgeReadPort` alone, without the branch-protection and
-auto-merge administration — today both shipped platforms (gh and glab)
-satisfy both surfaces, exactly as before the split.
+never a silent skip. Narrow callers can accept a selection of capabilities;
+both shipped platform adapters (gh and glab) retain the full public shape.
 
 ## Required-versus-optional rules
 

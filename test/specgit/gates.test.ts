@@ -4,6 +4,7 @@ import { checksGate } from '../../src/acceptance/gates/checks-gate.js';
 import { closingGate } from '../../src/acceptance/gates/closing-gate.js';
 import { completenessGate } from '../../src/acceptance/gates/completeness-gate.js';
 import { contextGate } from '../../src/acceptance/gates/context-gate.js';
+import { contextGate as localContextGate } from '../../src/cli/gates.js';
 import { issuesGate } from '../../src/acceptance/gates/issues-gate.js';
 import { originGate } from '../../src/acceptance/gates/origin-gate.js';
 import { policyGate } from '../../src/acceptance/gates/policy-gate.js';
@@ -258,6 +259,35 @@ describe('context gate', () => {
       gh: forgeStub({ getPr: async () => fail('gh_transport', 'down') }),
     });
     expect(codes(await contextGate(ctx))).toEqual(['gh_transport']);
+  });
+
+  it.each<{
+    name: string;
+    context: DeliveryBinding['context'];
+    facts: Partial<GitFacts>;
+    expected: string[];
+  }>([
+    { name: 'matching branch', context: BINDING.context, facts: {}, expected: [] },
+    { name: 'wrong branch', context: BINDING.context, facts: { branch: 'main' }, expected: ['branch_mismatch'] },
+    ...[
+      { name: 'matching worktree', facts: {}, expected: [] },
+      { name: 'branch has priority over worktree', facts: { branch: 'main', worktreeLabel: 'wrong' }, expected: ['branch_mismatch'] },
+      { name: 'main checkout', facts: { isLinkedWorktree: false }, expected: ['worktree_mismatch'] },
+      { name: 'unknown checkout kind', facts: { isLinkedWorktree: null }, expected: ['worktree_mismatch'] },
+      { name: 'wrong label', facts: { worktreeLabel: 'wrong' }, expected: ['worktree_mismatch'] },
+      { name: 'missing worktree entry', facts: { worktrees: [] }, expected: ['worktree_mismatch'] },
+      { name: 'label on another branch', facts: { worktrees: [{ label: 'wt-1', branch: 'other' }] }, expected: ['worktree_mismatch'] },
+      { name: 'duplicate labels include correct pair', facts: { worktrees: [{ label: 'wt-1', branch: 'other' }, { label: 'wt-1', branch: 'feat/test' }] }, expected: [] },
+    ].map((row) => ({
+      ...row,
+      context: { kind: 'worktree' as const, label: 'wt-1', branch: 'feat/test' },
+      facts: { isLinkedWorktree: true, worktreeLabel: 'wt-1', worktrees: [{ label: 'wt-1', branch: 'feat/test' }], ...row.facts },
+    })),
+  ])('keeps local and acceptance context decisions aligned: $name', async ({ context, facts, expected }) => {
+    const binding = { ...BINDING, context };
+    const live = { ...FACTS, ...facts };
+    expect(codes(localContextGate(binding, live).failures)).toEqual(expected);
+    expect(codes(await contextGate(makeContext({ binding, git: gitStub(live) })))).toEqual(expected);
   });
 
   it('verifies the worktree context for worktree bindings', async () => {

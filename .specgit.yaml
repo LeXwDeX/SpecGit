@@ -1,17 +1,15 @@
 version: 1
-delivery: wait-for-settled
+delivery: simplify-delivery-boundaries
 context:
   kind: branch
-  branch: fix/435-wait-for-settled
+  branch: feat/412-simplify-delivery-boundaries
 issues:
-  - 435
-  - 437
-  - 438
-  - 440
-  - 439
-  - 444
-  - 445
-issueKinds:
-  - issue: 435
-    kind: kind::fix
-pr: 436
+  - 412
+  - 413
+  - 414
+  - 415
+  - 441
+  - 446
+  - 447
+issueKinds: []
+pr: 443

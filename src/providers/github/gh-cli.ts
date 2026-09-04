@@ -37,6 +37,7 @@ import type {
 } from '../../github/port.js';
 import type { TagSpec } from '../../tags/catalog.js';
 import { isLaterCheckRun } from '../../github/check-runs.js';
+import { createActionsOwnership, isGithubActionsApp } from '../../harness-runtime/actions-ownership.mjs';
 
 /** Map a classic-protection payload to the reported fact (contexts only, never fabricated). */
 function protectionFactFromPayload(payload: unknown): BranchProtectionFact {
@@ -69,8 +70,8 @@ const ISSUE_SEARCH_PAGE_SIZE = 100;
 /** GitHub's search API never returns more than 1000 results (10×100). */
 const MAX_ISSUE_SEARCH_PAGES = 10;
 
-/** gh stderr markers that mean "not authenticated" rather than transport. */
-const AUTH_FAILURE_PATTERN = /HTTP 40[13]|Bad credentials|gh auth login|not logged in|authentication required/i;
+/** A 403 can mean permissions or rate limiting; only explicit authentication failures belong here. */
+const AUTH_FAILURE_PATTERN = /HTTP 401|Bad credentials|gh auth login|not logged in|authentication required/i;
 
 /** gh stderr markers that mean the looked-up resource does not exist. */
 const NOT_FOUND_PATTERN = /HTTP 404|Not Found/i;
@@ -469,7 +470,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
               check_suite?: { id?: unknown };
             };
             return {
-              actions: item.app?.slug === 'github-actions' || item.app?.id === 15368,
+              actions: isGithubActionsApp(item.app),
               checkSuiteId: item.check_suite?.id,
               check: {
                 name: typeof item.name === 'string' ? item.name : '',
@@ -500,38 +501,29 @@ export class GhCliGitHubProvider implements ForgeProvider {
     }
     const workflows = await this.readWorkflowRuns(repo, workflowSha, hasActions);
     if (!workflows.ok) return workflows;
+    if (hasActions) {
+      try {
+        const ownership = createActionsOwnership(workflows.value);
+        const checks = runs.value.flatMap((run) => {
+          if (!run.actions) return [run.check];
+          const owner = ownership.currentFor(run.checkSuiteId);
+          if (owner === null) return [];
+          // A partial rerun retains successful jobs from earlier attempts.
+          // Only a pending rerun masks their terminal state for acceptance.
+          return [owner.runAttempt !== 1 && owner.check.status !== 'completed' && run.check.status === 'completed'
+            ? { ...run.check, status: 'in_progress', conclusion: null } : run.check];
+        });
+        return ok({ checks, workflows: ownership.latest.map((owner) => owner.check) });
+      } catch (error) {
+        return fail('gh_transport', error instanceof Error ? error.message : String(error));
+      }
+    }
     const latest = new Map<string, CheckRunInfo>();
-    const owners = new Map<number, WorkflowRunSnapshot>();
-    const workflowIds = new Set<number>();
     for (const workflow of workflows.value) {
       const selected = recordCiAttempt(latest, workflow.key, workflow.check);
       if (!selected.ok) return selected;
-      if (hasActions) {
-        if (typeof workflow.checkSuiteId !== 'number' || !Number.isSafeInteger(workflow.checkSuiteId) || workflow.checkSuiteId <= 0 ||
-            typeof workflow.runAttempt !== 'number' || !Number.isSafeInteger(workflow.runAttempt) || workflow.runAttempt <= 0 ||
-            workflow.check.startedAt === null || !Number.isFinite(Date.parse(workflow.check.startedAt)) || owners.has(workflow.checkSuiteId) ||
-            workflowIds.has(workflow.check.id) || !['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(workflow.check.status)) {
-          return fail('gh_transport', 'GitHub returned incomplete or ambiguous Actions workflow ownership.');
-        }
-        owners.set(workflow.checkSuiteId, workflow);
-        workflowIds.add(workflow.check.id);
-      }
     }
-    const checks: CheckRunInfo[] = [];
-    for (const run of runs.value) {
-      if (!run.actions) { checks.push(run.check); continue; }
-      if (typeof run.checkSuiteId !== 'number' || !Number.isSafeInteger(run.checkSuiteId) || run.checkSuiteId <= 0) {
-        return fail('gh_transport', 'GitHub returned an Actions check without a check-suite identity.');
-      }
-      const owner = owners.get(run.checkSuiteId);
-      if (!owner) return fail('gh_transport', 'The Actions check has no proven owning workflow run.');
-      if (latest.get(owner.key)?.id !== owner.check.id) continue;
-      // A partial rerun retains successful jobs from earlier attempts. While
-      // it is running, those terminal jobs cannot prove the attempt settled.
-      checks.push(owner.runAttempt !== 1 && owner.check.status !== 'completed' && run.check.status === 'completed'
-        ? { ...run.check, status: 'in_progress', conclusion: null } : run.check);
-    }
-    return ok({ checks, workflows: [...latest.values()] });
+    return ok({ checks: runs.value.map((run) => run.check), workflows: [...latest.values()] });
   }
 
   private async readWorkflowRuns(repo: RepoRef, sha: string, requireOwnership: boolean): Promise<Evidence<WorkflowRunSnapshot[]>> {
@@ -1203,9 +1195,8 @@ export class GhCliGitHubProvider implements ForgeProvider {
   }
 
   /**
-   * Repository-administration calls (branch protection, auto-merge). Unlike
-   * runCreateGh, HTTP 403 means missing admin permission — a transport
-   * fact for the caller to report, not an authentication problem — and
+   * Repository-administration calls (branch protection, auto-merge).
+   * Permission and rate-limit failures retain their transport evidence;
    * not_found passes through so reads can treat it as evidence.
    */
   private async runAdminApi(
@@ -1220,7 +1211,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       if (result.code === 'gh_missing' || result.code === 'not_found') {
         return { ok: false, code: result.code, message: result.message, ...(result.fix ? { fix: result.fix } : {}) };
       }
-      if (/HTTP 401|Bad credentials|gh auth login|not logged in|authentication required/i.test(result.message)) {
+      if (AUTH_FAILURE_PATTERN.test(result.message)) {
         return fail(
           'gh_unauthenticated',
           'GitHub CLI is not authenticated.',
@@ -1234,8 +1225,9 @@ export class GhCliGitHubProvider implements ForgeProvider {
 
   /**
    * Creation calls share the read taxonomy but classify authentication
-   * failures from gh's stderr (HTTP 401/403, "gh auth login" prompts)
-   * instead of relying on `gh auth status`.
+   * failures from gh's stderr (HTTP 401, "gh auth login" prompts)
+   * instead of relying on `gh auth status`. A generic 403 preserves the
+   * sanitized API reason so permission and rate-limit refusals remain distinct.
    */
   private async runCreateGh(
     args: string[],
