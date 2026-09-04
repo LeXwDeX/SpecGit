@@ -231,7 +231,11 @@ describe('e2e issue: idempotent resume after a failure between steps', () => {
     expect(git(repo.dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/11-resume-flow');
 
     // Second run with the healed transport: same command line resumes.
-    const ghWhole = makeGh(bootstrapRules(77));
+    const ghWhole = makeGh([
+      ...bootstrapRules(77),
+      { match: `^api repos/${OWNER}/${REPO}/issues/11$`, stdout: JSON.stringify({ number: 11, state: 'open', title: 'feat: resume flow' }) },
+      { match: `^api repos/${OWNER}/${REPO}/issues/12$`, stdout: JSON.stringify({ number: 12, state: 'open', title: 'chore: second why' }) },
+    ]);
     const second = await specgit(['issue', 'feat: resume flow', 'chore: second why', '--json'], {
       cwd: repo.dir,
       env: ghWhole.env(),
@@ -360,7 +364,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     ).toHaveLength(0);
   });
 
-  it('resumes from the durable partial record even when the remote title drifted', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
+  it('refuses a stale title and resumes a renamed partial issue by number', { timeout: DELIVERY_TEST_TIMEOUT_MS }, async () => {
     const repo = makePushableRepo('main');
 
     // Run 1: the first WHY is created and recorded; the second creation
@@ -385,10 +389,10 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     expect(partial).not.toContain('- 12');
     expect(git(repo.dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('main');
 
-    // Run 2: #11 was renamed remotely by a teammate. The resume must trust
-    // the durable binding for the consumed argument and only create the
-    // second WHY — reconciliation alone would duplicate the first.
+    // #11 was renamed remotely. A stale title must be refused; its durable
+    // number remains an unambiguous resume key for creating only the second WHY.
     const ghWhole = makeGh([
+      { match: `^api repos/${OWNER}/${REPO}/issues/11$`, stdout: JSON.stringify({ number: 11, state: 'open', title: 'renamed by a teammate' }) },
       {
         match: '^api search/issues',
         stdout: JSON.stringify({ items: [{ number: 11, title: 'renamed by a teammate' }] }),
@@ -402,7 +406,14 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
       { match: '^pr create --draft ', stdout: `https://github.com/${OWNER}/${REPO}/pull/77\n` },
       COMMENT_RULE,
     ]);
-    const second = await specgit(['issue', ...args, '--json'], {
+    const stale = await specgit(['issue', ...args, '--json'], {
+      cwd: repo.dir,
+      env: ghWhole.env(),
+    });
+    expect(stale.exitCode).toBe(2);
+    expect(parseEnvelope(stale).errors[0].code).toBe('issue_resume_drift');
+    expect(fs.readFileSync(path.join(repo.dir, '.specgit.yaml'), 'utf-8')).toBe(partial);
+    const second = await specgit(['issue', '11', 'fix: beta why', '--json'], {
       cwd: repo.dir,
       env: ghWhole.env(),
     });
@@ -445,6 +456,7 @@ describe('e2e issue: exactly-once across partial failures (fault injection)', ()
     // Run 2: the remote has exactly one open PR for the head branch —
     // adopt it; a second PR must not be created.
     const ghWhole = makeGh([
+      { match: `^api repos/${OWNER}/${REPO}/issues/11$`, stdout: JSON.stringify({ number: 11, state: 'open', title: 'feat: wing repair' }) },
       {
         match: '^pr list ',
         stdout: JSON.stringify([

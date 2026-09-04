@@ -28,6 +28,7 @@ describe('release-prepare gates (#71)', () => {
     jobs?: Record<
       string,
       {
+        if?: string;
         steps?: Array<{
           name?: string;
           id?: string;
@@ -49,6 +50,10 @@ describe('release-prepare gates (#71)', () => {
     }
   });
 
+  it('refuses release dispatches from unmerged branches or tags (#411)', () => {
+    expect(parsed.jobs?.release?.if).toBe("github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'");
+  });
+
   it('gates publish on an unpublished version, never on the head commit message (#227)', () => {
     // A merge-commit merge strategy makes the head commit message "Merge
     // pull request #N...", so a publish gated on startsWith(...,
@@ -59,15 +64,15 @@ describe('release-prepare gates (#71)', () => {
     const probe = steps.find((step) => step.id === 'unpublished');
     expect(probe).toBeDefined();
     expect(probe?.if).toBe("steps.pending.outputs.count == '0'");
-    expect(probe?.run).toContain('npm view');
-    expect(probe?.run).toContain('refs/tags/v${VERSION}');
-    expect(probe?.run).toContain('needs_publish=true');
-    expect(probe?.run).toContain('needs_publish=false');
-    for (const name of ['Build', 'Publish to npm', 'Tag and create GitHub Release']) {
+    expect(probe?.run).toBe('node scripts/release-state.mjs');
+    for (const name of ['Build', 'Publish to npm']) {
       const step = steps.find((candidate) => candidate.name === name);
       expect(step, name).toBeDefined();
       expect(step?.if, name).toBe("steps.unpublished.outputs.needs_publish == 'true'");
     }
+    const finalize = steps.find((step) => step.name === 'Tag and create GitHub Release');
+    expect(finalize?.if).toBe("steps.unpublished.outputs.needs_finalize == 'true'");
+    expect(finalize?.run).toBe('node scripts/release-state.mjs --finalize');
   });
 
   it('pushes the version branch with a write-access token when configured', () => {

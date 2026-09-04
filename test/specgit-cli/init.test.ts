@@ -526,11 +526,13 @@ describe('specgit init', () => {
     expect(envelope.detected.fallback).toBe(false);
   });
 
-  it('detects gitlab-ci job keys when no GitHub workflows exist', async () => {    fs.writeFileSync(
+  it('detects gitlab-ci job keys on a GitLab origin', async () => {    fs.writeFileSync(
       path.join(root, '.gitlab-ci.yml'),
       'stages:\n  - build\n  - test\ninclude:\n  - local: /templates.yml\nbuild-job:\n  script: echo build\ntest-job:\n  script: echo test\n'
     );
-    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@gitlab.com:team/app.git' }),
+    });
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
@@ -756,17 +758,15 @@ describe('specgit init', () => {
     expect(warning.fix).toContain('--force');
   });
 
-  it('pull_request_target and trigger-less workflows qualify; no warning when nothing is skipped (#121)', async () => {
+  it('pull_request_target and trigger-less workflows do not qualify as PR-head checks', async () => {
     const workflowsDir = path.join(root, '.github', 'workflows');
     fs.mkdirSync(workflowsDir, { recursive: true });
-    // pull_request_target runs for PR events too: its check runs report on
-    // the PR head, so its jobs stay required-check candidates.
+    // pull_request_target evaluates the trusted default branch, not the PR head.
     fs.writeFileSync(
       path.join(workflowsDir, 'guard.yml'),
       'name: Guard\non: pull_request_target\njobs:\n  guard:\n    runs-on: ubuntu-latest\n'
     );
-    // No `on:` at all: GitHub's default triggers are push AND
-    // pull_request, so the workflow does run on PR heads.
+    // A workflow without `on` does not declare an event trigger.
     fs.writeFileSync(
       path.join(workflowsDir, 'default.yml'),
       'name: Default\njobs:\n  checks:\n    runs-on: ubuntu-latest\n'
@@ -775,12 +775,12 @@ describe('specgit init', () => {
     const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['checks', 'guard'] });
-    expect(envelope.detected.sources).toEqual(['.github/workflows/default.yml', '.github/workflows/guard.yml']);
-    expect(envelope.detected.nonPrWorkflows).toEqual([]);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: [] });
+    expect(envelope.detected.sources).toEqual([]);
+    expect(envelope.detected.nonPrWorkflows).toEqual(['.github/workflows/default.yml', '.github/workflows/guard.yml']);
     expect(
       (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_not_pr_visible')
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('reports the detected platform from the origin URL', async () => {
@@ -937,9 +937,9 @@ describe('specgit init harness generation', () => {
 
     const workflow = read(WORKFLOW_ABS(root));
     expect(workflow).toBe(externalAcceptanceWorkflowYaml({ defaultBranch: 'master', version: '0.0.0-test' }));
-    expect(workflow).toContain('branches: [master]');
-    expect(workflow).toContain(`npm install --no-save --no-audit --no-fund specgit@0.0.0-test`);
-    expect(workflow).toContain('npx --no-install specgit finish --json');
+    expect(workflow).toContain('branches: ["master"]');
+    expect(workflow).toContain(`npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@0.0.0-test`);
+    expect(workflow).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
     // The adopting project's toolchain is never invoked.
     expect(workflow).not.toContain('pnpm');
     expect(workflow).not.toContain('bin/specgit.js');
@@ -957,7 +957,7 @@ describe('specgit init harness generation', () => {
     const envelope = parseStdoutJson(t.io);
     expect(envelope.harness).toEqual({ template: 'external' });
     expect(envelope.warnings?.some((w: { code: string }) => w.code === 'default_branch_unresolved')).toBe(true);
-    expect(read(WORKFLOW_ABS(root))).toContain('branches: [main]');
+    expect(read(WORKFLOW_ABS(root))).toContain('branches: ["main"]');
   });
 
   it('template stays in sync with this repo own workflow file (anti-drift lock)', async () => {
@@ -1302,7 +1302,7 @@ describe('specgit init hook merging', () => {
 
     const prePush = read(path.join(gitHooks, 'pre-push'));
     expect(prePush).toContain('./scripts/verify.sh');
-    expect(prePush.indexOf('./scripts/verify.sh')).toBeLessThan(prePush.indexOf('# >>> specgit:start >>>'));
+    expect(prePush.indexOf('./scripts/verify.sh')).toBeGreaterThan(prePush.indexOf('# <<< specgit:end <<<'));
 
     const envelope = parseStdoutJson(t.io);
     expect(envelope.warnings ?? []).toEqual([]);

@@ -1,9 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runCliWith } from '../../src/cli/index.js';
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
 import { makeCtx, parseStdoutJson, sampleBinding, stdoutText } from './helpers.js';
 
+vi.mock('@inquirer/prompts', () => ({ confirm: vi.fn(async () => false) }));
+
 describe('specgit unbind', () => {
+  it.each([
+    ['unbind', '--json'],
+    ['--json', 'unbind'],
+  ])('requires --yes on a TTY for %s %s without a prompt (#390)', async (first, second) => {
+    const { confirm } = await import('@inquirer/prompts');
+    const t = makeCtx({ record: sampleBinding(), stdinIsTTY: true });
+    const code = await runCliWith(['node', 'specgit', first, second], t.ctx);
+    expect(code).toBe(EXIT_USAGE);
+    expect(parseStdoutJson(t.io).errors[0].code).toBe('confirmation_required');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(t.recordPort.deletes).toEqual([]);
+  });
+
   it('deletes the record with --yes', async () => {
     const t = makeCtx({ record: sampleBinding() });
     const code = await runCliWith(['node', 'specgit', 'unbind', '--yes'], t.ctx);

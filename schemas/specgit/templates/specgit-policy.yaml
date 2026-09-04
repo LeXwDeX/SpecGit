@@ -38,6 +38,21 @@ required_checks:
 #     color: 0ea5e9
 #     description: Authentication subsystem deliveries
 
+# Optional: project conventions (#407). Defaults are titles: false and
+# labels: off; absence preserves existing behavior. Configure interactively
+# with `specgit init --force --configure-rules`, or use --language en|zh,
+# --title-check yes|no, --label-check kind|project|off, and repeatable
+# --allowed-label <slug>. Ordinary upgrades preserve these settings.
+# titles: true checks every issue and PR/MR title: en forbids Unicode Han
+# characters; zh requires at least one (technical names may stay English).
+# labels: kind requires exactly one built-in kind:: label plus only tags
+# extras; project requires a nonempty subset of a nonempty tags vocabulary.
+# Both enforce at most one label per scoped axis. Missing evidence fails
+# closed; known violations reject acceptance. Example opt-in:
+# validation:
+#   titles: true
+#   labels: kind
+
 # Optional: enforce delivery ordering (the sequence gate, G8). When true, no
 # OPEN issue with a smaller number than this delivery's smallest bound issue
 # may exist (issue_out_of_order). Default is false (gate passes vacuously).

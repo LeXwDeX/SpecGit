@@ -17,11 +17,6 @@ export interface UnbindOptions {
   json?: boolean;
 }
 
-async function promptForConfirmation(): Promise<boolean> {
-  const { confirm } = await import('@inquirer/prompts');
-  return confirm({ message: `Delete ${RECORD_FILENAME}?`, default: false });
-}
-
 export async function runUnbind(
   options: UnbindOptions,
   ctx: CommandContext
@@ -61,21 +56,16 @@ export async function runUnbind(
   }
 
   if (!options.yes) {
-    if (!ctx.stdinIsTTY) {
-      return {
-        exit: EXIT_USAGE,
-        errors: [
-          errorDiagnostic(
-            'confirmation_required',
-            'Unbind deletes the delivery binding record.',
-            { fix: `Rerun with --yes to delete ${RECORD_FILENAME}.` }
-          ),
-        ],
-      };
-    }
-    if (!(await promptForConfirmation())) {
-      return { exit: EXIT_SUCCESS, human: humanBuilder().line(human.unbindAborted()).build() };
-    }
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'confirmation_required',
+          'Unbind deletes the delivery binding record.',
+          { fix: `Rerun with --yes to delete ${RECORD_FILENAME}.` }
+        ),
+      ],
+    };
   }
 
   // #298 merged-delivery lifecycle: after a delivery merges, the binding

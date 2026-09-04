@@ -177,6 +177,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       number?: unknown;
       state?: unknown;
       title?: unknown;
+      labels?: unknown;
       pull_request?: unknown;
     };
     if (!parsed || parsed.number !== n || (parsed.state !== 'open' && parsed.state !== 'closed')) {
@@ -188,6 +189,9 @@ export class GhCliGitHubProvider implements ForgeProvider {
       state: parsed.state,
       pullRequest: parsed.pull_request != null,
       title: typeof parsed.title === 'string' ? parsed.title : undefined,
+      ...(Array.isArray(parsed.labels) && parsed.labels.every((label) =>
+        label !== null && typeof label === 'object' && typeof label.name === 'string')
+        ? { labels: parsed.labels.map((label: { name: string }) => label.name) } : {}),
     });
   }
 
@@ -288,6 +292,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       head?: { ref?: unknown; sha?: unknown };
       base?: { ref?: unknown };
       body?: unknown;
+      title?: unknown;
     };
     if (
       !parsed || parsed.number !== Number(ref) ||
@@ -303,6 +308,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
     return ok({
       number: parsed.number,
       state,
+      ...(typeof parsed.title === 'string' ? { title: parsed.title } : {}),
       headBranch: typeof parsed.head?.ref === 'string' ? parsed.head.ref : '',
       headSha: typeof parsed.head?.sha === 'string' ? parsed.head.sha : '',
       baseBranch: typeof parsed.base?.ref === 'string' ? parsed.base.ref : '',

@@ -226,7 +226,8 @@ specgit finish --json
 
 ## Rules
 
-- Evidence only: file contents can never change the verdict.
+- Policy defines the requirements; real git, PR, issue, and CI evidence
+  decides the verdict. Task lists and specification prose are not acceptance evidence.
 - Never weaken \`spec_git/policy.yaml\` to make a verdict pass.
 - \`--json\` is the only parse surface.
 
@@ -565,7 +566,28 @@ async function dirExists(target: string): Promise<boolean> {
 }
 
 export async function detectSetupTool(root: string): Promise<'opencode' | 'generic'> {
-  return (await dirExists(path.join(root, '.opencode'))) ? 'opencode' : 'generic';
+  const opencode = path.join(root, '.opencode');
+  if (!(await dirExists(opencode))) return 'generic';
+  const entries = await fs.readdir(opencode);
+  if (entries.length === 0 || entries.some((name) => name !== 'hooks' && name !== 'hooks.json')) {
+    return 'opencode';
+  }
+  const hooks = await readdirEntries(path.join(opencode, 'hooks'));
+  if (hooks.some((entry) => entry.name !== 'specgit-merge-guard.sh')) return 'opencode';
+  // init creates these guard assets for every adopter. Their presence
+  // alone cannot identify the user's agent tool.
+  try {
+    const config = JSON.parse(await fs.readFile(path.join(opencode, 'hooks.json'), 'utf8')) as Record<string, unknown>;
+    if (Object.keys(config).some((key) => key !== 'PreToolUse')) return 'opencode';
+    if (!Array.isArray(config.PreToolUse) || config.PreToolUse.some((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null || !('hooks' in entry) || !Array.isArray(entry.hooks)) return true;
+      return entry.hooks.some((hook: unknown) => typeof hook !== 'object' || hook === null ||
+        !('command' in hook) || hook.command !== '.opencode/hooks/specgit-merge-guard.sh');
+    })) return 'opencode';
+  } catch {
+    return 'opencode';
+  }
+  return 'generic';
 }
 
 /** List a directory for removal-candidate discovery; absent means empty. */

@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 import { buildAgentSurfaceDesiredState } from '../../src/cli/agent-surface.js';
 import type { ManagedStep } from '../../src/cli/managed-reconcile.js';
@@ -27,6 +28,11 @@ describe('harnessWorkflowYaml', () => {
 
   it('names the acceptance check it contributes', () => {
     expect(harnessWorkflowYaml()).toContain(`name: ${ACCEPTANCE_CHECK_NAME}`);
+  });
+
+  it('re-evaluates a title or body edit without requiring a new commit', () => {
+    const workflow = parse(harnessWorkflowYaml()) as { on: { pull_request: { types: string[] } } };
+    expect(workflow.on.pull_request.types).toContain('edited');
   });
 });
 
@@ -266,10 +272,10 @@ describe('mergeGitPrePush: pure byte merge', () => {
     expect(mergeGitPrePush('')).toBe(fresh);
   });
 
-  it('a user hook is preserved verbatim with the managed region appended', () => {
+  it('a user hook body is preserved verbatim after the managed preflight', () => {
     const user = '#!/bin/sh\necho user-hook\n';
     const merged = mergeGitPrePush(user);
-    expect(merged.startsWith(user)).toBe(true);
+    expect(merged.endsWith(user.slice('#!/bin/sh\n'.length))).toBe(true);
     expect(mergeGitPrePush(merged)).toBe(merged);
   });
 

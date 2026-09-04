@@ -146,6 +146,14 @@ Deferred past 1.0.0 (evergreen loop probe list):
   in the evergreen loop: every fresh bootstrap that needs the manual remedy is
   evidence to re-open the hardening ticket.
 
+Current disposition of the historical bootstrap entry: the ordering half was
+superseded by #278/#323. The current `BOOTSTRAP_STEPS` commits and pushes the
+binding before draft-PR creation, then carries the resulting PR binding. The
+old worktree-to-CI context observation is retained as a historical probe, not a
+newly reproduced current defect. This audit does not claim that context concern
+resolved without a corresponding live/CI reproduction; any recurrence is a
+mandatory functional repair under the current audit priority.
+
 ## 6. Known CI dispositions
 
 Gate 3 requires every red or semantics-ambiguous check — green-by-skip
@@ -163,3 +171,20 @@ Nix job's path-filter skip is self-documenting in-workflow (the
 | Version-PR auto-merge | Release workflow | Configured opt-in ([#382](https://github.com/LeXwDeX/SpecGit/issues/382)): disabled unless policy has `automation.merge: true` and `target_branch: main`. `specgit init --force` asks yes/no again, default no. Enabled runs verify the generated source branch, base and exact head, wait up to 20 minutes for all CI (including classic statuses and workflow runs), and merge with a server-side SHA condition followed by merged-state confirmation. Only non-required skipped checks are ignored. Disabled runs retain the version PR. This replaces the historical #102/#107 batch hold without bypassing branch protection. |
 | GitHub Advanced Security (dynamic) | PR branches only, never main | Exempt-with-rationale ([#109](https://github.com/LeXwDeX/SpecGit/issues/109)): GitHub-side GHAS agent whose session creation fails on a provider model-entitlement 400 (`claude-opus-4.6`), not repo-fixable, not a required check; optional owner escalations recorded on the issue. |
 | `Validate Release Tracking` | CI | Event-gated: runs only on `pull_request` and `merge_group` — never on `push` or `workflow_dispatch` — so it is skipped on main-push runs **by design**. Its green predicate is read on the delivery or version PR / merge-group run at the threshold, never on a bare main-push run. When it runs it is green either way: with changed `.changeset/*.md` it validates them (`changeset status --since=origin/main`); without changes it reports the normal release cadence ([#110](https://github.com/LeXwDeX/SpecGit/issues/110)). |
+
+## 7. Full-project audit — 2026-09-04
+
+The [current audit record](audits/2026-09-04-full-project-audit.md) tracks the
+product, architecture and implementation review from v1.11.0, including the
+24 corrections in #389–#411 and #416. Product defects and code bugs are repaired in the
+audit delivery; architecture changes without a proven functional failure have
+an explicit deferred disposition. The record distinguishes implementation
+regressions from final current-head acceptance, merge and release evidence.
+It does not change the immutable 1.0.0 archive above.
+
+Release recovery now checks publication and metadata independently (#392).
+A published version's registry `gitHead` anchors any missing tag; an existing
+tag must match. The GitHub Release can then be completed without republishing.
+Only an explicit registry 404 proves a version absent; other lookup failures
+stop the run. Manual release dispatch is restricted to the canonical repository
+on `main` (#411). These checks preserve the version-PR and protection gates.

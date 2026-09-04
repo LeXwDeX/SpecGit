@@ -66,11 +66,12 @@ export function externalAcceptanceWorkflowYaml(input: ExternalHarnessInput): str
 
 on:
   pull_request:
-    branches: [${input.defaultBranch}]
+    branches: [${JSON.stringify(input.defaultBranch)}]
     # A draft PR fails the verdict (pr_draft), so the draft→ready
     # transition must re-verdict. Listing types replaces the defaults,
-    # so the default activity types are listed alongside.
-    types: [opened, synchronize, reopened, ready_for_review]
+    # so the default activity types are listed alongside. Title and body
+    # edits change live acceptance evidence even when the head is unchanged.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
 
 permissions:
@@ -114,13 +115,14 @@ jobs:
       - name: Install pinned SpecGit CLI
         # Exact version on purpose (no ^): the gate must evaluate with the
         # same CLI generation that wrote the binding; upgrades are a
-        # deliberate re-init. --no-save keeps the adopting tree clean.
-        run: npm install --no-save --no-audit --no-fund specgit@${input.version}
+        # deliberate re-init. An isolated prefix avoids installing the
+        # adopting project's dependencies or running its lifecycle scripts.
+        run: npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@${input.version}
 
 ${waitStepYaml('gh')}
 
       - name: specgit finish
-        run: npx --no-install specgit finish --json
+        run: '"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json'
         env:
           GH_TOKEN: \${{ github.token }}
 `;

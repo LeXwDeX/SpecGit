@@ -219,5 +219,16 @@ export function createDefaultContext(overrides: WiringOverrides = {}): CommandCo
           : input
       )) as typeof evaluate,
     parseRepoRef: parseRepoRefWithProviders as CommandContext['parseRepoRef'],
+    withGitlabHost: (gitlabHost) => ({
+      parseRepoRef: (originUrl) => parseRepoRef(originUrl, { gitlabHost }),
+      gh: new PlatformRoutingProvider({
+        github: gh,
+        gitlab: async () => new GlabProvider({
+          hostname: gitlabHost,
+          requiredChecks: await policyRequiredChecks(),
+        }),
+        originPlatform: async () => 'gitlab',
+      }),
+    }),
   };
 }

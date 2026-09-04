@@ -27,7 +27,7 @@ const GITLAB_CI_FILENAME = '.gitlab-ci.yml';
 // GitLab CI top-level reserved keys that are not jobs.
 const GITLAB_RESERVED_KEYS = new Set([
   'stages', 'include', 'workflow', 'default', 'variables', 'image',
-  'services', 'before_script', 'after_script', 'cache', 'pages', 'types',
+  'services', 'before_script', 'after_script', 'cache', 'types', 'spec',
 ]);
 
 export type OriginPlatform = 'github' | 'gitlab' | 'unknown';
@@ -94,20 +94,20 @@ function jobCheckName(id: string, job: unknown): JobCheckName | null {
  * The detection trust boundary (#121): detected checks are suggestions
  * until proven on a PR head. A workflow's jobs can become required-check
  * candidates only if the workflow's triggers include a PR trigger —
- * `pull_request` or `pull_request_target` are the only triggers that
- * report check runs on a PR head. push (filtered or not), schedule,
- * workflow_dispatch, and every other trigger never do; classifying by
+ * `pull_request` is the PR event whose checks are relevant here;
+ * `pull_request_target` runs against the trusted default branch, not
+ * the delivery head. push (filtered or not), schedule,
+ * workflow_dispatch, and other triggers are not inferred as PR checks; classifying by
  * "not dispatch" would arm a stillborn policy (permanent checks_missing).
- * An omitted `on` key keeps GitHub's default triggers (push AND
- * pull_request), so it stays a candidate.
+ * An omitted `on` key is not a valid workflow trigger declaration.
  * YAML 1.1 parses the bare key `on` as boolean true — both shapes are read.
  */
-const PR_TRIGGERS = new Set(['pull_request', 'pull_request_target']);
+const PR_TRIGGERS = new Set(['pull_request']);
 
 function runsOnPullRequests(parsed: unknown): boolean {
   const record = parsed as { on?: unknown; true?: unknown } | null;
   const on = record?.on ?? record?.true;
-  if (on === undefined) return true; // implicit push/pull_request per GitHub defaults
+  if (on === undefined) return false;
   let triggers: string[];
   if (typeof on === 'string') {
     triggers = [on];
@@ -231,7 +231,7 @@ async function detectGithubChecks(
   return names;
 }
 
-async function detectGitlabChecks(root: string, sources: string[]): Promise<string[]> {
+async function detectGitlabChecks(root: string, sources: string[], ambiguousJobs: string[]): Promise<string[]> {
   let raw: string;
   try {
     raw = await fs.readFile(path.join(root, GITLAB_CI_FILENAME), 'utf-8');
@@ -246,9 +246,15 @@ async function detectGitlabChecks(root: string, sources: string[]): Promise<stri
   }
   if (typeof parsed !== 'object' || parsed === null) return [];
   sources.push(GITLAB_CI_FILENAME);
-  return Object.keys(parsed as Record<string, unknown>).filter(
-    (key) => !GITLAB_RESERVED_KEYS.has(key)
-  );
+  return Object.entries(parsed as Record<string, unknown>).flatMap(([key, value]) => {
+    if (key.startsWith('.') || GITLAB_RESERVED_KEYS.has(key) ||
+      typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+    if ('parallel' in value || key.includes('$[[')) {
+      ambiguousJobs.push(`${GITLAB_CI_FILENAME}: ${key}`);
+      return [];
+    }
+    return [key];
+  });
 }
 
 export async function detectRequiredChecks(cwd: string): Promise<string[]> {
@@ -258,14 +264,15 @@ export async function detectRequiredChecks(cwd: string): Promise<string[]> {
 
 export async function detectInitInputs(
   root: string,
-  originUrl: string | null
+  originUrl: string | null,
+  declaredPlatform?: OriginPlatform
 ): Promise<DetectionReport> {
-  const platform = await classifyPlatform(originUrl);
+  const platform = declaredPlatform ?? await classifyPlatform(originUrl);
   const sources: string[] = [];
   const nonPrWorkflows: string[] = [];
   const ambiguousJobs: string[] = [];
-  const github = await detectGithubChecks(root, sources, nonPrWorkflows, ambiguousJobs);
-  const gitlab = github.length > 0 ? [] : await detectGitlabChecks(root, sources);
+  const github = platform === 'gitlab' ? [] : await detectGithubChecks(root, sources, nonPrWorkflows, ambiguousJobs);
+  const gitlab = platform === 'github' || github.length > 0 ? [] : await detectGitlabChecks(root, sources, ambiguousJobs);
   const [gh, glab] = await Promise.all([probeCli('gh'), probeCli('glab')]);
   return {
     platform,

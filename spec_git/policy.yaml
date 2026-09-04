@@ -4,9 +4,9 @@ required_checks:
   - Test (macos-bash)
   - Test (windows-pwsh)
   - Lint & Type Check
-automation:
-  merge: false
-  close_issues: false
 validation:
   titles: true
   labels: kind
+automation:
+  merge: false
+  close_issues: false

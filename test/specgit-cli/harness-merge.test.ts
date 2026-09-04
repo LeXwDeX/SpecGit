@@ -198,12 +198,12 @@ describe('mergeGitPrePush', () => {
     expect(managed.endsWith('\n')).toBe(true);
   });
 
-  it('preserves an existing user script and appends the managed region once', () => {
+  it('preserves an existing user script after the managed preflight', () => {
     const managed = mergeGitPrePush(USER_PRE_PUSH);
-    expect(managed.startsWith(USER_PRE_PUSH)).toBe(true);
+    expect(managed.endsWith(USER_PRE_PUSH.slice('#!/bin/sh\n'.length))).toBe(true);
     expect(managed).toContain('verify.sh');
     expect(managed).toContain('# >>> specgit:start >>>');
-    expect(managed.indexOf('verify.sh')).toBeLessThan(managed.indexOf('# >>> specgit:start >>>'));
+    expect(managed.indexOf('verify.sh')).toBeGreaterThan(managed.indexOf('# <<< specgit:end <<<'));
   });
 
   it('replaces only the managed region on re-merge (byte-stable)', () => {
@@ -310,7 +310,7 @@ describe('writeHarnessAssets', () => {
 
     // pre-push: user script still first, managed region appended, executable.
     const prePush = read(path.join(gitHooks, 'pre-push'));
-    expect(prePush.startsWith(USER_PRE_PUSH)).toBe(true);
+    expect(prePush.endsWith(USER_PRE_PUSH.slice('#!/bin/sh\n'.length))).toBe(true);
     expect(prePush).toContain('# >>> specgit:start >>>');
     if (process.platform !== 'win32') {
       expect(fs.statSync(path.join(gitHooks, 'pre-push')).mode & 0o111).not.toBe(0);

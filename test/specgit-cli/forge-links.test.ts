@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { forgeWebBase } from '../../src/cli/forge-links.js';
 
 describe('forgeWebBase (#361)', () => {
+  it('retains HTTPS service ports but removes SSH transport ports (#399)', () => {
+    expect(forgeWebBase('https://git.example.com:8443/group/project.git')).toBe('https://git.example.com:8443/group/project');
+    expect(forgeWebBase('https://git@git.example.com:8443/group/project.git')).toBe('https://git.example.com:8443/group/project');
+    expect(forgeWebBase('ssh://git@git.example.com:2222/group/project.git')).toBe('https://git.example.com/group/project');
+  });
+
   it('derives the web base from https, ssh, and scp-like origins, stripping .git', () => {
     expect(forgeWebBase('https://github.com/LeXwDeX/SpecGit.git')).toBe(
       'https://github.com/LeXwDeX/SpecGit'

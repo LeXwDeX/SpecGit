@@ -439,10 +439,35 @@ describe('specgit issue: fresh bootstrap', () => {
 });
 
 describe('specgit issue: idempotent resume', () => {
+  it('refuses a different same-count title without mutating the existing delivery (#408)', async () => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [11] }),
+      gh: { getIssue: () => ok({ number: 11, state: 'open', pullRequest: false, title: 'feat: strict delivery harness' }) },
+    });
+    const outcome = await runIssue({ titles: ['fix: completely unrelated work'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+  });
+
+  it('fails closed when a resume title cannot be verified (#408)', async () => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [11] }),
+      gh: { getIssue: () => ok({ number: 11, state: 'open', pullRequest: false }) },
+    });
+    const outcome = await runIssue({ titles: ['feat: strict delivery harness'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_title_unavailable');
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
   it('resumes after a failure between steps without creating issues again', async () => {
     const t = issueCtx({
       facts: { branch: 'feat/11-strict-delivery-harness' },
       record: issuesOnly(),
+      gh: { getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: number === 11 ? 'feat: strict delivery harness' : 'Harden the evaluator' }) },
     });
     const outcome = await runIssue(
       { titles: ['feat: strict delivery harness', 'Harden the evaluator'] },
@@ -1042,6 +1067,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
       facts: { branch: 'main' },
       record: partial,
       gh: {
+        getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'feat: alpha why' }),
         createIssue: (_repo, title, body) => {
           healed.harness.createdIssues.push({ title, body });
           return {
@@ -1081,9 +1107,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
     expect(written?.issues).toEqual([11]);
   });
 
-  it('consumes the durable partial record even when the remote title drifted', async () => {
-    // Partial record pins #11; a teammate renamed it remotely. The resume
-    // must trust the durable binding for consumed arguments, not re-derive.
+  it('continues a renamed partial issue by number while refusing its stale title (#408)', async () => {
     const t = issueCtx({
       facts: { branch: 'main' },
       record: issuesOnly({
@@ -1095,6 +1119,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
         openIssues: [{ number: 11, title: 'renamed by a teammate' }],
       },
       gh: {
+        getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'renamed by a teammate' }),
         createIssue: (_repo, title, body) => {
           t.harness.createdIssues.push({ title, body });
           return {
@@ -1104,8 +1129,13 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
         },
       },
     });
-    const outcome = await runIssue({ titles: ['feat: alpha why', 'fix: beta why'] }, t.ctx);
+    const stale = await runIssue({ titles: ['feat: alpha why', 'fix: beta why'] }, t.ctx);
+    expect(stale.exit).toBe(2);
+    expect(stale.errors?.[0]?.code).toBe('issue_resume_drift');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    const outcome = await runIssue({ titles: ['11', 'fix: beta why'] }, t.ctx);
     expect(outcome.exit).toBe(0);
+    expect(outcome.record?.context).toEqual({ kind: 'branch', branch: 'feat/11-alpha-why' });
     expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['fix: beta why']);
     const written = t.recordPort.recordWrites.at(-1)?.record;
     expect(written?.issues).toEqual([11, 12]);
@@ -1445,6 +1475,7 @@ describe('specgit issue: complete-record argument drift (P1 regression)', () => 
         issues: [11],
       }),
       gh: {
+        getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'feat: alpha why' }),
         createIssue: (_repo, title, body) => {
           t.harness.createdIssues.push({ title, body });
           return {
@@ -1687,6 +1718,7 @@ describe('specgit issue: per-issue kind tags (#338)', () => {
   it('a pre-#338 record without issueKinds never inherits a kind on continuation', async () => {
     const t = issueCtx({
       record: issuesOnly({ issues: [30] }),
+      gh: { getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'feat: alpha bits' }) },
     });
     const outcome = await runIssue({ titles: ['feat: alpha bits', 'docs: beta pages'] }, t.ctx);
     expect(outcome.exit).toBe(0);

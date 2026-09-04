@@ -64,7 +64,9 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
 - Policy `automation.merge: true` requires `target_branch`; enabling through
   init takes `--merge-target` or a proved remote default branch.
   `close_issues: true` additionally requires merge automation. Existing
-  policy settings survive `init --force`; `--protect` does not enable
+  checks, language, ordering, vocabulary and validation settings survive
+  `init --force` unless explicitly replaced; automation follows the newly
+  answered choice. `--protect` does not enable
   delivery automation.
 - `pr --merge` requires complete acceptance and all current-head CI/CD to
   pass, then submits the expected head SHA to the authenticated forge CLI.
@@ -113,13 +115,29 @@ Verdicts and delivery states are derived per invocation and never persisted.
 - The `accept` alias is permanent for v1 — existing scripts keep working.
 - **Generated text is language-configurable; the machine contract is not** ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). The policy's optional `language` key (`en` default, `zh` supported) selects the language of generated scaffolds, harness guidance, and success-path human prose. Never localized under any value: exit codes, `--json` envelope field names, diagnostic `code` values (and, in v1, diagnostic prose), the closing-reference keywords, the workflow YAML, and the guard scripts. Branch names stay ASCII — a title that yields no ASCII slug never invents `issue<N>`: bootstrap asks for a kebab-case delivery name, and scripted sessions pass `--delivery <slug>` ([#246](https://github.com/LeXwDeX/SpecGit/issues/246)).
 
+## Optional project conventions
+
+Policies without `validation` retain their existing behavior. A project can
+configure title and label checks with `init --force --configure-rules`, or
+explicit `--language`, `--title-check`, `--label-check` and repeatable
+`--allowed-label` flags. Ordinary upgrades preserve the choices.
+
+With `titles: true`, English requires no Unicode Han characters and Chinese
+requires at least one, across all bound issue titles and the PR/MR title.
+`labels: kind` requires exactly one catalog `kind::` member plus declared
+extras; `labels: project` requires a nonempty subset of the declared `tags`.
+Both allow at most one label per scoped axis. These are deterministic checks,
+with creation preflight and live acceptance at G7/G9: proven violations reject,
+missing evidence is unknown. Full [CLI rules](cli.md#project-title-and-label-rules)
+define the configuration choices and diagnostics.
+
 ## Non-goals (v1)
 
 - No GitHub Enterprise evidence (declaration and diagnostics only); self-managed GitLab CE/Free evidence is supported per [gitlab-support.md](gitlab-support.md).
 - No direct REST clients, no token storage, no telemetry.
 - No spec-artifact or task-list inputs — evidence is git + the forge (GitHub or GitLab) only.
 - No cross-platform deliveries (one delivery, one platform, one PR).
-- No weakening of `spec_git/policy.yaml` to pass a verdict, ever — weakening a policy that was right at birth is forbidden; correcting one that was wrong at birth (e.g. a detected check that never runs on PR heads) is required, via `init --force` re-detection or a reviewed edit.
+- No weakening of `spec_git/policy.yaml` to pass a verdict, ever — weakening a policy that was right at birth is forbidden; correcting one that was wrong at birth (e.g. a detected check that never runs on PR heads) is required, via explicit `init --force --required-check <verified-name>` replacement or a reviewed edit; ordinary upgrades preserve existing checks.
 
 ## Deprecation policy
 
@@ -135,6 +153,6 @@ Releases are automatic, PR-gated, and OIDC-based ([release-prepare.yml](../.gith
    The version PR remains open by default. Configured merge automation with
    target `main` waits for all current-head CI and merges with the expected
    SHA, preserving platform protection.
-2. Merging the version PR lands `chore(release): v<version>` on `main`, which builds, verifies the packed version, and publishes to npm via **OIDC trusted publishing** (no token, no environment secret) with provenance. The publish gate is registry evidence — no pending changesets and `package.json`'s version absent from npm — not the head commit message, so the merge strategy cannot suppress a release; `workflow_dispatch` is the manual retry entry point.
-3. The tag `v<version>` and the GitHub Release follow; every step is idempotent, decided by tag/npm existence — a replay never double-publishes.
+2. Merging the version PR lands `chore(release): v<version>` on `main`, which builds, verifies the packed version, and publishes to npm via **OIDC trusted publishing** (no token, no environment secret) with provenance. The publish gate is registry evidence — no pending changesets and `package.json`'s version absent from npm — not the head commit message, so the merge strategy cannot suppress a release; `workflow_dispatch` on `main` is the manual retry entry point; feature and tag refs cannot run the release job.
+3. The tag `v<version>` and the GitHub Release follow independently of whether npm publication happened in this run. A retry recovers missing metadata from the published version's exact `gitHead`; an existing tag must match that commit. Only an explicit npm 404 proves absence; transport/auth/parse failures stop the run. A replay never double-publishes.
 4. Direct pushes to `main` are refused by the pre-push guard, so **every published version traces to a merged PR**. Release candidates are verified without accidental final publish via dry-runs (`npm publish --dry-run`, tarball inspection) and the tag-based idempotence above.
