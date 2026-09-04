@@ -14,6 +14,7 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import { parseNpmPackFilename } from './npm-pack-output.mjs';
 
 function log(msg) {
   if (process.env.CI) return; // keep CI logs quiet by default
@@ -25,24 +26,7 @@ function run(cmd, args, opts = {}) {
 }
 
 function npmPack() {
-  try {
-    const jsonOut = run('npm', ['pack', '--json', '--silent']);
-    const arr = JSON.parse(jsonOut);
-    if (Array.isArray(arr) && arr.length > 0) {
-      const last = arr[arr.length - 1];
-      const file = (last && typeof last === 'object' && last.filename) || (typeof last === 'string' ? last : null);
-      if (file) return String(file).trim();
-    }
-    // Unexpected JSON shape or empty array; fallback to plain output
-    const out = run('npm', ['pack', '--silent']).trim();
-    const lines = out.split(/\r?\n/);
-    return lines[lines.length - 1].trim();
-  } catch (e) {
-    // Fallback for environments not supporting --json
-    const out = run('npm', ['pack', '--silent']).trim();
-    const lines = out.split(/\r?\n/);
-    return lines[lines.length - 1].trim();
-  }
+  return parseNpmPackFilename(run('npm', ['pack', '--json', '--silent']));
 }
 
 function main() {
