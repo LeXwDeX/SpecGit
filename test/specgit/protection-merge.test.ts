@@ -69,7 +69,12 @@ describe('buildProtectionUpdateBody', () => {
     // Checks: union, existing order first, no duplicates.
     expect(body.required_status_checks).toEqual({
       strict: false,
-      contexts: ['build', 'Test (linux)', 'SpecGit Acceptance'],
+      contexts: [],
+      checks: [
+        { context: 'build', app_id: 15368 },
+        { context: 'Test (linux)' },
+        { context: 'SpecGit Acceptance' },
+      ],
     });
 
     // Admin enforcement survives.
@@ -119,6 +124,40 @@ describe('buildProtectionUpdateBody', () => {
     ) as Record<string, any>;
     expect(body.required_status_checks.contexts).toEqual(['SpecGit Acceptance']);
     expect(body.required_status_checks.strict).toBe(true);
+  });
+
+  it('preserves locked branches, creation restrictions and fork syncing (#406)', () => {
+    const body = buildProtectionUpdateBody({
+      lock_branch: { enabled: true },
+      block_creations: { enabled: true },
+      allow_fork_syncing: { enabled: false },
+    }, 'SpecGit Acceptance');
+    expect(body).toMatchObject({ lock_branch: true, block_creations: true, allow_fork_syncing: false });
+  });
+
+  it('keeps app-pinned and explicitly unrestricted checks without reassociating them (#406)', () => {
+    const body = buildProtectionUpdateBody({ required_status_checks: {
+      strict: true, contexts: ['trusted', 'any-app'],
+      checks: [{ context: 'trusted', app_id: 123 }, { context: 'any-app', app_id: null }],
+    } }, 'SpecGit Acceptance');
+    expect(body.required_status_checks).toMatchObject({ checks: [
+      { context: 'trusted', app_id: 123 },
+      { context: 'any-app', app_id: -1 },
+      { context: 'SpecGit Acceptance' },
+    ] });
+  });
+
+  it('preserves configured review bypass actors while adding acceptance (#406)', () => {
+    const body = buildProtectionUpdateBody({ required_pull_request_reviews: {
+      bypass_pull_request_allowances: {
+        users: [{ login: 'release-user', id: 1 }],
+        teams: [{ slug: 'release-team', id: 2 }],
+        apps: [{ slug: 'release-app', id: 3 }],
+      },
+    } }, 'SpecGit Acceptance');
+    expect(body.required_pull_request_reviews).toEqual({ bypass_pull_request_allowances: {
+      users: ['release-user'], teams: ['release-team'], apps: ['release-app'],
+    } });
   });
 
   it('null dismissal restrictions and empty actor lists round-trip as-is', () => {

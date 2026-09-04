@@ -369,7 +369,7 @@ describe('acceptance evaluator', () => {
     expect(context?.failures.map((f) => f.code)).toEqual(['branch_mismatch']);
   });
 
-  it('keeps branch_mismatch when the provider cannot confirm the merge (fail-closed)', async () => {
+  it('keeps provider failure unknown when merged context cannot be confirmed', async () => {
     const gh = new MockForgeProvider({
       pr: fail('gh_transport', 'network down'),
     });
@@ -377,7 +377,24 @@ describe('acceptance evaluator', () => {
       input({ git: new StubGitPort(facts({ branch: 'main' })), gh })
     );
     const context = verdict.gates.find((g) => g.id === 'context');
-    expect(context?.failures.map((f) => f.code)).toEqual(['branch_mismatch']);
+    expect(context?.failures.map((f) => f.code)).toEqual(['gh_transport']);
+    expect(verdict.classification).toBe('unknown');
+    expect(verdict.exitCode).toBe(3);
+  });
+
+  it('matches the branch as well as the label when worktrees share a basename', async () => {
+    const verdict = await evaluate(input({
+      record: ok(binding({ context: { kind: 'worktree', label: 'checkout', branch: 'feat/123-login' } })),
+      git: new StubGitPort(facts({
+        isLinkedWorktree: true,
+        worktreeLabel: 'checkout',
+        worktrees: [
+          { label: 'checkout', branch: 'main' },
+          { label: 'checkout', branch: 'feat/123-login' },
+        ],
+      })),
+    }));
+    expect(gate(verdict, 'context').status).toBe('pass');
   });
 
   describe('merged-delivery lineage (issue #64)', () => {

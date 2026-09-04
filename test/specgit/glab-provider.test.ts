@@ -1275,7 +1275,7 @@ describe('GlabProvider#createIssue', () => {
       value: { number: 8, url: 'https://git.example.com/group/subgroup/project/-/issues/8' },
     });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
-      `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/issues -f title=Add strict delivery harness -f body=Body with #4 ref`,
+      `api --hostname ${HOST} -X POST projects/${PROJECT_ID}/issues -f title=Add strict delivery harness -f description=Body with #4 ref`,
     ]);
   });
 

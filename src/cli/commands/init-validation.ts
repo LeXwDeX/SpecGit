@@ -17,6 +17,8 @@ import type { CommandContext, Policy } from '../types.js';
 import { detectInitInputs, type DetectionReport } from '../detect-checks.js';
 import { POLICY_LANGUAGES, isAutomationTargetBranch, type PolicyAutomation, type PolicyLanguage } from '../../record/policy.js';
 import { POLICY_FILENAME, SPEC_GIT_DIR } from '../types.js';
+import type { ProjectRuleInteraction } from './init-rules.js';
+import { classifyPlatformMode } from './init-platform.js';
 
 export interface InitOptions {
   requiredCheck?: string[];
@@ -28,6 +30,10 @@ export interface InitOptions {
   gitlabHost?: string;
   /** Presentation language of generated text (#118): en | zh. */
   language?: string;
+  configureRules?: boolean;
+  titleCheck?: string;
+  labelCheck?: string;
+  allowedLabel?: string[];
   /** false (--no-ignore): skip the local-asset .gitignore block (#292); default writes it. */
   ignore?: boolean;
   /** Explicit user answer to the automation question. Absent defaults to no off a TTY. */
@@ -37,8 +43,9 @@ export interface InitOptions {
   json?: boolean;
 }
 
-export interface InitInteraction {
+export interface InitInteraction extends ProjectRuleInteraction {
   promptAutomation?: (message: string) => Promise<string | null>;
+  selectPlatform?: (endpoint: string) => Promise<'github' | 'gitlab'>;
 }
 
 function terminalAutomationPrompt(message: string): Promise<string | null> {
@@ -160,7 +167,8 @@ export async function resolveRequiredChecks(
   options: InitOptions,
   ctx: CommandContext,
   root: string,
-  existingPolicy: Evidence<Policy>
+  existingPolicy: Evidence<Policy>,
+  selectedPlatform?: 'github' | 'gitlab' | 'undecided'
 ): Promise<InitOutcome | CheckResolution> {
   const explicit = (options.requiredCheck ?? []).map((value) => value.trim());
   const invalid = explicit.find((value) => value.length === 0);
@@ -205,7 +213,15 @@ export async function resolveRequiredChecks(
   // Fresh init: detection reads the DISCOVERED root (never the cwd the
   // command happened to run from).
   const facts = await ctx.git.facts(root).catch(() => null);
-  const detected = await detectInitInputs(root, facts?.originUrl ?? null);
+  const originUrl = facts?.originUrl ?? null;
+  const platform = selectedPlatform ?? (options.gitlabHost !== undefined
+    ? 'gitlab'
+    : await classifyPlatformMode(root, originUrl));
+  const detected = await detectInitInputs(
+    root,
+    originUrl,
+    platform === 'github' || platform === 'gitlab' ? platform : undefined
+  );
   return { checks: detected.requiredChecks, detected, provenance: 'detected' };
 }
 

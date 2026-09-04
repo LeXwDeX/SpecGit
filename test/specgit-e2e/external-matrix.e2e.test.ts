@@ -185,6 +185,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
       // resuming a PR-bound record, so the fake gh answers for PR #9:
       // live (open, unmerged) → the resume converges, creating nothing.
       const ghResume = makeGh('specgit-ext-noci-ghresume-', [
+        { match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues/11$`, stdout: JSON.stringify({ number: 11, state: 'open', title: bootstrapTitle }) },
         { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/pulls/9$`,

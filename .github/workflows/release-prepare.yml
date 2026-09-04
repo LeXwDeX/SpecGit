@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   release:
-    if: github.repository == 'LeXwDeX/SpecGit'
+    if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,21 +61,10 @@ jobs:
           echo "Pending changesets: $COUNT"
 
       # No pending changesets: publish iff this version is not on npm yet.
-      - name: Check if unpublished version exists
+      - name: Check publication and release metadata
         id: unpublished
         if: steps.pending.outputs.count == '0'
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
-            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
-            echo "specgit@${VERSION} already on npm; nothing to publish."
-          elif git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
-            echo "Tag v${VERSION} exists but npm is behind; manual investigation needed."
-          else
-            echo "needs_publish=true" >> "$GITHUB_OUTPUT"
-            echo "specgit@${VERSION} not on npm and no tag — publish needed."
-          fi
+        run: node scripts/release-state.mjs
 
       # Push with pending changesets: propose the version PR.
       - name: Open version pull request
@@ -197,25 +186,7 @@ jobs:
           npm publish --access public --provenance --tag "$DIST_TAG"
 
       - name: Tag and create GitHub Release
-        if: "steps.unpublished.outputs.needs_publish == 'true'"
+        if: "steps.unpublished.outputs.needs_finalize == 'true'"
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v${VERSION}"
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists on origin; skipping tag push."
-          else
-            git tag "${TAG}"
-            git push origin "${TAG}"
-          fi
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists; skipping."
-            exit 0
-          fi
-          # Prerelease versions (any -suffix) must not displace the stable
-          # "Latest" rollup on the releases page.
-          PRERELEASE=""
-          if [ "${VERSION#*-}" != "$VERSION" ]; then PRERELEASE="--prerelease"; fi
-          gh release create "${TAG}" --generate-notes --title "${TAG}" ${PRERELEASE} \
-            --notes "Automated release from merged changesets. npm: https://www.npmjs.com/package/specgit/v/${VERSION}"
+        run: node scripts/release-state.mjs --finalize

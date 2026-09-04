@@ -78,9 +78,19 @@ export const PolicySchema = z
      * unknown slug the selection refuses.
      */
     tags: z.array(PolicyTagSchema).optional(),
+    /** Explicitly selected project conventions, checked against live forge facts. */
+    validation: z.object({
+      titles: z.boolean().optional(),
+      labels: z.enum(['off', 'kind', 'project']).optional(),
+    }).strict().optional(),
     /** Explicit authorization for merge and issue closure; absent means disabled. */
     automation: PolicyAutomationSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((policy, ctx) => {
+    if (policy.validation?.labels === 'project' && !policy.tags?.length) {
+      ctx.addIssue({ code: 'custom', path: ['tags'], message: 'Project label validation requires a non-empty tags vocabulary.' });
+    }
+  });
 
 export type Policy = z.infer<typeof PolicySchema>;

@@ -27,9 +27,10 @@ REST calls.
 gh issue list --repo LeXwDeX/SpecGit --state open
 gh issue view <n> --repo LeXwDeX/SpecGit
 
-# file and bind
-gh issue create --repo LeXwDeX/SpecGit --title "…" --label bug
-gh issue edit <n> --repo LeXwDeX/SpecGit --add-label delivery
+# create/reuse the issue and establish the delivery binding before edits
+specgit issue "fix: describe the verified defect"
+# fill the issue body from the agreed Why / Scope / Approach / Acceptance
+gh issue edit <n> --repo LeXwDeX/SpecGit --body-file <prepared-body.md>
 
 # deliver — SpecGit deliveries bootstrap their own PR
 # (specgit issue writes the deterministic scaffold with Closes #n;
@@ -52,15 +53,25 @@ Unsure: let the requester decide. One line of work per WHY, never two.
 
 ## Label vocabulary
 
-| Label | Meaning | Branch `<type>` |
-| --- | --- | --- |
-| `feature` | New capability | `feat` |
-| `bug` | Defect in shipped behavior | `fix` |
-| `docs` | Documentation-only change | `docs` |
-| `chore` | Tooling, dependencies, refactors with no behavior change | `chore` |
-| `delivery` | Issue is delivery-bound: assigned for work and enters the dev loop | — |
+Bootstrap infers one catalog label from each new title's type:
 
-`delivery` plus an assignee is the trigger defined in
-[workflows/specgit-dev-loop.md](../../workflows/specgit-dev-loop.md). One PR
-may close N issues; every bound issue needs its own closing reference in the
-PR body or `specgit finish` will reject with `closing_refs_incomplete`.
+| Label | Meaning | Title/branch type |
+| --- | --- | --- |
+| `kind::feat` | New capability | `feat` |
+| `kind::fix` | Defect in shipped behavior | `fix` |
+| `kind::docs` | Documentation-only change | `docs` |
+| `kind::refactor` | Structure change without a behavior change | `refactor` |
+| `kind::chore` | Routine tooling or maintenance | `chore` |
+
+The complete type catalog and pool-first selection rules live in
+[the CLI reference](../cli.md#specgit-issue). Use `--tags` for an explicit set;
+project extras belong in the policy's `tags` declarations. At most one member
+per scoped axis is allowed. When project label validation is enabled, every
+applied label must also satisfy [the configured rule](../cli.md#project-title-and-label-rules).
+
+The binding created by `specgit issue` establishes delivery work; no separate
+`delivery` label is required. One issue is one independently verifiable WHY.
+One PR may close N issues; every bound issue needs its own closing reference
+or `specgit finish` rejects with `closing_refs_incomplete`. Follow
+[the development loop](../../workflows/specgit-dev-loop.md) for execution and
+[the quality loop](../../workflows/quality-loop.md) for review and acceptance.

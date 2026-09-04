@@ -17,9 +17,9 @@
  *     pinned to the local delivery state) and ACCEPTS with exit 0, all
  *     eleven gates green, the closing refs parsed with the GitLab
  *     dialect;
- *  4. gh is unreachable by construction (PATH carries git and the fake
- *     glab only): a routing regression fails closed instead of ever
- *     touching a GitHub account.
+ *  4. gh is unreachable by construction (SPECGIT_GH names an absent
+ *     executable): a routing regression fails closed instead of ever
+ *     touching a GitHub account. System PATH remains available to git hooks.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -34,14 +34,12 @@ import {
   GITLAB_CHECK,
   GITLAB_HOST,
   GITLAB_ORIGIN_URL,
-  gitAndGlabOnlyPath,
   makeGitlabExternalRepo,
   npmInstallPacked,
   packSpecgit,
   rmDir,
   runInstalledSpecgit,
 } from './external-repo-fixture.js';
-import { gitOnlyPathDir } from './helpers.js';
 
 const FIXTURES = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -88,9 +86,10 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
       cleanup.push(fixture.dir, fixture.bareDir);
       await npmInstallPacked(tarballPath, fixture.dir);
 
-      // The sandbox: git and the fake glab on PATH, nothing else — no
-      // gh exists for a routing bug to reach.
-      const gitOnly = gitOnlyPathDir(fixture.dir);
+      // Isolate gh through its executable override while retaining real
+      // shell utilities (mktemp/cat/rm) for the installed pre-push hook.
+      const missingGh = path.join(fixture.dir, 'missing-gh');
+      expect(fs.existsSync(missingGh)).toBe(false);
       const project = 'specgit-evidence%2Fprobe%2Fapp';
       const api = (endpoint: string) =>
         `^api --hostname ${GITLAB_HOST} ${endpoint}`;
@@ -136,8 +135,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
       const sandboxEnv = (extra?: NodeJS.ProcessEnv) =>
         bootstrapGlab.env({
           ...(extra ?? {}),
-          PATH: gitAndGlabOnlyPath(gitOnly, bootstrapGlab.binDir),
-          Path: gitAndGlabOnlyPath(gitOnly, bootstrapGlab.binDir),
+          SPECGIT_GH: missingGh,
         });
 
       const init = runInstalledSpecgit(
@@ -168,7 +166,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         ['issue', 'feat: gitlab delivery story', '--json'],
         sandboxEnv()
       );
-      expect(issue.status, issue.stderr).toBe(0);
+      expect(issue.status, `${issue.stderr}\n${issue.stdout}`).toBe(0);
       const issueEnvelope = JSON.parse(issue.stdout);
       expect(issueEnvelope.record).toMatchObject({
         issues: [7],
@@ -239,8 +237,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
       ]);
       cleanup.push(readyGlab.binDir);
       const finishEnv = readyGlab.env({
-        PATH: gitAndGlabOnlyPath(gitOnly, readyGlab.binDir),
-        Path: gitAndGlabOnlyPath(gitOnly, readyGlab.binDir),
+        SPECGIT_GH: missingGh,
       });
 
       const finish = runInstalledSpecgit(fixture.dir, ['finish', '--json'], finishEnv);
@@ -300,7 +297,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
 
       // The verdict came from glab alone: every recorded call in the
       // finish phase is the glab CLI (host-scoped api or its own
-      // auth/version probes) — and no gh binary was ever reachable.
+      // auth/version probes) — and its configured gh executable is absent.
       const finishCalls = readCalls(readyGlab.logPath).map((call) => call.args);
       expect(finishCalls.some((call) => call.includes('/pipelines?sha='))).toBe(false);
       expect(finishCalls.length).toBeGreaterThan(0);

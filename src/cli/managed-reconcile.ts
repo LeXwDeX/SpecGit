@@ -146,6 +146,8 @@ export interface Snapshot {
   existed: boolean;
   content: string | null;
   mode: number | null;
+  /** Original symlink identity, alongside the referent bytes/mode. */
+  linkTarget?: string;
   /**
    * Ancestor directories of the target that did NOT exist when the
    * snapshot was taken (deepest-first, strictly below the repository
@@ -219,11 +221,21 @@ async function missingDirsBelow(dir: string, stopAt: string): Promise<string[]> 
 /** Build a full snapshot of `target` (bytes, mode, missing ancestors). */
 async function buildSnapshot(target: string, root: string): Promise<Snapshot> {
   const content = await readIfExists(target);
+  const entry = await fs.lstat(target).catch((error: unknown) => {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw error;
+  });
+  const linkTarget = entry?.isSymbolicLink() ? await fs.readlink(target) : undefined;
+  if (linkTarget !== undefined && content === null) {
+    throw new Error(`Cannot reconcile dangling symlink ${target}; repair its target before retrying.`);
+  }
   return {
     target,
     existed: content !== null,
     content,
     mode: await statMode(target),
+    ...(linkTarget !== undefined ? { linkTarget } : {}),
     missingDirs: await missingDirsBelow(path.dirname(target), root),
   };
 }
@@ -240,6 +252,15 @@ export async function snapshotManagedFile(
 export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> {
   if (snapshot.existed && snapshot.content !== null) {
     await fs.mkdir(path.dirname(snapshot.target), { recursive: true });
+    if (snapshot.linkTarget !== undefined) {
+      const currentLink = await fs.readlink(snapshot.target).catch(() => null);
+      if (currentLink !== snapshot.linkTarget) {
+        await fs.unlink(snapshot.target).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+        });
+        await fs.symlink(snapshot.linkTarget, snapshot.target, 'file');
+      }
+    }
     // The pre-run state itself may have been write-protected: the restore
     // must be able to rewrite it before the final chmod below protects it
     // again (#314).

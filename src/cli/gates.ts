@@ -200,7 +200,7 @@ export function contextGate(binding: DeliveryBinding, facts: GitFacts): GateResu
     };
   }
   if (context.kind === 'worktree') {
-    const entry = facts.worktrees.find((candidate) => candidate.label === context.label);
+    const entry = facts.worktrees.find((candidate) => candidate.label === context.label && candidate.branch === context.branch);
     const inWorktree =
       facts.isLinkedWorktree === true &&
       facts.worktreeLabel === context.label &&

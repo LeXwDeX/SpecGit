@@ -288,8 +288,8 @@ export class GlabProvider implements ForgeProvider {
     if (!result.ok) {
       return result;
     }
-    const parsed = result.value as { iid?: unknown; state?: unknown; title?: unknown } | null;
-    if (parsed === null || typeof parsed !== 'object' || typeof parsed.iid !== 'number' || (parsed.state !== 'opened' && parsed.state !== 'closed')) {
+    const parsed = result.value as { iid?: unknown; state?: unknown; title?: unknown; labels?: unknown } | null;
+    if (parsed === null || typeof parsed !== 'object' || typeof parsed.iid !== 'number' || parsed.iid !== n || (parsed.state !== 'opened' && parsed.state !== 'closed')) {
       return fail('glab_transport', 'GitLab returned an unexpected issue payload.');
     }
     return ok({
@@ -299,6 +299,8 @@ export class GlabProvider implements ForgeProvider {
       // issues API never surfaces a merge request.
       pullRequest: false,
       ...(typeof parsed.title === 'string' && parsed.title ? { title: parsed.title } : {}),
+      ...(Array.isArray(parsed.labels) && parsed.labels.every((label): label is string => typeof label === 'string')
+        ? { labels: parsed.labels } : {}),
     });
   }
 
@@ -368,13 +370,14 @@ export class GlabProvider implements ForgeProvider {
       target_branch?: unknown;
       sha?: unknown;
       description?: unknown;
+      title?: unknown;
       merge_commit_sha?: unknown;
       squash_commit_sha?: unknown;
       diff_refs?: { head_sha?: unknown } | null;
     } | null;
     if (
       parsed === null || typeof parsed !== 'object' ||
-      typeof parsed.iid !== 'number' ||
+      typeof parsed.iid !== 'number' || parsed.iid !== Number(ref) ||
       typeof parsed.draft !== 'boolean' ||
       (parsed.state !== 'opened' &&
         parsed.state !== 'closed' &&
@@ -402,6 +405,7 @@ export class GlabProvider implements ForgeProvider {
     return ok({
       number: parsed.iid,
       state,
+      ...(typeof parsed.title === 'string' ? { title: parsed.title } : {}),
       headBranch: typeof parsed.source_branch === 'string' ? parsed.source_branch : '',
       headSha: typeof parsed.sha === 'string' ? parsed.sha : '',
       baseBranch: typeof parsed.target_branch === 'string' ? parsed.target_branch : '',
@@ -717,7 +721,7 @@ export class GlabProvider implements ForgeProvider {
       '-f',
       `title=${title}`,
       '-f',
-      `body=${body}`,
+      `description=${body}`,
     ]);
     if (!result.ok) {
       return this.asFailure(result);

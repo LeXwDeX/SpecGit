@@ -1,5 +1,6 @@
 import { formatRepoRef, parsePrUrl, sameRepoRef } from '../../gitfacts/origin.js';
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
+import { checkTitleConvention } from '../../record/conventions.js';
 
 /**
  * Gate 9 — pr: the bound pull request exists, is mergeable (not closed
@@ -43,6 +44,8 @@ export async function prGate(ctx: GateContext): Promise<GateFailure[]> {
   ctx.evidence.prHead = fact.headSha || null;
 
   const failures: GateFailure[] = [];
+  const title = checkTitleConvention(ctx.policy!, fact.title);
+  if (!title.ok) failures.push(makeFailure(title, { pr: fact.number }));
   if (fact.state === 'closed') {
     failures.push(makeFailure('pr_closed_unmerged', { pr: fact.number }));
   }

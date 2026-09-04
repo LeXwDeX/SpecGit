@@ -31,6 +31,9 @@ export type WaitTransport = 'rest' | 'gh';
 export function waitStepYaml(transport: WaitTransport): string {
   const ghComment =
     transport === 'gh' ? '\n        # All GitHub access goes through the authenticated gh CLI.' : '';
+  const isolatedCliEnv = transport === 'gh'
+    ? '          SPECGIT_CLI_DIR: ${{ runner.temp }}/specgit-cli\n'
+    : '';
   const header = `      - name: Wait for sibling checks
         # The verdict must see the OTHER required checks in a terminal
         # state. Sibling jobs start in parallel AND may not have registered
@@ -45,7 +48,7 @@ export function waitStepYaml(transport: WaitTransport): string {
           WAIT_REPO: \${{ github.repository }}
           WAIT_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
           WAIT_PR: \${{ github.event.pull_request.number || '' }}
-        run: |
+${isolatedCliEnv}        run: |
 `;
   return `${header}${waitStepScript(transport)}\n`;
 }
@@ -58,9 +61,16 @@ export function waitStepScript(transport: WaitTransport): string {
       ? [
           `          import { existsSync, readFileSync } from 'node:fs';`,
           `          import { execFileSync } from 'node:child_process';`,
+          `          import { createRequire } from 'node:module';`,
         ]
       : [`          import { existsSync, readFileSync } from 'node:fs';`]),
-    `          import { parse } from 'yaml';`,
+    ...(transport === 'gh'
+      ? [
+          `          const { parse } = process.env.SPECGIT_CLI_DIR`,
+          `            ? createRequire(process.env.SPECGIT_CLI_DIR + '/node_modules/specgit/package.json')('yaml')`,
+          `            : await import('yaml');`,
+        ]
+      : [`          import { parse } from 'yaml';`]),
     `          if (!existsSync('spec_git/policy.yaml')) {`,
     `            console.error('spec_git/policy.yaml is absent at this head — an adoption PR carries no binding commit yet (expected once; merge it before enabling branch protection), and a delivery PR must carry it via specgit issue.');`,
     `            process.exit(1);`,

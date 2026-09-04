@@ -40,8 +40,9 @@ on:
     branches: [main]
     # A draft PR fails the verdict (pr_draft), so the draft→ready
     # transition must re-verdict. Listing types replaces the defaults,
-    # so the default activity types are listed alongside.
-    types: [opened, synchronize, reopened, ready_for_review]
+    # so the default activity types are listed alongside. Title and body
+    # edits change live acceptance evidence even when the head is unchanged.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
 
 permissions:
@@ -141,12 +142,16 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
 
 ### 议题标签
 
+- 按项目策略的 \`language\` 填写 issue/PR；\`validation\` 启用的标题与
+  标签规则在创建前和 \`finish\` 中校验。\`kind\` 模式要求一个内置类型，
+  扩展标签须在 \`tags\` 中声明；\`project\` 模式只选 \`tags\` 中的标签。
+  更改规则时，由用户通过 \`specgit init --force --configure-rules\` 选择。
 - 每次引导都会自动应用标题的 \`kind::<type>\` 成员；显式传入
   \`--tags <a,b>\` 可自选完整集合。
 - 选择以池为先：仓库中符合语法的既有标签原样胜出；缺失的名称从内置的
   \`kind::\` 目录或策略的 \`tags:\` 声明中播种。未知词汇以退出码 2 指名
   全集。
-- 克制选择：每轴至多一个标签，拿不准就不选——池外标签会被报告
+- 每轴至多一个标签；可选标签拿不准就不选，必选标签以策略为准。池外标签会被报告
   （\`tag_pool_dirty\` 警告是给人看的），SpecGit 绝不重命名它们。
 
 ### 修复与诊断
@@ -252,12 +257,19 @@ already exists); keep manual guidance outside them.
 
 ### Issue tags
 
+- Follow the project's \`language\` for issues and PRs. Enabled \`validation\`
+  rules check titles and labels before creation and during \`finish\`.
+  \`kind\` mode requires one catalog kind and only declared extras;
+  \`project\` mode selects only policy \`tags\`. Users choose rule changes with
+  \`specgit init --force --configure-rules\`.
 - Every bootstrap applies the title's \`kind::<type>\` member
   automatically; pass \`--tags <a,b>\` to choose the full set explicitly.
 - Selection is pool-first: existing on-spec labels win verbatim; anything
   missing is seeded from the built-in \`kind::\` catalog or the policy's
   \`tags:\` declarations. Unknown vocabulary exits 2 naming the universe.
-- Choose with restraint: at most one label per axis, none when unsure —
+- Choose at most one label per axis; omit uncertain optional labels and
+  keep every label required by the selected policy. Existing pool labels
+  cannot override that policy —
   off-spec pool labels are reported (\`tag_pool_dirty\` warnings are for
   humans) and never renamed by SpecGit.
 
@@ -492,7 +504,10 @@ export function mergeHooksJson(existing: string | null): HooksJsonMergeResult {
   const config = structuredClone(parsed) as Record<string, unknown>;
   const specgitEntry = structuredClone(GUARD_HOOK_ENTRY.PreToolUse[0]);
 
-  if (!Array.isArray(config.PreToolUse)) {
+  if (Object.hasOwn(config, 'PreToolUse') && !Array.isArray(config.PreToolUse)) {
+    return { json: existing, warning: `existing ${HOOKS_JSON_PATH} PreToolUse is not an array; left untouched` };
+  }
+  if (config.PreToolUse === undefined) {
     config.PreToolUse = [];
   }
   const preToolUse = config.PreToolUse as unknown[];
@@ -513,6 +528,13 @@ export function mergeHooksJson(existing: string | null): HooksJsonMergeResult {
       )
   );
   if (ownedEntry) {
+    const userHooks = ownedEntry.hooks.filter((hook) =>
+      typeof hook !== 'object' || hook === null || hook.command !== GUARD_COMMAND);
+    if (userHooks.length > 0) {
+      ownedEntry.hooks = userHooks;
+      preToolUse.push(specgitEntry);
+      return { json: `${JSON.stringify(config, null, 2)}\n` };
+    }
     if (ownedEntry.matcher !== GUARD_MATCHER) {
       ownedEntry.matcher = GUARD_MATCHER;
     }
@@ -752,7 +774,21 @@ const GIT_PRE_PUSH_SIGNATURE = '# SpecGit pre-push guard (managed by specgit ini
 
 /** The marker-delimited guard region (no shebang of its own). */
 function managedPrePushRegion(): string {
-  return `${PRE_PUSH_START}\n${GIT_PRE_PUSH_BODY}${PRE_PUSH_END}\n`;
+  return `${PRE_PUSH_START}
+# Run first in a subshell and replay stdin for the user's hook.
+specgit_pre_push_refs=$(mktemp) || exit 1
+cat > "$specgit_pre_push_refs" || { rm -f "$specgit_pre_push_refs"; exit 1; }
+(
+${GIT_PRE_PUSH_BODY}) < "$specgit_pre_push_refs"
+specgit_pre_push_status=$?
+exec < "$specgit_pre_push_refs"
+rm -f "$specgit_pre_push_refs"
+if [ "$specgit_pre_push_status" -ne 0 ]; then
+  exit "$specgit_pre_push_status"
+fi
+unset specgit_pre_push_refs specgit_pre_push_status
+${PRE_PUSH_END}
+`;
 }
 
 /** A fresh managed file: shebang line 1, then the managed region. */
@@ -768,9 +804,11 @@ function managedPrePush(): string {
  * - the #62 marker-first layout (shebang on line 2, unspawnable on
  *   Windows): rebuilt so the shebang becomes line 1, preserving any
  *   content after the managed region (#88-3);
- * - markers present: only the delimited region is replaced;
- * - anything else (a user hook, e.g. husky): preserved verbatim with
- *   the managed region appended after it.
+ * - markers present: the delimited region is refreshed before user code;
+ * - a user shell hook keeps its shebang and body, with the managed
+ *   preflight inserted first and stdin replayed for the original hook;
+ * - another interpreter is rejected before writes, since shell text
+ *   cannot safely be composed into that program.
  *
  * Damaged marker layouts converge like `injectManagedBlock`: marker
  * LINES pair nearest-start-first (a stray START never swallows user
@@ -793,18 +831,10 @@ export function mergeGitPrePush(existing: string | null): string {
   );
   if (firstPair !== null) {
     const trailing = nonMarkerLines(lines, { from: firstPair.end + 1, to: lines.length }, isMarkerLine);
-    if (firstPair.start === 0) {
-      // Old managed layout: the marker was line 1 and the shebang sat
-      // inside the region. Rebuild in the spawnable layout, keeping any
-      // user content that trails the managed region — the wholesale
-      // replacement used to delete it (#88-3).
-      return [managedPrePush().trimEnd(), ...trailing].join('\n');
-    }
-    return [
+    return prependPrePushGuard([
       ...nonMarkerLines(lines, { from: 0, to: firstPair.start }, isMarkerLine),
-      managedPrePushRegion().trimEnd(),
       ...trailing,
-    ].join('\n');
+    ].join('\n'));
   }
   // An unmarked install carrying the specgit signature line is a legacy
   // specgit guard from ANY earlier generation (#343): byte-equality with
@@ -818,6 +848,16 @@ export function mergeGitPrePush(existing: string | null): string {
   if (remainder === '') {
     return managedPrePush();
   }
-  const separator = remainder.endsWith('\n') ? '' : '\n';
-  return `${remainder}${separator}${managedPrePushRegion()}`;
+  return prependPrePushGuard(remainder);
+}
+
+/** Keep the user's interpreter, arguments, cwd and stdin; run the guard first. */
+function prependPrePushGuard(userContent: string): string {
+  const lines = userContent.split('\n');
+  const shebang = lines[0]?.startsWith('#!') ? lines.shift()! : '#!/bin/sh';
+  if (!/^#!\s*(?:\S*\/)?(?:sh|bash|dash|ksh|zsh)(?:\s.*)?$/.test(shebang) &&
+    !/^#!\s*\/usr\/bin\/env\s+(?:-S\s+)?(?:sh|bash|dash|ksh|zsh)(?:\s.*)?$/.test(shebang)) {
+    throw new Error('The existing pre-push hook is not a supported shell script; preserve it and compose SpecGit through your hook manager before retrying init.');
+  }
+  return `${shebang}\n${managedPrePushRegion()}${lines.join('\n')}`;
 }

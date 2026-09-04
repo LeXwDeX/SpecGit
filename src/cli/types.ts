@@ -86,4 +86,6 @@ export interface CommandContext {
   record: RecordPort;
   evaluate: EvaluateFn;
   parseRepoRef(originUrl: string): Evidence<RepoRef> | Promise<Evidence<RepoRef>>;
+  /** Read through a validated, unpersisted declaration without changing this context. */
+  withGitlabHost?(gitlabHost: string): Pick<CommandContext, 'parseRepoRef' | 'gh'>;
 }

@@ -73,6 +73,8 @@ export async function writeHarnessAndPolicy(args: {
   /** Validated prior policy: preserve fields the init options do not replace. */
   existingPolicy?: Policy;
   automation: NonNullable<Policy['automation']>;
+  validation?: Policy['validation'];
+  tags?: Policy['tags'];
   /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
   workflowYaml: string | null;
   /** false (--no-ignore) skips the local-asset .gitignore block (#292). */
@@ -109,6 +111,8 @@ export async function writeHarnessAndPolicy(args: {
     version: 1 as const,
     required_checks: checks,
     automation: args.automation,
+    ...(args.validation !== undefined ? { validation: args.validation } : {}),
+    ...(args.tags !== undefined ? { tags: args.tags } : {}),
     ...(language !== 'en' ? { language } : {}),
   };
   if (language === 'en') delete policy.language;
@@ -211,7 +215,7 @@ function adoptionNextActions(gitlab: boolean, text: HumanText): NextAction[] {
     ['adoption_branch', 'git checkout -b specgit-adoption'],
     [
       'adoption_commit',
-      'git add -A && git add -f spec_git/policy.yaml && git commit -m "chore: adopt SpecGit"',
+      `git add -A && git add -f spec_git/policy.yaml${gitlab ? ' spec_git/providers.yaml' : ''} && git commit -m "chore: adopt SpecGit"`,
     ],
     [
       'adoption_pr',

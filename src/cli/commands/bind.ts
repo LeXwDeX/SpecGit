@@ -11,7 +11,7 @@
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import { errorDiagnostic, humanBuilder, issueList, type BindOutcome } from '../output.js';
-import { coerceIssueRef, coercePrRef } from '../refs.js';
+import { coerceIssueRef, coercePrRef, type ParsedIssueRef } from '../refs.js';
 import { catalogFor, commandLanguage } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, mergeIssueNumbers } from '../../record/schema.js';
 import { carryRecordToBranch } from './bootstrap.js';
@@ -56,7 +56,7 @@ export async function runBind(
     };
   }
 
-  const incomingIssues: number[] = [];
+  const incomingRefs: ParsedIssueRef[] = [];
   for (const raw of options.issue ?? []) {
     const coerced = coerceIssueRef(raw);
     if (!coerced.ok) {
@@ -67,7 +67,7 @@ export async function runBind(
         ],
       };
     }
-    incomingIssues.push(coerced.value);
+    incomingRefs.push(coerced.value);
   }
 
   const rootEv = await ctx.discoverRoot(ctx.cwd);
@@ -91,6 +91,29 @@ export async function runBind(
         errorDiagnostic(contextEv.code, contextEv.message, contextEv.fix ? { fix: contextEv.fix } : {}),
       ],
     };
+  }
+
+  const urlRefs = incomingRefs.filter((ref) => ref.repository !== undefined);
+  if (urlRefs.length > 0) {
+    if (!facts.originUrl) {
+      return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic('no_origin', 'An origin is required to verify the issue URL repository.')] };
+    }
+    const repo = await ctx.parseRepoRef(facts.originUrl);
+    if (!repo.ok) {
+      return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(repo.code, repo.message, repo.fix ? { fix: repo.fix } : {})] };
+    }
+    for (const ref of urlRefs) {
+      if (repo.value.platform !== 'github' ||
+          ref.repository?.owner.toLowerCase() !== repo.value.owner.toLowerCase() ||
+          ref.repository?.repo.toLowerCase() !== repo.value.repo.toLowerCase()) {
+        return {
+          exit: EXIT_USAGE,
+          errors: [errorDiagnostic('issue_ref_repo_mismatch', 'The issue URL does not belong to the origin repository.', {
+            fix: 'Use an issue URL from this repository, or a local issue number.',
+          })],
+        };
+      }
+    }
   }
 
   const existing = await ctx.record.readRecord(root);
@@ -127,7 +150,7 @@ export async function runBind(
     };
   }
 
-  const mergedIssues = mergeIssueNumbers(existingRecord?.issues ?? [], incomingIssues);
+  const mergedIssues = mergeIssueNumbers(existingRecord?.issues ?? [], incomingRefs.map((ref) => ref.number));
 
   const pr =
     options.pr !== undefined

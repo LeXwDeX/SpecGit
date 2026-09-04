@@ -70,12 +70,13 @@ import {
   type InitInteraction,
   type InitOptions,
 } from './init-validation.js';
-import { persistGitlabHost, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
+import { persistGitlabHost, platformSelectionHuman, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
 import { selectWorkflowYaml } from './init-workflow.js';
 import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
 import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
+import { resolveProjectRules } from './init-rules.js';
 
 export type { InitOptions } from './init-validation.js';
 
@@ -149,23 +150,37 @@ export async function runInit(
   if ('exit' in validated) return validated;
   const { declaredEndpoint, existingPolicy, selection } = validated;
 
+  // Explicit inputs and preserved policy checks need no platform evidence.
+  // Keep their usage errors ahead of the interactive platform question.
+  const needsDetection = !existingPolicy.ok && options.detect !== false && (options.requiredCheck?.length ?? 0) === 0;
+  const configuredChecks = needsDetection ? null : await resolveRequiredChecks(options, ctx, root, existingPolicy);
+  if (configuredChecks !== null && 'exit' in configuredChecks) return configuredChecks;
+  const warnings: Diagnostic[] = [];
+  const platformSelection = await resolvePlatformMode(
+    ctx, root, warnings, interaction, declaredEndpoint ?? undefined
+  );
+
   // ---- Required-check selection (#310: one seam, after the existing
   // policy is known — still before any mutation). Explicit --required-check
   // replaces; a valid existing policy upgrades by preservation; only a
   // fresh init detects. ----
-  const resolved = await resolveRequiredChecks(options, ctx, root, existingPolicy);
+  const resolved = configuredChecks ?? await resolveRequiredChecks(options, ctx, root, existingPolicy, platformSelection.outcome.mode);
   if ('exit' in resolved) return resolved;
   const { checks, detected, provenance } = resolved;
 
-  const language = resolveInitLanguage(
+  const initialLanguage = resolveInitLanguage(
     options,
     existingPolicy.ok ? existingPolicy.value.language : undefined
   );
+  const rules = await resolveProjectRules(options, ctx, root, initialLanguage,
+    existingPolicy.ok ? existingPolicy.value : undefined, interaction,
+    platformSelection.outcome.gitlabHost);
+  if ('exit' in rules) return rules;
+  const { language } = rules;
   const automation = await resolveInitAutomation(options, ctx, root, language, interaction);
   if ('exit' in automation) return automation;
 
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
-  const warnings: Diagnostic[] = [];
   if (selection.warning !== undefined) warnings.push(selection.warning);
   if (detected !== null) {
     const nonPrWarning = nonPrWorkflowWarning(detected);
@@ -176,9 +191,8 @@ export async function runInit(
     warnings.push(preservedChecksWarning());
   }
 
-  // #117: the platform resolves BEFORE the harness write — GitLab mode
-  // changes what the harness is. The declaration persists first so
-  // resolvePlatformMode reads the declaration this run just validated.
+  // #117: the platform choice is already validated; its pending declaration
+  // joins the same transaction as the platform-specific harness write.
   // #305: that early persist is inside the run's logical transaction — a
   // later reconcile failure restores the providers file from this snapshot
   // (including the directories this run created under spec_git/, so the
@@ -206,15 +220,19 @@ export async function runInit(
       ],
     };
   }
-  if (declaredEndpoint !== null) {
-    await persistGitlabHost(declaredEndpoint.host, declaredEndpoint.port, root, warnings);
+  if (platformSelection.declaration !== undefined) {
+    const { host, port } = platformSelection.declaration;
+    await persistGitlabHost(host, port, root, warnings);
   }
 
   // #118: the effective generated-text language — explicit --language,
   // else the existing policy's language on --force, else the default.
   const { human: text } = catalogFor(language);
 
-  const platform = await resolvePlatformMode(options, ctx, root, warnings, text);
+  const platform = {
+    outcome: platformSelection.outcome,
+    human: platformSelectionHuman(platformSelection, text),
+  };
   const gitlabMode = platform.outcome.mode === 'gitlab';
   if (gitlabMode) {
     warnings.push({
@@ -233,6 +251,8 @@ export async function runInit(
     language,
     existingPolicy: existingPolicy.ok ? existingPolicy.value : undefined,
     automation: automation.automation,
+    validation: rules.validation,
+    tags: rules.tags,
     workflowYaml: gitlabMode ? null : selection.yaml,
     writeIgnore: options.ignore !== false,
     warnings,
