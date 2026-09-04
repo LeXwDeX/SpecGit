@@ -149,6 +149,12 @@ after that PR has merged. It verifies the PR identity and head/base revisions
 around paginated file reads; missing, truncated, or changing evidence fails
 closed. A merge must not collapse a product delivery into an empty metadata
 change, and metadata-only deliveries remain ineligible for source compilation.
+The SpecGit repository's reserved `changeset-release/main` proposal still runs
+Acceptance and every version/release gate, but its successful Acceptance run
+does not start bound-delivery completion: that generated proposal deliberately
+carries the preceding delivery record and is not itself a delivery. This
+source-repository exclusion does not alter `workflow_dispatch` recovery or the
+completion workflow generated for adopting projects.
 
 ## Adopting projects
 
