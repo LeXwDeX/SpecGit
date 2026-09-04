@@ -20,7 +20,7 @@
  */
 
 import type { PolicyLanguage } from '../record/policy.js';
-import { waitStepYaml } from './wait-step.js';
+import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
 
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
@@ -49,6 +49,7 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+  actions: read
 
 # One verdict per head at a time (#319): a newer trigger event (a push
 # after the draft opened, then ready_for_review) supersedes the older
@@ -64,7 +65,7 @@ jobs:
     # Hosted pool on purpose: a required check must not hinge on one
     # self-hosted container.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${ACCEPTANCE_JOB_MINUTES}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

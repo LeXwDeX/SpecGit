@@ -151,7 +151,7 @@ describe('external acceptance harness template', () => {
   it('contributes exactly the acceptance check name with read-only permissions', () => {
     const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
       name: string;
-      permissions: { contents: string; issues: string; 'pull-requests': string };
+      permissions: { contents: string; issues: string; 'pull-requests': string; actions: string };
       concurrency: { group: string; 'cancel-in-progress': boolean };
       jobs: Record<string, { name: string; 'runs-on': string; 'timeout-minutes': number }>;
     };
@@ -159,6 +159,7 @@ describe('external acceptance harness template', () => {
     expect(parsed.permissions.contents).toBe('read');
     expect(parsed.permissions.issues).toBe('read');
     expect(parsed.permissions['pull-requests']).toBe('read');
+    expect(parsed.permissions.actions).toBe('read');
     // #319: a newer trigger event cancels the superseded run instead of
     // leaving parallel copies burning identical wait budgets.
     expect(parsed.concurrency.group).toBe('specgit-accept-${{ github.ref }}');
@@ -166,7 +167,7 @@ describe('external acceptance harness template', () => {
     const job = parsed.jobs['specgit-acceptance'];
     expect(job.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(job['runs-on']).toBe('ubuntu-latest');
-    expect(job['timeout-minutes']).toBe(15);
+    expect(job['timeout-minutes']).toBe(30);
   });
 
   it('waits for sibling checks through the gh seam, never raw REST', () => {

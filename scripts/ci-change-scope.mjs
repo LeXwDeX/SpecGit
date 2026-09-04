@@ -50,6 +50,15 @@ export function classifyPaths(paths) {
   };
 }
 
+/** @param {{status: string, path: string}[]} entries */
+export function classifyEntries(entries) {
+  for (const entry of entries) {
+    if (entry.status !== 'D' && LOCAL_STATE.test(entry.path)) throw new Error(`${entry.path}: local state or build output must not be committed.`);
+  }
+  const applicablePaths = entries.filter((entry) => !(entry.status === 'D' && LOCAL_STATE.test(entry.path))).map((entry) => entry.path);
+  return { ...classifyPaths(applicablePaths), paths: entries.map((entry) => entry.path) };
+}
+
 /** @param {...string} args */
 function git(...args) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -122,11 +131,7 @@ export function inspectChanges(options = {}) {
     return { build: true, metadata: false, nix: true, dependencies: true, release_intent: false, paths: [], reason: 'Full verification requested or no prior branch revision.' };
   }
   const entries = changedEntries(range.base, range.head);
-  for (const entry of entries) {
-    if (entry.status !== 'D' && LOCAL_STATE.test(entry.path)) throw new Error(`${entry.path}: local state or build output must not be committed.`);
-  }
-  const applicablePaths = entries.filter((entry) => !(entry.status === 'D' && LOCAL_STATE.test(entry.path))).map((entry) => entry.path);
-  const result = { ...classifyPaths(applicablePaths), paths: entries.map((entry) => entry.path), base: range.base, head: range.head };
+  const result = { ...classifyEntries(entries), base: range.base, head: range.head };
   let releaseIntent = false;
   for (const entry of entries) {
     if (entry.status !== 'D' && CHANGESET.test(entry.path)) {
