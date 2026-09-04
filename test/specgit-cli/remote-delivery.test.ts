@@ -8,7 +8,7 @@ import { evaluate } from '../../src/acceptance/evaluate.js';
 import { matchesBoundRequest, runRemoteDelivery } from '../../src/automation/remote-delivery.js';
 import { workflowRequestNumber } from '../../src/automation/remote-entry.js';
 import { completionWorkflowYaml, gitlabRoutingWorkflowYaml } from '../../src/cli/completion-workflow.js';
-import { ok } from '../../src/kernel/evidence.js';
+import { fail, ok } from '../../src/kernel/evidence.js';
 import { makeCheckRun, makePrFact } from '../specgit/helpers/mock-forge.js';
 import { makeCtx, makeGhProvider, makeGitFacts, sampleBinding, samplePolicy } from './helpers.js';
 
@@ -71,10 +71,165 @@ describe('trusted remote delivery continuation', () => {
     expect(f.forge.closeIssue).not.toHaveBeenCalled();
     expect(f.forge.calls.some((call) => call.startsWith('createIssue'))).toBe(false);
   });
-  it('tracks two independent current check failures even while a sibling is pending', async () => {
+  it.each(['neutral-first', 'pending-first'])('waits for mixed CI to settle before creating repairs: %s', async (order) => {
+    const f = fixture();
+    const mixed = [
+      makeCheckRun('CodeQL', { conclusion: 'neutral' }),
+      makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null }),
+    ];
+    let checks = [makeCheckRun('All checks passed'), ...(order === 'neutral-first' ? mixed : mixed.reverse())];
+    f.forge.getCheckRuns.mockImplementation(async () => ok(checks));
+    f.forge.getPrChecks.mockImplementation(async () => ok({ headSha: HEAD, checks }));
+    const sleep = vi.fn(async () => {
+      expect(f.forge.createIssue).not.toHaveBeenCalled();
+      expect(f.forge.mergePr).not.toHaveBeenCalled();
+      checks = [makeCheckRun('All checks passed'), makeCheckRun('CodeQL'), makeCheckRun('Workflow CI')];
+    });
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(result.state).toBe('completed');
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).toHaveBeenCalledOnce();
+    expect(f.forge.closeIssue).toHaveBeenCalledOnce();
+  });
+  it('waits for the GitLab pipeline even when all visible jobs have completed', async () => {
+    const f = fixture('gitlab');
+    f.ctx.parseRepoRef = () => ok({ ...repo, platform: 'gitlab' });
+    let checks = [makeCheckRun('All checks passed'), makeCheckRun('Quality', { conclusion: 'neutral' })];
+    let pipelineStatus = 'running';
+    f.forge.getCheckRuns.mockImplementation(async () => ok(checks));
+    f.forge.getPrChecks.mockImplementation(async () => ok({ headSha: HEAD, checks, pipelineStatus }));
+    const sleep = vi.fn(async () => {
+      expect(f.forge.createIssue).not.toHaveBeenCalled();
+      checks = [makeCheckRun('All checks passed'), makeCheckRun('Quality')];
+      pipelineStatus = 'success';
+    });
+    const result = await runRemoteDelivery({ repo: { ...repo, platform: 'gitlab' }, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(result.state).toBe('completed');
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+  });
+  it('retries a stale CI rejection when the next snapshot has already settled successfully', async () => {
+    const f = fixture();
+    f.forge.getPrChecks
+      .mockResolvedValueOnce(ok({ headSha: HEAD, checks: [makeCheckRun('All checks passed'),
+        makeCheckRun('CodeQL', { conclusion: 'neutral' }),
+        makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null })] }))
+      .mockResolvedValue(ok({ headSha: HEAD, checks: [makeCheckRun('All checks passed'), makeCheckRun('CodeQL'), makeCheckRun('Workflow CI')] }));
+    const sleep = vi.fn(async () => undefined);
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(result.state).toBe('completed');
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).toHaveBeenCalledOnce();
+    expect(f.forge.closeIssue).toHaveBeenCalledOnce();
+  });
+  it.each(['success', 'neutral', 'failure'])('rechecks an initially rejected required check and respects its settled %s result', async (conclusion) => {
+    const f = fixture();
+    let checks = [
+      makeCheckRun('All checks passed', { conclusion: 'neutral' }),
+      makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null }),
+    ];
+    f.forge.getCheckRuns.mockImplementation(async () => ok(checks));
+    f.forge.getPrChecks.mockImplementation(async () => ok({ headSha: HEAD, checks }));
+    vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://github.com/LeXwDeX/SpecGit/issues/200' }));
+    const sleep = vi.fn(async () => {
+      expect(f.forge.createIssue).not.toHaveBeenCalled();
+      expect(f.forge.mergePr).not.toHaveBeenCalled();
+      checks = [makeCheckRun('All checks passed', { conclusion }), makeCheckRun('Workflow CI')];
+    });
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(sleep).toHaveBeenCalledOnce();
+    if (conclusion === 'success') {
+      expect(result.state).toBe('completed');
+      expect(f.forge.mergePr).toHaveBeenCalledOnce();
+      expect(f.forge.createIssue).not.toHaveBeenCalled();
+    } else {
+      expect(result.exit).toBe(1);
+      expect(result.automation?.status).toBe('blocked');
+      expect(result.errors).toMatchObject([{ code: 'checks_failed', message: `CI/CD check 'All checks passed' concluded ${conclusion}.` }]);
+      expect(f.forge.createIssue).toHaveBeenCalledOnce();
+      expect(f.forge.mergePr).not.toHaveBeenCalled();
+      expect(f.forge.closeIssue).not.toHaveBeenCalled();
+    }
+  });
+  it('keeps pending CI bounded by the deadline without merging or filing a premature repair', async () => {
+    const f = fixture();
+    const checks = [makeCheckRun('All checks passed'), makeCheckRun('CodeQL', { conclusion: 'neutral' }),
+      makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null })];
+    f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks }));
+    let time = 0;
+    const sleep = vi.fn(async (milliseconds: number) => { time += milliseconds; });
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx,
+      { now: () => time, sleep, deadlineMs: 10, pollMs: 5 });
+    expect(time).toBe(10);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(result.exit).toBe(1);
+    expect(result.automation?.status).toBe('pending');
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+    expect(f.forge.closeIssue).not.toHaveBeenCalled();
+  });
+  it('rejects a head change during the CI wait before any mutation', async () => {
+    const f = fixture();
+    const checks = [makeCheckRun('All checks passed'), makeCheckRun('CodeQL', { conclusion: 'neutral' }),
+      makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null })];
+    f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks }));
+    const sleep = vi.fn(async () => { f.setPr(makePrFact({ headSha: 'c'.repeat(40), body: 'Closes #123' })); });
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(result.errors?.[0].code).toBe('automation_head_changed');
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+    expect(f.forge.closeIssue).not.toHaveBeenCalled();
+  });
+  it('fails closed when the CI refresh loses evidence', async () => {
+    const f = fixture();
+    vi.spyOn(f.ctx.gh, 'getPrChecks')
+      .mockResolvedValueOnce(ok({ headSha: HEAD, checks: [makeCheckRun('All checks passed', { status: 'in_progress', conclusion: null })] }))
+      .mockResolvedValue(fail('gh_transport', 'The CI response is unavailable.'));
+    const sleep = vi.fn(async () => undefined);
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(result.exit).toBe(3);
+    expect(result.errors?.[0].code).toBe('gh_transport');
+    expect(sleep).not.toHaveBeenCalled();
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+  });
+  it('does not treat missing GitLab pipeline evidence as settled CI', async () => {
+    const f = fixture('gitlab');
+    f.ctx.parseRepoRef = () => ok({ ...repo, platform: 'gitlab' });
+    const checks = [makeCheckRun('All checks passed', { conclusion: 'neutral' })];
+    f.forge.getCheckRuns.mockResolvedValue(ok(checks));
+    f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks }));
+    vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://gitlab.com/LeXwDeX/SpecGit/-/issues/200' }));
+    const result = await runRemoteDelivery({ repo: { ...repo, platform: 'gitlab' }, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
+    expect(result.exit).toBe(3);
+    expect(result.errors?.[0].code).toBe('automation_pipeline_unavailable');
+    expect(f.forge.createIssue).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+  });
+  it('records an independent closing-reference failure while CI is pending without recording provisional CI failures', async () => {
+    const f = fixture();
+    f.setPr(makePrFact({ headSha: HEAD, body: 'Missing closing references.' }));
+    f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks: [
+      makeCheckRun('All checks passed'), makeCheckRun('CodeQL', { conclusion: 'neutral' }),
+      makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null }),
+    ] }));
+    vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://github.com/LeXwDeX/SpecGit/issues/200' }));
+    const sleep = vi.fn(async () => undefined);
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
+    expect(result.exit).toBe(1);
+    expect(result.errors).toMatchObject([{ code: 'closing_refs_incomplete' }]);
+    expect(result.errors).toHaveLength(1);
+    expect(f.forge.createIssue).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+  });
+  it('tracks two independent current check failures after every sibling has settled', async () => {
     const f = fixture();
     const checks = [
-      makeCheckRun('All checks passed', { status: 'in_progress', conclusion: null }),
+      makeCheckRun('All checks passed'),
       makeCheckRun('Lint', { source: 'app:1', conclusion: 'failure' }),
       makeCheckRun('Tests', { source: 'app:1', conclusion: 'failure' }),
     ];

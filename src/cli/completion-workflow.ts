@@ -118,11 +118,51 @@ ${input.selfHosted ? `      - name: Install trusted classifier dependencies with
         id: scope
         working-directory: specgit-data
         env:
+          GH_TOKEN: \${{ github.token }}
+          REQUEST_PR: \${{ needs.identify.outputs.pr }}
           REQUEST_HEAD: \${{ needs.identify.outputs.head }}
         run: |
-          git cat-file -e "$REQUEST_HEAD^{commit}"
-          BASE=$(git merge-base HEAD "$REQUEST_HEAD")
-          node ../specgit-runtime/scripts/ci-change-scope.mjs --base "$BASE" --head "$REQUEST_HEAD"
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          import { classifyEntries } from '../specgit-runtime/scripts/ci-change-scope.mjs';
+          const repo = process.env.GITHUB_REPOSITORY;
+          const number = Number(process.env.REQUEST_PR);
+          const head = process.env.REQUEST_HEAD;
+          const sha = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value);
+          if (!/^[\\w.-]+\\/[\\w.-]+$/.test(repo || '') || !Number.isSafeInteger(number) || number <= 0 || !sha(head)) throw new Error('Invalid request identity.');
+          const endpoint = 'repos/' + repo + '/pulls/' + number;
+          const query = (path) => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+          const readRequest = () => {
+            const request = query(endpoint);
+            if (request?.number !== number || request.head?.sha !== head || !sha(request.base?.sha)) throw new Error('The request identity or base changed.');
+            if (!Number.isSafeInteger(request.changed_files) || request.changed_files < 0 || request.changed_files > 3000) throw new Error('The complete request file count is unavailable or exceeds the GitHub API limit.');
+            return request;
+          };
+          const before = readRequest();
+          const entries = [];
+          const seen = new Set();
+          const validPath = (value) => typeof value === 'string' && value.length > 0 && !/[\\\\\\p{Cc}]/u.test(value) && !value.split('/').some((part) => part === '' || part === '.' || part === '..');
+          for (let page = 1; page <= 30; page++) {
+            const files = query(endpoint + '/files?per_page=100&page=' + page);
+            if (!Array.isArray(files) || files.length > 100) throw new Error('The request file page is invalid.');
+            for (const file of files) {
+              if (!validPath(file?.filename) || seen.has(file.filename) || !['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'].includes(file.status)) throw new Error('The request file evidence is invalid or repeated.');
+              seen.add(file.filename);
+              if (file.status === 'renamed') {
+                if (!validPath(file.previous_filename) || file.previous_filename === file.filename) throw new Error('The renamed request file has no original path.');
+                entries.push({ status: 'D', path: file.previous_filename });
+              }
+              entries.push({ status: file.status === 'removed' ? 'D' : 'M', path: file.filename });
+            }
+            if (seen.size > before.changed_files) throw new Error('The request file count changed during pagination.');
+            if (files.length < 100) break;
+          }
+          const after = readRequest();
+          if (after.base.sha !== before.base.sha || after.changed_files !== before.changed_files || seen.size !== before.changed_files) throw new Error('The request file evidence changed or is incomplete.');
+          const scope = classifyEntries(entries);
+          appendFileSync(process.env.GITHUB_OUTPUT, 'build=' + scope.build + '\\n');
+          NODE
 ` : ''}      - name: Select a compatible trusted runtime
         id: runtime
         env:
