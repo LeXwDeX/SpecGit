@@ -25,6 +25,8 @@
  * human text is never parsed.
  */
 
+import { readFileSync } from 'node:fs';
+
 export type WaitTransport = 'rest' | 'gh';
 
 export const ACCEPTANCE_POLL_MINUTES = 25;
@@ -231,7 +233,10 @@ function workflowOwnershipBlock(transport: WaitTransport): string[] {
           + '/actions/runs?head_sha=' + process.env.WAIT_SHA + '&per_page=' + PER_PAGE + '&page=' + page, { headers });
         if (!response.ok) throw new Error('workflow-runs API HTTP ' + response.status);
         return await response.json();`;
-  return String.raw`const isActions = (check) => check.app?.slug === 'github-actions' || check.app?.id === 15368;
+  const ownershipSource = readFileSync(new URL('../harness-runtime/actions-ownership.mjs', import.meta.url), 'utf8')
+    .replace(/\r\n?/g, '\n').trimEnd();
+  return String.raw`${ownershipSource}
+const isActions = (check) => isGithubActionsApp(check.app);
 const listWorkflowsWithRetry = async (page) => {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -245,11 +250,8 @@ const listWorkflowsWithRetry = async (page) => {
 };
 const currentExecutionChecks = async (checks) => {
   if (!checks.some(isActions)) return checks;
-  const bySuite = new Map();
-  const ids = new Set();
-  const latest = new Map();
+  const workflows = [];
   const positive = (value) => Number.isSafeInteger(value) && value > 0;
-  const key = (run) => JSON.stringify([run.workflow_id, run.event]);
   let total;
   for (let page = 1; page <= 10; page++) {
     const payload = await listWorkflowsWithRetry(page);
@@ -259,32 +261,26 @@ const currentExecutionChecks = async (checks) => {
     if (total !== undefined && total !== payload.total_count) throw new Error('GitHub Actions workflow evidence changed during pagination.');
     total = payload.total_count;
     for (const run of payload.workflow_runs) {
-      if (!positive(run?.id) || !positive(run.check_suite_id) || !positive(run.workflow_id) || !positive(run.run_attempt)
-        || run.head_sha !== process.env.WAIT_SHA || typeof run.event !== 'string' || run.event.length === 0
-        || typeof run.run_started_at !== 'string' || !Number.isFinite(Date.parse(run.run_started_at))
-        || !['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(run.status)
-        || ids.has(run.id) || bySuite.has(run.check_suite_id)) throw new Error('GitHub Actions workflow ownership is missing, invalid, or ambiguous.');
-      ids.add(run.id);
-      bySuite.set(run.check_suite_id, run);
-      const previous = latest.get(key(run));
-      const time = Date.parse(run.run_started_at);
-      if (!previous || time > Date.parse(previous.run_started_at)
-        || (time === Date.parse(previous.run_started_at) && run.id > previous.id)) latest.set(key(run), run);
+      if (!positive(run?.workflow_id) || run.head_sha !== process.env.WAIT_SHA
+        || typeof run.event !== 'string' || run.event.length === 0) throw new Error('GitHub Actions workflow ownership is missing, invalid, or ambiguous.');
+      workflows.push({ key: JSON.stringify([run.workflow_id, run.event]), checkSuiteId: run.check_suite_id,
+        runAttempt: run.run_attempt, check: { id: run.id, startedAt: run.run_started_at, status: run.status } });
     }
     if (payload.workflow_runs.length < PER_PAGE) break;
     if (page === 10) throw new Error('GitHub Actions workflow evidence reached the pagination limit.');
   }
-  if (ids.size !== total) throw new Error('GitHub Actions workflow evidence is incomplete.');
+  if (workflows.length !== total) throw new Error('GitHub Actions workflow evidence is incomplete.');
+  const ownership = createActionsOwnership(workflows);
   return checks.flatMap((check) => {
     if (!isActions(check)) return [check];
-    const suite = check.check_suite?.id;
-    if (!positive(suite) || !bySuite.has(suite)) throw new Error('A GitHub Actions check has no verified workflow owner.');
-    const owner = bySuite.get(suite);
-    if (latest.get(key(owner)).id !== owner.id) return [];
+    let owner;
+    try { owner = ownership.currentFor(check.check_suite?.id); }
+    catch { throw new Error('A GitHub Actions check has no verified workflow owner.'); }
+    if (owner === null) return [];
     // A rerun can retain completed jobs from its prior attempt until new jobs register.
-    return [owner.status === 'completed' ? check : { ...check, status: 'in_progress', conclusion: null }];
+    return [owner.check.status === 'completed' ? check : { ...check, status: 'in_progress', conclusion: null }];
   });
-};`.split('\n').map((line) => `          ${line}`);
+};`.split('\n').map((line) => line === '' ? '' : `          ${line}`);
 }
 
 /**

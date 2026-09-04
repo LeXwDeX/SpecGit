@@ -1,4 +1,4 @@
-import type { ForgeReadPort, OpenIssueFact } from '../../github/port.js';
+import type { ForgeEvidencePort, OpenIssueFact } from '../../github/port.js';
 import type { PolicyLanguage } from '../../record/policy.js';
 import { parseNumericRef } from '../../record/schema.js';
 import { EXIT_USAGE } from '../exit-codes.js';
@@ -33,7 +33,7 @@ export function issueBody(title: string, language: PolicyLanguage = 'en'): strin
  * each record write; a plan does not reserve an issue on the forge.
  */
 export async function prepareIssuePlan(deps: {
-  provider: Pick<ForgeReadPort, 'getOpenIssues'>;
+  provider: Pick<ForgeEvidencePort, 'getOpenIssues'>;
   repo: RepoRef;
   language: PolicyLanguage;
   delivery: string;

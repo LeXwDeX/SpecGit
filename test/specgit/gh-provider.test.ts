@@ -632,6 +632,19 @@ describe('GhCliGitHubProvider', () => {
       expect(result.ok && result.value.map((run) => run.id)).toEqual([1, 3]);
     });
 
+    it('keeps first-attempt job evidence terminal while all-CI still includes its pending workflow', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)],
+        [workflow(4, 41, { status: 'in_progress', conclusion: null })]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
+        { id: 1, status: 'completed', conclusion: 'success' },
+      ] });
+      const allCi = await provider.getPrChecks(REPO, 436);
+      expect(allCi.ok && allCi.value.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 1, status: 'completed', conclusion: 'success' }),
+        expect.objectContaining({ id: 4, status: 'in_progress', conclusion: null }),
+      ]));
+    });
+
     it('keeps terminal jobs pending while their same-suite workflow rerun is running', async () => {
       const { provider } = generationProvider([check(1, 'Required verification', 41)],
         [workflow(4, 41, { run_attempt: 2, status: 'in_progress', conclusion: null })]);

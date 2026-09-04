@@ -73,6 +73,13 @@ describe('install smoke (#67): the packed tarball is clean', () => {
     expect(has('bin/specgit.js')).toBe(true);
     expect(has('dist/cli/index.js')).toBe(true);
     expect(has('dist/index.js')).toBe(true);
+    for (const filename of ['actions-ownership.mjs', 'actions-ownership.d.mts']) {
+      const entry = `dist/harness-runtime/${filename}`;
+      expect(has(entry), entry).toBe(true);
+      const packed = spawnSync('tar', ['-xOf', tarballPath, `package/${entry}`], { encoding: 'utf8' });
+      expect(packed.status, packed.stderr).toBe(0);
+      expect(packed.stdout).toBe(fs.readFileSync(new URL(`../../src/harness-runtime/${filename}`, import.meta.url), 'utf8'));
+    }
     expect(hasPrefix('schemas/')).toBe(true);
 
     expect(hasPrefix('src/')).toBe(false);
