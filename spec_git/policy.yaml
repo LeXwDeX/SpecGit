@@ -7,3 +7,6 @@ required_checks:
 automation:
   merge: false
   close_issues: false
+validation:
+  titles: true
+  labels: kind
