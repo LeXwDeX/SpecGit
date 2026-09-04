@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ForgeProvider, PrFact } from '../github/port.js';
+import type { ForgeEvidencePort, ForgeDeliveryWritePort, ForgeAdminWritePort, PrFact } from '../github/port.js';
 import type { RepoRef } from '../gitfacts/origin.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { Policy } from '../record/policy.js';
@@ -29,10 +29,16 @@ const NON_FAILURES = new Set([
   'automation_disabled', 'automation_checks_missing', 'evidence_truncated',
 ]);
 
+/** The tracker capabilities needed to reconcile repair issues; no merge or protection writes. */
+export type FailureIssuePort =
+  Pick<ForgeEvidencePort, 'getPr' | 'getOpenIssues'> &
+  Pick<ForgeDeliveryWritePort, 'createIssue' | 'addIssueLabels' | 'addIssueComment'> &
+  Pick<ForgeAdminWritePort, 'ensureRepoLabels'>;
+
 /** A failed delivery gets new repair work; repeated observations reconcile it through the tracker. */
 export async function ensureFailureIssues(
   input: FailureIssueInput,
-  forge: ForgeProvider,
+  forge: FailureIssuePort,
 ): Promise<Evidence<{ issues: number[] }>> {
   const failures = [...new Map(input.failures
     .filter((item) => item.code.trim() !== '' && !NON_FAILURES.has(item.code))

@@ -67,6 +67,9 @@ export type { RepoRef } from './gitfacts/origin.js';
 
 export type {
   ForgeProvider,
+  ForgeEvidencePort,
+  ForgeDeliveryWritePort,
+  ForgeAdminWritePort,
   ForgeReadPort,
   ForgeAdminPort,
   GitHubProvider,

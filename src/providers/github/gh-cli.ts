@@ -69,8 +69,8 @@ const ISSUE_SEARCH_PAGE_SIZE = 100;
 /** GitHub's search API never returns more than 1000 results (10×100). */
 const MAX_ISSUE_SEARCH_PAGES = 10;
 
-/** gh stderr markers that mean "not authenticated" rather than transport. */
-const AUTH_FAILURE_PATTERN = /HTTP 40[13]|Bad credentials|gh auth login|not logged in|authentication required/i;
+/** A 403 can mean permissions or rate limiting; only explicit authentication failures belong here. */
+const AUTH_FAILURE_PATTERN = /HTTP 401|Bad credentials|gh auth login|not logged in|authentication required/i;
 
 /** gh stderr markers that mean the looked-up resource does not exist. */
 const NOT_FOUND_PATTERN = /HTTP 404|Not Found/i;
@@ -1119,9 +1119,8 @@ export class GhCliGitHubProvider implements ForgeProvider {
   }
 
   /**
-   * Repository-administration calls (branch protection, auto-merge). Unlike
-   * runCreateGh, HTTP 403 means missing admin permission — a transport
-   * fact for the caller to report, not an authentication problem — and
+   * Repository-administration calls (branch protection, auto-merge).
+   * Permission and rate-limit failures retain their transport evidence;
    * not_found passes through so reads can treat it as evidence.
    */
   private async runAdminApi(
@@ -1136,7 +1135,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       if (result.code === 'gh_missing' || result.code === 'not_found') {
         return { ok: false, code: result.code, message: result.message, ...(result.fix ? { fix: result.fix } : {}) };
       }
-      if (/HTTP 401|Bad credentials|gh auth login|not logged in|authentication required/i.test(result.message)) {
+      if (AUTH_FAILURE_PATTERN.test(result.message)) {
         return fail(
           'gh_unauthenticated',
           'GitHub CLI is not authenticated.',
@@ -1150,8 +1149,9 @@ export class GhCliGitHubProvider implements ForgeProvider {
 
   /**
    * Creation calls share the read taxonomy but classify authentication
-   * failures from gh's stderr (HTTP 401/403, "gh auth login" prompts)
-   * instead of relying on `gh auth status`.
+   * failures from gh's stderr (HTTP 401, "gh auth login" prompts)
+   * instead of relying on `gh auth status`. A generic 403 preserves the
+   * sanitized API reason so permission and rate-limit refusals remain distinct.
    */
   private async runCreateGh(
     args: string[],

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ import {
 } from '../../src/index.js';
 import { MockForgeProvider } from './helpers/mock-forge.js';
 import { makeGitFacts, makeGitPort, makeGhProvider } from '../specgit-cli/helpers.js';
+import type { ForgeProvider, ForgeEvidencePort, ForgeDeliveryWritePort, ForgeAdminWritePort } from '../../src/index.js';
 
 // Port-contract pins (#80): every in-tree implementation — production
 // adapters and test doubles alike — is held to the same port shape, the
@@ -35,6 +36,19 @@ function expectExposes(instance: object, members: readonly string[], label: stri
 }
 
 describe('provider port contract (#80)', () => {
+  it('exports disjoint evidence, delivery-write and administration-write capabilities (#412)', () => {
+    expectTypeOf<keyof ForgeDeliveryWritePort>().toEqualTypeOf<
+      'mergePr' | 'closeIssue' | 'createIssue' | 'createDraftPr' | 'addIssueComment' | 'addIssueLabels'
+    >();
+    expectTypeOf<keyof ForgeAdminWritePort>().toEqualTypeOf<
+      'enableBranchProtection' | 'enableRepoAutomerge' | 'ensureRepoLabels'
+    >();
+    expectTypeOf<keyof ForgeEvidencePort>().toEqualTypeOf<
+      Exclude<keyof ForgeProvider, keyof ForgeDeliveryWritePort | keyof ForgeAdminWritePort>
+    >();
+    expectTypeOf<ForgeProvider>().toExtend<ForgeEvidencePort & ForgeDeliveryWritePort & ForgeAdminWritePort>();
+    expectTypeOf<ForgeEvidencePort & ForgeDeliveryWritePort & ForgeAdminWritePort>().toExtend<ForgeProvider>();
+  });
   it('exports the member inventories for both ports', () => {
     expect(Array.isArray(GIT_PORT_MEMBERS)).toBe(true);
     expect(Array.isArray(FORGE_PROVIDER_MEMBERS)).toBe(true);
@@ -313,6 +327,9 @@ describe('provider port contract (#80)', () => {
     const api = read('src', 'index.ts');
     for (const name of [
       'ForgeProvider',
+      'ForgeEvidencePort',
+      'ForgeDeliveryWritePort',
+      'ForgeAdminWritePort',
       // The #180 surfaces: the composed port documents its read and admin
       // halves, each with its own compile-checked inventory.
       'ForgeReadPort',
