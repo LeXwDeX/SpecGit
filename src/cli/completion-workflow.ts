@@ -25,7 +25,9 @@ on:
   workflow_run:
     workflows: [SpecGit Acceptance]
     types: [completed]
-  workflow_dispatch:
+${input.selfHosted ? `    # The source repository's version proposal is not a bound delivery.
+    branches-ignore: [changeset-release/main]
+` : ''}  workflow_dispatch:
     inputs:
       pr:
         description: 'Bound pull request to recover'

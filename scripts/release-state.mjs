@@ -7,6 +7,12 @@ import { parseReleaseNote } from './ci-changesets.mjs';
 /** @param {string} command @param {string[]} args */
 const runCommand = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
+const RELEASE_PUBLICATION_TIMEOUT_MS = 60_000;
+const RELEASE_PUBLICATION_POLL_MS = 5_000;
+
+/** @param {number} delayMs */
+const sleepFor = (delayMs) => new Promise((resolveSleep) => setTimeout(resolveSleep, delayMs));
+
 /** @param {string} version */
 function requireVersion(version) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
@@ -105,10 +111,58 @@ export function readReleaseState({ version, run = runCommand }) {
   return { needsPublish: false, releaseSha: published.gitHead, tagExists: tagSha !== undefined };
 }
 
-/** @param {{version: string, run?: (command: string, args: string[]) => string}} options */
-export function finalizeRelease({ version, run = runCommand }) {
-  const state = readReleaseState({ version, run });
-  if (state.needsPublish) throw new Error(`specgit@${version} is not published; refusing to create release metadata.`);
+/**
+ * @param {{
+ *   version: string,
+ *   run?: (command: string, args: string[]) => string,
+ *   timeoutMs?: number,
+ *   pollMs?: number,
+ *   sleep?: (delayMs: number) => Promise<void>
+ * }} options
+ * @returns {Promise<{needsPublish: false, releaseSha: string, tagExists: boolean}>}
+ */
+export async function waitForPublishedRelease({
+  version,
+  run = runCommand,
+  timeoutMs = RELEASE_PUBLICATION_TIMEOUT_MS,
+  pollMs = RELEASE_PUBLICATION_POLL_MS,
+  sleep = sleepFor,
+}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || !Number.isSafeInteger(pollMs) || pollMs <= 0) {
+    throw new Error('Release publication wait requires a non-negative integer timeout and a positive integer poll interval.');
+  }
+  let waitedMs = 0;
+  while (true) {
+    const state = readReleaseState({ version, run });
+    if (!state.needsPublish) return state;
+    if (waitedMs >= timeoutMs) {
+      throw new Error(`specgit@${version} is not published after waiting ${timeoutMs}ms; refusing to create release metadata.`);
+    }
+    const delayMs = Math.min(pollMs, timeoutMs - waitedMs);
+    await sleep(delayMs);
+    waitedMs += delayMs;
+  }
+}
+
+/**
+ * Finalize release metadata after the registry exposes the just-published
+ * package. The initial release-state probe remains a single read.
+ * @param {{
+ *   version: string,
+ *   run?: (command: string, args: string[]) => string,
+ *   timeoutMs?: number,
+ *   pollMs?: number,
+ *   sleep?: (delayMs: number) => Promise<void>
+ * }} options
+ */
+export async function finalizeRelease({
+  version,
+  run = runCommand,
+  timeoutMs = RELEASE_PUBLICATION_TIMEOUT_MS,
+  pollMs = RELEASE_PUBLICATION_POLL_MS,
+  sleep = sleepFor,
+}) {
+  const state = await waitForPublishedRelease({ version, run, timeoutMs, pollMs, sleep });
   const tag = `v${version}`;
   if (!state.tagExists) {
     run('git', ['cat-file', '-e', `${state.releaseSha}^{commit}`]);
@@ -142,7 +196,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     } else if (requestedVersion !== undefined && requestedVersion !== version) {
       throw new Error('The release plan version no longer matches package.json.');
     } else if (process.argv.includes('--finalize')) {
-      finalizeRelease({ version });
+      await finalizeRelease({ version });
       console.log(`Release metadata for specgit@${version} is complete.`);
     } else {
       const state = readReleaseState({ version });
