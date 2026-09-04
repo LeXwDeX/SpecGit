@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseNpmPackFilename } from '../../scripts/npm-pack-output.mjs';
 
 import { git, rmDir } from './helpers.js';
 
@@ -219,15 +220,7 @@ export function packSpecgit(): Promise<PackedSpecgit> {
         ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
         staging
       );
-      // Belt and braces: tolerate any banner lines before npm's JSON array.
-      const lines = out.split('\n');
-      const jsonStart = lines.findIndex((line) => line.trimStart().startsWith('['));
-      if (jsonStart === -1) throw new Error('npm pack returned no JSON array');
-      const entries = JSON.parse(lines.slice(jsonStart).join('\n')) as Array<{
-        filename?: string;
-      }>;
-      const filename = entries.at(-1)?.filename;
-      if (!filename) throw new Error('npm pack returned no tarball');
+      const filename = parseNpmPackFilename(out);
       return { tarballPath: path.join(dest, filename), version: manifest.version };
     } catch (error) {
       packedPromise = undefined;
