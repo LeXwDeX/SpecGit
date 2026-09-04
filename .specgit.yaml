@@ -8,6 +8,7 @@ issues:
   - 437
   - 438
   - 440
+  - 439
 issueKinds:
   - issue: 435
     kind: kind::fix
