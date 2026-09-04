@@ -1,11 +1,10 @@
 version: 1
-delivery: support-npm-12
+delivery: refresh-english-project
 context:
   kind: branch
-  branch: fix/419-support-npm-12
+  branch: chore/421-refresh-english-project
 issues:
-  - 419
+  - 421
 issueKinds:
-  - issue: 419
-    kind: kind::fix
-pr: 420
+  - issue: 421
+    kind: kind::chore
