@@ -1,11 +1,10 @@
 version: 1
-delivery: support-npm-12
+delivery: ci-verification-scope
 context:
   kind: branch
-  branch: fix/419-support-npm-12
+  branch: ci/423-ci-verification-scope
 issues:
-  - 419
+  - 423
 issueKinds:
-  - issue: 419
-    kind: kind::fix
-pr: 420
+  - issue: 423
+    kind: kind::ci
