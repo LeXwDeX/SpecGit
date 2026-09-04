@@ -64,6 +64,18 @@ describe('configured version PR merge', () => {
     expect(calls.some((call) => call.startsWith('merge:'))).toBe(false);
   });
 
+  it.each([
+    { checks: [check('Test', null, 'queued'), check('Broken', 'failure')] },
+    { checks: [check('Broken', 'failure'), check('Test', null, 'queued')] },
+    { checks: [check('Broken', 'failure')] },
+  ])('fails immediately despite pending or missing evidence: $checks', async ({ checks }) => {
+    const { provider, calls, options } = fixture();
+    provider.getPrChecks = async () => ok({ headSha: sha, checks });
+    await expect(mergeVersionPullRequest(options)).rejects.toThrow("CI check 'Broken' concluded failure.");
+    expect(options.now()).toBe(0);
+    expect(calls.some((call) => call.startsWith('merge:'))).toBe(false);
+  });
+
   it('waits for all CI to finish before merging the same head', async () => {
     const { provider, calls, options } = fixture();
     let polls = 0;
