@@ -51,9 +51,11 @@ const HARNESS_WORKFLOW_PATH = '.github/workflows/specgit-accept.yml';
 
 const cleanup: string[] = [];
 
+// Installed dependency trees can take longer than the default hook budget to
+// remove on Windows. Cleanup remains required and has its own bounded deadline.
 afterAll(() => {
   for (const dir of cleanup) rmDir(dir);
-});
+}, 60_000);
 
 /** The envelope contract: exactly one JSON document on stdout — a whole-string parse proves it. */
 function parseInstalledJson(result: { stdout: string }): Record<string, any> {

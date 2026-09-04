@@ -49,7 +49,11 @@ describe('completion scope preserves the original request', () => {
       };
     `);
     const output = path.join(root, 'scope-output');
-    const run = spawnSync('bash', ['-e', '-c', script], { cwd: repo.root, encoding: 'utf8', env: {
+    // Execute the same script file boundary as Actions. On Windows, passing
+    // source through bash -c makes MSYS consume pairs of regex backslashes.
+    const scriptFile = path.join(root, 'scope-step.sh');
+    fs.writeFileSync(scriptFile, script, 'utf8');
+    const run = spawnSync('bash', ['-e', scriptFile.split(path.sep).join('/')], { cwd: repo.root, encoding: 'utf8', env: {
       ...process.env, ...repo.env, REQUEST_PR: '437', REQUEST_HEAD: head,
       GITHUB_REPOSITORY: 'owner/repo', GITHUB_OUTPUT: output, SPECGIT_SCOPE_FIXTURE: fixture,
     } });
@@ -107,6 +111,8 @@ describe('completion scope preserves the original request', () => {
     ['missing previous path', { files: [{ filename: 'docs/a.md', status: 'renamed' }] }],
     ['unknown status', { files: [{ filename: 'docs/a.md', status: 'unknown' }] }],
     ['unsafe path', { files: [{ filename: '../docs/a.md', status: 'modified' }] }],
+    ['backslash path', { files: [{ filename: 'src\\product.ts', status: 'modified' }] }],
+    ['control character path', { files: [{ filename: 'docs/control\u0001.md', status: 'modified' }] }],
     ['missing file', { files: [null] }],
     ['local state added', { files: [{ filename: '.local/cache.json', status: 'added' }] }],
   ])('fails before emitting a classification when %s', (_name, options) => {
