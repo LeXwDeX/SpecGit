@@ -75,6 +75,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Git pushes must use the same actor as gh; checkout's persisted
+          # Authorization header takes precedence over credentials in a URL.
+          token: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
@@ -111,7 +114,6 @@ jobs:
           # write) pushes as an actor whose events run without approval.
           # Without it the workflow still runs, and the watchdog step below
           # fails loudly instead of letting the PR stall silently.
-          PUSH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
           # @changesets/changelog-github needs a token to link PRs in the
           # generated changelog entries (separate from gh's GH_TOKEN).
@@ -123,7 +125,6 @@ jobs:
           pnpm exec changeset version
           VERSION=$(node -p "require('./package.json').version")
           git commit -am "chore(release): v${VERSION}"
-          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin changeset-release/main
           BODY="Automated version bump. Merging publishes specgit@${VERSION} to npm and tags v${VERSION}."
           # create may fail on permissions; the branch may also still carry
