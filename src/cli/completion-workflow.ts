@@ -2,6 +2,7 @@ import { isAutomationTargetBranch } from '../record/policy.js';
 
 export const COMPLETION_WORKFLOW_PATH = '.github/workflows/specgit-complete.yml';
 export const GITLAB_COMPLETION_WORKFLOW_PATH = '.gitlab/specgit-complete.yml';
+export const GITLAB_BUSINESS_WORKFLOW_PATH = '.gitlab/specgit-business.yml';
 export const COMPLETION_CHECK_NAME = 'SpecGit Completion';
 
 export interface CompletionWorkflowInput {
@@ -36,10 +37,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  actions: read
+  contents: read
 
 jobs:
   identify:
@@ -80,6 +78,11 @@ jobs:
   complete:
     needs: identify
     name: SpecGit Completion
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
     if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -127,12 +130,15 @@ ${input.selfHosted ? `      - name: Install trusted classifier dependencies with
         run: |
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
-          import { appendFileSync } from 'node:fs';
+          import { appendFileSync${input.selfHosted ? ', readFileSync' : ''} } from 'node:fs';
           import { pathToFileURL } from 'node:url';
           const prefix = process.env.RUNNER_TEMP + '/specgit-runtime';
           let directory = prefix + '/node_modules/specgit';
+${input.selfHosted ? `          const version = JSON.parse(readFileSync(process.env.GITHUB_WORKSPACE + '/specgit-runtime/package.json', 'utf8')).version;
+          if (typeof version !== 'string' || !/^\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?(?:\\+[\\w.-]+)?$/.test(version)) throw new Error('The approved source has no exact runtime version.');
+` : ''}          const packageSpec = ${input.selfHosted ? "'specgit@' + version" : JSON.stringify(`specgit@${input.version}`)};
           try {
-            execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', 'specgit@${input.version}'], { stdio: 'inherit' });
+            execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', packageSpec], { stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
             if (runtime.REMOTE_DELIVERY_PROTOCOL !== 1) throw new Error('Incompatible completion runtime.');
           } catch (error) {
@@ -147,7 +153,7 @@ ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') thr
           NODE
       - name: Complete the bound delivery
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${input.selfHosted ? '${{ secrets.RELEASE_BOT_TOKEN || github.token }}' : '${{ github.token }}'}
           SPECGIT_DATA_ROOT: \${{ github.workspace }}/specgit-data
           SPECGIT_PR: \${{ needs.identify.outputs.pr }}
           SPECGIT_HEAD: \${{ needs.identify.outputs.head }}
@@ -156,18 +162,60 @@ ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') thr
 `;
 }
 
+function gitlabCompletionCondition(input: CompletionWorkflowInput): string {
+  if (!isAutomationTargetBranch(input.defaultBranch)) throw new Error('Completion requires a valid default branch.');
+  return `$CI_COMMIT_BRANCH == ${JSON.stringify(input.defaultBranch)} && $CI_PIPELINE_SOURCE == "pipeline" && $SPECGIT_SOURCE_PROJECT == $CI_PROJECT_ID && $SPECGIT_SOURCE_PIPELINE && $SPECGIT_PR && $SPECGIT_HEAD`;
+}
+
+/** Ordinary pipelines retain the project's original configuration and execution semantics. */
+export function gitlabRoutingWorkflowYaml(input: CompletionWorkflowInput): string {
+  const condition = gitlabCompletionCondition(input).replace(/'/g, "''");
+  return `# Managed by SpecGit: isolated GitLab routing.
+include:
+  - local: /${GITLAB_BUSINESS_WORKFLOW_PATH}
+    rules:
+      - if: '${condition}'
+        when: never
+      - when: always
+  - local: /${GITLAB_COMPLETION_WORKFLOW_PATH}
+    rules:
+      - if: '${condition}'
+
+specgit-request-completion:
+  stage: .post
+  inherit:
+    default: false
+    variables: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - when: never
+  variables:
+    SPECGIT_PR: '$CI_MERGE_REQUEST_IID'
+    SPECGIT_HEAD: '$CI_COMMIT_SHA'
+    SPECGIT_SOURCE_PROJECT: '$CI_PROJECT_ID'
+    SPECGIT_SOURCE_PIPELINE: '$CI_PIPELINE_ID'
+  trigger:
+    project: '$CI_PROJECT_PATH'
+    branch: ${JSON.stringify(input.defaultBranch)}
+    forward:
+      yaml_variables: true
+      pipeline_variables: false
+`;
+}
+
 function gitlabCompletionWorkflow(input: CompletionWorkflowInput): string {
   return `# Managed by SpecGit: include in a trusted default-branch pipeline.
-# Trigger this independent pipeline with SPECGIT_PR and SPECGIT_HEAD after MR CI completes.
+# Only the native MR bridge routes here; the runtime proves its platform identity.
 # The runner must provide authenticated glab and git; no MR scripts run in this job.
 specgit-complete:
-  stage: .post
+  stage: test
   resource_group: specgit-complete-$SPECGIT_PR
   variables:
     GIT_DEPTH: '0'
     SPECGIT_DATA_ROOT: '$CI_PROJECT_DIR'
   rules:
-    - if: '$CI_COMMIT_BRANCH == ${JSON.stringify(input.defaultBranch)} && $SPECGIT_PR && $SPECGIT_HEAD && ($CI_PIPELINE_SOURCE == "pipeline" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
+    - if: '${gitlabCompletionCondition(input).replace(/'/g, "''")}'
     - when: never
   script:
     - npm install --prefix "$CI_PROJECT_DIR/../specgit-runtime" --no-save --ignore-scripts --no-audit --no-fund specgit@${input.version}

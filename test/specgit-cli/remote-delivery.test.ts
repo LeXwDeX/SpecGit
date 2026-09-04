@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { evaluate } from '../../src/acceptance/evaluate.js';
 import { matchesBoundRequest, runRemoteDelivery } from '../../src/automation/remote-delivery.js';
 import { workflowRequestNumber } from '../../src/automation/remote-entry.js';
@@ -89,6 +93,25 @@ describe('trusted remote delivery continuation', () => {
     expect(bodies[0].split('\n')[0]).not.toBe(bodies[1].split('\n')[0]);
     expect(f.forge.mergePr).not.toHaveBeenCalled();
   });
+  it('passes the immutable binding delivery into a required repair template', async () => {
+    const f = fixture();
+    const policy = samplePolicy({ automation: { merge: true, target_branch: 'main', close_issues: true },
+      templates: { issue: { body: '## Delivery\n{{delivery}}\n## Evidence\n{{body}}', required_sections: ['Delivery', 'Evidence'] } },
+    });
+    f.ctx.resolvePolicy = async () => ok({ policy, source: 'approved', branch: 'main', sha: HEAD });
+    f.forge.getIssue.mockImplementation(async (_repo, number) => ok({ number, pullRequest: false, state: 'open' as const,
+      body: '## Delivery\nBusiness delivery\n## Evidence\nConfirmed requirements.',
+    }));
+    const checks = [makeCheckRun('All checks passed', { conclusion: 'failure' })];
+    f.forge.getCheckRuns.mockResolvedValue(ok(checks));
+    f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks }));
+    vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://github.com/LeXwDeX/SpecGit/issues/200' }));
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
+    expect(result.exit).toBe(1);
+    expect(f.forge.createIssue).toHaveBeenCalledOnce();
+    expect(vi.mocked(f.forge.createIssue).mock.calls[0][2]).toContain(`## Delivery\n${f.record.delivery}\n`);
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+  });
   it('does not turn a draft or waiting pipeline into repair work', async () => {
     const f = fixture();
     f.setPr(makePrFact({ headSha: HEAD, draft: true }));
@@ -124,10 +147,13 @@ describe('completion workflow trust boundary', () => {
     expect(handoff.trigger.strategy).toBeUndefined();
     expect(handoff.script).toBeUndefined();
     expect(handoff.trigger.forward.pipeline_variables).toBe(false);
+    expect(handoff.inherit).toEqual({ default: false, variables: false });
   });
   it('keeps privileged execution on the default branch, outside PR-head checks', () => {
     const text = completionWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: true });
     const workflow = parse(text);
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(workflow.jobs.complete.permissions).toEqual({ contents: 'write', 'pull-requests': 'write', issues: 'write', actions: 'read' });
     expect(workflow.on.pull_request).toBeUndefined();
     expect(workflow.on.workflow_run).toEqual({ workflows: ['SpecGit Acceptance'], types: ['completed'] });
     expect(workflow.jobs.complete.if).toContain('refs/heads/main');
@@ -138,6 +164,33 @@ describe('completion workflow trust boundary', () => {
     expect(text).toContain('PRODUCT_CHANGE !== \'true\'');
     expect(text).toContain('runtime_upgrade_required');
     expect(text).not.toContain('pull_request_target');
+    expect(workflow.jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').env.GH_TOKEN)
+      .toBe('${{ secrets.RELEASE_BOT_TOKEN || github.token }}');
+  });
+  it('selects the published runtime from approved source after a self-hosted version bump', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'specgit-runtime-selection-'));
+    try {
+      const directory = join(root, 'specgit-runtime/node_modules/specgit/dist/automation');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(root, 'specgit-runtime/node_modules/specgit/package.json'), '{"type":"module"}');
+      writeFileSync(join(directory, 'remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 1;');
+      mkdirSync(join(root, 'approved/specgit-runtime'), { recursive: true });
+      writeFileSync(join(root, 'approved/specgit-runtime/package.json'), JSON.stringify({ version: '9.8.7' }));
+      const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.12.0', selfHosted: true }));
+      const step = workflow.jobs.complete.steps.find((item: { name?: string }) => item.name === 'Select a compatible trusted runtime');
+      const script = step.run.split("<<'NODE'\n")[1].replace(/\nNODE\s*$/, '')
+        .replace("import { execFileSync } from 'node:child_process';", 'const execFileSync = (command, args) => console.log(JSON.stringify({ command, args }));');
+      const output = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+        encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: root, GITHUB_WORKSPACE: join(root, 'approved'), GITHUB_OUTPUT: join(root, 'output'), PRODUCT_CHANGE: 'false' },
+      });
+      const commands = output.trim().split('\n').map((line) => JSON.parse(line));
+      expect(commands).toHaveLength(1);
+      expect(commands[0].command).toBe('npm');
+      expect(commands[0].args).toContain('specgit@9.8.7');
+      expect(commands[0].args).not.toContain('specgit@1.12.0');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
   it('does not compile an adopting project or silently use an old runtime', () => {
     const text = completionWorkflowYaml({ defaultBranch: 'Dev', version: '2.0.0', selfHosted: false });
@@ -145,6 +198,8 @@ describe('completion workflow trust boundary', () => {
     expect(text).toContain('REMOTE_DELIVERY_PROTOCOL !== 1');
     expect(text).not.toContain('pnpm');
     expect(text).not.toContain("['run', 'build']");
+    expect(parse(text).jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').env.GH_TOKEN)
+      .toBe('${{ github.token }}');
   });
   it('provides a separately serialized GitLab default-branch runner', () => {
     const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: false, platform: 'gitlab' }));

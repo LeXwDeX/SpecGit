@@ -18,6 +18,7 @@ export interface DeliveryFailure {
 export interface FailureIssueInput {
   repo: RepoRef;
   pr: PrFact;
+  delivery: string;
   issueNumbers: number[];
   failures: DeliveryFailure[];
   policy: Policy;
@@ -89,7 +90,9 @@ export async function ensureFailureIssues(
       zh ? '## 验收' : '## Acceptance',
       zh ? '- 修复有可重复的验证证据。\n- 交付合并到配置目标，绑定的 Issue 经核验全部关闭。' : '- The repair has reproducible verification evidence.\n- The delivery is merged into the configured target and all bound issues are confirmed closed.', '',
     ].join('\n');
-    const rendered = renderDeliveryTemplate(input.policy, 'issue', { title, body, issues: input.issueNumbers });
+    const rendered = renderDeliveryTemplate(input.policy, 'issue', {
+      title, body, delivery: input.delivery, issues: input.issueNumbers,
+    });
     if (!rendered.ok) return rendered;
     for (const checked of [checkTitleConvention(input.policy, rendered.value.title), checkBodyConvention(input.policy, 'issue', rendered.value.body)]) {
       if (!checked.ok) return checked;

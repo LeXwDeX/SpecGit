@@ -540,16 +540,6 @@ export async function runIssue(
     language = resolveLanguage(policy);
     ({ human } = catalogFor(language));
   }
-  if (policy?.templates?.issue) {
-    for (let i = 0; i < args.length; i += 1) {
-      if (parseNumericRef(args[i]) !== null) continue;
-      const rendered = renderDeliveryTemplate(policy, 'issue', { title: args[i], body: '', delivery: deliveryOverride ?? (existingRead.ok ? existingRead.value.delivery : undefined) });
-      if (!rendered.ok) return { exit: EXIT_USAGE, errors: [errorDiagnostic(rendered.code, rendered.message)] };
-      args[i] = rendered.value.title;
-    }
-  }
-
-
   // A merged record has nothing to resume: no-args resume would re-run
   // the branch/commit/push steps and resurrect the head branch GitHub
   // auto-deleted on merge. End the lifecycle decision before any side
@@ -564,6 +554,32 @@ export async function runIssue(
   }
   if (existing !== null && existing.ok && mergedEv.merged && args.length === 0) {
     return mergedDeliveryError(existing.value);
+  }
+
+  // Resolve identity from the original request before a template changes its
+  // title. Only an active binding supplies identity; merged history cannot
+  // name a new delivery. The resolved name also prevents a second prompt.
+  let resolvedDeliveryName = existing !== null && existing.ok && !mergedEv.merged
+    ? existing.value.delivery : deliveryOverride;
+  if ((existing === null || mergedEv.merged) && args.length > 0) {
+    const invalid = validateArgsForCreation(args);
+    if (invalid) return invalid;
+    const first = firstTitleArg(args);
+    const name = await resolveDeliveryName({
+      cleanTitle: first === null ? '' : parseIssueTitle(first).cleanTitle,
+      override: deliveryOverride, interactive: options.json !== true && ctx.stdinIsTTY,
+      prompt: terminalDeliveryNamePrompt, promptText: human.deliveryNamePrompt(), retryText: human.deliveryNameRetry(),
+    });
+    if ('exit' in name) return name;
+    resolvedDeliveryName = name.name;
+  }
+  if (policy?.templates?.issue) {
+    for (let i = 0; i < args.length; i += 1) {
+      if (parseNumericRef(args[i]) !== null) continue;
+      const rendered = renderDeliveryTemplate(policy, 'issue', { title: args[i], body: '', delivery: resolvedDeliveryName });
+      if (!rendered.ok) return { exit: EXIT_USAGE, errors: [errorDiagnostic(rendered.code, rendered.message)] };
+      args[i] = rendered.value.title;
+    }
   }
 
   // Validate arguments BEFORE any write, scoped to what
@@ -621,17 +637,6 @@ export async function runIssue(
     if (titles !== null) return titles;
   }
   const startIndex = resume !== null ? resume.startIndex : 0;
-  let resolvedDeliveryName = deliveryOverride;
-  if (liveRecord === null) {
-    const first = firstTitleArg(args);
-    const name = await resolveDeliveryName({
-      cleanTitle: first === null ? '' : parseIssueTitle(first).cleanTitle,
-      override: deliveryOverride, interactive: options.json !== true && ctx.stdinIsTTY,
-      prompt: terminalDeliveryNamePrompt, promptText: human.deliveryNamePrompt(), retryText: human.deliveryNameRetry(),
-    });
-    if ('exit' in name) return name;
-    resolvedDeliveryName = name.name;
-  }
   const issueBodies = new Map<number, string>();
   let prBody: string | undefined;
   if (liveRecord?.pr === undefined) {

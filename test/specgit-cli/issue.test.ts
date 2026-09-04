@@ -1625,6 +1625,30 @@ describe('specgit issue: harness currency gate (#339)', () => {
     expect(t.harness.createdIssues[0].body).toBe('## Why\nRepair delivery login-repair.');
   });
 
+  it('infers the fresh delivery from the raw title before rendering its title template', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { title: 'feat: {{delivery}}', body: '## Why\nDeliver {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['feat: add login'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues).toEqual([{ title: 'feat: add-login', body: '## Why\nDeliver add-login.' }]);
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('add-login');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-add-login');
+  });
+
+  it('never uses a completed record delivery in a new issue title template', async () => {
+    const t = mergedRecordCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { title: 'fix: {{delivery}}', body: '## Why\nRepair {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['fix: restore billing'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues).toEqual([{ title: 'fix: restore-billing', body: '## Why\nRepair restore-billing.' }]);
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('restore-billing');
+    expect(t.harness.createdPrs[0].head).toBe('fix/11-restore-billing');
+  });
+
   it('resumes an active request under approved rules while candidate content rules are changing', async () => {
     const record = sampleBinding({ pr: 42 });
     const t = issueCtx({ record, gh: { getPr: () => ok({

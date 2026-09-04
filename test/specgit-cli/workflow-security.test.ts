@@ -51,8 +51,11 @@ const cacheSteps = (doc: Workflow): string[] =>
   allSteps(doc)
     .filter((step) => {
       if (typeof step.uses === 'string' && step.uses.startsWith('actions/cache')) return true;
+      // setup-node also infers npm caching from package.json, which is
+      // controlled by the checked-out candidate even without a cache input.
+      if (step.uses?.startsWith('actions/setup-node') && step.with?.['package-manager-cache'] !== false) return true;
       const cache = step.with?.cache;
-      return cache !== undefined && cache !== '' && cache !== 'none';
+      return cache !== undefined && cache !== false && cache !== 'false' && cache !== '' && cache !== 'none';
     })
     .map((step) => step.name ?? step.uses ?? 'unnamed');
 
@@ -373,6 +376,14 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     );
     expect(mutant).not.toBe(acceptFile);
     expect(() => assertNoCacheMechanism(mutant, 'mutant')).toThrow();
+  });
+
+  it('implicit npm cache inferred from candidate package metadata is detected', () => {
+    for (const text of [acceptFile, acceptTemplate]) {
+      const mutant = text.replace('          package-manager-cache: false\n', '');
+      expect(mutant).not.toBe(text);
+      expect(() => assertNoCacheMechanism(mutant, 'mutant')).toThrow();
+    }
   });
 
   it('write-permission creep is detected', () => {

@@ -10,6 +10,7 @@ import { DeliveryBindingSchema } from '../record/schema.js';
 import { isAutomationTargetBranch } from '../record/policy.js';
 import { matchesBoundRequest, runRemoteDelivery } from './remote-delivery.js';
 import * as recordIo from '../record/io.js';
+import type { GitlabCompletionIdentity } from '../providers/gitlab/completion-context.js';
 
 const git = (root: string, hooks: string, args: string[]): string => execFileSync('git', ['-C', root, '-c', `core.hooksPath=${hooks}`, ...args], {
   encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
@@ -57,11 +58,29 @@ export async function completeFromEnvironment(): Promise<number> {
   if (!Number.isSafeInteger(pr) || pr <= 0 || !/^[a-f0-9]{40}$/i.test(headSha)) {
     throw new Error('Set SPECGIT_PR and SPECGIT_HEAD to the intended request and full current head SHA.');
   }
+  let gitlabCompletion: GitlabCompletionIdentity | undefined;
+  if (repo.value.platform === 'gitlab') {
+    if (process.env.CI_PIPELINE_SOURCE !== 'pipeline' || process.env.SPECGIT_SOURCE_PROJECT !== process.env.CI_PROJECT_ID) {
+      throw new Error('GitLab completion requires an independent same-project pipeline trigger.');
+    }
+    gitlabCompletion = {
+      projectId: Number(process.env.CI_PROJECT_ID), pipelineId: Number(process.env.CI_PIPELINE_ID),
+      jobId: Number(process.env.CI_JOB_ID), sourcePipelineId: Number(process.env.SPECGIT_SOURCE_PIPELINE),
+      pr, headSha, checkoutSha: git(dataRoot, hooks, ['rev-parse', 'HEAD']).trim(),
+    };
+  }
   const observed = await ctx.gh.getPr(repo.value, pr);
   if (!observed.ok) throw new Error(observed.message);
   if (observed.value.headSha !== headSha) throw new Error('The triggering request head is stale.');
   if (!isAutomationTargetBranch(observed.value.headBranch) || !isAutomationTargetBranch(observed.value.baseBranch)) {
     throw new Error('The forge returned an unusable branch name.');
+  }
+  if (gitlabCompletion !== undefined) {
+    // A GitLab default-branch checkout need not contain MR objects, even at
+    // depth zero. Fetch only the authenticated request ref as inert data.
+    const requestRef = `refs/specgit/requests/${pr}`;
+    git(dataRoot, hooks, ['fetch', '--no-tags', 'origin', `+refs/merge-requests/${pr}/head:${requestRef}`]);
+    if (git(dataRoot, hooks, ['rev-parse', requestRef]).trim() !== headSha) throw new Error('The fetched MR head changed after the completion event.');
   }
   const record = DeliveryBindingSchema.parse(YAML.parse(git(dataRoot, hooks, ['show', `${headSha}:.specgit.yaml`])));
   if (!matchesBoundRequest(record, repo.value, pr) || record.context.branch !== observed.value.headBranch) throw new Error('The immutable PR-head record does not match the triggering request.');
@@ -76,7 +95,13 @@ export async function completeFromEnvironment(): Promise<number> {
   git(checkout, hooks, ['checkout', '-B', branch, revision]);
   git(checkout, hooks, ['config', 'core.hooksPath', hooks]);
   process.chdir(checkout);
-  const isolated = createDefaultContext({ record: { ...recordIo, readRecord: async () => ({ ok: true, value: record }) } });
+  const isolated = createDefaultContext({ gitlabCompletion, record: { ...recordIo, readRecord: async () => ({ ok: true, value: record }) } });
+  if (gitlabCompletion !== undefined) {
+    // Prove execution before any mutation, including recovery of an already
+    // merged request whose issues still need to be closed.
+    const execution = await isolated.gh.getPrChecks(repo.value, pr);
+    if (!execution.ok) throw new Error(execution.message);
+  }
   const result = await runRemoteDelivery({ repo: repo.value, pr, headSha, record }, isolated, {
     prepareMerged: async () => {
       const base = observed.value.baseBranch;
