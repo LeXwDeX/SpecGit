@@ -54,8 +54,8 @@ describe('GitHub guarded delivery operations', () => {
   });
 
   it('ignores a superseded failed workflow while preserving its current attempt', async () => {
-    const old = { id: 4, workflow_id: 1, name: 'CI', event: 'pull_request', head_sha: sha, status: 'completed', conclusion: 'failure', run_started_at: null };
-    const { provider } = setup({ 'actions/runs': { workflow_runs: [old, { ...old, id: 5, conclusion: 'success' }] } });
+    const old = { id: 4, workflow_id: 1, name: 'CI', event: 'pull_request', head_sha: sha, status: 'completed', conclusion: 'failure', run_started_at: '2026-09-01T00:00:00Z' };
+    const { provider } = setup({ 'actions/runs': { workflow_runs: [old, { ...old, id: 5, conclusion: 'success', run_started_at: '2026-09-02T00:00:00Z' }] } });
     expect(await provider.getPrChecks(repo, 7)).toMatchObject({ ok: true, value: { checks: [
       { name: 'test' }, { conclusion: 'success' },
     ] } });
@@ -145,5 +145,39 @@ describe('GitHub guarded delivery operations', () => {
       { ...identity, name: 'test', status: 'queued', conclusion: null },
     ] } });
     expect(await provider.getPrChecks(repo, 7)).toMatchObject({ ok: false, code: 'gh_transport' });
+  });
+
+  it.each([null, 'invalid-date'])('refuses ambiguous check order when an attempt starts at %s', async (startedAt) => {
+    const green = { id: 10, app: { id: 1 }, name: 'test', started_at: '2026-09-01T00:00:00Z', status: 'completed', conclusion: 'success' };
+    const queued = { ...green, id: 11, started_at: startedAt, status: 'queued', conclusion: null };
+    for (const check_runs of [[green, queued], [queued, green]]) {
+      const { provider } = setup({ 'check-runs': { check_runs } });
+      expect(await provider.getPrChecks(repo, 7)).toMatchObject({ ok: false, code: 'gh_transport' });
+    }
+  });
+
+  it.each([null, 'invalid-date'])('refuses ambiguous workflow order when an attempt starts at %s', async (startedAt) => {
+    const green = { id: 10, workflow_id: 1, name: 'CI', event: 'pull_request', head_sha: sha, status: 'completed', conclusion: 'success', run_started_at: '2026-09-01T00:00:00Z' };
+    for (const id of [9, 11]) {
+      const queued = { ...green, id, status: 'queued', conclusion: null, run_started_at: startedAt };
+      for (const workflow_runs of [[green, queued], [queued, green]]) {
+        const { provider } = setup({ 'actions/runs': { workflow_runs } });
+        expect(await provider.getPrChecks(repo, 7)).toMatchObject({ ok: false, code: 'gh_transport' });
+      }
+    }
+  });
+
+  it('refuses ordering multiple undated workflow attempts by their creation ids', async () => {
+    const old = { id: 10, workflow_id: 1, name: 'CI', event: 'pull_request', head_sha: sha, status: 'completed', conclusion: 'success', run_started_at: null };
+    const { provider } = setup({ 'actions/runs': { workflow_runs: [old, { ...old, id: 9, status: 'queued', conclusion: null }] } });
+    expect(await provider.getPrChecks(repo, 7)).toMatchObject({ ok: false, code: 'gh_transport' });
+  });
+
+  it('preserves a dated workflow rerun even when its creation id is lower', async () => {
+    const old = { id: 10, workflow_id: 1, name: 'CI', event: 'pull_request', head_sha: sha, status: 'completed', conclusion: 'failure', run_started_at: '2026-09-01T00:00:00Z' };
+    const { provider } = setup({ 'actions/runs': { workflow_runs: [old, { ...old, id: 9, conclusion: 'success', run_started_at: '2026-09-02T00:00:00Z' }] } });
+    expect(await provider.getPrChecks(repo, 7)).toMatchObject({ ok: true, value: { checks: [
+      { name: 'test' }, { conclusion: 'success', id: 9 },
+    ] } });
   });
 });
