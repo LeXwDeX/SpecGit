@@ -45,6 +45,7 @@ export interface InitOptions {
 
 export interface InitInteraction extends ProjectRuleInteraction {
   promptAutomation?: (message: string) => Promise<string | null>;
+  selectPlatform?: (endpoint: string) => Promise<'github' | 'gitlab'>;
 }
 
 function terminalAutomationPrompt(message: string): Promise<string | null> {
@@ -166,7 +167,8 @@ export async function resolveRequiredChecks(
   options: InitOptions,
   ctx: CommandContext,
   root: string,
-  existingPolicy: Evidence<Policy>
+  existingPolicy: Evidence<Policy>,
+  selectedPlatform?: 'github' | 'gitlab' | 'undecided'
 ): Promise<InitOutcome | CheckResolution> {
   const explicit = (options.requiredCheck ?? []).map((value) => value.trim());
   const invalid = explicit.find((value) => value.length === 0);
@@ -212,9 +214,9 @@ export async function resolveRequiredChecks(
   // command happened to run from).
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
-  const platform = options.gitlabHost !== undefined
+  const platform = selectedPlatform ?? (options.gitlabHost !== undefined
     ? 'gitlab'
-    : await classifyPlatformMode(root, originUrl);
+    : await classifyPlatformMode(root, originUrl));
   const detected = await detectInitInputs(
     root,
     originUrl,

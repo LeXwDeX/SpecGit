@@ -13,7 +13,7 @@ import type { HumanText } from '../language.js';
 import { SPEC_GIT_DIR, type CommandContext } from '../types.js';
 import { extractOriginHost } from '../../gitfacts/origin.js';
 import { readProviders, writeProviders } from '../../record/io.js';
-import type { InitOptions } from './init-validation.js';
+import type { InitInteraction, InitOptions } from './init-validation.js';
 
 // #78 declaration grammar: `host` or `host:port` — the port names the
 // non-default port origins on that host may use.
@@ -23,6 +23,23 @@ export interface PlatformOutcome {
   [key: string]: unknown;
   mode: 'github' | 'gitlab' | 'undecided';
   gitlabHost?: string;
+}
+
+export interface PlatformSelection {
+  outcome: PlatformOutcome;
+  /** Persist only after all initialization choices and inputs have passed validation. */
+  declaration?: { host: string; port: string | null };
+  message?: 'github-default' | 'github-user' | 'gitlab';
+}
+
+export function platformSelectionHuman(selection: PlatformSelection, text: HumanText): string[] {
+  const human = humanBuilder();
+  if (selection.message === 'github-default') human.line(text.initPlatformGithubDefault());
+  if (selection.message === 'github-user') human.line(text.initPlatformGithubUser());
+  if (selection.message === 'gitlab' && selection.outcome.gitlabHost !== undefined) {
+    human.line(text.initPlatformGitlab(selection.outcome.gitlabHost, `${SPEC_GIT_DIR}/providers.yaml`));
+  }
+  return human.build();
 }
 
 /**
@@ -214,16 +231,23 @@ export async function classifyPlatformMode(
 
 /**
  * Platform-mode selection: a github.com origin defaults to GitHub; any
- * other origin needs a declaration (TTY question or --gitlab-host). The
- * choice persists in spec_git/providers.yaml, team-shared.
+ * other origin needs a declaration (TTY question or --gitlab-host). This
+ * reads and chooses only; the caller persists a pending declaration after
+ * validating all other inputs.
  */
 export async function resolvePlatformMode(
-  _options: InitOptions,
   ctx: CommandContext,
   root: string,
   warnings: Diagnostic[],
-  text: HumanText
-): Promise<{ outcome: PlatformOutcome; human: string[] }> {
+  interaction: Pick<InitInteraction, 'selectPlatform'> = {},
+  declaration?: { host: string; port: string | null }
+): Promise<PlatformSelection> {
+  if (declaration !== undefined) {
+    return {
+      outcome: { mode: 'gitlab', gitlabHost: declaredEndpointName(declaration.host, declaration.port) },
+      declaration,
+    };
+  }
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
 
@@ -243,23 +267,21 @@ export async function resolvePlatformMode(
       message: `The platform declaration at ${SPEC_GIT_DIR}/providers.yaml exists but cannot be read: ${existing.message}`,
       fix: `Repair the ${SPEC_GIT_DIR}/providers.yaml bytes, then re-run specgit init.`,
     });
-    return { outcome: { mode: 'undecided' }, human: humanBuilder().build() };
+    return { outcome: { mode: 'undecided' } };
   }
 
-  // The explicit flag already declared (or errored) before the policy
-  // write; here the persisted declaration and heuristics speak.
+  // Without an explicit flag, the existing declaration and heuristics speak.
   if (existingGitlab !== undefined) {
     return {
       outcome: {
         mode: 'gitlab',
         gitlabHost: declaredEndpointName(existingGitlab.host, existingGitlab.port ?? null),
       },
-      human: humanBuilder().build(),
     };
   }
 
   if (!originUrl) {
-    return { outcome: { mode: 'undecided' }, human: humanBuilder().build() };
+    return { outcome: { mode: 'undecided' } };
   }
   const endpoint = originEndpoint(originUrl);
   // Port rule (#78): only the scheme default keeps a shape classifiable —
@@ -269,7 +291,7 @@ export async function resolvePlatformMode(
   if (endpoint !== null && endpoint.host === 'github.com' && endpointUsesDefaultPort(endpoint)) {
     return {
       outcome: { mode: 'github' },
-      human: humanBuilder().line(text.initPlatformGithubDefault()).build(),
+      message: 'github-default',
     };
   }
   if (
@@ -279,57 +301,37 @@ export async function resolvePlatformMode(
   ) {
     // gitlab.com or a *gitlab* self-host on the default port: declarable
     // without asking (portless declaration — the default port needs none).
-    try {
-      await writeProviders(root, { gitlab: { host: endpoint.host, insecure_ssl: false } });
-    } catch {
-      // Non-fatal: the URL heuristic still classifies later commands.
-    }
     return {
       outcome: { mode: 'gitlab', gitlabHost: endpoint.host },
-      human: humanBuilder()
-        .line(text.initPlatformGitlab(endpoint.host, `${SPEC_GIT_DIR}/providers.yaml`))
-        .build(),
+      declaration: { host: endpoint.host, port: null },
+      message: 'gitlab',
     };
   }
 
   // Non-github, non-obvious host: ask on a TTY; warn otherwise.
   if (ctx.stdinIsTTY && endpoint !== null) {
     const shown = declaredEndpointName(endpoint.host, endpointUsesDefaultPort(endpoint) ? null : endpoint.port);
-    const { select } = await import('@inquirer/prompts');
-    // Render to stderr: --json stdout must stay exactly one JSON document.
-    const choice = await select(
-      {
-        message: `Origin endpoint "${shown}" is not github.com — which platform is this repository on?`,
-        choices: [
-          { value: 'gitlab' },
-          { value: 'github' },
-        ],
-      },
-      { output: process.stderr }
-    );
+    const selectPlatform = interaction.selectPlatform ?? (async (host) => {
+      const { select } = await import('@inquirer/prompts');
+      return select<'gitlab' | 'github'>({
+        message: `Origin endpoint "${host}" is not github.com — which platform is this repository on?`,
+        choices: [{ value: 'gitlab' }, { value: 'github' }],
+      }, { output: process.stderr });
+    });
+    const choice = await selectPlatform(shown);
     if (choice === 'gitlab') {
-      // Persist the port when the origin uses a non-default one: the
+      // Carry the port when the origin uses a non-default one: the
       // declaration must name it for classification to match (#78).
       const port = endpointUsesDefaultPort(endpoint) ? null : endpoint.port;
-      try {
-        await writeProviders(root, {
-          gitlab: { host: endpoint.host, ...(port !== null ? { port } : {}), insecure_ssl: false },
-        });
-      } catch {
-        // Non-fatal.
-      }
       return {
         outcome: { mode: 'gitlab', gitlabHost: declaredEndpointName(endpoint.host, port) },
-        human: humanBuilder()
-          .line(
-            text.initPlatformGitlab(declaredEndpointName(endpoint.host, port), `${SPEC_GIT_DIR}/providers.yaml`)
-          )
-          .build(),
+        declaration: { host: endpoint.host, port },
+        message: 'gitlab',
       };
     }
     return {
       outcome: { mode: 'github' },
-      human: humanBuilder().line(text.initPlatformGithubUser()).build(),
+      message: 'github-user',
     };
   }
 
@@ -341,5 +343,5 @@ export async function resolvePlatformMode(
     }" is neither github.com nor a declared GitLab host.`,
     fix: 'Re-run init with --gitlab-host <hostname> (or <hostname>:<port> for a non-default port), or answer the platform question on an interactive terminal.',
   });
-  return { outcome: { mode: 'undecided' }, human: humanBuilder().build() };
+  return { outcome: { mode: 'undecided' } };
 }

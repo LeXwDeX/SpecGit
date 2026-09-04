@@ -7,7 +7,7 @@ tracked by [#387](https://github.com/LeXwDeX/SpecGit/issues/387) and
 the requested priority: repair product defects and code bugs in this delivery;
 record architecture improvements for later when no functional failure is proven.
 
-There are **24 independently tracked corrections, #389–#411 and #416**. Some cover
+There are **25 independently tracked corrections, #389–#411 and #416–#417**. Some cover
 several reproductions of the same invariant failure. This is an implementation
 and verification record, not an acceptance verdict. The integrated current-head
 CI, final review and `specgit finish` verdict must be recorded before claiming
@@ -75,6 +75,7 @@ its own acceptance criteria.
 | [#410](https://github.com/LeXwDeX/SpecGit/issues/410) · I0/I3 | On another branch, a failed merged-history provider probe becomes factual `branch_mismatch` exit 1. | Preserve evidence failures as unknown exit 3; only proven non-merged mismatch is rejected. `test/specgit/acceptance.test.ts`. |
 | [#411](https://github.com/LeXwDeX/SpecGit/issues/411) · release seam | Manual release dispatch can execute publication from a feature or tag ref. | Require the canonical repository and `refs/heads/main` at the release-job boundary. `test/specgit/release-gates.test.ts`. |
 | [#416](https://github.com/LeXwDeX/SpecGit/issues/416) · I1/I2/I3 | GitLab returns a valid-shaped issue or MR payload with a different IID; the adapter accepts it and complete evaluation can report exit 0 for the wrong entity. | Require the issue/MR response IID to equal the requested identifier; mismatches are `glab_transport` and evaluation exits 3. Matching responses retain their behavior. `test/specgit/glab-identity-audit.test.ts`. |
+| [#417](https://github.com/LeXwDeX/SpecGit/issues/417) · product ownership | `status --json` classifies optional local guard hooks as committed harness assets, contradicting the three-tier contract. | Put guard hooks with setup entry points in `localIntegrationAssets`, preserving JSON field names and acceptance semantics. `test/specgit-cli/status.test.ts`. |
 
 The new project rules are opt-in. English validation rejects Unicode Han
 characters; Chinese validation requires at least one. `kind` label mode needs
@@ -158,15 +159,26 @@ be reported only after the corresponding authorized live actions.
 
 ## Final delivery evidence
 
-The final local integration run passed after all 24 corrections and generated
-asset regeneration. Review and remote acceptance are recorded on
+The first complete two-axis review of `5fe3cca7` found three hard P2 items:
+Standards identified empty/blank resume-title evidence returning usage drift
+instead of unknown (#408); Spec identified late interactive GitLab selection
+after required-check detection (#394), and stale runtime hook classification
+(#417). All three entered the repair loop. The Standards judgements about
+duplicate context rules and concentrated bootstrap responsibilities retain the
+explicit #413 and #415 deferrals above. The next full review rechecks the
+complete diff after these corrections.
+
+The final local integration run passed after all 25 corrections and generated
+asset regeneration, including guidance that distinguishes required labels from
+optional axes and gives policy precedence over the repository label pool.
+Review and remote acceptance are recorded on
 [PR #388](https://github.com/LeXwDeX/SpecGit/pull/388), against its current head;
 the report itself never supplies a verdict.
 
 | Required evidence | Result |
 | --- | --- |
 | Build, source/test typechecks and lint | Passed after final source restoration and asset regeneration |
-| Complete local test run | 89 files passed; 1825 tests passed, 1 skipped (1826 total), 65.77 seconds |
+| Complete local test run | 89 files passed; 1836 tests passed, 1 skipped (1837 total), 62.15 seconds |
 | Full two-axis review and disposition of every finding | See the Standards/Spec evidence in PR #388 |
 | Current PR-head CI, including SpecGit Acceptance | See the current-head checks linked from PR #388 |
 | `specgit finish` at the final delivery commit | See the explicit exit code and commit in PR #388 |

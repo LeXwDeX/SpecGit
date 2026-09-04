@@ -463,6 +463,19 @@ describe('specgit issue: idempotent resume', () => {
     expect(t.recordPort.recordWrites).toEqual([]);
   });
 
+  it.each(['', '   '])('fails closed when a resume title is blank: %j (#408)', async (title) => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [11] }),
+      gh: { getIssue: () => ok({ number: 11, state: 'open', pullRequest: false, title }) },
+    });
+    const outcome = await runIssue({ titles: ['feat: strict delivery harness'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_title_unavailable');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+  });
+
   it('resumes after a failure between steps without creating issues again', async () => {
     const t = issueCtx({
       facts: { branch: 'feat/11-strict-delivery-harness' },

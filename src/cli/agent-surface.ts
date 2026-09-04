@@ -133,14 +133,18 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 
 ## Tagging (choose before you bootstrap)
 
+- Follow the policy's \`language\` for issue/PR prose. Enabled
+  \`validation\` rules check live titles and labels. In \`kind\` mode,
+  select exactly one catalog kind plus only declared extras; in \`project\`
+  mode, select only from policy \`tags\`.
 - Every bootstrap applies the title's \`kind::<type>\` member by default;
   pass \`--tags <a,b>\` to choose the full set yourself instead.
 - Selection is pool-first: existing on-spec labels win verbatim; anything
   missing is seeded from the built-in kind:: catalog or the policy's
   \`tags:\` declarations — unknown vocabulary exits 2 naming what exists.
-- Pick with restraint: at most one label per axis (\`kind::\`,
-  \`module::\`, ...), none when unsure. The pool, not your guess, is the
-  source of truth.
+- Pick at most one label per axis (\`kind::\`, \`module::\`, ...).
+  Omit uncertain optional labels; the selected policy determines which
+  labels are required. An existing pool label cannot override that policy.
 
 ## What it does (idempotent; re-run resumes)
 

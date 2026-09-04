@@ -285,7 +285,7 @@ export async function runStatus(
     .line(origin.repo !== null ? text.statusRepository(origin.repo) : text.statusRepositoryUnresolved())
     .line(facts.branch !== null ? text.statusLiveBranch(facts.branch) : text.statusLiveBranchDetached())
     .line(
-      'Assets: authoritative delivery files (spec_git/policy.yaml, spec_git/providers.yaml, .specgit.yaml; shielded in .gitignore by default, carried by the binding commit) · derived committed harness (regenerate via init --force) · local integration (setup entry points)'
+      'Assets: authoritative delivery files (spec_git/policy.yaml, spec_git/providers.yaml, .specgit.yaml; shielded in .gitignore by default, carried by the binding commit) · derived committed harness (regenerate via init --force) · local integration (guard hooks and setup entry points)'
     )
     .append(renderGeneratedAssetsHuman(generated.report, text))
     .append(
