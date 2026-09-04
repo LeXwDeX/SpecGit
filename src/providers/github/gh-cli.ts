@@ -102,6 +102,30 @@ export interface GhCliGitHubProviderOptions {
 
 type CallKind = 'issue' | 'pr' | 'checks' | 'search' | 'labels';
 
+interface CheckRunSnapshot {
+  check: CheckRunInfo;
+  actions: boolean;
+  checkSuiteId: unknown;
+}
+
+interface WorkflowRunSnapshot {
+  key: string;
+  check: CheckRunInfo;
+  checkSuiteId: unknown;
+  runAttempt: unknown;
+}
+
+function recordCiAttempt(checks: Map<string, CheckRunInfo>, key: string, run: CheckRunInfo): Evidence<true> {
+  const previous = checks.get(key);
+  // Reruns retain their creation ID; an undated attempt cannot be ordered.
+  if (previous && [previous, run].some((attempt) =>
+    attempt.startedAt === null || !Number.isFinite(Date.parse(attempt.startedAt)))) {
+    return fail('gh_transport', 'Cannot order multiple CI attempts without valid start timestamps.');
+  }
+  if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
+  return ok(true);
+}
+
 /**
  * The only real GitHub transport: the `gh` CLI. Detection → auth → invoke;
  * array execFile args only, hard timeout, response size cap, JSON-only
@@ -397,11 +421,17 @@ export class GhCliGitHubProvider implements ForgeProvider {
   }
 
   async getCheckRuns(repo: RepoRef, sha: string): Promise<Evidence<CheckRunInfo[]>> {
+    const snapshot = await this.readCheckSnapshot(repo, sha);
+    return snapshot.ok ? ok(snapshot.value.checks) : snapshot;
+  }
+
+  /** Jobs and workflow summaries share one generation snapshot. */
+  private async readCheckSnapshot(repo: RepoRef, sha: string, includeWorkflows = false): Promise<Evidence<{ checks: CheckRunInfo[]; workflows: CheckRunInfo[] }>> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
       return fail('gh_transport', 'Cannot query check runs without a valid commit SHA.');
     }
 
-    return paginateToExhaustion<CheckRunInfo>(
+    const runs = await paginateToExhaustion<CheckRunSnapshot>(
       {
         pageSize: CHECK_RUN_PAGE_SIZE,
         maxPages: MAX_CHECK_RUN_PAGES,
@@ -435,102 +465,156 @@ export class GhCliGitHubProvider implements ForgeProvider {
               conclusion?: unknown;
               id?: unknown;
               started_at?: unknown;
-              app?: { id?: unknown };
+              app?: { id?: unknown; slug?: unknown };
+              check_suite?: { id?: unknown };
             };
             return {
-              name: typeof item.name === 'string' ? item.name : '',
-              status: typeof item.status === 'string' ? item.status : '',
-              conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
-              id: typeof item.id === 'number' ? item.id : 0,
-              startedAt: typeof item.started_at === 'string' ? item.started_at : null,
-              ...(typeof item.app?.id === 'number' && Number.isSafeInteger(item.app.id) && item.app.id > 0
-                ? { source: `app:${item.app.id}` } : {}),
+              actions: item.app?.slug === 'github-actions' || item.app?.id === 15368,
+              checkSuiteId: item.check_suite?.id,
+              check: {
+                name: typeof item.name === 'string' ? item.name : '',
+                status: typeof item.status === 'string' ? item.status : '',
+                conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
+                id: typeof item.id === 'number' ? item.id : 0,
+                startedAt: typeof item.started_at === 'string' ? item.started_at : null,
+                ...(typeof item.app?.id === 'number' && Number.isSafeInteger(item.app.id) && item.app.id > 0
+                  ? { source: `app:${item.app.id}` } : {}),
+              },
             };
           })
         );
       }
     );
+    if (!runs.ok) return runs;
+    const hasActions = runs.value.some((run) => run.actions);
+    if (!hasActions && !includeWorkflows) return ok({ checks: runs.value.map((run) => run.check), workflows: [] });
+    let workflowSha = sha.toLowerCase();
+    if (sha.length < 40) {
+      const commit = await this.runApi(`repos/${repo.owner}/${repo.repo}/commits/${sha}`, 'checks');
+      if (!commit.ok) return commit;
+      const resolved = (commit.value as { sha?: unknown } | null)?.sha;
+      if (typeof resolved !== 'string' || !/^[a-f0-9]{40}$/i.test(resolved) || !resolved.toLowerCase().startsWith(workflowSha)) {
+        return fail('gh_transport', 'GitHub did not resolve the requested commit abbreviation.');
+      }
+      workflowSha = resolved.toLowerCase();
+    }
+    const workflows = await this.readWorkflowRuns(repo, workflowSha, hasActions);
+    if (!workflows.ok) return workflows;
+    const latest = new Map<string, CheckRunInfo>();
+    const owners = new Map<number, WorkflowRunSnapshot>();
+    const workflowIds = new Set<number>();
+    for (const workflow of workflows.value) {
+      const selected = recordCiAttempt(latest, workflow.key, workflow.check);
+      if (!selected.ok) return selected;
+      if (hasActions) {
+        if (typeof workflow.checkSuiteId !== 'number' || !Number.isSafeInteger(workflow.checkSuiteId) || workflow.checkSuiteId <= 0 ||
+            typeof workflow.runAttempt !== 'number' || !Number.isSafeInteger(workflow.runAttempt) || workflow.runAttempt <= 0 ||
+            workflow.check.startedAt === null || !Number.isFinite(Date.parse(workflow.check.startedAt)) || owners.has(workflow.checkSuiteId) ||
+            workflowIds.has(workflow.check.id) || !['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(workflow.check.status)) {
+          return fail('gh_transport', 'GitHub returned incomplete or ambiguous Actions workflow ownership.');
+        }
+        owners.set(workflow.checkSuiteId, workflow);
+        workflowIds.add(workflow.check.id);
+      }
+    }
+    const checks: CheckRunInfo[] = [];
+    for (const run of runs.value) {
+      if (!run.actions) { checks.push(run.check); continue; }
+      if (typeof run.checkSuiteId !== 'number' || !Number.isSafeInteger(run.checkSuiteId) || run.checkSuiteId <= 0) {
+        return fail('gh_transport', 'GitHub returned an Actions check without a check-suite identity.');
+      }
+      const owner = owners.get(run.checkSuiteId);
+      if (!owner) return fail('gh_transport', 'The Actions check has no proven owning workflow run.');
+      if (latest.get(owner.key)?.id !== owner.check.id) continue;
+      // A partial rerun retains successful jobs from earlier attempts. While
+      // it is running, those terminal jobs cannot prove the attempt settled.
+      checks.push(owner.runAttempt !== 1 && owner.check.status !== 'completed' && run.check.status === 'completed'
+        ? { ...run.check, status: 'in_progress', conclusion: null } : run.check);
+    }
+    return ok({ checks, workflows: [...latest.values()] });
+  }
+
+  private async readWorkflowRuns(repo: RepoRef, sha: string, requireOwnership: boolean): Promise<Evidence<WorkflowRunSnapshot[]>> {
+    let total: number | undefined;
+    const rows = await paginateToExhaustion<unknown>(
+      { pageSize: 100, maxPages: 10, what: 'Workflow-run' },
+      async (page) => {
+        const result = await this.runApi(`repos/${repo.owner}/${repo.repo}/actions/runs?head_sha=${sha}&per_page=100&page=${page}`, 'checks');
+        if (!result.ok) return result;
+        const payload = result.value as { workflow_runs?: unknown; total_count?: unknown } | null;
+        const values = payload?.workflow_runs;
+        if (requireOwnership) {
+          const count = payload?.total_count;
+          if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
+            return fail('gh_transport', 'GitHub omitted the complete workflow-run count.');
+          }
+          if (count > 1000) return evidenceTruncated('The workflow-run count exceeds the GitHub search limit.');
+          if (total !== undefined && count !== total) return evidenceTruncated('The workflow-run count changed during pagination.');
+          total = count;
+        }
+        return Array.isArray(values) ? ok(values) : fail('gh_transport', 'GitHub returned an unexpected workflows payload.');
+      }
+    );
+    if (!rows.ok) return rows;
+    if (requireOwnership && rows.value.length !== total) return evidenceTruncated('The workflow-run list is incomplete.');
+    const workflows: WorkflowRunSnapshot[] = [];
+    for (const row of rows.value) {
+      if (row === null || typeof row !== 'object') return fail('gh_transport', 'GitHub returned malformed workflow evidence.');
+      const value = row as Record<string, unknown>;
+      if (typeof value.id !== 'number' || !Number.isSafeInteger(value.id) || value.id <= 0 || value.head_sha !== sha ||
+          typeof value.workflow_id !== 'number' || !Number.isSafeInteger(value.workflow_id) || value.workflow_id <= 0 ||
+          typeof value.event !== 'string' || !value.event || typeof value.name !== 'string' ||
+          typeof value.status !== 'string' || (value.status === 'completed' && typeof value.conclusion !== 'string')) {
+        return fail('gh_transport', 'GitHub returned incomplete or stale workflow evidence.');
+      }
+      workflows.push({ key: `workflow:${value.workflow_id}:${value.event}`, checkSuiteId: value.check_suite_id, runAttempt: value.run_attempt,
+        check: { name: `workflow: ${value.name} (${value.event})`, status: value.status,
+          conclusion: typeof value.conclusion === 'string' ? value.conclusion : null, id: value.id,
+          startedAt: typeof value.run_started_at === 'string' ? value.run_started_at : null } });
+    }
+    return ok(workflows);
   }
 
   async getPrChecks(repo: RepoRef, pr: number): Promise<Evidence<MergeChecksFact>> {
     const request = await this.getPr(repo, pr);
     if (!request.ok) return request;
     const headSha = request.value.headSha;
-    const runs = await this.getCheckRuns(repo, headSha);
+    const runs = await this.readCheckSnapshot(repo, headSha, true);
     if (!runs.ok) return runs;
     const checks = new Map<string, CheckRunInfo>();
-    const recordAttempt = (key: string, run: CheckRunInfo): Evidence<true> => {
-      const previous = checks.get(key);
-      // Workflow reruns keep their creation ID. An undated attempt cannot
-      // be proven older than a green run, even when its ID is lower.
-      if (previous && [previous, run].some((attempt) =>
-        attempt.startedAt === null || !Number.isFinite(Date.parse(attempt.startedAt)))) {
-        return fail('gh_transport', 'Cannot order multiple CI attempts without valid start timestamps.');
-      }
-      if (!previous || isLaterCheckRun(run, previous)) checks.set(key, run);
-      return ok(true);
-    };
-    for (const run of runs.value) {
+    for (const run of runs.value.checks) {
       if (!run.name || !run.status || !run.source || !Number.isSafeInteger(run.id) || run.id <= 0 ||
           (run.status === 'completed' && !run.conclusion)) {
         return fail('gh_transport', 'GitHub returned incomplete check-run evidence.');
       }
       const key = `${run.source ?? 'check'}:${run.name}`;
-      const selected = recordAttempt(key, run);
+      const selected = recordCiAttempt(checks, key, run);
       if (!selected.ok) return selected;
     }
-    // Classic commit statuses and workflow runs are independent evidence:
-    // a workflow awaiting approval can have no check jobs at all (#265).
-    for (const kind of ['statuses', 'workflows'] as const) {
-      const rows = await paginateToExhaustion<unknown>(
-        { pageSize: 100, maxPages: 10, what: kind === 'statuses' ? 'Commit-status' : 'Workflow-run' },
-        async (page) => {
-          const endpoint = kind === 'statuses'
-            ? `repos/${repo.owner}/${repo.repo}/commits/${headSha}/statuses?per_page=100&page=${page}`
-            : `repos/${repo.owner}/${repo.repo}/actions/runs?head_sha=${headSha}&per_page=100&page=${page}`;
-          const result = await this.runApi(endpoint, 'checks');
-          if (!result.ok) return result;
-          const values = kind === 'statuses' ? result.value
-            : (result.value as { workflow_runs?: unknown } | null)?.workflow_runs;
-          return Array.isArray(values) ? ok(values)
-            : fail('gh_transport', `GitHub returned an unexpected ${kind} payload.`);
-        }
-      );
-      if (!rows.ok) return rows;
-      for (const row of rows.value) {
-        if (row === null || typeof row !== 'object') return fail('gh_transport', 'GitHub returned malformed CI evidence.');
-        const value = row as Record<string, unknown>;
-        if (typeof value.id !== 'number' || !Number.isSafeInteger(value.id) || value.id <= 0) {
-          return fail('gh_transport', 'GitHub returned CI evidence without an attempt identity.');
-        }
-        let key: string;
-        let run: CheckRunInfo;
-        if (kind === 'statuses') {
-          if (typeof value.context !== 'string' || !value.context ||
-              !['pending', 'success', 'failure', 'error'].includes(String(value.state))) {
-            return fail('gh_transport', 'GitHub returned an unexpected commit status.');
-          }
-          key = `status:${value.context}`;
-          run = { name: value.context, status: value.state === 'pending' ? 'in_progress' : 'completed',
-            conclusion: value.state === 'pending' ? null : String(value.state), id: value.id,
-            startedAt: typeof value.created_at === 'string' ? value.created_at : null };
-        } else {
-          if (value.head_sha !== headSha || typeof value.workflow_id !== 'number' ||
-              !Number.isSafeInteger(value.workflow_id) || value.workflow_id <= 0 ||
-              typeof value.event !== 'string' || typeof value.name !== 'string' ||
-              typeof value.status !== 'string' ||
-              (value.status === 'completed' && typeof value.conclusion !== 'string')) {
-            return fail('gh_transport', 'GitHub returned incomplete or stale workflow evidence.');
-          }
-          key = `workflow:${value.workflow_id}:${value.event}`;
-          run = { name: `workflow: ${value.name} (${value.event})`, status: value.status,
-            conclusion: typeof value.conclusion === 'string' ? value.conclusion : null, id: value.id,
-            startedAt: typeof value.run_started_at === 'string' ? value.run_started_at : null };
-        }
-        const selected = recordAttempt(key, run);
-        if (!selected.ok) return selected;
+    const statuses = await paginateToExhaustion<unknown>(
+      { pageSize: 100, maxPages: 10, what: 'Commit-status' },
+      async (page) => {
+        const result = await this.runApi(`repos/${repo.owner}/${repo.repo}/commits/${headSha}/statuses?per_page=100&page=${page}`, 'checks');
+        if (!result.ok) return result;
+        return Array.isArray(result.value) ? ok(result.value) : fail('gh_transport', 'GitHub returned an unexpected statuses payload.');
       }
+    );
+    if (!statuses.ok) return statuses;
+    for (const row of statuses.value) {
+      if (row === null || typeof row !== 'object') return fail('gh_transport', 'GitHub returned malformed CI evidence.');
+      const value = row as Record<string, unknown>;
+      if (typeof value.id !== 'number' || !Number.isSafeInteger(value.id) || value.id <= 0 ||
+          typeof value.context !== 'string' || !value.context || !['pending', 'success', 'failure', 'error'].includes(String(value.state))) {
+        return fail('gh_transport', 'GitHub returned an unexpected commit status.');
+      }
+      const run: CheckRunInfo = { name: value.context, status: value.state === 'pending' ? 'in_progress' : 'completed',
+        conclusion: value.state === 'pending' ? null : String(value.state), id: value.id,
+        startedAt: typeof value.created_at === 'string' ? value.created_at : null };
+      const selected = recordCiAttempt(checks, `status:${value.context}`, run);
+      if (!selected.ok) return selected;
     }
+    // A workflow awaiting approval may have no check jobs at all (#265).
+    for (const run of runs.value.workflows) checks.set(`workflow:${run.id}`, run);
     return ok({ headSha, checks: [...checks.values()] });
   }
 

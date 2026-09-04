@@ -49,6 +49,7 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+  actions: read
 
 # One verdict per head at a time (#319): a newer trigger event (a push
 # after the draft opened, then ready_for_review) supersedes the older

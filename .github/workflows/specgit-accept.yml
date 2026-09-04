@@ -14,6 +14,7 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+  actions: read
 
 # One verdict per head at a time (#319): a newer trigger event (a push
 # after the draft opened, then ready_for_review) supersedes the older
@@ -199,6 +200,63 @@ jobs:
               }
             }
           };
+          const isActions = (check) => check.app?.slug === 'github-actions' || check.app?.id === 15368;
+          const listWorkflowsWithRetry = async (page) => {
+            for (let attempt = 1; ; attempt++) {
+              try {
+                return JSON.parse(execFileSync('gh', [
+                    'api', 'repos/' + process.env.WAIT_REPO + '/actions/runs', '--method', 'GET',
+                    '--field', 'head_sha=' + process.env.WAIT_SHA, '--field', 'per_page=' + PER_PAGE, '--field', 'page=' + page,
+                  ], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }));
+              } catch (error) {
+                const text = String(error) + ' ' + String(error && error.stderr ? error.stderr : '');
+                if (attempt >= 5 || !/HTTP 5\d\d|HTTP 429|ETIMEDOUT|ECONNRESET|ENOTFOUND|timed out/i.test(text)) throw error;
+                await new Promise((resolve) => setTimeout(resolve, Math.min(30000, 2000 * 2 ** (attempt - 1))));
+              }
+            }
+          };
+          const currentExecutionChecks = async (checks) => {
+            if (!checks.some(isActions)) return checks;
+            const bySuite = new Map();
+            const ids = new Set();
+            const latest = new Map();
+            const positive = (value) => Number.isSafeInteger(value) && value > 0;
+            const key = (run) => JSON.stringify([run.workflow_id, run.event]);
+            let total;
+            for (let page = 1; page <= 10; page++) {
+              const payload = await listWorkflowsWithRetry(page);
+              if (!Array.isArray(payload?.workflow_runs) || payload.workflow_runs.length > PER_PAGE
+                || !Number.isSafeInteger(payload.total_count) || payload.total_count < 0) throw new Error('GitHub Actions workflow evidence is malformed.');
+              if (payload.total_count > 1000) throw new Error('GitHub Actions workflow evidence exceeds the 1000-run API limit.');
+              if (total !== undefined && total !== payload.total_count) throw new Error('GitHub Actions workflow evidence changed during pagination.');
+              total = payload.total_count;
+              for (const run of payload.workflow_runs) {
+                if (!positive(run?.id) || !positive(run.check_suite_id) || !positive(run.workflow_id) || !positive(run.run_attempt)
+                  || run.head_sha !== process.env.WAIT_SHA || typeof run.event !== 'string' || run.event.length === 0
+                  || typeof run.run_started_at !== 'string' || !Number.isFinite(Date.parse(run.run_started_at))
+                  || !['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(run.status)
+                  || ids.has(run.id) || bySuite.has(run.check_suite_id)) throw new Error('GitHub Actions workflow ownership is missing, invalid, or ambiguous.');
+                ids.add(run.id);
+                bySuite.set(run.check_suite_id, run);
+                const previous = latest.get(key(run));
+                const time = Date.parse(run.run_started_at);
+                if (!previous || time > Date.parse(previous.run_started_at)
+                  || (time === Date.parse(previous.run_started_at) && run.id > previous.id)) latest.set(key(run), run);
+              }
+              if (payload.workflow_runs.length < PER_PAGE) break;
+              if (page === 10) throw new Error('GitHub Actions workflow evidence reached the pagination limit.');
+            }
+            if (ids.size !== total) throw new Error('GitHub Actions workflow evidence is incomplete.');
+            return checks.flatMap((check) => {
+              if (!isActions(check)) return [check];
+              const suite = check.check_suite?.id;
+              if (!positive(suite) || !bySuite.has(suite)) throw new Error('A GitHub Actions check has no verified workflow owner.');
+              const owner = bySuite.get(suite);
+              if (latest.get(key(owner)).id !== owner.id) return [];
+              // A rerun can retain completed jobs from its prior attempt until new jobs register.
+              return [owner.status === 'completed' ? check : { ...check, status: 'in_progress', conclusion: null }];
+            });
+          };
           const terminal = new Set(['completed']);
           const PER_PAGE = 100;
           // #300: page the listing to exhaustion — a head with more than
@@ -273,7 +331,7 @@ jobs:
                 + (error && error.message ? error.message : String(error)));
               process.exit(1);
             }
-            const runs = await fetchAllCheckRuns();
+            const runs = await currentExecutionChecks(await fetchAllCheckRuns());
             // #119: re-runs keep every same-name run; terminality is
             // decided on the truth run — latest started_at, ties broken
             // by the higher check-run id (docs/reference.md) — never on
