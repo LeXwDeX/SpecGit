@@ -29,3 +29,4 @@ issueKinds:
     kind: kind::refactor
   - issue: 382
     kind: kind::feat
+pr: 383
