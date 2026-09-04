@@ -1,5 +1,6 @@
 /** Configured, exact-head merge execution behind `specgit pr --merge`. */
-import type { CheckRunInfo, PrFact } from '../../github/port.js';
+import type { PrFact } from '../../github/port.js';
+import { classifyCiEligibility } from '../../automation/ci-eligibility.js';
 import { hasUnboundClosingRefs } from '../../github/closing-refs.js';
 import { extractOriginHost } from '../../gitfacts/origin.js';
 import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
@@ -8,13 +9,6 @@ import { catalogFor, resolveLanguage } from '../language.js';
 import type { CommandContext, Evidence } from '../types.js';
 
 const FULL_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
-
-function missingChecks(checks: CheckRunInfo[], required: string[]): string | null {
-  if (checks.length === 0) return 'No CI/CD checks were reported for the pull request head.';
-  const names = new Set(checks.map((check) => check.name));
-  const missing = required.filter((name) => !names.has(name));
-  return missing.length > 0 ? `Required checks are missing: ${missing.join(', ')}.` : null;
-}
 
 export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   const progress: PrAutomation = { status: 'blocked', merged: false, closedIssues: [] };
@@ -120,8 +114,11 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   if (ci.value.headSha !== observed.headSha) {
     return stop('automation_head_changed', 'CI/CD evidence belongs to a different pull request head.');
   }
-  const missing = missingChecks(ci.value.checks, policy.value.required_checks);
-  if (missing !== null) return stop('automation_checks_missing', missing);
+  const eligibility = classifyCiEligibility(ci.value.checks, policy.value.required_checks);
+  if (eligibility.empty) return stop('automation_checks_missing', 'No CI/CD checks were reported for the pull request head.');
+  if (eligibility.missingRequired.length > 0) {
+    return stop('automation_checks_missing', `Required checks are missing: ${eligibility.missingRequired.join(', ')}.`);
+  }
   if (repo.value.platform === 'gitlab' && ci.value.pipelineStatus !== 'success') {
     if (ci.value.pipelineStatus === undefined) {
       return stop('automation_pipeline_unavailable', 'The GitLab head pipeline status is unavailable.', EXIT_UNKNOWN);
@@ -130,20 +127,16 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
       .includes(ci.value.pipelineStatus) ? 'pending' : 'blocked';
     return stop('automation_pipeline_not_successful', `The GitLab head pipeline is ${ci.value.pipelineStatus}.`);
   }
-  const required = new Set(policy.value.required_checks);
-  let executed = 0;
-  for (const check of ci.value.checks) {
-    if (!required.has(check.name) && check.status === 'completed' && check.conclusion === 'skipped') continue;
-    executed++;
-    if (check.status !== 'completed') {
+  const firstProblem = eligibility.problems[0];
+  if (firstProblem !== undefined) {
+    const { check } = firstProblem;
+    if (firstProblem.kind === 'pending') {
       progress.status = 'pending';
       return stop('automation_checks_pending', `CI/CD check '${check.name}' is ${check.status}.`);
     }
-    if (check.conclusion !== 'success') {
-      return stop('automation_checks_failed', `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.`);
-    }
+    return stop('automation_checks_failed', `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.`);
   }
-  if (executed === 0) return stop('automation_checks_missing', 'No executed CI/CD checks prove this head successful.');
+  if (eligibility.executedCount === 0) return stop('automation_checks_missing', 'No executed CI/CD checks prove this head successful.');
 
   const bindingUnchanged = async (): Promise<PrOutcome | null> => {
     const [currentRecord, currentPolicy] = await Promise.all([
