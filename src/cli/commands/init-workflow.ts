@@ -16,7 +16,7 @@ import { harnessWorkflowYaml } from '../harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../external-harness.js';
 import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { CommandContext } from '../types.js';
-import { completionWorkflowYaml } from '../completion-workflow.js';
+import { completionWorkflowYaml, gitlabRoutingWorkflowYaml } from '../completion-workflow.js';
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import { errorDiagnostic, type InitOutcome } from '../output.js';
 
@@ -84,6 +84,7 @@ export async function selectWorkflowYaml(
 export interface CompletionSelection {
   platform: 'github' | 'gitlab';
   yaml: string;
+  routingYaml?: string;
 }
 
 /** Verify the actual project entry point without changing its remote CI settings. */
@@ -125,9 +126,12 @@ export async function selectCompletionWorkflow(
       'Fetch origin and establish origin/HEAD, then retry. The merge target does not identify the trusted default branch.');
   }
   try {
-    return ok({ platform, yaml: completionWorkflowYaml({
+    const input = {
       defaultBranch: branch.value, version: ctx.version, selfHosted: await isSelfRepository(root), platform,
-    }) });
+    };
+    return ok({ platform, yaml: completionWorkflowYaml(input),
+      ...(platform === 'gitlab' ? { routingYaml: gitlabRoutingWorkflowYaml(input) } : {}),
+    });
   } catch (error) {
     return fail('automation_workflow_invalid', error instanceof Error ? error.message : String(error));
   }

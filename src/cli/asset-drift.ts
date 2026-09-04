@@ -58,6 +58,7 @@ import {
 import { resolveLanguage } from './language.js';
 import type { Evidence } from '../kernel/evidence.js';
 import type { CommandContext, GitFacts, Policy } from './types.js';
+import { buildGitlabRoutingSteps, GitlabRoutingError } from './gitlab-routing.js';
 
 export type { ManagedAssetFinding, ManagedAssetState } from './managed-reconcile.js';
 
@@ -243,6 +244,14 @@ export async function inspectGeneratedAssets(args: {
     ? { ok: false as const, code: 'automation_platform_unknown' }
     : await selectCompletionWorkflow(ctx, root, platform === 'providers_invalid' ? 'undecided' : platform, completionEnabled);
   if (!completion.ok) uninspected.push(completion.code);
+  let routingSteps: Awaited<ReturnType<typeof buildGitlabRoutingSteps>> = [];
+  if (completion.ok) {
+    try {
+      routingSteps = await buildGitlabRoutingSteps(root, completion.value?.routingYaml ?? null);
+    } catch (error) {
+      uninspected.push(error instanceof GitlabRoutingError ? error.code : 'gitlab_ci_unreadable');
+    }
+  }
   const harness = await buildHarnessDesiredState(root, {
     resolveHooksDir: async (repoRoot) => {
       const hooksEv = await ctx.git.hooksPath(repoRoot);
@@ -258,6 +267,7 @@ export async function inspectGeneratedAssets(args: {
     workflowYaml: workflowYaml === undefined ? harnessWorkflowYaml() : workflowYaml,
     language,
     completion: completion.ok ? completion.value : null,
+    routingSteps,
   });
   // Harness-builder warnings mark desired steps the writer itself cannot
   // converge (an unmergeable hooks.json): no claim, by code.

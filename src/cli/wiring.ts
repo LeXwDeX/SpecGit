@@ -25,6 +25,7 @@ import { LocalGitAdapter } from '../gitfacts/local.js';
 import { parseRepoRef } from '../gitfacts/origin.js';
 import { GhCliGitHubProvider } from '../providers/github/gh-cli.js';
 import { GlabProvider } from '../providers/gitlab/glab-cli.js';
+import type { GitlabCompletionIdentity } from '../providers/gitlab/completion-context.js';
 import { PlatformRoutingProvider } from '../providers/routing.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import * as recordIo from '../record/io.js';
@@ -83,6 +84,8 @@ export async function probeGitBinary(): Promise<Evidence<string>> {
  * `createDefaultContext()` with no argument is exactly the shipped CLI.
  */
 export interface WiringOverrides {
+  /** Present only in the trusted remote runner; the provider authenticates every hint. */
+  gitlabCompletion?: GitlabCompletionIdentity;
   /** Repo-root discovery; defaults to real `git rev-parse --show-toplevel`. */
   discoverRoot?: (cwd: string) => Promise<Evidence<string>>;
   /** A trusted workflow may evaluate an immutable PR-head binding while reading merged git history. */
@@ -190,6 +193,7 @@ export function createDefaultContext(overrides: WiringOverrides = {}): CommandCo
       new GlabProvider({
         hostname: await declaredGitlabHost(),
         requiredChecks: await policyRequiredChecks(),
+        completion: overrides.gitlabCompletion,
       }),
     originPlatform: async () => {
       const gitlabHost = await declaredGitlabHost();

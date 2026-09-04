@@ -19,11 +19,23 @@ function fixture() {
     }),
     addIssueComment: vi.fn(async () => ok({ url: 'https://github.com/comment' })),
   };
-  const input = { repo, pr, issueNumbers: [10], policy: samplePolicy(),
+  const input = { repo, pr, issueNumbers: [10], delivery: 'login-recovery', policy: samplePolicy(),
     failures: [{ code: 'test_failure', message: 'A regression assertion failed.', evidenceUrl: 'https://github.com/owner/repo/actions/runs/1' }] };
   return { gh, input, issues };
 }
 describe('failed PR repair issue lifecycle', () => {
+  it('fills required project template delivery content and preserves repair identity on retry', async () => {
+    const t = fixture();
+    t.input.policy = samplePolicy({ templates: { issue: {
+      title: 'fix: repair {{delivery}}',
+      body: '## Delivery\n{{delivery}}\n## Evidence\n{{body}}', required_sections: ['Delivery', 'Evidence'],
+    } } });
+    expect(await ensureFailureIssues(t.input, t.gh)).toEqual(ok({ issues: [200] }));
+    expect(t.issues[0].title).toBe('fix: repair login-recovery');
+    expect(t.issues[0].body).toContain('## Delivery\nlogin-recovery\n');
+    expect(await ensureFailureIssues(t.input, t.gh)).toEqual(ok({ issues: [200] }));
+    expect(t.gh.createIssue).toHaveBeenCalledOnce();
+  });
   it('creates a traceable issue and reuses it for the same unresolved cause across heads', async () => {
     const t = fixture();
     const first = await ensureFailureIssues(t.input, t.gh);

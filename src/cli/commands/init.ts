@@ -77,6 +77,7 @@ import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
 import { resolveProjectRules, resolveRepairLabels } from './init-rules.js';
+import { buildGitlabRoutingSteps, GitlabRoutingError } from '../gitlab-routing.js';
 
 export type { InitOptions } from './init-validation.js';
 
@@ -196,6 +197,16 @@ export async function runInit(
     const configurationError = await validateGitlabCiConfig(ctx, root, platformSelection.outcome.gitlabHost);
     if (configurationError !== null) return configurationError;
   }
+  let routingSteps;
+  try {
+    routingSteps = await buildGitlabRoutingSteps(root, completion.value?.routingYaml ?? null);
+  } catch (error) {
+    return { exit: error instanceof GitlabRoutingError ? EXIT_USAGE : EXIT_UNKNOWN,
+      errors: [errorDiagnostic(error instanceof GitlabRoutingError ? error.code : 'gitlab_ci_unreadable',
+        error instanceof Error ? error.message : String(error), {
+          fix: 'Preserve the current CI files and resolve the reported include, path or ownership conflict before re-running init.',
+        })] };
+  }
 
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
   if (selection.warning !== undefined) warnings.push(selection.warning);
@@ -251,7 +262,7 @@ export async function runInit(
     human: platformSelectionHuman(platformSelection, text),
   };
   const gitlabMode = platform.outcome.mode === 'gitlab';
-  if (gitlabMode) {
+  if (gitlabMode && completion.value === null) {
     warnings.push({
       severity: 'warning',
       code: 'gitlab_harness_pending',
@@ -259,12 +270,6 @@ export async function runInit(
         'The GitLab CI harness template is not generated yet; a GitHub Actions workflow would be wrong-platform output here — carry your own .gitlab-ci.yml.',
       fix: 'Its top-level job keys become the required checks (detect from the file or pass --required-check); see docs/gitlab-support.md.',
     });
-    if (completion.value !== null) {
-      warnings.push({ severity: 'warning', code: 'gitlab_completion_handoff',
-        message: 'The generated .gitlab/specgit-complete.yml needs inclusion in a trusted default-branch pipeline and an authenticated completion trigger.',
-        fix: 'Configure the runner with authenticated glab/git and trigger that pipeline with SPECGIT_PR and the exact SPECGIT_HEAD after MR CI completes; keep write credentials out of MR jobs.',
-      });
-    }
   }
 
   const written = await writeHarnessAndPolicy({
@@ -278,6 +283,7 @@ export async function runInit(
     tags: rules.tags,
     workflowYaml: gitlabMode ? null : selection.yaml,
     completion: completion.value,
+    routingSteps,
     writeIgnore: options.ignore !== false,
     warnings,
   });
@@ -341,7 +347,7 @@ export async function runInit(
     policy: written.policy,
     ignore: written.ignore,
     reconciled: written.reconciled,
-    template: gitlabMode ? 'gitlab-pending' : selection.template,
+    template: gitlabMode ? (completion.value === null ? 'gitlab-pending' : 'gitlab') : selection.template,
     warnings,
     protection,
     protectionHuman,

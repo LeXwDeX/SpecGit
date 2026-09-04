@@ -18,8 +18,8 @@ Operating rules for AI agents in a SpecGit project. The managed `specgit` block 
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> accepted; configured pr --merge confirms merge
-        |                         then closes bound issues when enabled
+        |-- exit 0 --> accepted; trusted completion confirms merge
+        |                         and all bound issue closures: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -30,21 +30,21 @@ Operating rules for AI agents in a SpecGit project. The managed `specgit` block 
 - Always pass `--json` when acting programmatically. stdout is exactly one JSON document; anything human-readable was sent to stderr. Parse the envelope, never scrape text.
 - Branch on exit codes, not on output phrasing: `0` accepted/success · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown.
 - Continue within existing user authorization through issue bodies, PR readiness, CI repair or retry, acceptance, and the authorized merge. Ask only for a missing authorization or platform permission, naming the gap with the result already prepared.
-- Never invent environment configuration: the product's environment variables are exactly `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, `SPECGIT_GLAB_TIMEOUT_MS`, and `SPECGIT_GUARD_BUDGET_S`. The first four are read by the CLI (forge executable path and per-call timeout per platform); the fifth is hook-only — the generated merge-guard hook reads it to size the verdict budget. Nothing else is read, and there is no telemetry to disable.
+- Public CLI environment settings are `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, and `SPECGIT_GLAB_TIMEOUT_MS` (forge executable and per-call timeout), plus standard `NO_COLOR`/`CI`. `SPECGIT_GUARD_BUDGET_S` is hook-only. The internal remote runner receives identity inputs from generated workflows; these are not public CLI configuration. There is no telemetry to disable.
 
 ## 2. Issue-first delivery
 
-**Non-trivial mutation work becomes tracker issues before development starts.** A feature, a fix, a refactor, a docs change — any non-trivial task — is a delivery: work items live in the tracker as issues (`specgit issue <type>: <title>...`), never in private task lists or conversational checklists. Mid-conversation inventories ("let me list everything to do") become issues, not chat artifacts. Before creating an issue, search the tracker for duplicates and continue the existing issue when the WHY is the same — one line of work per WHY, never two.
+**Intended tracked product or shared-rule changes become tracker issues before implementation starts.** Bind the delivery with `specgit issue <type>: <title>...` before tracked implementation edits. Prepare temporary body files during bootstrap when selected templates require complete content at creation. Before creating an issue, search open and closed history, read plausible candidates, and continue existing open work when the WHY is the same — one line of work per WHY.
 
-Trivial replies and read-only questions are exempt: they change nothing and need no issue.
+Read-only questions and local CLI installation, upgrades or init/setup refreshes need no issue, PR, product build or release when no tracked change is intended. Review tracked diffs before deciding to share them. Follow the host project's verification policy for the actual changed inputs; ignore rules never grant CI exemptions. Publication requires explicit release intent and authorization.
 
 ## 3. The one rule
 
-**A delivery is done if and only if `specgit finish` exits `0`.** (`specgit accept` is the script alias running the same evaluation.)
+**`specgit finish` exit `0` means accepted. Completion requires a confirmed merge and every bound issue closed.** (`specgit accept` is the script alias running the same evaluation.) A merged delivery with open issues remains `closure_pending` and must continue closure recovery.
 
 Corollaries:
 
-- Never declare completion from task lists, file states, test runs you performed yourself, or the record alone. Only the verdict counts.
+- Derive acceptance from the verdict and completion from confirmed merge and issue facts; task lists, local tests and the record alone prove neither.
 - Never edit `.specgit.yaml` or `spec_git/policy.yaml` to flip a failing verdict. Those files describe the delivery; the gates verify it against git and the forge (GitHub or GitLab).
 - Treat exit `1` and exit `3` differently. Exit `1`: the evidence is complete — fix what the gates named. Exit `3`: evidence is missing — fix record, policy, git, or `gh` first (run `specgit doctor --json`).
 - A verdict is a fact about the moment it was computed. If the PR, checks, or branch change afterwards, re-run `finish` before relying on it.
@@ -54,9 +54,9 @@ Corollaries:
 | Command | When you run it | Hard rules |
 | --- | --- | --- |
 | `issue` | Starting a delivery | Pass one argument per independently verifiable WHY (quoted titles create; pure numbers reuse). Re-run the same command to resume after a failure between steps; never hand-edit the record instead. One issue per WHY — split deliverables that cannot be verified on their own evidence. |
-| `finish` | The delivery claims to be done | Read-only: report gates, codes, and fixes. On exit 3, run `doctor` and repair missing evidence; on exit 1, fix the delivery. It never merges or closes issues. |
-| `pr` | Repair the binding, or execute configured automation | Without flags, auto-discover by head branch; several matches require an explicit number. `pr --merge --json` requires enabled automation, the configured target branch, fresh acceptance, and all CI checks passing at the current PR head. It confirms merge before closing bound issues when configured. |
-| `init` | Create policy or reconsider configuration with `--force` | Use the team's required checks. Automation defaults to no (`--automation no`); only the user's own yes authorizes `--automation yes --merge-target <branch>`. An agent must not answer yes for the user. `init --force` permits a new user choice and regenerates the harness. |
+| `finish` | Verify delivery acceptance or inspect completed history | Read-only: report gates, codes, and fixes. On exit 3, run `doctor` and repair missing evidence; on exit 1, fix the delivery. It never merges or closes issues. |
+| `pr` | Repair the binding, or recover configured completion | Without flags, auto-discover by head branch; several matches require an explicit number. `pr --merge --json` requires approved target-policy automation, the configured target branch, fresh acceptance, and all CI checks passing at the current PR head. It confirms merge before closing bound issues when configured. |
+| `init` | Create policy or refresh with `--force` | Use the team's required checks. Automation defaults to no (`--automation no`); only the user's own yes authorizes `--automation yes --merge-target <branch>`. An agent must not answer yes for the user. Ordinary `init --force` preserves saved choices and regenerates the harness; explicit options change configuration. |
 | `bind` / `unbind` | Script-level record surgery | Only as machine aliases when a script cannot use `issue`/`pr`. `--issue` takes GitHub numbers only; `--delivery` only on first bind. |
 | `status` | Anytime — it is local-only and network-free | Use it for the record/state/context snapshot; never present its output as acceptance. |
 | `doctor` | Diagnosing exit-3 results or first-time setup | Its probe order is the debugging order: git → repo → origin → forge CLI (`gh`/`glab`) → auth → policy. |
@@ -64,10 +64,11 @@ Corollaries:
 ## 5. Working with the PR and checks
 
 - `specgit issue` opens the draft PR with `Closes #n` for every bound issue; keep those references intact when editing the body (keywords: `close(s|d)`, `fix(es|ed)`, `resolve(s|d)`; forms: `#N`, `owner/repo#N`, full issue URL).
-- Fill created issue bodies from the agreed Why / Scope / Approach / Acceptance before implementation, then maintain the PR body as evidence becomes available. Complete the ready transition before `finish` (`gh pr ready <n>` or `glab mr update <n> --ready`). These steps use the existing delivery authorization.
+- With selected body rules, prepare complete issue and PR content before creation using `--body-file` and `--pr-body-file`. After bootstrap, verify bodies against the agreed Why / Scope / Approach / Acceptance, fill missing content and preserve existing edits. Complete the ready transition before `finish` (`gh pr ready <n>` or `glab mr update <n> --ready`). These steps use the existing delivery authorization.
 - After changing the PR body, head branch, or CI, re-run `specgit finish`; do not assume.
-- When a check fails, fix the cause and push; checks are re-read from the new PR head. Never bypass, rename-around, or reconfig a required check to make acceptance pass without the user's explicit decision.
-- With automation enabled, continue to `specgit pr --merge --json` after acceptance. It rechecks evidence and submits the expected head SHA to the platform; a changed head or rejected merge leaves the issues open. A closure failure after a confirmed merge can be retried with the same command.
+- Track terminal ready-PR/MR failures in repair issues, one per independent cause; recurring unresolved causes reuse their issue. Preserve the original business issues and PR. Draft, pending and superseded evidence do not create repair work. Bind the repair before implementation, then push and verify the new head. Required checks retain their meaning.
+- With automation enabled, the trusted remote completion workflow continues after CI using approved target rules and all current-head checks. `specgit pr --merge --json` recovers interrupted completion. A changed head or rejected merge leaves issues open; a confirmed merge with incomplete closure remains recoverable through the same command.
+- Local guidance and entry-point drift warn with `local_assets_stale`; repair them through init/setup without blocking delivery. Stale, conflicting or partially missing remote acceptance assets still require repair before bootstrap.
 
 ## 6. Hard prohibitions
 

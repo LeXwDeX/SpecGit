@@ -30,6 +30,7 @@ import type {
   RepoLabelsFact,
 } from '../../github/port.js';
 import type { TagSpec } from '../../tags/catalog.js';
+import { verifyGitlabCompletion, type GitlabCompletionIdentity } from './completion-context.js';
 
 /**
  * The GitLab transport: the `glab` CLI, mirroring GhCliGitHubProvider
@@ -123,6 +124,8 @@ function compareTriples(a: readonly number[], b: readonly number[]): number {
 }
 
 export interface GlabProviderOptions {
+  /** Trusted runtime hints; every checks read proves them against authenticated platform facts. */
+  completion?: GitlabCompletionIdentity;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   maxBuffer?: number;
@@ -181,6 +184,7 @@ export class GlabProvider implements ForgeProvider {
   private readonly explicitGlabCommand: string | undefined;
   private readonly spawn: SpawnFn;
   private readonly requiredChecks: readonly string[] | undefined;
+  private readonly completion: GitlabCompletionIdentity | undefined;
 
   constructor(options: GlabProviderOptions = {}) {
     this.env = options.env;
@@ -191,6 +195,7 @@ export class GlabProvider implements ForgeProvider {
     this.explicitGlabCommand = options.glabCommand;
     this.spawn = options.spawnImpl ?? defaultSpawn;
     this.requiredChecks = options.requiredChecks;
+    this.completion = options.completion;
   }
 
   /**
@@ -520,7 +525,19 @@ export class GlabProvider implements ForgeProvider {
     if (pipeline === null || pipeline.status === null) {
       return fail('glab_transport', 'GitLab did not report the MR head pipeline status required for merge.');
     }
-    const checksEv = await this.collectMergePipelineChecks(pipeline);
+    let completion: { projectId: number; pipelineId: number } | undefined;
+    if (this.completion !== undefined) {
+      if (this.completion.pr !== pr || this.completion.headSha !== headSha || this.completion.sourcePipelineId !== pipeline.id || this.completion.projectId !== pipeline.projectId) {
+        return fail('gitlab_completion_unverified', 'The completion context differs from the current MR head pipeline.');
+      }
+      const proof = await verifyGitlabCompletion(repo, this.completion, {
+        api: (path) => this.runApi(path),
+        list: (path) => this.paginateList((page) => `${path}?per_page=${LIST_PAGE_SIZE}&page=${page}`, 'completion-evidence'),
+      });
+      if (!proof.ok) return proof;
+      completion = proof.value;
+    }
+    const checksEv = await this.collectMergePipelineChecks(pipeline, completion);
     if (!checksEv.ok) return checksEv;
     return ok({ headSha, checks: checksEv.value, pipelineStatus: pipeline.status });
   }
@@ -537,7 +554,7 @@ export class GlabProvider implements ForgeProvider {
   }
 
   /** All jobs in the linked pipeline graph, bounded and namespaced by identity. */
-  private async collectMergePipelineChecks(root: { id: number; projectId: number }): Promise<Evidence<CheckRunInfo[]>> {
+  private async collectMergePipelineChecks(root: { id: number; projectId: number }, completion?: { projectId: number; pipelineId: number }): Promise<Evidence<CheckRunInfo[]>> {
     const queue: PipelineRef[] = [{ id: root.id, project: String(root.projectId), projectId: root.projectId }];
     const visited = new Set<string>();
     const checks: CheckRunInfo[] = [];
@@ -563,6 +580,9 @@ export class GlabProvider implements ForgeProvider {
       }
       const key = `${projectId}/${ref.id}`;
       if (visited.has(key)) continue;
+      // This exact independently proven continuation cannot wait for itself.
+      // Root status, the bridge job, and every other downstream remain required.
+      if (!isRoot && completion !== undefined && projectId === completion.projectId && ref.id === completion.pipelineId) continue;
       if (visited.size >= MAX_MERGE_PIPELINES) {
         return evidenceTruncated(`The downstream pipeline graph exceeds the ${MAX_MERGE_PIPELINES}-pipeline merge evidence bound.`);
       }

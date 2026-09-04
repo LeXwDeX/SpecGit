@@ -96,7 +96,8 @@ export async function runRemoteDelivery(
       if (!failures.ok) return blocked(failures.code, failures.message);
       if (failures.value.length > 0) {
         const repairs = await ensureFailureIssues({ repo: input.repo, pr: current.value,
-          issueNumbers: input.record.issues, failures: failures.value, policy: approved.value.policy }, ctx.gh);
+          delivery: input.record.delivery, issueNumbers: input.record.issues,
+          failures: failures.value, policy: approved.value.policy }, ctx.gh);
         if (!repairs.ok) return blocked(repairs.code, repairs.message);
         return { ...outcome, exit: 1, ...(outcome.automation ? { automation: { ...outcome.automation, status: 'blocked' } } : {}),
           errors: failures.value.map((failure) => ({ severity: 'error', ...failure })) };

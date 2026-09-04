@@ -36,6 +36,7 @@ describe('configured completion installation', () => {
     }
   });
   it.each(['github', 'gitlab'] as const)('installs %s completion only with configured authorization and refreshes by the same desired state', async (platform) => {
+    if (platform === 'gitlab') fs.writeFileSync(path.join(root, '.gitlab-ci.yml'), 'build:\n  script: echo business\n');
     const facts = makeGitFacts({ originUrl: platform === 'github' ? 'git@github.com:owner/repo.git' : 'git@gitlab.com:owner/repo.git' });
     const t = makeCtx({ root: ok(root), facts, gitWrites: { remoteDefaultBranch: () => ok('trunk') },
       parseRepoRef: (url) => parseRepoRef(url, { gitlabHost: 'gitlab.com' }),
