@@ -71,12 +71,13 @@ import {
   type InitOptions,
 } from './init-validation.js';
 import { persistGitlabHost, platformSelectionHuman, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
-import { selectWorkflowYaml } from './init-workflow.js';
+import { selectCompletionWorkflow, selectWorkflowYaml, validateGitlabCiConfig } from './init-workflow.js';
 import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
 import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
-import { resolveProjectRules } from './init-rules.js';
+import { resolveProjectRules, resolveRepairLabels } from './init-rules.js';
+import { buildGitlabRoutingSteps, GitlabRoutingError } from '../gitlab-routing.js';
 
 export type { InitOptions } from './init-validation.js';
 
@@ -177,8 +178,35 @@ export async function runInit(
     platformSelection.outcome.gitlabHost);
   if ('exit' in rules) return rules;
   const { language } = rules;
-  const automation = await resolveInitAutomation(options, ctx, root, language, interaction);
+  const automation = await resolveInitAutomation(options, ctx, root, language, interaction,
+    existingPolicy.ok ? existingPolicy.value : undefined);
   if ('exit' in automation) return automation;
+  const repair = await resolveRepairLabels(options, ctx, {
+    ...(existingPolicy.ok ? existingPolicy.value : {}), version: 1, required_checks: checks, language,
+    validation: rules.validation ?? (existingPolicy.ok ? existingPolicy.value.validation : undefined),
+    tags: rules.tags ?? (existingPolicy.ok ? existingPolicy.value.tags : undefined),
+    automation: automation.automation,
+  }, interaction, existingPolicy.ok ? existingPolicy.value.automation?.repair_labels : undefined);
+  if ('exit' in repair) return repair;
+  const completion = await selectCompletionWorkflow(ctx, root, platformSelection.outcome.mode, automation.automation.merge);
+  if (!completion.ok) {
+    return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(completion.code, completion.message,
+      completion.fix ? { fix: completion.fix } : {})] };
+  }
+  if (completion.value?.platform === 'gitlab') {
+    const configurationError = await validateGitlabCiConfig(ctx, root, platformSelection.outcome.gitlabHost);
+    if (configurationError !== null) return configurationError;
+  }
+  let routingSteps;
+  try {
+    routingSteps = await buildGitlabRoutingSteps(root, completion.value?.routingYaml ?? null);
+  } catch (error) {
+    return { exit: error instanceof GitlabRoutingError ? EXIT_USAGE : EXIT_UNKNOWN,
+      errors: [errorDiagnostic(error instanceof GitlabRoutingError ? error.code : 'gitlab_ci_unreadable',
+        error instanceof Error ? error.message : String(error), {
+          fix: 'Preserve the current CI files and resolve the reported include, path or ownership conflict before re-running init.',
+        })] };
+  }
 
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
   if (selection.warning !== undefined) warnings.push(selection.warning);
@@ -234,7 +262,7 @@ export async function runInit(
     human: platformSelectionHuman(platformSelection, text),
   };
   const gitlabMode = platform.outcome.mode === 'gitlab';
-  if (gitlabMode) {
+  if (gitlabMode && completion.value === null) {
     warnings.push({
       severity: 'warning',
       code: 'gitlab_harness_pending',
@@ -250,10 +278,12 @@ export async function runInit(
     checks,
     language,
     existingPolicy: existingPolicy.ok ? existingPolicy.value : undefined,
-    automation: automation.automation,
+    automation: repair.automation,
     validation: rules.validation,
     tags: rules.tags,
     workflowYaml: gitlabMode ? null : selection.yaml,
+    completion: completion.value,
+    routingSteps,
     writeIgnore: options.ignore !== false,
     warnings,
   });
@@ -317,7 +347,7 @@ export async function runInit(
     policy: written.policy,
     ignore: written.ignore,
     reconciled: written.reconciled,
-    template: gitlabMode ? 'gitlab-pending' : selection.template,
+    template: gitlabMode ? (completion.value === null ? 'gitlab-pending' : 'gitlab') : selection.template,
     warnings,
     protection,
     protectionHuman,

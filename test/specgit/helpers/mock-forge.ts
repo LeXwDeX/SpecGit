@@ -18,6 +18,7 @@ import type {
   IssueCommentCreation,
   IssueCreation,
   IssueFact,
+  IssueHistoryFact,
   LabelsAppliedFact,
   OpenIssueFact,
   PrCreation,
@@ -31,6 +32,7 @@ import type { TagSpec } from '../../../src/tags/catalog.js';
 
 export interface MockForgeFixtures {
   preflight?: Evidence<PreflightFact>;
+  ciConfigPath?: Evidence<string | null>;
   issues?: Record<number, Evidence<IssueFact>>;
   defaultIssue?: (n: number) => Evidence<IssueFact>;
   pr?: Evidence<PrFact>;
@@ -55,6 +57,8 @@ export interface MockForgeFixtures {
   enableRepoAutomerge?: Evidence<RepoAutomergeFact>;
   openIssueNumbers?: Evidence<number[]>;
   openIssues?: Evidence<OpenIssueFact[]>;
+  issueHistory?: (query: string) => Evidence<IssueHistoryFact[]>;
+  issuePullRequests?: (issue: number) => Evidence<PrFact[]>;
   /** #330: the repository's label pool as names. */
   repoLabels?: (repo: RepoRef) => Evidence<RepoLabelsFact>;
   /** #330: seed specs the ensure call receives; result echoes them. */
@@ -86,6 +90,11 @@ export class MockForgeProvider implements ForgeProvider {
     );
   }
 
+  async getCiConfigPath(repo: RepoRef): Promise<Evidence<string | null>> {
+    this.calls.push(`getCiConfigPath:${formatRepo(repo)}`);
+    return this.fixtures.ciConfigPath ?? ok(null);
+  }
+
   async getOpenIssueNumbers(repo: RepoRef): Promise<Evidence<number[]>> {
     this.calls.push(`getOpenIssueNumbers:${formatRepo(repo)}`);
     return this.fixtures.openIssueNumbers ?? ok([]);
@@ -94,6 +103,16 @@ export class MockForgeProvider implements ForgeProvider {
   async getOpenIssues(repo: RepoRef): Promise<Evidence<OpenIssueFact[]>> {
     this.calls.push(`getOpenIssues:${formatRepo(repo)}`);
     return this.fixtures.openIssues ?? ok([]);
+  }
+
+  async searchIssueHistory(repo: RepoRef, query: string): Promise<Evidence<IssueHistoryFact[]>> {
+    this.calls.push(`searchIssueHistory:${formatRepo(repo)}:${query}`);
+    return this.fixtures.issueHistory?.(query) ?? ok([]);
+  }
+
+  async listIssuePullRequests(repo: RepoRef, issue: number): Promise<Evidence<PrFact[]>> {
+    this.calls.push(`listIssuePullRequests:${formatRepo(repo)}#${issue}`);
+    return this.fixtures.issuePullRequests?.(issue) ?? ok([]);
   }
 
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {

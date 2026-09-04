@@ -18,6 +18,7 @@ import type {
   IssueCreation,
   IssueCommentCreation,
   IssueFact,
+  IssueHistoryFact,
   LabelsAppliedFact,
   MergeChecksFact,
   OpenIssueFact,
@@ -29,6 +30,7 @@ import type {
   RepoLabelsFact,
 } from '../../github/port.js';
 import type { TagSpec } from '../../tags/catalog.js';
+import { verifyGitlabCompletion, type GitlabCompletionIdentity } from './completion-context.js';
 
 /**
  * The GitLab transport: the `glab` CLI, mirroring GhCliGitHubProvider
@@ -122,6 +124,8 @@ function compareTriples(a: readonly number[], b: readonly number[]): number {
 }
 
 export interface GlabProviderOptions {
+  /** Trusted runtime hints; every checks read proves them against authenticated platform facts. */
+  completion?: GitlabCompletionIdentity;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   maxBuffer?: number;
@@ -180,6 +184,7 @@ export class GlabProvider implements ForgeProvider {
   private readonly explicitGlabCommand: string | undefined;
   private readonly spawn: SpawnFn;
   private readonly requiredChecks: readonly string[] | undefined;
+  private readonly completion: GitlabCompletionIdentity | undefined;
 
   constructor(options: GlabProviderOptions = {}) {
     this.env = options.env;
@@ -190,6 +195,7 @@ export class GlabProvider implements ForgeProvider {
     this.explicitGlabCommand = options.glabCommand;
     this.spawn = options.spawnImpl ?? defaultSpawn;
     this.requiredChecks = options.requiredChecks;
+    this.completion = options.completion;
   }
 
   /**
@@ -288,7 +294,7 @@ export class GlabProvider implements ForgeProvider {
     if (!result.ok) {
       return result;
     }
-    const parsed = result.value as { iid?: unknown; state?: unknown; title?: unknown; labels?: unknown } | null;
+    const parsed = result.value as { iid?: unknown; state?: unknown; title?: unknown; labels?: unknown; description?: unknown } | null;
     if (parsed === null || typeof parsed !== 'object' || typeof parsed.iid !== 'number' || parsed.iid !== n || (parsed.state !== 'opened' && parsed.state !== 'closed')) {
       return fail('glab_transport', 'GitLab returned an unexpected issue payload.');
     }
@@ -299,6 +305,7 @@ export class GlabProvider implements ForgeProvider {
       // issues API never surfaces a merge request.
       pullRequest: false,
       ...(typeof parsed.title === 'string' && parsed.title ? { title: parsed.title } : {}),
+      ...(typeof parsed.description === 'string' ? { body: parsed.description } : parsed.description === null ? { body: '' } : {}),
       ...(Array.isArray(parsed.labels) && parsed.labels.every((label): label is string => typeof label === 'string')
         ? { labels: parsed.labels } : {}),
     });
@@ -345,11 +352,63 @@ export class GlabProvider implements ForgeProvider {
     return ok(issues.value.map((fact) => fact.number));
   }
 
-  /**
-   * MR fact through the state machine pinned at row 19: `opened`, `closed`,
-   * `locked`, `merged` — `locked` still accepts work, so it maps to `open`.
-   */
+  /** Search one bounded keyword window across both issue states. */
+  async searchIssueHistory(repo: RepoRef, query: string): Promise<Evidence<IssueHistoryFact[]>> {
+    if (!/^[\p{L}\p{N} ]{1,160}$/u.test(query) || !query.trim()) {
+      return fail('issue_history_query_invalid', 'History queries must contain bounded plain keywords.');
+    }
+    const pages = await this.paginateList(
+      (page) => `projects/${this.projectPath(repo)}/issues?scope=all&state=all&search=${encodeURIComponent(query)}&in=title,description&per_page=${LIST_PAGE_SIZE}&page=${page}`,
+      'issue-history'
+    );
+    if (!pages.ok) return pages;
+    const issues = new Map<number, IssueHistoryFact>();
+    for (const item of pages.value) {
+      const row = item as { iid?: unknown; title?: unknown; description?: unknown; state?: unknown; web_url?: unknown } | null;
+      if (!row || typeof row.iid !== 'number' || !Number.isSafeInteger(row.iid) || row.iid <= 0 ||
+          typeof row.title !== 'string' || !row.title.trim() || (row.description !== null && typeof row.description !== 'string') ||
+          (row.state !== 'opened' && row.state !== 'closed') || typeof row.web_url !== 'string' ||
+          row.web_url !== `https://${this.hostname ?? GITLAB_SAAS_HOST}/${repo.owner}/${repo.repo}/-/issues/${row.iid}`) {
+        return fail('glab_transport', 'GitLab returned a malformed historical issue.');
+      }
+      issues.set(row.iid, { number: row.iid, title: row.title, body: row.description ?? '', state: row.state === 'opened' ? 'open' : 'closed', url: row.web_url });
+    }
+    return ok([...issues.values()]);
+  }
+
+  async listIssuePullRequests(repo: RepoRef, issue: number): Promise<Evidence<PrFact[]>> {
+    if (!Number.isSafeInteger(issue) || issue <= 0) return fail('issue_occupancy_unknown', 'A positive issue number is required.');
+    const related = await this.paginateList(
+      (page) => `projects/${this.projectPath(repo)}/issues/${issue}/related_merge_requests?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+      'issue-related merge requests'
+    );
+    if (!related.ok) return related;
+    const numbers = new Set<number>();
+    for (const item of related.value) {
+      const row = item as { iid?: unknown; web_url?: unknown } | null;
+      if (!row || typeof row.iid !== 'number' || !Number.isSafeInteger(row.iid) || row.iid <= 0 || typeof row.web_url !== 'string') return fail('glab_transport', 'GitLab omitted the related merge request identity.');
+      let url: URL;
+      try { url = new URL(row.web_url); } catch { return fail('glab_transport', 'GitLab returned an invalid related merge request URL.'); }
+      if (url.host !== (this.hostname ?? GITLAB_SAAS_HOST) || !/\/(?:-\/)?merge_requests\/\d+$/.test(url.pathname)) return fail('glab_transport', 'GitLab returned an unexpected related merge request URL.');
+      if (url.pathname.replace(/\/(?:-\/)?merge_requests\/\d+$/, '') !== `/${repo.owner}/${repo.repo}`) continue;
+      if (!url.pathname.endsWith(`/${row.iid}`)) return fail('glab_transport', 'GitLab returned conflicting merge request identity.');
+      numbers.add(row.iid);
+    }
+    const requests: PrFact[] = [];
+    for (const number of numbers) {
+      const current = await this.readPr(repo, number, true);
+      if (!current.ok) return current;
+      requests.push(current.value);
+    }
+    return ok(requests);
+  }
+
   async getPr(repo: RepoRef, pr: number | string): Promise<Evidence<PrFact>> {
+    return this.readPr(repo, pr);
+  }
+
+  /** Normalize the live MR state; occupancy additionally requires body evidence. */
+  private async readPr(repo: RepoRef, pr: number | string, requireBody = false): Promise<Evidence<PrFact>> {
     const ref = String(pr);
     if (!/^\d+$/.test(ref)) {
       return fail(
@@ -379,6 +438,7 @@ export class GlabProvider implements ForgeProvider {
       parsed === null || typeof parsed !== 'object' ||
       typeof parsed.iid !== 'number' || parsed.iid !== Number(ref) ||
       typeof parsed.draft !== 'boolean' ||
+      (requireBody && parsed.description !== null && typeof parsed.description !== 'string') ||
       (parsed.state !== 'opened' &&
         parsed.state !== 'closed' &&
         parsed.state !== 'locked' &&
@@ -465,13 +525,36 @@ export class GlabProvider implements ForgeProvider {
     if (pipeline === null || pipeline.status === null) {
       return fail('glab_transport', 'GitLab did not report the MR head pipeline status required for merge.');
     }
-    const checksEv = await this.collectMergePipelineChecks(pipeline);
+    let completion: { projectId: number; pipelineId: number } | undefined;
+    if (this.completion !== undefined) {
+      if (this.completion.pr !== pr || this.completion.headSha !== headSha || this.completion.sourcePipelineId !== pipeline.id || this.completion.projectId !== pipeline.projectId) {
+        return fail('gitlab_completion_unverified', 'The completion context differs from the current MR head pipeline.');
+      }
+      const proof = await verifyGitlabCompletion(repo, this.completion, {
+        api: (path) => this.runApi(path),
+        list: (path) => this.paginateList((page) => `${path}?per_page=${LIST_PAGE_SIZE}&page=${page}`, 'completion-evidence'),
+      });
+      if (!proof.ok) return proof;
+      completion = proof.value;
+    }
+    const checksEv = await this.collectMergePipelineChecks(pipeline, completion);
     if (!checksEv.ok) return checksEv;
     return ok({ headSha, checks: checksEv.value, pipelineStatus: pipeline.status });
   }
 
+  async getCiConfigPath(repo: RepoRef): Promise<Evidence<string | null>> {
+    const result = await this.runApi(`projects/${this.projectPath(repo)}`);
+    if (!result.ok) return result;
+    const project = result.value as { path_with_namespace?: unknown; ci_config_path?: unknown } | null;
+    if (project?.path_with_namespace !== `${repo.owner}/${repo.repo}` ||
+        (project.ci_config_path !== null && typeof project.ci_config_path !== 'string')) {
+      return fail('glab_transport', 'GitLab did not identify the requested project and its CI configuration path.');
+    }
+    return ok(project.ci_config_path);
+  }
+
   /** All jobs in the linked pipeline graph, bounded and namespaced by identity. */
-  private async collectMergePipelineChecks(root: { id: number; projectId: number }): Promise<Evidence<CheckRunInfo[]>> {
+  private async collectMergePipelineChecks(root: { id: number; projectId: number }, completion?: { projectId: number; pipelineId: number }): Promise<Evidence<CheckRunInfo[]>> {
     const queue: PipelineRef[] = [{ id: root.id, project: String(root.projectId), projectId: root.projectId }];
     const visited = new Set<string>();
     const checks: CheckRunInfo[] = [];
@@ -497,6 +580,9 @@ export class GlabProvider implements ForgeProvider {
       }
       const key = `${projectId}/${ref.id}`;
       if (visited.has(key)) continue;
+      // This exact independently proven continuation cannot wait for itself.
+      // Root status, the bridge job, and every other downstream remain required.
+      if (!isRoot && completion !== undefined && projectId === completion.projectId && ref.id === completion.pipelineId) continue;
       if (visited.size >= MAX_MERGE_PIPELINES) {
         return evidenceTruncated(`The downstream pipeline graph exceeds the ${MAX_MERGE_PIPELINES}-pipeline merge evidence bound.`);
       }

@@ -38,21 +38,16 @@ export async function runAccept(
     };
   }
 
-  const [record, policy] = await Promise.all([
-    ctx.record.readRecord(root.value),
-    ctx.record.readPolicy(root.value),
-  ]);
+  const record = await ctx.record.readRecord(root.value);
+  const resolution = await ctx.resolvePolicy(root.value, record);
+  const policy = resolution.ok ? { ok: true as const, value: resolution.value.policy } : resolution;
 
   const evaluated = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  if (resolution.ok) evaluated.evidence.policySource = {
+    kind: resolution.value.source, branch: resolution.value.branch, sha: resolution.value.sha,
+  };
   const automated = policy.ok && policy.value.automation?.merge === true;
-  const verdict = automated && evaluated.state === 'completed'
-    ? {
-        ...evaluated,
-        warnings: evaluated.warnings.map((warning) => warning.code === 'record_of_merged_delivery'
-          ? { ...warning, fix: 'Complete the configured issue-closure step before starting the next delivery.' }
-          : warning),
-      }
-    : evaluated;
+  const verdict = evaluated;
 
   // Success-path headline follows the policy language (#118); the
   // per-gate failure lines are diagnostic evidence and stay English.
@@ -77,11 +72,7 @@ export async function runAccept(
   const reasonFor = text.finishHandoffReasons();
   let nextActions: NextAction[] | undefined;
   if (verdict.classification === 'accepted') {
-    if (automated) {
-      nextActions = [{
-        code: 'delivery_merge', command: 'specgit pr --merge', reason: text.automationHandoffReason(),
-      }];
-    } else if (verdict.state === 'completed') {
+    if (verdict.state === 'completed') {
       nextActions = [
         {
           code: 'next_delivery',
@@ -89,6 +80,13 @@ export async function runAccept(
           reason: reasonFor['next_delivery'] ?? '',
         },
       ];
+    } else if (automated) {
+      nextActions = [{
+        code: 'delivery_merge', command: 'specgit pr --merge', reason: text.automationHandoffReason(),
+      }];
+    } else if (verdict.state === 'closure_pending') {
+      nextActions = [{ code: 'delivery_finalize', command: 'specgit finish --json',
+        reason: 'The pull request is merged. Verify that every bound issue is closed before starting another delivery.' }];
     } else if (verdict.evidence.pr !== null) {
       const facts = await ctx.git.facts(root.value).catch(() => null);
       let platform: RepoRef['platform'] | null = null;

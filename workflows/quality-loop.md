@@ -1,4 +1,4 @@
-# Quality Loop — REVIEW → DEBUG → FIX until clean, then merge, then release
+# Quality Loop — REVIEW → DEBUG → FIX until clean, then the authorized merge
 
 ```text
   fast rounds (per slice): REVIEW -> findings -> FIX -> targeted gates
@@ -17,8 +17,11 @@
 ```
 
 The pre-merge quality loop for a delivery branch. It nests inside
-[specgit-dev-loop.md](specgit-dev-loop.md): it starts where a slice's local
-gates go green and ends after the version is on npm.
+[specgit-dev-loop.md](specgit-dev-loop.md): it starts where a slice's applicable
+local gates go green and ends after the authorized merge. A package release
+continues only with explicit release intent. Local installation, upgrades and
+init/setup refreshes with no intended tracked delivery do not enter this loop.
+[CI scope](../docs/ci-scope.md) defines the required verification per change class.
 
 **Standing principle ([NOTES](../NOTES.md)): the harness is the
 product.** Every review weighs findings in this order — product usage
@@ -31,9 +34,9 @@ defence mounted at a lower one.
 
 An **event**, never a schedule. Any one of these fires a loop run:
 
-1. New commits landed on the delivery branch AND the local gate set is
-   green (`pnpm exec tsc --noEmit`, `pnpm run typecheck:test`,
-   `pnpm run lint`, `pnpm test`). CI is not waited for — the review
+1. New commits landed on the delivery branch AND the applicable local gate set
+   is green: product checks for product changes, lightweight validation for
+   metadata-only changes. CI is not waited for — the review
    axes need only the diff; CI green is a merge gate, not a review
    gate.
 2. CI red after a push (the DEBUG discipline below).
@@ -49,9 +52,10 @@ clean, no matter how many rounds ran:
 2. **Every judgement call dispositioned** — each is either fixed, or
    deferred with a one-line reason recorded in the PR body's
    `Deferred` section. Deferred is a decision, not an oversight.
-3. **Local gate set green** — build, both typechecks, lint, full
-   tests.
-4. **CI green on all platforms** and `specgit finish` exits 0 — the
+3. **Applicable local gate set green** — product changes require build, both
+   typechecks, lint and full tests; metadata-only changes require the lightweight
+   checks in [CI scope](../docs/ci-scope.md).
+4. **Required CI green at the current PR head** and `specgit finish` exits 0 — the
    harness verdict is the outermost gate and is never bypassed or
    weakened to make it pass.
 
@@ -62,7 +66,7 @@ Two review tiers, in order:
 1. **Fast review** — a quick pass over the changes since the last
    review round (first round: all commits on the branch). Findings
    are fixed immediately, lightweight: direct edits, run the
-   affected tests, then the full local gate set before pushing, then
+   affected tests, then the applicable local gate set before pushing, then
    fast-review again. No TDD red-green ritual inside the loop — the
    delivery's own slices already proved the behaviour; the loop
    proves the changes didn't break their neighbours.
@@ -84,7 +88,7 @@ their judgements.
   The sub-agent verifies the diff serves the bound issue's WHY,
   reporting findings grouped by four layers, highest first:
   1. *Product usage* — does the change make the documented user
-     story truer? The sub-agent **runs the product**, not just
+     story truer? For product changes the sub-agent **runs the product**, not just
      reads: the README quick-start fragment touched by the diff,
      exercised through the built CLI (`node bin/specgit.js …`) in
      this repository's real environment. Boundary: no sandboxed
@@ -94,7 +98,10 @@ their judgements.
      **two pieces of evidence** — the documented promise
      (file:line) and the observed run (command + the output line
      that disagrees) — to count as hard; a single piece makes it a
-     judgement call.
+     judgement call. Metadata-only reviews inspect the relevant documents/data
+     and run their lightweight checks; they do not build the product to review
+     prose. Generated template source remains product code even when its output
+     is Markdown or a local hook.
   2. *Harness contract* — the eleven gates, exit-code semantics,
      fail-closed rules, the `--json` envelope. Weakening, bypassing,
      or reconfiguring the harness to make a verdict pass is never
@@ -154,13 +161,12 @@ a merge input, including Windows jobs.
    SHA, and confirms the platform merge before closing bound issues when
    configured. Existing user authorization needs no repeat approval.
 2. Automation defaults to no and requires the user's own yes during
-   `init --automation yes --merge-target main`; `init --force` permits a new
-   choice. Agents cannot answer yes for the user. Platform permissions and
+   `init --automation yes --merge-target main`; `init --force` preserves the choice unless explicitly changed. Agents cannot answer yes for the user. Platform permissions and
    protection remain binding. After the confirmed merge, the record on `main` is
    completed history (#351): the next `specgit issue` replaces it
    atomically — `unbind` is only for abandoning or resetting, never the
    post-merge step.
-3. An authorized release follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
+3. A release with explicit release intent follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
    (changesets): changeset PR → version PR → approve the workflow runs →
    merge → `npm view specgit version` confirms publication.
 
@@ -168,6 +174,12 @@ a merge input, including Windows jobs.
 
 One brief closes the run: rounds per tier, every finding with its
 disposition (fixed / deferred + reason, linked from the PR body),
-the `specgit finish` exit code, and the published version with its
-npm check. Fail-closed runs present the same brief with the
+the `specgit finish` exit code, and, only when publication was part of the
+authorized scope, the published version with its npm check. Fail-closed runs present the same brief with the
 unresolved findings at top.
+
+Terminal ready-PR CI or acceptance failures are tracked by repair issues, one
+per independently verifiable cause. Reuse an open repair issue for a recurring
+cause. Keep the original business issues open until the merged delivery is
+confirmed; a red check does not automatically abandon its branch or PR. Drafts,
+pending checks, and superseded heads do not create failure work.

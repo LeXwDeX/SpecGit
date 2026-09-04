@@ -37,6 +37,16 @@ describe('harnessWorkflowYaml', () => {
 });
 
 describe('managedPromptBlock', () => {
+  it('explains supplying validated bodies before bootstrap in both languages', () => {
+    for (const language of ['en', 'zh'] as const) {
+      const block = managedPromptBlock(language);
+      expect(block).toContain('--body-file <path>');
+      expect(block).toContain('--pr-body-file <path>');
+      expect(block).toContain('validation.bodies');
+      expect(block).toContain('required_sections');
+      expect(block).not.toMatch(/only body gate|正文里唯一的门槛/);
+    }
+  });
   it('en and zh are byte-stable snapshots framed by identical markers', () => {
     const en = managedPromptBlock('en');
     const zh = managedPromptBlock('zh');
@@ -142,7 +152,8 @@ describe('managedPromptBlock: start-of-delivery contract (#336)', () => {
   it('en binds the trigger to the decision to start and orders bootstrap-time fill', () => {
     const en = managedPromptBlock('en');
     expect(en).toMatch(/the FIRST action is\s+`specgit issue <type>: <title>/);
-    expect(en).toMatch(/before any file edit/);
+    expect(en).toMatch(/before tracked implementation edits/);
+    expect(en).toMatch(/Preparing temporary body files/);
     expect(en).toMatch(/`gh issue edit/);
     expect(en).toMatch(/then\s+implement/);
   });
@@ -151,7 +162,7 @@ describe('managedPromptBlock: start-of-delivery contract (#336)', () => {
     const zh = managedPromptBlock('zh');
     expect(zh).toMatch(/第一个动作[^`]*`specgit issue <type>: <标题>/);
     expect(zh).toMatch(/gh issue edit/);
-    expect(zh).toMatch(/再开始实现|然后再动手/);
+    expect(zh).toMatch(/再开始\s+实现|然后再动手/);
   });
 });
 
@@ -257,9 +268,13 @@ describe('agent surface: issue skill start contract (#336)', () => {
     expect(step).toBeDefined();
     const bytes = step?.merge(null) ?? '';
     expect(bytes).toMatch(/run this command FIRST/);
-    expect(bytes).toMatch(/before any file\s+edit/);
+    expect(bytes).toMatch(/before tracked\s+implementation edits/);
+    expect(bytes).toMatch(/Preparing temporary body files/);
     expect(bytes).toMatch(/`gh issue edit <n>`/);
     expect(bytes).toMatch(/then implement/);
+    expect(bytes).toContain('refreshes need no');
+    expect(bytes).toContain('intended for commit');
+    expect(bytes).toContain('Publishing requires explicit authorization');
   });
 });
 

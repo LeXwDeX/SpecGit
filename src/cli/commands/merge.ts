@@ -14,7 +14,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   const progress: PrAutomation = { status: 'blocked', merged: false, closedIssues: [] };
   const stop = (code: string, message: string, exit = EXIT_REJECTED, fix?: string): PrOutcome => ({
     exit,
-    ...(progress.pr !== undefined ? { state: 'bound' as const } : {}),
+    ...(progress.pr !== undefined ? { state: progress.merged ? 'closure_pending' as const : 'bound' as const } : {}),
     automation: {
       ...progress,
       status: exit === EXIT_UNKNOWN ? 'unknown' : progress.status,
@@ -27,9 +27,9 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
 
   const root = await ctx.discoverRoot(ctx.cwd);
   if (!root.ok) return unavailable(root);
-  const [record, policy] = await Promise.all([
-    ctx.record.readRecord(root.value), ctx.record.readPolicy(root.value),
-  ]);
+  const record = await ctx.record.readRecord(root.value);
+  const resolved = await ctx.resolvePolicy(root.value, record, { requireApproved: true });
+  const policy = resolved.ok ? { ok: true as const, value: resolved.value.policy } : resolved;
   if (!record.ok) return unavailable(record);
   if (!policy.ok) return unavailable(policy);
   const automation = policy.value.automation;
@@ -138,10 +138,15 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   }
   if (eligibility.executedCount === 0) return stop('automation_checks_missing', 'No executed CI/CD checks prove this head successful.');
 
-  const bindingUnchanged = async (): Promise<PrOutcome | null> => {
-    const [currentRecord, currentPolicy] = await Promise.all([
-      ctx.record.readRecord(root.value), ctx.record.readPolicy(root.value),
-    ]);
+  const bindingUnchanged = async (checkPolicy = true): Promise<PrOutcome | null> => {
+    const currentRecord = await ctx.record.readRecord(root.value);
+    if (!currentRecord.ok) return unavailable(currentRecord);
+    if (JSON.stringify(currentRecord.value) !== JSON.stringify(record.value)) {
+      return stop('automation_binding_changed', 'The delivery binding changed during automation. Retry with fresh evidence.');
+    }
+    if (!checkPolicy) return null;
+    const currentResolved = await ctx.resolvePolicy(root.value, currentRecord, { requireApproved: true });
+    const currentPolicy = currentResolved.ok ? { ok: true as const, value: currentResolved.value.policy } : currentResolved;
     if (!currentRecord.ok) return unavailable(currentRecord);
     if (!currentPolicy.ok) return unavailable(currentPolicy);
     if (JSON.stringify(currentRecord.value) !== JSON.stringify(record.value) ||
@@ -181,7 +186,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
     return stop('automation_merge_unconfirmed', 'The platform has not confirmed the pull request as merged.');
   }
   progress.merged = true;
-  const afterMergeChange = await bindingUnchanged();
+  const afterMergeChange = await bindingUnchanged(false);
   if (afterMergeChange) return afterMergeChange;
 
   if (automation.close_issues) {
@@ -192,7 +197,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
         return stop('automation_issue_mismatch', `Bound issue #${number} did not resolve to that issue.`);
       }
       if (issue.value.state === 'closed') continue;
-      const changed = await bindingUnchanged();
+      const changed = await bindingUnchanged(false);
       if (changed) return changed;
       const closed = await ctx.gh.closeIssue(repo.value, number);
       if (!closed.ok) return unavailable(closed);
@@ -201,6 +206,22 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
       }
       progress.closedIssues.push(number);
     }
+  }
+  // A successful mutation response is not a final state observation. Check
+  // every binding again, including issues the platform closed automatically.
+  const stillOpen: number[] = [];
+  for (const number of record.value.issues) {
+    const issue = await ctx.gh.getIssue(repo.value, number);
+    if (!issue.ok) return unavailable(issue);
+    if (issue.value.number !== number || issue.value.pullRequest) {
+      return stop('automation_issue_mismatch', `Bound issue #${number} did not resolve to that issue.`, EXIT_UNKNOWN);
+    }
+    if (issue.value.state !== 'closed') stillOpen.push(number);
+  }
+  if (stillOpen.length > 0) {
+    progress.status = 'pending';
+    return stop('automation_issue_closure_pending', `The pull request is merged; bound issues remain open: ${stillOpen.join(', ')}.`, EXIT_REJECTED,
+      'Retry the configured completion runner after restoring issue-closure access.');
   }
   progress.status = 'completed';
   const nextActions: NextAction[] = [{

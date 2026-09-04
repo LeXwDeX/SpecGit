@@ -178,13 +178,13 @@ export function createProgram(
     };
   };
 
-  const collect = (value: string, previous: string[]): string[] => [...previous, value];
+  const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
 
   program
     .command('init')
     .description('Create spec_git/policy.yaml with the required CI check names and generate the harness')
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
-    .option('--force', 'Regenerate the harness and ask about automation again; preserve other policy settings')
+    .option('--force', 'Refresh the harness while preserving configured automation, target and project rules')
     .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
     .option('--gitlab-host <hostname>', 'Declare a self-hosted GitLab host (bare hostname, or host:port for a non-default port, matching the origin)')
     .option('--language <lang>', 'Language of generated text: en | zh (default en; persisted in spec_git/policy.yaml)')
@@ -192,6 +192,7 @@ export function createProgram(
     .option('--title-check <yes|no>', 'Validate remote issue and PR titles against the project language')
     .option('--label-check <mode>', 'Issue label validation: off | kind | project')
     .option('--allowed-label <slug>', 'Allowed project label; repeatable, replaces the selected vocabulary', collect)
+    .option('--repair-label <slug>', 'Label for automatic repair issues; repeatable, replaces the repair mapping', collect)
     .option('--automation <yes|no>', 'Supply the user\'s automation answer: yes | no (default no)')
     .option('--merge-target <branch>', 'Target branch for configured merge automation')
     .option('--no-ignore', 'Skip the .gitignore block for the local delivery assets (.specgit.yaml, spec_git/)')
@@ -214,6 +215,8 @@ export function createProgram(
         ISSUE_TYPE_LIST
     )
     .argument('[titles...]', 'Issue titles to create (quoted) or existing issue numbers to reuse')
+    .option('--body-file <path>', 'Complete issue body; repeat once per title argument', (value: string, previous: string[]) => [...previous, value], [])
+    .option('--pr-body-file <path>', 'Complete body for a newly created PR/MR; preserves all bound closing references')
     .option('--json', 'Output as JSON')
     .option(
       '--delivery <slug>',

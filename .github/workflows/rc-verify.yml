@@ -8,8 +8,7 @@ name: RC Verify
 # PR-gated (a merged version PR) and OIDC-based (id-token + --provenance).
 
 on:
-  pull_request:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -29,6 +28,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -93,7 +93,7 @@ jobs:
       # Fork pull requests cannot be granted id-token: write, so the
       # provenance proof runs on same-repo PRs and manual dispatch only.
       - name: Prove OIDC provenance before any real publish
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.fork == false }}
+        if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.fork == false) }}
         run: |
           set -e
           # Audience probe: this runner can mint an npm-audience OIDC token.

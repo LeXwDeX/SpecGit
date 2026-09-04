@@ -46,6 +46,9 @@ export interface VerdictEvidence {
   issues: number[] | null;
   pr: number | null;
   prHead: string | null;
+  policySource?: { kind: 'approved' | 'adoption'; branch: string; sha: string };
+  /** Populated only from complete per-issue forge reads, never from a record claim. */
+  openIssues?: number[];
 }
 
 export interface EvaluateInput {
@@ -55,7 +58,7 @@ export interface EvaluateInput {
   git: Pick<GitPort, 'facts' | 'headContains'>;
   gh?: Pick<
     ForgeProvider,
-    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor'
+    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests'
   >;
   /** Declared self-hosted GitLab host (spec_git/providers.yaml), if any. */
   gitlabHost?: string;

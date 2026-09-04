@@ -75,7 +75,7 @@ function ghVersionRules() {
 function makeGh(prefix: string, rules: FakeGhRule[]) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   cleanup.push(dir);
-  return createFakeGh(dir, rules);
+  return createFakeGh(dir, [...rules, emptyTimelineRule(EXT_OWNER, EXT_REPO)]);
 }
 
 function makeXdg(prefix: string): string {
@@ -134,7 +134,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
       // Bootstrap, broken between steps: issues, branch, and the partial
       // record land; PR creation fails — exit 3, fail-closed.
       const ghBroken = makeGh('specgit-ext-noci-ghbroken-', [
-        { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+        { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues `,
           stdout: `{"number":%SEQ%,"html_url":"https://github.com/${EXT_OWNER}/${EXT_REPO}/issues/%SEQ%"}`,
@@ -186,7 +186,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
       // live (open, unmerged) → the resume converges, creating nothing.
       const ghResume = makeGh('specgit-ext-noci-ghresume-', [
         { match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues/11$`, stdout: JSON.stringify({ number: 11, state: 'open', title: bootstrapTitle }) },
-        { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+        { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/pulls/9$`,
           stdout: JSON.stringify({
@@ -395,7 +395,7 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
       const env = (gh: ReturnType<typeof createFakeGh>) => gh.env({ XDG_CONFIG_HOME: xdg });
 
       const ghBootstrap = makeGh('specgit-ext-wt-ghboot-', [
-        { match: '^api search/issues', stdout: JSON.stringify({ items: [] }) },
+        { match: '^api search/issues', stdout: JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }) },
         {
           match: `^api repos/${EXT_OWNER}/${EXT_REPO}/issues `,
           stdout: `{"number":%SEQ%,"html_url":"https://github.com/${EXT_OWNER}/${EXT_REPO}/issues/%SEQ%"}`,

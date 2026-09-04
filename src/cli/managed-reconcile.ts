@@ -85,6 +85,8 @@ export type ManagedStep =
       kind: 'write';
       path: string;
       mode: number;
+      /** Existing whole-file targets require proof of ownership before replacement. */
+      isOwned?: (existing: string) => boolean;
       /**
        * Pure resolver: current bytes (null when the file is absent) →
        * desired bytes. Returning null plans no write — the resolver's
@@ -336,6 +338,9 @@ async function planManaged(root: string, desired: DesiredManagedAssets): Promise
     try {
       if (step.kind === 'write') {
         const existing = await readIfExists(target);
+        if (existing !== null && step.isOwned !== undefined && !step.isOwned(existing)) {
+          throw new Error(`${step.path} is not provably SpecGit-owned; preserve or relocate the user file before retrying.`);
+        }
         const content = step.merge(existing);
         if (content === null) {
           continue;
@@ -464,6 +469,10 @@ export async function inspectManagedAssets(
     try {
       if (step.kind === 'write') {
         const existing = await readIfExists(target);
+        if (existing !== null && step.isOwned !== undefined && !step.isOwned(existing)) {
+          findings.push({ path: step.path, state: 'conflict', code: 'asset_conflict' });
+          continue;
+        }
         const content = step.merge(existing);
         if (content === null) {
           continue; // the resolver declined (an optional target): no claim

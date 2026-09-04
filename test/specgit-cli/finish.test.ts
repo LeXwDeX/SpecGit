@@ -50,7 +50,9 @@ describe('specgit finish: evaluator parity with accept', () => {
     });
     expect(await runCliWith(['node', 'specgit', 'finish', '--json'], t.ctx)).toBe(0);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.nextActions).toMatchObject([{ code: 'delivery_merge', command: 'specgit pr --merge' }]);
+    expect(envelope.nextActions).toMatchObject(state === 'completed'
+      ? [{ code: 'next_delivery', command: 'specgit issue "<type>: <title>"' }]
+      : [{ code: 'delivery_merge', command: 'specgit pr --merge' }]);
     expect(t.ghProvider.calls).toEqual([]);
     expect(t.recordPort.recordWrites).toEqual([]);
     expect(t.gitPort.pushCalls).toEqual([]);

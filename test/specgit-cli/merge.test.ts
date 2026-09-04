@@ -53,6 +53,22 @@ function mergeCtx(policy: Policy = samplePolicy({ automation })) {
 }
 
 describe('specgit pr --merge: configured delivery automation (#382)', () => {
+  it('does not complete when the close response succeeds but the issue remains open', async () => {
+    const t = mergeCtx();
+    t.gh.closeIssue.mockResolvedValue(ok({ closed: true }));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.state).toBe('closure_pending');
+    expect(result.automation?.merged).toBe(true);
+    expect(result.exit).not.toBe(0);
+  });
+
+  it('keeps an accepted merged delivery pending until every bound issue is closed', async () => {
+    const t = mergeCtx(samplePolicy({ automation: { ...automation, close_issues: false } }));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.state).toBe('closure_pending');
+    expect(result.automation?.status).toBe('pending');
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+  });
   it('refuses side effects without the policy opt-in', async () => {
     const t = mergeCtx(samplePolicy());
     const result = await runPr({ merge: true }, t.ctx);
@@ -288,6 +304,7 @@ describe('specgit pr --merge: configured delivery automation (#382)', () => {
 
   it('leaves issue closure to the platform when close_issues is disabled', async () => {
     const t = mergeCtx(samplePolicy({ automation: { ...automation, close_issues: false } }));
+    t.remote.issues.set(123, 'closed');
     expect((await runPr({ merge: true }, t.ctx)).exit).toBe(0);
     expect(t.gh.closeIssue).not.toHaveBeenCalled();
   });

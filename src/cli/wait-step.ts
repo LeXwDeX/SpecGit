@@ -28,11 +28,14 @@
 export type WaitTransport = 'rest' | 'gh';
 
 /** The step YAML, from `- name: Wait for sibling checks` through `EOF`. */
-export function waitStepYaml(transport: WaitTransport): string {
+export function waitStepYaml(
+  transport: WaitTransport,
+  cliDirectory = '${{ runner.temp }}/specgit-cli'
+): string {
   const ghComment =
     transport === 'gh' ? '\n        # All GitHub access goes through the authenticated gh CLI.' : '';
   const isolatedCliEnv = transport === 'gh'
-    ? '          SPECGIT_CLI_DIR: ${{ runner.temp }}/specgit-cli\n'
+    ? `          SPECGIT_CLI_DIR: ${cliDirectory}\n`
     : '';
   const header = `      - name: Wait for sibling checks
         # The verdict must see the OTHER required checks in a terminal
@@ -48,6 +51,7 @@ export function waitStepYaml(transport: WaitTransport): string {
           WAIT_REPO: \${{ github.repository }}
           WAIT_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
           WAIT_PR: \${{ github.event.pull_request.number || '' }}
+          WAIT_POLICY: \${{ runner.temp }}/specgit-policy.yaml
 ${isolatedCliEnv}        run: |
 `;
   return `${header}${waitStepScript(transport)}\n`;
@@ -71,11 +75,12 @@ export function waitStepScript(transport: WaitTransport): string {
           `            : await import('yaml');`,
         ]
       : [`          import { parse } from 'yaml';`]),
-    `          if (!existsSync('spec_git/policy.yaml')) {`,
+    `          const policyPath = process.env.WAIT_POLICY || 'spec_git/policy.yaml';`,
+    `          if (!existsSync(policyPath)) {`,
     `            console.error('spec_git/policy.yaml is absent at this head — an adoption PR carries no binding commit yet (expected once; merge it before enabling branch protection), and a delivery PR must carry it via specgit issue.');`,
     `            process.exit(1);`,
     `          }`,
-    `          const policy = parse(readFileSync('spec_git/policy.yaml', 'utf8'));`,
+    `          const policy = parse(readFileSync(policyPath, 'utf8'));`,
     `          const required = policy.required_checks ?? [];`,
     ...transportBlock(transport),
     `          const terminal = new Set(['completed']);`,
@@ -213,7 +218,7 @@ export function waitStepScript(transport: WaitTransport): string {
 /**
  * The transport seam: how one page of the check-runs listing is fetched
  * with bounded retry. REST (self template) reads the status codes; the
- * gh CLI (external template) surfaces HTTP failures as stderr text, so
+ * gh CLI (both current templates) surfaces HTTP failures as stderr text, so
  * transients are matched there.
  */
 function transportBlock(transport: WaitTransport): string[] {

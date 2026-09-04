@@ -14,6 +14,13 @@ metadata:
 The delivery bootstrap. One command binds the whole aggregate: N issues, one
 branch, one draft pull request, one record (`.specgit.yaml`).
 
+Local CLI installation, upgrades, and `init` / `setup` refreshes need no
+issue, PR, product build, or release when no product or shared-rule change is
+intended for commit. Review tracked diffs before choosing what to share.
+For intended deliveries, follow the host project's verification policy for
+the actual changed inputs; documentation may itself be a product input.
+Ignore rules are never CI exemptions. Publishing requires explicit authorization.
+
 ## Usage
 
 ```bash
@@ -55,15 +62,18 @@ New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf,
 ## Rules
 
 - Run it from the repository root; context comes from live git.
-- The trigger is the decision to start: the moment you begin turning the
-  discussed plan into changes, run this command FIRST — before any file
-  edit. Working without a binding is a contract violation, not a style
+- The trigger is the decision to deliver an intended tracked change:
+  when you begin implementing that delivery, run this command FIRST, before tracked
+  implementation edits. Preparing temporary body files belongs to bootstrap.
+  Working without a binding is a contract violation, not a style
   choice.
-- Immediately after bootstrap succeeds, fill each issue body it created
-  (Why / Scope / Approach / Acceptance) from the discussion with
-  `gh issue edit <n>`, then implement.
-- Fill in the PR scaffold sections as you deliver; placeholders are advisory,
-  never gates. Keep the closing references intact.
+- After bootstrap, verify each issue contains the discussed Why / Scope /
+  Approach / Acceptance. Fill missing content with `gh issue edit <n>` or
+  `glab issue update <n>`, preserve complete remote bodies, then implement.
+- With selected body rules, prepare complete content before creation using
+  `--body-file` and `--pr-body-file`. Otherwise fill the built-in scaffold
+  during delivery. Enabled content rules must pass; keep closing references
+  and existing remote edits intact.
 - The PR body is written once at creation; no SpecGit command edits it
   afterwards, and the repository's own PR template is never read.
 - If it fails mid-chain, re-run the same command — completed steps are

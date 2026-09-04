@@ -22,7 +22,7 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -42,7 +42,7 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 
 | Command | Role |
 | --- | --- |
-| `specgit init` | Public. Create the policy, generate the harness, ask the automation choice (yes/no, default no); `--force` regenerates and asks again. |
+| `specgit init` | Public. Create the policy, generate the harness, ask the automation choice (yes/no, default no); `--force` regenerates and preserves the saved choice unless explicitly changed. |
 | `specgit setup` | Public. Install agent entry points (`--tool opencode \| generic \| all`). |
 | `specgit issue` | Public. One-command delivery bootstrap; idempotent resume. |
 | `specgit pr` | Public. Repair the PR binding; `--merge` executes configured, guarded merge and issue closure. |
@@ -57,16 +57,17 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
 
 ## Optional merge and closure automation
 
-- Automation defaults to disabled. Interactive `init` and `init --force`
-  ask yes/no with no as the default; scripts may supply the user's answer
-  with `--automation yes|no`. Without a supplied answer, non-interactive
-  initialization records no. Agents cannot answer yes for the user.
+- Automation defaults to disabled. First interactive `init` asks yes/no
+  with no as the default; scripts may supply the user's answer with
+  `--automation yes|no`. First non-interactive initialization without an
+  answer records no. Ordinary `init --force` preserves the saved choice;
+  explicit automation options change it. Agents cannot answer yes for the user.
 - Policy `automation.merge: true` requires `target_branch`; enabling through
   init takes `--merge-target` or a proved remote default branch.
   `close_issues: true` additionally requires merge automation. Existing
   checks, language, ordering, vocabulary and validation settings survive
-  `init --force` unless explicitly replaced; automation follows the newly
-  answered choice. `--protect` does not enable
+  `init --force` unless explicitly replaced, including the saved automation
+  choice and target. `--protect` does not enable
   delivery automation.
 - `pr --merge` requires complete acceptance and all current-head CI/CD to
   pass, then submits the expected head SHA to the authenticated forge CLI.
@@ -78,6 +79,11 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
   abandons an unmerged request. Retries reconcile confirmed remote state.
   The JSON `automation` result distinguishes blocked, pending, unknown and
   completed outcomes. `finish` and `accept` remain read-only.
+- The trusted remote completion workflow continues from CI events using the
+  approved target policy. `pr --merge` provides a recovery path. Completion
+  requires a confirmed merge and all bound issues closed; merged work with
+  open issues remains `closure_pending`. A proposed policy cannot enable its
+  own automatic merge or weaken its own acceptance requirements.
 - Platforms atomically enforce the head SHA, but expose no equivalent
   target-branch compare-and-swap. SpecGit checks target and body before and
   after merge, stopping further actions on mismatch. Explicit issue closure
@@ -89,23 +95,30 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
 - Exit codes `0` (success/accepted) · `1` (rejected with complete evidence) · `2` (usage) · `3` (fail-closed unknown). `1` vs `3` is contractual.
 - `130` is the single **interruption exception**: Ctrl-C during an interactive prompt prints `Interrupted.` to stderr, emits no JSON envelope, and exits 130. This is documented, deterministic behavior — automation treats it as "interrupted, no verdict".
 - With `--json`, stdout carries **exactly one** valid JSON document (the envelope in [cli.md](cli.md#json-envelope)); every human-readable line goes to stderr. The `130` path above is the only exception.
-- Environment inputs: `SPECGIT_GH` / `SPECGIT_GH_TIMEOUT_MS` (path to and per-call timeout for the `gh` executable, default `15000` ms) and the `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` mirror pair, plus hook-only `SPECGIT_GUARD_BUDGET_S` (seconds — the generated merge-guard hook's verdict budget; the CLI never reads it), plus standard `NO_COLOR`/`CI`. No tokens, no telemetry.
+- Public CLI environment inputs: `SPECGIT_GH` / `SPECGIT_GH_TIMEOUT_MS` (path to and per-call timeout for the `gh` executable, default `15000` ms) and the `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` mirror pair, plus hook-only `SPECGIT_GUARD_BUDGET_S` (seconds — the generated merge-guard hook's verdict budget; the CLI never reads it), plus standard `NO_COLOR`/`CI`. The internal remote runner receives workflow identity inputs from generated workflows; these are not additional public CLI settings. No tokens in SpecGit state and no telemetry.
 
 ## State and assets
 
 Three tiers, nothing else (normative table: [reference.md](reference.md#state-and-assets)):
 
 1. **Authoritative delivery files** — `spec_git/policy.yaml`, `.specgit.yaml`, and the optional `spec_git/providers.yaml`. Human-owned. Shielded from everyday commits by the managed `.gitignore` block `init` writes by default (#292); the bootstrap's binding commit force-carries them into git on the delivery branch (`--no-ignore` keeps the classic committed model).
-2. **Derived committed harness** — `.github/workflows/specgit-accept.yml` and the managed block in `AGENTS.md`/`CLAUDE.md`. Generated, regenerable (`init --force` repairs drift).
+2. **Derived committed harness** — `.github/workflows/specgit-accept.yml`, the managed block in `AGENTS.md`/`CLAUDE.md`, and the optional trusted completion workflow. GitLab automation adds its managed root router and separate completion configuration while preserving the business CI bytes; see [GitLab support](gitlab-support.md). Generated assets are regenerable (`init --force` repairs drift).
 3. **Local integration assets** — guard hooks (`.opencode/hooks.json` entry, `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`) and `setup` entry points. Merged non-destructively into your existing wiring.
 
 Verdicts and delivery states are derived per invocation and never persisted.
+
+Local CLI installation, upgrade and init/setup refresh do not require an issue,
+PR, product build or release when no tracked product or shared-rule change is
+intended. Review tracked diffs before sharing them. Local entry-point drift is
+reported as a maintenance warning; unusable remote acceptance assets still
+block bootstrap. [CI scope](ci-scope.md) defines applicable verification;
+ignore rules never grant CI exemptions.
 
 ## Evaluation semantics
 
 - Eleven ordered gates: record → policy → completeness → context → origin → provider → issues → sequence → pr → closing → checks ([gate table](reference.md#gates)).
 - **Transient semantics:** `checks_pending` is `factual` and exits `1` — a complete verdict saying "CI has not finished". It is transient and retryable: wait, re-run `specgit finish`. It is never reclassified, never exit `3`.
-- Acceptance is fail-closed: ungatherable evidence ⇒ `unknown` (exit 3), never `accepted`. A delivery is done **iff** `specgit finish` exits `0`.
+- Acceptance is fail-closed: ungatherable evidence ⇒ `unknown` (exit 3), never `accepted`. `specgit finish` exit `0` means accepted. A delivery is completed only when its merge and every bound issue closure are confirmed.
 - **Fail-closed has two branches** (#120): fail closed on **errors** (evidence cannot be gathered ⇒ `unknown`) and fail closed on **silent incompleteness** — every list-shaped evidence input (open issues, check runs) is either paginated to exhaustion or signals truncation, and a truncation signal degrades the verdict to `unknown` (`evidence_truncated`, exit 3), never a complete-evidence exit `1`. A truncated list is not evidence.
 
 ## Compatibility

@@ -20,7 +20,7 @@ The delivery flow at a glance:
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
-        |-- exit 0 --> merge: done (exit 0 is the only done)
+        |-- exit 0 --> accepted → merge → confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
         '-- exit 3 --> fix the environment first (specgit doctor)
 ```
@@ -146,17 +146,87 @@ requires a terminal and cannot be combined with `--json`. Ordinary `init --force
 preserves existing rules and vocabulary unless the corresponding options replace
 them. Old policies without `validation` remain valid and unenforced.
 
+## Selected content templates
+
+Templates are inline policy data, so approved-policy evidence includes their
+exact content rules. For example:
+
+```yaml
+validation:
+  titles: true
+  labels: kind
+  bodies: true
+templates:
+  issue:
+    title: "fix: {{summary}}"
+    body: "## Why\n{{body}}"
+    required_sections: [Why]
+  pr:
+    body: "## Evidence\n{{body}}"
+    required_sections: [Evidence]
+```
+
+Supported variables are `title`, `summary` (without its typed prefix), `body`,
+`delivery`, and `issues`. Unknown variables are usage errors; supplied content
+is not recursively expanded. Repeat `--body-file <path>` once per title argument;
+numeric reuse retains the remote issue body. `--pr-body-file <path>` supplies
+the new PR/MR content. Resume preserves existing remote bodies.
+
+Content checks require nonempty H2 sections and reject known TODO/TBD/scaffold
+placeholders. Semantic adequacy belongs to review. Missing body evidence means
+exit 3; known incomplete content means exit 1 at acceptance or exit 2 during
+creation. Legacy policies retain advisory scaffolds. Refresh preserves templates
+and body rules.
+
+## Approved rules and completion
+
+Acceptance resolves the actual target branch's current policy through Git and
+the authenticated forge. Candidate policy cannot weaken its own required checks,
+change its permitted target, or enable its own automatic merge. First adoption
+may validate the candidate only when target-policy absence is proved; automatic
+merge requires approved policy. Missing Git objects remain unknown evidence.
+
+`finish` is read-only: exit 0 means accepted. Completion additionally requires
+proven merged lineage and all bound issues confirmed closed. Merged delivery
+with open issues reports `closure_pending`.
+
+After merging a policy-changing PR, same-run closure uses the policy approved
+before merge. Cross-process recovery currently proves that policy only from a
+two-parent merge whose second parent matches the platform PR head. Squash,
+rebase and fast-forward recovery without unique evidence returns
+`policy_history_unavailable`; it cannot invent historical authorization.
+
+Terminal failures on a ready PR/MR create repair issues for independent causes;
+recurring unresolved causes reuse the repair issue. Drafts, pending checks and
+superseded heads do not create repair issues. Original business issues remain
+open until delivery is confirmed.
+
+Repair labels use the saved `automation.repair_labels` selection. Without one,
+the built-in `kind::fix` is used when permitted, or the sole project tag when
+the vocabulary has only one choice. With multiple project choices, select the
+repair labels explicitly through repeatable `--repair-label <name>` options or
+interactive initialization. The selection must obey project label rules;
+SpecGit never expands the project vocabulary to create a repair issue. Ordinary
+refresh preserves this mapping.
+
 ## `specgit init`
 
-Creates `spec_git/policy.yaml` (write-once; refuses to overwrite) and generates the delivery harness. Initialization is non-destructive:
+Creates `spec_git/policy.yaml` (write-once unless `--force`) and generates the
+delivery harness. Local initialization and refresh do not themselves start a
+delivery, product build, or package release. Review any tracked changes before
+choosing to share them; [CI scope](ci-scope.md) defines the required verification.
+The command installs SpecGit assets without rewriting the adopting project's
+business workflows, build configuration, or dependencies. It is not a local-only
+mode: the generated SpecGit workflow and shared agent files can be tracked.
 
-**Automation choice.** Interactive initialization always asks whether to enable
-automatic merge and issue closure: **yes/no, default no**. `init --force`
-asks again with the same no default, so the user can later choose yes or
-revoke an earlier choice. Agents must present this choice to the user and
-cannot supply yes themselves. Scripts may pass the user's answer as
-`--automation yes|no`; non-interactive init without an answer writes disabled
-automation and explains that decision on stderr. JSON stdout remains one document.
+The write and preservation rules are:
+
+**Automation choice.** First interactive initialization asks whether to enable
+merge and issue closure: **yes/no, default no**. Ordinary `init --force` preserves
+the saved choice, target and closure setting. Explicit `--automation yes|no`
+changes it. Agents cannot answer yes for the user. First non-interactive init
+without an answer leaves automation disabled and explains that choice on stderr.
+JSON stdout remains one document.
 
 With yes, `--merge-target <branch>` sets the permitted destination. Without
 that flag, init requires evidence of the remote default branch; it never
@@ -172,11 +242,11 @@ automation:
 With no, both booleans are false. Old policies without `automation` remain
 valid and disabled. A forced initialization preserves the existing required
 checks, language, tags, validation and ordering unless their corresponding options replace
-them; it always applies the newly answered automation choice.
+them; automation changes only when explicitly requested.
 
 - **Validation before mutation.** Every check that can reject the run — flag validation, `--gitlab-host` validation, `policy_exists`, and a root-writability preflight — happens before any filesystem or remote change. A rejected init leaves the repository byte-identical (no probes, no writes).
 - **Error-atomic local writes (#62/#305).** The harness write, the policy write, and the managed `.gitignore` region run inside ONE reversible transaction: all targets are computed first, every mutation is snapshotted (bytes, mode, and symlink identity), and if any step fails mid-sequence every prior local mutation is rolled back — including a `spec_git/providers.yaml` declaration persisted earlier in the same run (directories the run created are removed too, so the tree — not just the files — round-trips) — and init exits 3. A failed upgrade never leaves a mixed-version tree, and never a silent one either: a pre-run state that cannot be read, including a dangling symlink, fails before any mutation (`providers_snapshot_failed`), and a compensation that cannot complete is reported alongside the triggering failure (`providers_restore_failed`).
-- **Hooks are merged, never overwritten.** An existing `.opencode/hooks.json` keeps user entries, matchers, and unknown keys; the SpecGit guard gets its own entry. Unparseable JSON or a malformed `PreToolUse` collection is preserved with `hooks_json_unmerged`. For a shell `pre-push` hook, the managed guard runs before the user's code, with push refs buffered and replayed so both receive the same input; the original script's exit behavior is preserved. Unsupported non-shell hooks cause init to refuse before local writes. The hook installs into the directory `git rev-parse --git-path hooks` resolves, including linked worktrees and `core.hooksPath` (husky/lefthook).
+- **Hooks are merged, never overwritten.** An existing `.opencode/hooks.json` keeps user entries, matchers, and unknown keys; the SpecGit guard gets its own entry. Unparseable JSON or a malformed `PreToolUse` collection is preserved with `hooks_json_unmerged`. For a shell `pre-push` hook, the managed guard runs before the user's code, with push refs buffered and replayed so both receive the same input; the original script's exit behavior is preserved. Unsupported non-shell hooks cause init to refuse before local writes. The hook installs only into a physical path owned by this repository or its common Git directory. External shared directories and symlink escapes are skipped with `git_hooks_external`; other safe assets continue.
 - **Re-init semantics — version-upgrade convergence (#305).** Running `init` again with an existing policy exits 2 (`policy_exists`) having written nothing and probed nothing; `specgit init --force` is the supported upgrade operation: it converges the repository to the running version's complete desired init-owned asset set. The policy is rebuilt, the managed block region is replaced, drift in generated artifacts is repaired, an existing managed `.gitignore` region is reconciled to the current entry set (entries a newer version requires appear inside the region; unrelated rules outside it are preserved), and obsolete SpecGit-owned assets are REMOVED — for example, a refresh that declares GitLab removes the old SpecGit-generated GitHub acceptance workflow. Removal happens only when SpecGit ownership is proven by the asset's content (the acceptance-workflow markers); a file at a managed path that does not prove ownership is preserved byte-identically and reported. The `--json` envelope carries the decisions as `reconciled: { created, updated, removed, preserved }`; a converged re-run reports empty lists and touches nothing.
 - **Required-check selection on upgrade — preserve vs explicit replace (#310).** A no-argument `init --force` is a version upgrade of the generated assets, not a policy re-birth: a valid existing policy's `required_checks` and `language` are PRESERVED exactly (names and order), because auto-detection is a suggestion and must never silently replace a working policy — detection reading local CI files can produce a different or only partly provable set. The run warns `checks_preserved` and still rebuilds the versioned harness/config/ignore assets. The one intentional replacement path is explicit: `init --force --required-check <name>` (repeatable) fully replaces the list with exactly the names given. `--no-detect` refuses guessing, not preserving — with an existing policy it still upgrades by preservation; without one it keeps demanding explicit names (`required_check_required`).
 - **Local-asset shielding (#292).** By default `init` maintains a managed, idempotent region in the root `.gitignore` that shields the local delivery assets (`/.specgit.yaml`, `/spec_git/`), so record rewrites and policy regens never leak into unrelated commits. The region is delimited by `# >>> specgit: local delivery assets … >>>` / `# <<< … <<<` markers and reconciled on every init (an older single-marker region, or a damaged region that lost its end marker, is upgraded in place by consuming only the marker and the entry lines SpecGit knows it wrote — a user rule glued directly beneath keeps its bytes and position); content outside the region is preserved byte-for-byte, and a file that already lists every current entry without any marker is left untouched (never duplicated). Reported in the envelope as `ignore: { path, entries, created }`. `.gitignore` only hides **untracked** files — the bootstrap's own binding commit force-carries the record (and, when present, the policy and providers files) into git on the delivery branch, which is where the CI verdict reads them; repositories that prefer the classic committed model pass `--no-ignore`.
@@ -184,7 +254,8 @@ them; it always applies the newly answered automation choice.
 
 Artifacts:
 
-- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance**. In the self template it runs the local build and `node bin/specgit.js finish --json`; in the external template it installs the pinned published CLI under `$RUNNER_TEMP/specgit-cli` with `npm install --prefix`, then runs that installation's `bin/specgit.js finish --json` directly. Installation and wait-step dependencies are isolated from the adopting project's package manifest, workspace, and lifecycle scripts. Both wait for sibling checks to reach a terminal state first (the self template polls the check-runs REST API with the workflow's `GITHUB_TOKEN`; the external template shells out to the authenticated `gh` CLI). The workflow is never listed in `policy.required_checks` (self-deadlock avoidance).
+- `.github/workflows/specgit-accept.yml` — the job **SpecGit Acceptance**. This product repository classifies the diff before selecting product build or metadata evaluation. Metadata uses a compatible pinned published CLI without product compilation. The external template installs its pinned published CLI in an isolated prefix. Both wait for approved policy's checks at the current PR head and reviewability boundary, then run `finish --json`. The acceptance job cannot list itself in `required_checks`. See [CI scope](ci-scope.md) for runtime compatibility and verification details.
+- With explicitly enabled automation, `.github/workflows/specgit-complete.yml` is a separate trusted remote executor. It validates request identity, current head, approved target rules and all current CI before merge, then confirms bound issue closure. It never executes PR source with write credentials. GitLab completion also requires a safe remote CI entry; generation alone does not establish automatic execution.
 - a managed prompt block `<!-- specgit:block:start --> … <!-- specgit:block:end -->` injected into `AGENTS.md` (created if missing) and `CLAUDE.md` (only if present). A harness rewrite replaces only the block region.
 
 ```bash
@@ -255,11 +326,17 @@ The one-command bootstrap: create/reuse N issues (one issue = one independently 
 
 Before any forge contact, a fast local probe (#339) compares the repository's generated harness assets (managed block, hooks, workflow, entry points) against the bytes the running CLI would generate today. Proven drift — a stale or conflicting asset, or a partially present harness — refuses the bootstrap with `harness_stale` (exit 2) naming the drifted surface's own repair (`specgit init --force` for the init surface, `specgit setup --tool <tool>` for entry-point drift; `specgit init` when no policy exists yet). A repository with no generated assets yet is never stale — the fresh-adopt flow proceeds unchanged — and an uninspectable environment never blocks (status and doctor own drift visibility). The gate is read-only, local-only, and rides no network.
 
-The scaffold is a pure function of the bound issues: the same binding always renders the identical body, and the renderer reads none of the adopting repository's files — the repository keeps full ownership of its own pull-request templates (an explicit body means GitHub never applies them). The closing references come first, so a later edit cannot hide them; the section placeholders are advisory and add no gate. The body is written exactly once, at draft creation: resume and `specgit pr` repair bind or adopt the existing PR and never edit its body, so user edits survive every re-run.
+The selected `policy.templates.pr` takes precedence over the built-in scaffold.
+Template text is explicit shared policy; unrelated repository template files are
+not silently loaded. `--pr-body-file` supplies content for the selected template.
+Every bound issue receives a closing reference. Without content validation the
+default section hints remain advisory. With `validation.bodies` or selected
+`required_sections`, missing or placeholder content is rejected. Creation writes
+the body once; resume and PR repair preserve remote edits.
 
 Resume matches the arguments onto the record positionally, split by record completeness. A **partial** record (issues recorded, no PR yet) continues issue creation from the first unconsumed argument — numeric arguments for consumed positions must match the bound issues, and title arguments must match their current live titles. The same identity rule applies to complete records; a different title is `issue_resume_drift` (exit 2), and an unavailable title is unknown evidence (exit 3). After a remote title rename, resume with no arguments or issue numbers. The recorded branch remains authoritative during partial resume: adding a differently typed next issue never renames or recreates the delivery branch. A **complete** record (PR bound, PR live) is a finished bootstrap: re-running with no arguments or with the original arguments is a healing no-op (commit/push only), while **more arguments than bound issues is drift** — `issue_resume_drift`, exit 2, refused with zero side effects (no issue or PR probes or creates, `.specgit.yaml` left byte-identical). Fewer arguments than bound issues, and numeric arguments not among the bound issues, are drift on any record. A record whose PR already **merged** is completed history, not an active delivery, and its lifecycle ends there: **no-args resume is refused** — `issue_delivery_merged`, exit 2, zero git side effects (the branch GitHub deleted on merge is never re-created or re-pushed) — while **replacement arguments re-bootstrap**: they are validated first, then the first successful new binding write atomically replaces the completed record. Failures before that write preserve completed history; later failures retain the new partial record for resume. The mergedness probe itself fails closed: if the PR fact cannot be gathered, the command exits 3 with the provider error and keeps the record — it never guesses "not merged" (#75).
 
-Success hands off (#361): the `--json` envelope carries `urls` (every bound issue and the draft PR, platform-dialect web links) and `nextActions` — `issue_bodies` (fill each Why / Scope / Approach / Acceptance), `pr_brief` (fill the scaffold sections; the `Closes #n` lines are the only body gate), `pr_ready` (`gh pr ready <n>` / `glab mr update <n> --ready` — a draft always fails the verdict). Human output renders the short `Next:` form.
+Success hands off (#361): the `--json` envelope carries `urls` (every bound issue and the draft PR, platform-dialect web links) and `nextActions` — `issue_bodies` (fill each Why / Scope / Approach / Acceptance), `pr_brief` (fill the scaffold sections; closing references and enabled content rules must pass), `pr_ready` (`gh pr ready <n>` / `glab mr update <n> --ready` — a draft always fails the verdict). Human output renders the short `Next:` form.
 
 ```bash
 specgit issue "feat: add login" "security: harden the session model"   # two new issues, one delivery
@@ -268,9 +345,16 @@ specgit issue "feat: 添加登录" --delivery add-login           # non-ASCII ti
 specgit issue                                                 # resume an incomplete bootstrap (no args + no record → exit 2; no args + merged record → exit 2, issue_delivery_merged)
 ```
 
-Each positional argument is a quoted title (a new issue is created from a required/optional template) or a pure number (an existing issue is reused). Every new title must start with `<type>: ` where `<type>` is validated against a fixed whitelist (`feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `style`, `build`, `ci`, `revert`, `security`, `deprecate`, `dogfood`); the title body may be in any language unless `validation.titles` enables the project rule (#407). A missing or unknown type is a usage error (exit 2) listing the valid types; all titles are validated before any issue is created. The slug is kebab-case from the first three ASCII words of the title; when the title yields no slug (a non-ASCII or wordless title, or number-only arguments), bootstrap never invents a name (#246): an interactive terminal session is prompted for a kebab-case ASCII delivery name, and any other session gets a usage error (exit 2, `issue_delivery_name_required`) naming the explicit flag. `--delivery <slug>` supplies the name explicitly and wins over a derived slug; on resume the recorded name is reused without asking. The PR base is the remote's default branch (`origin/HEAD`, `main` fallback).
+Each positional argument is a quoted title (a new issue is created from a required/optional template) or a pure number (an existing issue is reused). Every new title must start with `<type>: ` where `<type>` is validated against a fixed whitelist (`feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `style`, `build`, `ci`, `revert`, `security`, `deprecate`, `dogfood`); the title body may be in any language unless `validation.titles` enables the project rule (#407). A missing or unknown type is a usage error (exit 2) listing the valid types; all titles are validated before any issue is created. The slug is kebab-case from the first three ASCII words of the title; when the title yields no slug (a non-ASCII or wordless title, or number-only arguments), bootstrap never invents a name (#246): an interactive terminal session is prompted for a kebab-case ASCII delivery name, and any other session gets a usage error (exit 2, `issue_delivery_name_required`) naming the explicit flag. `--delivery <slug>` supplies the name explicitly and wins over a derived slug; on resume the recorded name is reused without asking. The PR base is the configured automation target when enabled; otherwise it is the remote default branch (`origin/HEAD`, `main` fallback).
 
 Before creating from a title, the bootstrap probes the open issues with one title-carrying search (paginated to exhaustion, #77): an open issue whose title exactly matches a pending title argument is that argument's issue — a previous run created it but failed to record it — and is adopted instead of duplicating the WHY. Issue titles are not unique, so an exact match binds only when it is unambiguous: a single candidate, or a sole candidate carrying the deterministic scaffold body this tool writes (`## Why (required)` … `specgit finish must exit 0`), which an unrelated human issue with the same title does not carry. An unresolvable same-title collision is the usage diagnostic `issue_title_ambiguous` (exit 2) listing every candidate — never a silent adoption of an issue that could be unrelated. The probe is skipped entirely for purely numeric arguments and fails closed (exit 3) when the evidence cannot be gathered.
+
+Before new creation, SpecGit also searches relevant open and closed history and
+reports candidates for WHY review. Matching closed titles are linked in the new
+body; closed issues are never silently reopened. Similarity alone does not veto
+creation. Active closing references in another open PR/MR prevent duplicate
+claims; bootstrap checks before binding and acceptance checks live facts again,
+including drafts. Unknown history or occupancy evidence fails closed.
 
 ### Delivery tags (#330)
 
@@ -309,7 +393,7 @@ specgit issue "feat: oauth device flow" --tags kind::feat,module::auth   # expli
 }
 ```
 
-Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_resume_title_unavailable` (a supplied title cannot be compared with the bound issue; exit 3) / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments — the next `specgit issue` atomically replaces the completed record) / `issues_not_closed` (a merged delivery's bound issues are still open on the forge — the closing reference never fired; exit 2 before the record is replaced, fix: close them on the tracker, then start the next delivery) / `issue_title_ambiguous` (several open issues share the pending title with no sole scaffold-body match; lists every candidate; fix: adopt one explicitly by number — `specgit issue <number>` — or rename the unrelated issue; exit 2 with zero side effects) / `issue_delivery_name_required` (the title yields no ASCII slug and no name was given or prompted; fix: `--delivery <slug>` or an ASCII title; exit 2 with zero side effects) / `issue_delivery_name_invalid` (the `--delivery` value is not kebab-case ASCII; exit 2) / `issue_tags_invalid` (`--tags` value violates the grammar; exit 2 before any create) / `issue_tags_unknown` (`--tags` value absent from pool, catalog, and policy declarations; exit 2 naming the available universe, before any create) / `harness_stale` (generated harness assets stale, conflicting, or partially present for the running CLI version; exit 2 before any forge contact; fix: the drifted surface's own repair — `specgit init --force` for the init surface, `specgit setup --tool <tool>` for entry-point drift) (exit 2; drift, merged-refusal, ambiguity, naming gaps, and tag refusals happen before any create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport` — on a declared GitLab origin their `glab_missing` / `glab_unauthenticated` / `glab_transport` counterparts surface instead — plus `evidence_truncated` — including the mergedness probe on a PR-bound record and the explicit-mode tag calls, which fail closed and keep the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
+Diagnostics: `issue_args_required` / `issue_title_empty` / `issue_resume_drift` / `issue_resume_title_unavailable` (a supplied title cannot be compared with the bound issue; exit 3) / `issue_delivery_merged` (no-args resume of a merged delivery; fix: replacement arguments — the next `specgit issue` atomically replaces the completed record) / `issues_not_closed` (a merged delivery's bound issues are still open on the forge — the closing reference never fired; exit 2 before the record is replaced, fix: close them on the tracker, then start the next delivery) / `issue_title_ambiguous` (several open issues share the pending title with no sole scaffold-body match; lists every candidate; fix: adopt one explicitly by number — `specgit issue <number>` — or rename the unrelated issue; exit 2 with zero side effects) / `issue_delivery_name_required` (the title yields no ASCII slug and no name was given or prompted; fix: `--delivery <slug>` or an ASCII title; exit 2 with zero side effects) / `issue_delivery_name_invalid` (the `--delivery` value is not kebab-case ASCII; exit 2) / `issue_tags_invalid` (`--tags` value violates the grammar; exit 2 before any create) / `issue_tags_unknown` (`--tags` value absent from pool, catalog, and policy declarations; exit 2 naming the available universe, before any create) / `harness_stale` (remote acceptance assets stale, conflicting, or partially present for the running CLI version; exit 2 before bootstrap; repair with `specgit init --force`; local guidance and setup entry-point drift instead produce the advisory `local_assets_stale` warning and can be refreshed through init/setup without blocking bootstrap) (exit 2; drift, merged-refusal, ambiguity, naming gaps, and tag refusals happen before any create, with zero side effects); `pr_ambiguous` when several open PRs share the head branch (exit 3, fix: `specgit pr <number>`); provider failures (`gh_missing`, `gh_unauthenticated`, `gh_transport` — on a declared GitLab origin their `glab_missing` / `glab_unauthenticated` / `glab_transport` counterparts surface instead — plus `evidence_truncated` — including the mergedness probe on a PR-bound record and the explicit-mode tag calls, which fail closed and keep the record), `no_origin`, `record_write_failed`, `git_branch_failed`, `git_commit_failed`, `git_push_failed` (exit 3, resumable).
 
 ## `specgit finish`
 
@@ -325,7 +409,8 @@ Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` canno
 **Completed history (#351).** Running `finish` on a trunk that already merged
 the delivery is not a mismatch: the context gate proves that local HEAD contains
 the platform's merged result. The verdict reports `state: "completed"` only
-after every gate runs successfully. A failed evidence read leaves later gates
+after every gate runs successfully and every bound issue is closed.
+An open bound issue instead gives `closure_pending`. A failed evidence read leaves later gates
 `skipped` and `complete: false`. Invalid replacement arguments or a failed first
 write preserve the completed record; `unbind` is the abandon/reset/uninstall tool.
 
@@ -508,13 +593,17 @@ The verdict is fail-closed about its own coverage. `complete` is `true` only whe
 
 ### The version-upgrade sequence
 
-After upgrading the CLI (`npm install -g specgit`), one numbered sequence converges a repository and proves it clean — locally, with zero forge calls:
+After upgrading the CLI (`npm install -g specgit`), refresh the installed
+surfaces and verify them. `status` and `setup` are local; `init` can make forge
+probes or protection changes. This maintenance does not itself require a
+delivery, product build, CI wait or release; [CI scope](ci-scope.md) applies when
+tracked changes are intentionally shared.
 
 1. **Upgrade the CLI** to the new version.
-2. **`specgit init --force`** — converges the init-owned tier: the acceptance workflow (or removes a SpecGit-owned one on a GitLab-declared repository), the managed `AGENTS.md`/`CLAUDE.md` blocks, the guard hooks, and the managed `.gitignore` region.
+2. **`specgit init --force --no-protect`** — converges the init-owned tier: the acceptance workflow (or removes a SpecGit-owned one on a GitLab-declared repository), the managed `AGENTS.md`/`CLAUDE.md` blocks, the guard hooks, and the managed `.gitignore` region. `--no-protect` skips protection probes/changes; supply only the user's chosen automation settings when scripting.
 3. **`specgit setup --tool opencode` / `--tool generic`** (or `--tool all` for both) — converges the agent surfaces; each surface's exact fix is what `status` names per surface.
 4. **`specgit status --json`** — `assets.generated.clean` must be `true`. Clean implies `complete`: an incomplete report never claims current, so first resolve any `uninspected` code (declare the platform with `--gitlab-host`, fetch the remote so the default branch resolves, merge or repair `.opencode/hooks.json`). A remaining `conflict` is a file at a managed path that does not prove SpecGit ownership: review it, and if it is a leftover, delete it yourself — the tools never will — then re-run `status`.
-5. **Review and commit the intended derived assets** (`git add -A && git commit`). The three tiers decide what "intended" means: authoritative files (`spec_git/`, `.specgit.yaml`) are yours or the binding commit's; the derived harness is meant to be committed; local integration assets (entry points, `.git/hooks`) are your team's choice. After that commit, `git status --porcelain` is empty — no generated legacy or ignored residue reappears (#308 pins this journey as a test).
+5. **Review tracked diffs and choose what to share.** Commit only intended shared changes through the applicable delivery. Local maintenance alone ends after verification; it does not automatically stage files, open a PR, build or publish. Local hooks, caches and device state remain outside committed source. Shared policy and workflow changes receive the validation defined in [CI scope](ci-scope.md); `.gitignore` is not a CI exemption mechanism.
 
 The sequence converges identically on every supported OS (#314): mode drift is compared and repaired to the extent the filesystem enforces — full POSIX permission bits on Linux/macOS, the read-only attribute on Windows, whose files cannot carry `0o755`/`0o644` bits at all — so a second `init --force`/`setup` run is a filesystem no-op and `status` can prove `clean` on Windows too. A managed asset that drifted write-protected is repaired, not crashed on: the refresh clears exactly the write protection (the owner-write bit) before rewriting or retiring the asset and the final mode lands the intended protection again.
 
@@ -585,7 +674,7 @@ Fields:
 
 - `status` — `ok` | `rejected` | `unknown` | `error`
 - `exit` — the numeric exit code the process exits with (`0` | `1` | `2` | `3`), equal to `status`' mapping; lets a piped caller read the exit code from the document itself
-- `state` — the derived delivery state. `finish`/`accept`: `unbound` | `draft` | `bound` | `accepted` | `completed` | `rejected` | `unknown` (`completed` = the merged-delivery history proven at the trunk, #351). `status`: `unbound` | `draft` | `bound` | `historical-candidate` | `unknown` (`historical-candidate` = a record tracked on a branch other than its recorded context — the offline signature of merged history; confirm with `finish`). The bootstrap commands (`issue`/`pr`/`bind`) report `draft` | `bound`.
+- `state` — the derived delivery state. `finish`/`accept`: `unbound` | `draft` | `bound` | `accepted` | `closure_pending` | `completed` | `rejected` | `unknown` (`completed` = proven merged lineage and all bound issues closed; `closure_pending` = merged with open bound issues). `status`: `unbound` | `draft` | `bound` | `historical-candidate` | `unknown` (`historical-candidate` = a record tracked on a branch other than its recorded context — the offline signature of merged history; confirm with `finish`). The bootstrap commands (`issue`/`pr`/`bind`) report `draft` | `bound`.
 - `recordState` / `localContext` / `lifecycle` — the question-layered status fields (#363), each answerable on its own: `recordState` `missing` | `partial` | `complete`; `localContext` `matching` | `mismatch` | `unknown`; `lifecycle` `active` | `historical-candidate`. Status-only; the verdict layer belongs to `finish`.
 - `urls` — (issue success, #361) forge web URLs for the bound issues and the draft PR.
 - `nextActions[]` — the structured success hand-off (#352/#360/#361): `code`, `command`, `reason`. Fresh `init` carries the adoption steps (`adoption_branch` | `adoption_commit` | `adoption_pr` | `adoption_protect` | `adoption_setup`); `issue` success carries `issue_bodies` | `pr_brief` | `pr_ready`; an accepted `finish` carries `delivery_merge` (live PR, auto-merge per policy) or `next_delivery` (completed history). Codes/commands are stable and never localized; reasons localize with `language`.

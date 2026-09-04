@@ -13,6 +13,7 @@ import {
 } from '../../src/cli/harness-content.js';
 import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
+import { LOCAL_ASSET_IGNORE_ENTRIES } from '../../src/cli/commands/init-ignore.js';
 import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
@@ -1071,8 +1072,9 @@ describe('specgit init harness generation', () => {
 
     const block = managedPromptBlock();
     expect(block).toContain('### Agent contract essentials');
-    // The one rule: only the verdict declares completion.
-    expect(block.toLowerCase()).toContain('a delivery is done if and only if');
+    // Acceptance is necessary; configured delivery completion also proves merge and closure.
+    expect(block.toLowerCase()).toContain('exit `0` means accepted');
+    expect(block.toLowerCase()).toContain('configured target merge and every bound issue closure');
     expect(block.toLowerCase()).toContain('never declare completion');
     // Exit-code semantics: 1 vs 3 is contractual, exit 3 is never success.
     expect(block).toContain('Branch on exit codes');
@@ -1449,6 +1451,7 @@ describe('specgit init --language (#118)', () => {
     expect(code).toBe(EXIT_SUCCESS);
     expect(t.recordPort.policyWrites[0]?.policy).toEqual({
       automation: { merge: false, close_issues: false },
+      language: 'en',
       version: 1,
       required_checks: ['Test'],
     });
@@ -1521,7 +1524,7 @@ describe('specgit init --language (#118)', () => {
     const envelope = parseStdoutJson(t.io);
     expect(envelope.ignore).toEqual({
       path: '.gitignore',
-      entries: ['/.specgit.yaml', '/spec_git/'],
+      entries: [...LOCAL_ASSET_IGNORE_ENTRIES],
       created: true,
     });
     expect(stdoutText(t.io)).toContain('.gitignore');
@@ -1550,7 +1553,7 @@ describe('specgit init --language (#118)', () => {
     const envelope = parseStdoutJson(forceCtx.io);
     expect(envelope.ignore).toEqual({
       path: '.gitignore',
-      entries: ['/.specgit.yaml', '/spec_git/'],
+      entries: [...LOCAL_ASSET_IGNORE_ENTRIES],
       created: false,
     });
   });

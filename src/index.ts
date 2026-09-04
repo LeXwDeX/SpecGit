@@ -71,6 +71,7 @@ export type {
   ForgeAdminPort,
   GitHubProvider,
   IssueFact,
+  IssueHistoryFact,
   PrFact,
   CheckRunInfo,
   MergeChecksFact,

@@ -266,7 +266,7 @@ export const EXT_PR_TEMPLATE = [
   '',
 ].join('\n');
 
-export function makeExternalRepo(prefix: string, options: ExternalRepoOptions = {}): ExternalRepoFixture {
+export function makeExternalRepo(prefix: string, options: ExternalRepoOptions = {}, withRemote = true): ExternalRepoFixture {
   const defaultBranch = options.defaultBranch ?? 'master';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   git(dir, 'init', '-b', defaultBranch);
@@ -324,6 +324,13 @@ export function makeExternalRepo(prefix: string, options: ExternalRepoOptions = 
   // LocalGitAdapter's probe) resolves in a real clone.
   git(dir, 'update-ref', `refs/remotes/origin/${defaultBranch}`, headSha);
   git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${defaultBranch}`);
+  if (withRemote) {
+    const bare = path.join(dir, '.git', 'specgit-e2e-origin.git');
+    git(dir, 'init', '--bare', bare);
+    git(dir, 'config', `url.${bare}.insteadOf`, EXT_ORIGIN_URL);
+    git(dir, 'push', 'origin', `HEAD:refs/heads/${defaultBranch}`);
+    git(dir, '--git-dir', bare, 'symbolic-ref', 'HEAD', `refs/heads/${defaultBranch}`);
+  }
 
   return { dir, headSha };
 }
@@ -342,10 +349,13 @@ export function makePushableExternalRepo(
   prefix: string,
   options: ExternalRepoOptions = {}
 ): PushableExternalRepo {
-  const repo = makeExternalRepo(prefix, options);
+  const repo = makeExternalRepo(prefix, options, false);
   const bareDir = `${fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}bare-`))}.git`;
   git(repo.dir, 'init', '--bare', bareDir);
   git(repo.dir, 'config', `url.${bareDir}.insteadOf`, EXT_ORIGIN_URL);
+  const branch = git(repo.dir, 'branch', '--show-current').trim();
+  git(repo.dir, 'push', 'origin', `HEAD:refs/heads/${branch}`);
+  git(repo.dir, '--git-dir', bareDir, 'symbolic-ref', 'HEAD', `refs/heads/${branch}`);
   return { ...repo, bareDir };
 }
 
@@ -416,6 +426,8 @@ export function makeGitlabExternalRepo(prefix: string): GitlabExternalRepoFixtur
   const bareDir = `${fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}bare-`))}.git`;
   git(dir, 'init', '--bare', bareDir);
   git(dir, 'config', `url.${bareDir}.insteadOf`, GITLAB_ORIGIN_URL);
+  git(dir, 'push', 'origin', 'HEAD:refs/heads/main');
+  git(dir, '--git-dir', bareDir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
 
   return { dir, bareDir, headSha };
 }

@@ -29,11 +29,37 @@ describe('project convention configuration', () => {
       automation: { merge: false },
     });
   });
+  it('offers first-run language, title validation and label choices with explicit defaults', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true });
+    const selectRule = vi.fn(async (_message: string, _choices: Array<{ name: string; value: string }>, current: string) =>
+      current === 'en' ? 'zh' : current);
+    const result = await runInit({ protect: false, automation: 'no' }, t.ctx, { selectRule });
+    expect(result.exit).toBe(0);
+    expect(selectRule.mock.calls.map((call) => call[2])).toEqual(['en', 'yes', 'kind']);
+    expect(selectRule.mock.calls[1]?.[0]).toContain('中文至少含一个汉字');
+    expect(selectRule.mock.calls[2]?.[1].map((choice) => choice.value)).toEqual(['kind', 'project', 'off']);
+    expect(result.policy).toMatchObject({ language: 'zh', validation: { titles: true, labels: 'kind' } });
+  });
   it('requires a nonempty selected vocabulary in project mode before writes', async () => {
     const t = makeCtx({ root: { ok: true, value: root } });
     const result = await runInit({ labelCheck: 'project', protect: false, json: true }, t.ctx);
     expect(result.exit).toBe(2);
     expect(t.recordPort.policyWrites).toEqual([]);
+  });
+  it('keeps explicit English language and disabled rules on an ordinary refresh', async () => {
+    const policy = { version: 1 as const, required_checks: ['test'], language: 'en' as const,
+      validation: { titles: false, labels: 'off' as const, bodies: true },
+      templates: { issue: { title: '{type}: {title}', body: '## Why\n{why}', required_sections: ['Why'] } },
+      automation: { merge: true, target_branch: 'Dev', close_issues: true } };
+    const t = makeCtx({ root: { ok: true, value: root }, policy, stdinIsTTY: true });
+    const selectRule = vi.fn(async () => { throw new Error('ordinary refresh must not prompt'); });
+    const result = await runInit({ force: true, protect: false }, t.ctx, { selectRule });
+    expect(result.exit).toBe(0);
+    expect(result.policy).toEqual(policy);
+    expect(selectRule).not.toHaveBeenCalled();
+    const changed = await runInit({ force: true, protect: false, titleCheck: 'yes' }, t.ctx, { selectRule });
+    expect(changed.policy?.validation).toEqual({ titles: true, labels: 'off', bodies: true });
+    expect(changed.policy?.templates).toEqual(policy.templates);
   });
   it('does not prompt for project choices from a JSON invocation', async () => {
     const t = makeCtx({ root: { ok: true, value: root } });

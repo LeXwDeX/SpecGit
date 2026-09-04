@@ -1,10 +1,59 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseReleaseNote } from './ci-changesets.mjs';
 
 /** @param {string} command @param {string[]} args */
 const runCommand = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+
+/** @param {string} version */
+function requireVersion(version) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error('A valid package version is required.');
+  }
+}
+
+/**
+ * A push needs a release-relevant diff. Explicit manual dispatch may prepare
+ * or recover a release; its optional version guard must match package.json.
+ * @param {{event: string, version: string, releaseIntent: boolean, pending: string[], requestedVersion?: string}} options
+ */
+export function planRelease({ event, version, releaseIntent, pending, requestedVersion }) {
+  requireVersion(version);
+  if (event === 'workflow_dispatch') {
+    if (requestedVersion && requestedVersion !== version) throw new Error('The requested release version must match package.json exactly.');
+    return { eligible: true, version, pending: pending.length };
+  }
+  return { eligible: event === 'push' && releaseIntent, version, pending: pending.length };
+}
+
+/** @param {string} root */
+export function pendingChangesets(root) {
+  /** @type {string[]} */
+  let consumed = [];
+  try {
+    /** @type {{changesets?: unknown}} */
+    const pre = JSON.parse(readFileSync(resolve(root, '.changeset/pre.json'), 'utf8'));
+    if (!Array.isArray(pre.changesets) || pre.changesets.some((entry) => typeof entry !== 'string')) {
+      throw new Error('Prerelease metadata must identify its consumed changesets.');
+    }
+    consumed = pre.changesets;
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
+  }
+  let files;
+  try {
+    files = readdirSync(resolve(root, '.changeset'));
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
+    return [];
+  }
+  return files.filter((file) => file.endsWith('.md') && file !== 'README.md')
+    .filter((file) => !consumed.includes(file.slice(0, -3)))
+    .filter((file) => parseReleaseNote(readFileSync(resolve(root, '.changeset', file), 'utf8'), file).releases.length > 0)
+    .map((file) => file.slice(0, -3));
+}
 
 /**
  * Read publication and tag evidence independently so retries can repair a
@@ -13,9 +62,7 @@ const runCommand = (command, args) => execFileSync(command, args, { encoding: 'u
  * @returns {{needsPublish: boolean, releaseSha: string, tagExists: boolean}}
  */
 export function readReleaseState({ version, run = runCommand }) {
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
-    throw new Error('A valid package version is required.');
-  }
+  requireVersion(version);
   let published;
   try {
     published = JSON.parse(run('npm', ['view', `specgit@${version}`, 'version', 'gitHead', '--json']));
@@ -80,7 +127,21 @@ export function finalizeRelease({ version, run = runCommand }) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-    if (process.argv.includes('--finalize')) {
+    const requestedVersion = process.env.SPECGIT_RELEASE_VERSION;
+    if (process.argv.includes('--plan')) {
+      const intent = process.env.SPECGIT_RELEASE_INTENT;
+      if (intent !== 'true' && intent !== 'false') throw new Error('Classifier release intent must be a literal boolean.');
+      const plan = planRelease({
+        event: process.env.GITHUB_EVENT_NAME ?? '', version,
+        releaseIntent: intent === 'true',
+        pending: pendingChangesets(process.cwd()), requestedVersion,
+      });
+      if (!process.env.GITHUB_OUTPUT) throw new Error('GITHUB_OUTPUT is required for the release plan.');
+      appendFileSync(process.env.GITHUB_OUTPUT, `eligible=${plan.eligible}\nversion=${plan.version}\npending=${plan.pending}\n`);
+      console.log(plan.eligible ? `Release work requested for specgit@${version}.` : 'No release work requested by this change.');
+    } else if (requestedVersion !== undefined && requestedVersion !== version) {
+      throw new Error('The release plan version no longer matches package.json.');
+    } else if (process.argv.includes('--finalize')) {
       finalizeRelease({ version });
       console.log(`Release metadata for specgit@${version} is complete.`);
     } else {

@@ -18,6 +18,7 @@ export type DeliveryState =
   | 'draft'
   | 'bound'
   | 'accepted'
+  | 'closure_pending'
   | 'completed'
   | 'rejected'
   | 'unknown';
@@ -157,7 +158,9 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     // #351: a record judged at its merged history is completed, not
     // merely accepted — the delivery is done and the record rides the
     // trunk until the next bootstrap atomically replaces it.
-    state = ctx.mergedRecord ? 'completed' : 'accepted';
+    state = ctx.mergedRecord
+      ? evidence.openIssues?.length === 0 ? 'completed' : 'closure_pending'
+      : 'accepted';
   } else if (classification === 'rejected') {
     state = 'rejected';
   } else {
@@ -170,8 +173,12 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
     warnings.push({
       severity: 'warning',
       code: 'record_of_merged_delivery',
-      message: 'This record is the completed history of a delivery whose pull request is merged.',
-      fix: 'Start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.',
+      message: state === 'completed'
+        ? 'This record is the completed history of a delivery whose pull request is merged and bound issues are closed.'
+        : 'The pull request is merged; bound issue closure is still pending.',
+      fix: state === 'completed'
+        ? 'Start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.'
+        : 'Resume the configured completion runner or close the remaining bound issues, then run specgit finish again.',
     });
   }
 
