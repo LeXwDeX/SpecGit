@@ -304,43 +304,33 @@ export function createProgram(
   return program;
 }
 
+/** One parser and error envelope for injected and production contexts. */
+async function parseCli(
+  argv: string[],
+  resolve: ContextResolver,
+  io: CliIO,
+  version: string
+): Promise<number> {
+  const result = { exit: EXIT_SUCCESS };
+  const program = createProgram(resolve, io, version, result, argv);
+  try {
+    await program.parseAsync(argv);
+  } catch (error) {
+    if (error instanceof CommanderError && error.exitCode === 0) return EXIT_SUCCESS;
+    const outcome = error instanceof CommanderError
+      ? usageOutcome('usage_error', error.message)
+      : unexpectedOutcome(error);
+    return finishOutcome(io, detectCommand(argv), version, outcome, argv.includes('--json'));
+  }
+  return result.exit;
+}
+
 export async function runCliWith(
   argv: string[],
   ctx: CommandContext,
   resolve?: ContextResolver
 ): Promise<number> {
-  const result = { exit: EXIT_SUCCESS };
-  const resolver: ContextResolver = resolve ?? (async () => ({ ctx }));
-  const program = createProgram(resolver, ctx.io, ctx.version, result, argv);
-
-  try {
-    await program.parseAsync(argv);
-  } catch (error) {
-    if (error instanceof CommanderError) {
-      if (error.exitCode === 0) {
-        return EXIT_SUCCESS;
-      }
-      const json = argv.includes('--json');
-      result.exit = finishOutcome(
-        ctx.io,
-        detectCommand(argv),
-        ctx.version,
-        usageOutcome('usage_error', error.message),
-        json
-      );
-      return result.exit;
-    }
-    const json = argv.includes('--json');
-    result.exit = finishOutcome(
-      ctx.io,
-      detectCommand(argv),
-      ctx.version,
-      unexpectedOutcome(error),
-      json
-    );
-  }
-
-  return result.exit;
+  return parseCli(argv, resolve ?? (async () => ({ ctx })), ctx.io, ctx.version);
 }
 
 export async function runMain(argv: string[] = process.argv): Promise<number> {
@@ -362,24 +352,7 @@ export async function runMain(argv: string[] = process.argv): Promise<number> {
     return { ctx: cached };
   };
 
-  const result = { exit: EXIT_SUCCESS };
-  const program = createProgram(resolve, io, version, result, argv);
-
-  try {
-    await program.parseAsync(argv);
-  } catch (error) {
-    if (error instanceof CommanderError) {
-      if (error.exitCode === 0) {
-        return EXIT_SUCCESS;
-      }
-      const json = argv.includes('--json');
-      return finishOutcome(io, detectCommand(argv), version, usageOutcome('usage_error', error.message), json);
-    }
-    const json = argv.includes('--json');
-    return finishOutcome(io, detectCommand(argv), version, unexpectedOutcome(error), json);
-  }
-
-  return result.exit;
+  return parseCli(argv, resolve, io, version);
 }
 
 export function runCli(argv: string[] = process.argv): void {

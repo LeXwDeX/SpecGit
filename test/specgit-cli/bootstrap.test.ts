@@ -2,7 +2,7 @@
  * The DeliveryBootstrap module (#278): the tail chain of `specgit
  * issue` — checkout, commit binding, push head, bind PR, commit
  * record, push — exists as an ordered list of steps, each carrying its
- * precondition, resume marker, and failure code. Reordering is a
+ * precondition and operation. Reordering is a
  * change to the list; resume from any partial state converges without
  * repeating a completed step.
  */
@@ -17,7 +17,6 @@ import { errorDiagnostic } from '../../src/cli/output.js';
 import {
   BOOTSTRAP_STEPS,
   runBootstrapSteps,
-  type BootstrapState,
   type BootstrapStep,
 } from '../../src/cli/commands/bootstrap.js';
 import { makeCtx, makeGitFacts, makeGhProvider, sampleBinding } from './helpers.js';
@@ -36,10 +35,7 @@ describe('the bootstrap chain is data (#278)', () => {
     expect(BOOTSTRAP_STEPS.map((step) => step.id)).toEqual([...CHAIN_ORDER]);
   });
 
-  it('every step names the failure code it reports', () => {
-    for (const step of BOOTSTRAP_STEPS) {
-      expect(step.failureCode.length, step.id).toBeGreaterThan(0);
-    }
+  it('every step has a unique identity', () => {
     const ids = BOOTSTRAP_STEPS.map((step) => step.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -62,29 +58,6 @@ describe('the bootstrap chain is data (#278)', () => {
     expect(ids.indexOf('bind-pr')).toBeLessThan(ids.indexOf('commit-record'));
   });
 
-  it('marks the durable-marker steps resumable and the idempotent pushes/commit as healing', () => {
-    const byId = Object.fromEntries(BOOTSTRAP_STEPS.map((step) => [step.id, step]));
-    // Completion is detectable from durable state: the live branch and
-    // the recorded PR number.
-    expect(byId['checkout'].resume).not.toBeNull();
-    expect(byId['bind-pr'].resume).not.toBeNull();
-    // The pushes and the record commit have no marker: re-running them
-    // is the healing itself (git push is idempotent; commitFile commits
-    // nothing on a clean tree).
-    expect(byId['push-head'].resume).toBeNull();
-    expect(byId['commit-record'].resume).toBeNull();
-    expect(byId['push-record-commit'].resume).toBeNull();
-    // The resume probes agree with the preconditions they mirror.
-    const state: BootstrapState = {
-      record: sampleBinding(),
-      firstTitle: null,
-      currentBranch: sampleBinding().context.branch,
-    };
-    expect(byId['checkout'].precondition(state)).toBe(false);
-    expect((byId['checkout'].resume as (s: BootstrapState) => boolean)(state)).toBe(true);
-    expect(byId['bind-pr'].precondition(state)).toBe(false);
-    expect((byId['bind-pr'].resume as (s: BootstrapState) => boolean)(state)).toBe(true);
-  });
 });
 
 describe('runBootstrapSteps runner semantics', () => {
@@ -106,13 +79,11 @@ describe('runBootstrapSteps runner semantics', () => {
   function probeStep(
     id: BootstrapStep['id'],
     log: string[],
-    overrides: Partial<Pick<BootstrapStep, 'precondition' | 'resume'>> = {}
+    overrides: Partial<Pick<BootstrapStep, 'precondition'>> = {}
   ): BootstrapStep {
     return {
       id,
-      failureCode: 'probe_failed',
       precondition: overrides.precondition ?? (() => true),
-      resume: overrides.resume ?? null,
       run: async ({ state }) => {
         log.push(id);
         return { record: state.record };
@@ -130,7 +101,7 @@ describe('runBootstrapSteps runner semantics', () => {
     expect(log).toEqual(['checkout', 'push-head', 'bind-pr']);
   });
 
-  it('skips a step whose precondition already holds', async () => {
+  it('skips a step whose precondition is false', async () => {
     const log: string[] = [];
     await runBootstrapSteps(
       [
@@ -146,9 +117,7 @@ describe('runBootstrapSteps runner semantics', () => {
     const log: string[] = [];
     const failing: BootstrapStep = {
       id: 'push-head',
-      failureCode: 'git_push_failed',
       precondition: () => true,
-      resume: null,
       run: async () => ({
         exit: 3,
         errors: [errorDiagnostic('git_push_failed', 'git push failed')],
@@ -175,9 +144,9 @@ describe('per-step resume converges without repeating completed steps', () => {
     });
   }
 
-  const openPrFact = () =>
+  const openPrFact = (number = 42) =>
     ok({
-      number: 42,
+      number,
       state: 'open' as const,
       headBranch: BRANCH,
       headSha: 'a'.repeat(40),
@@ -290,5 +259,34 @@ describe('per-step resume converges without repeating completed steps', () => {
     expect(outcome.errors?.[0]?.code).toBe('git_push_failed');
     expect(t.gh.calls.filter((c) => c.startsWith('listOpenPrsByHead'))).toEqual([]);
     expect(t.gh.calls.filter((c) => c.startsWith('createDraftPr'))).toEqual([]);
+  });
+
+  it('returns the actual transport diagnostic and heals from the persisted PR after a final push failure (#415)', async () => {
+    const record = completeRecord();
+    delete record.pr;
+    let pushes = 0;
+    const t = resumeCtx({ branch: BRANCH, record });
+    t.ctx.git.pushBranch = vi.fn(async () => {
+      pushes += 1;
+      return pushes === 2
+        ? fail<{ pushed: boolean }>('git_remote_rejected', 'The remote rejected the final push.', 'Retry the push.')
+        : ok({ pushed: true });
+    });
+    const first = await runIssue({}, t.ctx);
+    expect(first.exit).toBe(3);
+    expect(first.errors?.[0]).toMatchObject({
+      code: 'git_remote_rejected', message: 'The remote rejected the final push.', fix: 'Retry the push.',
+    });
+    const persisted = t.recordPort.recordWrites.at(-1)?.record;
+    expect(persisted?.pr).toBe(43);
+    if (persisted === undefined) throw new Error('The PR binding must be durable before the final push.');
+    const healed = resumeCtx({ branch: BRANCH, record: persisted });
+    healed.gh.getPr = vi.fn(async () => openPrFact(43));
+    const second = await runIssue({}, healed.ctx);
+    expect(second.exit).toBe(0);
+    expect(healed.gh.createDraftPr).not.toHaveBeenCalled();
+    expect(healed.gh.listOpenPrsByHead).not.toHaveBeenCalled();
+    expect(healed.gitPort.checkoutCalls).toEqual([]);
+    expect(healed.gitPort.pushCalls).toEqual([BRANCH, BRANCH]);
   });
 });
