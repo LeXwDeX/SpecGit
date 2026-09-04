@@ -1,15 +1,16 @@
 version: 1
-delivery: simplify-delivery-boundaries
+delivery: robust-release-finalization
 context:
   kind: branch
-  branch: feat/412-simplify-delivery-boundaries
+  branch: fix/448-robust-release-finalization
 issues:
-  - 412
-  - 413
-  - 414
-  - 415
-  - 441
-  - 446
-  - 447
-issueKinds: []
-pr: 443
+  - 448
+  - 449
+  - 451
+  - 452
+issueKinds:
+  - issue: 448
+    kind: kind::fix
+  - issue: 449
+    kind: kind::fix
+pr: 450

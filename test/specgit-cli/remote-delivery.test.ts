@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -284,6 +284,13 @@ describe('trusted remote delivery continuation', () => {
 });
 
 describe('completion workflow trust boundary', () => {
+  it('keeps the checked-in self-hosted workflow synchronized with its generator', () => {
+    const version = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).version;
+    const expected = completionWorkflowYaml({ defaultBranch: 'main', version, selfHosted: true });
+    const checkedIn = readFileSync(join(process.cwd(), '.github/workflows/specgit-complete.yml'), 'utf8')
+      .replace(/\r\n/g, '\n');
+    expect(checkedIn).toBe(expected);
+  });
   it('preserves ordinary business CI and routes only an independent default-branch continuation', () => {
     const workflow = parse(gitlabRoutingWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: false, platform: 'gitlab' }));
     const [business, completion] = workflow.include;
@@ -310,7 +317,15 @@ describe('completion workflow trust boundary', () => {
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(workflow.jobs.complete.permissions).toEqual({ contents: 'write', 'pull-requests': 'write', issues: 'write', actions: 'read' });
     expect(workflow.on.pull_request).toBeUndefined();
-    expect(workflow.on.workflow_run).toEqual({ workflows: ['SpecGit Acceptance'], types: ['completed'] });
+    expect(workflow.on.workflow_run).toEqual({
+      workflows: ['SpecGit Acceptance'],
+      types: ['completed'],
+      'branches-ignore': ['changeset-release/main'],
+    });
+    expect(workflow.on.workflow_dispatch.inputs).toEqual({
+      pr: { description: 'Bound pull request to recover', required: true, type: 'string' },
+      head: { description: 'Exact current pull request head SHA', required: true, type: 'string' },
+    });
     expect(workflow.jobs.complete.if).toContain('refs/heads/main');
     expect(workflow.jobs.complete.concurrency['cancel-in-progress']).toBe(false);
     expect(workflow.jobs.complete.concurrency.group).toContain('needs.identify.outputs.pr');
@@ -349,6 +364,7 @@ describe('completion workflow trust boundary', () => {
   });
   it('does not compile an adopting project or silently use an old runtime', () => {
     const text = completionWorkflowYaml({ defaultBranch: 'Dev', version: '2.0.0', selfHosted: false });
+    expect(parse(text).on.workflow_run).toEqual({ workflows: ['SpecGit Acceptance'], types: ['completed'] });
     expect(text).toContain('specgit@2.0.0');
     expect(text).toContain('REMOTE_DELIVERY_PROTOCOL !== 1');
     expect(text).not.toContain('pnpm');
