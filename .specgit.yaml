@@ -1,11 +1,10 @@
 version: 1
-delivery: shared-ci-eligibility
+delivery: full-project-audit
 context:
   kind: branch
-  branch: refactor/385-shared-ci-eligibility
+  branch: docs/387-full-project-audit
 issues:
-  - 385
+  - 387
 issueKinds:
-  - issue: 385
-    kind: kind::refactor
-pr: 386
+  - issue: 387
+    kind: kind::docs
