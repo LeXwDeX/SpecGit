@@ -447,6 +447,14 @@ allows failure. The graph is bounded to 32 distinct pipelines; incomplete or
 untraceable downstream evidence, unsupported endpoints, and exceeded bounds
 produce unknown evidence rather than authorizing a merge.
 
+The automatic delivery and version-PR runners wait within their existing deadline
+while any current-head CI check is pending, even if another check temporarily
+reports a non-success conclusion. They finalize CI repair causes only after CI
+settles; independently proven non-CI failures can still produce repair issues
+immediately. A settled neutral or failed check still blocks merging, and a
+timeout never authorizes it. This scheduling rule does not change the factual
+verdict returned by `finish`, `accept`, or one `pr --merge` attempt.
+
 The merge request carries an atomic expected-head condition to the platform.
 Binding, policy, head, target, and PR body are checked again before merging;
 the remote PR/MR is checked again afterwards. The forge does not provide an

@@ -33,7 +33,7 @@ export async function mergeVersionPullRequest(options) {
     }
     if (fact.state === 'closed') throw new Error('The version PR is closed without merging.');
   };
-  const { now = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), timeoutMs = 20 * 60 * 1000, pollIntervalMs = 10_000 } = options;
+  const { now = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), timeoutMs = 35 * 60 * 1000, pollIntervalMs = 10_000 } = options;
   const deadline = now() + timeoutMs;
   for (;;) {
     const current = requireEvidence(await provider.getPr(repo, number));
@@ -42,8 +42,11 @@ export async function mergeVersionPullRequest(options) {
     const ci = requireEvidence(await provider.getPrChecks(repo, number));
     if (ci.headSha !== expectedHeadSha) throw new Error('CI evidence belongs to a different version PR head.');
     const eligibility = classifyCiEligibility(ci.checks, policy.required_checks);
+    // Aggregated checks can revise an intermediate conclusion while sibling
+    // work is running. Decide failure only after this head's CI has settled.
+    const pending = eligibility.problems.some((problem) => problem.kind === 'pending');
     const failure = eligibility.problems.find((problem) => problem.kind === 'failed');
-    if (failure !== undefined) {
+    if (!pending && failure !== undefined) {
       const { check } = failure;
       throw new Error(`CI check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.`);
     }

@@ -27,6 +27,10 @@
 
 export type WaitTransport = 'rest' | 'gh';
 
+export const ACCEPTANCE_POLL_MINUTES = 25;
+/** Allow preparation and the verdict to finish outside the sibling wait. */
+export const ACCEPTANCE_JOB_MINUTES = ACCEPTANCE_POLL_MINUTES + 5;
+
 /** The step YAML, from `- name: Wait for sibling checks` through `EOF`. */
 export function waitStepYaml(
   transport: WaitTransport,
@@ -133,7 +137,7 @@ export function waitStepScript(transport: WaitTransport): string {
     `              if (!Array.isArray(events) || events.length < PER_PAGE) return anchor;`,
     `            }`,
     `          };`,
-    `          // Poll deadline sits BELOW the job's timeout-minutes (15) on
+    `          // Poll deadline sits BELOW the job's timeout-minutes (${ACCEPTANCE_JOB_MINUTES}) on
 `,
     `          // purpose: when the deadline loses the race against a slow
 `,
@@ -141,7 +145,7 @@ export function waitStepScript(transport: WaitTransport): string {
 `,
     `          // being killed by the job timeout mid-line.
 `,
-    `          const deadline = Date.now() + 13 * 60 * 1000;`,
+    `          const deadline = Date.now() + ${ACCEPTANCE_POLL_MINUTES} * 60 * 1000;`,
     `          while (Date.now() < deadline) {`,
     `            // #315: re-read the anchor every cycle — the transition
 `,

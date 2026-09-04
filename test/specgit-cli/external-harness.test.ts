@@ -166,7 +166,7 @@ describe('external acceptance harness template', () => {
     const job = parsed.jobs['specgit-acceptance'];
     expect(job.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(job['runs-on']).toBe('ubuntu-latest');
-    expect(job['timeout-minutes']).toBe(15);
+    expect(job['timeout-minutes']).toBe(30);
   });
 
   it('waits for sibling checks through the gh seam, never raw REST', () => {
