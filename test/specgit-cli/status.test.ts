@@ -380,6 +380,18 @@ describe('specgit status (local evidence only, G1-G5)', () => {
     expect(envelope.assets.derivedCommittedHarness.paths).toContain('.github/workflows/specgit-accept.yml');
   });
 
+  it.each([false, true])('reports guard hooks as optional local integration (bound=%s) (#417)', async (bound) => {
+    const t = makeCtx({ ...(bound ? { record: sampleBinding() } : {}), policy: samplePolicy() });
+    expect(await runCliWith(['node', 'specgit', 'status', '--json'], t.ctx)).toBe(EXIT_SUCCESS);
+    const assets = parseStdoutJson(t.io).assets;
+    for (const hook of ['.opencode/hooks.json (specgit guard entry)',
+      '.opencode/hooks/specgit-merge-guard.sh', 'git pre-push hook (specgit managed markers)']) {
+      expect(assets.localIntegrationAssets.paths).toContain(hook);
+      expect(assets.derivedCommittedHarness.paths).not.toContain(hook);
+    }
+    expect(assets.derivedCommittedHarness.paths).toContain('.github/workflows/specgit-accept.yml');
+  });
+
   // #308: assets.generated is the drift report — computed for every
   // computable snapshot, additive next to the static taxonomy, and never
   // an exit-code input.

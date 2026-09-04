@@ -1,12 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { runInit } from '../../src/cli/commands/init.js';
 import { runSetup } from '../../src/cli/commands/setup.js';
 import { detectInitInputs } from '../../src/cli/detect-checks.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import { makeCtx, makeGitFacts } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+
+vi.mock('@inquirer/prompts', () => ({ select: vi.fn(async () => 'gitlab') }));
 
 describe('init audit: usable platform checks and onboarding', () => {
   let root: string;
@@ -39,6 +42,75 @@ describe('init audit: usable platform checks and onboarding', () => {
     const result = await runInit({ gitlabHost: 'git.example.com', protect: false }, t.ctx);
     expect(result.exit).toBe(0);
     expect(result.policy?.required_checks).toEqual(['gitlab-only']);
+  });
+
+  it.each(['github', 'gitlab'] as const)('uses the interactive %s choice for dual-platform CI detection', async (mode) => {
+    write('.github/workflows/ci.yml', 'on: pull_request\njobs:\n  github-only:\n    runs-on: ubuntu-latest\n');
+    write('.gitlab-ci.yml', 'gitlab-only:\n  script: echo test\n');
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'https://git.example.com:8443/team/app.git' }) });
+    const selectPlatform = vi.fn(async () => mode);
+    const result = await runInit({ protect: false, automation: 'no' }, t.ctx, { selectPlatform });
+    expect(result.exit).toBe(0);
+    expect(result.platform?.mode).toBe(mode);
+    expect(result.policy?.required_checks).toEqual([`${mode}-only`]);
+    expect(selectPlatform).toHaveBeenCalledExactlyOnceWith('git.example.com:8443');
+  });
+
+  it('uses the first platform choice for project labels without persisting before selection', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'https://git.example.com:8443/team/app.git' }) });
+    t.ctx.withGitlabHost = vi.fn((gitlabHost) => ({
+      parseRepoRef: (origin: string) => parseRepoRef(origin, { gitlabHost }), gh: t.ghProvider,
+    }));
+    const answers = ['en', 'yes', 'project'];
+    const selectLabels = vi.fn(async (names: string[]) => {
+      expect(fs.readdirSync(root)).toEqual([]);
+      expect(names).toContain('kind::fix');
+      return ['kind::fix'];
+    });
+    const result = await runInit({ configureRules: true, protect: false, automation: 'no' }, t.ctx, {
+      selectPlatform: async () => 'gitlab', selectRule: async () => answers.shift()!, selectLabels,
+    });
+    expect(result.exit).toBe(0);
+    expect(selectLabels).toHaveBeenCalledOnce();
+    expect(t.ctx.withGitlabHost).toHaveBeenCalledExactlyOnceWith('git.example.com:8443');
+    expect(result.policy?.tags).toEqual([{ name: 'kind::fix' }]);
+  });
+
+  it('leaves no writes when a later automation answer is invalid after choosing GitLab', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'git@git.example.com:team/app.git' }) });
+    const selectPlatform = vi.fn(async () => 'gitlab' as const);
+    const result = await runInit({ protect: false }, t.ctx, {
+      selectPlatform, promptAutomation: async () => 'invalid',
+    });
+    expect(result.exit).toBe(2);
+    expect(selectPlatform).toHaveBeenCalledOnce();
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it('leaves no writes when the platform question is canceled', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'git@git.example.com:team/app.git' }) });
+    const interrupted = Object.assign(new Error('Interrupted.'), { name: 'ExitPromptError' });
+    await expect(runInit({ protect: false, automation: 'no' }, t.ctx, {
+      selectPlatform: async () => { throw interrupted; },
+    })).rejects.toBe(interrupted);
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it.each([{ detect: false }, { requiredCheck: [' '] }])('refuses invalid explicit check inputs without a platform prompt: %j', async (options) => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'git@git.example.com:team/app.git' }) });
+    const selectPlatform = vi.fn(async () => 'gitlab' as const);
+    const result = await runInit({ ...options, protect: false, automation: 'no' }, t.ctx, { selectPlatform });
+    expect(result.exit).toBe(2);
+    expect(selectPlatform).not.toHaveBeenCalled();
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 
   it('rejects declaring github.com as GitLab before generating files', async () => {

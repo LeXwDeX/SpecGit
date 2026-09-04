@@ -870,7 +870,8 @@ async function validateResumeTitles(
     const number = record.issues[index];
     const issue = await ctx.gh.getIssue(repo, number);
     if (!issue.ok) return passthrough(issue);
-    if (issue.value.number !== number || issue.value.pullRequest || typeof issue.value.title !== 'string') {
+    if (issue.value.number !== number || issue.value.pullRequest ||
+        typeof issue.value.title !== 'string' || issue.value.title.trim() === '') {
       return {
         exit: EXIT_UNKNOWN,
         errors: [errorDiagnostic('issue_resume_title_unavailable', `The title of bound issue #${number} could not be verified.`, {

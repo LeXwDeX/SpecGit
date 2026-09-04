@@ -176,7 +176,7 @@ Nix job's path-filter skip is self-documenting in-workflow (the
 
 The [current audit record](audits/2026-09-04-full-project-audit.md) tracks the
 product, architecture and implementation review from v1.11.0, including the
-24 corrections in #389–#411 and #416. Product defects and code bugs are repaired in the
+25 corrections in #389–#411 and #416–#417. Product defects and code bugs are repaired in the
 audit delivery; architecture changes without a proven functional failure have
 an explicit deferred disposition. The record distinguishes implementation
 regressions from final current-head acceptance, merge and release evidence.

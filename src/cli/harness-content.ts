@@ -143,14 +143,15 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
 ### 议题标签
 
 - 按项目策略的 \`language\` 填写 issue/PR；\`validation\` 启用的标题与
-  标签规则在创建前和 \`finish\` 中校验。按策略 \`tags\` 选择标签；需要
+  标签规则在创建前和 \`finish\` 中校验。\`kind\` 模式要求一个内置类型，
+  扩展标签须在 \`tags\` 中声明；\`project\` 模式只选 \`tags\` 中的标签。
   更改规则时，由用户通过 \`specgit init --force --configure-rules\` 选择。
 - 每次引导都会自动应用标题的 \`kind::<type>\` 成员；显式传入
   \`--tags <a,b>\` 可自选完整集合。
 - 选择以池为先：仓库中符合语法的既有标签原样胜出；缺失的名称从内置的
   \`kind::\` 目录或策略的 \`tags:\` 声明中播种。未知词汇以退出码 2 指名
   全集。
-- 克制选择：每轴至多一个标签，拿不准就不选——池外标签会被报告
+- 每轴至多一个标签；可选标签拿不准就不选，必选标签以策略为准。池外标签会被报告
   （\`tag_pool_dirty\` 警告是给人看的），SpecGit 绝不重命名它们。
 
 ### 修复与诊断
@@ -258,14 +259,17 @@ already exists); keep manual guidance outside them.
 
 - Follow the project's \`language\` for issues and PRs. Enabled \`validation\`
   rules check titles and labels before creation and during \`finish\`.
-  Select labels from policy \`tags\`; users choose rule changes with
+  \`kind\` mode requires one catalog kind and only declared extras;
+  \`project\` mode selects only policy \`tags\`. Users choose rule changes with
   \`specgit init --force --configure-rules\`.
 - Every bootstrap applies the title's \`kind::<type>\` member
   automatically; pass \`--tags <a,b>\` to choose the full set explicitly.
 - Selection is pool-first: existing on-spec labels win verbatim; anything
   missing is seeded from the built-in \`kind::\` catalog or the policy's
   \`tags:\` declarations. Unknown vocabulary exits 2 naming the universe.
-- Choose with restraint: at most one label per axis, none when unsure —
+- Choose at most one label per axis; omit uncertain optional labels and
+  keep every label required by the selected policy. Existing pool labels
+  cannot override that policy —
   off-spec pool labels are reported (\`tag_pool_dirty\` warnings are for
   humans) and never renamed by SpecGit.
 
