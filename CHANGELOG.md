@@ -1,5 +1,13 @@
 # specgit
 
+## 1.14.0
+
+### Minor Changes
+
+- [#456](https://github.com/LeXwDeX/SpecGit/pull/456) [`64f2320`](https://github.com/LeXwDeX/SpecGit/commit/64f23205bd94b9dadabf3ba96e3b8c8e1443d48c) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Refresh and reconcile the canonical documentation and bilingual Wiki ([#454](https://github.com/LeXwDeX/SpecGit/issues/454), [#455](https://github.com/LeXwDeX/SpecGit/issues/455)), and add the guided `specgit init` upgrade path for proven managed-asset drift ([#457](https://github.com/LeXwDeX/SpecGit/issues/457)). Harden repository writes against symbolic-link escapes and stale ownership plans ([#458](https://github.com/LeXwDeX/SpecGit/issues/458), [#460](https://github.com/LeXwDeX/SpecGit/issues/460)), make provider persistence and platform selection fail closed before mutation, and require remote-default-branch evidence before workflow or protection writes ([#459](https://github.com/LeXwDeX/SpecGit/issues/459), [#461](https://github.com/LeXwDeX/SpecGit/issues/461), [#464](https://github.com/LeXwDeX/SpecGit/issues/464)). Validate every metadata-only CI input rather than trusting its path ([#462](https://github.com/LeXwDeX/SpecGit/issues/462)), and refuse to resume or replace a closed-unmerged delivery until its PR/MR binding is repaired ([#463](https://github.com/LeXwDeX/SpecGit/issues/463)).
+
+  Remove the legacy default-branch fallback from fresh delivery bootstrap and make local push guards resolve the repository's real default branch. Restore E2E remote-HEAD setup and Windows metadata/guard compatibility without reducing verification requirements.
+
 ## 1.13.1
 
 ### Patch Changes
