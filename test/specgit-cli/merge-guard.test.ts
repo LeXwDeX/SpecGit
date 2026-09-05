@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { GUARD_SCRIPT } from '../../src/cli/harness-content.js';
+import { git, initRepo } from '../specgit/helpers/temp-repo.js';
 
 /**
  * #68: the merge guard must surface the verdict it acts on. A blocked
@@ -86,6 +87,7 @@ interface GuardResult {
 }
 
 let binDir: string;
+let guardRepo: ReturnType<typeof initRepo>;
 
 function writeEnvelope(name: string, value: unknown): string {
   const file = path.join(binDir, `${name}.json`);
@@ -103,11 +105,13 @@ function runGuard(
     const child =
       launchMode === 'sh'
         ? spawn('sh', [GUARD], {
-            env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
+            cwd: guardRepo.root,
+            env: { ...process.env, ...guardRepo.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
             stdio: ['pipe', 'pipe', 'pipe'],
           })
         : spawn(GUARD, {
-            env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
+            cwd: guardRepo.root,
+            env: { ...process.env, ...guardRepo.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
             stdio: ['pipe', 'pipe', 'pipe'],
           });
     let stderr = '';
@@ -153,6 +157,9 @@ describe('merge guard diagnostics (#68)', () => {
   beforeAll(() => {
     binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-guard-'));
     fs.writeFileSync(path.join(binDir, 'specgit'), SHIM, { mode: 0o755 });
+    guardRepo = initRepo(binDir);
+    git(guardRepo.root, ['update-ref', 'refs/remotes/origin/main', 'HEAD'], guardRepo.env);
+    git(guardRepo.root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], guardRepo.env);
   });
 
   afterAll(() => {
