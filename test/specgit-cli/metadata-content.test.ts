@@ -191,11 +191,14 @@ describe('metadata content validation', () => {
     })).toThrow(/exactly one kind label/i);
   });
 
-  it('rejects damaged shielding and CODEOWNERS configuration on the metadata route', () => {
+  it.each(['\n', '\r\n'])('rejects damaged shielding and CODEOWNERS with %j line endings', (newline) => {
     const configs = repositoryConfigurations();
+    const gitignore = configs.gitignore.replace(/\r?\n/g, newline);
+    const damaged = gitignore.replace(/^\/spec_git\/\r?\n/m, '');
+    expect(damaged).not.toBe(gitignore);
     expect(() => validateRepositoryMetadataConfigurations({
       ...configs,
-      gitignore: configs.gitignore.replace('/spec_git/\n', ''),
+      gitignore: damaged,
     })).toThrow(/gitignore.*managed/i);
     expect(() => validateRepositoryMetadataConfigurations({
       ...configs,
