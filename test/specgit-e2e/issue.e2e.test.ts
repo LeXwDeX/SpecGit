@@ -70,6 +70,7 @@ function makePushableRepo(branch: string): RepoFixture & { bareDir: string } {
   git(repo.dir, 'config', `url.${bareDir}.insteadOf`, `https://github.com/${OWNER}/${REPO}.git`);
   git(repo.dir, 'push', 'origin', 'HEAD:refs/heads/main');
   git(repo.dir, '--git-dir', bareDir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  git(repo.dir, 'remote', 'set-head', 'origin', '-a');
   cleanupDirs.push(bareDir, repo.dir);
   return { ...repo, bareDir };
 }

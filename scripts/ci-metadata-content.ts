@@ -246,6 +246,7 @@ function validateIssueTemplatePolicy(title: string, labels: string[], file: stri
 }
 
 function validateManagedGitignore(text: string): void {
+  text = text.replace(/\r\n/g, '\n');
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const start = lines.flatMap((line, index) => line.trim() === LOCAL_ASSET_IGNORE_START ? [index] : []);
   const end = lines.flatMap((line, index) => line.trim() === LOCAL_ASSET_IGNORE_END ? [index] : []);

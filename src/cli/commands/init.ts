@@ -54,7 +54,6 @@ import type { Diagnostic } from '../../kernel/diagnostics.js';
 import { catalogFor } from '../language.js';
 import { SPEC_GIT_DIR, POLICY_FILENAME, type CommandContext } from '../types.js';
 import {
-  restoreManagedSnapshot,
   restoreManagedSnapshotIfCurrent,
   snapshotManagedFile,
   type Snapshot,
@@ -316,25 +315,10 @@ export async function runInit(
     const { host, port } = platformSelection.declaration;
     const persisted = await persistGitlabHost(host, port, root);
     if ('exit' in persisted) {
-      let restoreFailure: string | null = null;
-      try {
-        await restoreManagedSnapshot(providersSnapshot);
-      } catch (error) {
-        restoreFailure = error instanceof Error ? error.message : String(error);
-      }
-      const errors = [...(persisted.errors ?? [])];
-      if (restoreFailure !== null) {
-        errors.push(
-          errorDiagnostic(
-            'providers_restore_failed',
-            `Could not restore ${SPEC_GIT_DIR}/providers.yaml to its pre-run state after the failed provider write: ${restoreFailure}`,
-            {
-              fix: `Compare ${SPEC_GIT_DIR}/providers.yaml against its pre-run state and re-run init once the cause is fixed.`,
-            }
-          )
-        );
-      }
-      return { ...persisted, errors };
+      // The atomic writer reports failure before committing target bytes.
+      // Restoring this snapshot could overwrite another writer's update
+      // while we waited for its lock, although this run never wrote a file.
+      return persisted;
     }
     providersMutation = { before: providersSnapshot, writtenContent: persisted.content };
   }

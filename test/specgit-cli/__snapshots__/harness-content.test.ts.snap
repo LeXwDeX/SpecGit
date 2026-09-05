@@ -315,10 +315,30 @@ case "$merge_command" in
 esac
 unset classifier_status merge_command
 
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
+  esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
 case "$command" in
-  git\\ push\\ origin\\ main*|git\\ push\\ origin\\ +main*|git\\ push\\ origin\\ HEAD:main*)
-    echo "specgit: direct push to main is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
-    exit 2
+  git\\ push\\ origin\\ *)
+    default_ref=$(specgit_default_ref) || {
+      echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+      exit 2
+    }
+    default_branch=\${default_ref#refs/remotes/origin/}
+    case "$command" in
+      git\\ push\\ origin\\ "$default_branch"|git\\ push\\ origin\\ "$default_branch"\\ *|git\\ push\\ origin\\ +"$default_branch"|git\\ push\\ origin\\ +"$default_branch"\\ *|git\\ push\\ origin\\ HEAD:"$default_branch"|git\\ push\\ origin\\ HEAD:"$default_branch"\\ *)
+        echo "specgit: direct push to $default_branch is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+        exit 2
+        ;;
+    esac
     ;;
 esac
 exit 0
@@ -1089,21 +1109,33 @@ specgit_pre_push_refs=$(mktemp) || exit 1
 cat > "$specgit_pre_push_refs" || { rm -f "$specgit_pre_push_refs"; exit 1; }
 (
 # SpecGit pre-push guard (managed by specgit init).
-while read -r local_ref local_sha remote_ref remote_sha; do
-  case "$remote_ref" in
-    refs/heads/main)
-      # Mirror sync (#343): a commit already contained by origin/main is
-      # accepted history — pushing it to another remote mirrors the
-      # verdict, it bypasses nothing. A zero sha (ref deletion) never
-      # passes this check.
-      if git merge-base --is-ancestor "$local_sha" refs/remotes/origin/main >/dev/null 2>&1; then
-        continue
-      fi
-      echo "specgit: direct push to main is not the delivery path." >&2
-      echo "Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
-      exit 1
-      ;;
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
   esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
+default_ref=$(specgit_default_ref) || {
+  echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+  exit 1
+}
+default_branch=\${default_ref#refs/remotes/origin/}
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/$default_branch" ]; then
+    # A commit already contained by the proved origin default is accepted
+    # history and may be mirrored. A zero sha (deletion) cannot pass.
+    if git merge-base --is-ancestor "$local_sha" "$default_ref" >/dev/null 2>&1; then
+      continue
+    fi
+    echo "specgit: direct push to $default_branch is not the delivery path." >&2
+    echo "Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+    exit 1
+  fi
 done
 exit 0
 ) < "$specgit_pre_push_refs"

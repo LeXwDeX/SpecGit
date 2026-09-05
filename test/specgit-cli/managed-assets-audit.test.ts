@@ -9,7 +9,7 @@ import {
   ManagedReconcileError,
   reconcileManagedAssets,
 } from '../../src/cli/managed-reconcile.js';
-import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+import { git, initRepo, makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 describe('managed asset audit: preserve user behavior and rollback identity', () => {
   let root: string;
@@ -41,6 +41,10 @@ describe('managed asset audit: preserve user behavior and rollback identity', ()
   });
 
   it.each(['#!/bin/sh\nexit 0\n', '#!/bin/sh\ncat >/dev/null\n'])('blocks main even when the existing hook exits or consumes stdin (%s)', (original) => {
+    const repo = initRepo(root);
+    root = repo.root;
+    git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD'], repo.env);
+    git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], repo.env);
     const hook = path.join(root, 'pre-push');
     fs.writeFileSync(hook, mergeGitPrePush(original));
     const result = spawnSync('sh', [hook], { cwd: root, encoding: 'utf8',
@@ -51,6 +55,10 @@ describe('managed asset audit: preserve user behavior and rollback identity', ()
   });
 
   it('preserves stdin and the exit status for a user hook on a delivery branch', () => {
+    const repo = initRepo(root);
+    root = repo.root;
+    git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD'], repo.env);
+    git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], repo.env);
     const hook = path.join(root, 'pre-push');
     fs.writeFileSync(hook, mergeGitPrePush('#!/bin/sh\ncat > user-refs\nexit 7\n'));
     const refs = `refs/heads/feature ${'a'.repeat(40)} refs/heads/feature ${'0'.repeat(40)}\n`;

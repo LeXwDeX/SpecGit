@@ -75,8 +75,9 @@ function safeDecode(value: string): string {
 }
 
 function headingSlug(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, '')
+  // Extract heading text for an anchor lookup, never sanitized HTML. The
+  // final character allowlist below defines the entire output alphabet.
+  return value.split(/<[^>]*>/g).join('')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/[`*_~]/g, '')

@@ -634,7 +634,22 @@ export function mergeHooksJson(existing: string | null): HooksJsonMergeResult {
   return { json: `${JSON.stringify(config, null, 2)}\n` };
 }
 
-// Blocks merge/push-main attempts that bypass the evidence verdict, and —
+// Local push guards resolve the full symbolic ref at execution time, so a
+// default-branch rename needs no regenerated branch literal. Keep failed or
+// dangling evidence distinct from a branch that happens to be named main.
+const PUSH_DEFAULT_REF = `specgit_default_ref() {
+  specgit_ref=\$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "\$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
+  esac
+  git rev-parse --verify "\$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "\$specgit_ref"
+}
+`;
+
+// Blocks merge/default-branch push attempts that bypass the evidence verdict, and —
 // since #335 — file-mutation tool calls on a branch with no delivery
 // binding: the start gate. Bash verbs match only the command's leading
 // pattern so prose containing the keywords (e.g. an issue body) never trips
@@ -960,10 +975,20 @@ case "\$merge_command" in
 esac
 unset classifier_status merge_command
 
+${PUSH_DEFAULT_REF}
 case "\$command" in
-  git\\ push\\ origin\\ main*|git\\ push\\ origin\\ +main*|git\\ push\\ origin\\ HEAD:main*)
-    echo "specgit: direct push to main is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
-    exit 2
+  git\\ push\\ origin\\ *)
+    default_ref=\$(specgit_default_ref) || {
+      echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+      exit 2
+    }
+    default_branch=\${default_ref#refs/remotes/origin/}
+    case "\$command" in
+      git\\ push\\ origin\\ "\$default_branch"|git\\ push\\ origin\\ "\$default_branch"\\ *|git\\ push\\ origin\\ +"\$default_branch"|git\\ push\\ origin\\ +"\$default_branch"\\ *|git\\ push\\ origin\\ HEAD:"\$default_branch"|git\\ push\\ origin\\ HEAD:"\$default_branch"\\ *)
+        echo "specgit: direct push to \$default_branch is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+        exit 2
+        ;;
+    esac
     ;;
 esac
 exit 0
@@ -971,7 +996,7 @@ exit 0
 
 export { GUARD_SCRIPT };
 
-// Local git-layer guard: refuses direct pushes to main; deliveries must go
+// Local git-layer guard: refuses direct pushes to the proved default branch; deliveries must go
 // through PR/MR + CI + specgit finish. The managed file wraps this BODY in
 // SPECGIT_PRE_PUSH_MARKERS so an existing user hook is merged, not
 // replaced (#62) — and keeps the shebang on line 1, ahead of the start
@@ -979,21 +1004,23 @@ export { GUARD_SCRIPT };
 // spawn a file whose first line is a plain comment (#67 matrix,
 // windows-pwsh: "cannot spawn ... pre-push: Exec format error").
 const GIT_PRE_PUSH_BODY = `# SpecGit pre-push guard (managed by specgit init).
+${PUSH_DEFAULT_REF}
+default_ref=\$(specgit_default_ref) || {
+  echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+  exit 1
+}
+default_branch=\${default_ref#refs/remotes/origin/}
 while read -r local_ref local_sha remote_ref remote_sha; do
-  case "\$remote_ref" in
-    refs/heads/main)
-      # Mirror sync (#343): a commit already contained by origin/main is
-      # accepted history — pushing it to another remote mirrors the
-      # verdict, it bypasses nothing. A zero sha (ref deletion) never
-      # passes this check.
-      if git merge-base --is-ancestor "\$local_sha" refs/remotes/origin/main >/dev/null 2>&1; then
-        continue
-      fi
-      echo "specgit: direct push to main is not the delivery path." >&2
-      echo "Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
-      exit 1
-      ;;
-  esac
+  if [ "\$remote_ref" = "refs/heads/\$default_branch" ]; then
+    # A commit already contained by the proved origin default is accepted
+    # history and may be mirrored. A zero sha (deletion) cannot pass.
+    if git merge-base --is-ancestor "\$local_sha" "\$default_ref" >/dev/null 2>&1; then
+      continue
+    fi
+    echo "specgit: direct push to \$default_branch is not the delivery path." >&2
+    echo "Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+    exit 1
+  fi
 done
 exit 0
 `;

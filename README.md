@@ -134,7 +134,7 @@ Automatic merge and issue closure are **off by default**. Only the user's explic
 yes enables them; an agent cannot supply that decision. For an existing policy:
 
 ```bash
-specgit init --force --automation yes --merge-target main
+specgit init --force --automation yes --merge-target <branch>
 ```
 
 Once enabled, the trusted completion workflow continues after CI.

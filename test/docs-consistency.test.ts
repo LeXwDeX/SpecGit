@@ -123,7 +123,7 @@ describe('docs consistency (issue templates obey this repository policy)', () =>
     ['bug_report.md', 'fix', 'kind::fix'],
     ['feature_request.md', 'feat', 'kind::feat'],
   ])('%s uses an English typed title and exactly one kind label', (file, type, label) => {
-    const template = read('.github', 'ISSUE_TEMPLATE', file);
+    const template = read('.github', 'ISSUE_TEMPLATE', file).replace(/\r\n/g, '\n');
     const frontmatter = template.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
     expect(frontmatter).toContain(`title: '${type}: <english title>'`);
     expect(frontmatter).toContain(`labels: ${label}`);

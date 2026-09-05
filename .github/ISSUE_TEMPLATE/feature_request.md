@@ -34,4 +34,4 @@ Workarounds today, and why they are not enough.
 - [ ] If this changes platform support, it states the gap against the current
       [platform contract](https://github.com/LeXwDeX/SpecGit/blob/main/docs/gitlab-support.md)
 - [ ] Not a security vulnerability (those go privately via
-      [SECURITY.md](https://github.com/LeXwDeX/SpecGit/blob/main/SECURITY.md))
+      [GitHub vulnerability reporting](https://github.com/LeXwDeX/SpecGit/security/advisories/new))

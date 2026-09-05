@@ -457,16 +457,19 @@ describe('reconcileManagedAssets', () => {
     expect(read(target)).toBe('SpecGit managed concurrent\n');
   });
 
-  it('preserves a removal target that loses ownership after planning (#460)', async () => {
+  it('aborts and compensates earlier writes when a removal target loses ownership (#460)', async () => {
     const target = path.join(root, 'obsolete.txt');
+    const earlier = path.join(root, 'trigger.txt');
     fs.writeFileSync(target, 'SpecGit obsolete\n');
+    fs.writeFileSync(earlier, 'before\n');
 
-    const report = await reconcileManagedAssets(root, {
+    await expect(reconcileManagedAssets(root, {
       steps: [
         {
           kind: 'portWrite',
           path: 'trigger.txt',
           write: async () => {
+            fs.writeFileSync(earlier, 'after\n');
             fs.writeFileSync(target, 'user replacement\n');
           },
         },
@@ -476,10 +479,9 @@ describe('reconcileManagedAssets', () => {
           isOwned: (existing) => existing.startsWith('SpecGit'),
         },
       ],
-    });
+    })).rejects.toThrow('ownership changed before removal');
 
-    expect(report.removed).toEqual([]);
-    expect(report.preserved).toEqual(['obsolete.txt']);
+    expect(read(earlier)).toBe('before\n');
     expect(read(target)).toBe('user replacement\n');
   });
 

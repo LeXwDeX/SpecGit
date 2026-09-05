@@ -318,7 +318,11 @@ export async function readProviders(root: string): Promise<Evidence<Providers>> 
   return ok(result.data);
 }
 
-/** Write providers atomically and return the exact bytes committed by this call. */
+/**
+ * Write providers atomically and return the exact bytes committed by this call.
+ * Rejection means this call did not commit target bytes: rename is the final
+ * fallible write step, and lock release cannot reject after that commit.
+ */
 export async function writeProviders(root: string, providers: Providers): Promise<string> {
   const target = providersPath(root);
   const content = YAML.stringify(providers);

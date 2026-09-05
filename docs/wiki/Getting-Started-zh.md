@@ -20,6 +20,11 @@ GitLab 用户先按主机认证 `glab`，再执行
 Init 会写入共享集成资产和本地钩子，提交前先检查改动。自动合并默认选择**否**，
 只有用户明确同意才能开启。`setup` 安装的 Agent 入口属于本地辅助工具。
 
+默认分支可能叫 `master`、`trunk` 或其他名称，SpecGit 不会猜成 `main`。
+如果提示缺少默认分支证据，先运行 `git fetch origin` 和
+`git remote set-head origin -a`，再重试。自动化目标用于选择 PR/MR 的合并位置，
+不能代替初始化所需的默认分支证据。
+
 ## 开始交付
 
 ```bash
