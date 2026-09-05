@@ -12,6 +12,8 @@ issues:
   - 460
   - 461
   - 462
+  - 463
+  - 464
 issueKinds:
   - issue: 454
     kind: kind::docs
