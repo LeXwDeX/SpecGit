@@ -675,6 +675,14 @@ export async function runIssue(
     if (occupancy !== null) return occupancy;
   }
 
+  // A fresh delivery must know its PR/MR target before creating issues or
+  // writing a binding. Existing deliveries can repair/adopt their request;
+  // bindPullRequest resolves a default only when it actually creates one.
+  if (liveRecord === null && policy?.automation?.target_branch === undefined) {
+    const base = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+    if (!base.ok) return passthrough(base);
+  }
+
   const created = await createOrAdoptIssues({
     ctx,
     root,

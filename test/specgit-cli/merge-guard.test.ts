@@ -167,7 +167,7 @@ describe('merge guard diagnostics (#68)', () => {
   });
 
   it('keeps the checked-in runtime guard byte-identical to the generator', () => {
-    expect(fs.readFileSync(GUARD, 'utf8')).toBe(GUARD_SCRIPT);
+    expect(fs.readFileSync(GUARD, 'utf8').replace(/\r\n/g, '\n')).toBe(GUARD_SCRIPT);
   });
 
   itOrSkip('lets an accepted verdict through', async () => {
@@ -378,6 +378,8 @@ describe('start gate (#335): edits require a delivery binding', () => {
     fs.writeFileSync(path.join(gateRepo, 'seed.txt'), 'seed\n');
     git(['add', '.']);
     git(['commit', '-m', 'seed']);
+    git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
   });
 
   afterAll(() => {

@@ -23,6 +23,12 @@ Init writes shared integration assets and local hooks. Review those changes
 before sharing them. Automatic merge defaults to **no**; only the user's explicit
 yes enables it. Agent entry points installed by `setup` are local conveniences.
 
+SpecGit uses the repository's proved default branch, which may be `master`,
+`trunk`, or another name. If default-branch evidence is missing, run
+`git fetch origin` and `git remote set-head origin -a`, then retry. An explicit
+automation target chooses the PR/MR destination; it does not identify the trusted
+default branch used by initialization.
+
 ## Deliver
 
 ```bash

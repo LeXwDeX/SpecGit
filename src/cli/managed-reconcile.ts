@@ -761,8 +761,9 @@ export async function reconcileManagedAssets(
       } else {
         // Ownership is a claim about the bytes at the moment of deletion,
         // not the bytes observed during planning. An intervening user change
-        // turns this action into a preserved conflict and never enters the
-        // rollback stack; a changed but still-owned target remains removable.
+        // aborts the transaction without adding the user's replacement to
+        // the rollback stack; earlier managed mutations are compensated.
+        // A changed but still-owned target remains removable.
         const before = await buildSnapshot(
           root,
           action.step.path,
@@ -772,10 +773,7 @@ export async function reconcileManagedAssets(
           continue;
         }
         if (!action.step.isOwned(before.content)) {
-          if (!report.preserved.includes(action.step.path)) {
-            report.preserved.push(action.step.path);
-          }
-          continue;
+          throw new Error(`Managed asset ownership changed before removal: ${action.step.path}`);
         }
         snapshots.push(before);
         // A write-protected owned asset is still SpecGit's to retire — on

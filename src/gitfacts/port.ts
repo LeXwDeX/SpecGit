@@ -44,9 +44,11 @@ export interface GitWritePort {
   /** Push `branch` to origin, setting upstream (`git push -u`). */
   pushBranch(root: string, branch: string): Promise<Evidence<{ pushed: boolean }>>;
   /**
-   * The remote's default branch (`origin/HEAD`). Falls back to `main`
-   * when the symbolic ref is unset locally — the same default `gh`
-   * would resolve server-side for `--base`.
+   * The remote's default branch, proved by the local symbolic origin/HEAD
+   * and its existing remote-tracking commit. Missing evidence fails closed;
+   * neither the current branch nor a guessed main is a default-branch fact.
+   * The optional argument is retained for adapter compatibility; evidence
+   * is required for every call, including when requireEvidence is false.
    */
   remoteDefaultBranch(root: string, options?: { requireEvidence?: boolean }): Promise<Evidence<string>>;
   /**

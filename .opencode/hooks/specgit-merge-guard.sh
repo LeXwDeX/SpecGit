@@ -312,10 +312,30 @@ case "$merge_command" in
 esac
 unset classifier_status merge_command
 
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
+  esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
 case "$command" in
-  git\ push\ origin\ main*|git\ push\ origin\ +main*|git\ push\ origin\ HEAD:main*)
-    echo "specgit: direct push to main is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
-    exit 2
+  git\ push\ origin\ *)
+    default_ref=$(specgit_default_ref) || {
+      echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+      exit 2
+    }
+    default_branch=${default_ref#refs/remotes/origin/}
+    case "$command" in
+      git\ push\ origin\ "$default_branch"|git\ push\ origin\ "$default_branch"\ *|git\ push\ origin\ +"$default_branch"|git\ push\ origin\ +"$default_branch"\ *|git\ push\ origin\ HEAD:"$default_branch"|git\ push\ origin\ HEAD:"$default_branch"\ *)
+        echo "specgit: direct push to $default_branch is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+        exit 2
+        ;;
+    esac
     ;;
 esac
 exit 0

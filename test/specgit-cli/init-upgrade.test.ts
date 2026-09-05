@@ -352,20 +352,16 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(envelope.reconciled?.removed ?? []).toEqual([HARNESS_WORKFLOW_PATH]);
   });
 
-  it('a provider write failure exits 3, restores exact bytes, and stops before later init writes', async () => {
+  it('an atomic provider write failure exits 3, preserves exact bytes, and stops before later init writes', async () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
     const seededProviders = '# team-owned formatting\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
     fs.writeFileSync(PROVIDERS_ABS(root), seededProviders);
     fs.chmodSync(PROVIDERS_ABS(root), 0o640);
     const before = treeState(root);
 
-    const realWriteProviders = recordIo.writeProviders;
-    const write = vi.spyOn(recordIo, 'writeProviders').mockImplementationOnce(async (writeRoot, providers) => {
-      // Model a persistence port that mutates the target and then reports
-      // failure. The init transaction must compensate even this boundary.
-      await realWriteProviders(writeRoot, providers);
-      throw new Error('simulated provider persistence failure');
-    });
+    const write = vi.spyOn(recordIo, 'writeProviders').mockRejectedValueOnce(
+      new Error('simulated provider persistence failure')
+    );
     const t = makeCtx({
       root: { ok: true, value: root },
       cwd: root,
@@ -396,6 +392,44 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
     expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
   });
+
+  it('a busy provider lock preserves the other writer update when init never committed', async () => {
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    fs.writeFileSync(PROVIDERS_ABS(root), '# original config\ngitlab:\n  host: git.ycgame.com\n');
+    const lockPath = `${PROVIDERS_ABS(root)}.lock`;
+    fs.writeFileSync(lockPath, 'other-writer');
+    const concurrentContent = '# concurrent user update\ngitlab:\n  host: git.ycgame.com\n';
+    const realWriteProviders = recordIo.writeProviders;
+    vi.spyOn(recordIo, 'writeProviders').mockImplementationOnce(async (writeRoot, providers) => {
+      // The other writer changes its file after init took its snapshot.
+      // The real persistence call must wait on that writer's existing lock.
+      fs.writeFileSync(PROVIDERS_ABS(root), concurrentContent);
+      return await realWriteProviders(writeRoot, providers);
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force',
+        '--gitlab-host', 'git.ycgame.com', '--json', '--no-protect'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('providers_write_failed');
+    expect(envelope.errors?.[0]?.message).toContain('file lock is busy');
+    expect(read(PROVIDERS_ABS(root))).toBe(concurrentContent);
+    expect(read(lockPath)).toBe('other-writer');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+  }, 15_000);
 
   it('invalid providers bytes fail closed before any upgrade mutation (#308 symmetry)', async () => {
     // The write side must honor what the read side refuses: status calls

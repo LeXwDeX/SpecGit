@@ -104,6 +104,15 @@ describe('metadata content validation', () => {
     })).toThrow(/coderabbit\.yaml/);
   });
 
+  it('accepts CRLF metadata without weakening managed-ignore validation', () => {
+    const configs = repositoryConfigurations();
+    const crlf = configs.gitignore.replace(/\r?\n/g, '\r\n');
+    expect(() => validateRepositoryMetadataConfigurations({ ...configs, gitignore: crlf })).not.toThrow();
+    expect(() => validateRepositoryMetadataConfigurations({
+      ...configs, gitignore: crlf.replace('/spec_git/', '/wrong-policy/'),
+    })).toThrow(/gitignore.*stale|gitignore.*damaged/i);
+  });
+
   it('accepts a valid issue form and rejects an invalid body shape', () => {
     const configs = repositoryConfigurations();
     const form = {

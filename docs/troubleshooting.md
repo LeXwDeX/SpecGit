@@ -148,6 +148,22 @@ path or parent-directory permissions and rerun. If compensation itself fails,
 `providers_restore_failed` is reported alongside the original error and the
 named path needs manual recovery from version control or backup.
 
+### `git_default_branch_unknown` (`issue`, exit 3)
+
+The checkout has no usable symbolic `origin/HEAD`, or its remote-tracking
+commit is missing. Neither a local branch named `main` nor a branch named
+`origin/HEAD` supplies that evidence. Recover it from the actual remote:
+
+```bash
+git fetch origin
+git remote set-head origin -a
+```
+
+Retry the original command. Fresh issue creation stops before mutation when
+no explicit request target is configured. An existing request can still be
+adopted by its own identity. The local push hooks use the same default-branch
+evidence at execution time, including after a rename.
+
 ### `workflow_default_branch_unknown` (`init`, exit 3)
 
 The acceptance workflow and branch-protection target require a remotely proved

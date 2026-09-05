@@ -165,6 +165,7 @@ describe('mergeGitPrePush', () => {
       acceptedSha = git(['rev-parse', 'HEAD']).trim();
       // A fake origin/main that already contains the accepted commit.
       git(['update-ref', 'refs/remotes/origin/main', acceptedSha]);
+      git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
       // An unmerged commit (the delivery-branch tip a bypass would push).
       fs.writeFileSync(path.join(repo, 'unmerged.txt'), 'unmerged\n');
       git(['add', '.']);

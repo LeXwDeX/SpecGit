@@ -299,10 +299,6 @@ async function bindPullRequest(deps: {
   const { ctx, root, repo, language, human, branch, firstTitle } = deps;
   let record = deps.record;
 
-  const baseEv = await ctx.git.remoteDefaultBranch(root);
-  if (!baseEv.ok) {
-    return passthrough(baseEv);
-  }
   // Remotely discoverable idempotency marker for the PR: the open pull
   // request for this head branch. A previous run may have created it but
   // failed to record the number — adopt it instead of opening a second.
@@ -346,7 +342,12 @@ async function bindPullRequest(deps: {
     for (const result of [checkTitleConvention(selectedPolicy, rendered.value.title), checkBodyConvention(selectedPolicy, 'pr', body)]) {
       if (!result.ok) return { exit: 2, errors: [errorDiagnostic(result.code, result.message)] };
     }
-    const target = selectedPolicy.automation?.target_branch ?? baseEv.value;
+    let target = selectedPolicy.automation?.target_branch;
+    if (target === undefined) {
+      const baseEv = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+      if (!baseEv.ok) return passthrough(baseEv);
+      target = baseEv.value;
+    }
     const prEv = await ctx.gh.createDraftPr(repo, branch, target, rendered.value.title, body);
     if (!prEv.ok) {
       return passthrough(prEv);

@@ -175,6 +175,34 @@ describe('specgit issue: fresh bootstrap', () => {
     );
   });
 
+  it('refuses missing default-branch evidence before fresh delivery mutations', async () => {
+    const t = issueCtx({ writes: {
+      remoteDefaultBranch: () => fail('git_default_branch_unknown', 'origin/HEAD is missing'),
+    } });
+    const outcome = await runIssue({ titles: ['fix: avoid guessing the target'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('git_default_branch_unknown');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutOrCreateBranch).not.toHaveBeenCalled();
+    expect(t.gitPort.commitFile).not.toHaveBeenCalled();
+    expect(t.gitPort.pushBranch).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicitly configured PR target without inventing default-branch evidence', async () => {
+    const t = issueCtx({ writes: {
+      remoteDefaultBranch: () => fail('git_default_branch_unknown', 'origin/HEAD is missing'),
+    } });
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      automation: { merge: true, target_branch: 'release/stable', close_issues: true },
+    });
+    const outcome = await runIssue({ titles: ['fix: respect the chosen target'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdPrs[0].base).toBe('release/stable');
+    // Read-only asset inspection may probe the default; its absence cannot
+    // override an explicitly configured request target.
+  });
+
   it('creates every title issue, derives branch/delivery, opens the draft PR, records, commits, pushes', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue(

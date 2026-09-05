@@ -29,8 +29,9 @@ SpecGit 自身仓库在合并前保留轻量远程文档/元数据验证和验�
 | [Provider 架构](Provider-Architecture-zh) | 本地 Git 与平台能力边界 |
 
 安装命令为 `npm install -g specgit@latest`。需要 Node.js `>=20.19`、Git 和
-已认证的 `gh` 或 `glab`；用 `specgit --version` 确认已安装版本。本次 Wiki 于
-**2026-09-05** 对照已发布的 **v1.13.1** 核对，安装示例始终获取最新发布版。
+已认证的 `gh` 或 `glab`；用 `specgit --version` 确认已安装版本。这些页面描述
+**v1.14.0（待发布）**，包含该版本的默认分支证据要求。于 **2026-09-05**
+核对时，npm 的最新发布版为 **v1.13.1**。
 
 详细契约见[仓库文档](https://github.com/LeXwDeX/SpecGit/tree/main/docs)。Wiki 的
 可编辑副本保存在 `docs/wiki/`；修改副本后，还需要单独发布到这个 Wiki。

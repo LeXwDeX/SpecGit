@@ -109,7 +109,7 @@ to those lists member-for-member: change a port, change this page.
 | `checkoutOrCreateBranch` | required | Bootstrap write: check out the delivery branch, creating it from HEAD when absent. |
 | `commitFile` | required | Bootstrap write: force-staged (`git add -f`), pathspec-limited commit of the authoritative delivery files (#292 — past the tool-installed local-asset ignore); unchanged paths are a successful no-op (idempotent bootstrap). |
 | `pushBranch` | required | Bootstrap write: push the delivery branch with upstream (`git push -u`). |
-| `remoteDefaultBranch` | required | Read the remote default branch. Callers may request strict evidence; initialization always does so before workflow generation or protection and exits `3` when `origin/HEAD` cannot prove the branch. It never guesses `main`, and an automation merge target is not a substitute for the trusted default-branch identity. |
+| `remoteDefaultBranch` | required | Read the remote default branch from a symbolic `origin/HEAD` whose remote-tracking commit exists. Every call requires evidence; the optional `requireEvidence` argument remains for adapter compatibility and no longer permits a fallback. Initialization and unconfigured fresh PR/MR creation exit `3` when the branch cannot be proved. An automation merge target is not a substitute for the trusted default-branch identity. |
 | `hooksPath` | required | The hooks directory git will actually use (linked-worktree and `core.hooksPath` aware) for guard installation. |
 
 ### ForgeReadPort (src/github/port.ts)

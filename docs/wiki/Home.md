@@ -34,8 +34,9 @@ source repository's CI policy is not imposed on their business pipelines.
 
 Install with `npm install -g specgit@latest`; requirements are Node.js `>=20.19`,
 Git, and an authenticated `gh` or `glab`. Use `specgit --version` to identify the
-installed runtime. This Wiki revision was checked against release **v1.13.1** on
-**2026-09-05**; installation commands intentionally select the latest release.
+installed runtime. These pages describe **v1.14.0 (pending release)**, including
+its default-branch evidence requirements. The registry's latest release was
+**v1.13.1** when checked on **2026-09-05**.
 
 Detailed contracts live in the [repository docs](https://github.com/LeXwDeX/SpecGit/tree/main/docs).
 The editable Wiki copies are maintained under `docs/wiki/`; publishing them to
