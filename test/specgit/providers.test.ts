@@ -28,6 +28,9 @@ describe('providers io', () => {
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.code).toBe('providers_missing');
+    expect(read.fix).toBe(
+      'Optional: declare a GitLab host, including gitlab.com, with "specgit init --gitlab-host <hostname>" before first init, or add --force in an initialized project.'
+    );
   });
 
   it('round-trips a gitlab host with insecure ssl', async () => {

@@ -349,6 +349,166 @@ describe('reconcileManagedAssets', () => {
     expect(read(owned)).toBe('name: SpecGit Acceptance\n');
   });
 
+  it('refuses a stale owned write without rolling user bytes back over it (#460)', async () => {
+    const trigger = path.join(root, 'trigger.txt');
+    const target = path.join(root, 'managed.txt');
+    fs.writeFileSync(trigger, 'before\n');
+    fs.writeFileSync(target, 'SpecGit managed v1\n');
+
+    let caught: unknown;
+    try {
+      await reconcileManagedAssets(root, {
+        steps: [
+          {
+            kind: 'portWrite',
+            path: 'trigger.txt',
+            write: async () => {
+              fs.writeFileSync(trigger, 'after\n');
+              // Deterministically model a user/process changing a later
+              // whole-file target after the transaction planned it.
+              fs.writeFileSync(target, 'user replacement\n');
+            },
+          },
+          {
+            kind: 'write',
+            path: 'managed.txt',
+            mode: 0o644,
+            isOwned: (existing) => existing.startsWith('SpecGit managed'),
+            merge: () => 'SpecGit managed v2\n',
+          },
+        ],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ManagedReconcileError);
+    expect((caught as ManagedReconcileError).phase).toBe('commit');
+    expect((caught as ManagedReconcileError).step?.path).toBe('managed.txt');
+    // The prior action rolls back, but the changed target was never
+    // snapshotted or touched by this transaction.
+    expect(read(trigger)).toBe('before\n');
+    expect(read(target)).toBe('user replacement\n');
+  });
+
+  it('still commits an owned write when its planned bytes remain current (#460)', async () => {
+    const trigger = path.join(root, 'trigger.txt');
+    const target = path.join(root, 'managed.txt');
+    fs.writeFileSync(trigger, 'before\n');
+    fs.writeFileSync(target, 'SpecGit managed v1\n');
+
+    const report = await reconcileManagedAssets(root, {
+      steps: [
+        {
+          kind: 'portWrite',
+          path: 'trigger.txt',
+          write: async () => {
+            fs.writeFileSync(trigger, 'after\n');
+          },
+        },
+        {
+          kind: 'write',
+          path: 'managed.txt',
+          mode: 0o644,
+          isOwned: (existing) => existing.startsWith('SpecGit managed'),
+          merge: () => 'SpecGit managed v2\n',
+        },
+      ],
+    });
+
+    expect(report.updated).toEqual(['trigger.txt', 'managed.txt']);
+    expect(read(target)).toBe('SpecGit managed v2\n');
+  });
+
+  it('refuses a write whose still-owned bytes changed after its merge was planned (#460)', async () => {
+    const trigger = path.join(root, 'trigger.txt');
+    const target = path.join(root, 'managed.txt');
+    fs.writeFileSync(trigger, 'before\n');
+    fs.writeFileSync(target, 'SpecGit managed v1\n');
+
+    let caught: unknown;
+    try {
+      await reconcileManagedAssets(root, {
+        steps: [
+          {
+            kind: 'portWrite',
+            path: 'trigger.txt',
+            write: async () => {
+              fs.writeFileSync(trigger, 'after\n');
+              fs.writeFileSync(target, 'SpecGit managed concurrent\n');
+            },
+          },
+          {
+            kind: 'write',
+            path: 'managed.txt',
+            mode: 0o644,
+            isOwned: (existing) => existing.startsWith('SpecGit managed'),
+            merge: (existing) => `${existing ?? ''}planned suffix\n`,
+          },
+        ],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ManagedReconcileError);
+    expect((caught as ManagedReconcileError).step?.path).toBe('managed.txt');
+    expect(read(trigger)).toBe('before\n');
+    expect(read(target)).toBe('SpecGit managed concurrent\n');
+  });
+
+  it('preserves a removal target that loses ownership after planning (#460)', async () => {
+    const target = path.join(root, 'obsolete.txt');
+    fs.writeFileSync(target, 'SpecGit obsolete\n');
+
+    const report = await reconcileManagedAssets(root, {
+      steps: [
+        {
+          kind: 'portWrite',
+          path: 'trigger.txt',
+          write: async () => {
+            fs.writeFileSync(target, 'user replacement\n');
+          },
+        },
+        {
+          kind: 'remove',
+          path: 'obsolete.txt',
+          isOwned: (existing) => existing.startsWith('SpecGit'),
+        },
+      ],
+    });
+
+    expect(report.removed).toEqual([]);
+    expect(report.preserved).toEqual(['obsolete.txt']);
+    expect(read(target)).toBe('user replacement\n');
+  });
+
+  it('still removes a target whose changed bytes remain ownership-proven (#460)', async () => {
+    const target = path.join(root, 'obsolete.txt');
+    fs.writeFileSync(target, 'SpecGit obsolete v1\n');
+
+    const report = await reconcileManagedAssets(root, {
+      steps: [
+        {
+          kind: 'portWrite',
+          path: 'trigger.txt',
+          write: async () => {
+            fs.writeFileSync(target, 'SpecGit obsolete concurrent\n');
+          },
+        },
+        {
+          kind: 'remove',
+          path: 'obsolete.txt',
+          isOwned: (existing) => existing.startsWith('SpecGit obsolete'),
+        },
+      ],
+    });
+
+    expect(report.removed).toEqual(['obsolete.txt']);
+    expect(report.preserved).toEqual([]);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
   it('wraps an owned port write: snapshot, classification, rollback', async () => {
     const policyPath = path.join(root, 'spec_git', 'policy.yaml');
     fs.mkdirSync(path.dirname(policyPath), { recursive: true });

@@ -20,10 +20,10 @@ if the tracked copy ever drifts from the generator.
 
 | Skill | Purpose |
 | --- | --- |
-| [`specgit-issue`](specgit-issue/SKILL.md) | One-command delivery bootstrap: N issues → branch → draft PR → record |
+| [`specgit-issue`](specgit-issue/SKILL.md) | One-command delivery bootstrap: N issues → branch → draft PR/MR → record |
 | [`specgit-finish`](specgit-finish/SKILL.md) | The evidence verdict and the fix loop to exit 0 |
 | [`specgit-doctor`](specgit-doctor/SKILL.md) | The exit-3 diagnostic loop: run the probes, apply each fix, re-run |
-| [`specgit-pr`](specgit-pr/SKILL.md) | Repair the PR binding — auto-discover by head branch or bind explicitly |
+| [`specgit-pr`](specgit-pr/SKILL.md) | Repair the PR/MR binding — auto-discover by head branch or bind explicitly |
 | [`specgit-status`](specgit-status/SKILL.md) | Local evidence: record, delivery state, drift, origin |
 
 ## Install

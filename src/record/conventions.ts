@@ -9,7 +9,7 @@ export function checkTitleConvention(policy: Policy, title: unknown): Evidence<t
   if (policy.validation?.titles !== true) return ok(true);
   if (typeof title !== 'string' || title.trim() === '') {
     return fail('title_evidence_missing', 'The forge did not provide a nonempty title for project-rule validation.',
-      'Retry once the issue or pull request title is available from the forge.');
+      'Retry once the issue or PR/MR title is available from the forge.');
   }
   const language = policy.language ?? 'en';
   const valid = language === 'en' ? !HAN.test(title) : HAN.test(title);
@@ -17,7 +17,7 @@ export function checkTitleConvention(policy: Policy, title: unknown): Evidence<t
   return fail('title_language_mismatch', language === 'en'
     ? 'The project requires English titles: Han characters are not allowed.'
     : 'The project requires Chinese titles: include at least one Han character; technical names may remain in English.',
-  'Edit the remote issue or pull request title to follow the project language, then re-run specgit finish.');
+  'Edit the remote issue or PR/MR title to follow the project language, then re-run specgit finish.');
 }
 
 /** The selected vocabulary is policy evidence; the mutable repository pool cannot expand it. */

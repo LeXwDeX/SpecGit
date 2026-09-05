@@ -206,7 +206,7 @@ export async function runStatus(
         severity: 'warning',
         code: 'record_historical_candidate',
         message: `This record names branch '${record.context.branch}' but is tracked on '${facts.branch}' — the local signature of a merged delivery's history.`,
-        fix: 'Run "specgit finish" to confirm the merged lineage (it reads the pull request), or start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.',
+        fix: 'Run "specgit finish" to confirm the merged lineage (it reads the PR/MR), or start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.',
       }
     : null;
   const evidence: Record<string, unknown> = {

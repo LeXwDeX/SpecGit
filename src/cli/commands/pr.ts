@@ -1,10 +1,10 @@
 /**
- * `specgit pr [<ref>]` — repair the PR binding of the current delivery.
+ * `specgit pr [<ref>]` — repair the PR/MR binding of the current delivery.
  *
- * Without arguments: auto-discover the open pull request whose head is
+ * Without arguments: ask the routed forge provider for the open request whose head is
  * the record's branch. Exactly one candidate binds it; zero fails with
- * a fix; several refuse and list. With an explicit number or URL the PR
- * binds directly without contacting GitHub.
+ * a fix; several refuse and list. A numeric PR/MR ID or full GitHub PR URL
+ * binds directly without contacting the forge provider.
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
@@ -32,10 +32,23 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
     if (options.ref !== undefined) {
       return {
         exit: EXIT_USAGE,
-        errors: [errorDiagnostic('automation_ref_conflict', 'Use "specgit pr --merge" with the existing binding; an explicit PR reference cannot be combined with --merge.')],
+        errors: [errorDiagnostic('automation_ref_conflict', 'Use "specgit pr --merge" with the existing binding; an explicit PR/MR reference cannot be combined with --merge.')],
       };
     }
     return runMerge(ctx);
+  }
+  const explicitPr = options.ref === undefined ? null : coercePrRef(options.ref);
+  if (explicitPr !== null && !explicitPr.ok) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          explicitPr.code,
+          explicitPr.message,
+          explicitPr.fix ? { fix: explicitPr.fix } : {}
+        ),
+      ],
+    };
   }
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
@@ -66,15 +79,43 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
   let record = existing.value;
   const facts = await ctx.git.facts(root);
 
-  if (options.ref !== undefined) {
-    record = bindPr(record, coercePrRef(options.ref));
+  if (explicitPr !== null) {
+    const repository = explicitPr.value.repository;
+    if (repository !== undefined) {
+      if (!facts.originUrl) {
+        return {
+          exit: EXIT_UNKNOWN,
+          errors: [errorDiagnostic('no_origin', 'An origin is required to verify the PR URL repository.')],
+        };
+      }
+      const repoEv = await ctx.parseRepoRef(facts.originUrl);
+      if (!repoEv.ok) {
+        return {
+          exit: EXIT_UNKNOWN,
+          errors: [
+            errorDiagnostic(repoEv.code, repoEv.message, repoEv.fix ? { fix: repoEv.fix } : {}),
+          ],
+        };
+      }
+      if (repoEv.value.platform !== 'github' ||
+          repository.owner.toLowerCase() !== repoEv.value.owner.toLowerCase() ||
+          repository.repo.toLowerCase() !== repoEv.value.repo.toLowerCase()) {
+        return {
+          exit: EXIT_USAGE,
+          errors: [errorDiagnostic('pr_ref_repo_mismatch', 'The PR URL does not belong to the GitHub origin repository.', {
+            fix: 'Use a GitHub PR URL from this repository, or a numeric PR/MR ID on the current forge.',
+          })],
+        };
+      }
+    }
+    record = bindPr(record, explicitPr.value.value);
   } else {
     if (!facts.originUrl) {
       return {
         exit: EXIT_UNKNOWN,
         errors: [
           errorDiagnostic('no_origin', 'No origin remote is configured.', {
-            fix: 'Add a GitHub origin: git remote add origin <url>.',
+            fix: 'Add an origin for the supported forge: git remote add origin <url>.',
           }),
         ],
       };
@@ -107,11 +148,11 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
         errors: [
           errorDiagnostic(
             'pr_not_found',
-            `No open pull request has head branch '${head}'.`,
+            `No open PR/MR has head branch '${head}'.`,
             { fix: CODE_INFO.pr_not_found.fix }
           ),
         ],
-        human: humanBuilder().line(`No open pull request has head branch '${head}'.`).build(),
+        human: humanBuilder().line(`No open PR/MR has head branch '${head}'.`).build(),
       };
     }
     if (candidates.length > 1) {
@@ -121,12 +162,12 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
         errors: [
           errorDiagnostic(
             'pr_ambiguous',
-            `Multiple open pull requests have head branch '${head}':\n${listing}`,
+            `Multiple open PRs/MRs have head branch '${head}':\n${listing}`,
             { fix: 'Bind one explicitly: specgit pr <number>.' }
           ),
         ],
         human: humanBuilder()
-          .line(`Multiple open pull requests have head branch '${head}':`)
+          .line(`Multiple open PRs/MRs have head branch '${head}':`)
           .line(listing)
           .line('Bind one explicitly: specgit pr <number>.')
           .build(),
@@ -146,7 +187,7 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
   }
 
   // #299 carrying commit: a local-only repair forks the local and CI
-  // verdicts — the PR head still reads the stale record. On the delivery
+  // verdicts — the request head still reads the stale record. On the delivery
   // branch, force-carry the repaired record (commit + push, idempotent,
   // resumable on failure). Off-branch, say so instead of silently
   // skipping.
@@ -178,7 +219,7 @@ export async function runPr(options: PrOptions, ctx: CommandContext): Promise<Pr
         severity: 'warning',
         code: 'record_carry_push_failed',
         message: `The repaired record was committed locally but not pushed: ${carry.pushMessage}`,
-        fix: 'Push the delivery branch (git push) so the CI verdict on the PR head reads the same record; until then the local and CI verdicts can disagree.',
+        fix: 'Push the delivery branch (git push) so the CI verdict on the PR/MR head reads the same record; until then the local and CI verdicts can disagree.',
       });
     }
   } else {

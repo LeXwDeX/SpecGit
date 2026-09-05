@@ -90,6 +90,7 @@ export {
   FORGE_READ_PORT_MEMBERS,
   FORGE_ADMIN_PORT_MEMBERS,
   GITHUB_PROVIDER_MEMBERS,
+  GITLAB_PIPELINE_SUCCESS_GATE,
 } from './github/port.js';
 export { GhCliGitHubProvider, sanitizeApiText } from './providers/github/gh-cli.js';
 export type { GhCliGitHubProviderOptions } from './providers/github/gh-cli.js';

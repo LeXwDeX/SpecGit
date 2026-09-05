@@ -14,8 +14,9 @@
  *
  * - per asset: `current` | `stale` | `missing` | `conflict` with codes
  *   `asset_stale` / `asset_missing` / `asset_conflict`;
- * - per surface: `init` → `specgit init --force` (or `specgit init` when
- *   no policy exists yet), `opencode` → `specgit setup --tool opencode`,
+ * - per surface: `init` → `specgit init --force --no-protect` (or
+ *   `specgit init` when no policy exists yet; add `--no-ignore` for a proven
+ *   committed-authoritative model), `opencode` → `specgit setup --tool opencode`,
  *   `generic` → `specgit setup --tool generic`; an optional setup surface
  *   with nothing on disk is `absent` — clean, no fix, no missing-file
  *   list;
@@ -34,8 +35,6 @@
  *   where the writer itself would guess.
  */
 
-import * as fs from 'node:fs/promises';
-
 import { buildAgentSurfaceDesiredState } from './agent-surface.js';
 import {
   buildHarnessDesiredState,
@@ -52,7 +51,7 @@ import { classifyPlatformMode } from './commands/init-platform.js';
 import { selectCompletionWorkflow, selectWorkflowYaml } from './commands/init-workflow.js';
 import { COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH } from './completion-workflow.js';
 import {
-  hasManagedIgnoreRegion,
+  localAssetIgnoreClaim,
   reconcileLocalAssetIgnore,
 } from './commands/init-ignore.js';
 import { resolveLanguage } from './language.js';
@@ -71,7 +70,8 @@ export type GeneratedSurfaceState = ManagedAssetState | 'absent';
 /** The exact repair command for one surface; never localized. */
 export type GeneratedSurfaceFix =
   | 'specgit init'
-  | 'specgit init --force'
+  | 'specgit init --force --no-protect'
+  | 'specgit init --force --no-protect --no-ignore'
   | 'specgit setup --tool opencode'
   | 'specgit setup --tool generic';
 
@@ -156,48 +156,6 @@ function setupSurface(
   };
 }
 
-/** The tracked probe that distinguishes the committed-authoritative model (#292/#308). */
-const AUTHORITATIVE_PATHS = ['.specgit.yaml', 'spec_git/policy.yaml'];
-
-/**
- * Decide whether the `.gitignore` region may be claimed at all. `inspect`
- * when a managed region exists (keep it current) or when the local-asset
- * model applies; otherwise a machine code explaining the refusal: a repo
- * that commits the authoritative tier opted out of the block, and a failed
- * tracked probe means the model is unknowable — never a guessed `missing`.
- * An unreadable `.gitignore` (EISDIR/EACCES/…) is likewise an unknown
- * (#308 Delta 2): only a truly absent path may mean absence, so a read
- * error can never collapse into the proven committed-authoritative skip.
- */
-async function ignoreClaim(
-  root: string,
-  ctx: CommandContext
-): Promise<
-  'inspect' | 'ignore_committed_authoritative' | 'ignore_tracked_unknown' | 'ignore_unreadable'
-> {
-  let gitignore: string | null;
-  try {
-    gitignore = await fs.readFile(`${root}/.gitignore`, 'utf-8');
-  } catch (error) {
-    // The same absence proof the reconciler's readIfExists uses: ENOENT,
-    // or ENOTDIR when a path component is a file. Everything else is
-    // unreadable evidence, not a missing file.
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
-      return 'ignore_unreadable';
-    }
-    gitignore = null;
-  }
-  if (hasManagedIgnoreRegion(gitignore)) {
-    return 'inspect';
-  }
-  const trackedEv = await ctx.git.trackedFiles(root, [...AUTHORITATIVE_PATHS]);
-  if (!trackedEv.ok) {
-    return 'ignore_tracked_unknown';
-  }
-  return trackedEv.value.length > 0 ? 'ignore_committed_authoritative' : 'inspect';
-}
-
 export async function inspectGeneratedAssets(args: {
   root: string;
   ctx: CommandContext;
@@ -221,12 +179,12 @@ export async function inspectGeneratedAssets(args: {
     workflowYaml = null; // desired: no GitHub workflow; an owned one is removable
   } else if (platform === 'github') {
     const selection = await selectWorkflowYaml(ctx, root);
-    if (selection.warning !== undefined) {
-      // The desired bytes would pin a guessed default branch — the writer
-      // itself warns and falls back; status refuses to call that drift.
+    if (!selection.ok) {
+      // The writer cannot prove the branch it must pin, so status makes no
+      // workflow claim either. No guessed bytes are compared or written.
       uninspected.push('workflow_default_branch_unresolved');
     } else {
-      workflowYaml = selection.yaml;
+      workflowYaml = selection.value.yaml;
     }
   } else {
     // `undecided`: heuristics exhausted, no claim. `providers_invalid`
@@ -278,7 +236,7 @@ export async function inspectGeneratedAssets(args: {
     (workflowYaml !== undefined || step.path !== HARNESS_WORKFLOW_PATH) &&
     (completion.ok || (step.path !== COMPLETION_WORKFLOW_PATH && step.path !== GITLAB_COMPLETION_WORKFLOW_PATH)));
 
-  const claim = await ignoreClaim(root, ctx);
+  const claim = await localAssetIgnoreClaim(root, ctx);
   if (claim === 'inspect') {
     initSteps.push({
       kind: 'write',
@@ -316,13 +274,18 @@ export async function inspectGeneratedAssets(args: {
   }
 
   const initState = worstState(initInspection.findings);
+  const initFix: GeneratedSurfaceFix = policy.ok
+    ? claim === 'ignore_committed_authoritative'
+      ? 'specgit init --force --no-protect --no-ignore'
+      : 'specgit init --force --no-protect'
+    : 'specgit init';
   const surfaces: GeneratedSurfaceReport[] = [
     {
       surface: 'init',
       state: initState,
-      // No policy yet: plain `init` creates it; `--force` is the upgrade
-      // repair once the authoritative policy exists.
-      ...(initState !== 'current' ? { fix: policy.ok ? 'specgit init --force' : 'specgit init' } : {}),
+      // No policy yet: plain `init` creates it. An asset-only refresh never
+      // enters remote protection, and preserves a proven ignore opt-out.
+      ...(initState !== 'current' ? { fix: initFix } : {}),
       assets: initInspection.findings,
     },
     setupSurface('opencode', opencodeInspection.findings, 'specgit setup --tool opencode'),

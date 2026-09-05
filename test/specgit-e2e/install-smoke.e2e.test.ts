@@ -9,8 +9,8 @@
  *    install are deterministic PR-level layers and always run;
  *  - the registry-published package smoke is opt-in
  *    (`SPECGIT_E2E_PUBLISHED=1`, version overridable via
- *    SPECGIT_E2E_PUBLISHED_VERSION) — the always-on live layer is the
- *    post-publish external Actions run tracked on the issue.
+ *    SPECGIT_E2E_PUBLISHED_VERSION); historical post-publish external
+ *    Actions runs are archived evidence, not an always-on current job.
  *
  * Every scenario avoids this repository's workspace: installs target
  * throwaway temp directories with an isolated npm cache

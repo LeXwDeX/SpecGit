@@ -214,12 +214,29 @@ describe('CLI contract: ten-command surface (#69)', () => {
     expect(stdoutText(t.io)).toMatch(pattern);
   });
 
-  it('top-level help documents the SPECGIT_GH and SPECGIT_GH_TIMEOUT_MS seams', async () => {
+  it('top-level help documents both forge CLIs and the hook-only guard budget', async () => {
     const t = makeCtx();
     await runCliWith(['node', 'specgit', '--help'], t.ctx);
     const help = stdoutText(t.io);
-    expect(help).toContain('SPECGIT_GH');
-    expect(help).toContain('SPECGIT_GH_TIMEOUT_MS');
+    for (const variable of [
+      'SPECGIT_GH',
+      'SPECGIT_GH_TIMEOUT_MS',
+      'SPECGIT_GLAB',
+      'SPECGIT_GLAB_TIMEOUT_MS',
+      'SPECGIT_GUARD_BUDGET_S',
+    ]) {
+      expect(help, `help must document ${variable}`).toContain(variable);
+    }
+    expect(help).toMatch(/forge\s+issues/i);
+    expect(help).toMatch(/pull or merge\s+request/i);
+  });
+
+  it('doctor help follows the routed forge instead of naming only gh', async () => {
+    const t = makeCtx();
+    await runCliWith(['node', 'specgit', 'doctor', '--help'], t.ctx);
+    const help = stdoutText(t.io);
+    expect(help).toMatch(/configured provider CLI/i);
+    expect(help).not.toMatch(/origin, gh, and policy/i);
   });
 });
 
@@ -329,6 +346,28 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)', 
     expect(cli).toContain('ten commands');
     for (const name of COMMAND_NAMES) {
       expect(cli, `docs/cli.md must list \`specgit ${name}\` in the command table`).toContain(`\`specgit ${name}\``);
+    }
+  });
+
+  it('docs/cli.md names every public long option registered by the CLI', async () => {
+    const cli = readRepoFile('docs', 'cli.md');
+    const { createProgram } = await import('../../src/cli/index.js');
+    const t = makeCtx();
+    const program = createProgram(
+      async () => ({ ctx: t.ctx }),
+      t.io.writeOut,
+      '0.0.0-test',
+      { exit: 0 },
+      ['node', 'specgit']
+    );
+    const options = [
+      ...program.options,
+      ...program.commands.flatMap((command) => command.options),
+    ]
+      .map((option) => option.long)
+      .filter((option): option is string => option !== undefined);
+    for (const option of new Set(options)) {
+      expect(cli, `docs/cli.md must document ${option}`).toContain(option);
     }
   });
 

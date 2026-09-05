@@ -12,7 +12,7 @@ There is no external board. If it is not a GitHub issue, it is not work.
   TDD slices -> push -> CI (SpecGit Acceptance = finish --json)
         |
         v
-  gh pr ready <n> -> specgit finish --exit 0--> merge (issues auto-close)
+  gh pr ready <n> -> specgit finish --(exit 0)--> merge (issues auto-close)
         '-- exit 1/3 -> fix what the verdict names; never bypass the gate
 ```
 

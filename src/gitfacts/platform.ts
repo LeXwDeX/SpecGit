@@ -19,7 +19,7 @@ import { isPlausibleHostname } from './origin-shape.js';
 // explicit port keeps the fail-closed rejection.
 const DEFAULT_PORTS: Record<'https' | 'ssh', string> = { https: '443', ssh: '22' };
 
-/** A declared self-hosted GitLab endpoint: bare host, optional port. */
+/** A declared GitLab endpoint: bare host, optional port. */
 export interface DeclaredGitLab {
   host: string;
   port: string | null;

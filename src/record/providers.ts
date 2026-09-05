@@ -2,9 +2,9 @@ import { z } from 'zod';
 
 /**
  * Provider configuration (spec_git/providers.yaml): explicit, user-owned
- * declarations the URL heuristics cannot decide — today, which self-hosted
- * host is a GitLab instance. Committed to the repository so the whole team
- * shares one declaration.
+ * declarations that select a provider route — today, the exact GitLab host,
+ * including GitLab.com or a self-managed instance. Committed to the repository
+ * so the whole team shares one declaration.
  */
 export const ProvidersSchema = z
   .object({

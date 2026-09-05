@@ -174,8 +174,8 @@ export async function evaluate(input: EvaluateInput): Promise<Verdict> {
       severity: 'warning',
       code: 'record_of_merged_delivery',
       message: state === 'completed'
-        ? 'This record is the completed history of a delivery whose pull request is merged and bound issues are closed.'
-        : 'The pull request is merged; bound issue closure is still pending.',
+        ? 'This record is the completed history of a delivery whose PR/MR is merged and bound issues are closed.'
+        : 'The PR/MR is merged; bound issue closure is still pending.',
       fix: state === 'completed'
         ? 'Start the next delivery: specgit issue "<type>: <title>" atomically replaces this record.'
         : 'Resume the configured completion runner or close the remaining bound issues, then run specgit finish again.',

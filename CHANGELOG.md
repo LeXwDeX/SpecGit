@@ -48,7 +48,7 @@
 
 ### Patch Changes
 
-- [#373](https://github.com/LeXwDeX/SpecGit/pull/373) [`e68ce59`](https://github.com/LeXwDeX/SpecGit/commit/e68ce5915daf28894d793588547f7e1bd4d75ef8) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Align generated agent guidance and config contracts ([#371](https://github.com/LeXwDeX/SpecGit/issues/371)).
+- [#373](https://github.com/LeXwDeX/SpecGit/pull/373) [`e68ce59`](https://github.com/LeXwDeX/SpecGit/commit/e68ce5915daf28894d793588547f7e1bd4d75ef8) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Align generated agent guidance and config contracts ([#371](https://github.com/LeXwDeX/SpecGit/pull/371)).
 
 ## 1.10.0
 
@@ -269,7 +269,7 @@
   - Fix `setPipelineGate` to edit the project with `PUT` instead of `PATCH`:
     GitLab's edit-project endpoint is routed for `PUT` only, so every
     pipeline-gate call returned HTTP 404 and `specgit init` could never enable
-    branch protection / auto-merge on a declared GitLab origin ([#229](https://github.com/LeXwDeX/SpecGit/issues/229), [#230](https://github.com/LeXwDeX/SpecGit/issues/230))
+    branch protection / auto-merge on a declared GitLab origin ([#229](https://github.com/LeXwDeX/SpecGit/issues/229), [#230](https://github.com/LeXwDeX/SpecGit/pull/230))
 
 ## 1.1.0
 
@@ -279,7 +279,7 @@
 
   - `specgit setup` installs 5 entry points per tool (issue, finish, doctor, pr, status) with new skills for doctor/pr/status diagnostics ([#164](https://github.com/LeXwDeX/SpecGit/issues/164), [#165](https://github.com/LeXwDeX/SpecGit/issues/165))
   - Doctor output now includes actionable fix guidance for each diagnostic code ([#166](https://github.com/LeXwDeX/SpecGit/issues/166))
-  - `specgit issue` posts a traceability comment on each bound issue ([#160](https://github.com/LeXwDeX/SpecGit/issues/160), [#161](https://github.com/LeXwDeX/SpecGit/issues/161))
+  - `specgit issue` posts a traceability comment on each bound issue ([#160](https://github.com/LeXwDeX/SpecGit/issues/160), [#161](https://github.com/LeXwDeX/SpecGit/pull/161))
   - Issue help and skill list all 14 conventional title types ([#174](https://github.com/LeXwDeX/SpecGit/issues/174))
   - Managed AGENTS/CLAUDE block now includes agent contract essentials and draft→ready guidance ([#163](https://github.com/LeXwDeX/SpecGit/issues/163), [#176](https://github.com/LeXwDeX/SpecGit/issues/176), [#183](https://github.com/LeXwDeX/SpecGit/issues/183))
 
@@ -363,7 +363,7 @@
 
   Branch-slug derivation is now defined for non-ASCII titles under every
   language: any title containing non-ASCII characters derives the numeric
-  fallback — issue [#123](https://github.com/LeXwDeX/SpecGit/issues/123) bootstraps branch `feat/123-issue123` (delivery
+  fallback — issue `#123` bootstraps branch `feat/123-issue123` (delivery
   `issue123`); the former `issue_title_not_english` rejection is gone. ASCII
   titles keep the first-three-words kebab slug.
 
@@ -431,7 +431,7 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
   page 1.
 
   - The rule is now contract, written as the second fail-closed branch in
-    [docs/baseline-v1.md](../docs/baseline-v1.md): every list-shaped
+    [docs/baseline-v1.md](docs/baseline-v1.md): every list-shaped
     evidence input is paginated to exhaustion or signals truncation, and a
     truncation signal degrades the verdict to `unknown`
     (`evidence_truncated`, exit 3) — never a complete-evidence exit 1.
@@ -447,7 +447,7 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
     refuses on zero/several matches, so truncation cannot flip an outcome
     (≥2 always refuses with the candidate list).
   - The GitLab provider plan's `rel="next"` continuation
-    ([docs/gitlab-support.md](../docs/gitlab-support.md)) is confirmed to
+    ([docs/gitlab-support.md](docs/gitlab-support.md)) is confirmed to
     carry the same rule from day one: continuation to exhaustion, full
     page without a usable link ⇒ `evidence_truncated`, exit 3.
   - TDD: a >100-issues scripted-provider fixture pins the sequence gate's
@@ -533,8 +533,8 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
     all gates green, zero gh reachable).
   - Dogfood evidence (GA gate 4): a real nested-group delivery on
     git.ycgame.com 19.2.4 CE with `specgit finish` exit 0 — archived in
-    [docs/release-gates.md](../docs/release-gates.md) GA-4 and
-    [docs/evidence/gitlab-19.2.md](../docs/evidence/gitlab-19.2.md);
+    [docs/release-gates.md](docs/release-gates.md) GA-4 and
+    [docs/evidence/gitlab-19.2.md](docs/evidence/gitlab-19.2.md);
     FU-5 (read-only project access token) applied as the CI-side glab
     credential.
   - GitHub-side zero regression: the GitHub paths are byte-unaffected
@@ -649,7 +649,7 @@ passed | 1 skipped (798)` across `43` files, matrix-layer files
   re-pin all three facts (count, platform, commit). The CI note now
   records the workflow facts since `4df0ae0`: 20-minute test-job timeout
   (was 15) and windows-pwsh `VITEST_MAX_WORKERS=1` (was 2; linux/macos
-  run 4). Findings 4 and 6 of [#88](https://github.com/LeXwDeX/SpecGit/issues/88) shipped earlier ([#137](https://github.com/LeXwDeX/SpecGit/issues/137), [#134](https://github.com/LeXwDeX/SpecGit/issues/134)).
+  run 4). Findings 4 and 6 of [#88](https://github.com/LeXwDeX/SpecGit/issues/88) shipped earlier ([#137](https://github.com/LeXwDeX/SpecGit/pull/137), [#134](https://github.com/LeXwDeX/SpecGit/pull/134)).
 
 - [#142](https://github.com/LeXwDeX/SpecGit/pull/142) [`d8a5fb3`](https://github.com/LeXwDeX/SpecGit/commit/d8a5fb3ba95f91baa2e06fe6aada0d12ed314ef8) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Merged-lineage anchor validation ([#76](https://github.com/LeXwDeX/SpecGit/issues/76))
 
@@ -819,7 +819,7 @@ passed | 1 skipped (798)` across `43` files, matrix-layer files
     `makeGhProvider`, `makeGitPort` — one assertion per implementer for full
     red attribution, plus a doc-sync test pinning `docs/providers.md`'s
     inventory tables to the exported lists member-for-member.
-  - **Deliberate proof (recorded in PR [#129](https://github.com/LeXwDeX/SpecGit/issues/129))**: temporarily adding the
+  - **Deliberate proof (recorded in PR [#129](https://github.com/LeXwDeX/SpecGit/pull/129))**: temporarily adding the
     required member `__contractProbe()` to both ports went red everywhere it
     must — `tsc` at every src implementer and both inventory checks (6
     errors); after propagating the probe into the inventories, the contract
@@ -856,7 +856,7 @@ passed | 1 skipped (798)` across `43` files, matrix-layer files
     assert a GitHub-only v1 scope; both now carry the incremental dual-platform
     narrative ratified in `docs/gitlab-support.md` (D-1=A).
   - **PR template time bomb defused**: `.github/PULL_REQUEST_TEMPLATE.md` no
-    longer carries the literal `Closes [#123](https://github.com/LeXwDeX/SpecGit/issues/123)` — the placeholder is now
+    longer carries the literal `Closes #123` — the placeholder is now
     `Closes #<issue-number>`, so an unedited template can never auto-close a
     real issue.
   - `test/docs-consistency.test.ts` pins all of the above (red-first: all four
@@ -913,7 +913,7 @@ passed | 1 skipped (798)` across `43` files, matrix-layer files
   with the last five consecutive `main` runs red on the leg (through
   `15ce8ef`), so self-hosted coverage leaves the release matrix with the
   rationale recorded on the issue and referenced from
-  [docs/release-gates.md](../docs/release-gates.md) §3. Required checks are
+  [docs/release-gates.md](docs/release-gates.md) §3. Required checks are
   untouched — hosted `linux-bash`/`macos-bash`/`windows-pwsh` legs stay,
   `spec_git/policy.yaml` unchanged.
 

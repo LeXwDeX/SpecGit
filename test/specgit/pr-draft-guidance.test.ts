@@ -24,7 +24,8 @@ describe('#162: pr_draft carries an executable ready-for-review fix', () => {
     // GitLab deliveries evaluate through glab — the equivalent is named too.
     expect(info.fix).toContain('glab mr update <number> --ready');
     // The fix closes the loop: re-run the verdict after the transition.
-    expect(info.fix).toContain('specgit accept');
+    expect(info.fix).toContain('specgit finish');
+    expect(info.fix).not.toContain('specgit accept');
   });
 
   it('skills/specgit-finish/SKILL.md checks draft state before the verdict', () => {

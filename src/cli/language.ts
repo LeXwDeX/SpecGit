@@ -13,7 +13,7 @@
 import { resolveLanguage, type PolicyLanguage } from '../i18n/language.js';
 import type { CommandContext } from './types.js';
 
-export { catalogFor, resolveLanguage, DEFAULT_LANGUAGE } from '../i18n/language.js';
+export { catalogFor, formatRequestRef, resolveLanguage, DEFAULT_LANGUAGE } from '../i18n/language.js';
 export type { LanguageCatalog, HumanText, ScaffoldText } from '../i18n/language.js';
 
 /** Presentation language for a command run. Never a verdict input. */

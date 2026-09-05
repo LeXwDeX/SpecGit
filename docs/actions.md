@@ -3,24 +3,24 @@
 SpecGit verifies deliveries against CI evidence. This page defines how GitHub Actions produce that evidence — how check names are chosen, how to wire required checks, and the security rules for the workflows involved.
 
 ```text
-  specgit init / setup      once per repository: policy + acceptance
+  specgit init / setup      initialize once; rerun after upgrades
         |                   harness + agent entry points
         v
   specgit issue "..."       per delivery: issues + branch +
-        |                   draft PR (Closes #n) + record,
+        |                   draft PR/MR (Closes #n) + record,
         |                   committed and pushed (idempotent resume)
         v
-  work, commit, push -----> CI on the PR head
-        |                   (the SpecGit Acceptance job runs
+  work, commit, push -----> CI/CD on the request head
+        |                   (the platform acceptance job runs
         |                    specgit finish --json)
         v
-  gh pr ready <n>           a draft PR always fails the verdict
+  mark PR/MR ready          a draft request always fails the verdict
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
         |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
-        '-- exit 3 --> fix the environment first (specgit doctor)
+        '-- exit 3 --> follow errors[].fix; use doctor for its probes
 ```
 
 ## How SpecGit reads Actions
@@ -46,14 +46,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: npm ci
       - run: npm test
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: npm ci
       - run: npm run build
 
@@ -64,7 +64,10 @@ jobs:
     if: always()
     steps:
       - name: Fail unless every dependency succeeded
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
         run: exit 1
       - run: echo ok
 ```
@@ -92,13 +95,13 @@ Naming rules that matter:
 
 ## Security guidance
 
-**Least privilege by default.** Set top-level `permissions: { contents: read }` and grant more only inside jobs that provably need it. Acceptance evidence is read-only; nothing in the SpecGit model needs workflow write access to contents, packages, or deployments.
+**Least privilege by job.** Set top-level `permissions: { contents: read }` and grant more only inside jobs that provably need it. The generated Acceptance job reads evidence and needs no write credential. Configured Completion is a separate trusted workflow: merging and closing issues require narrowly scoped contents, pull-request, and issue writes. It validates the event, target, and exact head and never checks out or executes PR source with that write credential.
 
 **Never expose secrets to untrusted changes.** Trigger on `pull_request` (not `pull_request_target`) for anything that runs fork-contributor code: the `pull_request` context receives no secrets and no write tokens. Reserve `pull_request_target` for workflows that only touch trusted data (labeling, status comments) and never check out or execute PR code.
 
 **Tokens.** SpecGit on a developer machine authenticates through your existing `gh auth login` session; it never reads, echoes, or stores tokens, and `gh auth status` output is the only auth surface it inspects. If you script SpecGit in CI:
 
-- Mint a narrowly scoped token (read-only for the repo: issues, pull requests, checks) and pass it as an action secret to `gh auth`.
+- For a verdict-only job, mint a narrowly scoped read-only token for issues, pull requests, and checks and pass it as an action secret to `gh auth`. Use the generated trusted completion workflow rather than adding write scope to a job that executes PR code.
 - Never print the token, never store it in the record or policy (both are committed files), and never pass it as a command-line argument visible in process listings.
 - Remember the asymmetry: CI-side verdicts are convenient, but they inherit the fork-PR secret rules above.
 

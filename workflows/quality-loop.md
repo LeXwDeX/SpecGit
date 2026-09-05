@@ -1,4 +1,9 @@
-# Quality Loop — REVIEW → DEBUG → FIX until clean, then the authorized merge
+# Product Quality Loop
+
+This loop applies to product changes. Documentation-only and manual
+project-guidance changes use the [documentation short path](../docs/ci-scope.md#documentation-short-path)
+and finish after one relevant review and lightweight validation. They do not
+enter the review rounds or spawn the review agents described below.
 
 ```text
   fast rounds (per slice): REVIEW -> findings -> FIX -> targeted gates
@@ -7,10 +12,10 @@
   one full two-axis review (standards + spec) -> disposition every finding
         |
         v
-  four clean criteria hold -> gh pr ready -> specgit finish
+  four clean criteria hold -> PR/MR ready -> specgit finish
          |-- exit 0 --> enabled specgit pr --merge (all CI + target match)
          |             -> confirmed merge -> configured bound issue closure
-         |             -> authorized release (changesets)
+         |             -> authorized release when a changeset declares intent
          |             -> next specgit issue (replaces the completed
          |                record atomically, #351)
          '-- exit 1/3 -> back to FIX; never weaken a gate to pass
@@ -23,8 +28,7 @@ continues only with explicit release intent. Local installation, upgrades and
 init/setup refreshes with no intended tracked delivery do not enter this loop.
 [CI scope](../docs/ci-scope.md) defines the required verification per change class.
 
-**Standing principle ([NOTES](../NOTES.md)): the harness is the
-product.** Every review weighs findings in this order — product usage
+**Standing principle: the harness is the product.** Every review weighs findings in this order — product usage
 first, harness contract second, architecture third, code last.
 Architecture and code exist to serve *spec bound to git, verified
 through the harness*; a finding at a higher layer always outranks a
@@ -35,8 +39,7 @@ defence mounted at a lower one.
 An **event**, never a schedule. Any one of these fires a loop run:
 
 1. New commits landed on the delivery branch AND the applicable local gate set
-   is green: product checks for product changes, lightweight validation for
-   metadata-only changes. CI is not waited for — the review
+   is green for a product change. CI is not waited for — the review
    axes need only the diff; CI green is a merge gate, not a review
    gate.
 2. CI red after a push (the DEBUG discipline below).
@@ -166,9 +169,11 @@ a merge input, including Windows jobs.
    completed history (#351): the next `specgit issue` replaces it
    atomically — `unbind` is only for abandoning or resetting, never the
    post-merge step.
-3. A release with explicit release intent follows [CONTRIBUTING.md](../CONTRIBUTING.md) §2 step 6
-   (changesets): changeset PR → version PR → approve the workflow runs →
-   merge → `npm view specgit version` confirms publication.
+3. A release with explicit release intent follows
+   [release guidance](../docs/ci-scope.md#required-verification):
+   the delivery PR carries a changeset, merging it creates or updates the
+   generated version PR, normal CI and configured merge automation gate that
+   PR, and registry, tag, and GitHub Release evidence confirm publication.
 
 ## Final brief
 

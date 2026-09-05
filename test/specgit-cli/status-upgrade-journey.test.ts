@@ -135,7 +135,7 @@ describe('the old-version upgrade journey (#308)', () => {
 
     const init = generated.surfaces.find((s: any) => s.surface === 'init');
     expect(init.state).toBe('missing'); // required assets absent outrank the stale ones
-    expect(init.fix).toBe('specgit init --force');
+    expect(init.fix).toBe('specgit init --force --no-protect');
     expect(init.assets.find((a: any) => a.path === HARNESS_WORKFLOW_PATH)).toMatchObject({
       state: 'stale',
       code: 'asset_stale',

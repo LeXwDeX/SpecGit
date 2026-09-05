@@ -60,7 +60,7 @@ export interface EvaluateInput {
     ForgeEvidencePort,
     'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests'
   >;
-  /** Declared self-hosted GitLab host (spec_git/providers.yaml), if any. */
+  /** Declared GitLab host (spec_git/providers.yaml), if any. */
   gitlabHost?: string;
 }
 

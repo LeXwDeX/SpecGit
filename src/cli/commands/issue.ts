@@ -2,7 +2,7 @@
  * `specgit issue [<title-or-number> ...]` — the one-command delivery
  * bootstrap: create/reuse N issues (one issue = one independently
  * verifiable WHY), create the branch `<type>/<first#>-<slug>`, open a
- * draft PR whose body is the deterministic scaffold rendered from the
+ * draft PR/MR whose body is the deterministic scaffold rendered from the
  * bound issues (#87), write `.specgit.yaml`, commit and push. Re-runs
  * resume: every completed step is detected from the record and the live
  * branch, so a failure between steps heals on the next invocation with
@@ -13,7 +13,7 @@
  * after every issue so partial state is durable; and every remote side
  * effect carries an idempotency marker — the record itself, an open
  * issue's exact title (disambiguated by the deterministic scaffold body
- * on same-title collisions, #77), or the open PR for the head branch —
+ * on same-title collisions, #77), or the open PR/MR for the head branch —
  * so a retry adopts what already exists instead of duplicating a WHY.
  * An idempotency marker that cannot name exactly one remote object is
  * drift the human resolves: `issue_title_ambiguous`, never a silent
@@ -21,9 +21,11 @@
  *
  * The CLI is non-interactive: no arguments and no record is a usage
  * error (exit 2). With a live record, no arguments is a pure resume; a
- * record whose PR merged is completed history — no-args resume is a
+ * record whose PR/MR merged is completed history — no-args resume is a
  * usage error naming the way forward, and validated replacement
- * arguments re-bootstrap in its place (#75).
+ * arguments re-bootstrap in its place (#75). A request closed without a
+ * merge is a failed delivery that must be repaired before any new WHY can
+ * replace it (#463).
  *
  * Delivery naming (#246): the branch is always issue number + semantic
  * name (`<type>/<issue>-<slug>`), and bootstrap never invents a name. When
@@ -34,15 +36,15 @@
  *
  * Structure (#177): `runIssue` is orchestration only; the readable,
  * individually testable steps live in named sub-functions —
- * `resolveMergedRecord` (read-only mergedness probe), `validateResumeArgs`
+ * `resolveRequestLifecycle` (read-only request-state probe), `validateResumeArgs`
  * (positional resume validation), and `createOrAdoptIssues` (the issue
  * creation loop with durable per-issue record writes). The tail chain —
- * checkout, binding commit, push, PR binding, final record commit,
+ * checkout, binding commit, push, PR/MR binding, final record commit,
  * push — is the ordered step list of the DeliveryBootstrap module
  * (#278, ./bootstrap.ts).
  */
 
-import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
+import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { deriveBindingState, resolveExecutionContext } from '../gates.js';
 import {
   detailLine,
@@ -60,7 +62,7 @@ import {
   forgeReadyCommand,
   forgeWebBase,
 } from '../forge-links.js';
-import { catalogFor, resolveLanguage } from '../language.js';
+import { catalogFor, formatRequestRef, resolveLanguage } from '../language.js';
 import { isKebabId, KEBAB_ID_FIX, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
 import type { Policy, PolicyLanguage } from '../../record/policy.js';
 import { checkLabelConvention, checkTitleConvention } from '../../record/conventions.js';
@@ -329,7 +331,7 @@ async function harnessCurrencyGate(args: {
   if (localDrift.length > 0) args.warnings.push({
     severity: 'warning', code: 'local_assets_stale',
     message: `Local integration assets need refresh: ${localDrift.map((asset) => asset.path).join(', ')}.`,
-    fix: 'Inspect specgit status, then refresh owned assets with specgit init --force and specgit setup. Delivery verification remains enforced.',
+    fix: 'Inspect specgit status, then run the exact surface repair commands it reports. Delivery verification remains enforced.',
   });
   const drifted = report.surfaces.filter((surface) => {
     const states = surface.assets.filter(remoteAsset).map((asset) => asset.state);
@@ -345,7 +347,7 @@ async function harnessCurrencyGate(args: {
   if (drifted.length === 0) {
     return null;
   }
-  const fix = drifted.find((surface) => surface.fix !== undefined)?.fix ?? 'specgit init --force';
+  const fix = drifted.find((surface) => surface.fix !== undefined)?.fix ?? 'specgit init --force --no-protect';
   const names = drifted.map((surface) => surface.surface).join(', ');
   return {
     exit: EXIT_USAGE,
@@ -353,7 +355,7 @@ async function harnessCurrencyGate(args: {
       errorDiagnostic(
         'harness_stale',
         `Generated harness assets are stale or conflicting for this CLI version (surfaces: ${names}).`,
-        { fix: `Refresh them, then re-run this command: ${fix}. Probe the details with 'specgit doctor'.` }
+        { fix: `Inspect the drift with "specgit status --json", run the reported repair command (${fix}), then re-run this command.` }
       ),
     ],
   };
@@ -361,7 +363,7 @@ async function harnessCurrencyGate(args: {
 
 /**
  * The closing-loop gate (#347): a merged delivery whose bound issues are
- * still OPEN has no proven closure — GitHub's auto-close never fired
+ * still OPEN has no proven closure — the forge's auto-close never fired
  * (refs removed post-merge, cross-repo reference, provider close-semantics).
  * Starting the next delivery on top of unproven closure is refused with
  * zero side effects, before the merged record could be replaced. Evidence
@@ -389,7 +391,7 @@ async function mergedIssuesClosureGate(
         'issues_not_closed',
         `The merged delivery '${record.delivery}' still has unclosed bound issue(s): ${issueList(stillOpen)}. The closing reference never fired on the forge.`,
         {
-          fix: 'Close them on the tracker — check the merged PR body for removed Closes references — then start the next delivery.',
+          fix: 'Close them on the tracker — check the merged PR/MR body for removed Closes references — then start the next delivery.',
         }
       ),
     ],
@@ -438,7 +440,7 @@ export async function runIssue(
       exit: EXIT_UNKNOWN,
       errors: [
         errorDiagnostic('no_origin', 'No origin remote is configured.', {
-          fix: 'Add a GitHub origin: git remote add origin <url>.',
+          fix: 'Add an origin for the supported forge: git remote add origin <url>.',
         }),
       ],
     };
@@ -469,14 +471,20 @@ export async function runIssue(
     return gate;
   }
 
-  const mergedEv = await resolveMergedRecord(ctx, repoEv.value, existingRead.ok ? existingRead : null);
-  if ('exit' in mergedEv) {
-    return mergedEv;
+  const lifecycleEv = await resolveRequestLifecycle(ctx, repoEv.value, existingRead.ok ? existingRead : null);
+  if ('exit' in lifecycleEv) {
+    return lifecycleEv;
   }
-  let existing = mergedEv.existing;
+  let existing = lifecycleEv.existing;
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'absent') {
+    return missingRequestError(existing.value);
+  }
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'closed') {
+    return closedRequestError(existing.value);
+  }
   // An active request is governed by approved target rules until merge.
   // Candidate settings cannot make its idempotent resume contradict finish.
-  if (existing !== null && existing.ok && !mergedEv.merged && existing.value.pr !== undefined) {
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'bound') {
     const approved = await ctx.resolvePolicy(root, existing);
     if (!approved.ok && approved.code !== 'policy_missing') return passthrough(approved);
     policy = approved.ok ? approved.value.policy : undefined;
@@ -484,27 +492,27 @@ export async function runIssue(
     ({ human } = catalogFor(language));
   }
   // A merged record has nothing to resume: no-args resume would re-run
-  // the branch/commit/push steps and resurrect the head branch GitHub
+  // the branch/commit/push steps and resurrect a head branch the forge
   // auto-deleted on merge. End the lifecycle decision before any side
   // effect, naming the way forward (#75). #347: before that refusal —
   // and before any replacement re-bootstrap below — prove the merged
   // delivery's issues actually closed on the forge.
-  if (existing !== null && existing.ok && mergedEv.merged) {
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'merged') {
     const closure = await mergedIssuesClosureGate(ctx, repoEv.value, existing.value);
     if (closure !== null) {
       return closure;
     }
   }
-  if (existing !== null && existing.ok && mergedEv.merged && args.length === 0) {
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'merged' && args.length === 0) {
     return mergedDeliveryError(existing.value);
   }
 
   // Resolve identity from the original request before a template changes its
   // title. Only an active binding supplies identity; merged history cannot
   // name a new delivery. The resolved name also prevents a second prompt.
-  let resolvedDeliveryName = existing !== null && existing.ok && !mergedEv.merged
+  let resolvedDeliveryName = existing !== null && existing.ok && lifecycleEv.requestState !== 'merged'
     ? existing.value.delivery : deliveryOverride;
-  if ((existing === null || mergedEv.merged) && args.length > 0) {
+  if ((existing === null || lifecycleEv.requestState === 'merged') && args.length > 0) {
     const invalid = validateArgsForCreation(args);
     if (invalid) return invalid;
     const first = firstTitleArg(args);
@@ -554,7 +562,7 @@ export async function runIssue(
   // completed record on disk until the first new issue is durable: the
   // atomic writer replaces it, so naming, tag, forge, or write failures
   // before that point preserve the completed delivery (#378).
-  if (existing !== null && existing.ok && mergedEv.merged && args.length > 0) {
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'merged' && args.length > 0) {
     const invalidReplacement = validateArgsForCreation(args);
     if (invalidReplacement) {
       return invalidReplacement;
@@ -599,7 +607,7 @@ export async function runIssue(
       }
       if (options.prBodyFile) {
         prBody = await readFile(resolve(root, options.prBodyFile), 'utf8');
-        if (Buffer.byteLength(prBody, 'utf8') > 1_000_000) throw new Error('PR body exceeds 1 MB.');
+        if (Buffer.byteLength(prBody, 'utf8') > 1_000_000) throw new Error('PR/MR body exceeds 1 MB.');
       }
     } catch (error) {
       return { exit: EXIT_USAGE, errors: [errorDiagnostic('issue_body_file_invalid', error instanceof Error ? error.message : String(error))] };
@@ -712,7 +720,7 @@ export async function runIssue(
   }
 
   // #278: the tail chain is data — the DeliveryBootstrap module's
-  // ordered steps (checkout → commit binding → push head → bind PR →
+  // ordered steps (checkout → commit binding → push head → bind PR/MR →
   // commit record → push). Preconditions read the current branch and
   // record, so a re-run from any partial state converges;
   // reordering is a change to BOOTSTRAP_STEPS, reviewable as such.
@@ -749,7 +757,7 @@ export async function runIssue(
     );
   }
   // #361: the success hand-off — forge URLs and the steps to
-  // review-ready (fill the issue bodies, fill the PR brief, mark ready).
+  // review-ready (fill the issue bodies, fill the PR/MR brief, mark ready).
   const platform = repoEv.value.platform;
   const base = forgeWebBase(facts.originUrl);
   const urls =
@@ -803,41 +811,121 @@ export async function runIssue(
 }
 
 /**
- * Read-only mergedness probe (#75): a record whose PR already merged is
- * completed history, not an active delivery. Provider failures keep the
- * existing record (fail-closed — never guess merged): resuming on a guess
- * of "not merged" could re-push the branch GitHub deleted on merge.
- * `pr_not_found` is the one exception (#284): it is a fact, not a probe
- * failure — a bound PR that does not exist on this platform can never
- * merge, so the lifecycle is terminal like a merged one (a mirror
- * repository's record names the other platform's PR number).
+ * Read-only request-state probe (#75/#463): a merged PR/MR is completed
+ * history, a closed-unmerged PR/MR is failed history that requires repair,
+ * and a missing request is a broken binding. Provider failures keep the
+ * existing record (fail-closed — never guess lifecycle state): resuming on
+ * a guess could re-push a branch the forge deleted on merge.
  */
-async function resolveMergedRecord(
+type RequestLifecycle = 'unbound' | 'bound' | 'merged' | 'closed' | 'absent';
+
+async function resolveRequestLifecycle(
   ctx: CommandContext,
   repo: RepoRef,
   existing: Evidence<DeliveryBinding> | null
-): Promise<IssueOutcome | { existing: Evidence<DeliveryBinding> | null; merged: boolean }> {
+): Promise<IssueOutcome | {
+  existing: Evidence<DeliveryBinding> | null;
+  requestState: RequestLifecycle;
+}> {
   if (existing === null || !existing.ok || existing.value.pr === undefined) {
-    return { existing, merged: false };
+    return { existing, requestState: 'unbound' };
   }
   const prEv = await ctx.gh.getPr(repo, existing.value.pr);
   if (!prEv.ok) {
     if (prEv.code === 'pr_not_found') {
-      return { existing, merged: true };
+      return { existing, requestState: 'absent' };
     }
     return passthrough(prEv);
   }
-  return { existing, merged: prEv.value.state === 'merged' };
+  return {
+    existing,
+    requestState:
+      prEv.value.state === 'merged'
+        ? 'merged'
+        : prEv.value.state === 'closed'
+          ? 'closed'
+          : 'bound',
+  };
 }
 
-/** The no-args refusal for a record whose PR is terminal: merged or absent (#75, #284). */
+/** A closed request without a merge is a failed delivery, never resumable history. */
+function closedRequestError(record: DeliveryBinding): IssueOutcome {
+  if (record.pr === undefined) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'record_invalid',
+          `Delivery '${record.delivery}' has no PR/MR reference whose closed state can be reported.`,
+          { fix: 'Repair or recreate .specgit.yaml before resuming this delivery.' }
+        ),
+      ],
+    };
+  }
+  const closingReferences = record.issues.map((issue) => `Closes #${issue}`).join(', ');
+  return {
+    exit: EXIT_REJECTED,
+    errors: [
+      errorDiagnostic(
+        'pr_closed_unmerged',
+        `Delivery '${record.delivery}' is bound to PR/MR ${formatRequestRef(record.pr)}, which is closed without merge. The failed delivery record was preserved and cannot be resumed or replaced.`,
+        {
+          fix: `Create or find an open draft PR/MR from branch '${record.context.branch}' whose body preserves every closing reference (${closingReferences}); then repair this binding with: specgit pr <number>. Handle any new WHY in a separate issue after this binding is repaired.`,
+        }
+      ),
+    ],
+  };
+}
+
+/** A missing request is a repairable binding failure, never completed history. */
+function missingRequestError(record: DeliveryBinding): IssueOutcome {
+  if (record.pr === undefined) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'record_invalid',
+          `Delivery '${record.delivery}' has no PR/MR reference to repair.`,
+          { fix: 'Repair or recreate .specgit.yaml before resuming this delivery.' }
+        ),
+      ],
+    };
+  }
+  const closingReferences = record.issues.map((issue) => `Closes #${issue}`).join(', ');
+  return {
+    exit: EXIT_UNKNOWN,
+    errors: [
+      errorDiagnostic(
+        'pr_not_found',
+        `Delivery '${record.delivery}' remains bound to PR/MR ${formatRequestRef(record.pr)}, but that request does not exist on the configured forge. The delivery is not complete and its record was preserved.`,
+        {
+          fix: `Find an existing open PR/MR for branch '${record.context.branch}' or create a draft one whose body preserves every closing reference (${closingReferences}); then repair this binding with: specgit pr <number>.`,
+        }
+      ),
+    ],
+  };
+}
+
+/** The no-args refusal for a record whose PR/MR is proven merged (#75). */
 function mergedDeliveryError(record: DeliveryBinding): IssueOutcome {
+  if (record.pr === undefined) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'record_invalid',
+          `Delivery '${record.delivery}' has no PR/MR reference whose merged state can be reported.`,
+          { fix: 'Repair or recreate .specgit.yaml before resuming this delivery.' }
+        ),
+      ],
+    };
+  }
   return {
     exit: EXIT_USAGE,
     errors: [
       errorDiagnostic(
         'issue_delivery_merged',
-        `Delivery '${record.delivery}' has no live pull request (PR #${record.pr} is merged or does not exist on this platform); there is nothing to resume.`,
+        `Delivery '${record.delivery}' is complete because PR/MR ${formatRequestRef(record.pr)} is merged; there is nothing to resume.`,
         {
           fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why" — it atomically replaces this completed record.',
         }
@@ -880,13 +968,13 @@ function validateResumeArgs(
     return { startIndex: issues.length, firstTitle: null };
   }
   // Partial continuation (issues ⊂ args) is only possible while the
-  // bootstrap is incomplete: no PR recorded yet. A record with a PR
+  // bootstrap is incomplete: no PR/MR recorded yet. A record with a request
   // bound is a complete delivery — a finished bootstrap never creates
   // issues, so surplus arguments are drift, refused with zero side
   // effects before any probe or create.
   if (record.pr !== undefined) {
     return driftError(
-      `This checkout already carries the complete delivery '${record.delivery}' with ${record.issues.length} bound issue(s) and PR #${record.pr}; the ${args.length} argument(s) do not match.`
+      `This checkout already carries the complete delivery '${record.delivery}' with ${record.issues.length} bound issue(s) and PR/MR ${formatRequestRef(record.pr)}; the ${args.length} argument(s) do not match.`
     );
   }
   // Partial record (issues ⊂ args): the first issues.length arguments

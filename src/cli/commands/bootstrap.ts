@@ -322,7 +322,7 @@ async function bindPullRequest(deps: {
       errors: [
         errorDiagnostic(
           'pr_ambiguous',
-          `Multiple open pull requests have head branch '${branch}':\n${listing}`,
+          `Multiple open PRs/MRs have head branch '${branch}':\n${listing}`,
           {
             fix: 'Bind one explicitly: specgit pr <number>, then re-run specgit issue to finish the delivery.',
           }

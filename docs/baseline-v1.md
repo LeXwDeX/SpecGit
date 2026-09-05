@@ -7,36 +7,36 @@ first — versioned per major line (`baseline-v1.md`, `baseline-v2.md`, …) and
 referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/SpecGit/milestone/1).
 
 ```text
-  specgit init / setup      once per repository: policy + acceptance
-        |                   harness + agent entry points
+  specgit init / setup      at adoption and after CLI upgrades:
+        |                   policy + harness + agent entry points
         v
-  specgit issue "..."       per delivery: issues + branch +
-        |                   draft PR (Closes #n) + record,
+  specgit issue "<type>: …" per delivery: issues + branch +
+        |                   draft PR/MR (Closes #n) + record,
         |                   committed and pushed (idempotent resume)
         v
   work, commit, push -----> CI on the PR head
         |                   (the SpecGit Acceptance job runs
         |                    specgit finish --json)
         v
-  gh pr ready <n>           a draft PR always fails the verdict
+  PR/MR ready               a draft request always fails the verdict
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
         |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
-        '-- exit 3 --> fix the environment first (specgit doctor)
+        '-- exit 3 --> follow errors[].fix; use doctor for its probes
 ```
 
 ## Supported platforms and prerequisites
 
 | Dimension | v1 baseline |
 | --- | --- |
-| Hosted forge | **GitHub.com plus GitLab CE/Free self-managed** — the v1 scope is dual-platform per the version policy; the GitLab evidence chain (recognition, glab adapter, per-platform routing — ledger Phases 1–2) is fully shipped since 1.0.0, while the generated `.gitlab-ci.yml` acceptance template remains future work (Phase 3) ([gitlab-support.md](gitlab-support.md)). Origins parsing to `github.com` (HTTPS, SCP-style SSH, `ssh://`) are served through `gh`; a GitLab host declared in `spec_git/providers.yaml` is served through the `glab` provider (self-managed verified window `>= 19.2.4 < 19.4.0`, CE/Free — outside versions warn, live APIs decide); everything else fails `origin_unresolvable`. |
-| GitHub access | Exclusively the authenticated `gh` CLI. No direct REST client, no stored or logged tokens. |
+| Hosted forge | The v1 contract is **dual-platform: GitHub.com plus GitLab.com and declared self-managed GitLab CE/Free**. Origins parsed as `github.com` are served through `gh`; GitLab.com and a self-managed host declared in `spec_git/providers.yaml` are served through `glab`. The self-managed verified window is `>= 19.2.4 < 19.4.0`; outside versions warn and live APIs decide. GitLab projects retain their project-owned business acceptance job; opt-in completion generates the conditional root router and independent default-branch completion pipeline described in [gitlab-support.md](gitlab-support.md). Everything else fails `origin_unresolvable`. |
+| Forge access | Exclusively the existing authenticated CLI session: `gh` for GitHub and `glab` for the routed GitLab origin. No direct REST client, no stored or logged tokens. |
 | Git | Required; local facts come from the git binary (`src/gitfacts` seam). Linked worktrees and `core.hooksPath` setups are first-class. |
 | Runtime | Node.js ≥ 20.19 (the `specgit` CLI is an npm package). |
-| Operating systems | macOS, Linux, and Windows where Node ≥ 20.19, git, and gh run. |
-| CI systems | Any system that reports check runs to the GitHub PR head (GitHub Actions is the documented path — [actions.md](actions.md)). |
+| Operating systems | macOS, Linux, and Windows where Node ≥ 20.19, git, and the routed forge CLI run. |
+| CI systems | GitHub checks at the PR head or the authoritative GitLab MR pipeline and its downstream pipelines. GitHub Actions is documented in [actions.md](actions.md); the GitLab integration and project-owned acceptance boundary are documented in [gitlab-support.md](gitlab-support.md). |
 
 ## Commands (ten)
 
@@ -54,6 +54,14 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 | `specgit accept` | Automation alias. The same evaluation as `finish`. |
 
 Nothing else is public surface. Full reference: [cli.md](cli.md).
+
+`init` requires a supported forge platform before any mutation. Only
+`github.com` auto-selects GitHub; another endpoint may be declared or confirmed
+only as GitLab, because GitHub Enterprise has no v1 route. Undecided or invalid
+platform evidence exits `3` without writes. A provider-declaration persistence
+failure also exits `3` and restores the exact pre-run provider state. Before
+workflow generation or protection, init additionally requires the remote
+default branch proved from `origin/HEAD`; those paths never guess `main`.
 
 ## Optional merge and closure automation
 
@@ -105,6 +113,11 @@ Three tiers, nothing else (normative table: [reference.md](reference.md#state-an
 2. **Derived committed harness** — `.github/workflows/specgit-accept.yml`, the managed block in `AGENTS.md`/`CLAUDE.md`, and the optional trusted completion workflow. GitLab automation adds its managed root router and separate completion configuration while preserving the business CI bytes; see [GitLab support](gitlab-support.md). Generated assets are regenerable (`init --force` repairs drift).
 3. **Local integration assets** — guard hooks (`.opencode/hooks.json` entry, `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`) and `setup` entry points. Merged non-destructively into your existing wiring.
 
+The reconciler re-reads whole-file targets at commit time. Replacement requires
+current ownership plus the exact planned merge basis; removal re-proves current
+ownership. Intervening user bytes are preserved, and a failed transaction rolls
+back earlier accepted mutations.
+
 Verdicts and delivery states are derived per invocation and never persisted.
 
 Local CLI installation, upgrade and init/setup refresh do not require an issue,
@@ -114,10 +127,20 @@ reported as a maintenance warning; unusable remote acceptance assets still
 block bootstrap. [CI scope](ci-scope.md) defines applicable verification;
 ignore rules never grant CI exemptions.
 
+In this repository, every path admitted to metadata-only verification has a
+real fail-closed content check: delivery schemas, workflows, generated guidance
+and setup entries, YAML/legacy Markdown issue templates, `.gitignore`,
+`CODEOWNERS`, changesets, repository metadata, and documentation. A missing or
+malformed input fails; it cannot skip product verification by path alone.
+
 ## Evaluation semantics
 
 - Eleven ordered gates: record → policy → completeness → context → origin → provider → issues → sequence → pr → closing → checks ([gate table](reference.md#gates)).
 - **Transient semantics:** `checks_pending` is `factual` and exits `1` — a complete verdict saying "CI has not finished". It is transient and retryable: wait, re-run `specgit finish`. It is never reclassified, never exit `3`.
+- **Closed request semantics:** a record bound to a PR/MR closed without merge
+  is failed delivery evidence. `specgit issue` exits `1` with
+  `pr_closed_unmerged`, preserves the record, and requires an open draft from
+  the recorded branch to be bound through `specgit pr` before a new WHY starts.
 - Acceptance is fail-closed: ungatherable evidence ⇒ `unknown` (exit 3), never `accepted`. `specgit finish` exit `0` means accepted. A delivery is completed only when its merge and every bound issue closure are confirmed.
 - **Fail-closed has two branches** (#120): fail closed on **errors** (evidence cannot be gathered ⇒ `unknown`) and fail closed on **silent incompleteness** — every list-shaped evidence input (open issues, check runs) is either paginated to exhaustion or signals truncation, and a truncation signal degrades the verdict to `unknown` (`evidence_truncated`, exit 3), never a complete-evidence exit `1`. A truncated list is not evidence.
 
@@ -146,7 +169,7 @@ define the configuration choices and diagnostics.
 
 ## Non-goals (v1)
 
-- No GitHub Enterprise evidence (declaration and diagnostics only); self-managed GitLab CE/Free evidence is supported per [gitlab-support.md](gitlab-support.md).
+- No GitHub Enterprise declaration or evidence route; self-managed GitLab CE/Free evidence is supported per [gitlab-support.md](gitlab-support.md).
 - No direct REST clients, no token storage, no telemetry.
 - No spec-artifact or task-list inputs — evidence is git + the forge (GitHub or GitLab) only.
 - No cross-platform deliveries (one delivery, one platform, one PR).
@@ -156,7 +179,11 @@ define the configuration choices and diagnostics.
 
 - **Stable within v1 (major):** command names and roles, the exit-code contract, the JSON envelope shape, the two schema files, diagnostic codes and their classification (`factual`/`evidence`).
 - **Deprecation procedure:** any removal or semantic change to a stable surface is (1) documented here and in [CHANGELOG.md](../CHANGELOG.md) via a changeset, (2) announced at least one minor release ahead with the old behavior still present and a warning where output allows, (3) removed only in a major version.
-- Generated assets (harness workflow, managed block, skills) track the CLI version that generated them; re-running `init --force` after upgrading is the supported refresh path.
+- Generated assets track the CLI version that generated them. After upgrading,
+  `init --force --no-protect` converges init-owned workflows, managed guidance,
+  guards, and ignore state; `setup --tool all` converges installed commands and
+  skills; `status --json` verifies the result. Plain interactive `init` offers
+  this sequence when it proves installed assets stale.
 
 ## Release process
 
