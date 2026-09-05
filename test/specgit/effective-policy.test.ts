@@ -29,6 +29,16 @@ describe('approved policy resolution', () => {
     expect(await resolveEffectivePolicy(f)).toMatchObject({ ok: false, code: 'pr_repo_mismatch' });
     expect(f.forge.getPr).not.toHaveBeenCalled();
   });
+  it('rejects a same-path GitHub PR URL on a GitLab origin before provider lookup', async () => {
+    const f = fixture('version: 1\nrequired_checks: []');
+    f.record = ok(sampleBinding({ pr: 'https://github.com/g/r/pull/42' }));
+    const result = await resolveEffectivePolicy({
+      ...f,
+      parseRepoRef: () => ok({ platform: 'gitlab', owner: 'g', repo: 'r' }),
+    });
+    expect(result).toMatchObject({ ok: false, code: 'pr_repo_mismatch' });
+    expect(f.forge.getPr).not.toHaveBeenCalled();
+  });
   it('uses the approved base rules rather than the proposed weaker policy', async () => {
     const f = fixture('version: 1\nrequired_checks: [Review]\nautomation:\n  merge: false\n');
     expect(await resolveEffectivePolicy(f)).toEqual(ok({ source: 'approved', branch: 'Dev', sha: SHA,

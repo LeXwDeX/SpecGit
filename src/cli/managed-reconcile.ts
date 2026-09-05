@@ -36,10 +36,27 @@
  * preserved verbatim and reported, never guessed at. After a successful
  * removal the directories it emptied are pruned (again only-empty rmdir).
  *
+ * Path safety: repository-managed targets and every existing ancestor below
+ * the repository root must be real filesystem entries, never symbolic links.
+ * The read-only inspector and the writer use the same lstat-based boundary,
+ * before reading target bytes. Git's separately verified hooks directory is
+ * the sole explicit exception: its ancestors are owned by the git adapter,
+ * while the hook file itself still may not be a symbolic link.
+ *
+ * Commit-time ownership: a write re-reads bytes, re-applies its ownership
+ * predicate, and requires the exact input used by its merge resolver before
+ * its snapshot enters the rollback stack. A removal re-reads and re-proves
+ * ownership before its snapshot enters that stack. Node's portable filesystem
+ * API has no compare-and-swap write/unlink primitive, so one residual TOCTOU
+ * window remains: another process can change a target after that final
+ * lstat/read and before SpecGit's write or unlink (including an ABA change),
+ * or after an earlier successful mutation but before a later rollback.
+ *
  * Paths in specs and reports are repo-relative with forward slashes.
  */
 
 import * as fs from 'node:fs/promises';
+import type { Stats } from 'node:fs';
 import * as path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -80,6 +97,13 @@ export function managedModeMatches(actual: number, desired: number): boolean {
   return (actual & 0o200) === (desired & 0o200);
 }
 
+export type ManagedPathScope = 'repo' | 'git-hooks';
+
+interface ManagedPathScoped {
+  /** Repository paths are the default; git hooks require explicit adapter-backed trust. */
+  scope?: ManagedPathScope;
+}
+
 export type ManagedStep =
   | {
       kind: 'write';
@@ -93,7 +117,7 @@ export type ManagedStep =
        * closure owns surfacing why (a merge refused, an optional target).
        */
       merge: (existing: string | null) => string | null;
-    }
+    } & ManagedPathScoped
   | {
       kind: 'portWrite';
       path: string;
@@ -103,13 +127,13 @@ export type ManagedStep =
        * the target before and classifies the outcome after.
        */
       write: () => Promise<void>;
-    }
+    } & ManagedPathScoped
   | {
       kind: 'remove';
       path: string;
       /** True when the existing bytes prove SpecGit ownership (safe delete). */
       isOwned: (existing: string) => boolean;
-    };
+    } & ManagedPathScoped;
 
 export interface DesiredManagedAssets {
   steps: ManagedStep[];
@@ -144,12 +168,13 @@ export class ManagedReconcileError extends Error {
 }
 
 export interface Snapshot {
+  root: string;
+  path: string;
+  scope: ManagedPathScope;
   target: string;
   existed: boolean;
   content: string | null;
   mode: number | null;
-  /** Original symlink identity, alongside the referent bytes/mode. */
-  linkTarget?: string;
   /**
    * Ancestor directories of the target that did NOT exist when the
    * snapshot was taken (deepest-first, strictly below the repository
@@ -157,6 +182,92 @@ export interface Snapshot {
    * only, so a directory that picked up user content stays.
    */
   missingDirs: string[];
+}
+
+export interface ManagedPathBoundary {
+  /** Fully resolved lexical target. No realpath call follows managed links. */
+  target: string;
+  /** The first symbolic-link component, expressed relative to root when possible. */
+  symlink: string | null;
+  /** True only when that link is the leaf itself, which can be unlinked safely. */
+  symlinkAtTarget: boolean;
+}
+
+function isInsideOrEqual(target: string, root: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === '' ||
+    (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+async function lstatIfExists(target: string): Promise<Stats | null> {
+  try {
+    return await fs.lstat(target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
+
+/**
+ * Inspect the lexical path without following a managed symbolic link.
+ *
+ * Repo scope checks the repository root, target, and every component between
+ * them. An out-of-root git-hooks step is already physically bounded by
+ * GitPort.hooksPath; only its leaf remains unchecked by that adapter, so only
+ * the leaf is lstat'd here. An in-repo hook keeps the full repository check.
+ * Returning the link instead of throwing lets read-only inspection turn the
+ * unsafe path into an ordinary conflict finding.
+ */
+export async function inspectManagedPathBoundary(
+  root: string,
+  relPath: string,
+  scope: ManagedPathScope = 'repo'
+): Promise<ManagedPathBoundary> {
+  const resolvedRoot = path.resolve(root);
+  const target = path.resolve(resolvedRoot, ...relPath.split('/'));
+
+  if (scope === 'git-hooks' && !isInsideOrEqual(target, resolvedRoot)) {
+    const entry = await lstatIfExists(target);
+    return {
+      target,
+      symlink: entry?.isSymbolicLink() ? relPath : null,
+      symlinkAtTarget: entry?.isSymbolicLink() ?? false,
+    };
+  }
+
+  if (!isInsideOrEqual(target, resolvedRoot) || target === resolvedRoot) {
+    throw new Error(`Managed path "${relPath}" must stay strictly inside the repository root.`);
+  }
+
+  const relative = path.relative(resolvedRoot, target);
+  const components = relative.split(path.sep).filter((part) => part.length > 0);
+  let cursor = resolvedRoot;
+  for (const component of ['', ...components]) {
+    if (component !== '') cursor = path.join(cursor, component);
+    const entry = await lstatIfExists(cursor);
+    if (entry === null) break;
+    if (entry.isSymbolicLink()) {
+      const relativeLink = path.relative(resolvedRoot, cursor).split(path.sep).join('/');
+      return { target, symlink: relativeLink || '.', symlinkAtTarget: cursor === target };
+    }
+  }
+  return { target, symlink: null, symlinkAtTarget: false };
+}
+
+function symbolicLinkBoundaryMessage(relPath: string, symlink: string): string {
+  return `Managed path "${relPath}" crosses symbolic link "${symlink}"; replace it with a real repository path before retrying.`;
+}
+
+async function safeManagedTarget(
+  root: string,
+  step: Pick<ManagedStep, 'path' | 'scope'>
+): Promise<string> {
+  const boundary = await inspectManagedPathBoundary(root, step.path, step.scope ?? 'repo');
+  if (boundary.symlink !== null) {
+    throw new Error(symbolicLinkBoundaryMessage(step.path, boundary.symlink));
+  }
+  return boundary.target;
 }
 
 async function readIfExists(target: string): Promise<string | null> {
@@ -172,7 +283,10 @@ async function readIfExists(target: string): Promise<string | null> {
 }
 
 async function statMode(target: string): Promise<number | null> {
-  const stat = await fs.stat(target).catch(() => null);
+  const stat = await lstatIfExists(target);
+  if (stat?.isSymbolicLink()) {
+    throw new Error(`Refusing to inspect mode through symbolic link ${target}.`);
+  }
   return stat?.mode ?? null;
 }
 
@@ -188,7 +302,11 @@ async function statMode(target: string): Promise<number | null> {
  * do not exist or are already writable.
  */
 async function ensureReplaceable(target: string): Promise<void> {
-  const mode = await statMode(target);
+  const entry = await lstatIfExists(target);
+  if (entry?.isSymbolicLink()) {
+    throw new Error(`Refusing to chmod symbolic link ${target}.`);
+  }
+  const mode = entry?.mode ?? null;
   if (mode === null || (mode & 0o200) !== 0) {
     return;
   }
@@ -212,7 +330,7 @@ async function missingDirsBelow(dir: string, stopAt: string): Promise<string[]> 
   let cursor = dir;
   while (
     isStrictlyBelow(cursor, stopAt) &&
-    !(await fs.stat(cursor).then(() => true).catch(() => false))
+    (await lstatIfExists(cursor)) === null
   ) {
     missing.push(cursor);
     cursor = path.dirname(cursor);
@@ -220,24 +338,23 @@ async function missingDirsBelow(dir: string, stopAt: string): Promise<string[]> 
   return missing;
 }
 
-/** Build a full snapshot of `target` (bytes, mode, missing ancestors). */
-async function buildSnapshot(target: string, root: string): Promise<Snapshot> {
-  const content = await readIfExists(target);
-  const entry = await fs.lstat(target).catch((error: unknown) => {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-    throw error;
-  });
-  const linkTarget = entry?.isSymbolicLink() ? await fs.readlink(target) : undefined;
-  if (linkTarget !== undefined && content === null) {
-    throw new Error(`Cannot reconcile dangling symlink ${target}; repair its target before retrying.`);
-  }
+/** Build a full snapshot of one already-bounded target (bytes, mode, missing ancestors). */
+async function buildSnapshot(
+  root: string,
+  relPath: string,
+  scope: ManagedPathScope = 'repo'
+): Promise<Snapshot> {
+  const target = await safeManagedTarget(root, { path: relPath, scope });
+  const entry = await lstatIfExists(target);
+  const content = entry === null ? null : await readIfExists(target);
   return {
+    root,
+    path: relPath,
+    scope,
     target,
     existed: content !== null,
     content,
-    mode: await statMode(target),
-    ...(linkTarget !== undefined ? { linkTarget } : {}),
+    mode: entry?.mode ?? null,
     missingDirs: await missingDirsBelow(path.dirname(target), root),
   };
 }
@@ -247,22 +364,25 @@ export async function snapshotManagedFile(
   root: string,
   relPath: string
 ): Promise<Snapshot> {
-  return buildSnapshot(path.join(root, ...relPath.split('/')), root);
+  return buildSnapshot(root, relPath);
 }
 
 /** Public restore primitive: put a snapshot back byte-and-mode-exact. */
 export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> {
+  const boundary = await inspectManagedPathBoundary(snapshot.root, snapshot.path, snapshot.scope);
+  const current = await lstatIfExists(snapshot.target);
+  if (boundary.symlink !== null && !boundary.symlinkAtTarget) {
+    // A leaf link can be unlinked without following it. A linked ancestor
+    // would redirect every later mkdir/write and therefore blocks rollback.
+    throw new Error(symbolicLinkBoundaryMessage(snapshot.path, boundary.symlink));
+  }
+  if (current?.isSymbolicLink()) {
+    // Removing the link itself never touches its referent. This is required
+    // when a failed port write replaced an originally safe leaf with a link.
+    await fs.unlink(snapshot.target);
+  }
   if (snapshot.existed && snapshot.content !== null) {
     await fs.mkdir(path.dirname(snapshot.target), { recursive: true });
-    if (snapshot.linkTarget !== undefined) {
-      const currentLink = await fs.readlink(snapshot.target).catch(() => null);
-      if (currentLink !== snapshot.linkTarget) {
-        await fs.unlink(snapshot.target).catch((error: unknown) => {
-          if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
-        });
-        await fs.symlink(snapshot.linkTarget, snapshot.target, 'file');
-      }
-    }
     // The pre-run state itself may have been write-protected: the restore
     // must be able to rewrite it before the final chmod below protects it
     // again (#314).
@@ -303,15 +423,43 @@ export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> 
   }
 }
 
+/**
+ * Restore a snapshot only while the target still contains the exact bytes
+ * written by this run. A missing, replaced, non-file, linked, or byte-changed
+ * target is preserved and reported as `false`; it may belong to a concurrent
+ * writer. This is the strongest portable compare-before-restore available
+ * through Node's file APIs. A process can still race the final check and the
+ * restore itself, so callers must treat the result as conflict avoidance, not
+ * an atomic filesystem compare-and-swap.
+ */
+export async function restoreManagedSnapshotIfCurrent(
+  snapshot: Snapshot,
+  expectedCurrentContent: string
+): Promise<boolean> {
+  const boundary = await inspectManagedPathBoundary(snapshot.root, snapshot.path, snapshot.scope);
+  if (boundary.symlink !== null) return false;
+  const entry = await lstatIfExists(snapshot.target);
+  if (entry === null || !entry.isFile()) return false;
+  const currentContent = await readIfExists(snapshot.target);
+  if (currentContent !== expectedCurrentContent) return false;
+  await restoreManagedSnapshot(snapshot);
+  return true;
+}
+
 /** mkdir -p that records the directory chain it had to create. */
 async function ensureDirTracked(dir: string, created: string[]): Promise<void> {
   const missing: string[] = [];
   let cursor = dir;
-  while (!(await fs.stat(cursor).then(() => true).catch(() => false))) {
+  let entry = await lstatIfExists(cursor);
+  while (entry === null) {
     missing.push(cursor);
     const parent = path.dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
+    entry = await lstatIfExists(cursor);
+  }
+  if (entry?.isSymbolicLink()) {
+    throw new Error(`Refusing to create a managed directory through symbolic link ${cursor}.`);
   }
   if (missing.length > 0) {
     await fs.mkdir(dir, { recursive: true });
@@ -320,7 +468,13 @@ async function ensureDirTracked(dir: string, created: string[]): Promise<void> {
 }
 
 type PlannedAction =
-  | { kind: 'write'; step: Extract<ManagedStep, { kind: 'write' }>; content: string }
+  | {
+      kind: 'write';
+      step: Extract<ManagedStep, { kind: 'write' }>;
+      /** Exact bytes the pure merge resolver used to derive `content`. */
+      basis: string | null;
+      content: string;
+    }
   | { kind: 'portWrite'; step: Extract<ManagedStep, { kind: 'portWrite' }> }
   | { kind: 'remove'; step: Extract<ManagedStep, { kind: 'remove' }> };
 
@@ -334,8 +488,8 @@ async function planManaged(root: string, desired: DesiredManagedAssets): Promise
   const actions: PlannedAction[] = [];
   const preserved: string[] = [];
   for (const step of desired.steps) {
-    const target = path.join(root, ...step.path.split('/'));
     try {
+      const target = await safeManagedTarget(root, step);
       if (step.kind === 'write') {
         const existing = await readIfExists(target);
         if (existing !== null && step.isOwned !== undefined && !step.isOwned(existing)) {
@@ -346,14 +500,14 @@ async function planManaged(root: string, desired: DesiredManagedAssets): Promise
           continue;
         }
         if (existing === null) {
-          actions.push({ kind: 'write', step, content });
+          actions.push({ kind: 'write', step, basis: existing, content });
           continue;
         }
         const mode = await statMode(target);
         const unchanged =
           existing === content && mode !== null && managedModeMatches(mode, step.mode);
         if (!unchanged) {
-          actions.push({ kind: 'write', step, content });
+          actions.push({ kind: 'write', step, basis: existing, content });
         }
       } else if (step.kind === 'remove') {
         const existing = await readIfExists(target);
@@ -465,8 +619,13 @@ export async function inspectManagedAssets(
   const findings: ManagedAssetFinding[] = [];
   const notInspected: string[] = [];
   for (const step of desired.steps) {
-    const target = path.join(root, ...step.path.split('/'));
     try {
+      const boundary = await inspectManagedPathBoundary(root, step.path, step.scope ?? 'repo');
+      if (boundary.symlink !== null) {
+        findings.push({ path: step.path, state: 'conflict', code: 'asset_conflict' });
+        continue;
+      }
+      const target = boundary.target;
       if (step.kind === 'write') {
         const existing = await readIfExists(target);
         if (existing !== null && step.isOwned !== undefined && !step.isOwned(existing)) {
@@ -532,11 +691,11 @@ export async function reconcileManagedAssets(
   };
   const snapshots: Snapshot[] = [];
   const createdDirs: string[] = [];
-  const snap = async (target: string): Promise<Snapshot> => {
+  const snap = async (step: Pick<ManagedStep, 'path' | 'scope'>): Promise<Snapshot> => {
     // Build the snapshot fully BEFORE recording it: a read that throws must
     // never leave a half-initialized "did not exist" entry behind — rollback
     // would treat it as run-created and try to unlink it.
-    const shot = await buildSnapshot(target, root);
+    const shot = await buildSnapshot(root, step.path, step.scope ?? 'repo');
     snapshots.push(shot);
     return shot;
   };
@@ -545,9 +704,35 @@ export async function reconcileManagedAssets(
   try {
     for (const action of plan.actions) {
       lastStep = { kind: action.step.kind, path: action.step.path };
-      const target = path.join(root, ...action.step.path.split('/'));
+      // Re-check immediately before the mutation: planning and commit share
+      // the boundary, and a link inserted after planning is still rejected.
+      const target = await safeManagedTarget(root, action.step);
       if (action.kind === 'write') {
-        const before = await snap(target);
+        // Build but do not record the snapshot until the write has re-proven
+        // both its plan basis and (for whole-file targets) ownership. If an
+        // earlier port write or another process changed these bytes after the
+        // plan, rollback must restore earlier actions without touching this
+        // newly user-owned target.
+        const before = await buildSnapshot(
+          root,
+          action.step.path,
+          action.step.scope ?? 'repo'
+        );
+        if (
+          before.content !== null &&
+          action.step.isOwned !== undefined &&
+          !action.step.isOwned(before.content)
+        ) {
+          throw new Error(
+            `${action.step.path} changed after planning and is no longer provably SpecGit-owned; refusing to replace it.`
+          );
+        }
+        if (before.content !== action.basis) {
+          throw new Error(
+            `${action.step.path} changed after planning; refusing to overwrite bytes that were not used by its merge resolver.`
+          );
+        }
+        snapshots.push(before);
         await ensureDirTracked(path.dirname(target), createdDirs);
         // Repairing an enforceable drift can mean the target is currently
         // write-protected: make it replaceable, then let the final chmod
@@ -559,9 +744,10 @@ export async function reconcileManagedAssets(
         await fs.chmod(target, action.step.mode);
         (before.existed ? report.updated : report.created).push(action.step.path);
       } else if (action.kind === 'portWrite') {
-        const before = await snap(target);
+        const before = await snap(action.step);
         await ensureDirTracked(path.dirname(target), createdDirs);
         await action.step.write();
+        await safeManagedTarget(root, action.step);
         const after = await readIfExists(target);
         if (after === null) {
           // The port write did not touch the file — no claim of change.
@@ -573,7 +759,23 @@ export async function reconcileManagedAssets(
           report.updated.push(action.step.path);
         }
       } else {
-        await snap(target);
+        // Ownership is a claim about the bytes at the moment of deletion,
+        // not the bytes observed during planning. An intervening user change
+        // aborts the transaction without adding the user's replacement to
+        // the rollback stack; earlier managed mutations are compensated.
+        // A changed but still-owned target remains removable.
+        const before = await buildSnapshot(
+          root,
+          action.step.path,
+          action.step.scope ?? 'repo'
+        );
+        if (before.content === null) {
+          continue;
+        }
+        if (!action.step.isOwned(before.content)) {
+          throw new Error(`Managed asset ownership changed before removal: ${action.step.path}`);
+        }
+        snapshots.push(before);
         // A write-protected owned asset is still SpecGit's to retire — on
         // Windows unlink refuses read-only files (EPERM), so clear the
         // protection first; ownership was already proven from the bytes.

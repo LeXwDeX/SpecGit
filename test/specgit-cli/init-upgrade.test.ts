@@ -23,6 +23,7 @@ import {
 } from '../../src/cli/harness-content.js';
 import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
+import * as recordIo from '../../src/record/io.js';
 import {
   LOCAL_ASSET_IGNORE_MARKER,
   LOCAL_ASSET_IGNORE_ENTRIES,
@@ -184,6 +185,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmDir(root);
   });
 
@@ -350,36 +352,115 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(envelope.reconciled?.removed ?? []).toEqual([HARNESS_WORKFLOW_PATH]);
   });
 
-  it('invalid providers bytes refuse heuristic classification instead of being overwritten (#308 symmetry)', async () => {
+  it('an atomic provider write failure exits 3, preserves exact bytes, and stops before later init writes', async () => {
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    const seededProviders = '# team-owned formatting\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
+    fs.writeFileSync(PROVIDERS_ABS(root), seededProviders);
+    fs.chmodSync(PROVIDERS_ABS(root), 0o640);
+    const before = treeState(root);
+
+    const write = vi.spyOn(recordIo, 'writeProviders').mockRejectedValueOnce(
+      new Error('simulated provider persistence failure')
+    );
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node', 'specgit', 'init',
+        '--required-check', 'Test',
+        '--force',
+        '--gitlab-host', 'git.ycgame.com',
+        '--json', '--no-protect',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('providers_write_failed');
+    expect(envelope.errors?.[0]?.message).toContain('simulated provider persistence failure');
+    expect(write).toHaveBeenCalledOnce();
+    expect(treeState(root)).toEqual(before);
+    expect(read(PROVIDERS_ABS(root))).toBe(seededProviders);
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+  });
+
+  it('a busy provider lock preserves the other writer update when init never committed', async () => {
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    fs.writeFileSync(PROVIDERS_ABS(root), '# original config\ngitlab:\n  host: git.ycgame.com\n');
+    const lockPath = `${PROVIDERS_ABS(root)}.lock`;
+    fs.writeFileSync(lockPath, 'other-writer');
+    const concurrentContent = '# concurrent user update\ngitlab:\n  host: git.ycgame.com\n';
+    const realWriteProviders = recordIo.writeProviders;
+    vi.spyOn(recordIo, 'writeProviders').mockImplementationOnce(async (writeRoot, providers) => {
+      // The other writer changes its file after init took its snapshot.
+      // The real persistence call must wait on that writer's existing lock.
+      fs.writeFileSync(PROVIDERS_ABS(root), concurrentContent);
+      return await realWriteProviders(writeRoot, providers);
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force',
+        '--gitlab-host', 'git.ycgame.com', '--json', '--no-protect'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('providers_write_failed');
+    expect(envelope.errors?.[0]?.message).toContain('file lock is busy');
+    expect(read(PROVIDERS_ABS(root))).toBe(concurrentContent);
+    expect(read(lockPath)).toBe('other-writer');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+  }, 15_000);
+
+  it('invalid providers bytes fail closed before any upgrade mutation (#308 symmetry)', async () => {
     // The write side must honor what the read side refuses: status calls
     // an unreadable platform declaration `providers_invalid` and makes no
     // platform claim, but init fell through to the origin heuristics —
     // on a gitlab-shaped host it SILENTLY OVERWROTE the broken bytes,
     // destroying the evidence the user needs to repair. Init must warn,
-    // leave the bytes untouched, and stay undecided.
+    // leave the bytes and the rest of the repository untouched.
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
     fs.writeFileSync(PROVIDERS_ABS(root), 'gitlab: [unclosed\n');
+    const before = treeState(root);
 
     const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false, policy: samplePolicy() });
     const code = await runCliWith(
       ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json', '--no-protect'],
       t.ctx
     );
-    expect(code).toBe(EXIT_SUCCESS);
+    expect(code).toBe(EXIT_UNKNOWN);
 
-    // Warned, undecided — never classified by heuristic over broken bytes.
+    // Unknown, never classified by heuristic over broken bytes.
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.platform).toEqual({ mode: 'undecided' });
-    expect(
-      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'platform_providers_invalid')
-    ).toBe(true);
-    // The invalid bytes survive verbatim: not overwritten, not repaired.
-    expect(read(PROVIDERS_ABS(root))).toBe('gitlab: [unclosed\n');
+    expect(envelope.errors?.[0]?.code).toBe('platform_providers_invalid');
+    expect(envelope.errors?.[0]?.fix).toContain('Repair');
+    expect(treeState(root)).toEqual(before);
+    expect(t.recordPort.policyWrites).toEqual([]);
   });
 
-  it('a gitlab-shaped origin does not silently overwrite invalid providers bytes (#308 symmetry)', async () => {
+  it('an explicit matching GitLab option cannot overwrite invalid providers bytes (#308 symmetry)', async () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
     fs.writeFileSync(PROVIDERS_ABS(root), 'gitlab: [unclosed\n');
+    const before = treeState(root);
 
     const t = makeCtx({
       root: { ok: true, value: root },
@@ -389,16 +470,20 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
     });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json', '--no-protect'],
+      [
+        'node', 'specgit', 'init',
+        '--required-check', 'Test',
+        '--force',
+        '--gitlab-host', 'git.ycgame.com',
+        '--json', '--no-protect',
+      ],
       t.ctx
     );
-    expect(code).toBe(EXIT_SUCCESS);
+    expect(code).toBe(EXIT_UNKNOWN);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.platform).toEqual({ mode: 'undecided' });
-    expect(
-      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'platform_providers_invalid')
-    ).toBe(true);
-    expect(read(PROVIDERS_ABS(root))).toBe('gitlab: [unclosed\n');
+    expect(envelope.errors?.[0]?.code).toBe('platform_providers_invalid');
+    expect(treeState(root)).toEqual(before);
+    expect(t.recordPort.policyWrites).toEqual([]);
   });
 
   it('preserves and reports a workflow file SpecGit cannot prove it owns', async () => {
@@ -467,6 +552,34 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(fs.existsSync(path.join(root, '.opencode'))).toBe(false);
   });
 
+  it('an unrelated harness failure never restores providers bytes this run did not mutate', async () => {
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    fs.writeFileSync(PROVIDERS_ABS(root), '# initial shared config\n{}\n');
+    const concurrentProviders = '# concurrent user edit\n{}\n';
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      policy: samplePolicy(),
+    });
+    t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
+      fs.writeFileSync(PROVIDERS_ABS(root), concurrentProviders);
+      throw new Error('simulated disk failure');
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect((envelope.errors ?? []).map((error: { code: string }) => error.code)).toEqual([
+      'policy_write_failed',
+    ]);
+    expect(read(PROVIDERS_ABS(root))).toBe(concurrentProviders);
+  });
+
   it('a failed GitLab refresh also restores the providers declaration it persisted', async () => {
     // persistGitlabHost runs before the harness phase by design (platform
     // resolution re-reads the declaration); a later failure must still
@@ -497,6 +610,44 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     );
     expect(code).toBe(EXIT_UNKNOWN);
     expect(read(PROVIDERS_ABS(root))).toBe(seededProviders);
+  });
+
+  it('a failed GitLab refresh preserves provider bytes changed after its own persistence', async () => {
+    fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
+    const seededProviders = '# pre-run config\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
+    const concurrentProviders = '# concurrent user edit\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
+    fs.writeFileSync(PROVIDERS_ABS(root), seededProviders);
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      policy: samplePolicy(),
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+    });
+    t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
+      fs.writeFileSync(PROVIDERS_ABS(root), concurrentProviders);
+      throw new Error('simulated disk failure');
+    });
+
+    const code = await runCliWith(
+      [
+        'node', 'specgit', 'init',
+        '--required-check', 'Test',
+        '--force',
+        '--gitlab-host', 'git.ycgame.com',
+        '--json', '--no-protect',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect((envelope.errors ?? []).map((error: { code: string }) => error.code)).toEqual([
+      'policy_write_failed',
+      'providers_restore_conflict',
+    ]);
+    expect(read(PROVIDERS_ABS(root))).toBe(concurrentProviders);
+    expect(read(PROVIDERS_ABS(root))).not.toBe(seededProviders);
   });
 
   it('a failed declared-GitLab init restores the complete tree including created directories', async () => {
@@ -531,11 +682,10 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     expect(fs.existsSync(path.join(root, 'spec_git'))).toBe(false);
   });
 
-  it('an unestablishable providers snapshot fails closed as an exit-3 diagnostic', async () => {
-    // The pre-run state of spec_git/providers.yaml cannot be read (here:
-    // not a file at all). The run must fail through the outcome path with
-    // a dedicated diagnostic — never escape as an unstructured crash —
-    // and must not mutate anything while at it.
+  it('an unreadable providers path fails closed as an exit-3 diagnostic', async () => {
+    // The platform declaration cannot be read (here: it is not a file at
+    // all). The run must fail through the outcome path before snapshot or
+    // mutation — never escape as an unstructured crash.
     fs.mkdirSync(PROVIDERS_ABS(root), { recursive: true });
     const t = makeCtx({
       root: { ok: true, value: root },
@@ -556,13 +706,13 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     );
     expect(code).toBe(EXIT_UNKNOWN);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.errors?.[0]?.code).toBe('providers_snapshot_failed');
+    expect(envelope.errors?.[0]?.code).toBe('platform_providers_unreadable');
     // Fail closed before any mutation: the seeded tree is as it started.
     expect(fs.statSync(PROVIDERS_ABS(root)).isDirectory()).toBe(true);
     expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
   });
 
-  it('an incomplete providers restore is surfaced as an additional error diagnostic', async () => {
+  it('a concurrent non-file providers replacement is preserved as a restore conflict', async () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
     fs.writeFileSync(
       PROVIDERS_ABS(root),
@@ -575,9 +725,9 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       policy: samplePolicy(),
       facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
     });
-    // The failing policy write also wrecks the providers file into a
-    // non-file: the compensating restore cannot succeed, and the envelope
-    // must say so instead of swallowing the compensation failure.
+    // The failing policy write also replaces the providers file with a
+    // directory. Compensation cannot prove that target is still the bytes
+    // this run wrote, so it must preserve the replacement and say so.
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       fs.rmSync(PROVIDERS_ABS(root));
       fs.mkdirSync(PROVIDERS_ABS(root));
@@ -597,8 +747,9 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     const envelope = parseStdoutJson(t.io);
     expect((envelope.errors ?? []).map((error: { code: string }) => error.code)).toEqual([
       'policy_write_failed',
-      'providers_restore_failed',
+      'providers_restore_conflict',
     ]);
+    expect(fs.statSync(PROVIDERS_ABS(root)).isDirectory()).toBe(true);
   });
 
   // ---- #310: required-check selection on upgrade — explicit replaces, ----

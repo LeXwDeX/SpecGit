@@ -2,8 +2,8 @@
  * `specgit` — delivery binding and acceptance harness.
  *
  * The execution context is a git branch or worktree; a delivery binds linked
- * GitHub issues and one pull request; acceptance is derived fail-closed from
- * real git, PR, and check evidence. Spec/task artifacts are not inputs.
+ * forge issues and one pull or merge request; acceptance is derived fail-closed
+ * from real git, request, and check evidence. Spec/task artifacts are not inputs.
  *
  * Output contract: `--json` puts exactly one JSON document on stdout and all
  * human text on stderr. Exit codes: 0 success/accepted · 1 rejected with
@@ -104,7 +104,7 @@ export function createProgram(
   program
     .name('specgit')
     .description(
-      'Delivery binding and acceptance harness: bind a branch or worktree to GitHub issues and one PR, then derive acceptance from real git, PR, and CI evidence.'
+      'Delivery binding and acceptance harness: bind a branch or worktree to forge issues and one pull or merge request, then derive acceptance from real git, request, and CI evidence.'
     )
     .version(version)
     .exitOverride()
@@ -128,6 +128,9 @@ export function createProgram(
         'Environment:',
         '  SPECGIT_GH             Path to the gh executable (default: gh on PATH).',
         '  SPECGIT_GH_TIMEOUT_MS  Per-call gh timeout in milliseconds (default: 15000).',
+        '  SPECGIT_GLAB           Path to the glab executable (default: glab on PATH).',
+        '  SPECGIT_GLAB_TIMEOUT_MS Per-call glab timeout in milliseconds (default: 15000).',
+        '  SPECGIT_GUARD_BUDGET_S Hook-only merge-guard verdict budget in seconds.',
         '',
         'Exit codes: 0 success/accepted · 1 rejected with complete evidence ·',
         '2 usage error · 3 fail-closed unknown. Ctrl-C at an interactive prompt',
@@ -182,28 +185,28 @@ export function createProgram(
 
   program
     .command('init')
-    .description('Create spec_git/policy.yaml with the required CI check names and generate the harness')
+    .description('Create the policy and harness; a plain interactive re-run offers to refresh managed assets proven stale or missing')
     .option('--required-check <name>', 'Required check name; repeatable', collect, [])
     .option('--force', 'Refresh the harness while preserving configured automation, target and project rules')
     .option('--no-detect', 'Skip auto-detection; require explicit --required-check')
-    .option('--gitlab-host <hostname>', 'Declare a self-hosted GitLab host (bare hostname, or host:port for a non-default port, matching the origin)')
-    .option('--language <lang>', 'Language of generated text: en | zh (default en; persisted in spec_git/policy.yaml)')
+    .option('--gitlab-host <hostname>', 'Declare a GitLab host (bare hostname, or host:port for a non-default port, matching the origin)')
+    .option('--language <lang>', 'Project language for issue and PR/MR scaffolds, managed guidance, success prose, and enabled title checks: en | zh (fresh default en; --force preserves when omitted)')
     .option('--configure-rules', 'Choose project language, title validation, and issue label convention interactively')
-    .option('--title-check <yes|no>', 'Validate remote issue and PR titles against the project language')
+    .option('--title-check <yes|no>', 'Validate remote issue and PR/MR titles against the project language')
     .option('--label-check <mode>', 'Issue label validation: off | kind | project')
     .option('--allowed-label <slug>', 'Allowed project label; repeatable, replaces the selected vocabulary', collect)
     .option('--repair-label <slug>', 'Label for automatic repair issues; repeatable, replaces the repair mapping', collect)
-    .option('--automation <yes|no>', 'Supply the user\'s automation answer: yes | no (default no)')
+    .option('--automation <yes|no>', 'Supply the user\'s answer: yes | no (fresh default no; --force preserves when omitted)')
     .option('--merge-target <branch>', 'Target branch for configured merge automation')
-    .option('--no-ignore', 'Skip the .gitignore block for the local delivery assets (.specgit.yaml, spec_git/)')
-    .option('--protect', 'Enable branch protection and forge auto-merge capability; does not enable delivery automation')
+    .option('--no-ignore', 'Skip the managed .gitignore block for authoritative files, hooks, agent entry points, and local state/cache')
+    .option('--protect', 'Enable the platform protection gate without asking; does not enable delivery automation')
     .option('--no-protect', 'Skip the branch-protection probe and warning entirely')
     .option('--json', 'Output as JSON')
     .action(wrap('init', runInit as CommandRun));
 
   program
     .command('setup')
-    .description('Install agent entry points: commands for opencode, portable skills for other tools')
+    .description('Install agent entry points and reconcile the local-asset .gitignore block when applicable')
     .option('--tool <tool>', 'opencode | generic | all (default: auto-detect)')
     .option('--json', 'Output as JSON')
     .action(wrap('setup', runSetup as CommandRun));
@@ -211,7 +214,7 @@ export function createProgram(
   program
     .command('issue')
     .description(
-      'One-command delivery bootstrap: create/reuse issues, branch, draft PR, record — resumable. New titles must start with "<type>: "; allowed types: ' +
+      'One-command delivery bootstrap: create/reuse issues, branch, draft PR/MR, record — resumable. New titles must start with "<type>: "; allowed types: ' +
         ISSUE_TYPE_LIST
     )
     .argument('[titles...]', 'Issue titles to create (quoted) or existing issue numbers to reuse')
@@ -235,8 +238,8 @@ export function createProgram(
 
   program
     .command('pr')
-    .description('Repair the PR binding, or execute configured delivery automation with --merge')
-    .argument('[ref]', 'Pull request number or URL; omit to auto-discover by head branch')
+    .description('Repair the PR/MR binding, or execute configured delivery automation with --merge')
+    .argument('[ref]', 'Numeric PR/MR ID, or a full GitHub PR URL; omit to auto-discover by head branch')
     .option('--merge', 'Execute policy-enabled merge after acceptance and all CI/CD checks pass')
     .option('--json', 'Output as JSON')
     .action(
@@ -257,8 +260,8 @@ export function createProgram(
     .description(
       'Script alias: write or update .specgit.yaml; the execution context is taken from live git'
     )
-    .option('--issue <n>', 'GitHub issue number or issue URL; repeatable, merged', collect, [])
-    .option('--pr <ref>', 'Pull request number or URL (replaces)')
+    .option('--issue <n>', 'Forge-local issue number or GitHub issue URL; repeatable, merged', collect, [])
+    .option('--pr <ref>', 'Numeric PR/MR ID, or a full GitHub PR URL (replaces)')
     .option('--delivery <kebab-id>', 'Delivery id (first bind only)')
     .option('--json', 'Output as JSON')
     .action(wrap('bind', runBind as CommandRun));
@@ -286,7 +289,7 @@ export function createProgram(
 
   program
     .command('doctor')
-    .description('Probe git, repository, origin, gh, and policy')
+    .description('Probe git, repository, origin, the configured provider CLI (gh, or glab for declared GitLab), and policy')
     .option('--json', 'Output as JSON')
     .action(wrap('doctor', runDoctor as CommandRun));
 

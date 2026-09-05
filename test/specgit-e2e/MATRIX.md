@@ -1,4 +1,4 @@
-# External adoption & install matrix (#67)
+# External adoption & install matrix (historical tracker #67)
 
 Reproducible evidence map for "the npm package and generated harness
 work in repositories with different branches, package managers, CI
@@ -15,7 +15,7 @@ paths, no `main` assumption.
 | clean pack | the tarball ships the package surface only | `pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "clean"` | every CI `test_matrix` entry (required) |
 | npx (local) | `npx --no-install specgit` resolves the adopted install | `pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "npx"` | every CI `test_matrix` entry (required) |
 | global install | `npm i -g` into an isolated prefix; PATH shim runs the CLI anywhere | `pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "global"` | every CI `test_matrix` entry (required) |
-| registry-published | the published package itself via `npx --yes specgit@<version>` | `SPECGIT_E2E_PUBLISHED=1 pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "registry-published"` | opt-in (offline dev loops skip it); the always-on live layer is the post-publish external Actions run tracked on the issue |
+| registry-published | the published package itself via `npx --yes specgit@<version>` | `SPECGIT_E2E_PUBLISHED=1 pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "registry-published"` | opt-in; offline development and normal repository CI skip it |
 
 Environment knobs: `SPECGIT_E2E_PUBLISHED=1` enables the registry
 smoke; `SPECGIT_E2E_PUBLISHED_VERSION` overrides the pinned version
@@ -63,6 +63,7 @@ commit); never edit a number without its provenance.
   run with a 20-minute timeout (was 15), and the windows-pwsh leg
   forces `VITEST_MAX_WORKERS=1` (was 2; linux-bash and macos-bash
   run 4 workers).
-- Post-publish handover: enable `SPECGIT_E2E_PUBLISHED=1` on the
-  registry layer and record a real external repository's green Actions
-  run against the released tarball (tracked on issue #67).
+- Post-publish verification: enable `SPECGIT_E2E_PUBLISHED=1` on the registry
+  layer and link the resulting real external-repository run from the release
+  delivery. Issue #67 contains the original adoption evidence and is a closed
+  historical tracker, not an always-on job.

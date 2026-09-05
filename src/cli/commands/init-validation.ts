@@ -26,7 +26,7 @@ export interface InitOptions {
   detect?: boolean;
   /** true (--protect): enable without asking; false (--no-protect): skip probing; undefined: ask on TTY. */
   protect?: boolean;
-  /** Bare hostname of a self-hosted GitLab instance matching the origin host. */
+  /** Declared GitLab host (GitLab.com or self-managed) matching the origin host. */
   gitlabHost?: string;
   /** Presentation language of generated text (#118): en | zh. */
   language?: string;
@@ -46,10 +46,13 @@ export interface InitOptions {
 
 export interface InitInteraction extends ProjectRuleInteraction {
   promptAutomation?: (message: string) => Promise<string | null>;
-  selectPlatform?: (endpoint: string) => Promise<'github' | 'gitlab'>;
+  promptUpgrade?: (message: string) => Promise<string | null>;
+  /** `github` remains accepted at this test/API seam so old callers fail closed instead of being misclassified. */
+  selectPlatform?: (endpoint: string) => Promise<'github' | 'gitlab' | 'unsupported'>;
 }
 
-function terminalAutomationPrompt(message: string): Promise<string | null> {
+/** Shared terminal prompt so every init yes/no question keeps Ctrl-C semantics. */
+export function terminalYesNoPrompt(message: string): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const terminal = createInterface({ input: process.stdin, output: process.stderr });
     terminal.once('SIGINT', () => {
@@ -115,7 +118,7 @@ export async function resolveInitAutomation(
     const question = language === 'zh'
       ? '启用自动化合并和关闭已绑定 issue？ [yes/no]（默认 no）： '
       : 'Enable automatic merge and closure of bound issues? [yes/no] (default no): ';
-    const response = (await (interaction.promptAutomation ?? terminalAutomationPrompt)(question))?.trim().toLowerCase();
+    const response = (await (interaction.promptAutomation ?? terminalYesNoPrompt)(question))?.trim().toLowerCase();
     defaulted = !response;
     answer = response || 'no';
     if (answer !== 'yes' && answer !== 'no') {
@@ -266,7 +269,8 @@ export function validateLanguageOption(options: InitOptions): InitOutcome | null
 
 /**
  * policy_exists is the write gate: with an existing policy init refuses
- * (zero writes, zero remote calls) unless --force explicitly rebuilds.
+ * (zero writes, zero remote calls) unless --force explicitly rebuilds or
+ * the interactive guided-upgrade preflight has converted the run to force.
  * Returns a rejection outcome, or null when the write may proceed.
  */
 export function policyGateOutcome(
@@ -280,7 +284,9 @@ export function policyGateOutcome(
         errorDiagnostic(
           'policy_exists',
           `${SPEC_GIT_DIR}/${POLICY_FILENAME} already exists in this repository.`,
-          { fix: `Edit ${SPEC_GIT_DIR}/${POLICY_FILENAME} directly, or re-run with --force to rebuild it (also refreshes the harness).` }
+          {
+            fix: `For a configuration change, re-run the same init options with --force. For an asset-only refresh without changing remote protection, run "specgit init --force --no-protect", then "specgit setup --tool all". Append --no-ignore to init when authoritative delivery files are intentionally tracked without the managed ignore block.`,
+          }
         ),
       ],
     };

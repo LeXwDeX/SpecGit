@@ -7,8 +7,8 @@ contact_links:
     url: https://github.com/LeXwDeX/SpecGit/blob/main/docs/troubleshooting.md
     about: Every diagnostic code mapped to its cause and fix — most `specgit finish` failures are answered here.
   - name: Support and questions
-    url: https://github.com/LeXwDeX/SpecGit/blob/main/SUPPORT.md
-    about: Where to ask what, and how to report bugs, features, and security issues.
+    url: https://github.com/LeXwDeX/SpecGit/blob/main/docs/faq.md
+    about: Check common usage and troubleshooting questions before opening an issue.
   - name: Security vulnerability
-    url: https://github.com/LeXwDeX/SpecGit/blob/main/SECURITY.md
+    url: https://github.com/LeXwDeX/SpecGit/security/advisories/new
     about: Report privately — never in a public issue.

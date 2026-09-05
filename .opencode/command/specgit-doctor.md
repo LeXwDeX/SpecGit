@@ -11,16 +11,20 @@ the AGENTS.md SpecGit block; this command only launches it.
 
 ## Steps
 
-1. Run from the repo root:
+1. Read the original `specgit finish --json` `errors[].code` and
+   `errors[].fix`. Apply a record or delivery-state repair directly when
+   that diagnostic names one.
+2. For git, repository, origin, configured provider CLI/auth, or policy
+   evidence, run from the repo root:
 
    ```bash
    specgit doctor --json
    ```
 
-2. Read `probes[]`: every failing probe carries a `code` (git, repo,
+3. Read `probes[]`: every failing probe carries a `code` (git, repo,
    origin, gh/glab presence and auth, policy).
-3. Fix exactly what the failing probe names, then re-run
+4. Fix exactly what the failing probe names, then re-run
    `specgit doctor --json` until exit 0.
-4. Return to the verdict: `specgit finish --json`. Exit 3 is environment,
-   never delivery — do not edit the record or the policy to work around it.
-5. `--json` is the only parse surface.
+5. Return to the verdict: `specgit finish --json`. Repair invalid state
+   when a diagnostic names it; never weaken a valid policy or bypass evidence.
+6. `--json` is the only parse surface.

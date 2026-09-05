@@ -5,7 +5,7 @@
  * `--branch`/`--worktree` flags. `issues` merge with dedupe keeping
  * first-seen order; `pr` replaces on flag presence and stays untouched
  * otherwise; `delivery` is set on the first bind only. No network: the
- * GitHub provider is never consulted.
+ * routed forge provider is never consulted.
  */
 
 import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
@@ -70,6 +70,20 @@ export async function runBind(
     incomingRefs.push(coerced.value);
   }
 
+  const incomingPr = options.pr === undefined ? null : coercePrRef(options.pr);
+  if (incomingPr !== null && !incomingPr.ok) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          incomingPr.code,
+          incomingPr.message,
+          incomingPr.fix ? { fix: incomingPr.fix } : {}
+        ),
+      ],
+    };
+  }
+
   const rootEv = await ctx.discoverRoot(ctx.cwd);
   if (!rootEv.ok) {
     return {
@@ -94,9 +108,10 @@ export async function runBind(
   }
 
   const urlRefs = incomingRefs.filter((ref) => ref.repository !== undefined);
-  if (urlRefs.length > 0) {
+  const prUrlRepository = incomingPr?.ok ? incomingPr.value.repository : undefined;
+  if (urlRefs.length > 0 || prUrlRepository !== undefined) {
     if (!facts.originUrl) {
-      return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic('no_origin', 'An origin is required to verify the issue URL repository.')] };
+      return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic('no_origin', 'An origin is required to verify a request URL repository.')] };
     }
     const repo = await ctx.parseRepoRef(facts.originUrl);
     if (!repo.ok) {
@@ -113,6 +128,17 @@ export async function runBind(
           })],
         };
       }
+    }
+    if (prUrlRepository !== undefined &&
+        (repo.value.platform !== 'github' ||
+         prUrlRepository.owner.toLowerCase() !== repo.value.owner.toLowerCase() ||
+         prUrlRepository.repo.toLowerCase() !== repo.value.repo.toLowerCase())) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [errorDiagnostic('pr_ref_repo_mismatch', 'The PR URL does not belong to the GitHub origin repository.', {
+          fix: 'Use a GitHub PR URL from this repository, or a numeric PR/MR ID on the current forge.',
+        })],
+      };
     }
   }
 
@@ -153,8 +179,8 @@ export async function runBind(
   const mergedIssues = mergeIssueNumbers(existingRecord?.issues ?? [], incomingRefs.map((ref) => ref.number));
 
   const pr =
-    options.pr !== undefined
-      ? coercePrRef(options.pr)
+    incomingPr !== null
+      ? incomingPr.value.value
       : existingRecord?.pr;
 
   const record: DeliveryBinding = {
@@ -177,7 +203,7 @@ export async function runBind(
   }
 
   // #299 carrying commit: bind surgery rewrites the record — on the
-  // delivery branch it must reach the PR head (commit + push, idempotent,
+  // delivery branch it must reach the PR/MR head (commit + push, idempotent,
   // resumable); off-branch, say so instead of silently skipping.
   const warnings: BindOutcome['warnings'] = [];
   if (facts.branch === record.context.branch) {
@@ -203,7 +229,7 @@ export async function runBind(
         severity: 'warning',
         code: 'record_carry_push_failed',
         message: `The record rewrite was committed locally but not pushed: ${carry.pushMessage}`,
-        fix: 'Push the delivery branch (git push) so the CI verdict on the PR head reads the same record; until then the local and CI verdicts can disagree.',
+        fix: 'Push the delivery branch (git push) so the CI verdict on the PR/MR head reads the same record; until then the local and CI verdicts can disagree.',
       });
     }
   } else {

@@ -1,6 +1,6 @@
 ---
 name: specgit-issue
-description: Start a SpecGit delivery — create or reuse GitHub issues, branch, draft PR that closes them, and record the binding, in one command.
+description: Start a SpecGit delivery — create or reuse forge issues, branch, draft PR or MR that closes them, and record the binding, in one command.
 allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
@@ -12,11 +12,17 @@ metadata:
 # specgit-issue
 
 The delivery bootstrap. One command binds the whole aggregate: N issues, one
-branch, one draft pull request, one record (`.specgit.yaml`).
+branch, one draft pull or merge request, one record (`.specgit.yaml`).
 
 Local CLI installation, upgrades, and `init` / `setup` refreshes need no
-issue, PR, product build, or release when no product or shared-rule change is
+issue, PR/MR, product build, or release when no product or shared-rule change is
 intended for commit. Review tracked diffs before choosing what to share.
+After a package upgrade, a human may run plain `specgit init` and approve its
+guided refresh when it proves drift. Non-interactive agents run
+`specgit init --force --no-protect`, then `specgit setup --tool all`, then
+verify `specgit status --json`. Append `--no-ignore` to init when
+authoritative delivery files are intentionally tracked without the managed
+ignore block; setup preserves that proven choice.
 For intended deliveries, follow the host project's verification policy for
 the actual changed inputs; documentation may itself be a product input.
 Ignore rules are never CI exemptions. Publishing requires explicit authorization.
@@ -24,18 +30,32 @@ Ignore rules are never CI exemptions. Publishing requires explicit authorization
 ## Usage
 
 ```bash
-specgit issue "<title>"                 # create one issue and start
-specgit issue "<title A>" "<title B>"   # N issues, one delivery
+specgit issue "fix: correct cache invalidation"       # create one issue and start
+specgit issue "feat: add login" "security: harden sessions" # N issues, one delivery
 specgit issue 42                        # reuse an existing issue
-specgit issue "<no-slug title>" --delivery my-name   # explicit delivery name
-specgit issue "<title>" --tags kind::fix,module::auth  # explicit tag selection
+specgit issue "docs: 更新安装说明" --delivery docs-install # zh policy; explicit ASCII name
+specgit issue "fix: validate session" --tags kind::fix,module::auth
 ```
 
 New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf, docs, test, chore, style, build, ci, revert, security, deprecate, dogfood.
 
+## Before creating an issue
+
+Search for the same WHY on the configured forge before creating new work:
+
+```bash
+gh issue list --state open --search "<keywords>"       # GitHub
+glab issue list --search "<keywords>" --in title      # GitLab
+```
+
+Open and read every plausible candidate with `gh issue view <n>` or
+`glab issue view <n>`. Reuse a candidate that covers the same WHY; if it is
+close but different, record the distinction. Ask the requester only when the
+evidence does not decide whether the work is a duplicate.
+
 ## Tagging (choose before you bootstrap)
 
-- Follow the policy's `language` for issue/PR prose. Enabled
+- Follow the policy's `language` for issue and PR/MR prose. Enabled
   `validation` rules check live titles and labels. In `kind` mode,
   select exactly one catalog kind plus only declared extras; in `project`
   mode, select only from policy `tags`.
@@ -51,13 +71,14 @@ New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf,
 ## What it does (idempotent; re-run resumes)
 
 1. Creates (or reuses) the issues — one issue = one independently verifiable
-   WHY.
+   WHY — and writes the initial binding.
 2. Creates and checks out the delivery branch.
-3. Opens a draft PR pre-filled with a deterministic scaffold: the
-   `Closes #n` line for every bound issue first, then Why / What changed /
-   Evidence / Checklist sections.
-4. Writes `.specgit.yaml` and commits it.
-5. Pushes the branch.
+3. Commits the authoritative binding and pushes the branch, so the request has
+   a real remote head distinct from its base.
+4. Opens a draft PR/MR pre-filled with the supplied body, selected policy
+   template, or built-in scaffold, including one `Closes #n` line per bound
+   issue.
+5. Records the request number, commits the completed binding, and pushes again.
 
 ## Rules
 
@@ -71,11 +92,12 @@ New titles must start with `<type>: `; allowed types: feat, fix, refactor, perf,
   Approach / Acceptance. Fill missing content with `gh issue edit <n>` or
   `glab issue update <n>`, preserve complete remote bodies, then implement.
 - With selected body rules, prepare complete content before creation using
-  `--body-file` and `--pr-body-file`. Otherwise fill the built-in scaffold
-  during delivery. Enabled content rules must pass; keep closing references
-  and existing remote edits intact.
-- The PR body is written once at creation; no SpecGit command edits it
-  afterwards, and the repository's own PR template is never read.
+  `--body-file` and `--pr-body-file`. Without enforced body rules, fill the
+  selected policy template or built-in scaffold during delivery. Enabled
+  content rules must pass; keep closing references and existing remote edits
+  intact.
+- The PR/MR body is written once at creation; no SpecGit command edits it
+  afterwards, and the repository's default PR/MR template is never read.
 - If it fails mid-chain, re-run the same command — completed steps are
   detected and resumed; never hand-edit `.specgit.yaml`.
 - When the title yields no ASCII slug, the command asks for a kebab-case

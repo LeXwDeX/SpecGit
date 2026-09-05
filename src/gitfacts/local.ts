@@ -284,31 +284,28 @@ export class LocalGitAdapter implements GitPort {
     return push.ok ? ok({ pushed: true }) : push;
   }
 
-  async remoteDefaultBranch(root: string, options: { requireEvidence?: boolean } = {}): Promise<Evidence<string>> {
+  async remoteDefaultBranch(root: string, _options: { requireEvidence?: boolean } = {}): Promise<Evidence<string>> {
     const resolved = await this.write('branch', [
       '-C',
       root,
-      'rev-parse',
-      '--abbrev-ref',
-      'origin/HEAD',
+      'symbolic-ref',
+      '--quiet',
+      'refs/remotes/origin/HEAD',
     ]);
     if (resolved.ok) {
-      const name = resolved.value.trim().replace(/^origin\//, '');
-      if (name && (!options.requireEvidence || (resolved.value.trim().startsWith('origin/') && name !== 'HEAD'))) {
-        return ok(name);
+      const ref = resolved.value.trim();
+      const prefix = 'refs/remotes/origin/';
+      const name = ref.slice(prefix.length);
+      if (ref.startsWith(prefix) && name && name !== 'HEAD') {
+        const commit = await this.write('branch', ['-C', root, 'rev-parse', '--verify', `${ref}^{commit}`]);
+        if (commit.ok) return ok(name);
       }
     }
-    if (options.requireEvidence) {
-      return fail(
-        'git_default_branch_unknown',
-        'The local origin/HEAD does not prove a remote default branch.',
-        'Resolve origin/HEAD from the remote, or explicitly choose the intended target branch.'
-      );
-    }
-    // origin/HEAD is a local convenience ref and is often unset in fresh
-    // clones; `gh` would resolve the default branch server-side. `main`
-    // is the documented fallback so PR creation stays deterministic.
-    return ok('main');
+    return fail(
+      'git_default_branch_unknown',
+      'The local origin/HEAD does not prove a remote default branch.',
+      'Run git fetch origin and git remote set-head origin -a, then retry. An explicit PR/MR target cannot replace default-branch evidence for init.'
+    );
   }
 
   /** #298: which of `paths` the index tracks (`git ls-files --`). */

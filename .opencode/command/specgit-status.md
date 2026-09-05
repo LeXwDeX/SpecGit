@@ -17,9 +17,10 @@ AGENTS.md SpecGit block; this command only launches it.
    specgit status --json
    ```
 
-2. Read `state` and `record` from the envelope: local evidence only —
-   record, drift, origin. Platform evidence (issues, PR, checks) belongs
-   to `specgit finish`.
+2. Read `state`, `recordState`, `localContext`, and `lifecycle` from
+   the envelope. The bound delivery, context, issue numbers, PR/MR number,
+   origin, and drift are under `evidence`. Platform evidence such as live
+   issue, PR/MR, and check state belongs to `specgit finish`.
 3. No record is not an error: `state: "unbound"` with exit `0` is the
    normal pre-binding state — bootstrap with `specgit issue` (the
    `record_missing` warning carries the next step in `warnings[].fix`).

@@ -104,6 +104,15 @@ describe('specgit init', () => {
     expect(fix).toContain('SpecGit Acceptance');
   });
 
+  it('renders the executable GitHub protection repair in human output', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+
+    expect(await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx)).toBe(EXIT_SUCCESS);
+
+    expect(stdoutText(t.io)).toContain('Settings → Branches');
+    expect(stdoutText(t.io)).toContain('specgit init --force --protect');
+  });
+
   it('--protect enables protection and auto-merge from scripts', async () => {
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
     const code = await runCliWith(
@@ -119,6 +128,202 @@ describe('specgit init', () => {
       requiredChecks: ['SpecGit Acceptance'],
       automerge: true,
       action: 'protected',
+    });
+  });
+
+  it('treats GitLab protected-branch plus pipeline-success as the protection proof', async () => {
+    const forge = makeGhProvider({
+      branchProtection: { ok: true, value: { protected: true, requiredChecks: [] } },
+      repoAutomerge: { ok: true, value: { enabled: true } },
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(forge.calls).not.toContain('enableBranchProtection:suntao/specgit:main:pipeline-success');
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      protected: true,
+      pipelineRequired: true,
+      action: 'already-protected',
+    });
+  });
+
+  it('--protect enables GitLab branch and pipeline protection without inventing a job name', async () => {
+    const forge = makeGhProvider();
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node',
+        'specgit',
+        'init',
+        '--required-check',
+        'Test',
+        '--gitlab-host',
+        'git.ycgame.com',
+        '--protect',
+        '--json',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(forge.calls).toContain('enableBranchProtection:suntao/specgit:main:pipeline-success');
+    expect(forge.calls.join('\n')).not.toContain('SpecGit Acceptance');
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      protected: true,
+      pipelineRequired: true,
+      action: 'protected',
+    });
+    expect(parseStdoutJson(t.io).protection).not.toHaveProperty('automerge');
+  });
+
+  it('warns with a GitLab pipeline-protection repair and no GitHub Settings path', async () => {
+    const forge = makeGhProvider();
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    const protection = parseStdoutJson(t.io).protection;
+    expect(protection).toMatchObject({
+      protected: false,
+      pipelineRequired: false,
+      action: 'warned',
+    });
+    expect(protection.fix).toContain('specgit init --force --protect');
+    expect(protection.fix).toContain('pipeline');
+    expect(protection.fix).not.toContain('SpecGit Acceptance');
+    expect(protection.fix).not.toContain('Settings');
+  });
+
+  it('does not report protected when GitHub omits the required check from the returned post-state', async () => {
+    const forge = makeGhProvider({
+      enableBranchProtection: { ok: true, value: { protected: true, requiredChecks: [] } },
+    });
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false, gh: forge });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--protect', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).protection).toMatchObject({ action: 'unavailable' });
+  });
+
+  it('does not report protected when GitLab cannot prove the pipeline-success gate was enabled', async () => {
+    const forge = makeGhProvider({
+      enableRepoAutomerge: { ok: true, value: { enabled: false } },
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node',
+        'specgit',
+        'init',
+        '--required-check',
+        'Test',
+        '--gitlab-host',
+        'git.ycgame.com',
+        '--protect',
+        '--json',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      pipelineRequired: false,
+      action: 'unavailable',
+    });
+  });
+
+  it('does not report protected when GitLab omits branch protection from the returned post-state', async () => {
+    const forge = makeGhProvider({
+      enableBranchProtection: { ok: true, value: { protected: false, requiredChecks: [] } },
+      repoAutomerge: { ok: true, value: { enabled: true } },
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node',
+        'specgit',
+        'init',
+        '--required-check',
+        'Test',
+        '--gitlab-host',
+        'git.ycgame.com',
+        '--protect',
+        '--json',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      protected: false,
+      pipelineRequired: true,
+      action: 'unavailable',
     });
   });
 
@@ -289,8 +494,8 @@ describe('specgit init', () => {
 
   // #117: a GitHub Actions workflow is wrong-platform output for a
   // GitLab repository — init on gitlab mode writes every platform-neutral
-  // harness asset (managed blocks, hooks) but NOT the workflow, reports
-  // the pending GitLab harness honestly, and points at .gitlab-ci.yml.
+  // harness asset (managed blocks, hooks) but NOT the workflow, and states
+  // that the project owns its .gitlab-ci.yml acceptance job.
   it('--gitlab-host skips the GitHub Actions workflow and warns gitlab_harness_pending (#117)', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },
@@ -310,7 +515,11 @@ describe('specgit init', () => {
       (w: { code: string }) => w.code === 'gitlab_harness_pending'
     );
     expect(warning).toBeDefined();
-    expect(warning.message).toContain('.gitlab-ci.yml');
+    expect(warning.message).toContain('project-owned .gitlab-ci.yml');
+    expect(warning.message).toContain('specgit finish --json');
+    expect(warning.message).not.toContain('not generated yet');
+    expect(warning.fix).toContain('job key');
+    expect(warning.fix).toContain('--required-check <name>');
     // Platform-neutral harness assets still land: the managed prompt
     // block in AGENTS.md.
     expect(read(AGENTS_ABS(root))).toContain(BLOCK_START_MARKER);
@@ -477,7 +686,7 @@ describe('specgit init', () => {
     expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
   });
 
-  it('non-github origin without a declaration warns: platform undecided', async () => {
+  it('non-github origin without a declaration fails closed before generating GitHub assets', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },
       cwd: root,
@@ -485,10 +694,29 @@ describe('specgit init', () => {
       facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
     });
     const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
-    expect(code).toBe(EXIT_SUCCESS);
+    expect(code).toBe(EXIT_UNKNOWN);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.platform).toEqual({ mode: 'undecided' });
-    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'platform_undecided')).toBe(true);
+    expect(envelope.errors?.[0]?.code).toBe('platform_undecided');
+    expect(envelope.errors?.[0]?.fix).toContain('--gitlab-host');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it('a missing origin fails closed with an actionable platform error and no writes', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: null }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('platform_undecided');
+    expect(envelope.errors?.[0]?.message).toContain('origin URL');
+    expect(envelope.errors?.[0]?.fix).toContain('Configure origin');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 
 
@@ -931,8 +1159,12 @@ describe('specgit init harness generation', () => {
       root: { ok: true, value: root },
       gitWrites: { remoteDefaultBranch: () => ({ ok: true, value: 'master' }) },
     });
-    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Build', '--json'], t.ctx);
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Build', '--protect', '--json'],
+      t.ctx
+    );
     expect(code).toBe(EXIT_SUCCESS);
+    expect(t.gitPort.remoteDefaultBranch).toHaveBeenCalledWith(root, { requireEvidence: true });
     const envelope = parseStdoutJson(t.io);
     expect(envelope.harness).toEqual({ template: 'external' });
 
@@ -944,21 +1176,111 @@ describe('specgit init harness generation', () => {
     // The adopting project's toolchain is never invoked.
     expect(workflow).not.toContain('pnpm');
     expect(workflow).not.toContain('bin/specgit.js');
+    expect(t.ghProvider.calls).toContain(
+      'enableBranchProtection:LeXwDeX/SpecGit:master:SpecGit Acceptance'
+    );
+    expect(t.ghProvider.calls.join('\n')).not.toContain('LeXwDeX/SpecGit:main');
   });
 
-  it('an unresolvable remote default branch falls back to main with a warning', async () => {
+  it('the self template and --protect both honor a proved master default branch', async () => {
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      `${JSON.stringify({ name: 'specgit', version: '0.0.0' }, null, 2)}\n`
+    );
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: { remoteDefaultBranch: () => ({ ok: true, value: 'master' }) },
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Build', '--protect', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(read(WORKFLOW_ABS(root))).toBe(harnessWorkflowYaml('master'));
+    expect(read(WORKFLOW_ABS(root))).toContain('branches: ["master"]');
+    expect(t.ghProvider.calls).toContain(
+      'enableBranchProtection:LeXwDeX/SpecGit:master:SpecGit Acceptance'
+    );
+    expect(t.ghProvider.calls.join('\n')).not.toContain('LeXwDeX/SpecGit:main');
+  });
+
+  it('missing origin/HEAD fails closed before workflow writes or --protect provider calls', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },
       gitWrites: {
-        remoteDefaultBranch: () => ({ ok: false, code: 'git_probe_failed', message: 'no origin/HEAD' }),
+        remoteDefaultBranch: () => ({
+          ok: false,
+          code: 'git_default_branch_unknown',
+          message: 'no origin/HEAD',
+          fix: 'establish origin/HEAD',
+        }),
       },
     });
-    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Build', '--json'], t.ctx);
-    expect(code).toBe(EXIT_SUCCESS);
+    const code = await runCliWith([
+      'node', 'specgit', 'init',
+      '--required-check', 'Build',
+      '--protect',
+      '--json',
+    ], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.harness).toEqual({ template: 'external' });
-    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'default_branch_unresolved')).toBe(true);
-    expect(read(WORKFLOW_ABS(root))).toContain('branches: ["main"]');
+    expect(envelope.errors?.[0]).toMatchObject({
+      code: 'workflow_default_branch_unknown',
+      fix: 'establish origin/HEAD',
+    });
+    expect(envelope.errors?.[0]?.message).toContain('proven remote default branch');
+    expect(t.gitPort.remoteDefaultBranch).toHaveBeenCalledExactlyOnceWith(
+      root,
+      { requireEvidence: true }
+    );
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(t.ghProvider.calls).toEqual([]);
+  });
+
+  it('GitLab --protect fails before provider calls when its default branch is unproven', async () => {
+    const forge = makeGhProvider();
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gitWrites: {
+        remoteDefaultBranch: () => ({
+          ok: false,
+          code: 'git_default_branch_unknown',
+          message: 'origin/HEAD is absent',
+        }),
+      },
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith([
+      'node', 'specgit', 'init',
+      '--required-check', 'Build',
+      '--gitlab-host', 'git.ycgame.com',
+      '--protect',
+      '--json',
+    ], t.ctx);
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    expect(parseStdoutJson(t.io).errors?.[0]?.code).toBe(
+      'protection_default_branch_unknown'
+    );
+    expect(t.gitPort.remoteDefaultBranch).toHaveBeenCalledExactlyOnceWith(
+      root,
+      { requireEvidence: true }
+    );
+    expect(forge.calls).toEqual([]);
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
   });
 
   it('template stays in sync with this repo own workflow file (anti-drift lock)', async () => {

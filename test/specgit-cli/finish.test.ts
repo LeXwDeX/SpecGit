@@ -76,6 +76,33 @@ describe('specgit finish: evaluator parity with accept', () => {
     expect(String(actions[0].command)).not.toContain('unbind');
   });
 
+  it.each([
+    { language: 'en' as const, reason: 'The PR/MR is merged' },
+    { language: 'zh' as const, reason: 'PR/MR 已合并' },
+  ])('closure-pending hand-off keeps delivery_finalize and localizes its reason ($language)', async ({ language, reason }) => {
+    const closurePending = makeVerdict({
+      accepted: true,
+      state: 'closure_pending',
+      classification: 'accepted',
+      exitCode: 0,
+      complete: true,
+    });
+    const t = makeCtx({
+      policy: samplePolicy({ language, automation: { merge: false, close_issues: false } }),
+      evaluate: makeEvaluate(closurePending),
+    });
+
+    expect(await runCliWith(['node', 'specgit', 'finish', '--json'], t.ctx)).toBe(0);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.nextActions).toEqual([
+      expect.objectContaining({
+        code: 'delivery_finalize',
+        command: 'specgit finish --json',
+        reason: expect.stringContaining(reason),
+      }),
+    ]);
+  });
+
   it('propagates rejected verdicts with exit 1 and the gate evidence', async () => {
     const rejected = makeVerdict({
       accepted: false,

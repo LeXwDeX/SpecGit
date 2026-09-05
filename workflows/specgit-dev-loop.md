@@ -1,5 +1,9 @@
 # SpecGit Development Loop
 
+For documentation-only or manual project-guidance edits, follow the
+[documentation short path](../docs/ci-scope.md#documentation-short-path).
+The TDD slices and product quality loop below apply to product changes.
+
 How a delivery-bound issue becomes a merged PR in this repository. The loop
 is binding for agents and humans alike; the tracker that drives it is defined
 in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
@@ -15,7 +19,7 @@ in [docs/agents/issue-tracker.md](../docs/agents/issue-tracker.md).
   push --> CI on the PR head (SpecGit Acceptance runs finish --json)
         |
         v
-  gh pr ready <n> -> CI green -> specgit finish --exit 0--> accepted
+  gh pr ready <n> -> CI green -> specgit finish --(exit 0)--> accepted
         |                    (exit 1/3: repair and retry)
         v
   enabled specgit pr --merge -> confirmed merge + bound issue closure
@@ -54,20 +58,24 @@ Per slice, in order:
 
 ## Branch and binding
 
+- Before bootstrap, prepare one `--body-file` per new issue and a
+  `--pr-body-file` when selected body validation or required sections must
+  pass at creation.
 - `specgit issue "<type>: <title>"...` bootstraps the delivery in one
   command: it creates/reuses the issues, branches as
   `<type>/<first-issue#>-<slug>` (e.g. `feat/123-add-login`; `<type>`
   mirrors the CLI's fixed type whitelist — see
   [docs/cli.md](../docs/cli.md); the title body may be any language
   (#118), and a title that yields no ASCII slug asks for a
-  `--delivery <slug>` name instead of inventing one),
-  opens the draft PR (body carries `Closes #N` for every bound issue),
-  writes the record, commits, and pushes. Re-run the same command to
-  resume an interrupted bootstrap; `specgit bind` remains as the
-  script alias for record surgery.
-- Fill each created issue's Why / Scope / Approach / Acceptance immediately
-  after bootstrap, then implement. Update the PR body with the delivered
-  changes and evidence, retaining every bound closing reference.
+  `--delivery <slug>` name instead of inventing one), writes the binding,
+  commits and pushes it, opens the draft PR/MR (body carries `Closes #N` for
+  every bound issue), then records and pushes the request number. Re-run the
+  same command to resume an interrupted bootstrap; `specgit bind` remains as
+  the script alias for record surgery.
+- When creation-time body rules are disabled, fill each created issue's Why /
+  Scope / Approach / Acceptance immediately after bootstrap, then implement.
+  Update the PR/MR body with delivered changes and evidence, retaining every
+  bound closing reference.
 
 ## PR and gates
 
@@ -125,8 +133,9 @@ cap-breach escalation brief are binding:
 
 - exit `0` → accepted; continue the authorized merge with configured automation;
 - exit `1` → fix exactly what the gates named and re-run;
-- exit `3` → evidence is missing; run `specgit doctor`, fix the
-  environment, then re-run.
+- exit `3` → evidence is missing; follow the reported `errors[].fix`. Run
+  `specgit doctor` only when the failure is one of its git, repository,
+  origin, forge-CLI, authentication, or policy probes, then re-run.
 
 `finish` remains read-only. A merge requires its exit `0`; automated merge
 also requires all CI checks to pass and the target branch to match policy.

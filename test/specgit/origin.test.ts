@@ -144,6 +144,12 @@ describe('parseRepoRef', () => {
         { owner: 'a', repo: 'c', platform: 'github' }
       )
     ).toBe(false);
+    expect(
+      sameRepoRef(
+        { owner: 'a', repo: 'b', platform: 'github' },
+        { owner: 'a', repo: 'b', platform: 'gitlab' }
+      )
+    ).toBe(false);
   });
 
   it('formats owner/repo', () => {

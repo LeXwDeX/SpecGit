@@ -54,7 +54,7 @@ describe('PlatformRoutingProvider (#117)', () => {
     await router.createDraftPr(gitlabRef, 'head', 'main', 't', 'b');
     await router.listOpenPrsByHead(gitlabRef, 'head');
     await router.getBranchProtection(gitlabRef, 'main');
-    await router.enableBranchProtection(gitlabRef, 'main', 'check');
+    await router.enableBranchProtection(gitlabRef, 'main', 'pipeline-success');
     await router.getRepoAutomerge(gitlabRef);
     await router.enableRepoAutomerge(gitlabRef);
 

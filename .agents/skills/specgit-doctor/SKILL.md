@@ -11,9 +11,9 @@ metadata:
 
 # specgit-doctor
 
-The exit-3 diagnostic loop. Exit code 3 means no verdict was possible — the
-environment, not the delivery, is broken. Retrying `finish` blindly will
-never pass; the probes tell you what to fix.
+The exit-3 diagnostic loop. Exit code 3 means no verdict was possible because
+required evidence is incomplete. Start with the original diagnostic; use the
+doctor probes for the environment and provider evidence they cover.
 
 ## When to use
 
@@ -22,28 +22,34 @@ the failing gate; the loop below resolves it.
 
 ## Steps
 
-1. Run the probes from the repository root:
+1. Read the original `specgit finish --json` `errors[].code` and
+   `errors[].fix`. If it names an invalid record or delivery state, apply
+   that repair directly; doctor does not inspect every acceptance input.
+2. For git, repository, origin, configured provider CLI/auth, or policy
+   evidence, run the probes from the repository root:
 
    ```bash
    specgit doctor --json
    ```
 
-2. Read `probes[]`: each failing probe carries a `code` — git binary,
+3. Read `probes[]`: each failing probe carries a `code` — git binary,
    repository, origin, gh/glab presence and auth, policy.
-3. Apply the fix the failing probe names:
+4. Apply the fix the failing probe names:
    - `git` missing → install the git binary or fix PATH.
    - `repo` → run from the repository root.
    - `no_origin` / origin parse → configure a parseable origin remote.
    - `gh_missing` / `glab_missing` → install the platform CLI.
-   - gh/glab auth → `gh auth login` (or `glab auth login`).
+   - gh/glab auth → follow the failing probe's fix: `gh auth login`, or
+     `glab auth login --hostname <host>`.
    - `policy` missing → run `specgit init`.
-4. Re-run `specgit doctor --json` until exit 0.
-5. Return to the verdict: `specgit finish --json`.
+5. Re-run `specgit doctor --json` until exit 0.
+6. Return to the verdict: `specgit finish --json`.
 
 ## Rules
 
-- Exit 3 is environment, never delivery: never edit the record or the
-  policy to work around a probe.
+- Exit 3 means evidence is incomplete. Repair invalid state only when the
+  diagnostic names it; never weaken a valid policy or bypass evidence.
 - `--json` is the only parse surface — parse the envelope, never
   human-readable lines.
-- Do not loop on `finish` itself; always go through the probes first.
+- Do not loop on `finish` blindly; follow its diagnostic, then use doctor
+  for the probe set above.

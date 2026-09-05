@@ -437,7 +437,7 @@ describe('specgit status (local evidence only, G1-G5)', () => {
       // A name alone does not prove ownership. A foreign collision outranks
       // missing assets; a proven older workflow is stale, so missing wins.
       expect(init.state).toBe(surfaceState);
-      expect(init.fix).toBe('specgit init --force');
+      expect(init.fix).toBe('specgit init --force --no-protect');
       expect(
         init.assets.find((a: any) => a.path === HARNESS_WORKFLOW_PATH)
       ).toMatchObject({ state: workflowState, code: assetCode });

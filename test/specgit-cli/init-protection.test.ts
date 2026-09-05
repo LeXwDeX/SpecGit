@@ -26,7 +26,8 @@ describe('init branch-protection confirm default (#352)', () => {
       t.ctx,
       '/repo',
       text,
-      false
+      false,
+      'main'
     );
     expect(confirm).toHaveBeenCalledOnce();
     const question = vi.mocked(confirm).mock.calls[0][0] as unknown as { default?: boolean };
@@ -45,7 +46,8 @@ describe('init branch-protection confirm default (#352)', () => {
       t.ctx,
       '/repo',
       text,
-      true
+      true,
+      'main'
     );
     const question = vi.mocked(confirm).mock.calls[0][0] as unknown as { default?: boolean };
     expect(question.default).toBe(true);

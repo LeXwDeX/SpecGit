@@ -42,6 +42,9 @@ export interface RepoRef {
   platform: 'github' | 'gitlab';
 }
 
+const DECLARE_GITLAB_FIX =
+  'For a fresh setup, declare the GitLab host with "specgit init --gitlab-host <hostname> --no-protect". When a policy already exists, run "specgit init --force --gitlab-host <hostname> --no-protect" instead. Append --no-ignore when authoritative delivery files are intentionally tracked without the managed ignore block, then authenticate glab for that host. See docs/gitlab-support.md.';
+
 export function parseRepoRef(
   originUrl: string,
   options: { gitlabHost?: string } = {}
@@ -51,7 +54,7 @@ export function parseRepoRef(
     return fail(
       'origin_unresolvable',
       'The origin remote has an empty URL.',
-      'Point origin at a github.com repository.'
+      'Point origin at a supported GitHub or declared GitLab repository.'
     );
   }
   if (url.length > MAX_ORIGIN_URL_LENGTH) {
@@ -101,7 +104,7 @@ export function parseRepoRef(
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a GitLab repository whose host is not declared.`,
-        'Declare the platform with "specgit init --gitlab-host <hostname>" and authenticate glab for that host; see docs/gitlab-support.md.'
+        DECLARE_GITLAB_FIX
       );
     }
     // #95: a path naming a nested group (or %2F-encoded separators,
@@ -112,15 +115,15 @@ export function parseRepoRef(
       return fail(
         'gitlab_unsupported',
         `Origin "${truncateUrl(url)}" points at a nested-group GitLab repository whose host is not declared.`,
-        'Declare the platform with "specgit init --gitlab-host <hostname>" and authenticate glab for that host; nested groups are supported. See docs/gitlab-support.md.'
+        `${DECLARE_GITLAB_FIX} Nested groups are supported.`
       );
     }
   }
 
   return fail(
     'origin_unresolvable',
-    `Origin "${truncateUrl(url)}" does not point at a github.com repository.`,
-    'Point origin at a github.com repository (https or ssh), or declare a GitLab host via "specgit init --gitlab-host <hostname>".'
+    `Origin "${truncateUrl(url)}" does not point at a supported GitHub or declared GitLab repository.`,
+    `Point origin at a github.com repository (https or ssh), or ${DECLARE_GITLAB_FIX.charAt(0).toLowerCase()}${DECLARE_GITLAB_FIX.slice(1)}`
   );
 }
 
@@ -228,7 +231,9 @@ export function formatRepoRef(repo: RepoRef): string {
 }
 
 export function sameRepoRef(a: RepoRef, b: RepoRef): boolean {
-  return a.owner.toLowerCase() === b.owner.toLowerCase() && a.repo.toLowerCase() === b.repo.toLowerCase();
+  return a.platform === b.platform &&
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase();
 }
 
 export function parsePrUrl(url: string): Evidence<{ repo: RepoRef; pr: number }> {

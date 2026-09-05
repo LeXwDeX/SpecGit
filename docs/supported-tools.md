@@ -3,24 +3,24 @@
 SpecGit is built to be driven by AI coding agents as much as by humans. There is no per-tool configuration to write by hand — the integration is a strict CLI contract plus a managed prompt block in your instruction files, with fixed entry points installed for you by `specgit setup`.
 
 ```text
-  specgit init / setup      once per repository: policy + acceptance
+  specgit init / setup      initialize once; rerun after upgrades
         |                   harness + agent entry points
         v
   specgit issue "..."       per delivery: issues + branch +
-        |                   draft PR (Closes #n) + record,
+        |                   draft PR/MR (Closes #n) + record,
         |                   committed and pushed (idempotent resume)
         v
-  work, commit, push -----> CI on the PR head
-        |                   (the SpecGit Acceptance job runs
+  work, commit, push -----> CI/CD on the request head
+        |                   (the platform acceptance job runs
         |                    specgit finish --json)
         v
-  gh pr ready <n>           a draft PR always fails the verdict
+  mark PR/MR ready          a draft request always fails the verdict
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
         |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
-        '-- exit 3 --> fix the environment first (specgit doctor)
+        '-- exit 3 --> follow errors[].fix; use doctor for its probes
 ```
 
 ## The integration surface
@@ -31,7 +31,7 @@ Every AI agent works through the same three facts:
 2. **`--json` is machine-first.** One JSON document per invocation on stdout, human text on stderr. Parse the envelope; never scrape human output.
 3. **Exit codes are contractual.** `0` accepted · `1` rejected with evidence · `2` usage error · `3` fail-closed unknown. Branch on them, don't guess.
 
-Requirements are the same as for a human: `git`, plus the platform CLI installed and authenticated — `gh` for GitHub evidence (`issue`, `pr`, `finish`/`accept`, parts of `doctor`), or `glab` (≥ 1.113.0) when the origin is a declared self-managed GitLab host.
+Requirements are the same as for a human: `git`, plus the platform CLI installed and authenticated — `gh` for GitHub evidence (`issue`, `pr`, `finish`/`accept`, parts of `doctor`), or `glab` (≥ 1.113.0) for an explicitly declared GitLab origin, including capability-probed GitLab.com and version-qualified self-managed GitLab.
 
 ## Behavioral source: the managed block
 
@@ -39,7 +39,7 @@ Requirements are the same as for a human: `git`, plus the platform CLI installed
 
 ## What agents should never do
 
-- Assert completion without an exit-0 `specgit finish`.
+- Request merge without an exit-0 `specgit finish`, or report completion before the merge and every bound issue closure are confirmed.
 - Edit `.specgit.yaml` or `spec_git/policy.yaml` to make a failing verdict pass.
 - Treat missing evidence (`unknown`) as success, or retry blindly instead of fixing the named cause.
 

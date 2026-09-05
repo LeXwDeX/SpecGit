@@ -2,14 +2,16 @@
  * `specgit init` — creates `spec_git/policy.yaml` and generates the
  * delivery harness: the CI acceptance workflow, the opencode guard hooks,
  * and the managed prompt block in the agent instruction files. The
- * harness generation is idempotent and merges with existing hooks; the
- * policy itself is write-once and never overwritten.
+ * harness generation is idempotent and merges with existing hooks. A current
+ * plain init does not rewrite policy; explicit --force or guided consent does,
+ * while preserving every omitted policy choice.
  *
  * Non-destructive contract (#62): every check that can reject the run —
  * input validation, `--gitlab-host` validation, `policy_exists`, and a
  * root-writability preflight — happens BEFORE any filesystem or remote
- * mutation. A rejected init leaves the repository byte-identical. The
- * harness write itself is error-atomic (rolled back on failure). Remote
+ * mutation. A validation-phase rejection or init-writer failure leaves the
+ * repository byte-identical. The harness write itself is error-atomic (rolled
+ * back on failure); the later setup phase is a separate transaction. Remote
  * mutation (branch protection) happens last and only when explicitly
  * requested (`--protect` or an interactive confirmation).
  *
@@ -26,21 +28,22 @@
  * the list; a no-argument `init --force` PRESERVES a valid existing
  * policy's required checks and language while rebuilding the versioned
  * harness/config/ignore assets; only a fresh init (no policy yet)
- * auto-detects from `.github/workflows/*.{yml,yaml}` (job `name:` or the
- * job id; the generated SpecGit Acceptance job is excluded to avoid
- * self-reference; a matrix/reusable shape is never claimed as a proven
- * check-run name — it is reported as ambiguous). When no CI exists at
- * all, the policy names zero checks (#63: a fallback name the harness
- * cannot produce would deadlock the wait step and make the verdict
- * unsatisfiable) — the acceptance job itself, enforced through branch
- * protection, is then the gate.
+ * auto-detects from the selected platform's CI config. GitHub reads job names
+ * or ids from `.github/workflows/*.{yml,yaml}` and excludes the generated
+ * SpecGit Acceptance job to avoid self-reference. Declared GitLab reads
+ * top-level jobs from `.gitlab-ci.yml`; its project-owned MR acceptance job
+ * remains the adopter's responsibility. Matrix, reusable, dynamic, and other
+ * ambiguous shapes are reported rather than guessed. When no product CI exists,
+ * the policy names zero checks (#63: a fabricated fallback would make the
+ * verdict unsatisfiable); GitHub then relies on the protected generated
+ * acceptance job, while GitLab relies on its reviewed project-owned job.
  *
  * Structure (#171): `runInit` below only orchestrates named steps; the
  * concerns live in focused modules — detection and validation in
  * `init-validation.ts`, platform resolution in `init-platform.ts`,
  * workflow template selection in `init-workflow.ts`, the harness and
- * policy write in `init-write.ts`, and branch protection in
- * `init-protection.ts`.
+ * policy write in `init-write.ts`, guided read/consent and setup composition in
+ * `init-upgrade.ts`, and branch protection in `init-protection.ts`.
  */
 
 import * as path from 'node:path';
@@ -51,7 +54,7 @@ import type { Diagnostic } from '../../kernel/diagnostics.js';
 import { catalogFor } from '../language.js';
 import { SPEC_GIT_DIR, POLICY_FILENAME, type CommandContext } from '../types.js';
 import {
-  restoreManagedSnapshot,
+  restoreManagedSnapshotIfCurrent,
   snapshotManagedFile,
   type Snapshot,
 } from '../managed-reconcile.js';
@@ -72,12 +75,18 @@ import {
 } from './init-validation.js';
 import { persistGitlabHost, platformSelectionHuman, resolvePlatformMode, validateGitlabHost } from './init-platform.js';
 import { selectCompletionWorkflow, selectWorkflowYaml, validateGitlabCiConfig } from './init-workflow.js';
-import { setupBranchProtection, type ProtectionOutcome } from './init-protection.js';
+import {
+  resolveProtectionDefaultBranch,
+  setupBranchProtection,
+  type ProtectionOutcome,
+} from './init-protection.js';
 import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
 import { resolveProjectRules, resolveRepairLabels } from './init-rules.js';
 import { buildGitlabRoutingSteps, GitlabRoutingError } from '../gitlab-routing.js';
+import { runSetup } from './setup.js';
+import { finishGuidedUpgrade, guidedUpgradeDecision } from './init-upgrade.js';
 
 export type { InitOptions } from './init-validation.js';
 
@@ -90,13 +99,15 @@ export type { InitOptions } from './init-validation.js';
 async function runValidationPhase(
   options: InitOptions,
   ctx: CommandContext,
-  root: string
+  root: string,
+  interaction: InitInteraction
 ): Promise<
   | InitOutcome
   | {
       declaredEndpoint: { host: string; port: string | null } | null;
       existingPolicy: Awaited<ReturnType<CommandContext['record']['readPolicy']>>;
-      selection: Awaited<ReturnType<typeof selectWorkflowYaml>>;
+      options: InitOptions;
+      guidedUpgrade: boolean;
     }
 > {
   // Validate the --gitlab-host declaration now; persist it only after the
@@ -109,22 +120,23 @@ async function runValidationPhase(
   }
 
   const existingPolicy = await ctx.record.readPolicy(root);
-  const policyGate = policyGateOutcome(existingPolicy, options);
+  const guided = await guidedUpgradeDecision({ root, ctx, options, policy: existingPolicy, interaction });
+  if ('outcome' in guided) return guided.outcome;
+  const effectiveOptions: InitOptions = guided.upgrade
+    ? {
+        ...options,
+        force: true,
+        protect: false,
+        ...(guided.preserveIgnoreOptOut ? { ignore: false } : {}),
+      }
+    : options;
+  const policyGate = policyGateOutcome(existingPolicy, effectiveOptions);
   if (policyGate !== null) return policyGate;
 
   const writableError = await preflightRootWritable(root);
   if (writableError !== null) return writableError;
 
-  // Workflow template selection (#63) closes the validation phase: a pure
-  // computation over already-read inputs, still rejecting before writes.
-  let selection: Awaited<ReturnType<typeof selectWorkflowYaml>>;
-  try {
-    selection = await selectWorkflowYaml(ctx, root);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { exit: EXIT_USAGE, errors: [errorDiagnostic('workflow_input_invalid', message)] };
-  }
-  return { declaredEndpoint, existingPolicy, selection };
+  return { declaredEndpoint, existingPolicy, options: effectiveOptions, guidedUpgrade: guided.upgrade };
 }
 
 export async function runInit(
@@ -147,41 +159,43 @@ export async function runInit(
   }
   const root = rootEv.value;
 
-  const validated = await runValidationPhase(options, ctx, root);
+  const validated = await runValidationPhase(options, ctx, root, interaction);
   if ('exit' in validated) return validated;
-  const { declaredEndpoint, existingPolicy, selection } = validated;
+  const { declaredEndpoint, existingPolicy, options: effectiveOptions, guidedUpgrade } = validated;
 
   // Explicit inputs and preserved policy checks need no platform evidence.
   // Keep their usage errors ahead of the interactive platform question.
-  const needsDetection = !existingPolicy.ok && options.detect !== false && (options.requiredCheck?.length ?? 0) === 0;
-  const configuredChecks = needsDetection ? null : await resolveRequiredChecks(options, ctx, root, existingPolicy);
+  const needsDetection = !existingPolicy.ok && effectiveOptions.detect !== false && (effectiveOptions.requiredCheck?.length ?? 0) === 0;
+  const configuredChecks = needsDetection ? null : await resolveRequiredChecks(effectiveOptions, ctx, root, existingPolicy);
   if (configuredChecks !== null && 'exit' in configuredChecks) return configuredChecks;
   const warnings: Diagnostic[] = [];
   const platformSelection = await resolvePlatformMode(
-    ctx, root, warnings, interaction, declaredEndpoint ?? undefined
+    ctx, root, interaction, declaredEndpoint ?? undefined
   );
+  if ('exit' in platformSelection) return platformSelection;
+  const gitlabMode = platformSelection.outcome.mode === 'gitlab';
 
   // ---- Required-check selection (#310: one seam, after the existing
   // policy is known — still before any mutation). Explicit --required-check
   // replaces; a valid existing policy upgrades by preservation; only a
   // fresh init detects. ----
-  const resolved = configuredChecks ?? await resolveRequiredChecks(options, ctx, root, existingPolicy, platformSelection.outcome.mode);
+  const resolved = configuredChecks ?? await resolveRequiredChecks(effectiveOptions, ctx, root, existingPolicy, platformSelection.outcome.mode);
   if ('exit' in resolved) return resolved;
   const { checks, detected, provenance } = resolved;
 
   const initialLanguage = resolveInitLanguage(
-    options,
+    effectiveOptions,
     existingPolicy.ok ? existingPolicy.value.language : undefined
   );
-  const rules = await resolveProjectRules(options, ctx, root, initialLanguage,
+  const rules = await resolveProjectRules(effectiveOptions, ctx, root, initialLanguage,
     existingPolicy.ok ? existingPolicy.value : undefined, interaction,
     platformSelection.outcome.gitlabHost);
   if ('exit' in rules) return rules;
   const { language } = rules;
-  const automation = await resolveInitAutomation(options, ctx, root, language, interaction,
+  const automation = await resolveInitAutomation(effectiveOptions, ctx, root, language, interaction,
     existingPolicy.ok ? existingPolicy.value : undefined);
   if ('exit' in automation) return automation;
-  const repair = await resolveRepairLabels(options, ctx, {
+  const repair = await resolveRepairLabels(effectiveOptions, ctx, {
     ...(existingPolicy.ok ? existingPolicy.value : {}), version: 1, required_checks: checks, language,
     validation: rules.validation ?? (existingPolicy.ok ? existingPolicy.value.validation : undefined),
     tags: rules.tags ?? (existingPolicy.ok ? existingPolicy.value.tags : undefined),
@@ -208,8 +222,60 @@ export async function runInit(
         })] };
   }
 
+  // Branch-dependent desired state closes the read-only phase. A GitHub
+  // acceptance workflow always needs a proven remote default. Protection
+  // independently proves its target before any local or provider mutation;
+  // if origin/HEAD changed between probes, refuse a mixed-branch harness.
+  let workflowYaml: string | null = null;
+  let workflowTemplate: 'self' | 'external' | 'gitlab' | 'gitlab-pending';
+  let workflowBranch: string | undefined;
+  if (!gitlabMode) {
+    try {
+      const selectionEv = await selectWorkflowYaml(ctx, root);
+      if (!selectionEv.ok) {
+        return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(
+          selectionEv.code,
+          selectionEv.message,
+          selectionEv.fix ? { fix: selectionEv.fix } : {}
+        )] };
+      }
+      workflowYaml = selectionEv.value.yaml;
+      workflowTemplate = selectionEv.value.template;
+      workflowBranch = selectionEv.value.defaultBranch;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { exit: EXIT_USAGE, errors: [errorDiagnostic('workflow_input_invalid', message)] };
+    }
+  } else {
+    workflowTemplate = completion.value === null ? 'gitlab-pending' : 'gitlab';
+  }
+
+  let protectionBranch: string | null = null;
+  if (effectiveOptions.protect !== false) {
+    const branchEv = await resolveProtectionDefaultBranch(ctx, root);
+    if (!branchEv.ok) {
+      return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(
+        branchEv.code,
+        branchEv.message,
+        branchEv.fix ? { fix: branchEv.fix } : {}
+      )] };
+    }
+    protectionBranch = branchEv.value;
+  }
+  const branchClaims = [
+    workflowBranch,
+    completion.value?.defaultBranch,
+    protectionBranch ?? undefined,
+  ].filter((branch): branch is string => branch !== undefined);
+  if (new Set(branchClaims).size > 1) {
+    return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(
+      'default_branch_changed',
+      `The proven remote default branch changed during init (${branchClaims.join(' -> ')}).`,
+      { fix: 'Refresh origin/HEAD and re-run init so every generated workflow and protection target uses one branch.' }
+    )] };
+  }
+
   // ---- Mutation phase: local writes first (error-atomic), remote last. ----
-  if (selection.warning !== undefined) warnings.push(selection.warning);
   if (detected !== null) {
     const nonPrWarning = nonPrWorkflowWarning(detected);
     if (nonPrWarning !== null) warnings.push(nonPrWarning);
@@ -219,38 +285,42 @@ export async function runInit(
     warnings.push(preservedChecksWarning());
   }
 
-  // #117: the platform choice is already validated; its pending declaration
-  // joins the same transaction as the platform-specific harness write.
-  // #305: that early persist is inside the run's logical transaction — a
-  // later reconcile failure restores the providers file from this snapshot
-  // (including the directories this run created under spec_git/, so the
-  // tree — not just the file — round-trips). A pre-run state that cannot
-  // even be established fails closed HERE, through the outcome path, before
-  // any mutation happens.
-  let providersSnapshot: Snapshot;
-  try {
-    providersSnapshot = await snapshotManagedFile(
-      root,
-      path.relative(root, providersPath(root)).split(path.sep).join('/')
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      exit: EXIT_UNKNOWN,
-      errors: [
-        errorDiagnostic(
-          'providers_snapshot_failed',
-          `Could not read the pre-run state of ${SPEC_GIT_DIR}/providers.yaml: ${message}`,
-          {
-            fix: `Make ${SPEC_GIT_DIR}/providers.yaml a readable file (or remove it), then re-run init.`,
-          }
-        ),
-      ],
-    };
-  }
+  // Only a pending declaration mutates providers.yaml. Track both the
+  // pre-run state and the exact bytes this process wrote; an unrelated
+  // harness failure must never restore a file this run did not touch, and a
+  // later concurrent edit must never be overwritten by compensation.
+  let providersMutation: { before: Snapshot; writtenContent: string } | null = null;
   if (platformSelection.declaration !== undefined) {
+    let providersSnapshot: Snapshot;
+    try {
+      providersSnapshot = await snapshotManagedFile(
+        root,
+        path.relative(root, providersPath(root)).split(path.sep).join('/')
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        exit: EXIT_UNKNOWN,
+        errors: [
+          errorDiagnostic(
+            'providers_snapshot_failed',
+            `Could not read the pre-run state of ${SPEC_GIT_DIR}/providers.yaml: ${message}`,
+            {
+              fix: `Make ${SPEC_GIT_DIR}/providers.yaml a readable file (or remove it), then re-run init.`,
+            }
+          ),
+        ],
+      };
+    }
     const { host, port } = platformSelection.declaration;
-    await persistGitlabHost(host, port, root, warnings);
+    const persisted = await persistGitlabHost(host, port, root);
+    if ('exit' in persisted) {
+      // The atomic writer reports failure before committing target bytes.
+      // Restoring this snapshot could overwrite another writer's update
+      // while we waited for its lock, although this run never wrote a file.
+      return persisted;
+    }
+    providersMutation = { before: providersSnapshot, writtenContent: persisted.content };
   }
 
   // #118: the effective generated-text language — explicit --language,
@@ -261,14 +331,13 @@ export async function runInit(
     outcome: platformSelection.outcome,
     human: platformSelectionHuman(platformSelection, text),
   };
-  const gitlabMode = platform.outcome.mode === 'gitlab';
   if (gitlabMode && completion.value === null) {
     warnings.push({
       severity: 'warning',
       code: 'gitlab_harness_pending',
       message:
-        'The GitLab CI harness template is not generated yet; a GitHub Actions workflow would be wrong-platform output here — carry your own .gitlab-ci.yml.',
-      fix: 'Its top-level job keys become the required checks (detect from the file or pass --required-check); see docs/gitlab-support.md.',
+        'SpecGit does not generate or own the GitLab CI acceptance job; the project-owned .gitlab-ci.yml must run "specgit finish --json" for merge requests.',
+      fix: 'Keep a top-level job in the project-owned .gitlab-ci.yml responsible for "specgit finish --json"; SpecGit can detect its job key or you can declare it explicitly with "--required-check <name>".',
     });
   }
 
@@ -281,24 +350,28 @@ export async function runInit(
     automation: repair.automation,
     validation: rules.validation,
     tags: rules.tags,
-    workflowYaml: gitlabMode ? null : selection.yaml,
+    workflowYaml,
     completion: completion.value,
     routingSteps,
-    writeIgnore: options.ignore !== false,
+    writeIgnore: effectiveOptions.ignore !== false,
     warnings,
   });
   if ('exit' in written) {
-    // #305: the reconcile transaction already restored every asset it
-    // touched (harness, policy, ignore); the providers declaration may
-    // have persisted earlier in this phase — restore it too, so a failed
-    // upgrade leaves no mixed-version local state. A restore that cannot
-    // complete is never swallowed: it becomes an ADDITIONAL error
-    // diagnostic next to the failure that triggered it.
+    // The reconcile transaction already restored its own assets. Restore a
+    // declaration only if this run persisted one and providers.yaml still
+    // contains the exact bytes that persistence wrote. Concurrent changes
+    // are preserved and surfaced instead of being overwritten.
     let restoreFailure: string | null = null;
-    try {
-      await restoreManagedSnapshot(providersSnapshot);
-    } catch (error) {
-      restoreFailure = error instanceof Error ? error.message : String(error);
+    let restoreConflict = false;
+    if (providersMutation !== null) {
+      try {
+        restoreConflict = !(await restoreManagedSnapshotIfCurrent(
+          providersMutation.before,
+          providersMutation.writtenContent
+        ));
+      } catch (error) {
+        restoreFailure = error instanceof Error ? error.message : String(error);
+      }
     }
     // OutcomeBase declares `errors` optional — every 'exit' path here sets
     // it, but the empty fallback keeps the spread total at the type level.
@@ -310,6 +383,16 @@ export async function runInit(
           `Could not restore ${SPEC_GIT_DIR}/providers.yaml to its pre-run state after the failed init: ${restoreFailure}`,
           {
             fix: `Compare ${SPEC_GIT_DIR}/providers.yaml against its pre-run state and re-run init once the cause is fixed.`,
+          }
+        )
+      );
+    } else if (restoreConflict) {
+      errors.push(
+        errorDiagnostic(
+          'providers_restore_conflict',
+          `Did not restore ${SPEC_GIT_DIR}/providers.yaml because it changed after this init persisted its declaration.`,
+          {
+            fix: `Preserve the current ${SPEC_GIT_DIR}/providers.yaml, reconcile it with the intended declaration, and re-run init.`,
           }
         )
       );
@@ -332,13 +415,20 @@ export async function runInit(
 
   let protection: ProtectionOutcome | undefined;
   let protectionHuman: string[] = [];
-  if (options.protect !== false) {
-    const guarded = await setupBranchProtection(options, ctx, root, text, adopted);
+  if (protectionBranch !== null) {
+    const guarded = await setupBranchProtection(
+      effectiveOptions,
+      ctx,
+      root,
+      text,
+      adopted,
+      protectionBranch
+    );
     protection = guarded.outcome;
     protectionHuman = guarded.human;
   }
 
-  return buildInitOutcome({
+  const initialized = buildInitOutcome({
     checks,
     detected,
     provenance,
@@ -347,11 +437,14 @@ export async function runInit(
     policy: written.policy,
     ignore: written.ignore,
     reconciled: written.reconciled,
-    template: gitlabMode ? (completion.value === null ? 'gitlab-pending' : 'gitlab') : selection.template,
+    template: workflowTemplate,
     warnings,
     protection,
     protectionHuman,
     adopted,
     text,
   });
+  if (!guidedUpgrade) return initialized;
+  const setup = await runSetup({ tool: 'all', json: effectiveOptions.json }, ctx);
+  return finishGuidedUpgrade(initialized, setup);
 }

@@ -10,24 +10,25 @@ import {
   paginateToExhaustion,
   type CliRunOutcome,
 } from '../cli-evidence-transport.js';
-import type {
-  BranchProtectionFact,
-  CheckRunInfo,
-  EvidenceAnchorFact,
-  ForgeProvider,
-  IssueCreation,
-  IssueCommentCreation,
-  IssueFact,
-  IssueHistoryFact,
-  LabelsAppliedFact,
-  MergeChecksFact,
-  OpenIssueFact,
-  PrCreation,
-  PrFact,
-  PrSummary,
-  PreflightFact,
-  RepoAutomergeFact,
-  RepoLabelsFact,
+import {
+  GITLAB_PIPELINE_SUCCESS_GATE,
+  type BranchProtectionFact,
+  type CheckRunInfo,
+  type EvidenceAnchorFact,
+  type ForgeProvider,
+  type IssueCreation,
+  type IssueCommentCreation,
+  type IssueFact,
+  type IssueHistoryFact,
+  type LabelsAppliedFact,
+  type MergeChecksFact,
+  type OpenIssueFact,
+  type PrCreation,
+  type PrFact,
+  type PrSummary,
+  type PreflightFact,
+  type RepoAutomergeFact,
+  type RepoLabelsFact,
 } from '../../github/port.js';
 import type { TagSpec } from '../../tags/catalog.js';
 import { verifyGitlabCompletion, type GitlabCompletionIdentity } from './completion-context.js';
@@ -130,7 +131,7 @@ export interface GlabProviderOptions {
   timeoutMs?: number;
   maxBuffer?: number;
   /**
-   * Declared self-managed GitLab host (optionally `host:port`), from
+   * Declared GitLab host (optionally `host:port`), from
    * `spec_git/providers.yaml`. Scopes every call per host —
    * `glab auth status --hostname` and `glab api --hostname` — and turns
    * on the verified-version window check (advisory, #241). Absent (or
@@ -1052,10 +1053,13 @@ export class GlabProvider implements ForgeProvider {
   async enableBranchProtection(
     repo: RepoRef,
     branch: string,
-    requiredCheck: string
+    requiredGate: string
   ): Promise<Evidence<BranchProtectionFact>> {
-    if (!branch.trim() || !requiredCheck.trim()) {
-      return fail('glab_transport', 'Cannot enable branch protection without a branch and check name.');
+    if (!branch.trim() || requiredGate !== GITLAB_PIPELINE_SUCCESS_GATE) {
+      return fail(
+        'glab_transport',
+        `GitLab branch protection requires the "${GITLAB_PIPELINE_SUCCESS_GATE}" gate; it does not accept a GitHub status-check name.`
+      );
     }
     const currentEv = await this.fetchProtectionPayload(repo, branch);
     if (!currentEv.ok) {
@@ -1064,6 +1068,12 @@ export class GlabProvider implements ForgeProvider {
     const gateEv = await this.setPipelineGate(repo);
     if (!gateEv.ok) {
       return gateEv;
+    }
+    if (!gateEv.value.enabled) {
+      return fail(
+        'glab_transport',
+        'GitLab did not report successful pipelines as required after the project-gate update.'
+      );
     }
     if (currentEv.value === null) {
       const created = await this.runCreate([
@@ -1087,6 +1097,10 @@ export class GlabProvider implements ForgeProvider {
       const parsedEv = this.parseJsonOutput(created.value.stdout);
       if (!parsedEv.ok) {
         return parsedEv;
+      }
+      const verifiedEv = this.verifyProtectionPayload(parsedEv.value, branch);
+      if (!verifiedEv.ok) {
+        return verifiedEv;
       }
     }
     if (this.requiredChecks === undefined) {
@@ -1334,7 +1348,7 @@ export class GlabProvider implements ForgeProvider {
     return ok(true);
   }
 
-  /** Raw protection payload; null when the branch is not protected (404). */
+  /** Verified protection payload; null when the branch is not protected (404). */
   private async fetchProtectionPayload(
     repo: RepoRef,
     branch: string
@@ -1349,7 +1363,19 @@ export class GlabProvider implements ForgeProvider {
       }
       return result;
     }
-    return ok(result.value);
+    return this.verifyProtectionPayload(result.value, branch);
+  }
+
+  /** A success response is protection evidence only when it names the requested branch. */
+  private verifyProtectionPayload(payload: unknown, branch: string): Evidence<unknown> {
+    const name = (payload as { name?: unknown } | null)?.name;
+    if (name !== branch) {
+      return fail(
+        'glab_transport',
+        `GitLab branch-protection response did not identify the requested branch "${sanitizeApiText(branch)}".`
+      );
+    }
+    return ok(payload);
   }
 
   /**

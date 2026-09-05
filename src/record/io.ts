@@ -292,7 +292,7 @@ export async function readProviders(root: string): Promise<Evidence<Providers>> 
       return fail(
         'providers_missing',
         `No provider configuration found at ${providersPath(root)}.`,
-        'Optional: declare a self-hosted GitLab host via "specgit init --gitlab-host <hostname>".'
+        'Optional: declare a GitLab host, including gitlab.com, with "specgit init --gitlab-host <hostname>" before first init, or add --force in an initialized project.'
       );
     }
     throw error;
@@ -318,9 +318,16 @@ export async function readProviders(root: string): Promise<Evidence<Providers>> 
   return ok(result.data);
 }
 
-export async function writeProviders(root: string, providers: Providers): Promise<void> {
+/**
+ * Write providers atomically and return the exact bytes committed by this call.
+ * Rejection means this call did not commit target bytes: rename is the final
+ * fallible write step, and lock release cannot reject after that commit.
+ */
+export async function writeProviders(root: string, providers: Providers): Promise<string> {
   const target = providersPath(root);
+  const content = YAML.stringify(providers);
   await withFileLock(`${target}.lock`, async () => {
-    await writeFileAtomically(target, YAML.stringify(providers));
+    await writeFileAtomically(target, content);
   });
+  return content;
 }

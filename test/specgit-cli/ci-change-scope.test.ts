@@ -18,6 +18,9 @@ describe('CI change impact', () => {
     'README.md', 'docs/cli.md', 'docs/路径含空格 test.md', 'AGENTS.md',
     '.agents/skills/specgit-finish/SKILL.md', '.opencode/command/specgit-issue.md',
     '.changeset/fresh-change.md', '.github/workflows/README.md',
+    '.github/ISSUE_TEMPLATE/config.yml', '.github/ISSUE_TEMPLATE/bug.yml',
+    '.github/ISSUE_TEMPLATE/bug_report.md',
+    '.changeset/config.json', '.coderabbit.yaml', '.github/dependabot.yml',
   ])('keeps %s on the metadata route', (file) => {
     expect(classify([file])).toMatchObject({ build: false, metadata: true });
   });
@@ -26,8 +29,12 @@ describe('CI change impact', () => {
     'src/cli/harness-content.ts', 'src/cli/agent-surface.ts', 'bin/specgit.js',
     'schemas/specgit/templates/specgit-policy.yaml', 'skills/specgit-issue/SKILL.md',
     'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'test/example.test.ts',
-    '.github/workflows/ci.yml', 'scripts/ci-change-scope.mjs', 'new-runtime/file.xyz',
+    '.github/workflows/ci.yml', '.github/workflows/specgit-accept.yml',
+    '.github/workflows/specgit-complete.yml', '.github/workflows/release-prepare.yml',
+    '.github/workflows/rc-verify.yml', '.github/workflows/security.yml',
+    'scripts/ci-change-scope.mjs', 'new-runtime/file.xyz',
     '.local/state/gh/device-id', 'docs/executable.js', '.agents/unknown/script.sh',
+    '.devcontainer/devcontainer.json', '.opencode/hooks.json',
   ])('requires complete verification for %s', (file) => {
     expect(classify([file])).toMatchObject({ build: true, metadata: false });
   });
@@ -38,12 +45,16 @@ describe('CI change impact', () => {
 
   it('selects dependency and Nix checks from their actual inputs', () => {
     expect(classify(['pnpm-lock.yaml'])).toMatchObject({ dependencies: true, nix: true });
+    expect(classify(['.github/dependabot.yml'])).toMatchObject({
+      build: false, metadata: true, dependencies: true,
+    });
     expect(classify(['src/index.ts'])).toMatchObject({ dependencies: false });
     expect(classify(['flake.nix'])).toMatchObject({ nix: true });
   });
 
   it('rejects paths outside the repository rather than granting an exemption', () => {
     expect(classify(['../README.md']).build).toBe(true);
+    expect(classify(['docs/ambiguous\tname.md']).build).toBe(true);
   });
 });
 
@@ -82,6 +93,17 @@ describe('complete Git diff classification', () => {
     git('mv', 'src/entry.ts', 'docs/example.md'); git('commit', '-qm', 'rename');
     const result = JSON.parse(execFileSync(process.execPath, [script, '--base', base, '--head', 'HEAD'], { cwd: root, encoding: 'utf8' }));
     expect(result.build).toBe(true);
+    expect(result.paths).toContain('src/entry.ts');
+  }));
+
+  it('requires product verification when a source file is deleted', () => withRepo((root, base, git) => {
+    git('rm', '-q', 'src/entry.ts'); git('commit', '-qm', 'delete source');
+    const result = JSON.parse(execFileSync(
+      process.execPath,
+      [script, '--base', base, '--head', 'HEAD'],
+      { cwd: root, encoding: 'utf8' }
+    ));
+    expect(result).toMatchObject({ build: true, metadata: false });
     expect(result.paths).toContain('src/entry.ts');
   }));
 

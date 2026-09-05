@@ -2,7 +2,7 @@
  * `specgit accept` — full eleven-gate evaluation via the acceptance evaluator
  * (`src/acceptance/**`). States are derived per invocation and never
  * persisted. Spec/task artifacts are not inputs anywhere on this path —
- * only the record, the policy, live git facts, and GitHub provider facts.
+ * only the record, the policy, live git facts, and routed forge-provider facts.
  *
  * Exit codes come from the evaluator verdict: 0 accepted · 1 rejected with
  * complete evidence · 3 cannot determine (fail-closed). Usage errors exit
@@ -86,7 +86,7 @@ export async function runAccept(
       }];
     } else if (verdict.state === 'closure_pending') {
       nextActions = [{ code: 'delivery_finalize', command: 'specgit finish --json',
-        reason: 'The pull request is merged. Verify that every bound issue is closed before starting another delivery.' }];
+        reason: reasonFor['delivery_finalize'] ?? '' }];
     } else if (verdict.evidence.pr !== null) {
       const facts = await ctx.git.facts(root.value).catch(() => null);
       let platform: RepoRef['platform'] | null = null;

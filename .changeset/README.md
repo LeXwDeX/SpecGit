@@ -12,12 +12,17 @@ Follow the prompts to select version bump type and describe your changes.
 
 ## Workflow
 
-1. **Choose the release path**: Maintainers decide whether a PR follows the normal release cadence or gets dedicated release tracking.
-2. **Add dedicated release tracking**: When a maintainer asks for a changeset, run `pnpm changeset` locally before or after your PR.
-3. **Version PR**: CI opens/updates a "Version Packages" PR when changesets merge to main.
-4. **Release**: Merging the Version PR triggers npm publish and GitHub Release.
+1. **Choose publication intent**: A delivery that is intended to change the npm
+   package includes a changeset. Maintenance with no publication intent omits it.
+2. **Describe the released behavior**: Run `pnpm exec changeset` on the delivery
+   branch and commit the generated `.changeset/*.md` with the change.
+3. **Version PR**: After the delivery merges, CI creates or updates
+   `changeset-release/main`, titled `chore(release): v<version>`.
+4. **Release**: Merging that version PR publishes the package through npm OIDC,
+   then reconciles the matching tag and GitHub Release from registry evidence.
 
-> **Note:** The default path is the normal release cadence. Add a changeset when a maintainer or release owner wants dedicated release notes and version tracking for the PR. Versioning (`changeset version`) and publishing happen automatically in CI.
+Versioning (`changeset version`) and publishing happen in CI. A delivery with no
+changeset does not enter the npm release queue.
 
 ## Template
 
@@ -61,18 +66,17 @@ Include only the sections relevant to your change.
 
 ## When to Create a Changeset
 
-**Use dedicated release tracking for:**
-- New features or commands selected for release
-- Notable bug fixes or hotfixes requested by a maintainer/release owner
-- Breaking changes or deprecations
-- Performance improvements users would notice and that are planned for release
+Create a changeset when the delivery is intended for npm publication, including:
 
-**Use the normal release cadence for:**
-- Routine bug fixes that fit the normal release cadence
-- Documentation-only changes
-- Test additions/fixes
-- Internal refactoring that preserves user behavior
-- CI/tooling changes
+- New package behavior or commands
+- Released bug fixes and performance improvements
+- Breaking changes or deprecations
+- Documentation that is deliberately being published as a package update
+
+Omit a changeset when no npm publication is intended, including local
+installation or init/setup refreshes, tests, internal refactors, CI/tooling, and
+documentation maintenance. If one of those changes must ship in the npm package,
+publication intent makes the changeset required.
 
 ## Writing Good Descriptions
 

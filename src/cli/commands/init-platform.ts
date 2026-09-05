@@ -6,9 +6,8 @@
  * GitLab.
  */
 
-import { EXIT_USAGE } from '../exit-codes.js';
+import { EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
 import { errorDiagnostic, humanBuilder, type InitOutcome } from '../output.js';
-import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { HumanText } from '../language.js';
 import { SPEC_GIT_DIR, type CommandContext } from '../types.js';
 import { readProviders, writeProviders } from '../../record/io.js';
@@ -45,13 +44,12 @@ export interface PlatformSelection {
   outcome: PlatformOutcome;
   /** Persist only after all initialization choices and inputs have passed validation. */
   declaration?: { host: string; port: string | null };
-  message?: 'github-default' | 'github-user' | 'gitlab';
+  message?: 'github-default' | 'gitlab';
 }
 
 export function platformSelectionHuman(selection: PlatformSelection, text: HumanText): string[] {
   const human = humanBuilder();
   if (selection.message === 'github-default') human.line(text.initPlatformGithubDefault());
-  if (selection.message === 'github-user') human.line(text.initPlatformGithubUser());
   if (selection.message === 'gitlab' && selection.outcome.gitlabHost !== undefined) {
     human.line(text.initPlatformGitlab(selection.outcome.gitlabHost, `${SPEC_GIT_DIR}/providers.yaml`));
   }
@@ -132,19 +130,27 @@ export async function validateGitlabHost(
 export async function persistGitlabHost(
   host: string,
   port: string | null,
-  root: string,
-  warnings: Diagnostic[]
-): Promise<void> {
+  root: string
+): Promise<InitOutcome | { content: string }> {
   try {
-    await writeProviders(root, {
+    const content = await writeProviders(root, {
       gitlab: { host, ...(port !== null ? { port } : {}), insecure_ssl: false },
     });
-  } catch {
-    warnings.push({
-      severity: 'warning',
-      code: 'providers_write_failed',
-      message: `Could not write ${SPEC_GIT_DIR}/providers.yaml.`,
-    });
+    return { content };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'providers_write_failed',
+          `Could not write ${SPEC_GIT_DIR}/providers.yaml: ${message}`,
+          {
+            fix: `Make ${SPEC_GIT_DIR}/providers.yaml and its parent directory writable, then re-run init.`,
+          }
+        ),
+      ],
+    };
   }
 }
 
@@ -184,20 +190,32 @@ export async function classifyPlatformMode(
 export async function resolvePlatformMode(
   ctx: CommandContext,
   root: string,
-  warnings: Diagnostic[],
   interaction: Pick<InitInteraction, 'selectPlatform'> = {},
   declaration?: { host: string; port: string | null }
-): Promise<PlatformSelection> {
-  if (declaration !== undefined) {
-    return {
-      outcome: { mode: 'gitlab', gitlabHost: declaredEndpointName(declaration.host, declaration.port) },
-      declaration,
-    };
-  }
+): Promise<PlatformSelection | InitOutcome> {
   const facts = await ctx.git.facts(root).catch(() => null);
   const originUrl = facts?.originUrl ?? null;
 
-  const classified = classifyHarnessPlatform({ originUrl, providers: await readProviders(root) });
+  let providers: Awaited<ReturnType<typeof readProviders>>;
+  try {
+    providers = await readProviders(root);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'platform_providers_unreadable',
+          `The platform declaration at ${SPEC_GIT_DIR}/providers.yaml could not be read: ${message}`,
+          {
+            fix: `Make ${SPEC_GIT_DIR}/providers.yaml a readable regular file (or remove it), then re-run specgit init.`,
+          }
+        ),
+      ],
+    };
+  }
+
+  const classified = classifyHarnessPlatform({ originUrl, providers });
 
   // #308 write/read symmetry: the read side (`classifyPlatformMode`)
   // refuses to classify over unreadable declaration bytes — so must the
@@ -206,13 +224,26 @@ export async function resolvePlatformMode(
   // destroy the evidence the user needs to repair); the heuristics speak
   // again only after the bytes parse.
   if (classified.mode === 'providers_invalid') {
-    warnings.push({
-      severity: 'warning',
-      code: 'platform_providers_invalid',
-      message: `The platform declaration at ${SPEC_GIT_DIR}/providers.yaml exists but cannot be read: ${classified.message}`,
-      fix: `Repair the ${SPEC_GIT_DIR}/providers.yaml bytes, then re-run specgit init.`,
-    });
-    return { outcome: { mode: 'undecided' } };
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'platform_providers_invalid',
+          `The platform declaration at ${SPEC_GIT_DIR}/providers.yaml is invalid: ${classified.message}`,
+          { fix: `Repair the ${SPEC_GIT_DIR}/providers.yaml bytes, then re-run specgit init.` }
+        ),
+      ],
+    };
+  }
+
+  // An explicit declaration is a selection, not permission to overwrite
+  // invalid or unreadable authoritative bytes. The read gate above must
+  // pass first so every rejected init preserves the existing file exactly.
+  if (declaration !== undefined) {
+    return {
+      outcome: { mode: 'gitlab', gitlabHost: declaredEndpointName(declaration.host, declaration.port) },
+      declaration,
+    };
   }
 
   if (classified.mode === 'gitlab') {
@@ -230,17 +261,35 @@ export async function resolvePlatformMode(
       message: 'github-default',
     };
   }
-  if (!classified.hasOrigin) return { outcome: { mode: 'undecided' } };
+  if (!classified.hasOrigin) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'platform_undecided',
+          'SpecGit cannot determine the repository platform because the origin URL is missing or unusable.',
+          {
+            fix: 'Configure origin for a github.com or GitLab repository, or pass --gitlab-host <hostname> for the intended GitLab endpoint, then re-run init.',
+          }
+        ),
+      ],
+    };
+  }
   const { endpoint } = classified;
 
-  // Non-github, non-obvious host: ask on a TTY; warn otherwise.
+  // Non-github, non-obvious host: a TTY may confirm GitLab and persist its
+  // declaration. GitHub Enterprise has no v1 provider route, so it is not
+  // offered as a selectable success path.
   if (ctx.stdinIsTTY && endpoint !== null) {
     const shown = declaredEndpointName(endpoint.host, endpointUsesDefaultPort(endpoint) ? null : endpoint.port);
     const selectPlatform = interaction.selectPlatform ?? (async (host) => {
       const { select } = await import('@inquirer/prompts');
-      return select<'gitlab' | 'github'>({
-        message: `Origin endpoint "${host}" is not github.com — which platform is this repository on?`,
-        choices: [{ value: 'gitlab' }, { value: 'github' }],
+      return select<'gitlab' | 'unsupported'>({
+        message: `Origin endpoint "${host}" is not github.com. Is this repository hosted on GitLab?`,
+        choices: [
+          { name: 'GitLab (declare this endpoint)', value: 'gitlab' },
+          { name: 'Unsupported platform (stop without changes)', value: 'unsupported' },
+        ],
       }, { output: process.stderr });
     });
     const choice = await selectPlatform(shown);
@@ -255,18 +304,32 @@ export async function resolvePlatformMode(
       };
     }
     return {
-      outcome: { mode: 'github' },
-      message: 'github-user',
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'platform_unsupported',
+          `Origin endpoint "${shown}" cannot use the GitHub provider in SpecGit v1; GitHub support is limited to github.com.`,
+          {
+            fix: 'Use a github.com origin, confirm GitLab for this endpoint, or stop and configure a supported repository before re-running init.',
+          }
+        ),
+      ],
     };
   }
 
-  warnings.push({
-    severity: 'warning',
-    code: 'platform_undecided',
-    message: `Origin endpoint "${
-      endpoint === null ? 'unknown' : declaredEndpointName(endpoint.host, endpointUsesDefaultPort(endpoint) ? null : endpoint.port)
-    }" is neither github.com nor a declared GitLab host.`,
-    fix: 'Re-run init with --gitlab-host <hostname> (or <hostname>:<port> for a non-default port), or answer the platform question on an interactive terminal.',
-  });
-  return { outcome: { mode: 'undecided' } };
+  const shown = endpoint === null
+    ? 'unknown'
+    : declaredEndpointName(endpoint.host, endpointUsesDefaultPort(endpoint) ? null : endpoint.port);
+  return {
+    exit: EXIT_UNKNOWN,
+    errors: [
+      errorDiagnostic(
+        'platform_undecided',
+        `Origin endpoint "${shown}" is neither github.com nor a declared GitLab host.`,
+        {
+          fix: 'Re-run init with --gitlab-host <hostname> (or <hostname>:<port> for a non-default port). Interactive init can confirm GitLab, but SpecGit v1 cannot route GitHub Enterprise hosts.',
+        }
+      ),
+    ],
+  };
 }

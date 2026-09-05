@@ -14,7 +14,6 @@ import * as path from 'node:path';
 
 import { harnessWorkflowYaml } from '../harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../external-harness.js';
-import type { Diagnostic } from '../../kernel/diagnostics.js';
 import type { CommandContext } from '../types.js';
 import { completionWorkflowYaml, gitlabRoutingWorkflowYaml } from '../completion-workflow.js';
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
@@ -26,7 +25,8 @@ const SELF_PACKAGE_NAME = 'specgit';
 export interface WorkflowSelection {
   yaml: string;
   template: 'self' | 'external';
-  warning?: Diagnostic;
+  /** Remote default branch proved from origin/HEAD before any managed write. */
+  defaultBranch: string;
 }
 
 /**
@@ -49,40 +49,39 @@ async function isSelfRepository(root: string): Promise<boolean> {
 
 /**
  * Compute the acceptance-workflow bytes for this repository (validation
- * phase — a pure function of inputs, no writes). External inputs are the
- * adopting repo's remote default branch and the running CLI's exact
- * version; an unresolvable remote falls back to `main` with a warning,
- * mirroring the branch fallback the protection guard already uses.
+ * phase — a pure function of inputs, no writes). The remote default branch
+ * is mandatory evidence: guessing `main` can write a workflow that never
+ * runs for the repository's actual pull-request target and can later protect
+ * the wrong branch. The proved branch is carried with the selection so the
+ * caller can reject inconsistent workflow, completion, and protection proofs.
  */
 export async function selectWorkflowYaml(
   ctx: CommandContext,
   root: string
-): Promise<WorkflowSelection> {
+): Promise<Evidence<WorkflowSelection>> {
+  const branchEv = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+  if (!branchEv.ok) {
+    return fail(
+      'workflow_default_branch_unknown',
+      `Acceptance workflow generation requires a proven remote default branch (${branchEv.message}).`,
+      branchEv.fix ?? 'Fetch origin and establish origin/HEAD, then re-run init.'
+    );
+  }
+  const defaultBranch = branchEv.value;
   if (await isSelfRepository(root)) {
-    return { yaml: harnessWorkflowYaml(), template: 'self' };
+    return ok({ yaml: harnessWorkflowYaml(defaultBranch), template: 'self', defaultBranch });
   }
-  const branchEv = await ctx.git.remoteDefaultBranch(root);
-  let warning: Diagnostic | undefined;
-  let defaultBranch = 'main';
-  if (branchEv.ok) {
-    defaultBranch = branchEv.value;
-  } else {
-    warning = {
-      severity: 'warning',
-      code: 'default_branch_unresolved',
-      message: `The remote default branch could not be resolved (${branchEv.message}).`,
-      fix: 'Fetch the remote (git fetch) and set origin/HEAD, then re-run init --force to re-pin the branch.',
-    };
-  }
-  return {
+  return ok({
     yaml: externalAcceptanceWorkflowYaml({ defaultBranch, version: ctx.version }),
     template: 'external',
-    ...(warning !== undefined ? { warning } : {}),
-  };
+    defaultBranch,
+  });
 }
 
 export interface CompletionSelection {
   platform: 'github' | 'gitlab';
+  /** Remote default branch proved before generating this workflow. */
+  defaultBranch: string;
   yaml: string;
   routingYaml?: string;
 }
@@ -129,7 +128,7 @@ export async function selectCompletionWorkflow(
     const input = {
       defaultBranch: branch.value, version: ctx.version, selfHosted: await isSelfRepository(root), platform,
     };
-    return ok({ platform, yaml: completionWorkflowYaml(input),
+    return ok({ platform, defaultBranch: branch.value, yaml: completionWorkflowYaml(input),
       ...(platform === 'gitlab' ? { routingYaml: gitlabRoutingWorkflowYaml(input) } : {}),
     });
   } catch (error) {

@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { GUARD_SCRIPT } from '../../src/cli/harness-content.js';
+import { git, initRepo } from '../specgit/helpers/temp-repo.js';
+
 /**
  * #68: the merge guard must surface the verdict it acts on. A blocked
  * merge prints a concise summary naming pending (transient) and failed
@@ -84,6 +87,7 @@ interface GuardResult {
 }
 
 let binDir: string;
+let guardRepo: ReturnType<typeof initRepo>;
 
 function writeEnvelope(name: string, value: unknown): string {
   const file = path.join(binDir, `${name}.json`);
@@ -101,11 +105,13 @@ function runGuard(
     const child =
       launchMode === 'sh'
         ? spawn('sh', [GUARD], {
-            env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
+            cwd: guardRepo.root,
+            env: { ...process.env, ...guardRepo.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
             stdio: ['pipe', 'pipe', 'pipe'],
           })
         : spawn(GUARD, {
-            env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
+            cwd: guardRepo.root,
+            env: { ...process.env, ...guardRepo.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...env },
             stdio: ['pipe', 'pipe', 'pipe'],
           });
     let stderr = '';
@@ -151,6 +157,9 @@ describe('merge guard diagnostics (#68)', () => {
   beforeAll(() => {
     binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-guard-'));
     fs.writeFileSync(path.join(binDir, 'specgit'), SHIM, { mode: 0o755 });
+    guardRepo = initRepo(binDir);
+    git(guardRepo.root, ['update-ref', 'refs/remotes/origin/main', 'HEAD'], guardRepo.env);
+    git(guardRepo.root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], guardRepo.env);
   });
 
   afterAll(() => {
@@ -162,6 +171,10 @@ describe('merge guard diagnostics (#68)', () => {
     } catch {
       /* temp dir; the OS reclaims it */
     }
+  });
+
+  it('keeps the checked-in runtime guard byte-identical to the generator', () => {
+    expect(fs.readFileSync(GUARD, 'utf8').replace(/\r\n/g, '\n')).toBe(GUARD_SCRIPT);
   });
 
   itOrSkip('lets an accepted verdict through', async () => {
@@ -196,16 +209,20 @@ describe('merge guard diagnostics (#68)', () => {
     expect(result.code).toBe(2);
     expect(result.stderr).toMatch(/no verdict/i);
     expect(result.stderr).toMatch(/not a rejection/i);
+    expect(result.stderr).toContain('errors[].fix');
+    expect(result.stderr).toMatch(/doctor.*only for git, repository, origin, configured provider CLI\/auth, or policy/i);
   });
 
-  itOrSkip('reports budget expiry as no verdict, bounded and honest', async () => {
-    // gh budget 2s; an override of 1s must be clamped up to the gh budget
-    // (#68: the guard budget is never shorter than the configured gh
-    // timeout). The shim outlives the budget, so the guard must cut it off.
+  itOrSkip('uses the slower forge timeout and reports budget expiry as no verdict', async () => {
+    // gh is 1s and glab is 1.999s; an override of 1s must be rounded up and
+    // clamped to 2s for the slower provider. This catches both a GitHub-only
+    // calculation and a millisecond-to-second floor. The shim outlives the
+    // budget, so the guard must cut it off.
     const result = await runGuard('gh pr merge 82 --squash', {
       FAKE_SPECGIT_EXIT: '0',
       FAKE_SPECGIT_SLEEP_S: '6',
-      SPECGIT_GH_TIMEOUT_MS: '2000',
+      SPECGIT_GH_TIMEOUT_MS: '1000',
+      SPECGIT_GLAB_TIMEOUT_MS: '1999',
       SPECGIT_GUARD_BUDGET_S: '1',
     });
     expect(result.code).toBe(2);
@@ -237,6 +254,60 @@ describe('merge guard diagnostics (#68)', () => {
     expect(result.code).toBe(2);
     expect(result.stderr).toMatch(/rejected/i);
     expect(result.stderr).toMatch(/pending \(transient/);
+  });
+
+  itOrSkip.each([
+    ['github', 'gh -R owner/repo pr merge 82 --squash'],
+    ['gitlab', 'glab -R owner/repo mr merge 82 --squash'],
+  ])('routes a %s merge with a leading repository selector through the verdict', async (provider, command) => {
+    const result = await runGuard(command, {
+      FAKE_SPECGIT_EXIT: '1',
+      FAKE_SPECGIT_STDOUT_FILE: writeEnvelope(`rejected-${provider}-repo`, REJECTED_ENVELOPE),
+    });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/rejected/i);
+  });
+
+  itOrSkip.each([
+    ['github', 'env GH_HOST=github.example.test gh pr merge 82 --squash'],
+    ['gitlab', 'env GITLAB_HOST=gitlab.example.test glab mr merge 82 --squash'],
+  ])('routes a %s merge with an environment wrapper through the verdict', async (provider, command) => {
+    const result = await runGuard(command, {
+      FAKE_SPECGIT_EXIT: '1',
+      FAKE_SPECGIT_STDOUT_FILE: writeEnvelope(`rejected-${provider}-env`, REJECTED_ENVELOPE),
+    });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/rejected/i);
+  });
+
+  itOrSkip.each([
+    ['github', 'cd /tmp/repo && gh pr merge 82 --squash'],
+    ['gitlab', 'cd /tmp/repo && glab mr merge 82 --squash'],
+  ])('routes a %s merge after a directory change through the verdict', async (provider, command) => {
+    const result = await runGuard(command, {
+      FAKE_SPECGIT_EXIT: '1',
+      FAKE_SPECGIT_STDOUT_FILE: writeEnvelope(`rejected-${provider}-cd`, REJECTED_ENVELOPE),
+    });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/rejected/i);
+  });
+
+  itOrSkip.each([
+    ['quoted GitHub prose', 'echo "gh pr merge 82"'],
+    ['quoted GitLab prose', "printf '%s\\n' 'glab mr merge 82'"],
+  ])('does not treat %s as a forge merge command', async (_description, command) => {
+    const result = await runGuard(command, {
+      FAKE_SPECGIT_EXIT: '1',
+      FAKE_SPECGIT_STDOUT_FILE: writeEnvelope('quoted-prose', REJECTED_ENVELOPE),
+    });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
+  itOrSkip('fails closed when the merge-command classifier cannot parse the shell input', async () => {
+    const result = await runGuard("gh pr merge 82 '");
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/could not safely classify/i);
   });
 
   itOrSkip('blocks every push form that targets main (#369)', async () => {
@@ -314,6 +385,8 @@ describe('start gate (#335): edits require a delivery binding', () => {
     fs.writeFileSync(path.join(gateRepo, 'seed.txt'), 'seed\n');
     git(['add', '.']);
     git(['commit', '-m', 'seed']);
+    git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
   });
 
   afterAll(() => {

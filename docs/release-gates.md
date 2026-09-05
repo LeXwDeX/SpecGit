@@ -13,31 +13,31 @@ Language follows [README.md](../README.md) and [docs/cli.md](cli.md); the
 versioned platform contract is [docs/baseline-v1.md](baseline-v1.md).
 
 ```text
-  specgit init / setup      once per repository: policy + acceptance
-        |                   harness + agent entry points
+  specgit init / setup      at adoption and after CLI upgrades:
+        |                   policy + harness + agent entry points
         v
-  specgit issue "..."       per delivery: issues + branch +
-        |                   draft PR (Closes #n) + record,
+  specgit issue "<type>: …" per delivery: issues + branch +
+        |                   draft PR/MR (Closes #n) + record,
         |                   committed and pushed (idempotent resume)
         v
-  work, commit, push -----> CI on the PR head
+  work, commit, push -----> CI on the PR/MR head
         |                   (the SpecGit Acceptance job runs
         |                    specgit finish --json)
         v
-  gh pr ready <n>           a draft PR always fails the verdict
+  PR/MR ready               a draft request always fails the verdict
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
         |-- exit 0 --> accepted → merge → confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
-        '-- exit 3 --> fix the environment first (specgit doctor)
+        '-- exit 3 --> follow errors[].fix; use doctor for its probes
 ```
 
 ## 1. The invariant core (I0–I5)
 
 Provider-neutral and falsifiable: each invariant names the observation that
-would refute it, so it holds for the GitHub port today and the GitLab port per
-the [Phase-2 roadmap](gitlab-support.md) without re-derivation. Every ticket in
+would refute it, so it holds for the shipped GitHub and GitLab ports without
+re-derivation; their current boundary is in [GitLab support](gitlab-support.md). Every ticket in
 this repository serves at least one invariant or one of the four seams —
 **git facts** (local git), **forge evidence** (the authenticated provider CLI),
 **delivery record** (the committed binding), **harness environment** (generated
@@ -55,8 +55,9 @@ workflow and agent surface) — see the growth discipline in §5.
 ## 2. Red-line closure checklist (1.0 blockers)
 
 A red-line defect is any situation where `specgit finish` exits `0` but the
-evidence says no — or the harness is stillborn for a whole repo class. Four are
-open today; **1.0.0 does not ship while any row is open.** Closure = the closing
+evidence says no — or the harness is stillborn for a whole repo class. At the
+1.0 cut, four blockers were tracked; **1.0.0 did not ship while any row was
+open.** Closure meant the closing
 PR merged behind the SpecGit Acceptance gate, with its evidence link pasted
 into the row.
 
@@ -170,11 +171,11 @@ Nix job's path-filter skip is self-documenting in-workflow (the
 | `Test (self-hosted-linux)` | CI · main pushes (retired 2026-08-21) | **Retired** at the W2 retirement line ([#105](https://github.com/LeXwDeX/SpecGit/issues/105), PR #138): never green since introduction — every run crashed at job initialization inside the runner container (infrastructure-side; [W1 diagnosis](https://github.com/LeXwDeX/SpecGit/issues/105#issuecomment-5356816362)) — and the last five consecutive `main` runs stayed red through `15ce8ef`. The leg is removed from `ci.yml` (re-introduction requires repairing the runner first and updating the structural pin in `test/specgit-cli/workflow-security.test.ts`); evidence on the issue. Row kept as the gate-3 record of the resolved disposition. |
 | Version-PR auto-merge | Release workflow | Configured opt-in ([#382](https://github.com/LeXwDeX/SpecGit/issues/382)): disabled unless policy has `automation.merge: true` and `target_branch: main`. Ordinary `specgit init --force` preserves the saved choice; explicit automation options change it. Enabled runs verify the generated source branch, base and exact head, wait up to 35 minutes for all CI (including classic statuses and workflow runs), and merge with a server-side SHA condition followed by merged-state confirmation. Only non-required skipped checks are ignored. Disabled runs retain the version PR. This replaces the historical #102/#107 batch hold without bypassing branch protection. |
 | GitHub Advanced Security (dynamic) | PR branches only, never main | Exempt-with-rationale ([#109](https://github.com/LeXwDeX/SpecGit/issues/109)): GitHub-side GHAS agent whose session creation fails on a provider model-entitlement 400 (`claude-opus-4.6`), not repo-fixable, not a required check; optional owner escalations recorded on the issue. |
-| `Validate Release Tracking` | CI | Event-gated: runs only on `pull_request` and `merge_group` — never on `push` or `workflow_dispatch` — so it is skipped on main-push runs **by design**. Its green predicate is read on the delivery or version PR / merge-group run at the threshold, never on a bare main-push run. When it runs it is green either way: with changed `.changeset/*.md` it validates them (`changeset status --since=origin/main`); without changes it reports the normal release cadence ([#110](https://github.com/LeXwDeX/SpecGit/issues/110)). |
+| Complete-diff classification and release intent | CI and release workflows | Since [#424](https://github.com/LeXwDeX/SpecGit/pull/424), `scripts/ci-change-scope.mjs` classifies the complete merge-base diff, validates any changed release note with the locked Changesets parser, and reports release intent separately from product-build scope. `Metadata contracts` always validates shared metadata; every allowlisted input now has a fail-closed parser or generated-byte contract (#462), including legacy/YAML issue templates, mandatory generated files, `.gitignore`, and `CODEOWNERS`, so missing or malformed content cannot skip product checks. `Required verification` requires product jobs only when the classifier selects them. This supersedes the historical `Validate Release Tracking` event gate from [#110](https://github.com/LeXwDeX/SpecGit/issues/110); the old job is no longer a live check. |
 
 ## 7. Full-project audit — 2026-09-04
 
-The [current audit record](audits/2026-09-04-full-project-audit.md) tracks the
+The [dated audit snapshot](audits/2026-09-04-full-project-audit.md) tracks the
 product, architecture and implementation review from v1.11.0, including the
 25 corrections in #389–#411 and #416–#417. Product defects and code bugs are repaired in the
 audit delivery; architecture changes without a proven functional failure have
@@ -193,3 +194,28 @@ The publication checks accept both older npm object metadata and npm 12's
 single-result array (#419), retaining exact version and source-commit checks.
 Package verification likewise accepts legacy pack arrays and npm 12's
 package-keyed objects; empty or ambiguous results cannot select an artifact.
+
+## 8. Current release closeout — v1.13
+
+This addendum updates the live release state without changing the immutable
+1.0 archive or the dated v1.11 audit snapshot above.
+
+- **v1.13.0** is anchored by tag `v1.13.0` at
+  [`22d05d01000bf0101ec32a815c12a22ff927b711`](https://github.com/LeXwDeX/SpecGit/commit/22d05d01000bf0101ec32a815c12a22ff927b711),
+  the merge of version PR [#434](https://github.com/LeXwDeX/SpecGit/pull/434).
+  Its deliveries include the complete-diff CI and project-rule reconciliation
+  in [#424](https://github.com/LeXwDeX/SpecGit/pull/424), the settled-evidence
+  repair in [#436](https://github.com/LeXwDeX/SpecGit/pull/436), and the provider
+  capability split in [#443](https://github.com/LeXwDeX/SpecGit/pull/443).
+- **v1.13.1** is anchored by tag `v1.13.1` at
+  [`6d30168434f07d483643360af9bd4fd617096be9`](https://github.com/LeXwDeX/SpecGit/commit/6d30168434f07d483643360af9bd4fd617096be9),
+  the merge of version PR [#453](https://github.com/LeXwDeX/SpecGit/pull/453).
+  Repair delivery [#450](https://github.com/LeXwDeX/SpecGit/pull/450)
+  excludes the generated version proposal from bound-delivery completion and
+  waits for bounded npm propagation before reconciling the tag and GitHub
+  Release.
+
+The current release process is the one in
+[the v1 baseline](baseline-v1.md#release-process): a delivery changeset carries
+publication intent, the generated version PR remains gated by applicable CI,
+and npm registry evidence anchors publication and metadata recovery.
