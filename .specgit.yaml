@@ -1,22 +1,10 @@
 version: 1
-delivery: reconcile-docs-wiki
+delivery: align-wiki-availability
 context:
   kind: branch
-  branch: docs/454-reconcile-docs-wiki
+  branch: docs/467-align-wiki-availability
 issues:
-  - 454
-  - 455
-  - 457
-  - 458
-  - 459
-  - 460
-  - 461
-  - 462
-  - 463
-  - 464
+  - 467
 issueKinds:
-  - issue: 454
+  - issue: 467
     kind: kind::docs
-  - issue: 455
-    kind: kind::docs
-pr: 456
