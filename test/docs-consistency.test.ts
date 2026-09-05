@@ -45,21 +45,20 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     expect(text).toMatch(/accept-or-defer/i);
   });
 
-  it('release-gates.md carries the known CI dispositions (gate 3 record)', () => {
+  it('release-gates.md carries the current CI dispositions and retires the old event gate', () => {
     const text = read('docs', 'release-gates.md');
 
     expect(text).toMatch(/Known CI dispositions/i);
     // Every standing disposition outside a delivery PR's own gates: the
     // self-hosted leg (#105), the auto-merge arm-off (#107), the GHAS
-    // dynamic-workflow exemption (#109), and the Validate Release Tracking
-    // event gate (#110).
+    // dynamic-workflow exemption (#109), and the replacement for the
+    // historical Validate Release Tracking event gate (#110).
     for (const issue of ['#105', '#107', '#109', '#110']) {
       expect(text, `dispositions table must track ${issue}`).toContain(issue);
     }
-    // VRT's skip-by-design is an event gate, and the predicate names where
-    // its green is read.
-    expect(text).toMatch(/event-gated/i);
-    expect(text).toMatch(/merge_group/);
+    expect(text).toMatch(/complete-diff classification and release intent/i);
+    expect(text).toMatch(/supersedes the historical `Validate Release Tracking`/i);
+    expect(text).toMatch(/old job is no longer a live check/i);
   });
 
   it('README links the release gates', () => {
@@ -116,6 +115,64 @@ describe('docs consistency (release gates, scope narrative, PR template)', () =>
     const template = read('.github', 'PULL_REQUEST_TEMPLATE.md');
     expect(template).not.toMatch(/#[0-9]+\b/);
     expect(template).toContain('Closes #<issue-number>');
+  });
+});
+
+describe('docs consistency (issue templates obey this repository policy)', () => {
+  it.each([
+    ['bug_report.md', 'fix', 'kind::fix'],
+    ['feature_request.md', 'feat', 'kind::feat'],
+  ])('%s uses an English typed title and exactly one kind label', (file, type, label) => {
+    const template = read('.github', 'ISSUE_TEMPLATE', file).replace(/\r\n/g, '\n');
+    const frontmatter = template.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+    expect(frontmatter).toContain(`title: '${type}: <english title>'`);
+    expect(frontmatter).toContain(`labels: ${label}`);
+    expect(frontmatter.match(/^labels:/gm)).toHaveLength(1);
+    expect(frontmatter).not.toMatch(/^labels:\s*(bug|enhancement)\s*$/m);
+  });
+
+  it('the template contract stays aligned with the checked-in kind-mode policy', () => {
+    const policy = read('spec_git', 'policy.yaml');
+    expect(policy).toMatch(/language:\s*en/);
+    expect(policy).toMatch(/labels:\s*kind/);
+  });
+});
+
+describe('docs consistency (upgrades refresh generated assets)', () => {
+  const LIFECYCLE_PAGES = [
+    'README.md',
+    'docs/actions.md',
+    'docs/cli.md',
+    'docs/concepts.md',
+    'docs/existing-projects.md',
+    'docs/glossary.md',
+    'docs/providers.md',
+    'docs/troubleshooting.md',
+  ] as const;
+
+  it.each(LIFECYCLE_PAGES)('%s does not present init/setup as a one-time action', (page) => {
+    const text = read(page);
+    expect(text).not.toMatch(/init\s*\/\s*setup\s+once per repository/i);
+    expect(text).toMatch(/after (?:CLI )?upgrades/i);
+  });
+
+  it('the installation guide carries the complete published-CLI refresh sequence', () => {
+    const text = read('docs', 'installation.md');
+    for (const step of [
+      'npm install -g specgit@latest',
+      'specgit status',
+      'specgit init --force',
+      'specgit setup --tool all',
+      'specgit doctor',
+    ]) {
+      expect(text, `upgrade guide must include ${step}`).toContain(step);
+    }
+  });
+
+  it('CLI examples describe their version as runtime supplied instead of pinning an old package', () => {
+    const text = read('docs', 'cli.md');
+    expect(text).not.toContain('"version": "1.1.0"');
+    expect(text).toMatch(/runtime[- ]supplied version/i);
   });
 });
 

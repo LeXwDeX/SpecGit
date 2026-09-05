@@ -4,8 +4,9 @@ This directory contains the VS Code dev container configuration for SpecGit deve
 
 ## What's Included
 
-- **Node.js 20 LTS** (>=20.19.0) - TypeScript/JavaScript runtime
-- **pnpm** - Fast, disk space efficient package manager
+- **Node.js 22** - TypeScript/JavaScript runtime (the package also supports the
+  declared Node.js >=20.19 floor)
+- **pnpm 9.15.9** - The package manager pinned by `package.json`
 - **Git + GitHub CLI** - Version control tools
 - **VS Code Extensions**:
   - ESLint & Prettier for code quality
@@ -21,7 +22,7 @@ This directory contains the VS Code dev container configuration for SpecGit deve
 
 1. **Install Prerequisites** (on your local machine):
    - [VS Code](https://code.visualstudio.com/)
-   - [Docker Desktop](https://www.docker.com/products/docker-desktop)
+   - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
    - [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
 
 2. **Open in Container**:

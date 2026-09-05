@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { GlabProvider } from '../../src/providers/gitlab/glab-cli.js';
+import { GITLAB_PIPELINE_SUCCESS_GATE } from '../../src/github/port.js';
 import {
   createFakeGlab,
   readFakeGlabCalls,
@@ -1935,6 +1936,20 @@ describe('GlabProvider branch protection', () => {
     expect(result).toEqual({ ok: true, value: { protected: false, requiredChecks: [] } });
   });
 
+  it('fails closed when the protection read does not identify the requested branch', async () => {
+    const { provider } = setup([
+      {
+        match: `protected_branches/main$`,
+        stdout: JSON.stringify({ name: 'release', push_access_levels: [{ access_level: 40 }] }),
+      },
+    ]);
+    const result = await provider.getBranchProtection(REPO, 'main');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(result.message).toContain('requested branch "main"');
+  });
+
   it('maps other lookup failures to glab_transport', async () => {
     const { provider } = setup([
       { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 403 Forbidden\n' },
@@ -1961,7 +1976,7 @@ describe('GlabProvider branch protection', () => {
         stdout: JSON.stringify({ name: 'main', push_access_levels: [{ access_level: 40 }] }),
       },
     ]);
-    const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+    const result = await provider.enableBranchProtection(REPO, 'main', GITLAB_PIPELINE_SUCCESS_GATE);
     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
       `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,
@@ -1985,7 +2000,7 @@ describe('GlabProvider branch protection', () => {
         }),
       },
     ]);
-    const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+    const result = await provider.enableBranchProtection(REPO, 'main', GITLAB_PIPELINE_SUCCESS_GATE);
     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: [] } });
     const calls = readFakeGlabCalls(fake.logPath);
     expect(calls).toHaveLength(2);
@@ -2005,18 +2020,67 @@ describe('GlabProvider branch protection', () => {
       },
       { match: `-X POST projects/${PROJECT_ID}/protected_branches `, exit: 1, stderr: 'glab: 422\n' },
     ]);
-    const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+    const result = await provider.enableBranchProtection(REPO, 'main', GITLAB_PIPELINE_SUCCESS_GATE);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('glab_transport');
   });
 
-  it('refuses an empty branch or check without invoking glab', async () => {
-    const { provider, fake } = setup([]);
-    const result = await provider.enableBranchProtection(REPO, ' ', 'check');
+  it('fails closed when the POST response does not prove the requested branch was protected', async () => {
+    const { provider } = setup([
+      { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+      {
+        match: `-X PUT projects/${PROJECT_ID} `,
+        stdout: JSON.stringify({
+          id: 1278,
+          path_with_namespace: 'group/subgroup/project',
+          only_allow_merge_if_pipeline_succeeds: true,
+        }),
+      },
+      {
+        match: `-X POST projects/${PROJECT_ID}/protected_branches `,
+        stdout: JSON.stringify({ name: 'release', push_access_levels: [{ access_level: 40 }] }),
+      },
+    ]);
+    const result = await provider.enableBranchProtection(REPO, 'main', GITLAB_PIPELINE_SUCCESS_GATE);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('glab_transport');
+    expect(result.message).toContain('requested branch "main"');
+  });
+
+  it('does not protect the branch when GitLab fails to confirm the pipeline gate', async () => {
+    const { provider, fake } = setup([
+      { match: `protected_branches/main$`, exit: 1, stderr: 'glab: 404 Not Found\n' },
+      {
+        match: `-X PUT projects/${PROJECT_ID} `,
+        stdout: JSON.stringify({ id: 1278, path_with_namespace: 'group/subgroup/project' }),
+      },
+    ]);
+    const result = await provider.enableBranchProtection(REPO, 'main', GITLAB_PIPELINE_SUCCESS_GATE);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(result.message).toContain('successful pipelines as required');
+    expect(readFakeGlabCalls(fake.logPath).some((call) => call.includes('-X POST'))).toBe(false);
+  });
+
+  it('refuses an empty branch without invoking glab', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.enableBranchProtection(REPO, ' ', GITLAB_PIPELINE_SUCCESS_GATE);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
+  });
+
+  it('rejects a GitHub status-check name instead of treating it as a GitLab job', async () => {
+    const { provider, fake } = setup([]);
+    const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('glab_transport');
+    expect(result.message).toContain(GITLAB_PIPELINE_SUCCESS_GATE);
     expect(readFakeGlabCalls(fake.logPath)).toEqual([]);
   });
 });
@@ -2196,7 +2260,7 @@ describe('GlabProvider requiredChecks — the verified pipeline-gate intersectio
       ],
       { requiredChecks: POLICY_CHECKS }
     );
-    const result = await provider.enableBranchProtection(REPO, 'main', 'SpecGit Acceptance');
+    const result = await provider.enableBranchProtection(REPO, 'main', GITLAB_PIPELINE_SUCCESS_GATE);
     expect(result).toEqual({ ok: true, value: { protected: true, requiredChecks: ['build', 'SpecGit Acceptance'] } });
     expect(readFakeGlabCalls(fake.logPath)).toEqual([
       `api --hostname ${HOST} projects/${PROJECT_ID}/protected_branches/main`,

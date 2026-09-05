@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { CODE_INFO } from '../../src/acceptance/codes.js';
 import { runPr } from '../../src/cli/commands/pr.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import {
   makeCtx,
   makeGhProvider,
@@ -113,12 +114,41 @@ describe('specgit pr: explicit binding', () => {
     expect(t.recordPort.recordWrites.at(-1)?.record?.pr).toBe(42);
   });
 
-  it('binds a PR URL reference verbatim (schema accepts number | string)', async () => {
+  it('binds a full GitHub PR URL verbatim', async () => {
     const t = prCtx();
     const url = 'https://github.com/LeXwDeX/SpecGit/pull/55';
     const outcome = await runPr({ ref: url }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(t.recordPort.recordWrites.at(-1)?.record?.pr).toBe(url);
+    expect(outcome.human?.join('\n')).toContain(`PR/MR ${url}`);
+    expect(outcome.human?.join('\n')).not.toContain(`#${url}`);
+  });
+
+  it('rejects an opaque request reference before reading or writing the repository', async () => {
+    const t = prCtx();
+
+    const outcome = await runPr({ ref: 'JIRA-123' }, t.ctx);
+
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('pr_ref_invalid');
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
+  it('rejects a GitHub PR URL on a declared GitLab origin before writing', async () => {
+    const t = makeCtx({
+      facts: makeGitFacts({ originUrl: 'git@gitlab.com:owner/repo.git' }),
+      record: sampleBinding({ pr: undefined, delivery: 'add-login-flow' }),
+      parseRepoRef: (url) => parseRepoRef(url, { gitlabHost: 'gitlab.com' }),
+    });
+
+    const outcome = await runPr(
+      { ref: 'https://github.com/owner/repo/pull/55' },
+      t.ctx
+    );
+
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('pr_ref_repo_mismatch');
+    expect(t.recordPort.recordWrites).toEqual([]);
   });
 });
 

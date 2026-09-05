@@ -454,6 +454,15 @@ describe('pr gate', () => {
     expect(codes(await prGate(ctx))).toEqual(['pr_repo_mismatch']);
   });
 
+  it('fails pr_repo_mismatch for a GitHub URL on a same-path GitLab origin', async () => {
+    const ctx = makeContext({
+      binding: { ...BINDING, pr: 'https://github.com/owner/repo/pull/9' },
+      repoRef: { owner: 'owner', repo: 'repo', platform: 'gitlab' },
+      gh: forgeStub({}),
+    });
+    expect(codes(await prGate(ctx))).toEqual(['pr_repo_mismatch']);
+  });
+
   it('fails pr_not_found when the provider cannot resolve the PR', async () => {
     const ctx = makeContext({
       repoRef: REPO,
@@ -557,16 +566,15 @@ describe('checks gate', () => {
     expect(failures[0].detail).toEqual({ name: 'ci' });
   });
 
-  it('keeps the GitHub Actions wording on a GitHub origin', async () => {
+  it('gives a forge-neutral executable repair when a required check is missing', async () => {
     const ctx = makeContext({ repoRef: REPO, prFact: PR_FACT, gh: greenForge([]) });
     const failures = await checksGate(ctx);
-    expect(failures[0].fix).toContain('GitHub Actions');
+    expect(failures[0].fix).toBe(
+      'Ensure the configured GitHub workflow or GitLab pipeline job runs on the current PR/MR head commit, then run "specgit finish" again.'
+    );
   });
 
-  it('wording is GitLab-shaped on a declared GitLab origin (#269)', async () => {
-    // The checks diagnostics must not say "GitHub Actions" on a declared
-    // GitLab origin: the platform's CI is not GitHub Actions, and the
-    // prose misdirects the repair.
+  it('keeps the same forge-neutral repair on a declared GitLab origin (#269)', async () => {
     const ctx = makeContext({
       repoRef: REPO,
       prFact: PR_FACT,
@@ -575,8 +583,9 @@ describe('checks gate', () => {
     });
     const failures = await checksGate(ctx);
     expect(codes(failures)).toEqual(['checks_missing']);
-    expect(failures[0].message).not.toContain('GitHub Actions');
-    expect(failures[0].fix).not.toContain('GitHub Actions');
+    expect(failures[0].fix).toBe(
+      'Ensure the configured GitHub workflow or GitLab pipeline job runs on the current PR/MR head commit, then run "specgit finish" again.'
+    );
   });
 
   it('fails checks_pending naming the live status', async () => {

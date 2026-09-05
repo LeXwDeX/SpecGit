@@ -493,18 +493,17 @@ describe('e2e acceptance: missing links reject with complete evidence', () => {
     ]);
 
     await initPolicy(repo.dir, gh.env());
-    await bindDelivery(
-      repo.dir,
-      [
-        '--delivery',
-        'foreign-pr',
-        '--issue',
-        '91',
-        '--pr',
-        'https://github.com/some-other/repo/pull/17',
-      ],
-      gh.env()
-    );
+    // Current bind input correctly rejects a cross-repository URL. Write a
+    // legacy/external record directly so acceptance still proves that an
+    // already persisted foreign binding cannot pass the PR identity gate.
+    fs.writeFileSync(path.join(repo.dir, '.specgit.yaml'), [
+      'version: 1',
+      'delivery: foreign-pr',
+      `context: {kind: branch, branch: ${repo.branch}}`,
+      'issues: [91]',
+      'pr: https://github.com/some-other/repo/pull/17',
+      '',
+    ].join('\n'));
 
     const { result, envelope } = await acceptJson(repo.dir, gh.env());
 

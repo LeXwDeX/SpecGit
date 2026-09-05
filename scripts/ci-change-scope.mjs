@@ -10,8 +10,9 @@ import { parseReleaseNote } from './ci-changesets.mjs';
 const METADATA_FILES = new Set([
   '.gitignore', '.specgit.yaml', 'spec_git/policy.yaml', 'spec_git/providers.yaml',
   'README.md', 'AGENTS.md', 'CLAUDE.md', 'CHANGELOG.md', 'CONTRIBUTING.md',
-  'CODE_OF_CONDUCT.md', 'LICENSE', 'MAINTAINERS.md', 'NOTES.md', 'SECURITY.md', 'SUPPORT.md',
-  '.changeset/README.md', '.github/workflows/README.md', '.devcontainer/README.md',
+  'CODE_OF_CONDUCT.md', 'LICENSE', 'SECURITY.md',
+  '.changeset/README.md', '.changeset/config.json', '.coderabbit.yaml',
+  '.github/dependabot.yml', '.github/workflows/README.md', '.devcontainer/README.md',
   'scripts/README.md', 'skills/README.md', '.github/CODEOWNERS',
 ]);
 const NIX_INPUTS = new Set([
@@ -20,7 +21,7 @@ const NIX_INPUTS = new Set([
 ]);
 const DEPENDENCY_INPUTS = new Set([
   'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc',
-  '.github/workflows/security.yml', 'scripts/ci-change-scope.mjs',
+  '.github/dependabot.yml', '.github/workflows/security.yml', 'scripts/ci-change-scope.mjs',
 ]);
 const SKILLS = '(?:doctor|finish|issue|pr|status)';
 const LOCAL_ENTRY = new RegExp(`^(?:\\.agents/skills/specgit-${SKILLS}/SKILL\\.md|\\.opencode/command/specgit-${SKILLS}\\.md)$`);
@@ -29,9 +30,10 @@ const LOCAL_STATE = /^(?:\.local\/|\.pnpm-store\/|node_modules\/|dist\/|coverage
 
 /** @param {string} file */
 function metadataPath(file) {
-  if (file.includes('\\') || file.startsWith('/') || file.split('/').some((part) => part === '.' || part === '..' || part === '')) return false;
+  if (/[\\\p{Cc}]/u.test(file) || file.startsWith('/')
+    || file.split('/').some((part) => part === '.' || part === '..' || part === '')) return false;
   return METADATA_FILES.has(file) || /^(?:docs|workflows)\/.+\.md$/.test(file)
-    || /^\.github\/ISSUE_TEMPLATE\/[^/]+\.md$/.test(file)
+    || /^\.github\/ISSUE_TEMPLATE\/[^/]+\.(?:md|ya?ml)$/.test(file)
     || file === '.github/PULL_REQUEST_TEMPLATE.md'
     || CHANGESET.test(file) || LOCAL_ENTRY.test(file);
 }

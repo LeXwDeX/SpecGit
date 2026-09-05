@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { select as promptSelect } from '@inquirer/prompts';
 
 import { runInit } from '../../src/cli/commands/init.js';
 import { runSetup } from '../../src/cli/commands/setup.js';
 import { detectInitInputs } from '../../src/cli/detect-checks.js';
+import { EXIT_UNKNOWN } from '../../src/cli/exit-codes.js';
 import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import { makeCtx, makeGitFacts } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
@@ -44,19 +46,61 @@ describe('init audit: usable platform checks and onboarding', () => {
     expect(result.policy?.required_checks).toEqual(['gitlab-only']);
   });
 
-  it.each(['github', 'gitlab'] as const)('uses the interactive %s choice for dual-platform CI detection', async (mode) => {
+  it('uses an interactive GitLab confirmation for CI detection', async () => {
     write('.github/workflows/ci.yml', 'on: pull_request\njobs:\n  github-only:\n    runs-on: ubuntu-latest\n');
     write('.gitlab-ci.yml', 'gitlab-only:\n  script: echo test\n');
     const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
       facts: makeGitFacts({ originUrl: 'https://git.example.com:8443/team/app.git' }) });
-    const selectPlatform = vi.fn(async () => mode);
+    const selectPlatform = vi.fn(async () => 'gitlab' as const);
     const result = await runInit({ protect: false, automation: 'no' }, t.ctx, {
       selectPlatform, selectRule: async (_message, _choices, current) => current,
     });
     expect(result.exit).toBe(0);
-    expect(result.platform?.mode).toBe(mode);
-    expect(result.policy?.required_checks).toEqual([`${mode}-only`]);
+    expect(result.platform?.mode).toBe('gitlab');
+    expect(result.policy?.required_checks).toEqual(['gitlab-only']);
     expect(selectPlatform).toHaveBeenCalledExactlyOnceWith('git.example.com:8443');
+  });
+
+  it('the built-in platform prompt offers GitLab declaration or a fail-closed stop, never GitHub Enterprise', async () => {
+    const select = vi.mocked(promptSelect);
+    select.mockClear();
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'https://github.corp.example/team/app.git' }) });
+
+    const result = await runInit(
+      { requiredCheck: ['Test'], protect: false, automation: 'no' },
+      t.ctx,
+      { selectRule: async (_message, _choices, current) => current }
+    );
+
+    expect(result.exit).toBe(0);
+    expect(result.platform?.mode).toBe('gitlab');
+    expect(select).toHaveBeenCalledOnce();
+    const question = select.mock.calls[0]?.[0];
+    const values = question?.choices?.map((choice) =>
+      typeof choice === 'object' && choice !== null && 'value' in choice ? choice.value : undefined
+    );
+    expect(values).toEqual(['gitlab', 'unsupported']);
+    expect(values).not.toContain('github');
+  });
+
+  it('fails closed when an old TTY caller tries to select GitHub for a non-github.com endpoint', async () => {
+    write('.github/workflows/ci.yml', 'on: pull_request\njobs:\n  github-only:\n    runs-on: ubuntu-latest\n');
+    const before = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf-8');
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: true,
+      facts: makeGitFacts({ originUrl: 'https://github.corp.example/team/app.git' }) });
+    const selectPlatform = vi.fn(async () => 'github' as const);
+
+    const result = await runInit({ protect: false, automation: 'no' }, t.ctx, { selectPlatform });
+
+    expect(result.exit).toBe(EXIT_UNKNOWN);
+    expect(result.errors?.[0]?.code).toBe('platform_unsupported');
+    expect(result.errors?.[0]?.fix).toContain('github.com');
+    expect(selectPlatform).toHaveBeenCalledExactlyOnceWith('github.corp.example');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf-8')).toBe(before);
+    expect(fs.existsSync(path.join(root, 'spec_git'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'AGENTS.md'))).toBe(false);
   });
 
   it('uses the first platform choice for project labels without persisting before selection', async () => {

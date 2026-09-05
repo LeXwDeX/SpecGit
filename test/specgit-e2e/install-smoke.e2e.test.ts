@@ -9,8 +9,8 @@
  *    install are deterministic PR-level layers and always run;
  *  - the registry-published package smoke is opt-in
  *    (`SPECGIT_E2E_PUBLISHED=1`, version overridable via
- *    SPECGIT_E2E_PUBLISHED_VERSION) — the always-on live layer is the
- *    post-publish external Actions run tracked on the issue.
+ *    SPECGIT_E2E_PUBLISHED_VERSION); historical post-publish external
+ *    Actions runs are archived evidence, not an always-on current job.
  *
  * Every scenario avoids this repository's workspace: installs target
  * throwaway temp directories with an isolated npm cache
@@ -60,10 +60,13 @@ function tarList(tarballPath: string): string[] {
 }
 
 const PUBLISHED_GATE = process.env.SPECGIT_E2E_PUBLISHED === '1';
-const PUBLISHED_VERSION = process.env.SPECGIT_E2E_PUBLISHED_VERSION ?? '0.7.2';
+const PUBLISHED_VERSION = process.env.SPECGIT_E2E_PUBLISHED_VERSION ??
+  (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 describe('install smoke (#67): the packed tarball is clean', () => {
-  it('ships the package surface and nothing from the development tree', async () => {
+  // Hosted Windows must pack and inspect the archive before any other test
+  // can reuse it. The current-head CI run exceeded the default 10s budget.
+  it('ships the package surface and nothing from the development tree', { timeout: 30_000 }, async () => {
     const { tarballPath } = await packSpecgit();
     const entries = tarList(tarballPath);
     const has = (entry: string) => entries.includes(`package/${entry}`);

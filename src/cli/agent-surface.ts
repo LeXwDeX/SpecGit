@@ -21,11 +21,11 @@
 
 import * as fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
-import * as path from 'node:path';
 
 import { DELIVERY_TYPES } from '../tags/catalog.js';
 import { reconcileLocalAssetIgnore } from './commands/init-ignore.js';
 import {
+  inspectManagedPathBoundary,
   reconcileManagedAssets,
   type ManagedReconcileReport,
   type ManagedStep,
@@ -36,8 +36,14 @@ export type SetupTool = 'opencode' | 'generic' | 'all';
 const ISSUE_TYPE_LIST = DELIVERY_TYPES.join(', ');
 
 const LOCAL_MAINTENANCE_GUIDANCE = `Local CLI installation, upgrades, and \`init\` / \`setup\` refreshes need no
-issue, PR, product build, or release when no product or shared-rule change is
+issue, PR/MR, product build, or release when no product or shared-rule change is
 intended for commit. Review tracked diffs before choosing what to share.
+After a package upgrade, a human may run plain \`specgit init\` and approve its
+guided refresh when it proves drift. Non-interactive agents run
+\`specgit init --force --no-protect\`, then \`specgit setup --tool all\`, then
+verify \`specgit status --json\`. Append \`--no-ignore\` to init when
+authoritative delivery files are intentionally tracked without the managed
+ignore block; setup preserves that proven choice.
 For intended deliveries, follow the host project's verification policy for
 the actual changed inputs; documentation may itself be a product input.
 Ignore rules are never CI exemptions. Publishing requires explicit authorization.`;
@@ -46,13 +52,14 @@ const MERGE_GUIDANCE = `Continue within existing user authorization. With automa
 trusted remote completion workflow continues after CI without another user
 confirmation. \`specgit pr --merge --json\` is its recovery path. It requires
 the approved target policy, \`finish\` exit 0, and all CI checks passing at the
-current PR head. Completion means the merge and every bound issue closure are
+current PR/MR head. Completion means the merge and every bound issue closure are
 confirmed; a partial closure remains recoverable. \`finish\` is read-only and
 exit 0 means accepted, not necessarily completed. A failed delivery is tracked
-by a repair issue; retries reuse that cause and preserve the original PR.
-Automation defaults to no. Only the user's own yes enables it through
-\`specgit init --automation yes --merge-target <branch>\`; ordinary \`init --force\`
-preserves that choice and target. An agent must not choose yes for the user. When an
+by a repair issue; retries reuse that cause and preserve the original PR/MR.
+Automation defaults to no. Only the user's own yes enables it. A fresh policy
+uses \`specgit init --automation yes --merge-target <branch>\`; an existing policy
+uses \`specgit init --force --automation yes --merge-target <branch>\`. Ordinary
+\`init --force\` preserves that choice and target. An agent must not choose yes for the user. When an
 action lacks user authorization or platform permission, report the specific
 missing permission with the prepared result.`;
 
@@ -81,11 +88,12 @@ ${LOCAL_MAINTENANCE_GUIDANCE}
    specgit issue $ARGUMENTS --json
    \`\`\`
 
-3. On success report the issue URL(s), draft PR URL and branch name.
+3. On success report the issue URL(s), draft PR/MR URL and branch name.
    Verify the issue bodies contain the discussed Why / Scope / Approach /
    Acceptance, fill only missing content, preserve remote edits, then
-   implement. Fill in the draft PR's scaffold (Why / What changed /
-   Evidence / Checklist) as you deliver when no body rules were selected.
+   implement. Fill the draft request from the selected policy template as you
+   deliver; when no template is configured, fill the built-in Why / What
+   changed / Evidence / Checklist scaffold.
    Enabled content rules must pass; preserve every closing reference and
    existing remote body on resume.
 4. Switch to the delivery branch and begin the TDD loop.
@@ -103,7 +111,7 @@ AGENTS.md SpecGit block; this command only launches it.
 
 ## Steps
 
-1. Complete the authorized PR body and mark the PR ready for review, then
+1. Complete the authorized PR/MR body and mark the request ready for review, then
    run from the delivery branch:
 
    \`\`\`bash
@@ -111,12 +119,13 @@ AGENTS.md SpecGit block; this command only launches it.
    \`\`\`
 
 2. Branch on the exit code:
-   - \`exit 0\` → report issues, PR, CI run links, and the verdict; continue
+   - \`exit 0\` → report issues, PR/MR, CI run links, and the verdict; continue
      the authorized merge through the guidance below.
    - \`exit 1\` → read \`errors[].fix\` / gate failures, fix exactly what they
      name, re-run. Loop until exit 0.
-   - \`exit 3\` → run \`specgit doctor --json\`, repair the named evidence
-     failure within your permissions, and retry the verdict.
+   - \`exit 3\` → read \`errors[].fix\` first and repair the named evidence.
+     Use \`specgit doctor --json\` for git, repository, origin, configured
+     provider CLI/auth, or policy probes, then retry the verdict.
 3. Iron rules: never weaken \`spec_git/policy.yaml\` to pass; \`--json\` is the
    only parse surface; a non-zero verdict never merges.
 
@@ -125,7 +134,7 @@ ${MERGE_GUIDANCE}
 
 const ISSUE_SKILL = `---
 name: specgit-issue
-description: Start a SpecGit delivery — create or reuse GitHub issues, branch, draft PR that closes them, and record the binding, in one command.
+description: Start a SpecGit delivery — create or reuse forge issues, branch, draft PR or MR that closes them, and record the binding, in one command.
 allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
@@ -135,25 +144,39 @@ metadata:
 # specgit-issue
 
 The delivery bootstrap. One command binds the whole aggregate: N issues, one
-branch, one draft pull request, one record (\`.specgit.yaml\`).
+branch, one draft pull or merge request, one record (\`.specgit.yaml\`).
 
 ${LOCAL_MAINTENANCE_GUIDANCE}
 
 ## Usage
 
 \`\`\`bash
-specgit issue "<title>"                 # create one issue and start
-specgit issue "<title A>" "<title B>"   # N issues, one delivery
+specgit issue "fix: correct cache invalidation"       # create one issue and start
+specgit issue "feat: add login" "security: harden sessions" # N issues, one delivery
 specgit issue 42                        # reuse an existing issue
-specgit issue "<no-slug title>" --delivery my-name   # explicit delivery name
-specgit issue "<title>" --tags kind::fix,module::auth  # explicit tag selection
+specgit issue "docs: 更新安装说明" --delivery docs-install # zh policy; explicit ASCII name
+specgit issue "fix: validate session" --tags kind::fix,module::auth
 \`\`\`
 
 New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 
+## Before creating an issue
+
+Search for the same WHY on the configured forge before creating new work:
+
+\`\`\`bash
+gh issue list --state open --search "<keywords>"       # GitHub
+glab issue list --search "<keywords>" --in title      # GitLab
+\`\`\`
+
+Open and read every plausible candidate with \`gh issue view <n>\` or
+\`glab issue view <n>\`. Reuse a candidate that covers the same WHY; if it is
+close but different, record the distinction. Ask the requester only when the
+evidence does not decide whether the work is a duplicate.
+
 ## Tagging (choose before you bootstrap)
 
-- Follow the policy's \`language\` for issue/PR prose. Enabled
+- Follow the policy's \`language\` for issue and PR/MR prose. Enabled
   \`validation\` rules check live titles and labels. In \`kind\` mode,
   select exactly one catalog kind plus only declared extras; in \`project\`
   mode, select only from policy \`tags\`.
@@ -169,13 +192,14 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 ## What it does (idempotent; re-run resumes)
 
 1. Creates (or reuses) the issues — one issue = one independently verifiable
-   WHY.
+   WHY — and writes the initial binding.
 2. Creates and checks out the delivery branch.
-3. Opens a draft PR pre-filled with a deterministic scaffold: the
-   \`Closes #n\` line for every bound issue first, then Why / What changed /
-   Evidence / Checklist sections.
-4. Writes \`.specgit.yaml\` and commits it.
-5. Pushes the branch.
+3. Commits the authoritative binding and pushes the branch, so the request has
+   a real remote head distinct from its base.
+4. Opens a draft PR/MR pre-filled with the supplied body, selected policy
+   template, or built-in scaffold, including one \`Closes #n\` line per bound
+   issue.
+5. Records the request number, commits the completed binding, and pushes again.
 
 ## Rules
 
@@ -189,11 +213,12 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
   Approach / Acceptance. Fill missing content with \`gh issue edit <n>\` or
   \`glab issue update <n>\`, preserve complete remote bodies, then implement.
 - With selected body rules, prepare complete content before creation using
-  \`--body-file\` and \`--pr-body-file\`. Otherwise fill the built-in scaffold
-  during delivery. Enabled content rules must pass; keep closing references
-  and existing remote edits intact.
-- The PR body is written once at creation; no SpecGit command edits it
-  afterwards, and the repository's own PR template is never read.
+  \`--body-file\` and \`--pr-body-file\`. Without enforced body rules, fill the
+  selected policy template or built-in scaffold during delivery. Enabled
+  content rules must pass; keep closing references and existing remote edits
+  intact.
+- The PR/MR body is written once at creation; no SpecGit command edits it
+  afterwards, and the repository's default PR/MR template is never read.
 - If it fails mid-chain, re-run the same command — completed steps are
   detected and resumed; never hand-edit \`.specgit.yaml\`.
 - When the title yields no ASCII slug, the command asks for a kebab-case
@@ -203,7 +228,7 @@ New titles must start with \`<type>: \`; allowed types: ${ISSUE_TYPE_LIST}.
 
 const FINISH_SKILL = `---
 name: specgit-finish
-description: Run the SpecGit evidence verdict — fail-closed acceptance derived from real git, PR, and CI evidence; exit 0 means accepted; completion requires confirmed merge and issue closure.
+description: Run the SpecGit evidence verdict — fail-closed acceptance derived from real git, PR/MR, and CI evidence; exit 0 means accepted; completion requires confirmed merge and issue closure.
 allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
@@ -214,7 +239,7 @@ metadata:
 
 The acceptance verdict. Eleven gates evaluate live evidence: record, policy,
 completeness, context, origin, provider, issues, sequence (ordered
-deliveries), PR, closing refs, and required checks at the PR head.
+deliveries), PR/MR, closing refs, and required checks at the request head.
 
 ## Usage
 
@@ -224,7 +249,7 @@ specgit finish --json
 
 ## Steps
 
-1. Before running the verdict, confirm the bound pull request is not a
+1. Before running the verdict, confirm the bound pull or merge request is not a
    draft — a draft always fails with \`pr_draft\` (factual, exit 1). If it
    is still a draft, mark it ready for review first:
 
@@ -248,12 +273,13 @@ specgit finish --json
   through the guidance below.
 - \`1\` rejected — each failure carries a \`fix\`; fix what the gates name,
   re-run until 0.
-- \`3\` unknown — run \`specgit doctor --json\`, fix the named evidence
-  failure within your permissions, then retry.
+- \`3\` unknown — read \`errors[].fix\` first and repair the named evidence.
+  Use \`specgit doctor --json\` for git, repository, origin, configured
+  provider CLI/auth, or policy probes, then retry.
 
 ## Rules
 
-- Policy defines the requirements; real git, PR, issue, and CI evidence
+- Policy defines the requirements; real git, PR/MR, issue, and CI evidence
   decides the verdict. Task lists and specification prose are not acceptance evidence.
 - Never weaken \`spec_git/policy.yaml\` to make a verdict pass.
 - \`--json\` is the only parse surface.
@@ -261,8 +287,8 @@ specgit finish --json
 ${MERGE_GUIDANCE}
 `;
 
-// #165: exit 3 is the one verdict outcome an agent cannot fix by editing
-// the delivery — the skill below installs the probe-driven repair loop.
+// #165: exit 3 means the verdict lacks required evidence. The skill starts
+// from the original diagnostic and uses doctor only for the probes it owns.
 const DOCTOR_COMMAND = `---
 description: Diagnose the SpecGit environment probes and drive the exit-3 repair loop
 ---
@@ -274,28 +300,32 @@ the AGENTS.md SpecGit block; this command only launches it.
 
 ## Steps
 
-1. Run from the repo root:
+1. Read the original \`specgit finish --json\` \`errors[].code\` and
+   \`errors[].fix\`. Apply a record or delivery-state repair directly when
+   that diagnostic names one.
+2. For git, repository, origin, configured provider CLI/auth, or policy
+   evidence, run from the repo root:
 
    \`\`\`bash
    specgit doctor --json
    \`\`\`
 
-2. Read \`probes[]\`: every failing probe carries a \`code\` (git, repo,
+3. Read \`probes[]\`: every failing probe carries a \`code\` (git, repo,
    origin, gh/glab presence and auth, policy).
-3. Fix exactly what the failing probe names, then re-run
+4. Fix exactly what the failing probe names, then re-run
    \`specgit doctor --json\` until exit 0.
-4. Return to the verdict: \`specgit finish --json\`. Exit 3 is environment,
-   never delivery — do not edit the record or the policy to work around it.
-5. \`--json\` is the only parse surface.
+5. Return to the verdict: \`specgit finish --json\`. Repair invalid state
+   when a diagnostic names it; never weaken a valid policy or bypass evidence.
+6. \`--json\` is the only parse surface.
 `;
 
 const PR_COMMAND = `---
-description: Repair the SpecGit PR binding or complete a configured automatic merge
+description: Repair the SpecGit PR/MR binding or complete a configured automatic merge
 ---
 
 # /specgit-pr
 
-Thin trigger for PR-binding repair. The canonical behavior lives in the
+Thin trigger for PR/MR-binding repair. The canonical behavior lives in the
 AGENTS.md SpecGit block; this command only launches it.
 
 ## Steps
@@ -307,12 +337,14 @@ AGENTS.md SpecGit block; this command only launches it.
    \`\`\`
 
 2. Branch on the result:
-   - \`exit 0\` → the record's PR binding is repaired; resume the delivery.
-   - \`pr_not_found\` → push the branch (re-running \`specgit issue\`
-     resumes the bootstrap), then rerun this command.
-   - \`pr_ambiguous\` → several open PRs share the head branch; bind one
+   - \`exit 0\` → the record's PR/MR binding is repaired; resume the delivery.
+   - \`pr_not_found\` → follow \`errors[].fix\` to create or find the draft
+     PR/MR for the recorded head branch, preserve every closing reference,
+     then bind it explicitly with \`specgit pr <number>\`. Only a genuinely
+     partial bootstrap with no recorded request resumes through \`specgit issue\`.
+   - \`pr_ambiguous\` → several open PRs/MRs share the head branch; bind one
      explicitly: \`specgit pr <number>\`.
-3. \`specgit pr\` owns the PR binding; never hand-edit \`.specgit.yaml\`.
+3. \`specgit pr\` owns the PR/MR binding; never hand-edit \`.specgit.yaml\`.
    \`--json\` is the only parse surface.
 
 ${MERGE_GUIDANCE}
@@ -335,9 +367,10 @@ AGENTS.md SpecGit block; this command only launches it.
    specgit status --json
    \`\`\`
 
-2. Read \`state\` and \`record\` from the envelope: local evidence only —
-   record, drift, origin. Platform evidence (issues, PR, checks) belongs
-   to \`specgit finish\`.
+2. Read \`state\`, \`recordState\`, \`localContext\`, and \`lifecycle\` from
+   the envelope. The bound delivery, context, issue numbers, PR/MR number,
+   origin, and drift are under \`evidence\`. Platform evidence such as live
+   issue, PR/MR, and check state belongs to \`specgit finish\`.
 3. No record is not an error: \`state: "unbound"\` with exit \`0\` is the
    normal pre-binding state — bootstrap with \`specgit issue\` (the
    \`record_missing\` warning carries the next step in \`warnings[].fix\`).
@@ -357,9 +390,9 @@ metadata:
 
 # specgit-doctor
 
-The exit-3 diagnostic loop. Exit code 3 means no verdict was possible — the
-environment, not the delivery, is broken. Retrying \`finish\` blindly will
-never pass; the probes tell you what to fix.
+The exit-3 diagnostic loop. Exit code 3 means no verdict was possible because
+required evidence is incomplete. Start with the original diagnostic; use the
+doctor probes for the environment and provider evidence they cover.
 
 ## When to use
 
@@ -368,36 +401,42 @@ the failing gate; the loop below resolves it.
 
 ## Steps
 
-1. Run the probes from the repository root:
+1. Read the original \`specgit finish --json\` \`errors[].code\` and
+   \`errors[].fix\`. If it names an invalid record or delivery state, apply
+   that repair directly; doctor does not inspect every acceptance input.
+2. For git, repository, origin, configured provider CLI/auth, or policy
+   evidence, run the probes from the repository root:
 
    \`\`\`bash
    specgit doctor --json
    \`\`\`
 
-2. Read \`probes[]\`: each failing probe carries a \`code\` — git binary,
+3. Read \`probes[]\`: each failing probe carries a \`code\` — git binary,
    repository, origin, gh/glab presence and auth, policy.
-3. Apply the fix the failing probe names:
+4. Apply the fix the failing probe names:
    - \`git\` missing → install the git binary or fix PATH.
    - \`repo\` → run from the repository root.
    - \`no_origin\` / origin parse → configure a parseable origin remote.
    - \`gh_missing\` / \`glab_missing\` → install the platform CLI.
-   - gh/glab auth → \`gh auth login\` (or \`glab auth login\`).
+   - gh/glab auth → follow the failing probe's fix: \`gh auth login\`, or
+     \`glab auth login --hostname <host>\`.
    - \`policy\` missing → run \`specgit init\`.
-4. Re-run \`specgit doctor --json\` until exit 0.
-5. Return to the verdict: \`specgit finish --json\`.
+5. Re-run \`specgit doctor --json\` until exit 0.
+6. Return to the verdict: \`specgit finish --json\`.
 
 ## Rules
 
-- Exit 3 is environment, never delivery: never edit the record or the
-  policy to work around a probe.
+- Exit 3 means evidence is incomplete. Repair invalid state only when the
+  diagnostic names it; never weaken a valid policy or bypass evidence.
 - \`--json\` is the only parse surface — parse the envelope, never
   human-readable lines.
-- Do not loop on \`finish\` itself; always go through the probes first.
+- Do not loop on \`finish\` blindly; follow its diagnostic, then use doctor
+  for the probe set above.
 `;
 
 const PR_SKILL = `---
 name: specgit-pr
-description: Repair the SpecGit PR binding or complete a configured automatic merge.
+description: Repair the SpecGit PR/MR binding or complete a configured automatic merge.
 allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
 license: MIT
 metadata:
@@ -406,15 +445,15 @@ metadata:
 
 # specgit-pr
 
-Repairs the record's PR binding. With \`--merge\`, completes the configured
+Repairs the record's PR/MR binding. With \`--merge\`, completes the configured
 merge and issue closure after fresh evidence passes.
 
 ## Usage
 
 \`\`\`bash
-specgit pr              # auto-discover the PR for this head branch
+specgit pr              # auto-discover the PR/MR for this head branch
 specgit pr 123          # bind an explicit number (no platform round-trip)
-specgit pr --merge --json  # merge the bound PR when automation is enabled
+specgit pr --merge --json  # merge the bound PR/MR when automation is enabled
 \`\`\`
 
 ## Steps
@@ -427,14 +466,16 @@ specgit pr --merge --json  # merge the bound PR when automation is enabled
 
 2. Branch on the result:
    - \`exit 0\` → the binding is repaired; resume the delivery.
-   - \`pr_not_found\` → push the branch and re-run \`specgit issue\` to
-     resume the bootstrap, then rerun this command.
-   - \`pr_ambiguous\` → several open PRs share the head branch; bind one
+   - \`pr_not_found\` → follow \`errors[].fix\` to create or find the draft
+     PR/MR for the recorded head branch, preserve every closing reference,
+     then bind it explicitly with \`specgit pr <number>\`. Only a genuinely
+     partial bootstrap with no recorded request resumes through \`specgit issue\`.
+   - \`pr_ambiguous\` → several open PRs/MRs share the head branch; bind one
      explicitly: \`specgit pr <number>\`.
 
 ## Rules
 
-- \`specgit pr\` owns the PR binding; never hand-edit \`.specgit.yaml\`.
+- \`specgit pr\` owns the PR/MR binding; never hand-edit \`.specgit.yaml\`.
 - \`--json\` is the only parse surface.
 
 ${MERGE_GUIDANCE}
@@ -452,7 +493,7 @@ metadata:
 # specgit-status
 
 Local evidence only: the record, the delivery state, drift, and the origin.
-Platform evidence (issues, PR, checks) belongs to \`specgit finish\`.
+Platform evidence (issues, PR/MR, checks) belongs to \`specgit finish\`.
 
 ## Usage
 
@@ -463,8 +504,10 @@ specgit status --json
 ## Steps
 
 1. Run from the repository root.
-2. Read \`state\` and \`record\` from the envelope: use them to see what is
-   bound and what drifted before touching anything.
+2. Read \`state\`, \`recordState\`, \`localContext\`, and \`lifecycle\` from
+   the envelope. Inspect \`evidence.delivery\`, \`evidence.context\`,
+   \`evidence.issues\`, \`evidence.pr\`, and the drift fields to see what is
+   bound and what changed before touching anything.
 3. No record is not an error: \`state: "unbound"\` with exit \`0\` is the
    normal pre-binding state (#175) — bootstrap with \`specgit issue\`; the
    \`record_missing\` warning names that next step in \`warnings[].fix\`.
@@ -584,27 +627,30 @@ export interface AgentSurfaceDesiredState {
   installed: string[];
 }
 
-async function dirExists(target: string): Promise<boolean> {
-  try {
-    return (await fs.stat(target)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 export async function detectSetupTool(root: string): Promise<'opencode' | 'generic'> {
-  const opencode = path.join(root, '.opencode');
-  if (!(await dirExists(opencode))) return 'generic';
+  const opencodeBoundary = await inspectManagedPathBoundary(root, '.opencode');
+  // Selecting this surface carries the unsafe path into reconciliation,
+  // where it is rejected before any mutation. Never readdir through it.
+  if (opencodeBoundary.symlink !== null) return 'opencode';
+  const opencode = opencodeBoundary.target;
+  const opencodeEntry = await fs.lstat(opencode).catch((error: unknown) => {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw error;
+  });
+  if (!opencodeEntry?.isDirectory()) return 'generic';
   const entries = await fs.readdir(opencode);
   if (entries.length === 0 || entries.some((name) => name !== 'hooks' && name !== 'hooks.json')) {
     return 'opencode';
   }
-  const hooks = await readdirEntries(path.join(opencode, 'hooks'));
+  const hooks = await readdirEntries(root, '.opencode/hooks');
   if (hooks.some((entry) => entry.name !== 'specgit-merge-guard.sh')) return 'opencode';
   // init creates these guard assets for every adopter. Their presence
   // alone cannot identify the user's agent tool.
   try {
-    const config = JSON.parse(await fs.readFile(path.join(opencode, 'hooks.json'), 'utf8')) as Record<string, unknown>;
+    const hooksJson = await inspectManagedPathBoundary(root, '.opencode/hooks.json');
+    if (hooksJson.symlink !== null) return 'opencode';
+    const config = JSON.parse(await fs.readFile(hooksJson.target, 'utf8')) as Record<string, unknown>;
     if (Object.keys(config).some((key) => key !== 'PreToolUse')) return 'opencode';
     if (!Array.isArray(config.PreToolUse) || config.PreToolUse.some((entry: unknown) => {
       if (typeof entry !== 'object' || entry === null || !('hooks' in entry) || !Array.isArray(entry.hooks)) return true;
@@ -618,9 +664,13 @@ export async function detectSetupTool(root: string): Promise<'opencode' | 'gener
 }
 
 /** List a directory for removal-candidate discovery; absent means empty. */
-async function readdirEntries(target: string): Promise<Dirent[]> {
+async function readdirEntries(root: string, relPath: string): Promise<Dirent[]> {
+  const boundary = await inspectManagedPathBoundary(root, relPath);
+  if (boundary.symlink !== null) return [];
   try {
-    return await fs.readdir(target, { withFileTypes: true });
+    const entry = await fs.lstat(boundary.target);
+    if (!entry.isDirectory()) return [];
+    return await fs.readdir(boundary.target, { withFileTypes: true });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
     if (code === 'ENOENT' || code === 'ENOTDIR') {
@@ -662,8 +712,7 @@ export async function buildAgentSurfaceDesiredState(
       installed.push(`${OPENCODE_COMMAND_DIR}/${rel}`);
     }
     const current = new Set(Object.keys(OPENCODE_COMMANDS));
-    const commandDir = path.join(root, ...OPENCODE_COMMAND_DIR.split('/'));
-    for (const entry of await readdirEntries(commandDir)) {
+    for (const entry of await readdirEntries(root, OPENCODE_COMMAND_DIR)) {
       if (!entry.isFile() || !entry.name.startsWith('specgit-') || !entry.name.endsWith('.md')) {
         continue;
       }
@@ -690,8 +739,7 @@ export async function buildAgentSurfaceDesiredState(
       installed.push(`${GENERIC_SKILLS_DIR}/${rel}`);
     }
     const current = new Set(Object.keys(GENERIC_SKILLS));
-    const skillsDir = path.join(root, ...GENERIC_SKILLS_DIR.split('/'));
-    for (const entry of await readdirEntries(skillsDir)) {
+    for (const entry of await readdirEntries(root, GENERIC_SKILLS_DIR)) {
       if (!entry.isDirectory() || !entry.name.startsWith('specgit-')) {
         continue;
       }
@@ -719,10 +767,18 @@ export async function buildAgentSurfaceDesiredState(
  * failure at any step restores the pre-run tree — bytes, modes, and
  * run-created directories.
  */
-export async function writeAgentSurface(root: string, tool: SetupTool): Promise<SetupWriteResult> {
+export async function writeAgentSurface(
+  root: string,
+  tool: SetupTool,
+  options: { writeIgnore?: boolean } = {}
+): Promise<SetupWriteResult> {
   const desired = await buildAgentSurfaceDesiredState(root, tool);
-  const reconciled = await reconcileManagedAssets(root, { steps: [...desired.steps, {
-    kind: 'write', path: '.gitignore', mode: 0o644, merge: reconcileLocalAssetIgnore,
-  }] });
+  const steps = [...desired.steps];
+  if (options.writeIgnore !== false) {
+    steps.push({
+      kind: 'write', path: '.gitignore', mode: 0o644, merge: reconcileLocalAssetIgnore,
+    });
+  }
+  const reconciled = await reconcileManagedAssets(root, { steps });
   return { tool, installed: desired.installed, reconciled };
 }

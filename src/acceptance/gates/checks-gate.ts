@@ -71,10 +71,6 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
   // whatever its conclusion says.
   const { anchor, failure: anchorFailure } = await fetchAnchor(ctx);
   if (anchorFailure) return [anchorFailure];
-  // #269: diagnostic prose is the greppable surface — on a declared
-  // GitLab origin the platform's CI is a GitLab pipeline, never GitHub
-  // Actions, so the checks_missing fix is GitLab-shaped there.
-  const onGitLab = ctx.input.gitlabHost !== undefined;
   const failures: GateFailure[] = [];
   for (const requiredName of ctx.policy!.required_checks) {
     // #119: re-runs keep every same-name run in the Checks API. The
@@ -83,11 +79,7 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
     // position is never evidence.
     const run = truthRun(runs.value, requiredName);
     if (!run) {
-      const missing = makeFailure('checks_missing', { name: requiredName });
-      if (onGitLab) {
-        missing.fix = 'Ensure the required GitLab CI pipeline runs on the MR head commit.';
-      }
-      failures.push(missing);
+      failures.push(makeFailure('checks_missing', { name: requiredName }));
       continue;
     }
     // #315: anchored freshness — the truth run must start at or after
@@ -103,7 +95,7 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
       });
       stale.message = `A required check's truth run predates the evidence anchor [check: ${requiredName}, started: ${run.startedAt ?? 'unknown'}, anchor: ${anchor}]`;
       stale.fix =
-        'A finished run never becomes fresh by waiting: re-run the required check on the pull request head (re-running is safe and idempotent), then run "specgit accept" again.';
+        'A finished run never becomes fresh by waiting: re-run the required check on the PR/MR head (re-running is safe and idempotent), then run "specgit finish" again.';
       failures.push(stale);
       continue;
     }

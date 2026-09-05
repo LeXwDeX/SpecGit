@@ -254,6 +254,7 @@ export async function buildHarnessDesiredState(
     steps.push({
       kind: 'write',
       path: path.relative(root, gitHookTarget).split(path.sep).join('/'),
+      scope: 'git-hooks',
       mode: 0o755,
       merge: () => mergeGitPrePush(existing),
     });

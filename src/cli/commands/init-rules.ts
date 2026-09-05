@@ -83,7 +83,7 @@ export async function resolveProjectRules(
       const { select } = await import('@inquirer/prompts');
       return select({ message, choices, default: current }, { output: process.stderr });
     });
-    const chosenLanguage = options.language !== undefined && !explicitSession ? language : await selectRule('Issue/PR language / 项目语言', [
+    const chosenLanguage = options.language !== undefined && !explicitSession ? language : await selectRule('Issue/PR/MR language / 项目语言', [
       { name: 'English (en)', value: 'en' }, { name: '中文 (zh)', value: 'zh' },
     ], language);
     if (chosenLanguage !== 'en' && chosenLanguage !== 'zh') return invalid('Choose en or zh.');

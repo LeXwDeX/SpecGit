@@ -93,7 +93,7 @@ export async function runUnbind(
           severity: 'warning',
           code: 'record_deletion_tracked',
           message: `${RECORD_FILENAME} is tracked by git — deleting the working-tree copy leaves an uncommitted deletion behind.`,
-          fix: 'Commit the deletion (e.g. "chore: unbind delivery") through a PR to return the tree to clean; the next delivery\'s binding commit force-carries the rewritten record anyway.',
+          fix: 'Commit the deletion (e.g. "chore: unbind delivery") through a PR/MR to return the tree to clean; the next delivery\'s binding commit force-carries the rewritten record anyway.',
         },
       ]
     : undefined;

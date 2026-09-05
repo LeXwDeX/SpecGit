@@ -1,238 +1,282 @@
-# SpecGit Workflow Guide — 从零到验收的完整流程
+# SpecGit Workflow Guide
 
-This guide is the canonical walkthrough: what to do first, what to do next,
-and how agents drive the same loop. Language note: prose is English-first
-elsewhere in these docs; this file keeps Chinese narrative with English
-commands/terms so both humans and agents can follow it verbatim.
+This is the canonical walkthrough for humans and agents. The project guidance is
+English; command names, diagnostic codes, JSON keys, branch names, and closing
+references remain the same under every configured language.
 
 ```text
-  specgit init / setup     每仓库一次：policy + 验收 harness + agent 入口点
+  specgit init / setup     initialize once; rerun after upgrades
         |
         v
-  specgit issue "..."      每次交付：issues + 分支 + draft PR（Closes #n）
-        |                  + 绑定记录，提交并推送（失败重跑同命令即续）
+  specgit issue "..."      each delivery: issues + branch + draft PR/MR
+        |                  + binding record, committed and pushed
         v
-  开发、commit、push -----> PR head 上跑 CI
-        |                  （SpecGit Acceptance job 即 specgit finish --json）
-        v
-  gh pr ready <n>          draft PR 必然不通过验收（pr_draft）
+  work, commit, push ----> CI/CD on the exact request head
         |
         v
-  specgit finish           裁决：十一道门禁，fail-closed
-        |-- exit 0 --> 合并：完成（exit 0 是唯一的 done）
-        |-- exit 1 --> 按门禁点名的项修复（证据已完整）
-        '-- exit 3 --> 先修环境（specgit doctor）
+  mark the PR/MR ready     a draft always fails with pr_draft
+        |
+        v
+  specgit finish           eleven-gate, fail-closed evidence verdict
+        |-- exit 0 --> accepted --> confirmed merge --> issue closure --> completed
+        |-- exit 1 --> repair the delivery facts named by the gates
+        '-- exit 3 --> follow errors[].fix; doctor covers prerequisite probes
 ```
 
----
+## 1. Prepare each machine
 
-## 0. 前置条件（每台机器，一次性）
+| Requirement | Check | Purpose |
+| --- | --- | --- |
+| Node.js 20.19 or newer | `node --version` | CLI runtime |
+| git | `git --version` | Local repository evidence |
+| Authenticated `gh` | `gh auth status` | GitHub issues, PRs, checks, and administration |
+| Authenticated `glab` 1.113.0 or newer | `glab auth status --hostname <host>` | Explicitly declared GitLab issues, MRs, pipelines, and administration |
 
-| 依赖 | 检查命令 | 说明 |
-|---|---|---|
-| Node ≥ 20.19 | `node --version` | CLI 运行时 |
-| git | `git --version` | 本地证据来源 |
-| `gh` CLI 已认证 | `gh auth status` | GitHub 证据来源（issues/PR/checks） |
-| `glab` CLI 已认证（仅声明式 GitLab origin） | `glab auth status --hostname <host>` | GitLab 证据来源（issues/MR/pipelines），≥ 1.113.0 |
-
-安装 CLI（发布后）：
+Install or upgrade the published CLI:
 
 ```bash
-npm install -g specgit
-# 或开发模式：在本仓库内
-pnpm install && pnpm run build
-ln -sf "$PWD/bin/specgit.js" ~/.local/bin/specgit
+npm install -g specgit@latest
+specgit --version
 ```
 
-一键体检：
+Run the human-readable diagnostic inside the target repository:
 
 ```bash
-specgit doctor --json
+specgit doctor
 ```
 
-`doctor` 按 git → repo → origin → provider CLI 在位 → provider CLI 已认证
-→ policy 的顺序探测六项，任何一项不对都会 fail-closed 并给出 fix 提示。
+Scripts and agents may add `--json`. That flag is a machine interface: stdout is
+exactly one JSON document and human-readable text goes to stderr. Humans do not
+need it for ordinary use.
 
----
+## 2. Initialize a repository
 
-## 1. 仓库初始化（每个仓库，一次性）
+On the default branch, run:
 
 ```bash
-specgit init --required-check "Test (linux-bash)" --required-check "Lint & Type Check" --json
+specgit init
+specgit setup
 ```
 
-- 产出 `spec_git/policy.yaml`：列出本仓库 PR 必须 passing 的 CI check 名。
-- Check 名必须与 CI 矩阵里的 job `name:` **完全一致**（含空格、括号、大小写）。
-- 自动检测（已上线，#63）：无参时从 `.github/workflows/*.yml`（GitHub 模式）
-  静态发现 check 名；仓库完全没有 CI 时 policy 为空列表——分支保护强制
-  的验收 job 本身就是门。GitLab 模式检测 `.gitlab-ci.yml` 顶层 job 名。
-- `--force`：policy 已存在时重建 harness 与全部生成资产；既有
-  `required_checks`/`language` 默认**原样保留**（#310）——只有显式传
-  `--required-check` 才整体替换该列表。不带 `--force` 的重跑报
-  `policy_exists` 拒绝（exit 2，零写入）。
-- `spec_git/policy.yaml` 默认被 init 写入的 `.gitignore` 托管块屏蔽（#292）；
-  它进入 git 的正规路径是交付引导的绑定提交——手动提交需 `git add -f`
-  越过屏蔽，或 init 时用 `--no-ignore` 保持经典提交模型。
-
----
-
-## 2. 单次交付的标准流程（人类视角）
-
-一次 delivery = 一个 change = 绑定三元组的完整生命周期。
-命令故事是 **issue → finish**：一条命令开始，一条命令裁决。
-
-### Step 1 — 一键引导：`specgit issue`
+Fresh `init` detects statically provable PR-visible GitHub workflow job names or
+visible GitLab CI job names. Supply exact names when detection cannot prove them:
 
 ```bash
-specgit issue "feat: add login" "security: harden the session model" --json
+specgit init --required-check "All checks passed"
 ```
 
-一个参数 = 一个独立可验证的 WHY：
+The platform acceptance integration is separate from product checks. On GitHub,
+never put the generated `SpecGit Acceptance` job in `required_checks`; its wait
+step cannot wait for itself. On GitLab, the project's reviewed pipeline owns the
+job that runs `specgit finish --json`. An empty list is the no-CI policy; the
+applicable acceptance integration and merge protection remain the gate.
 
-- 带引号的文本 → 新建 issue（标题必须 `<type>: <标题>` 前缀，type 走固定白名单；标题正文任意语言（#118），产不出 ASCII slug 时要求 `--delivery <slug>`）；
-- 纯数字 → 复用已有 issue。
-
-N 个参数 = N 个 issue 绑进 **同一个** 交付（1 PR : N issues）。
-该命令依次完成：创建/复用 issues → 建分支 `<type>/<first#>-<slug>`
-（type 取自首个标题的 conventional 前缀，默认 feat；slug 取前三个
-ASCII 单词；标题产不出 slug 时绝不静默造名——交互终端会反问一个
-kebab-case 交付名，脚本环境报 `issue_delivery_name_required` 并指向
-`--delivery <slug>`）→ 开 draft PR（body 自动写
-`Closes #n`，覆盖每个 issue）→ 写 `.specgit.yaml` → commit → push。
-
-**幂等续跑**：任何一步之间失败后，重跑同一条命令即恢复——已完成的
-步骤（记录里的 issues → 分支 → PR → commit → push）会被检测并跳过，
-不会重复建 issue、不会重复开 PR。无参数且无记录时退出 2（CLI 不交互）。
-
-**引导后立即补全内容**：命令成功后，用平台 CLI 把讨论沉淀进每个新建
-issue 的 body（Why / Scope / Approach / Acceptance，如 `gh issue edit <n>`）；
-draft PR 脚手架的四个节（Why / What changed / Evidence / Checklist）在
-交付过程中随手填——占位符是提示不是门禁，`Closes #n` 引用保持原样。
-
-### Step 2 — 开发（TDD）
-
-按 `workflows/specgit-dev-loop.md` 的切片纪律：
-红测 → 最小绿 → mutation（回退必红）→ 定向测试 + typecheck → commit。
-分支与 draft PR 已在 Step 1 就位，直接在其上工作、push。
-
-### Step 3 — 验收
+For GitLab, declare the exact origin host, including GitLab.com:
 
 ```bash
-specgit finish --json
+specgit init --gitlab-host git.example.com
+specgit init --gitlab-host gitlab.com
 ```
 
-11 道门禁全部从真实 git/PR/CI 证据推导：
+The declaration is explicit, never inferred from a hostname substring. Declared
+GitLab.com is capability-probed. Self-managed CE/Free has a verified window of
+`>= 19.2.4 < 19.4.0`; versions outside it warn while live API evidence remains
+fail-closed.
 
-1. `record` / 2. `policy` / 3. `completeness` / 4. `context` / 5. `origin`
-6. `provider` / 7. `issues` / 8. `sequence` / 9. `pr` / 10. `closing`（PR body 覆盖所有 issue）
-11. `checks`（policy 里的每个 check 在 PR head 上 success）
+Init resolves this platform before it writes. Only exact `github.com` origins
+select GitHub. An interactive prompt for another endpoint can confirm GitLab or
+stop; it cannot select GitHub Enterprise. Invalid provider bytes or an undecided
+platform cause exit `3` without mutation. A run that will generate a platform
+workflow or configure protection also requires `origin/HEAD` to prove the
+remote default branch before the local transaction; missing evidence leaves the
+policy, harness, and protection unchanged. If writing a selected GitLab
+declaration fails, init restores its exact pre-run provider state and stops.
+Workflows and protection always use the proved branch, never a guessed `main`.
 
-`spec_git/policy.yaml` 已由 `specgit init` 声明的 required checks 与
-`.github/workflows/specgit-accept.yml` 里的 **SpecGit Acceptance** job
-（跑 `specgit finish --json`）共同构成物理 CI 门禁。
+### What init and setup own
 
-退出码契约：
+`init` writes the policy and converges the generated harness, managed
+AGENTS/CLAUDE block, guard hooks, and managed `.gitignore` region. GitHub gets a
+generated acceptance workflow. GitLab keeps its business acceptance job
+project-owned; optional automation adds only the managed router, preserved
+business configuration, and trusted completion continuation. `setup` installs
+local agent entry points. These commands do not replace business build commands,
+source, or dependencies.
 
-| exit | 含义 | 动作 |
-|---|---|---|
-| 0 | accepted | 全绿，可合并 |
-| 1 | rejected | 事实性失败：按 `failures[].fix` 逐条修 |
-| 2 | usage | 参数错误 |
-| 3 | unknown | 证据不可得（gh/glab 未认证/网络）——修环境，绝不改记录 |
+By default the managed `.gitignore` region shields `.specgit.yaml` and
+`spec_git/` from accidental staging. The delivery bootstrap uses `git add -f` to
+carry the authoritative policy, optional provider declaration, and record into
+the delivery branch where CI reads them. A deliberate adoption PR must likewise
+force-stage the authoritative files, or initialize with `--no-ignore`.
 
-`checks_pending`：CI 还在跑 → `gh pr checks <PR> --watch` 后重试。
+The managed reconciler checks more than the initial plan. Immediately before a
+whole-file replacement it re-reads the current bytes, proves ownership again,
+and requires the bytes used by the merge plan to be unchanged. It re-proves
+ownership from current bytes before removal. An intervening user edit is
+preserved and earlier mutations in the failed transaction roll back.
 
-### Step 4 — 合并
+Initialization and local entry-point refresh are maintenance. They do not by
+themselves require a product build, issue, PR, or release. If the team chooses to
+share a policy, workflow, or guidance change, deliver that tracked change under
+the repository's [CI scope](ci-scope.md). `.gitignore` affects tracking, not the
+checks appropriate to an intentionally shared diff.
 
-- 人工检查点 **push right**：唯一一次人审 = 读 PR brief（what/why/issue+PR+CI
-  链接 + `specgit finish` 裁决），批准合并。
-- 机器裁决先行：**verdict ≠ accepted 的 PR 不允许合并**。合并命令按平台：
-  GitHub `gh pr merge`，GitLab `glab mr merge`——工具层的本地 merge guard
-  会在拦截点先要求一份已通过的裁决。
+### Automation is an explicit user choice
 
-### Step 5 — 收尾
+The first interactive initialization asks whether to enable automatic merge and
+issue closure; the default is no. Agents cannot answer yes for the user. A first
+non-interactive init without `--automation` leaves it disabled. Enable it only
+with the user's choice:
 
 ```bash
-git switch main && git pull            # 回主干
-gh issue view <N>                      # issues 已被 Closes 自动关闭
-specgit status                          # main 上无绑定（正常态）
+specgit init --automation yes --merge-target main
 ```
 
----
+An ordinary `init --force` preserves automation, target, closure, required
+checks, language, tags, templates, validation, ordering, and repair labels.
+Explicit options replace only the selected settings. With automation enabled,
+the trusted completion runner can continue after CI, merge only the approved
+target and exact head, confirm the merge, and close every bound issue.
 
-## 3. Agent 视角（在 AGENTS 里怎么做）
+### Project conventions
 
-Agent 与人类走同一条流程，差异只在驱动者是模型。行为来源是
-`specgit init` 注入 `AGENTS.md` 的 **specgit 托管块**
-（`<!-- specgit:block:start/end -->` 之间的内容，re-init 只重写块内
-内容），规范化版本见 [`docs/agent-contract.md`](agent-contract.md)。
-`specgit setup` 另行安装本地便利入口点——`.opencode/command/` 命令与
-`.agents/skills/` portable skills；它们是便利设施而非第二个行为来源，
-也永远不是验收输入。行为契约始终是 CLI 契约 + AGENTS.md 托管块。
+Configure generated text and optional live-fact validation with explicit flags
+or the interactive rules session:
 
-### 3.1 Agent 的标准作业循环
-
-```
-触发：新 issue 被认领 / 用户指派交付
-  1. specgit issue "<type>: <标题>"...        # 一键引导（幂等，失败重跑同命令）
-  2. TDD 切片循环（红→绿→mutation→门禁→commit）
-  3. push（分支、draft PR、记录都已就位）
-  4. specgit finish --json
-     ├─ exit 0  → 输出 PR brief（含 issue/PR/CI run 链接），请人批准合并
-     ├─ exit 1  → 读 failures[].fix → 修复 → 回到 4
-     └─ exit 3  → 报告环境问题（gh auth/网络），不动代码
-   5. 人批准 → gh pr merge（GitLab：glab mr merge）→ issues 自动关闭
+```bash
+specgit init --force --configure-rules
+specgit init --force --language en --title-check yes --label-check kind
 ```
 
-### 3.2 修复与诊断
+With English title validation, issue and PR/MR titles must contain no Han
+characters. With Chinese validation they must contain at least one Han
+character; English technical names may remain. Label validation uses either the
+built-in `kind::` axis plus declared extras, or the exact project `tags`
+vocabulary. Repair issue labels are selected with repeatable `--repair-label`.
 
-- PR 绑定缺失/失准 → `specgit pr`（无参自动按 head 分支发现 PR；
-  0 个 → 报错并给 fix；多个 → 拒绝并列出，此时显式 `specgit pr <n>`）。
-- 环境疑难 → `specgit doctor --json`（git → repo → origin → gh → auth
-  → policy 的探测顺序即排查顺序）。
+Policies may select issue and PR/MR templates and require nonempty H2 sections.
+When body validation or `required_sections` is enabled, prepare complete files
+before creating remote objects:
 
-### 3.3 粒度原则与铁律（agent 必须遵守）
+```bash
+specgit issue "fix: prevent stale sessions" \
+  --body-file /tmp/issue.md \
+  --pr-body-file /tmp/pr.md
+```
 
-**一个 issue = 一个独立可验证的 WHY。** 交付物无法凭自身证据验证时，
-先拆分再绑定。
+Without body rules, the built-in scaffold is advisory and can be completed after
+creation. Unselected repository templates are never loaded silently.
 
-- 验收只认证据：任何 spec/task/计划文件的内容都不能改变 verdict。
-- `spec_git/policy.yaml` 不许为了让 verdict 通过而削弱——check 名写错走
-  reviewed change 修。
-- `specgit finish` 退出码非 0 的 PR 永远不请求合并、不自行合并。
-- `--json` 输出是唯一可靠解析面：stdout 恰好一个 JSON 文档。
+## 3. Start one delivery
 
-### 3.4 Dev loop 规范
+```bash
+specgit issue "feat: add login" "security: harden session handling"
+```
 
-完整切片纪律见 [`workflows/specgit-dev-loop.md`](../workflows/specgit-dev-loop.md)；
-issue tracker 约定见 [`docs/agents/issue-tracker.md`](agents/issue-tracker.md)。
+Each argument is one independently verifiable WHY. A quoted typed title creates
+an issue; a positive integer reuses an issue in the current routed forge. One
+command may bind N issues to one PR/MR. Numeric references work on GitHub and
+declared GitLab because they are forge-local. Full issue URL input is currently
+the GitHub-only convenience; opaque tracker IDs are rejected.
 
----
+Bootstrap plans the selection, checks relevant issue history and active issue
+occupancy, creates or reuses the issues, creates the delivery branch, opens a
+draft PR/MR containing `Closes #n` for every bound issue, writes the record,
+commits, and pushes. Re-running the same command resumes after a partial failure
+without duplicating durable remote objects.
 
-## 4. 多交付并行
+New titles use `<type>: <summary>`, where type is one of the CLI's declared
+types. Branch names remain ASCII. When no ASCII slug can be derived, pass an
+explicit kebab-case delivery name:
 
-- 不同交付 = 不同分支（或不同 worktree）+ 不同 `.specgit.yaml`。
-- worktree 模式下，`bind` 记录 worktree label；`accept` 在 accept 时用
-  `git worktree list` 重新验证该 label 仍挂在绑定的分支上。
-- 每个交付独立 PR、独立验收、独立合并；policy 是仓库级共享的。
+```bash
+specgit issue "feat: add localized onboarding" --delivery localized-onboarding
+```
 
-## 5. 故障排查
+Preserve every closing reference. Fill the issue Why / Scope / Approach /
+Acceptance and the PR/MR Why / What changed / Evidence / Checklist sections.
+When body rules are enabled, supply that content before bootstrap as described
+above. Resume preserves existing remote bodies and human edits.
 
-| 症状 | 诊断 |
-|---|---|
-| `policy_missing` | 先 `specgit init`（Section 1） |
-| `gh_unauthenticated` / exit 3 | `gh auth login` |
-| `branch_mismatch` | 你不在绑定分支上：`git switch <bound-branch>` |
-| `checks_missing` | check 名与 policy 不一致，或 CI 没跑：对照 ci.yml job name |
-| `closing_refs_incomplete` | PR body 缺某个 `Closes #N`：补全后重试 |
+## 4. Implement and review
 
-任何疑难：`specgit doctor --json` 先行。
+Work on the branch bootstrap created, commit, and push. The PR/MR remains draft
+until it is reviewable:
 
----
+```bash
+gh pr ready <number>
+# GitLab:
+glab mr update <number> --ready
+```
 
-## 参考索引
+Review decides whether the change should exist and whether the implementation is
+sound. SpecGit checks the delivery binding and live evidence. Existing user
+authorization covers routine body completion, review fixes, ready transition,
+CI repair, merge, and closure unless the user limited that authorization or a
+new scope decision is required.
 
-- CLI 全命令与 JSON 契约：[cli.md](cli.md) · [agent-contract.md](agent-contract.md)
-- 概念与名词：[concepts.md](concepts.md) · [glossary.md](glossary.md)
-- 安装：[installation.md](installation.md)
-- 团队协作：[team-workflow.md](team-workflow.md)
+## 5. Run the verdict
+
+```bash
+specgit finish
+```
+
+The evaluator checks, in order: record, policy, completeness, context, origin,
+provider, issues and project rules, issue sequence, PR/MR and project rules,
+closing references, and required checks at the exact request head.
+
+- Exit `0`: accepted. A live delivery is eligible for the authorized merge.
+- Exit `1`: evidence is complete and says no. Fix the named delivery fact.
+- Exit `2`: command usage or configuration input is invalid.
+- Exit `3`: no verdict is possible. Follow each reported `errors[].fix`; use
+  `specgit doctor` only for its git, repository, origin, routed forge-CLI,
+  authentication, and policy probes.
+- Exit `130`: an interactive prompt was interrupted; no JSON envelope exists.
+
+`finish` is read-only. Exit 0 alone does not prove completion. Completion needs a
+confirmed merge and every bound issue confirmed closed. After a merge, `status`
+may report `historical-candidate` from local evidence; `finish` proves merged
+lineage and reports `completed`, or `closure_pending` while an issue remains open.
+
+With configured automation, trusted remote execution normally performs the merge
+and closure. `specgit pr --merge` is the recovery path for an interrupted run and
+rechecks current policy, exact head, target, acceptance, and all executed CI/CD.
+With automation disabled, use the forge merge operation already authorized, then
+verify the resulting completed state. A terminal failed PR/MR is tracked by a
+repair issue; repeated occurrences of the same unresolved cause reuse it.
+
+## 6. Repair and diagnose
+
+- Missing or stale PR/MR binding: run `specgit pr`. It discovers by head branch;
+  zero matches gives a repair, multiple matches require an explicit number.
+- Exit 3: follow the named fix. When it concerns a prerequisite,
+  `specgit doctor` reports all failed git, repository, origin, routed platform CLI (`gh`
+  or `glab`), authentication, and policy probes. It does not inspect records,
+  PRs/MRs, checks, or managed-file drift.
+- Stale installed assets after a package update: run `specgit status`, then each
+  exact `init --force` or `setup --tool ...` repair it names, and re-run status.
+- Pending checks: wait for the current head's fresh generation. Do not open a
+  repair issue or weaken policy for a transient state.
+- Failed PR/MR: keep the original business issues bound; use the automatically
+  created or manually tracked repair issue for the independent failure cause.
+- Closed-unmerged bound PR/MR: `specgit issue` exits `1` with
+  `pr_closed_unmerged` and preserves the record even when given new titles.
+  Reopen it or create/find an open draft from the recorded branch with every
+  closing reference, then run `specgit pr <number>`. Start a new WHY only after
+  repairing that binding.
+
+## 7. Parallel deliveries
+
+Each delivery owns one branch or linked worktree, one record, N issues, and one
+PR/MR. Separate deliveries use separate branches/worktrees and independent
+records. The project policy is shared. A worktree context keeps its portable
+checkout basename plus branch and is revalidated with `git worktree list`.
+
+## References
+
+- [CLI reference](cli.md)
+- [Concepts](concepts.md) and [Glossary](glossary.md)
+- [Installation and upgrades](installation.md)
+- [Troubleshooting](troubleshooting.md)
+- [Team workflow](team-workflow.md)
+- [CI scope](ci-scope.md)

@@ -20,7 +20,7 @@ case "$tool" in
     # (branch "feat/1-a" must never satisfy a record for "feat/1-a2").
     branch=$(git branch --show-current 2>/dev/null)
     if [ -z "$branch" ] || [ ! -f .specgit.yaml ] || ! grep -qFx "  branch: $branch" .specgit.yaml; then
-      echo "specgit: start gate - this branch has no delivery binding. Start the delivery first: specgit issue \\"<type>: <title>\\", then fill each issue body from the discussion, then edit files." >&2
+      echo "specgit: start gate - this branch has no delivery binding. Start the delivery first according to the managed guidance: prepare any required body files, then run specgit issue \\"<type>: <title>\\" with them before editing files." >&2
       exit 2
     fi
     exit 0
@@ -28,19 +28,161 @@ case "$tool" in
 esac
 command=$(printf '%s' "$payload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_input&&j.tool_input.command)||'')}catch{process.stdout.write('')}})")
 
-case "$command" in
-  gh\\ pr\\ merge*|glab\\ mr\\ merge*)
+# Classify statically visible forge-merge commands without executing or
+# expanding shell input. The lexer understands quoting, command separators,
+# environment assignments, env/command/exec wrappers, and forge-global repo
+# selectors. It deliberately inspects only each simple command's executable
+# and leading global options, so quoted prose such as echo "gh pr merge" does
+# not trigger the gate.
+merge_command=$(printf '%s' "$command" | node -e '
+  const fs = require("fs");
+  const source = fs.readFileSync(0, "utf8");
+  const SQ = String.fromCharCode(39);
+  const DQ = String.fromCharCode(34);
+  const BS = String.fromCharCode(92);
+
+  function tokenize(text) {
+    const tokens = [];
+    let word = "";
+    let active = false;
+    let quote = 0;
+    const flush = () => {
+      if (!active) return;
+      tokens.push({ kind: "word", value: word });
+      word = "";
+      active = false;
+    };
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      if (quote === 39) {
+        if (char === SQ) quote = 0;
+        else word += char;
+        continue;
+      }
+      if (quote === 34) {
+        if (char === DQ) {
+          quote = 0;
+        } else if (char === BS) {
+          if (index + 1 >= text.length) return null;
+          word += text[++index];
+        } else {
+          word += char;
+        }
+        continue;
+      }
+      if (char === SQ || char === DQ) {
+        quote = char === SQ ? 39 : 34;
+        active = true;
+      } else if (char === BS) {
+        if (index + 1 >= text.length) return null;
+        const next = text[++index];
+        if (next !== "\\n") {
+          word += next;
+          active = true;
+        }
+      } else if (char === " " || char === "\\t" || char === "\\r") {
+        flush();
+      } else if (char === "\\n" || char === ";" || char === "|" ||
+                 char === "&" || char === "(" || char === ")") {
+        flush();
+        if ((char === "|" || char === "&") && text[index + 1] === char) index += 1;
+        tokens.push({ kind: "boundary" });
+      } else if (char === "#" && !active) {
+        while (index + 1 < text.length && text[index + 1] !== "\\n") index += 1;
+      } else {
+        word += char;
+        active = true;
+      }
+    }
+    if (quote !== 0) return null;
+    flush();
+    return tokens;
+  }
+
+  const executable = (word) => {
+    const base = word.replace(/\\\\/g, "/").split("/").pop() || "";
+    return base.toLowerCase().replace(/\\.exe$/, "");
+  };
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+  function unwrap(words) {
+    let index = 0;
+    while (assignment.test(words[index] || "")) index += 1;
+    if (executable(words[index] || "") === "env") {
+      index += 1;
+      while (assignment.test(words[index] || "")) index += 1;
+    }
+    while (["command", "exec"].includes(executable(words[index] || ""))) {
+      index += 1;
+    }
+    return words.slice(index);
+  }
+
+  function isForgeMerge(segment) {
+    const words = unwrap(segment);
+    const forge = executable(words[0] || "");
+    if (forge !== "gh" && forge !== "glab") return false;
+    let index = 1;
+    while (index < words.length) {
+      const option = words[index];
+      if (["-R", "--repo", "--hostname"].includes(option)) {
+        if (index + 1 >= words.length) return false;
+        index += 2;
+      } else if (option === "--" || option.startsWith("--repo=") ||
+                 option.startsWith("--hostname=") ||
+                 (option.startsWith("-R") && option.length > 2)) {
+        index += 1;
+        if (option === "--") break;
+      } else {
+        break;
+      }
+    }
+    return forge === "gh"
+      ? words[index] === "pr" && words[index + 1] === "merge"
+      : words[index] === "mr" && words[index + 1] === "merge";
+  }
+
+  const tokens = tokenize(source);
+  if (tokens === null) {
+    process.stdout.write("indeterminate");
+  } else {
+    let segment = [];
+    for (const token of [...tokens, { kind: "boundary" }]) {
+      if (token.kind === "word") {
+        segment.push(token.value);
+      } else {
+        if (isForgeMerge(segment)) {
+          process.stdout.write("merge");
+          process.exit(0);
+        }
+        segment = [];
+      }
+    }
+  }
+')
+classifier_status=$?
+if [ "$classifier_status" -ne 0 ]; then
+  merge_command=indeterminate
+fi
+
+case "$merge_command" in
+  indeterminate)
+    echo "specgit: command blocked - the merge guard could not safely classify the shell input. Retry with a direct gh pr merge or glab mr merge command." >&2
+    exit 2
+    ;;
+  merge)
     exec node -e '
       const { spawn } = require("child_process");
       const fs = require("fs");
       const path = require("path");
-      const ghMsRaw = parseInt(process.env.SPECGIT_GH_TIMEOUT_MS || "", 10);
-      const ghMs = Number.isFinite(ghMsRaw) && ghMsRaw > 0 ? ghMsRaw : 15000;
-      const ghS = Math.max(1, Math.floor(ghMs / 1000));
-      let budgetS = Math.max(60, ghS * 8);
+      const timeoutMs = ["SPECGIT_GH_TIMEOUT_MS", "SPECGIT_GLAB_TIMEOUT_MS"]
+        .map((name) => parseInt(process.env[name] || "", 10))
+        .map((value) => Number.isFinite(value) && value > 0 ? value : 15000);
+      const providerS = Math.max(1, Math.ceil(Math.max(...timeoutMs) / 1000));
+      let budgetS = Math.max(60, providerS * 8);
       const overrideRaw = parseInt(process.env.SPECGIT_GUARD_BUDGET_S || "", 10);
       if (Number.isFinite(overrideRaw) && overrideRaw > 0) {
-        budgetS = Math.max(overrideRaw, ghS);
+        budgetS = Math.max(overrideRaw, providerS);
       }
       // The hook runner kills long hooks; surface the mismatch instead of
       // being cut off mid-verdict.
@@ -138,7 +280,7 @@ case "$command" in
           );
         } else {
           lines.push(
-            "specgit: merge blocked - no verdict possible (evidence incomplete, exit " + code + "). This is not a rejection: fix evidence gathering (network, gh auth), then retry."
+            "specgit: merge blocked - no verdict possible (evidence incomplete, exit " + code + "). This is not a rejection: follow errors[].fix in the specgit finish --json result first. Run specgit doctor --json only for git, repository, origin, configured provider CLI/auth, or policy probes, then retry."
           );
         }
         if (pending.length > 0) {
@@ -170,9 +312,33 @@ case "$command" in
       });
     '
     ;;
-  git\\ push\\ origin\\ main*|git\\ push\\ origin\\ +main*|git\\ push\\ origin\\ HEAD:main*)
-    echo "specgit: direct push to main is not the delivery path. Deliveries go: specgit issue -> PR -> CI -> specgit finish (exit 0) -> merge." >&2
-    exit 2
+esac
+unset classifier_status merge_command
+
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
+  esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
+case "$command" in
+  git\\ push\\ origin\\ *)
+    default_ref=$(specgit_default_ref) || {
+      echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+      exit 2
+    }
+    default_branch=\${default_ref#refs/remotes/origin/}
+    case "$command" in
+      git\\ push\\ origin\\ "$default_branch"|git\\ push\\ origin\\ "$default_branch"\\ *|git\\ push\\ origin\\ +"$default_branch"|git\\ push\\ origin\\ +"$default_branch"\\ *|git\\ push\\ origin\\ HEAD:"$default_branch"|git\\ push\\ origin\\ HEAD:"$default_branch"\\ *)
+        echo "specgit: direct push to $default_branch is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+        exit 2
+        ;;
+    esac
     ;;
 esac
 exit 0
@@ -658,21 +824,22 @@ already exists); keep manual guidance outside them.
 ### The delivery story
 
 - Start with \`specgit issue <title-or-number>...\`: it creates or reuses
-  the issues, branches, opens the draft pull request pre-filled with a
-  deterministic scaffold (the \`Closes #n\` line for every bound issue,
-  then Why / What changed / Evidence / Checklist sections), and writes
-  \`.specgit.yaml\`. Re-running resumes; it is idempotent.
-- Use the issue/PR templates explicitly selected by policy. With
+  the issues, writes and pushes the initial binding on the delivery branch,
+  opens the draft pull or merge request with the supplied body, selected policy
+  template, or built-in scaffold, then records and pushes its number. Re-running
+  resumes; it is idempotent.
+- Use the issue and PR/MR templates explicitly selected by policy. With
   \`validation.bodies\` or \`required_sections\`, prepare complete content from
   the discussion before bootstrap and supply \`--body-file <path>\` per new
-  title and \`--pr-body-file <path>\`. Without body rules, built-in scaffolds
-  can be filled after creation. Preserve every \`Closes #n\`; enabled body
+  title and \`--pr-body-file <path>\`. Without enforced body rules, the selected
+  policy template or built-in scaffold can be filled after creation. Preserve
+  every \`Closes #n\`; enabled body
   rules apply at creation and acceptance. Resume keeps existing remote bodies
   and user edits. Unselected repository templates are not silently loaded.
-- A draft pull request always fails the verdict (\`pr_draft\`): before
+- A draft PR/MR always fails the verdict (\`pr_draft\`): before
   \`specgit finish\`, mark it ready for review — \`gh pr ready <number>\`
   on GitHub, \`glab mr update <number> --ready\` on GitLab.
-- \`specgit finish\` is read-only: its verdict comes from real git, PR,
+- \`specgit finish\` is read-only: its verdict comes from real git, PR/MR,
   and CI evidence; exit 0 means accepted. With automation enabled, the trusted
   remote workflow continues after CI without another confirmation.
   \`specgit pr --merge --json\` is the recovery path: it verifies the approved
@@ -682,7 +849,7 @@ already exists); keep manual guidance outside them.
 
 ### Issue tags
 
-- Follow the project's \`language\` for issues and PRs. Enabled \`validation\`
+- Follow the project's \`language\` for issues and PRs/MRs. Enabled \`validation\`
   rules check titles and labels before creation and during \`finish\`.
   \`kind\` mode requires one catalog kind and only declared extras;
   \`project\` mode selects only policy \`tags\`. Users choose rule changes with
@@ -700,12 +867,12 @@ already exists); keep manual guidance outside them.
 
 ### Repair and diagnostics
 
-- \`specgit pr\` repairs the pull-request binding: with no arguments it
-  auto-discovers the pull request for this head branch, errors with a fix
+- \`specgit pr\` repairs the PR/MR binding: with no arguments it
+  auto-discovers the request for this head branch, errors with a fix
   when none is found, and refuses with a list when several match.
 - \`specgit status\` shows local evidence only: record, state, drift,
-  origin. \`specgit doctor\` probes git, repository, origin, gh, and
-  policy.
+  origin. \`specgit doctor\` probes git, repository, origin, the configured
+  provider CLI (\`gh\`, or \`glab\` for a declared GitLab host), and policy.
 
 ### The command surface
 
@@ -715,17 +882,23 @@ already exists); keep manual guidance outside them.
 - \`specgit setup\` installs the agent entry points (commands for opencode,
   portable skills for other tools); \`specgit bind\`, \`specgit unbind\`,
   and \`specgit accept\` are automation aliases for scripts and CI.
-- Automation defaults to off (\`--automation no\`). Only when the user personally chooses
-  yes may \`specgit init --automation yes --merge-target <branch>\` enable it;
-  ordinary \`init --force\` preserves that choice and target. An agent must not answer yes for the user.
+- Automation defaults to off (\`--automation no\`). For a fresh policy, only
+  when the user personally chooses yes may they enable it with
+  \`specgit init --automation yes --merge-target <branch>\`. To change an
+  existing policy, use
+  \`specgit init --force --automation yes --merge-target <branch>\`; plain
+  \`init --force\` preserves its current choice and target. An agent must not
+  answer yes for the user.
 
 ### Before creating an issue, check for duplicates
 
 - Before running \`specgit issue\` with a new title, search the tracker for
-  similar open work: \`gh issue list\` with keywords from the title
-  (state, labels, and search terms via \`gh search issues\`).
-- Open and read every plausible candidate (\`gh issue view <n>\`) — compare
-  the WHY, not just the wording.
+  similar open work through the authenticated session: on GitHub use
+  \`gh issue list --state open --search "<keywords>"\`; on GitLab use
+  \`glab issue list --search "<keywords>" --in title\`. Narrow
+  further with labels when useful.
+- Open and read every plausible candidate with \`gh issue view <n>\` on GitHub
+  or \`glab issue view <n>\` on GitLab — compare the WHY, not just the wording.
 - If a candidate covers the same WHY, continue that issue instead of
   creating a new one; if it is close but different, say how they differ.
 - When unsure, ask the requester to decide between continuing the existing
@@ -764,9 +937,14 @@ verified on its own evidence, split it before binding.
   artifacts. Trivial replies and read-only questions need none of
   this.
 - Local maintenance: installing or upgrading the CLI and running \`init\` /
-  \`setup\` to refresh local configuration and entry points need no issue, PR,
+  \`setup\` to refresh local configuration and entry points need no issue, PR/MR,
   product build, or release when no product or shared-rule change is intended
-  for commit. Review tracked diffs before choosing what to share; ignore rules
+  for commit. After a package upgrade, a human may run plain \`specgit init\`
+  and approve its guided refresh when it proves drift; non-interactive agents
+  run \`specgit init --force --no-protect\`, then \`specgit setup --tool all\`,
+  then verify \`specgit status --json\`. Append \`--no-ignore\` to init when
+  authoritative delivery files are intentionally tracked without the managed
+  ignore block; setup preserves that proven choice. Review tracked diffs before choosing what to share; ignore rules
   are never CI exemptions. Follow the host project's verification policy for
   the actual changed inputs; documentation may itself be a product input.
   Publishing requires explicit release intent within existing user authorization;
@@ -774,18 +952,19 @@ verified on its own evidence, split it before binding.
 - \`specgit finish\` exit \`0\` means accepted. Report completed only after
   the configured target merge and every bound issue closure are confirmed.
   Never declare completion from task lists, file states, or tests alone.
-  Track a failed PR with a new repair issue; repeated causes reuse an open
-  repair issue and do not require abandoning the original PR.
-- Use existing user authorization to complete issue bodies, the PR body
+  Track a failed PR/MR with a new repair issue; repeated causes reuse an open
+  repair issue and do not require abandoning the original PR/MR.
+- Use existing user authorization to complete issue bodies, the PR/MR body
   and ready transition, CI repairs or retries, acceptance, and the authorized
   merge. When user authorization or platform permission is missing, present
   the prepared result and name the specific gap. Documentation and entry
   points do not grant permission themselves.
 - Branch on exit codes, not phrasing: \`1\` = evidence complete, fix what
-  the gates named; \`3\` = evidence missing, fix the environment first
-  (\`specgit doctor\`). Never present exit \`3\` as success.
-- Keep the \`Closes #n\` references in the PR body intact; after changing
-  the PR body, head branch, or CI, re-run \`specgit finish\`. Never
+  the gates named; \`3\` = evidence missing, so follow \`errors[].fix\` first.
+  Run \`specgit doctor --json\` only for git, repository, origin, configured
+  provider CLI/auth, or policy probes. Never present exit \`3\` as success.
+- Keep the \`Closes #n\` references in the PR/MR body intact; after changing
+  the PR/MR body, head branch, or CI, re-run \`specgit finish\`. Never
   bypass or reconfig a required check to make acceptance pass.
 - Forge evidence flows through the user's authenticated CLI session only
   (\`gh\` / \`glab\`): never read, log, or pass around tokens.
@@ -801,28 +980,27 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 
 ### 交付故事
 
-- 用 \`specgit issue <标题或编号>...\` 开始：它会创建或复用议题、建分支、
-  开一个预填确定性骨架的草稿拉取请求（每个绑定议题一行 \`Closes #n\`，
-  随后是 为什么 / 变更内容 / 证据 / 清单 各节），并写入 \`.specgit.yaml\`。
-  重复执行会恢复现场；它是幂等的。
-- 使用策略明确选择的 issue/PR 模板。启用 \`validation.bodies\` 或
+- 用 \`specgit issue <标题或编号>...\` 开始：它会创建或复用议题，在交付
+  分支写入并推送初始绑定，使用显式提供的正文、策略模板或内置骨架创建草稿
+  PR/MR，随后记录并再次推送请求编号。重复执行会恢复现场；它是幂等的。
+- 使用策略明确选择的 issue 与 PR/MR 模板。启用 \`validation.bodies\` 或
   \`required_sections\` 时，先从对话准备完整正文，创建时通过
   \`--body-file <path>\`（每个新标题一份）和 \`--pr-body-file <path>\` 传入。
-  未启用正文规则时，内置骨架可在创建后填写。保留所有 \`Closes #n\`；
+  未启用正文规则时，所选策略模板或内置骨架可在创建后填写。保留所有 \`Closes #n\`；
   创建及验收都会检查启用的正文规则。恢复交付保留已有远端正文，
   不会覆盖用户修改，也不会暗中加载未选择的仓库模板。
-- 草稿拉取请求恒使裁决失败（\`pr_draft\`）：在 \`specgit finish\` 之前，
+- 草稿 PR/MR 恒使裁决失败（\`pr_draft\`）：在 \`specgit finish\` 之前，
   先把它标为可评审——GitHub 用 \`gh pr ready <number>\`，GitLab 用
   \`glab mr update <number> --ready\`。
-- \`specgit finish\` 只读：裁决来自真实的 git、PR 与 CI 证据，退出码
+- \`specgit finish\` 只读：裁决来自真实的 git、PR/MR 与 CI 证据，退出码
   0 表示验收通过。已启用自动化时，可信远端工作流在 CI 结束后自动续行，
   无需再次人工确认；\`specgit pr --merge --json\` 是恢复入口。它验证已批准
-  策略的 \`target_branch\`、重新验收及当前 PR 头的全部 CI 检查，确认合并
+  策略的 \`target_branch\`、重新验收及当前 PR/MR 头的全部 CI 检查，确认合并
   与全部绑定议题关闭后才报告 completed；关闭失败保留可恢复的待收尾状态。
 
 ### 议题标签
 
-- 按项目策略的 \`language\` 填写 issue/PR；\`validation\` 启用的标题与
+- 按项目策略的 \`language\` 填写 issue 与 PR/MR；\`validation\` 启用的标题与
   标签规则在创建前和 \`finish\` 中校验。\`kind\` 模式要求一个内置类型，
   扩展标签须在 \`tags\` 中声明；\`project\` 模式只选 \`tags\` 中的标签。
   更改规则时，由用户通过 \`specgit init --force --configure-rules\` 选择。
@@ -836,10 +1014,11 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 
 ### 修复与诊断
 
-- \`specgit pr\` 修复拉取请求绑定：不带参数时按当前头分支自动发现拉取
-  请求，找不到时报错并给出修复办法，找到多个时列出并拒绝。
+- \`specgit pr\` 修复 PR/MR 绑定：不带参数时按当前头分支自动发现请求，
+  找不到时报错并给出修复办法，找到多个时列出并拒绝。
 - \`specgit status\` 只展示本地证据：记录、状态、漂移、origin。
-  \`specgit doctor\` 探测 git、仓库、origin、gh 与策略。
+  \`specgit doctor\` 探测 git、仓库、origin、已配置的平台 CLI（GitHub 用
+  \`gh\`，已声明 GitLab host 时用 \`glab\`）与策略。
 - 诊断信息（diagnostic 的 message/fix）与诊断 \`code\` 恒为英文——这是
   机器契约的一部分，任何语言配置都不本地化它们；按 \`code\` 与 \`fix\`
   行动，不要依赖语言一致性。
@@ -852,17 +1031,19 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
 - \`specgit setup\` 安装代理入口（opencode 的命令、其他工具的可移植
   skill）；\`specgit bind\`、\`specgit unbind\`、\`specgit accept\` 是面向
   脚本与 CI 的自动化别名。
-- 自动化默认关闭（\`--automation no\`）。只有用户本人选择 yes，才能用
-  \`specgit init --automation yes --merge-target <branch>\` 开启；
-  普通 \`init --force\` 保留这个选择与目标；代理不得替用户回答 yes。
+- 自动化默认关闭（\`--automation no\`）。新建策略时，只有用户本人选择 yes，
+  才能用 \`specgit init --automation yes --merge-target <branch>\` 开启；已有策略
+  要改为自动化时，使用
+  \`specgit init --force --automation yes --merge-target <branch>\`。普通
+  \`init --force\` 保留已有选择与目标；代理不得替用户回答 yes。
 
 ### 建议题之前，先查重
 
-- 用新标题运行 \`specgit issue\` 之前，先在 tracker 里搜索相近的在办
-  工作：用标题关键词做 \`gh issue list\`（状态、标签、检索词用
-  \`gh search issues\`）。
-- 打开并阅读每一个疑似候选（\`gh issue view <n>\`）——比较 WHY 本身，
-  而不是措辞。
+- 用新标题运行 \`specgit issue\` 之前，通过已认证的会话搜索 tracker 中相近的
+  在办工作：GitHub 使用 \`gh issue list --state open --search "<关键词>"\`；GitLab 使用
+  \`glab issue list --search "<关键词>" --in title\`。需要时用标签继续缩小范围。
+- 用 GitHub 的 \`gh issue view <n>\` 或 GitLab 的 \`glab issue view <n>\`
+  打开并阅读每一个疑似候选——比较 WHY 本身，而不是措辞。
 - 若某个候选覆盖了同一个 WHY，继续那个议题而不是新建；若相近但不同，
   说明差别在哪里。
 - 拿不准时，请提出请求的人决定是继续已有议题还是接受重复。一个团队
@@ -893,20 +1074,27 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
   实现。会话中途的盘点（“让我列出所有要做的事”）也应变成议题，而不是
   聊天产物。平凡的回复与只读提问无需如此。
 - 本地维护：安装或升级 CLI、运行 \`init\` / \`setup\` 刷新本地配置与入口，
-  在没有计划提交产品或共享规则变更时，无需议题、PR、产品构建或发布。
+  在没有计划提交产品或共享规则变更时，无需议题、PR/MR、产品构建或发布。
+  包升级后，人类可运行裸 \`specgit init\`，仅在它证明存在漂移时批准引导刷新；
+  非交互代理依次运行 \`specgit init --force --no-protect\`、
+  \`specgit setup --tool all\`，再以 \`specgit status --json\` 验证。
+  若权威交付文件被有意跟踪且没有托管 ignore 块，则为 init 追加
+  \`--no-ignore\`；setup 会保留这项已证明的选择。
   先检查跟踪文件的差异，再决定哪些变更需要共享；忽略规则不是 CI 豁免名单。
   按宿主项目对真实变更输入的验证政策运行检查，文档也可能是产品输入。
   发布包必须有明确发布意图，并在已有用户授权范围内执行；本地维护与合并本身不代表发布。
 - \`specgit finish\` 退出 \`0\` 表示 accepted；只有配置目标上的合并和全部
   绑定议题关闭均经核验，才能报告 completed。绝不凭任务清单、文件状态或
-  自己跑过的测试宣布完成。失败 PR 用新的修复议题承接，重复原因复用已有
-  开放修复议题，不要求废弃原 PR。
-- 沿用已有用户授权完成议题正文、PR 正文与 ready、CI 修复或重试、验收
+  自己跑过的测试宣布完成。失败 PR/MR 用新的修复议题承接，重复原因复用已有
+  开放修复议题，不要求废弃原 PR/MR。
+- 沿用已有用户授权完成议题正文、PR/MR 正文与 ready、CI 修复或重试、验收
   以及授权范围内的合并闭环。只在缺少用户授权或平台权限时，携已准备好的
   结果说明具体缺口；文档与入口指引本身不授予权限。
 - 按退出码分支，不按措辞：\`1\` = 证据齐全，修门槛点名的内容；\`3\` =
-  证据缺失，先修环境（\`specgit doctor\`）。绝不把退出 \`3\` 当作成功。
-- 保持 PR 正文里的 \`Closes #n\` 引用完整；改动 PR 正文、头分支或 CI
+  证据缺失，先按 \`errors[].fix\` 修复。只有 git、仓库、origin、已配置的平台
+  CLI/auth 或策略探针失败时才运行 \`specgit doctor --json\`。绝不把退出 \`3\`
+  当作成功。
+- 保持 PR/MR 正文里的 \`Closes #n\` 引用完整；改动 PR/MR 正文、头分支或 CI
   后重跑 \`specgit finish\`。绝不为通过验收而绕过或改配置必需检查。
 - 平台证据只经由用户已认证的 CLI 会话（\`gh\` / \`glab\`）流转：绝不
   读取、记录或传递 token。
@@ -921,21 +1109,33 @@ specgit_pre_push_refs=$(mktemp) || exit 1
 cat > "$specgit_pre_push_refs" || { rm -f "$specgit_pre_push_refs"; exit 1; }
 (
 # SpecGit pre-push guard (managed by specgit init).
-while read -r local_ref local_sha remote_ref remote_sha; do
-  case "$remote_ref" in
-    refs/heads/main)
-      # Mirror sync (#343): a commit already contained by origin/main is
-      # accepted history — pushing it to another remote mirrors the
-      # verdict, it bypasses nothing. A zero sha (ref deletion) never
-      # passes this check.
-      if git merge-base --is-ancestor "$local_sha" refs/remotes/origin/main >/dev/null 2>&1; then
-        continue
-      fi
-      echo "specgit: direct push to main is not the delivery path." >&2
-      echo "Deliveries go: specgit issue -> PR -> CI -> specgit finish (exit 0) -> merge." >&2
-      exit 1
-      ;;
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
   esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
+default_ref=$(specgit_default_ref) || {
+  echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+  exit 1
+}
+default_branch=\${default_ref#refs/remotes/origin/}
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/$default_branch" ]; then
+    # A commit already contained by the proved origin default is accepted
+    # history and may be mirrored. A zero sha (deletion) cannot pass.
+    if git merge-base --is-ancestor "$local_sha" "$default_ref" >/dev/null 2>&1; then
+      continue
+    fi
+    echo "specgit: direct push to $default_branch is not the delivery path." >&2
+    echo "Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+    exit 1
+  fi
 done
 exit 0
 ) < "$specgit_pre_push_refs"

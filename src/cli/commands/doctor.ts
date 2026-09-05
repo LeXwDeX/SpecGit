@@ -1,7 +1,7 @@
 /**
  * `specgit doctor` — environment probes, nothing more. Probes: git binary,
- * git repository, parseable GitHub origin, gh present, gh authenticated,
- * policy present. Exit 0 when every probe passes; exit 3 otherwise
+ * git repository, parseable supported origin, matching provider CLI present
+ * and authenticated, policy present. Exit 0 when every probe passes; exit 3 otherwise
  * (fail-closed). One hygiene warning rides the envelope (#348): open
  * issues that carry the specgit scaffold signature but are bound to no
  * delivery — born outside the pipeline, so no closing reference will

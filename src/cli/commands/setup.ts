@@ -17,6 +17,7 @@ import {
   type SetupTool,
 } from '../agent-surface.js';
 import { catalogFor, commandLanguage } from '../language.js';
+import { localAssetIgnoreClaim } from './init-ignore.js';
 
 export interface SetupOptions {
   tool?: string;
@@ -58,8 +59,23 @@ export async function runSetup(
     tool = await detectSetupTool(root);
   }
 
+  const ignoreClaim = await localAssetIgnoreClaim(root, ctx);
+  if (ignoreClaim === 'ignore_tracked_unknown' || ignoreClaim === 'ignore_unreadable') {
+    const fix = ignoreClaim === 'ignore_unreadable'
+      ? 'Make .gitignore a readable regular file (or remove it), then re-run setup.'
+      : 'Ensure git is available and "git ls-files -- .specgit.yaml spec_git/policy.yaml" succeeds, then re-run setup.';
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [errorDiagnostic(ignoreClaim, 'The local-asset ignore model could not be determined safely.', {
+        fix,
+      })],
+    };
+  }
+
   try {
-    const result = await writeAgentSurface(root, tool);
+    const result = await writeAgentSurface(root, tool, {
+      writeIgnore: ignoreClaim === 'inspect',
+    });
     // #307: a removal candidate we could not prove ownership for is
     // preserved verbatim — surfaced, never silently dropped.
     const warnings = result.reconciled.preserved.map((entryPath) => ({

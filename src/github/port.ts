@@ -130,10 +130,16 @@ export interface BranchProtectionFact {
   requiredChecks: string[];
 }
 
-/** Repository-level auto-merge setting. */
+/** Provider-specific repository merge prerequisite used by init protection. */
 export interface RepoAutomergeFact {
   enabled: boolean;
 }
+
+/**
+ * Provider selector for GitLab's project-wide "pipeline must succeed"
+ * merge gate. This is a gate kind, never a CI job name.
+ */
+export const GITLAB_PIPELINE_SUCCESS_GATE = 'pipeline-success';
 
 /**
  * The delivery's evidence anchor (#315): the ISO-8601 instant the
@@ -237,6 +243,7 @@ export interface ForgeEvidencePort {
   getEvidenceAnchor(repo: RepoRef, pr: number | string): Promise<Evidence<EvidenceAnchorFact>>;
   listOpenPrsByHead(repo: RepoRef, head: string): Promise<Evidence<PrSummary[]>>;
   getBranchProtection(repo: RepoRef, branch: string): Promise<Evidence<BranchProtectionFact>>;
+  /** GitHub auto-merge capability, or GitLab's pipeline-success requirement. */
   getRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
   /** Every label title the repository carries (#330) — the pool tags are selected from. */
   listRepoLabels(repo: RepoRef): Promise<Evidence<RepoLabelsFact>>;
@@ -282,16 +289,22 @@ export interface ForgeDeliveryWritePort {
 }
 
 /**
- * Repository-administration mutations (#412): protection, auto-merge
- * configuration and label definitions. Read-only configuration facts
+ * Repository-administration mutations (#412): protection, provider-specific
+ * merge prerequisites and label definitions. Read-only configuration facts
  * belong to {@link ForgeEvidencePort}.
  */
 export interface ForgeAdminWritePort {
+  /**
+   * Enable branch protection for the provider's gate selector. GitHub accepts
+   * an exact required status-check name; GitLab accepts only
+   * {@link GITLAB_PIPELINE_SUCCESS_GATE}, which is not a CI job name.
+   */
   enableBranchProtection(
     repo: RepoRef,
     branch: string,
-    requiredCheck: string
+    requiredGate: string
   ): Promise<Evidence<BranchProtectionFact>>;
+  /** Enable GitHub auto-merge, or require successful GitLab pipelines. */
   enableRepoAutomerge(repo: RepoRef): Promise<Evidence<RepoAutomergeFact>>;
   /**
    * Create the named specs that are missing (#330), leave existing ones

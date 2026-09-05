@@ -218,7 +218,8 @@ export function packSpecgit(): Promise<PackedSpecgit> {
     try {
       const out = await runNpm(
         ['pack', '--json', '--silent', '--ignore-scripts', `--pack-destination=${dest}`],
-        staging
+        staging,
+        { npm_config_cache: path.join(staging, '.npm-cache') }
       );
       const filename = parseNpmPackFilename(out);
       return { tarballPath: path.join(dest, filename), version: manifest.version };

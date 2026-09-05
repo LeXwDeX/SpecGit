@@ -175,6 +175,34 @@ describe('specgit issue: fresh bootstrap', () => {
     );
   });
 
+  it('refuses missing default-branch evidence before fresh delivery mutations', async () => {
+    const t = issueCtx({ writes: {
+      remoteDefaultBranch: () => fail('git_default_branch_unknown', 'origin/HEAD is missing'),
+    } });
+    const outcome = await runIssue({ titles: ['fix: avoid guessing the target'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('git_default_branch_unknown');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutOrCreateBranch).not.toHaveBeenCalled();
+    expect(t.gitPort.commitFile).not.toHaveBeenCalled();
+    expect(t.gitPort.pushBranch).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicitly configured PR target without inventing default-branch evidence', async () => {
+    const t = issueCtx({ writes: {
+      remoteDefaultBranch: () => fail('git_default_branch_unknown', 'origin/HEAD is missing'),
+    } });
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      automation: { merge: true, target_branch: 'release/stable', close_issues: true },
+    });
+    const outcome = await runIssue({ titles: ['fix: respect the chosen target'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdPrs[0].base).toBe('release/stable');
+    // Read-only asset inspection may probe the default; its absence cannot
+    // override an explicitly configured request target.
+  });
+
   it('creates every title issue, derives branch/delivery, opens the draft PR, records, commits, pushes', async () => {
     const t = issueCtx({ facts: { branch: 'main' } });
     const outcome = await runIssue(
@@ -910,12 +938,13 @@ describe('specgit issue: replacement validation is non-destructive', () => {
 
   it('refuses a no-args resume of a merged delivery instead of resurrecting it (lifecycle)', async () => {
     // #75: the record's PR is merged — completed history. No-args resume
-    // must never re-create, commit, or push the branch GitHub deleted on
+    // must never re-create, commit, or push the branch the forge deleted on
     // merge; the decision is a usage diagnostic naming the way forward.
     const t = mergedRecordCtx();
     const outcome = await runIssue({ titles: [] }, t.ctx);
     expect(outcome.exit).toBe(2);
     expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
+    expect(outcome.errors?.[0]?.message).toContain('is complete because PR/MR #42 is merged');
     expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
     expect(outcome.errors?.[0]?.fix).not.toContain('unbind');
     expect(t.recordPort.deletes).toEqual([]);
@@ -1004,14 +1033,11 @@ describe('specgit issue: mergedness probe fails closed (provider failure)', () =
   });
 });
 
-describe('specgit issue: a bound PR that does not exist is terminal evidence (#284)', () => {
-  // Live finding on the GitLab mirror: main carries a record whose bound
-  // PR number exists only on the other platform. The mergedness probe
-  // then returns pr_not_found — a FACT, not a transport failure. A
-  // non-existent PR can never merge, so the lifecycle is terminal like a
-  // merged one: replacement arguments start the next delivery, and a
-  // no-args resume refuses with the way forward. Transport failures stay
-  // fail-closed (the describe above).
+describe('specgit issue: a bound PR/MR that does not exist remains repairable (#284)', () => {
+  // A missing request is proven absent, but absence is not proof of merge
+  // or completion. Keep the binding and tell the operator how to recreate
+  // or find the request and bind its number. Transport failures remain the
+  // distinct fail-closed probe result covered above.
   function missingPrCtx() {
     return issueCtx({
       facts: { branch: 'main' },
@@ -1027,23 +1053,84 @@ describe('specgit issue: a bound PR that does not exist is terminal evidence (#2
     });
   }
 
-  it('replacement arguments overwrite the stale record and bootstrap the next delivery', async () => {
+  it('replacement arguments cannot discard the repairable delivery', async () => {
     const t = missingPrCtx();
     const outcome = await runIssue({ titles: ['feat: next why'] }, t.ctx);
-    expect(outcome.exit).toBe(0);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('pr_not_found');
+    expect(outcome.errors?.[0]?.message).toContain('The delivery is not complete');
+    expect(outcome.errors?.[0]?.fix).toContain("branch 'feat/11-stale-cross-platform'");
+    expect(outcome.errors?.[0]?.fix).toContain('Closes #11, Closes #12');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr <number>');
     expect(t.recordPort.deletes).toEqual([]);
-    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: next why']);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
   });
 
-  it('a no-args resume refuses with the way forward, keeping the record', async () => {
+  it('a no-args resume reports the same repair path without calling it merged', async () => {
     const t = missingPrCtx();
     const outcome = await runIssue({ titles: [] }, t.ctx);
-    expect(outcome.exit).toBe(2);
-    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
-    expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
-    expect(outcome.errors?.[0]?.fix).not.toContain('unbind');
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('pr_not_found');
+    expect(outcome.errors?.[0]?.message).not.toContain('complete because');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr <number>');
+    expect(outcome.errors?.[0]?.fix).not.toContain('specgit issue');
     expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
     expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+});
+
+describe('specgit issue: a closed-unmerged PR/MR cannot resume (#463)', () => {
+  function closedPrCtx() {
+    return issueCtx({
+      facts: { branch: 'feat/11-failed-delivery' },
+      record: sampleBinding({
+        delivery: 'failed-delivery',
+        context: { kind: 'branch', branch: 'feat/11-failed-delivery' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () => ok({
+          number: 42,
+          state: 'closed' as const,
+          headBranch: 'feat/11-failed-delivery',
+          headSha: 'c'.repeat(40),
+          baseBranch: 'main',
+          body: 'Closes #11\nCloses #12\n',
+          mergeCommitSha: null,
+          draft: false,
+        }),
+      },
+    });
+  }
+
+  it.each([
+    { titles: [] as string[] },
+    { titles: ['fix: unrelated replacement'] },
+  ])('rejects before every mutation for arguments $titles', async ({ titles }) => {
+    const t = closedPrCtx();
+    const outcome = await runIssue({ titles }, t.ctx);
+    expect(outcome.exit).toBe(1);
+    expect(outcome.errors?.[0]?.code).toBe('pr_closed_unmerged');
+    expect(outcome.errors?.[0]?.message).toContain('closed without merge');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr <number>');
+    expect(outcome.errors?.[0]?.fix).toContain("branch 'feat/11-failed-delivery'");
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
     expect(t.gitPort.pushCalls).toEqual([]);
   });
 });
@@ -1239,7 +1326,7 @@ describe('specgit issue: exactly-once issue creation (fault injection)', () => {
       '## Approach',
       '',
       '## Acceptance',
-      'The delivery pull request closes this issue; `specgit finish` must exit 0.',
+      'The delivery PR/MR closes this issue; `specgit finish` must exit 0.',
       '',
     ].join('\n');
 

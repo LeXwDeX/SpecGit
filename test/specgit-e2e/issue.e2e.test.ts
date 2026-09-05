@@ -70,6 +70,7 @@ function makePushableRepo(branch: string): RepoFixture & { bareDir: string } {
   git(repo.dir, 'config', `url.${bareDir}.insteadOf`, `https://github.com/${OWNER}/${REPO}.git`);
   git(repo.dir, 'push', 'origin', 'HEAD:refs/heads/main');
   git(repo.dir, '--git-dir', bareDir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  git(repo.dir, 'remote', 'set-head', 'origin', '-a');
   cleanupDirs.push(bareDir, repo.dir);
   return { ...repo, bareDir };
 }
@@ -168,9 +169,9 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
     );
     expect(comments).toEqual([
       `api repos/${OWNER}/${REPO}/issues/11/comments?per_page=100&page=1`,
-      `api repos/${OWNER}/${REPO}/issues/11/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft pull request #77).`,
+      `api repos/${OWNER}/${REPO}/issues/11/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft PR/MR #77).`,
       `api repos/${OWNER}/${REPO}/issues/12/comments?per_page=100&page=1`,
-      `api repos/${OWNER}/${REPO}/issues/12/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft pull request #77).`,
+      `api repos/${OWNER}/${REPO}/issues/12/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft PR/MR #77).`,
     ]);
 
     // Simulate the merge: PR merged, issues closed by GitHub, checks

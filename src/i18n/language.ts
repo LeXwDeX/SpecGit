@@ -27,6 +27,12 @@ export type { PolicyLanguage } from '../record/policy.js';
 
 export const DEFAULT_LANGUAGE: PolicyLanguage = 'en';
 
+/** Render numeric request ids with `#`; keep validated URL refs intact. */
+export function formatRequestRef(pr: number | string): string {
+  const value = String(pr);
+  return /^\d+$/u.test(value) ? `#${value}` : value;
+}
+
 /** The policy's language, or the default when absent. */
 export function resolveLanguage(policy: Policy | undefined | null): PolicyLanguage {
   return policy?.language ?? DEFAULT_LANGUAGE;
@@ -144,6 +150,7 @@ export interface HumanText {
   initRemovedAsset(path: string): string;
   initPreservedAsset(path: string): string;
   initProtectionRequired(branch: string, check: string): string;
+  initGitlabPipelineProtection(branch: string): string;
   // init — adoption hand-off (#352); the reasons localize keyed by the
   // verbatim step code, so no positional coupling to the command list.
   // gitlab drops the protect step.
@@ -173,7 +180,7 @@ const EN_SCAFFOLD: ScaffoldText = {
   issueApproach: '## Approach',
   issueAcceptance: '## Acceptance',
   issueAcceptanceLine:
-    'The delivery pull request closes this issue; `specgit finish` must exit 0.',
+    'The delivery PR/MR closes this issue; `specgit finish` must exit 0.',
   prWhy: '## Why',
   prWhyHint: 'Summarize the problem or need this delivery addresses.',
   prWhat: '## What changed',
@@ -207,7 +214,7 @@ const EN_HUMAN: HumanText = {
     `${resumed ? 'Resumed' : 'Bootstrapped'} delivery '${delivery}':`,
   issueBranch: (branch) => `  Branch: ${branch}`,
   issueIssues: (list) => `  Issues: ${list}`,
-  issuePr: (pr) => `  PR: #${pr} (draft)`,
+  issuePr: (pr) => `  PR/MR: ${formatRequestRef(pr)} (draft)`,
   issueRecorded: (filename) => `  Recorded ${filename}, committed, pushed to origin`,
   issueTags: (applied, seeded) =>
     `  Tags: ${applied}${seeded === null ? '' : ` (seeded: ${seeded})`}`,
@@ -217,12 +224,12 @@ const EN_HUMAN: HumanText = {
     '  Warning: the repository label pool could not be read; no tags were applied this run.',
   issuePrTitleFallback: (delivery) => `Delivery ${delivery}`,
   issueTraceabilityComment: (branch, pr) =>
-    `SpecGit delivery branch: \`${branch}\` (draft pull request #${pr}).`,
+    `SpecGit delivery branch: \`${branch}\` (draft PR/MR ${formatRequestRef(pr)}).`,
   deliveryNamePrompt: () =>
     'Enter a delivery name (kebab-case ASCII, e.g. add-login): ',
   deliveryNameRetry: () =>
     'Not a valid kebab-case name — try again (e.g. add-login): ',
-  prBound: (pr, delivery) => `Bound PR #${pr} to delivery '${delivery}':`,
+  prBound: (pr, delivery) => `Bound PR/MR ${formatRequestRef(pr)} to delivery '${delivery}':`,
   prIssues: (list) => `  Issues: ${list}`,
   automationCompleted: (pr, target) => `Merged #${pr} into ${target}; configured issue closure is complete.`,
   automationHandoffReason: () => 'Verify all CI/CD on the current head, merge into the configured target, and complete configured issue closure.',
@@ -230,7 +237,7 @@ const EN_HUMAN: HumanText = {
   bindContextWorktree: (label, branch) => `Context: worktree ${label} on ${branch}`,
   bindContextBranch: (branch) => `Context: branch ${branch}`,
   bindIssues: (list) => `  Issues: ${list}`,
-  bindPr: (pr) => `  PR: ${pr}`,
+  bindPr: (pr) => `  PR/MR: ${formatRequestRef(pr)}`,
   unbindAborted: () => 'Unbind aborted; record kept.',
   unbindRemoved: (filename) => `Removed ${filename}.`,
   statusDelivery: (delivery, state) => `Delivery: ${delivery} (${state})`,
@@ -238,8 +245,8 @@ const EN_HUMAN: HumanText = {
   statusContextBranch: (branch) => `Context: branch ${branch}`,
   statusIssues: (list) => `Issues: ${list}`,
   statusIssuesNone: () => 'Issues: (none)',
-  statusPr: (pr) => `PR: ${pr}`,
-  statusPrNone: () => 'PR: (none)',
+  statusPr: (pr) => `PR/MR: ${formatRequestRef(pr)}`,
+  statusPrNone: () => 'PR/MR: (none)',
   statusRepository: (repo) => `Repository: ${repo}`,
   statusRepositoryUnresolved: () => 'Repository: (unresolved)',
   statusLiveBranch: (branch) => `Live branch: ${branch}`,
@@ -279,6 +286,8 @@ const EN_HUMAN: HumanText = {
   initPreservedAsset: (path) => `Preserved ${path} (not provably SpecGit-owned; left untouched)`,
   initProtectionRequired: (branch, check) =>
     `Branch protection: ${branch} now requires "${check}"`,
+  initGitlabPipelineProtection: (branch) =>
+    `GitLab protection: ${branch} is protected and requires a successful pipeline before merge`,
   initNextAdoptionHeadline: () =>
     'Next: the adoption is not on the default branch yet — finish it before requiring checks:',
   nextHeadline: () => 'Next:',
@@ -287,20 +296,22 @@ const EN_HUMAN: HumanText = {
       issue_bodies:
         'Fill every issue body (Why / Scope / Approach / Acceptance) — the scaffold body is advisory, the WHY is the contract.',
       pr_brief:
-        'Fill the PR brief sections (Why / What changed / Evidence); keep the Closes #n lines intact.',
+        'Fill the PR/MR brief sections (Why / What changed / Evidence); keep the Closes #n lines intact.',
       pr_ready: 'A draft always fails the verdict; ready makes the delivery reviewable.',
     }) as Record<string, string>,
   finishHandoffReasons: () =>
     ({
       delivery_merge:
         'The verdict is green. Auto-merge fires only when every required check — this verdict among them — passes.',
+      delivery_finalize:
+        'The PR/MR is merged. Verify that every bound issue is closed before starting another delivery.',
       next_delivery:
         'This record is completed history — the next bootstrap atomically replaces it.',
     }) as Record<string, string>,
   initAdoptionReasons: (gitlab) =>
     ({
       adoption_branch:
-        'Carry the harness and policy to the default branch through a pull request, not a direct push.',
+        'Carry the harness and policy to the default branch through a PR/MR, not a direct push.',
       adoption_commit:
         'The policy is shielded by .gitignore by default — a plain "git add" silently skips it; the -f is required.',
       adoption_pr: gitlab
@@ -317,7 +328,7 @@ const EN_HUMAN: HumanText = {
     }) as Record<string, string>,
   initAutomerge: (enabled) => `Auto-merge: ${enabled ? 'enabled' : 'already on'}`,
   finishAccepted: (delivery, pr) =>
-    `Accepted: delivery '${delivery}'${pr !== null ? ` (PR ${pr})` : ''}.`,
+    `Accepted: delivery '${delivery}'${pr !== null ? ` (PR/MR ${formatRequestRef(pr)})` : ''}.`,
   finishRejected: (delivery) => `Rejected: delivery '${delivery}' failed acceptance.`,
   finishUnknown: (delivery) =>
     `Cannot determine acceptance${delivery !== null ? ` for delivery '${delivery}'` : ''}.`,
@@ -327,7 +338,7 @@ const ZH_HUMAN: HumanText = {
   issueHeader: (resumed, delivery) => `${resumed ? '已恢复交付' : '已引导交付'} '${delivery}'：`,
   issueBranch: (branch) => `  分支：${branch}`,
   issueIssues: (list) => `  议题：${list}`,
-  issuePr: (pr) => `  PR：#${pr}（草稿）`,
+  issuePr: (pr) => `  PR/MR：${formatRequestRef(pr)}（草稿）`,
   issueRecorded: (filename) => `  已记录 ${filename}，已提交并推送到 origin`,
   issueTags: (applied, seeded) =>
     `  标签：${applied}${seeded === null ? '' : `（新建：${seeded}）`}`,
@@ -338,8 +349,8 @@ const ZH_HUMAN: HumanText = {
   deliveryNamePrompt: () => '请输入交付名（kebab-case ASCII，例如 add-login）：',
   deliveryNameRetry: () => '不是有效的 kebab-case 名称——请重试（例如 add-login）：',
   issueTraceabilityComment: (branch, pr) =>
-    `SpecGit 交付分支：\`${branch}\`（草稿拉取请求 #${pr}）。`,
-  prBound: (pr, delivery) => `已将 PR #${pr} 绑定到交付 '${delivery}'：`,
+    `SpecGit 交付分支：\`${branch}\`（草稿 PR/MR ${formatRequestRef(pr)}）。`,
+  prBound: (pr, delivery) => `已将 PR/MR ${formatRequestRef(pr)} 绑定到交付 '${delivery}'：`,
   prIssues: (list) => `  议题：${list}`,
   automationCompleted: (pr, target) => `已将 #${pr} 合并到 ${target}，配置要求的议题关闭已完成。`,
   automationHandoffReason: () => '核验当前提交的全部 CI/CD，合并到配置的目标分支，并完成配置要求的议题关闭。',
@@ -347,7 +358,7 @@ const ZH_HUMAN: HumanText = {
   bindContextWorktree: (label, branch) => `上下文：工作树 ${label}，分支 ${branch}`,
   bindContextBranch: (branch) => `上下文：分支 ${branch}`,
   bindIssues: (list) => `  议题：${list}`,
-  bindPr: (pr) => `  PR：${pr}`,
+  bindPr: (pr) => `  PR/MR：${formatRequestRef(pr)}`,
   unbindAborted: () => '已取消解绑；记录保留。',
   unbindRemoved: (filename) => `已移除 ${filename}。`,
   statusDelivery: (delivery, state) => `交付：${delivery}（${state}）`,
@@ -355,8 +366,8 @@ const ZH_HUMAN: HumanText = {
   statusContextBranch: (branch) => `上下文：分支 ${branch}`,
   statusIssues: (list) => `议题：${list}`,
   statusIssuesNone: () => '议题：（无）',
-  statusPr: (pr) => `PR：${pr}`,
-  statusPrNone: () => 'PR：（无）',
+  statusPr: (pr) => `PR/MR：${formatRequestRef(pr)}`,
+  statusPrNone: () => 'PR/MR：（无）',
   statusRepository: (repo) => `仓库：${repo}`,
   statusRepositoryUnresolved: () => '仓库：（未解析）',
   statusLiveBranch: (branch) => `当前分支：${branch}`,
@@ -394,6 +405,8 @@ const ZH_HUMAN: HumanText = {
   initRemovedAsset: (path) => `已移除过时的 SpecGit 资产 ${path}`,
   initPreservedAsset: (path) => `已保留 ${path}（无法证明为 SpecGit 所有；未做改动）`,
   initProtectionRequired: (branch, check) => `分支保护：${branch} 现在要求 "${check}"`,
+  initGitlabPipelineProtection: (branch) =>
+    `GitLab 分支保护：${branch} 已受保护，并要求流水线成功后才能合并`,
   initNextAdoptionHeadline: () =>
     '下一步：接入（adoption）尚未落到默认分支——先完成接入，再启用必需检查：',
   nextHeadline: () => '下一步：',
@@ -401,17 +414,18 @@ const ZH_HUMAN: HumanText = {
     ({
       issue_bodies:
         '填写每个 issue 正文（Why / Scope / Approach / Acceptance）——骨架正文只是建议，WHY 才是契约。',
-      pr_brief: '填写 PR 简报各节（Why / What changed / Evidence）；保持 Closes #n 行不变。',
+      pr_brief: '填写 PR/MR 简报各节（Why / What changed / Evidence）；保持 Closes #n 行不变。',
       pr_ready: '草稿永远过不了裁决；ready 之后交付才可评审。',
     }) as Record<string, string>,
   finishHandoffReasons: () =>
     ({
       delivery_merge: '裁决已绿。auto-merge 只在全部必需检查（含本裁决）通过后触发。',
+      delivery_finalize: 'PR/MR 已合并。开始下一次交付前，确认所有绑定 issue 均已关闭。',
       next_delivery: '该记录是已完成的历史——下一次引导会原子替换它。',
     }) as Record<string, string>,
   initAdoptionReasons: (gitlab) =>
     ({
-      adoption_branch: '通过 pull request（而非直接 push）把 harness 与 policy 带到默认分支。',
+      adoption_branch: '通过 PR/MR（而非直接 push）把 harness 与 policy 带到默认分支。',
       adoption_commit: 'policy 默认被 .gitignore 屏蔽——普通 "git add" 会静默跳过它；必须加 -f。',
       adoption_pr: gitlab
         ? '合并接入 MR，让你的 CI 作业存在于默认分支上。'
@@ -423,7 +437,7 @@ const ZH_HUMAN: HumanText = {
     }) as Record<string, string>,
   initAutomerge: (enabled) => `自动合并：${enabled ? '已启用' : '已开启'}`,
   finishAccepted: (delivery, pr) =>
-    `已接受：交付 '${delivery}'${pr !== null ? `（PR ${pr}）` : ''}。`,
+    `已接受：交付 '${delivery}'${pr !== null ? `（PR/MR ${formatRequestRef(pr)}）` : ''}。`,
   finishRejected: (delivery) => `已拒绝：交付 '${delivery}' 未通过验收。`,
   finishUnknown: (delivery) =>
     `无法判定验收${delivery !== null ? `（交付 '${delivery}'）` : ''}。`,

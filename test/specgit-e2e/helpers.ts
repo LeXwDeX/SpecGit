@@ -83,6 +83,9 @@ export function makeRepo(branch: string, deliveryFile = 'feature.txt', withRemot
     git(dir, 'config', `url.${bare}.insteadOf`, REPO_URL);
     git(dir, 'push', 'origin', 'HEAD:refs/heads/main');
     git(dir, '--git-dir', bare, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+    // A push does not populate the local origin/HEAD. Ask the real bare
+    // remote for its advertised default, as a clone would do.
+    git(dir, 'remote', 'set-head', 'origin', '-a');
   }
   // #299: bind now force-carries the record as a commit — HEAD moves
   // after fixture creation, so `sha` must always read live.

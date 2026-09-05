@@ -72,13 +72,14 @@ describe('init automation choice', () => {
     expect(fs.existsSync(path.join(root, 'AGENTS.md'))).toBe(false);
   });
 
-  it('rejects a yes against real git with no origin HEAD before writing any policy', async () => {
+  it('rejects a real repository with no origin before automation or policy writes', async () => {
     const { root: repoRoot } = initRepo(root);
     const t = makeCtx({ root: ok(repoRoot), cwd: repoRoot });
     t.ctx.git = new LocalGitAdapter();
     const outcome = await runInit({ ...options, automation: 'yes' }, t.ctx);
     expect(outcome.exit).toBe(3);
-    expect(outcome.errors?.[0]?.code).toBe('automation_target_unknown');
+    expect(outcome.errors?.[0]?.code).toBe('platform_undecided');
+    expect(outcome.errors?.[0]?.fix).toContain('Configure origin');
     expect(t.recordPort.policyWrites).toEqual([]);
     expect(fs.existsSync(path.join(repoRoot, 'AGENTS.md'))).toBe(false);
   });
