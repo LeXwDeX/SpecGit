@@ -189,12 +189,15 @@ export class MockForgeProvider implements ForgeProvider {
   async enableBranchProtection(
     repo: RepoRef,
     branch: string,
-    requiredCheck: string
+    requiredGate: string
   ): Promise<Evidence<BranchProtectionFact>> {
-    this.calls.push(`enableBranchProtection:${formatRepo(repo)}:${branch}:${requiredCheck}`);
+    this.calls.push(`enableBranchProtection:${formatRepo(repo)}:${branch}:${requiredGate}`);
     return (
       this.fixtures.enableBranchProtection ??
-      ok({ protected: true, requiredChecks: [requiredCheck] })
+      ok({
+        protected: true,
+        requiredChecks: repo.platform === 'github' ? [requiredGate] : [],
+      })
     );
   }
 

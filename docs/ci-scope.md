@@ -24,12 +24,46 @@ prove that an existing tracked file is local, or make ignored code safe to ship.
 Moving a source file into a documentation path retains its source deletion in
 the classified diff and therefore still requires product verification.
 
-## What is verified
+## Documentation short path
+
+Use this path for an intended change limited to README prose, Wiki pages,
+ordinary documentation, or manual project guidance in AGENTS/CLAUDE. Shipped
+templates, generated-block source, executable workflows, and build inputs
+retain their product classification. Judge the actual inputs;
+a Markdown extension alone does not settle their role.
+
+1. Reuse the existing issue/PR when it covers the same WHY. Read the requested
+   pages and only the contract or source needed to verify their changed claims.
+2. Edit those pages and inspect their diff once for accuracy, links, and scope.
+   Preserve generated regions; manual project guidance belongs outside them.
+3. Run `node scripts/ci-metadata-check.mjs` once. Existing dependencies suffice;
+   if missing, install the locked verification dependencies with `--ignore-scripts`.
+   Fix failures caused by this change and rerun only the affected check; record
+   a pre-existing unrelated failure without expanding this task to repair it.
+4. The local edit is ready when its relevant content and checks are correct.
+   If delivery is authorized, commit only its intended files, push the final
+   content, and use the existing lightweight remote acceptance before merge.
+   Mark the PR ready after that final push. Pending CI is a wait state, not a
+   reason to rebuild, rewrite documentation, or create another repair issue.
+
+This path replaces the product TDD and multi-round quality-review loops for
+documentation. It requires no product build, full test suite, mutation test,
+architecture audit, parallel review agents, package release, or new test written
+only to assert a sentence. Repeat verification when a subsequent change or a
+relevant failure justifies it; passing checks are a stopping condition.
+
+In a shared dirty checkout, keep the requested edit separate from pre-existing
+source work. A PR that already includes product changes still needs product CI;
+do not turn a documentation request into finishing those unrelated changes.
+Publish Wiki pages from the reviewed document set and verify the remote commit;
+describe only released behavior as currently available.
+
+## Verification by changed surface
 
 | Changed surface | Required verification | Build or publish consequence |
 | --- | --- | --- |
 | CLI/domain/provider source, shipped generators and hook scripts, schema, templates, distributed skills, tests, build scripts, package/build dependencies, executable workflows | Product build, both typechecks, lint, tests and applicable security checks on the supported platform matrix | Build and test the product under review; publish only with release intent |
-| Explicitly recognized shared documentation, policy/record/provider data, `.gitignore`, project AGENTS/CLAUDE guidance, local agent command/skill Markdown copies | Real schema, generated-content and documentation contract validation; delivery acceptance still reads real git, forge and current-head CI evidence | Frozen verification dependencies installed with `--ignore-scripts`; no product compilation, typecheck, lifecycle build or implied release |
+| Explicitly recognized shared documentation, policy/record/provider data, `.gitignore`, project AGENTS/CLAUDE guidance, issue/PR templates, reviewed release/review metadata, and local agent command/skill Markdown copies | Real schema, generated-content, configuration-shape and documentation contract validation; delivery acceptance still reads real git, forge and current-head CI evidence | Frozen verification dependencies installed with `--ignore-scripts`; no product compilation, typecheck, lifecycle build or implied release |
 | Nix inputs and their CI wiring | Nix verification in addition to the applicable product checks | No implied release |
 | Dependency manifests, lockfile and security wiring | Dependency audit in addition to the applicable product checks | No implied release |
 | Valid nonempty release changeset or package version change | Validate release intent and run the release preparation/publishing gates appropriate to that stage | May start the explicitly authorized release flow, including an expressly requested docs-only release; a green ordinary PR alone cannot publish |
@@ -48,6 +82,25 @@ fail closed.
 Explicit metadata paths are a narrow allowlist; other paths require a build.
 For example, `.agents/skills/specgit-issue/SKILL.md` is a local integration copy,
 while the shipped `skills/specgit-issue/SKILL.md` is product content.
+The lightweight configuration allowlist includes `.changeset/config.json`,
+`.coderabbit.yaml`, `.github/dependabot.yml`, `.github/CODEOWNERS`, `.gitignore`,
+and both YAML and legacy Markdown issue templates only because Metadata
+contracts parses and validates their repository-critical shape. The Markdown
+frontmatter must declare a supported English delivery title and its matching
+`kind::<type>` label, and its body must be nonempty. YAML issue forms obey the
+same title/label policy. `CODEOWNERS` needs valid patterns/owners and a default
+`*` owner. `.gitignore` needs exactly one current, ordered SpecGit managed
+region and no later negation that exposes its local assets.
+Executable local integration configuration such as
+`.devcontainer/devcontainer.json` and `.opencode/hooks.json` remains on the
+product route.
+
+Every path admitted to metadata-only CI has a concrete fail-closed check. A
+required file deleted from the candidate tree, a malformed configuration, a
+damaged managed region, a missing mandatory generated file, or a byte mismatch
+against a generator fails Metadata contracts. It cannot turn into a successful
+lightweight result merely because the classifier recognized its path. Unknown
+paths and mixed diffs take full product verification instead.
 
 Deletion of accidentally tracked known local state is permitted as metadata
 cleanup; adding or modifying that state is rejected without reading its values.
@@ -77,10 +130,14 @@ node scripts/ci-change-scope.mjs --base <base-sha> --head <head-sha>
 **Metadata contracts** runs on every classified change. It loads the actual
 record, policy and provider schemas, requires this repository's nonempty
 `Required verification` policy entry, and checks that each required name is
-produced by CI. It compares generated workflow, managed guidance and installed
-entry-point bytes with the real generators, then runs the selected documentation,
-skill mirror and workflow-security contracts. Its standalone Vitest configuration
-has no product-build global setup and does not consume `dist`.
+produced by CI. It parses all repository metadata named above, validates
+changesets and selected issue/PR templates, checks the managed ignore block and
+`CODEOWNERS`, and compares the acceptance workflow, mandatory `AGENTS.md`, any
+present `CLAUDE.md`, and all ten setup entry points with their real generators.
+It then runs the selected documentation, link, skill-mirror and workflow-security
+contracts. Its standalone Vitest configuration has no product-build global setup
+and does not consume `dist`. Missing and malformed inputs fail the job; the
+metadata branch never falls back to compiling source to hide that failure.
 
 **Required verification** always reports a result. It requires successful
 classification and Metadata contracts before examining applicable job results:

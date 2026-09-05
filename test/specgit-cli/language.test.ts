@@ -407,11 +407,11 @@ describe('#118 language: generated scaffolding follows policy.language', () => {
     expect(en).toContain('Trivial replies and read-only questions');
     expect(zh).toContain('只读提问无需如此');
     expect(en).toContain('Local maintenance:');
-    expect(en).toContain('entry points need no issue, PR,');
+    expect(en).toContain('entry points need no issue, PR/MR,');
     expect(en).toContain('Publishing requires explicit release intent');
     expect(en).toContain('within existing user authorization');
     expect(zh).toContain('本地维护：');
-    expect(zh).toContain('无需议题、PR、产品构建或发布');
+    expect(zh).toContain('无需议题、PR/MR、产品构建或发布');
     expect(zh).toContain('发布包必须有明确发布意图');
     expect(zh).toContain('在已有用户授权范围内执行');
     // The rule is prose: it introduces no closing references.

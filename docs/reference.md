@@ -3,24 +3,24 @@
 Exact schemas, gates, codes, and behavioral rules. Everything here is normative. Templates for both files live in [`schemas/specgit/templates/`](../schemas/specgit/templates), and the schema-facing description of the record and policy lives in [`schemas/specgit/schema.yaml`](../schemas/specgit/schema.yaml).
 
 ```text
-  specgit init / setup      once per repository: policy + acceptance
+  specgit init / setup      initialize once; rerun after upgrades
         |                   harness + agent entry points
         v
   specgit issue "..."       per delivery: issues + branch +
-        |                   draft PR (Closes #n) + record,
+        |                   draft PR/MR (Closes #n) + record,
         |                   committed and pushed (idempotent resume)
         v
-  work, commit, push -----> CI on the PR head
-        |                   (the SpecGit Acceptance job runs
+  work, commit, push -----> CI/CD on the request head
+        |                   (the platform acceptance job runs
         |                    specgit finish --json)
         v
-  gh pr ready <n>           a draft PR always fails the verdict
+  mark PR/MR ready          a draft request always fails the verdict
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
         |-- exit 0 --> accepted -> merge -> confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
-        '-- exit 3 --> fix the environment first (specgit doctor)
+        '-- exit 3 --> follow errors[].fix; use doctor for its probes
 ```
 
 ## `.specgit.yaml` — delivery binding record
@@ -38,8 +38,11 @@ context:
   kind: worktree
   label: 123-login                # portable label; local paths rejected
   branch: feat/123-login
-issues: [123, 124]                # GitHub issue numbers; may be empty in a draft
+issues: [123, 124]                # issue numbers in the routed forge; draft may be empty
 pr: 42                            # number or URL verbatim; at most one
+issueKinds:                       # optional inferred kind per issue (#338)
+  - issue: 123
+    kind: fix
 ```
 
 Field rules:
@@ -51,8 +54,9 @@ Field rules:
 | `context.kind` | `branch` \| `worktree` | Required discriminant. Unknown kinds are invalid. |
 | `context.branch` | string | Non-empty. Must equal the live branch at evaluation. |
 | `context.label` | string | Worktree only. Non-empty, and **no local paths** (no leading `/`, `\`, or `X:/`) — labels must be portable across machines. |
-| `issues` | number[] | Positive GitHub issue numbers. Record cardinality 0..N; acceptance requires ≥1. |
+| `issues` | number[] | Positive issue numbers in the routed forge. Record cardinality 0..N; acceptance requires ≥1. Numeric IDs work for GitHub and declared GitLab; CLI full-URL input is currently GitHub-only. |
 | `pr` | number \| string | Positive integer or non-empty URL string. Record cardinality 0..1; acceptance requires exactly 1. |
+| `issueKinds` | object[] | Optional bootstrap-resume metadata. Each entry has a positive `issue` number and non-empty inferred `kind`; it prevents one issue inheriting another title's kind label. Live labels remain forge evidence. |
 
 Unknown keys are parsed-but-ignored and **preserved on rewrite** — other tools may keep data in the same file.
 
@@ -65,6 +69,20 @@ version: 1
 required_checks:
   - "All checks passed"
 ordered_issues: true
+language: en
+validation:
+  titles: true
+  labels: kind
+  bodies: true
+templates:
+  issue:
+    body: "## Why\n{{body}}"
+    required_sections: [Why]
+automation:
+  merge: true
+  target_branch: main
+  close_issues: true
+  repair_labels: [kind::fix]
 ```
 
 | Field | Type | Rule |
@@ -76,15 +94,21 @@ ordered_issues: true
 | `tags` | object[] | Optional declared label vocabulary. Each object has `name` (portable tag slug), optional six-hex `color`, and optional `description` (at most 300 characters). Used for seeding and for enforced label rules. |
 | `validation.titles` | boolean | Optional, default `false`. `true` checks live issue and PR/MR titles against `language`: English forbids Unicode Han characters; Chinese requires at least one. Missing or empty titles are unknown evidence. |
 | `validation.labels` | `off` \| `kind` \| `project` | Optional, default `off`. `kind` requires exactly one built-in `kind::` label and permits declared `tags` extras. `project` requires a nonempty subset of a nonempty `tags` vocabulary. Both reject undeclared labels and more than one member per scoped axis. |
-| `automation` | object | Optional, disabled when absent. `merge: true` requires a nonempty `target_branch`; `close_issues: true` requires merge automation. Configure through the user's explicit yes/no choice at init. |
+| `validation.bodies` | boolean | Optional, default `false`. When true, live issue and PR/MR bodies must contain the selected nonempty required H2 sections and no known placeholder text. Missing body evidence is unknown; known incomplete content is rejection. |
+| `templates.issue` / `templates.pr` | object | Optional selected template. Each object requires nonempty `body`, may provide nonempty `title`, and may list nonempty `required_sections`. Supported variables are `title`, `summary`, `body`, `delivery`, and `issues`; unselected repository template files are ignored. |
+| `automation` | object | Optional, disabled when absent. Strict fields: required `merge`; optional `target_branch`, `close_issues`, and nonempty `repair_labels`. `merge: true` requires a valid target branch; `close_issues: true` requires merge automation. Repair labels must be valid tag slugs and obey project vocabulary. Configure through the user's explicit choice; ordinary `init --force` preserves it. |
 
 The policy is strict: unknown keys make it invalid. Required checks are **declared locally** and matched against check runs reported to the PR head commit — they are not read from GitHub rulesets.
 
-**Wrong at birth vs weakening.** Never weaken a policy that was right at birth: removing or renaming a check to make a failing verdict pass is forbidden. A policy that was **wrong at birth** — most commonly a check name that can never report on a PR head, such as a push-filtered or scheduled workflow armed by an over-broad detection ([#121](https://github.com/LeXwDeX/SpecGit/issues/121)) — must be corrected: replace the list explicitly with `specgit init --force --required-check <verified-name>` (repeatable), or edit it in a reviewed PR. Ordinary `init --force` preserves existing names. GitHub auto-detection requires an explicit `pull_request` trigger; target-only and missing-trigger workflows are excluded. Correcting a false policy is the required repair, not a weakening.
+**Wrong at birth vs weakening.** Never weaken a policy that was right at birth: removing or renaming a check to make a failing verdict pass is forbidden. A policy that was **wrong at birth** — most commonly a check name that can never report on a PR head, such as a push-filtered or scheduled workflow armed by an over-broad detection ([#121](https://github.com/LeXwDeX/SpecGit/issues/121)) — must be corrected: replace the list explicitly with `specgit init --force --required-check <verified-name> --no-protect` (repeatable), or edit it in a reviewed PR. Ordinary `init --force` preserves existing names. GitHub auto-detection requires an explicit `pull_request` trigger; target-only and missing-trigger workflows are excluded. Correcting a false policy is the required repair, not a weakening.
 
 ## `spec_git/providers.yaml` — platform declarations
 
-Optional; created by `specgit init --gitlab-host <hostname>` (or the interactive platform question). Committed to the repository so the team shares one declaration.
+Optional; created by `specgit init --gitlab-host <hostname>` (or the
+interactive GitLab confirmation). Committed to the repository so the team
+shares one declaration. Only `github.com` auto-selects the GitHub route; the
+interactive choice for another endpoint can confirm GitLab or stop, never
+select GitHub Enterprise.
 
 ```yaml
 gitlab:
@@ -96,9 +120,15 @@ gitlab:
 | --- | --- | --- |
 | `gitlab.host` | string | Bare hostname (no scheme/path); must match the origin host when declared from `init`. |
 | `gitlab.port` | string \| number | Optional. Present only when the instance uses a non-default port; origins then classify against `host:port` exactly (a portless origin on the same host is a different effective port and stays `origin_unresolvable`). Absence means the scheme default (443 https, 22 ssh). |
-| `gitlab.insecure_ssl` | boolean | Default `false`. Per-host TLS-skip for the declared host only (self-signed certificates), via glab's host-scoped mechanism when the GitLab adapter lands — never global, never logged. The exact glab flag/config key is not yet pinned from gitlab-org/cli, so the setting stays inert until then (see the [evidence ledger](evidence/gitlab-19.2.md)). |
+| `gitlab.insecure_ssl` | boolean | Default `false`; declared but inert. The shipped glab adapter does not implement a TLS-verification bypass, so `true` does not relax TLS. A host-scoped mechanism must be pinned and implemented before this setting becomes active. |
 
-A declared host routes matching origins through `glab`, including **nested-group** paths (`group[/subgroup…]/project`, depth 2–5). Undeclared GitLab-like hosts remain unsupported until declared; a host name alone never grants provider capability. The self-managed support policy is version-qualified: CE/Free verified window `>= 19.2.4 < 19.4.0`; outside versions warn (`gitlab_version_unverified`) and are judged by their live API behaviour ([GitLab support roadmap](gitlab-support.md)). Strict schema: unknown keys are rejected.
+A declared host routes matching origins through `glab`, including **nested-group** paths (`group[/subgroup…]/project`, depth 2–5). Undeclared GitLab-like hosts remain unsupported until declared; a host name alone never grants provider capability. Declared GitLab.com is capability-probed. The self-managed support policy is version-qualified: CE/Free verified window `>= 19.2.4 < 19.4.0`; outside versions warn (`gitlab_version_unverified`) and are judged by their live API behaviour ([GitLab support](gitlab-support.md)). Strict schema: unknown keys are rejected.
+
+Init resolves and validates this declaration before any policy or harness
+mutation. `platform_undecided` and `platform_providers_invalid` are exit `3`
+refusals that preserve the tree. If writing a selected declaration fails,
+`providers_write_failed` also exits `3`, restores the exact pre-run provider
+bytes or absence, and prevents later init writes.
 
 ## Root discovery
 
@@ -115,27 +145,30 @@ Evaluation runs **eleven gates** in order. Gates short-circuit **across** gates 
 | G3 completeness | ≥1 issue, exactly 1 PR | local | `issues_empty`, `pr_missing` |
 | G4 context | record context matches live git | local git | `not_a_git_repo`, `git_unavailable`, `no_commits`, `detached_head`, `branch_mismatch`, `merged_delivery_not_contained`, `merged_lineage_unavailable`, `worktree_mismatch` |
 | G5 origin | `origin` resolves to `owner/repo` | local git | `no_origin`, `origin_unresolvable`, `gitlab_unsupported` |
-| G6 provider | platform CLI present and authenticated | provider preflight (`gh`/`glab`) | `gh_missing`, `gh_unauthenticated`, `gh_transport`, `glab_missing`, `glab_unauthenticated`, `glab_transport` |
-| G7 issues | every bound issue exists and is an issue; configured title and label rules hold | provider (`gh`/`glab`) | `issue_not_found`, `issue_is_pull_request`, `title_language_mismatch`, `title_evidence_missing`, `issue_labels_invalid`, `issue_labels_unavailable` |
+| G6 provider | platform CLI present and authenticated | provider preflight (`gh`/`glab`) | `gh_missing`, `gh_unauthenticated`, `gh_timeout`, `gh_transport`, `glab_missing`, `glab_unauthenticated`, `glab_transport` |
+| G7 issues | every bound issue exists and is an issue; configured title, label, and body rules hold | provider (`gh`/`glab`) | `issue_not_found`, `issue_is_pull_request`, `title_language_mismatch`, `title_evidence_missing`, `issue_labels_invalid`, `issue_labels_unavailable`, `body_evidence_missing`, `body_content_incomplete` |
 | G8 sequence | issue merge order (when `ordered_issues: true`) | provider (`gh`/`glab`) | `issue_out_of_order`, `evidence_truncated` |
-| G9 pr | PR exists, not closed-unmerged, not a draft, head branch matches context, same repo; configured title rule holds | provider (`gh`/`glab`) | `pr_not_found`, `pr_closed_unmerged`, `pr_draft`, `pr_head_mismatch`, `pr_repo_mismatch`, `title_language_mismatch`, `title_evidence_missing` |
-| G10 closing refs | PR body closes every bound issue | parsed PR body | `closing_refs_incomplete` |
-| G11 checks | every required check green at PR head | provider (`gh`/`glab`) | `checks_missing`, `checks_pending`, `checks_failed` (per check name), `evidence_truncated` |
+| G9 pr | PR/MR exists, not closed-unmerged or draft, head branch matches context, same repo; configured title/body rules hold; bound issues are not occupied by another active request | provider (`gh`/`glab`) | `pr_not_found`, `pr_closed_unmerged`, `pr_draft`, `pr_head_mismatch`, `pr_repo_mismatch`, `title_language_mismatch`, `title_evidence_missing`, `body_evidence_missing`, `body_content_incomplete`, `issue_already_claimed`, `issue_occupancy_unknown` |
+| G10 closing refs | PR/MR body contains a scoped closing reference for every bound issue | parsed request body | `closing_refs_incomplete` |
+| G11 checks | every required check green at PR/MR head | provider (`gh`/`glab`) | `checks_missing`, `checks_pending`, `checks_failed` (per check name), `evidence_truncated` |
 
 Draft PRs (G9): a draft is a verdict dimension, not an invisible scaffold state — a draft PR with green checks and complete closing refs still fails with `pr_draft` (factual, exit 1: the evidence is complete and says the PR is a draft; a draft never auto-transitions to mergeable, so exit 0 must not be proclaimed over it). `getPr` collects the `draft` flag; a pull-request payload without it is a transport anomaly and fails closed (`gh_transport`). The accept workflow re-verdicts on the draft→ready transition (its `pull_request` trigger lists `ready_for_review`), so marking the PR ready for review is the repair.
 
 Context matching (G4): the live branch must equal `context.branch`; a detached HEAD fails outright. For `kind: worktree`, the live checkout must additionally be a linked worktree whose label and branch together match an entry in `git worktree list`. Another worktree with the same basename cannot mask the matching branch. Local status and acceptance share this identity decision; only acceptance can perform the separate remote merge and local lineage proof described below.
 
-Merged-delivery lineage (G4): `branch_mismatch` has one exculpation — the bound PR is verified **merged** via `gh`, so running `finish` on the base branch afterwards is completed history, not a mismatch. Historical acceptance then requires lineage proof that local HEAD contains the PR's `merge_commit_sha` (GitHub anchors it on the base branch under every merge method — merge commit, squash, or rebase). Containment proven ⇒ the record is merged history and the context gate passes. Git's decisive *no* (both commits locally known, not an ancestor) ⇒ `merged_delivery_not_contained` (factual, exit 1 — fetch and check out the base branch that received the merge; a rewritten local history cannot prove lineage). No anchor reported, or git cannot answer (e.g. the merge commit is not a local object) ⇒ `merged_lineage_unavailable` (fail-closed, exit 3 — `git fetch` and pull the base branch, then re-run). A failure to gather the PR or repository evidence returns unknown (exit 3), preserving the provider diagnostic; it cannot prove a factual branch mismatch. Unresolved lineage never turns green.
+Merged-delivery lineage (G4): `branch_mismatch` has one exculpation — the routed provider verifies that the bound PR/MR **merged**, so running `finish` on the target branch can be completed history rather than a mismatch. Historical acceptance then requires local containment of the provider's validated merge anchor. GitHub uses its reported merge commit; GitLab uses the verified merge or squash commit, with the documented unsquashed frozen-head fallback. Containment proven ⇒ the record is merged history and the context gate passes. Git's decisive *no* (both commits locally known, not an ancestor) ⇒ `merged_delivery_not_contained` (factual, exit 1 — fetch and check out the branch that received the merge; rewritten local history cannot prove lineage). No usable anchor, or git cannot answer because the object is absent, ⇒ `merged_lineage_unavailable` (fail-closed, exit 3 — fetch and pull the target branch, then re-run). Provider failures remain unknown and cannot exculpate a branch mismatch.
 
 Non-gate repair diagnostics: `pr_ambiguous` — `specgit pr` (auto-discovery) and `specgit issue` (PR idempotency probe) refuse when several open pull requests share the head branch, listing the candidates with the fix `specgit pr <number>` (exit 3). See the [CLI reference](cli.md) for the full command surface.
 
 Project rules (G7/G9): `validation` is optional and defaults to disabled.
-Enabled rules read current forge facts, including reused issues and edited titles
-or labels; they do not trust scaffold text or local records. A known violation
-(`title_language_mismatch`, `issue_labels_invalid`) is factual rejection, exit 1.
-An unavailable title or complete label set (`title_evidence_missing`,
-`issue_labels_unavailable`) is unknown, exit 3. See [project rules](cli.md#project-title-and-label-rules)
+Enabled rules read current forge facts, including reused issues and edited titles,
+labels, or bodies; they do not trust scaffold text or local records. A known violation
+(`title_language_mismatch`, `issue_labels_invalid`, `body_content_incomplete`) is factual rejection, exit 1.
+Unavailable title, complete label set, or body evidence (`title_evidence_missing`,
+`issue_labels_unavailable`, `body_evidence_missing`) is unknown, exit 3. G9 also
+rejects an issue claimed by another active request (`issue_already_claimed`) and
+fails closed when complete occupancy cannot be established (`issue_occupancy_unknown`).
+See [project rules](cli.md#project-title-and-label-rules)
 for configuration and the deterministic character/vocabulary semantics.
 
 Sequence (G8): evaluated only when `policy.ordered_issues` is `true`; otherwise the gate passes vacuously. When on, a delivery whose smallest bound issue has a smaller-numbered **open** issue ahead of it fails with `issue_out_of_order` (exit 1) — deliver or close the earlier issue first. The gate consumes the **complete** open-issue list (#120): the provider pages the issue search to exhaustion, and a truncation signal fails `evidence_truncated` (exit 3) instead of letting an earlier issue hide beyond page 1.
@@ -158,7 +191,7 @@ Additional evidence rules:
 
 ## Closing references (G10)
 
-The PR body must close every bound issue. Recognized grammar: a closing keyword followed by a reference —
+The PR/MR body must contain a scoped closing reference for every bound issue. Recognized grammar: a closing keyword followed by a reference —
 
 - Keywords (case-insensitive): `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`
 - Reference forms: `#123`, `owner/repo#123`, or the full issue URL (`https://github.com/owner/repo/issues/123`)
@@ -178,13 +211,26 @@ States are **derived per invocation, never persisted**:
 | `unbound` | No record at the root. |
 | `draft` | Record exists but is incomplete (no issues, or no PR). |
 | `bound` | Record complete (≥1 issue, PR set) — acceptance not yet evaluated or not passing. |
-| `accepted` | This invocation: all gates passed. |
+| `accepted` | This invocation: every gate passed for a live, unmerged delivery; it is eligible for the authorized merge. |
+| `closure_pending` | The PR/MR is confirmed merged, but at least one bound issue is still open. |
+| `completed` | Merged lineage is proven and every bound issue is confirmed closed. |
 | `rejected` | This invocation: evidence complete, ≥1 gate failed. |
 | `unknown` | This invocation: evidence could not be fully gathered. |
+| `historical-candidate` | `status` only: local tracked-record/context evidence looks like merged history, but the offline command cannot prove merge or closure. Confirm with `finish`. |
 
-## GitHub provider seam
+## Forge provider seam
 
-All remote evidence flows through the `gh` CLI — no other endpoint selection exists.
+All remote evidence and mutations flow through the authenticated CLI selected by
+the resolved platform marker: `gh` for GitHub.com and `glab` for an explicitly
+declared GitLab origin. SpecGit uses no direct REST client and never reads or logs
+tokens.
+
+Initialization separately requests strict remote-default-branch evidence from
+the git port before writing a workflow or configuring protection. Failure is
+`workflow_default_branch_unknown` (exit `3`); no `main` fallback is inferred,
+and an automation target cannot stand in for `origin/HEAD`.
+
+### GitHub adapter
 
 - `gh` not found ⇒ `gh_missing`; `gh auth status` failing ⇒ `gh_unauthenticated` (remediation text is shown; tokens are never read or printed).
 - The `gh` executable is resolved per invocation: an explicit internal override, then `SPECGIT_GH`, then `gh` on `PATH`. Each call gets a hard timeout — `SPECGIT_GH_TIMEOUT_MS` when set, `15000` ms by default — plus response-size caps, array-form arguments, and JSON-only handling. Strings returned by the API are sanitized (control characters stripped, values truncated) before any terminal rendering.
@@ -192,7 +238,7 @@ All remote evidence flows through the `gh` CLI — no other endpoint selection e
 - The seam is injectable: tests run against a mock provider (and `SPECGIT_GH` can point at a scripted `gh`), so acceptance logic is verifiable offline.
 - How the port itself evolves — required-versus-optional member rules, the deprecation path, and the tracking obligations for alternate providers and test doubles — is the committed [port-compatibility policy](providers.md).
 
-### The glab mirror (#114)
+### GitLab adapter (#114)
 
 The same port has a second adapter: `GlabProvider` (`src/providers/gitlab/glab-cli.ts`) flows GitLab evidence through the authenticated `glab` CLI under the same discipline — per-host auth (`glab auth status --hostname <host>`), every api call host-scoped, `SPECGIT_GLAB` / `SPECGIT_GLAB_TIMEOUT_MS` mirroring the gh pair (timeout ⇒ `glab_transport`), read endpoints plus the documented issue, MR, label, merge and repository-administration operations, tokens never read or logged, list pagination to exhaustion with the `evidence_truncated` guard. A declared self-managed host's version is probed via `glab api /metadata`: outside the verified window `>= 19.2.4 < 19.4.0` the verdict warns (`gitlab_version_unverified`, #241) but proceeds — the live evidence pass stays the fail-closed guarantee; GitLab.com is judged by capability probing, never version pinning. Since #116 the adapter carries the GitLab checks-gate semantics ([ledger rows 25/26](evidence/gitlab-19.2.md)): pipeline jobs map to check runs with final states completing the run — `success`/'success', `failed`/'failure' plus the platform `allow_failure` boolean as job-level truth, `canceled`/'cancelled' — `skipped` jobs contribute no check-run at all, and `manual`/other non-final statuses read as pending; the checks gate passes a failed `allow_failure` run per pipeline semantics (failure only — no other conclusion is laundered). `BranchProtectionFact.requiredChecks` reports the verified intersection of the policy's required checks with the CI job names of the branch's latest pipeline when `only_allow_merge_if_pipeline_succeeds` is on, `[]` when off — never fabricated GitHub semantics. Since #117 the adapter is routed: the production composition's `PlatformRoutingProvider` (`src/providers/routing.ts`) dispatches every provider call on the ref's platform marker, so evaluation, bootstrap, and repair on a declared GitLab origin all flow through glab — the GitHub-only `requireGithubRoute` guard was retired with the dispatch inheriting its invariant ([gitlab-support.md](gitlab-support.md)).
 
@@ -202,15 +248,28 @@ Everything SpecGit writes falls into exactly three tiers:
 
 | Tier | Contents | Owner |
 | --- | --- | --- |
-| **Authoritative delivery files** | `spec_git/policy.yaml` (required-checks policy), `.specgit.yaml` (the delivery record), `spec_git/providers.yaml` (optional platform declaration) | You. Hand-editable; the CLI validates but never invents content. Shielded from everyday commits by a managed `.gitignore` block `init` writes by default (#292; `--no-ignore` opts out) — `.gitignore` only hides untracked files, so the bootstrap's binding commit (`git add -f`) is their intended entry into git, on the delivery branch where the PR-head CI verdict reads them. Repositories that already track them keep the classic committed model unchanged. |
-| **Derived committed harness** | `.github/workflows/specgit-accept.yml`, the managed `<!-- specgit:block:start/end -->` region in `AGENTS.md` (and `CLAUDE.md` when present) | Generated by `specgit init`. Safe to regenerate; re-running `init --force` converges the repository to the running version's desired asset set — repairs drift, reconciles the managed `.gitignore` region, and removes obsolete SpecGit-owned assets (proven by content markers; anything unproven is preserved and reported #305). Content outside the managed markers is yours. |
+| **Authoritative delivery files** | `spec_git/policy.yaml` (project policy), `.specgit.yaml` (delivery record), `spec_git/providers.yaml` (optional GitLab declaration) | The project owns and reviews their meaning. `init`, `issue`, `bind`, and `pr` create or update them under the strict schemas; users may make reviewed policy changes. A managed `.gitignore` block shields them from everyday staging by default, and the bootstrap's binding commit uses `git add -f` to carry the approved bytes into the delivery branch where CI reads them. Repositories already tracking them remain tracked. |
+| **Derived committed harness** | GitHub acceptance/completion workflows or the managed GitLab completion router/assets; the managed `<!-- specgit:block:start/end -->` region in `AGENTS.md` and, when present, `CLAUDE.md` | Generated by `specgit init`. Safe to regenerate; `init --force` converges the running version's desired asset set, reconciles the managed `.gitignore` region, and removes obsolete assets only when ownership is proven. Content outside managed markers is project-owned. |
 | **Local integration assets** | `.opencode/hooks.json` guard entry + `.opencode/hooks/specgit-merge-guard.sh`, the managed region of `.git/hooks/pre-push`, agent entry points installed by `specgit setup` (`.opencode/command/`, portable skills) | Machine-local wiring. Merged non-destructively (existing user hooks and entries are preserved); the `setup` entry points converge to the running version on re-run — retired SpecGit-owned entries are removed only with proven ownership, unmarked files preserved and reported (#307). Commit them only if your team wants shared wiring. |
 
-Verdicts are never part of state: they are computed per invocation from git and the forge and never persisted.
+Verdicts and lifecycle conclusions are computed per invocation from git and the forge and never persisted.
 
-**Drift diagnosis (#308).** `specgit status` reports, under `assets.generated`, whether each managed asset in the last two tiers is `current`, `stale`, `missing`, or `conflict` — grouped by the surface that repairs it (`specgit init --force`, `specgit setup --tool opencode`, `specgit setup --tool generic`). The verdicts come from one shared read-only inspector over the same desired states the writers converge, never a parallel checklist; states where ownership is unproven are `conflict` and are a human decision (the tools preserve those files). The verdict is fail-closed about its own coverage: `clean` requires `complete` — every desired part claimed or proven skipped — so an `uninspected` code (undecided platform, unresolved default branch, unmergeable hooks.json, a failed tracked probe) means incomplete, never clean, while a proven skip in `skipped` (the committed-authoritative ignore opt-out) never spoils an otherwise current report. See the [CLI reference](cli.md#specgit-status) for the full contract.
+The shared reconciler treats its plan as provisional. Immediately before a
+whole-file write it re-reads the target, proves ownership again, and requires
+the current bytes to equal the merge basis used by the plan. Immediately before
+removal it re-reads and proves ownership from the current bytes. An intervening
+user edit is preserved; a refused commit rolls back any earlier accepted
+mutations in the same transaction.
 
-**Merged-delivery lifecycle (#298, #351).** While a delivery is live, the binding commit keeps the record (and the policy, when it exists) tracked on the delivery branch — the PR-head CI verdict reads them there. After the delivery merges, those files stay tracked on the base branch as **completed history**: `status` reports `historical-candidate`, `finish` (having proven the merged lineage) reports `completed`, and the next delivery's bootstrap replaces the record atomically. `specgit unbind` is the abandon/reset/uninstall tool, not the post-merge step — but when it does delete a tracked record it warns (`record_deletion_tracked`) that the working-tree deletion needs a commit, and `specgit init --force` warns (`policy_rewrite_tracked`) that a rewritten policy shows as an uncommitted modification; the next delivery's binding commit force-carries the rewritten record and absorbs the residue, so the tree returns to clean through the normal delivery flow.
+**Drift diagnosis (#308).** `specgit status` reports, under `assets.generated`, whether each managed asset in the last two tiers is `current`, `stale`, `missing`, or `conflict` — grouped by the surface that repairs it (`specgit init --force --no-protect`, with `--no-ignore` added for a proven committed-authoritative model; `specgit setup --tool opencode`; `specgit setup --tool generic`). The verdicts come from one shared read-only inspector over the same desired states the writers converge, never a parallel checklist; states where ownership is unproven are `conflict` and are a human decision (the tools preserve those files). The verdict is fail-closed about its own coverage: `clean` requires `complete` — every desired part claimed or proven skipped — so an `uninspected` code (undecided platform, unresolved default branch, unmergeable hooks.json, a failed tracked probe) means incomplete, never clean, while a proven skip in `skipped` (the committed-authoritative ignore opt-out) never spoils an otherwise current report. See the [CLI reference](cli.md#specgit-status) for the full contract.
+
+**Merged-delivery lifecycle (#298, #351).** While a delivery is live, the binding commit keeps the record and approved policy tracked on the delivery branch, where the PR-head CI verdict reads them. After the delivery merges, those files stay tracked on the target branch as history: offline `status` reports `historical-candidate`; `finish` proves lineage and reports `completed` only when every bound issue is closed, otherwise `closure_pending`. The next delivery's bootstrap replaces completed history atomically. `specgit unbind` is the abandon/reset/uninstall tool, not the normal post-merge step. When it deletes a tracked record it warns (`record_deletion_tracked`) that the deletion needs a commit; a tracked policy rewrite similarly warns (`policy_rewrite_tracked`). The next binding commit can carry the rewritten record and absorb that residue.
+
+A closed-unmerged bound request is failed delivery evidence, not completed
+history. `specgit issue` exits `1` with `pr_closed_unmerged`, preserves the
+record, and refuses both resume and replacement arguments. Repair the binding
+to an open draft PR/MR from the recorded branch with every closing reference by
+running `specgit pr <number>`; start a new WHY only after that repair.
 
 ## Exit codes and JSON
 

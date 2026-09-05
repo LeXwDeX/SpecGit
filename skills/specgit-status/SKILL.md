@@ -12,7 +12,7 @@ metadata:
 # specgit-status
 
 Local evidence only: the record, the delivery state, drift, and the origin.
-Platform evidence (issues, PR, checks) belongs to `specgit finish`.
+Platform evidence (issues, PR/MR, checks) belongs to `specgit finish`.
 
 ## Usage
 
@@ -23,8 +23,10 @@ specgit status --json
 ## Steps
 
 1. Run from the repository root.
-2. Read `state` and `record` from the envelope: use them to see what is
-   bound and what drifted before touching anything.
+2. Read `state`, `recordState`, `localContext`, and `lifecycle` from
+   the envelope. Inspect `evidence.delivery`, `evidence.context`,
+   `evidence.issues`, `evidence.pr`, and the drift fields to see what is
+   bound and what changed before touching anything.
 3. No record is not an error: `state: "unbound"` with exit `0` is the
    normal pre-binding state (#175) — bootstrap with `specgit issue`; the
    `record_missing` warning names that next step in `warnings[].fix`.

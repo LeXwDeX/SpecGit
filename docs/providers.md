@@ -2,30 +2,30 @@
 
 SpecGit derives acceptance from two TypeScript seams, both behind the
 product contract that forge evidence flows exclusively through the
-authenticated platform CLIs — `gh` on GitHub origins, `glab` on a declared
-self-managed GitLab origin — and git facts exclusively from local git
+authenticated platform CLIs — `gh` on GitHub origins, `glab` on an explicitly
+declared GitLab origin (including GitLab.com) — and git facts exclusively from local git
 ([AGENTS.md](../AGENTS.md), [Reference — the provider
-seam](reference.md#github-provider-seam)):
+seam](reference.md#forge-provider-seam)):
 
 ```text
-  specgit init / setup      once per repository: policy + acceptance
+  specgit init / setup      initialize once; rerun after upgrades
         |                   harness + agent entry points
         v
   specgit issue "..."       per delivery: issues + branch +
-        |                   draft PR (Closes #n) + record,
+        |                   draft PR/MR (Closes #n) + record,
         |                   committed and pushed (idempotent resume)
         v
-  work, commit, push -----> CI on the PR head
-        |                   (the SpecGit Acceptance job runs
+  work, commit, push -----> CI/CD on the request head
+        |                   (the platform acceptance job runs
         |                    specgit finish --json)
         v
-  gh pr ready <n>           a draft PR always fails the verdict
+  mark PR/MR ready          a draft request always fails the verdict
         |
         v
   specgit finish            the verdict: eleven gates, fail-closed
         |-- exit 0 --> accepted → merge → confirmed issue closure: completed
         |-- exit 1 --> fix what the gates named (evidence complete)
-        '-- exit 3 --> fix the environment first (specgit doctor)
+        '-- exit 3 --> follow errors[].fix; use doctor for its probes
 ```
 
 - **`GitPort`** (`src/gitfacts/port.ts`) — local git facts and the
@@ -56,6 +56,14 @@ surface inventories `FORGE_READ_PORT_MEMBERS` / `FORGE_ADMIN_PORT_MEMBERS`
 (`GITHUB_PROVIDER_MEMBERS` remains as the deprecated alias of
 `FORGE_PROVIDER_MEMBERS`).
 This document is the compatibility policy for how those ports evolve (#80).
+
+Initialization resolves that routing decision before it mutates the repository.
+Only `github.com` selects the GitHub adapter automatically. A non-GitHub
+endpoint may be explicitly declared, or confirmed interactively, only as
+GitLab; GitHub Enterprise has no v1 route. Missing/invalid platform evidence
+fails closed. Persisting a new GitLab declaration is also an evidence boundary:
+`providers_write_failed` exits `3`, restores the exact pre-run provider state,
+and prevents later policy or harness writes.
 
 ## Selecting capabilities
 
@@ -101,7 +109,7 @@ to those lists member-for-member: change a port, change this page.
 | `checkoutOrCreateBranch` | required | Bootstrap write: check out the delivery branch, creating it from HEAD when absent. |
 | `commitFile` | required | Bootstrap write: force-staged (`git add -f`), pathspec-limited commit of the authoritative delivery files (#292 — past the tool-installed local-asset ignore); unchanged paths are a successful no-op (idempotent bootstrap). |
 | `pushBranch` | required | Bootstrap write: push the delivery branch with upstream (`git push -u`). |
-| `remoteDefaultBranch` | required | `origin/HEAD` for the PR base; the default bootstrap mode falls back to `main`. Initialization of merge automation requests strict evidence and refuses an unproved target. |
+| `remoteDefaultBranch` | required | Read the remote default branch. Callers may request strict evidence; initialization always does so before workflow generation or protection and exits `3` when `origin/HEAD` cannot prove the branch. It never guesses `main`, and an automation merge target is not a substitute for the trusted default-branch identity. |
 | `hooksPath` | required | The hooks directory git will actually use (linked-worktree and `core.hooksPath` aware) for guard installation. |
 
 ### ForgeReadPort (src/github/port.ts)
@@ -111,7 +119,7 @@ Deprecated compatibility composition → select `ForgeEvidencePort` and
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |
-| `preflight` | required | gh present and authenticated (G6). |
+| `preflight` | required | Matching platform CLI present and authenticated (G6): `gh` for GitHub or `glab` for declared GitLab. |
 | `getCiConfigPath` | required | Configured platform CI entry path, or null for the platform default. GitHub has its fixed workflow discovery convention; GitLab reads and validates the project's configured entry path before installing an automation wrapper. |
 | `getIssue` | required | Issue fact: state and `pullRequest` classification, plus real title, body and label evidence for enabled project rules. |
 | `getOpenIssueNumbers` | required | Open-issue numbers for the ordered-issues sequencing gate, derived from the complete `getOpenIssues` scan. |
@@ -125,7 +133,7 @@ Deprecated compatibility composition → select `ForgeEvidencePort` and
 | `closeIssue` | required | Idempotently close a bound issue and confirm its remote state; already closed issues need no write. The command calls it only after confirmed merge and successful CI/CD. |
 | `getEvidenceAnchor` | required | Check-freshness anchor (#315): the platform instant the delivery last became reviewable. `anchoredAt: null` is a legal answer (no boundary set — e.g. glab); a failed envelope fails closed. |
 | `createIssue` | required | Bootstrap create for new WHYs. |
-| `createDraftPr` | required | Bootstrap draft PR that closes every bound issue. |
+| `createDraftPr` | required | Bootstrap draft PR/MR containing a closing reference for every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
 | `addIssueComment` | required | Ensure an exact-body traceability comment exists. Complete remote evidence reconciles retries before posting and returns the existing URL. Read failures and truncation fail closed; independent concurrent writers are not serialized. |
 | `addIssueLabels` | required | Tag apply (#330): union-semantics label addition for every bound issue after the selection resolves. Idempotent; the response must confirm every requested slug or the call fails closed. |
@@ -137,18 +145,18 @@ Deprecated compatibility composition → select `ForgeEvidencePort` and
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |
-| `getBranchProtection` | required | Protection state and required checks for the guarded-merge story. |
-| `enableBranchProtection` | required | Add the acceptance check on the base branch by preserving existing mutable protection settings, including check App bindings, review bypass actors, branch creation/lock and fork-sync options. Confirm the server response. |
-| `getRepoAutomerge` | required | Repository auto-merge setting. |
-| `enableRepoAutomerge` | required | Turn on repository auto-merge. |
+| `getBranchProtection` | required | Protected-branch evidence. GitHub also returns its required status checks; GitLab returns the policy-job intersection as pipeline evidence, never as a GitHub protection primitive. |
+| `enableBranchProtection` | required | Enable the provider-selected protected-merge gate while preserving existing settings: add the acceptance check on GitHub, or protect the branch and keep successful pipelines required on GitLab. Confirm the server response. |
+| `getRepoAutomerge` | required | Compatibility-shaped capability fact: GitHub repository auto-merge, or GitLab's project-wide `only_allow_merge_if_pipeline_succeeds` gate. |
+| `enableRepoAutomerge` | required | Enable that platform capability: repository auto-merge on GitHub, or required successful pipelines on GitLab. |
 | `listRepoLabels` | required | The repository's label pool (#330), the universe the tag selection runs against. Paginated to exhaustion (#120 I3b); truncation fails closed. |
 | `ensureRepoLabels` | required | Idempotent seed (#330): create declared-but-missing tag specs, confirm every requested slug (created or already present); an unconfirmed slug fails closed. GitLab CE labels need a Planner-or-above role since 17.7 — permission failures are evidence, not verdict inputs. |
 
 ### ForgeProvider (src/github/port.ts)
 
 `ForgeProvider` retains the composition `ForgeReadPort & ForgeAdminPort`
-(#180), structurally equivalent to `ForgeEvidencePort & ForgeDeliveryWritePort &
-ForgeAdminWritePort` (#412). Every full in-tree adapter implements the
+(#180), structurally equivalent to
+`ForgeEvidencePort & ForgeDeliveryWritePort & ForgeAdminWritePort` (#412). Every full in-tree adapter implements the
 composed port, and every member is **required**. There are no
 optional port members: each method feeds a gate or bootstrap decision
 that cannot proceed without an answer, and each returns an `Evidence`
@@ -234,7 +242,8 @@ platform-proven target-branch result (merge, squash, or fast-forward). `null`
   failure taxonomy per platform (`glab_missing`, `glab_unauthenticated`,
   `glab_transport` — timeout included — plus the advisory
   `gitlab_version_unverified` warning for a self-managed version outside
-  the verified window (#241)). The glab method map stays
+  the verified window (#241)); explicitly declared GitLab.com is capability-probed
+  rather than version-pinned. The glab method map stays
   anchored cell-for-cell to this inventory and the
   [GitLab evidence ledger](evidence/gitlab-19.2.md) (row 24, all cells
   pinned). Routed since #117: the production context evaluates GitLab

@@ -112,11 +112,13 @@ describe('guard script bytes', () => {
     expect(parsed.PreToolUse[0].matcher).toBe('Bash|Edit|Write');
   });
 
-  it('routes gh and glab merges into the verdict case (#369)', () => {
+  it('classifies gh and glab merge dialects before running the verdict (#369)', () => {
     // One delivery evaluates every gate through one platform CLI (gh on
-    // GitHub, glab on a declared GitLab origin); the merge guard must
-    // verdict-route both dialects, never pass `glab mr merge` through.
-    expect(GUARD_SCRIPT).toContain('gh\\ pr\\ merge*|glab\\ mr\\ merge*');
+    // GitHub, glab on a declared GitLab origin); the static command
+    // classifier must retain both subcommand dialects.
+    expect(GUARD_SCRIPT).toContain('forge !== "gh" && forge !== "glab"');
+    expect(GUARD_SCRIPT).toContain('words[index] === "pr" && words[index + 1] === "merge"');
+    expect(GUARD_SCRIPT).toContain('words[index] === "mr" && words[index + 1] === "merge"');
   });
 
   it('upgrades a legacy Bash-only specgit guard entry to the current matcher, once (#335)', () => {
@@ -180,6 +182,25 @@ describe('agent guidance: authorized delivery automation (#382)', () => {
     expect(managedPromptBlock('zh')).toMatch(/用户本人选择/);
     expect(managedPromptBlock('zh')).toMatch(/finish` 只读/);
     expect(managedPromptBlock('zh')).toMatch(/已有用户授权/);
+  });
+
+  it('distinguishes fresh automation choice from changing an existing policy', () => {
+    for (const language of ['en', 'zh'] as const) {
+      const block = managedPromptBlock(language);
+      expect(block).toContain('specgit init --automation yes --merge-target <branch>');
+      expect(block).toContain('specgit init --force --automation yes --merge-target <branch>');
+    }
+  });
+
+  it('routes exit 3 through its diagnostic before the bounded doctor probes', () => {
+    for (const language of ['en', 'zh'] as const) {
+      const block = managedPromptBlock(language);
+      expect(block).toContain('errors[].fix');
+    }
+    expect(managedPromptBlock('en')).toMatch(/doctor[\s\S]*git, repository, origin, configured\s+provider CLI\/auth, or policy probes/i);
+    expect(managedPromptBlock('zh')).toMatch(/git、仓库、origin、已配置的平台[\s\S]*CLI\/auth 或策略探针[\s\S]*doctor --json/);
+    expect(managedPromptBlock('en')).not.toContain('fix the environment first');
+    expect(managedPromptBlock('zh')).not.toContain('先修环境');
   });
 
   it('finish and pr entry points continue authorized work on both installed surfaces', async () => {

@@ -2,7 +2,7 @@
 name: Feature request
 about: Propose a capability that serves an independently verifiable need
 title: 'feat: <english title>'
-labels: enhancement
+labels: kind::feat
 ---
 
 ## The WHY
@@ -31,7 +31,7 @@ Workarounds today, and why they are not enough.
 - [ ] Searched open issues for the same WHY (continue that issue if it exists)
 - [ ] This is one need — if it splits into independently verifiable parts,
       those become their own issues
-- [ ] Not a GitLab/GHE support request (tracked in the
-      [GitLab roadmap](https://github.com/LeXwDeX/SpecGit/blob/main/docs/gitlab-support.md))
+- [ ] If this changes platform support, it states the gap against the current
+      [platform contract](https://github.com/LeXwDeX/SpecGit/blob/main/docs/gitlab-support.md)
 - [ ] Not a security vulnerability (those go privately via
       [SECURITY.md](https://github.com/LeXwDeX/SpecGit/blob/main/SECURITY.md))

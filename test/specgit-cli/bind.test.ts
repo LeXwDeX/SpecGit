@@ -16,6 +16,18 @@ describe('specgit bind', () => {
     expect(t.gitPort.pushCalls).toEqual([]);
   });
 
+  it('rejects another repository PR URL before writes or git mutations', async () => {
+    const t = makeCtx();
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'audit', '--pr', 'https://github.com/other/project/pull/7', '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    expect(parseStdoutJson(t.io).errors[0].code).toBe('pr_ref_repo_mismatch');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+
   it.each(['0', '9007199254740993'])('rejects an unsafe issue URL number %s before writing (#391)', async (number) => {
     const t = makeCtx();
     const code = await runCliWith(
@@ -144,6 +156,18 @@ describe('specgit bind', () => {
     expect(t.recordPort.recordWrites[0].record.pr).toBe(
       'https://github.com/LeXwDeX/SpecGit/pull/55'
     );
+  });
+
+  it('rejects an opaque PR/MR reference at bind time', async () => {
+    const t = makeCtx();
+    const code = await runCliWith(
+      ['node', 'specgit', 'bind', '--delivery', 'add-login-flow', '--pr', 'JIRA-123', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('pr_ref_invalid');
+    expect(t.recordPort.recordWrites).toEqual([]);
   });
 
   it('resolves GitHub issue URLs to their numbers', async () => {

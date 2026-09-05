@@ -1,9 +1,9 @@
 /**
  * #292: `specgit init` shields the local delivery assets from git by
- * default. The record and the policy are rewritten by every bootstrap and
- * `init --force`; without shielding those rewrites leak into unrelated
- * commits. A managed, idempotent region in the root `.gitignore` keeps
- * them out of the working-tree noise floor.
+ * default. Bootstrap rewrites the record, and `init --force` rewrites the
+ * policy; without shielding those writes leak into unrelated commits. A
+ * managed, idempotent region in the root `.gitignore` keeps them out of the
+ * working-tree noise floor.
  *
  * #305: the region is delimited by start/end markers and RECONCILED — an
  * old-version region (the pre-#305 single-marker block, or a damaged
@@ -25,6 +25,11 @@
  * - The write happens inside the managed-asset reconciliation transaction
  *   (#305): a failed init leaves the repository byte-identical (#62).
  */
+
+import * as fs from 'node:fs/promises';
+
+import { inspectManagedPathBoundary } from '../managed-reconcile.js';
+import type { CommandContext } from '../types.js';
 
 /** Rooted so a nested `spec_git/` directory elsewhere is never matched. */
 export const LOCAL_ASSET_IGNORE_ENTRIES = [
@@ -77,6 +82,60 @@ export function hasManagedIgnoreRegion(content: string | null): boolean {
     lines.some((line) => isMarkerLine(line, LOCAL_ASSET_IGNORE_START)) ||
     lines.some((line) => isMarkerLine(line, LOCAL_ASSET_IGNORE_MARKER))
   );
+}
+
+/** The tracked probe that distinguishes the committed-authoritative model. */
+const AUTHORITATIVE_PATHS = ['.specgit.yaml', 'spec_git/policy.yaml'];
+
+/**
+ * Decide whether the `.gitignore` region may be claimed at all. `inspect`
+ * when a managed region exists (keep it current) or when the local-asset
+ * model applies. A repository that commits the authoritative tier has
+ * deliberately opted out. Failed tracked-file or read evidence remains
+ * unknown, so callers fail closed instead of guessing that the block is
+ * missing.
+ */
+export type LocalAssetIgnoreClaim =
+  | 'inspect'
+  | 'ignore_committed_authoritative'
+  | 'ignore_tracked_unknown'
+  | 'ignore_unreadable';
+
+/** Shared read-only decision used by status, guided init, and setup. */
+export async function localAssetIgnoreClaim(
+  root: string,
+  ctx: CommandContext
+): Promise<LocalAssetIgnoreClaim> {
+  const gitignorePath = await inspectManagedPathBoundary(root, '.gitignore').catch(() => null);
+  if (gitignorePath === null) {
+    return 'ignore_unreadable';
+  }
+  if (gitignorePath.symlink !== null) {
+    // Do not read through the link. `inspect` carries it into the shared
+    // managed-path inspector as asset_conflict, and the writer rejects it
+    // in its plan phase before any setup/init target is touched.
+    return 'inspect';
+  }
+  let gitignore: string | null;
+  try {
+    gitignore = await fs.readFile(gitignorePath.target, 'utf-8');
+  } catch (error) {
+    // ENOENT and ENOTDIR are the only absence proofs accepted by the
+    // reconciler. EISDIR, EACCES, and every other failure are unknown.
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+      return 'ignore_unreadable';
+    }
+    gitignore = null;
+  }
+  if (hasManagedIgnoreRegion(gitignore)) {
+    return 'inspect';
+  }
+  const trackedEv = await ctx.git.trackedFiles(root, [...AUTHORITATIVE_PATHS]);
+  if (!trackedEv.ok) {
+    return 'ignore_tracked_unknown';
+  }
+  return trackedEv.value.length > 0 ? 'ignore_committed_authoritative' : 'inspect';
 }
 
 function entryLines(content: string): Set<string> {

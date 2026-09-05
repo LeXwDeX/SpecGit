@@ -2,7 +2,7 @@
 name: Bug report
 about: Something in SpecGit behaves contrary to the documented contract
 title: 'fix: <english title>'
-labels: bug
+labels: kind::fix
 ---
 
 ## What happened

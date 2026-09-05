@@ -35,13 +35,13 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   const automation = policy.value.automation;
   if (automation?.merge !== true) {
     return stop('automation_disabled', 'Merge automation is not enabled in spec_git/policy.yaml.', EXIT_USAGE,
-      'Run "specgit init --force" to choose whether to enable it; only the user may answer yes.');
+      'Only the user may enable it: run "specgit init --force --automation yes --merge-target <branch>" with their explicit target choice.');
   }
   if (automation.target_branch === undefined) {
     return stop('automation_target_required', 'Configure automation.target_branch before merging.', EXIT_USAGE);
   }
   if (record.value.pr === undefined || record.value.issues.length === 0) {
-    return stop('automation_binding_incomplete', 'Bind the delivery issues and pull request before merging.', EXIT_USAGE);
+    return stop('automation_binding_incomplete', 'Bind the delivery issues and PR/MR before merging.', EXIT_USAGE);
   }
   progress.targetBranch = automation.target_branch;
   const { human } = catalogFor(resolveLanguage(policy.value));
@@ -65,10 +65,10 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   progress.headSha = observed.headSha;
   progress.merged = observed.state === 'merged';
   if (!FULL_SHA.test(observed.headSha)) {
-    return stop('automation_head_unavailable', 'The pull request head is not a full commit SHA.', EXIT_UNKNOWN);
+    return stop('automation_head_unavailable', 'The PR/MR head is not a full commit SHA.', EXIT_UNKNOWN);
   }
   if (observed.baseBranch !== automation.target_branch) {
-    return stop('automation_target_mismatch', `The pull request targets '${observed.baseBranch}', but automation permits '${automation.target_branch}'.`);
+    return stop('automation_target_mismatch', `The PR/MR targets '${observed.baseBranch}', but automation permits '${automation.target_branch}'.`);
   }
   const originHost = extractOriginHost(facts.originUrl);
   const nonDefaultPort = originHost?.port !== null && originHost?.port !== undefined &&
@@ -79,14 +79,14 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   if (hasUnboundClosingRefs(observed.body, repo.value.platform, {
     projectPath: `${repo.value.owner}/${repo.value.repo}`, host: closingHost,
   }, record.value.issues)) {
-    return stop('automation_unbound_closing_refs', 'The pull request body contains closing references outside the bound issues. Remove or replace those references before automated merging.');
+    return stop('automation_unbound_closing_refs', 'The PR/MR body contains closing references outside the bound issues. Remove or replace those references before automated merging.');
   }
 
   // A resumed closure must prove which merged delivery the checkout
   // contains, even when the old source branch still exists.
   if (observed.state === 'merged') {
     if (!observed.mergeCommitSha) {
-      return explainLineage(stop('merged_lineage_unavailable', 'The merged pull request has no lineage anchor.', EXIT_UNKNOWN));
+      return explainLineage(stop('merged_lineage_unavailable', 'The merged PR/MR has no lineage anchor.', EXIT_UNKNOWN));
     }
     const lineage = await ctx.git.headContains(root.value, observed.mergeCommitSha);
     if (!lineage.ok) {
@@ -106,16 +106,16 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
       verdict.exitCode === 0 ? EXIT_UNKNOWN : verdict.exitCode, failure?.fix);
   }
   if (verdict.evidence.pr !== observed.number || verdict.evidence.prHead !== observed.headSha) {
-    return stop('automation_head_changed', 'The pull request changed while acceptance was evaluated. Retry with fresh evidence.');
+    return stop('automation_head_changed', 'The PR/MR changed while acceptance was evaluated. Retry with fresh evidence.');
   }
 
   const ci = await ctx.gh.getPrChecks(repo.value, observed.number);
   if (!ci.ok) return unavailable(ci);
   if (ci.value.headSha !== observed.headSha) {
-    return stop('automation_head_changed', 'CI/CD evidence belongs to a different pull request head.');
+    return stop('automation_head_changed', 'CI/CD evidence belongs to a different PR/MR head.');
   }
   const eligibility = classifyCiEligibility(ci.value.checks, policy.value.required_checks);
-  if (eligibility.empty) return stop('automation_checks_missing', 'No CI/CD checks were reported for the pull request head.');
+  if (eligibility.empty) return stop('automation_checks_missing', 'No CI/CD checks were reported for the PR/MR head.');
   if (eligibility.missingRequired.length > 0) {
     return stop('automation_checks_missing', `Required checks are missing: ${eligibility.missingRequired.join(', ')}.`);
   }
@@ -165,10 +165,10 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   const beforeMerge = await ctx.gh.getPr(repo.value, observed.number);
   if (!beforeMerge.ok) return unavailable(beforeMerge);
   if (changedPr(beforeMerge.value)) {
-    return stop('automation_head_changed', 'The pull request changed after CI/CD verification. Retry with fresh evidence.');
+    return stop('automation_head_changed', 'The PR/MR changed after CI/CD verification. Retry with fresh evidence.');
   }
   if (beforeMerge.value.state !== 'merged') {
-    if (beforeMerge.value.state !== 'open') return stop('pr_closed_unmerged', 'The pull request closed without merging.');
+    if (beforeMerge.value.state !== 'open') return stop('pr_closed_unmerged', 'The PR/MR closed without merging.');
     const merged = await ctx.gh.mergePr(repo.value, observed.number, observed.headSha);
     if (!merged.ok) return unavailable(merged);
     if (!merged.value.merged) {
@@ -179,11 +179,11 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   const confirmed = await ctx.gh.getPr(repo.value, observed.number);
   if (!confirmed.ok) return unavailable(confirmed);
   if (changedPr(confirmed.value)) {
-    return stop('automation_head_changed', 'The merged pull request no longer matches the verified delivery.');
+    return stop('automation_head_changed', 'The merged PR/MR no longer matches the verified delivery.');
   }
   if (confirmed.value.state !== 'merged') {
     progress.status = 'pending';
-    return stop('automation_merge_unconfirmed', 'The platform has not confirmed the pull request as merged.');
+    return stop('automation_merge_unconfirmed', 'The platform has not confirmed the PR/MR as merged.');
   }
   progress.merged = true;
   const afterMergeChange = await bindingUnchanged(false);
@@ -220,7 +220,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   }
   if (stillOpen.length > 0) {
     progress.status = 'pending';
-    return stop('automation_issue_closure_pending', `The pull request is merged; bound issues remain open: ${stillOpen.join(', ')}.`, EXIT_REJECTED,
+    return stop('automation_issue_closure_pending', `The PR/MR is merged; bound issues remain open: ${stillOpen.join(', ')}.`, EXIT_REJECTED,
       'Retry the configured completion runner after restoring issue-closure access.');
   }
   progress.status = 'completed';

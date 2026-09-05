@@ -4,13 +4,24 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mergeGitPrePush, mergeHooksJson } from '../../src/cli/harness-content.js';
 import { LOCAL_ASSET_IGNORE_START, LOCAL_ASSET_IGNORE_END, reconcileLocalAssetIgnore } from '../../src/cli/commands/init-ignore.js';
-import { reconcileManagedAssets } from '../../src/cli/managed-reconcile.js';
+import {
+  inspectManagedAssets,
+  ManagedReconcileError,
+  reconcileManagedAssets,
+} from '../../src/cli/managed-reconcile.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 describe('managed asset audit: preserve user behavior and rollback identity', () => {
   let root: string;
-  beforeEach(() => { root = makeTempDir('specgit-assets-audit-'); });
-  afterEach(() => { rmDir(root); });
+  let externalRoots: string[];
+  beforeEach(() => {
+    root = makeTempDir('specgit-assets-audit-');
+    externalRoots = [];
+  });
+  afterEach(() => {
+    rmDir(root);
+    for (const external of externalRoots) rmDir(external);
+  });
 
   it('keeps malformed PreToolUse content byte-exact with a warning', () => {
     const original = JSON.stringify({ PreToolUse: { matcher: 'Bash', hooks: [{ command: 'my-check' }] } });
@@ -60,23 +71,138 @@ describe('managed asset audit: preserve user behavior and rollback identity', ()
     expect(reconcileLocalAssetIgnore(repaired)).toBe(repaired);
   });
 
-  it.skipIf(process.platform === 'win32')('restores a removed owned symlink after a later transaction failure', async () => {
-    fs.writeFileSync(path.join(root, 'target.md'), 'owned');
-    fs.symlinkSync('target.md', path.join(root, 'retired.md'));
-    await expect(reconcileManagedAssets(root, { steps: [
-      { kind: 'remove', path: 'retired.md', isOwned: () => true },
-      { kind: 'portWrite', path: 'failure', write: async () => { throw new Error('injected failure'); } },
-    ] })).rejects.toThrow('injected failure');
+  it.skipIf(process.platform === 'win32')('rejects an owned symlink in the plan instead of following or removing it', async () => {
+    const external = makeTempDir('specgit-assets-external-');
+    externalRoots.push(external);
+    const referent = path.join(external, 'target.md');
+    fs.writeFileSync(referent, 'external bytes');
+    fs.symlinkSync(referent, path.join(root, 'retired.md'));
+    const steps = [
+      { kind: 'remove' as const, path: 'retired.md', isOwned: () => true },
+    ];
+
+    expect(await inspectManagedAssets(root, { steps })).toEqual({
+      findings: [{ path: 'retired.md', state: 'conflict', code: 'asset_conflict' }],
+      notInspected: [],
+    });
+    let caught: unknown;
+    try {
+      await reconcileManagedAssets(root, { steps });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ManagedReconcileError);
+    expect((caught as ManagedReconcileError).phase).toBe('plan');
+    expect((caught as ManagedReconcileError).message).toContain('symbolic link "retired.md"');
     expect(fs.lstatSync(path.join(root, 'retired.md')).isSymbolicLink()).toBe(true);
-    expect(fs.readlinkSync(path.join(root, 'retired.md'))).toBe('target.md');
+    expect(fs.readFileSync(referent, 'utf8')).toBe('external bytes');
   });
 
   it.skipIf(process.platform === 'win32')('refuses a dangling symlink without creating its referent or losing the link', async () => {
     fs.symlinkSync('missing.md', path.join(root, 'managed.md'));
     await expect(reconcileManagedAssets(root, { steps: [
       { kind: 'write', path: 'managed.md', mode: 0o644, merge: () => 'generated' },
-    ] })).rejects.toThrow('dangling symlink');
+    ] })).rejects.toThrow('symbolic link "managed.md"');
     expect(fs.readlinkSync(path.join(root, 'managed.md'))).toBe('missing.md');
     expect(fs.existsSync(path.join(root, 'missing.md'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects a linked ancestor before any planned write reaches its external directory', async () => {
+    const external = makeTempDir('specgit-assets-external-');
+    externalRoots.push(external);
+    fs.writeFileSync(path.join(external, 'keep.txt'), 'external bytes');
+    fs.symlinkSync(external, path.join(root, '.agents'), 'dir');
+    const steps = [
+      { kind: 'write' as const, path: 'safe.txt', mode: 0o644, merge: () => 'must not exist' },
+      { kind: 'write' as const, path: '.agents/skills/specgit-issue/SKILL.md', mode: 0o644, merge: () => 'generated' },
+    ];
+
+    await expect(reconcileManagedAssets(root, { steps })).rejects.toThrow(
+      'symbolic link ".agents"'
+    );
+    expect(fs.existsSync(path.join(root, 'safe.txt'))).toBe(false);
+    expect(fs.readFileSync(path.join(external, 'keep.txt'), 'utf8')).toBe('external bytes');
+    expect(fs.existsSync(path.join(external, 'skills'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('allows only an explicitly trusted git-hooks path outside the worktree', async () => {
+    const hooks = makeTempDir('specgit-owned-hooks-');
+    externalRoots.push(hooks);
+    const prePush = path.join(hooks, 'pre-push');
+    fs.writeFileSync(prePush, '#!/bin/sh\nuser-check\n');
+    const hookPath = path.relative(root, prePush).split(path.sep).join('/');
+
+    const report = await reconcileManagedAssets(root, { steps: [{
+      kind: 'write',
+      path: hookPath,
+      scope: 'git-hooks',
+      mode: 0o755,
+      merge: () => '#!/bin/sh\nspecgit-check\n',
+    }] });
+
+    expect(report.updated).toEqual([hookPath]);
+    expect(fs.readFileSync(prePush, 'utf8')).toBe('#!/bin/sh\nspecgit-check\n');
+  });
+
+  it.skipIf(process.platform === 'win32')('still rejects a symlinked git hook leaf without touching its referent', async () => {
+    const hooks = makeTempDir('specgit-owned-hooks-');
+    const external = makeTempDir('specgit-hook-referent-');
+    externalRoots.push(hooks, external);
+    const referent = path.join(external, 'pre-push');
+    fs.writeFileSync(referent, '#!/bin/sh\nexternal\n');
+    const prePush = path.join(hooks, 'pre-push');
+    fs.symlinkSync(referent, prePush);
+    const hookPath = path.relative(root, prePush).split(path.sep).join('/');
+
+    await expect(reconcileManagedAssets(root, { steps: [{
+      kind: 'write',
+      path: hookPath,
+      scope: 'git-hooks',
+      mode: 0o755,
+      merge: () => '#!/bin/sh\nspecgit\n',
+    }] })).rejects.toThrow('symbolic link');
+
+    expect(fs.lstatSync(prePush).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(referent, 'utf8')).toBe('#!/bin/sh\nexternal\n');
+  });
+
+  it.skipIf(process.platform === 'win32')('does not extend git-hook trust to a linked ancestor inside the repository', async () => {
+    const external = makeTempDir('specgit-linked-gitdir-');
+    externalRoots.push(external);
+    fs.mkdirSync(path.join(external, 'hooks'));
+    const prePush = path.join(external, 'hooks', 'pre-push');
+    fs.writeFileSync(prePush, '#!/bin/sh\nexternal\n');
+    fs.symlinkSync(external, path.join(root, '.git'), 'dir');
+
+    await expect(reconcileManagedAssets(root, { steps: [{
+      kind: 'write',
+      path: '.git/hooks/pre-push',
+      scope: 'git-hooks',
+      mode: 0o755,
+      merge: () => '#!/bin/sh\nspecgit\n',
+    }] })).rejects.toThrow('symbolic link ".git"');
+
+    expect(fs.readFileSync(prePush, 'utf8')).toBe('#!/bin/sh\nexternal\n');
+  });
+
+  it.skipIf(process.platform === 'win32')('rolls back a port-created symlink by unlinking the leaf, never its referent', async () => {
+    const external = makeTempDir('specgit-port-referent-');
+    externalRoots.push(external);
+    const referent = path.join(external, 'policy.yaml');
+    fs.writeFileSync(referent, 'external policy bytes\n');
+    const managed = path.join(root, 'spec_git', 'policy.yaml');
+
+    await expect(reconcileManagedAssets(root, { steps: [{
+      kind: 'portWrite',
+      path: 'spec_git/policy.yaml',
+      write: async () => {
+        fs.mkdirSync(path.dirname(managed), { recursive: true });
+        fs.symlinkSync(referent, managed);
+      },
+    }] })).rejects.toThrow('symbolic link');
+
+    expect(fs.existsSync(managed)).toBe(false);
+    expect(fs.existsSync(path.join(root, 'spec_git'))).toBe(false);
+    expect(fs.readFileSync(referent, 'utf8')).toBe('external policy bytes\n');
   });
 });

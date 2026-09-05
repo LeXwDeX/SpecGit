@@ -17,9 +17,10 @@ Applies to tests under `test/`.
 - `test/specgit-cli/` — focused tests for the `specgit` CLI command functions
   with injected ports.
 - `test/specgit-e2e/` — end-to-end acceptance tests that run the real built CLI
-  (`dist/cli/index.js`) against deterministic fake `git`/`gh` providers and
-  both branch and worktree execution contexts. See `test/AGENTS.md` and the
-  shared runner in `test/helpers/run-cli.ts`.
+  (`dist/cli/index.js`) against deterministic fake `git`, `gh`, and `glab`
+  providers in branch and worktree contexts. See the
+  [external adoption matrix](specgit-e2e/MATRIX.md) and the shared runner in
+  `test/helpers/run-cli.ts`.
 
 ## Generated Assets in Tests
 

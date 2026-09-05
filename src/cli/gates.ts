@@ -142,15 +142,15 @@ export function completenessGate(binding: DeliveryBinding): GateResult {
   const failures: GateFailure[] = [];
   if (binding.issues.length === 0) {
     failures.push(
-      failure('issues_empty', 'No GitHub issues are bound.', {
-        fix: 'Bind at least one GitHub issue: specgit bind --issue <n>.',
+      failure('issues_empty', 'No forge issues are bound.', {
+        fix: 'Bind at least one issue from the current forge: specgit bind --issue <n>.',
       })
     );
   }
   if (binding.pr === undefined) {
     failures.push(
-      failure('pr_missing', 'No pull request is bound.', {
-        fix: 'Bind the pull request: specgit bind --pr <number-or-url>.',
+      failure('pr_missing', 'No pull or merge request is bound.', {
+        fix: 'Bind the delivery request: specgit bind --pr <ref> (numeric PR/MR ID, or a full GitHub PR URL).',
       })
     );
   }
@@ -227,7 +227,7 @@ export async function originGate(
         status: 'fail',
         failures: [
           failure('no_origin', 'No origin remote is configured.', {
-            fix: 'Add a GitHub origin: git remote add origin <url>.',
+            fix: 'Add an origin for a supported forge: git remote add origin <url>.',
           }),
         ],
       },

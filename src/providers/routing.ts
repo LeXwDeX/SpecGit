@@ -193,9 +193,9 @@ export class PlatformRoutingProvider implements ForgeProvider {
   async enableBranchProtection(
     repo: RepoRef,
     branch: string,
-    requiredCheck: string
+    requiredGate: string
   ): ReturnType<ForgeProvider['enableBranchProtection']> {
-    return (await this.forRepo(repo)).enableBranchProtection(repo, branch, requiredCheck);
+    return (await this.forRepo(repo)).enableBranchProtection(repo, branch, requiredGate);
   }
 
   async getRepoAutomerge(repo: RepoRef): ReturnType<ForgeProvider['getRepoAutomerge']> {

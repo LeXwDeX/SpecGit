@@ -233,7 +233,7 @@ describe('inspectGeneratedAssets: surface grouping and exact fixes (#308)', () =
     const report = await inspect();
     const init = report.surfaces.find((s) => s.surface === 'init');
     expect(init?.state).toBe('missing');
-    expect(init?.fix).toBe('specgit init --force');
+    expect(init?.fix).toBe('specgit init --force --no-protect');
     expect(init?.assets.map((a) => `${a.state}:${a.path}`)).toEqual(
       expect.arrayContaining([
         `missing:${HARNESS_WORKFLOW_PATH}`,
@@ -363,7 +363,7 @@ describe('inspectGeneratedAssets: surface grouping and exact fixes (#308)', () =
     const init = report.surfaces.find((s) => s.surface === 'init');
     const workflow = init?.assets.find((a) => a.path === HARNESS_WORKFLOW_PATH);
     expect(workflow).toEqual({ path: HARNESS_WORKFLOW_PATH, state: 'stale', code: 'asset_stale' });
-    expect(init?.fix).toBe('specgit init --force');
+    expect(init?.fix).toBe('specgit init --force --no-protect');
     expect(report.uninspected).not.toContain('workflow_platform_undecided');
 
     // Unowned bytes at the managed workflow path: a conflict, never a removal claim.
@@ -474,6 +474,7 @@ describe('inspectGeneratedAssets: surface grouping and exact fixes (#308)', () =
     expect(report.uninspected).not.toContain('ignore_committed_authoritative');
     const init = report.surfaces.find((s) => s.surface === 'init');
     expect(init?.assets.find((a) => a.path === '.gitignore')).toBeUndefined();
+    expect(init?.fix).toBe('specgit init --force --no-protect --no-ignore');
   });
 
   it('a repository with a managed ignore region keeps it inspected even when authoritative files are tracked', async () => {
@@ -687,7 +688,7 @@ describe('the generated report shape is typed and pinned (#308)', () => {
         {
           surface: 'init',
           state: 'stale',
-          fix: 'specgit init --force',
+          fix: 'specgit init --force --no-protect',
           assets: [{ path: 'AGENTS.md', state: 'stale', code: 'asset_stale' }],
         },
         {

@@ -25,10 +25,14 @@ serves.
 ## Checklist
 
 - [ ] The PR body closes every bound issue (`Closes #n`)
-- [ ] A changeset (`.changeset/*.md`) is included for user-visible changes
+- [ ] A changeset (`.changeset/*.md`) is included when this delivery has
+      explicit npm publication intent
 - [ ] Docs updated in the same PR where behavior changed
       (README / docs/cli.md / docs/reference.md / docs/baseline-v1.md)
 - [ ] No public-contract drift: exit codes, `--json` envelope, command set —
       changes update [docs/baseline-v1.md](../docs/baseline-v1.md) first
 - [ ] No secrets, no tokens, no telemetry added
-- [ ] `pnpm run lint`, `pnpm exec tsc --noEmit`, `pnpm test` all pass
+- [ ] The applicable checks in [docs/ci-scope.md](../docs/ci-scope.md) pass:
+      product changes run build, lint, both typechecks, and tests; recognized
+      metadata-only changes run the metadata contracts without compiling the
+      product

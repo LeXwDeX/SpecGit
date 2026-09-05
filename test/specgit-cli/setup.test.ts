@@ -20,13 +20,16 @@ function gitInit(root: string): void {
 
 describe('specgit setup', () => {
   let tempDir: string;
+  let externalRoots: string[];
 
   beforeEach(() => {
     tempDir = makeTempDir('specgit-setup-');
+    externalRoots = [];
   });
 
   afterEach(() => {
     rmDir(tempDir);
+    for (const external of externalRoots) rmDir(external);
   });
 
   it('auto-detects generic when no .opencode directory exists', async () => {
@@ -146,6 +149,90 @@ describe('specgit setup', () => {
     expect(outcome.human).toBeDefined();
     const joined = (outcome.human ?? []).join('\n');
     expect(joined).toContain('.agents/skills/specgit-issue/SKILL.md');
+  });
+
+  it('fails closed before writing when tracked-file evidence is unavailable', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: tempDir },
+      cwd: tempDir,
+      gitWrites: {
+        trackedFiles: () => ({
+          ok: false,
+          code: 'tracked_probe_failed',
+          message: 'git ls-files failed',
+        }),
+      },
+    });
+
+    const outcome = await runSetup({ tool: 'generic', json: true }, t.ctx);
+
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('ignore_tracked_unknown');
+    expect(outcome.errors?.[0]?.fix).toContain('git ls-files -- .specgit.yaml spec_git/policy.yaml');
+    expect(fs.existsSync(path.join(tempDir, '.agents'))).toBe(false);
+  });
+
+  it('fails closed before writing when .gitignore is unreadable as a file', async () => {
+    fs.mkdirSync(path.join(tempDir, '.gitignore'));
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+
+    const outcome = await runSetup({ tool: 'generic', json: true }, t.ctx);
+
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('ignore_unreadable');
+    expect(outcome.errors?.[0]?.fix).toContain('readable regular file');
+    expect(fs.existsSync(path.join(tempDir, '.agents'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects a symlinked .gitignore before installing a setup surface', async () => {
+    const external = makeTempDir('specgit-setup-external-');
+    externalRoots.push(external);
+    const referent = path.join(external, 'ignore');
+    fs.writeFileSync(referent, 'external ignore bytes\n');
+    fs.symlinkSync(referent, path.join(tempDir, '.gitignore'));
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+
+    const outcome = await runSetup({ tool: 'generic', json: true }, t.ctx);
+
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('setup_write_failed');
+    expect(outcome.errors?.[0]?.message).toContain('symbolic link ".gitignore"');
+    expect(fs.readFileSync(referent, 'utf8')).toBe('external ignore bytes\n');
+    expect(fs.existsSync(path.join(tempDir, '.agents'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects a symlinked .agents ancestor without writing outside the repository', async () => {
+    const external = makeTempDir('specgit-setup-external-');
+    externalRoots.push(external);
+    fs.writeFileSync(path.join(external, 'keep.txt'), 'external agent bytes\n');
+    fs.symlinkSync(external, path.join(tempDir, '.agents'), 'dir');
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+
+    const outcome = await runSetup({ tool: 'generic', json: true }, t.ctx);
+
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('setup_write_failed');
+    expect(outcome.errors?.[0]?.message).toContain('symbolic link ".agents"');
+    expect(fs.readFileSync(path.join(external, 'keep.txt'), 'utf8')).toBe('external agent bytes\n');
+    expect(fs.existsSync(path.join(external, 'skills'))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, '.gitignore'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('auto-detection does not read through a symlinked .opencode root', async () => {
+    const external = makeTempDir('specgit-setup-external-');
+    externalRoots.push(external);
+    fs.writeFileSync(path.join(external, 'keep.txt'), 'external opencode bytes\n');
+    fs.symlinkSync(external, path.join(tempDir, '.opencode'), 'dir');
+    const t = makeCtx({ root: { ok: true, value: tempDir }, cwd: tempDir });
+
+    const outcome = await runSetup({ json: true }, t.ctx);
+
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('setup_write_failed');
+    expect(outcome.errors?.[0]?.message).toContain('symbolic link ".opencode"');
+    expect(fs.readFileSync(path.join(external, 'keep.txt'), 'utf8')).toBe('external opencode bytes\n');
+    expect(fs.existsSync(path.join(external, 'command'))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, '.gitignore'))).toBe(false);
   });
 
   it('exposes the structured assets payload through the --json envelope (#168)', async () => {

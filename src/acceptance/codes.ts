@@ -82,12 +82,12 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   title_language_mismatch: {
     kind: 'factual',
     message: 'The title violates the explicitly selected project language rule.',
-    fix: 'Edit the issue or pull request title to match the project language, then re-run specgit finish.',
+    fix: 'Edit the issue or pull/merge request title to match the project language, then re-run specgit finish.',
   },
   title_evidence_missing: {
     kind: 'evidence',
     message: 'The forge did not provide the title required for validation.',
-    fix: 'Retry when the issue and pull request titles are available from the forge.',
+    fix: 'Retry when the issue and pull/merge request titles are available from the forge.',
   },
   issue_labels_invalid: {
     kind: 'factual',
@@ -107,26 +107,27 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   record_invalid: {
     kind: 'evidence',
     message: 'The .specgit.yaml delivery binding is invalid.',
-    fix: 'Fix or recreate .specgit.yaml, then run "specgit accept" again.',
+    fix: 'Fix or recreate .specgit.yaml, then run "specgit finish" again.',
   },
   policy_missing: {
     kind: 'evidence',
-    message: 'No spec_git/policy.yaml found.',    fix: 'Run "specgit init --required-check <name>" to declare required checks.',
+    message: 'No spec_git/policy.yaml found.',
+    fix: 'Run "specgit init" to create the policy and generate the harness.',
   },
   policy_invalid: {
     kind: 'evidence',
     message: 'spec_git/policy.yaml is invalid.',
-    fix: 'Fix or recreate spec_git/policy.yaml — every required check name must be a non-empty string, and the list itself may be empty (the no-CI policy).',
+    fix: 'Repair or recreate spec_git/policy.yaml according to the reported schema error, then re-run; required_checks may be an empty list for the no-CI policy, but every listed name must be a non-empty string.',
   },
   issues_empty: {
     kind: 'factual',
     message: 'The delivery binding lists no issues.',
-    fix: 'Bind at least one GitHub issue number.',
+    fix: 'Bind at least one issue number from the current forge.',
   },
   pr_missing: {
     kind: 'factual',
-    message: 'The delivery binding has no pull request.',
-    fix: 'Bind the pull request that delivers this work.',
+    message: 'The delivery binding has no pull or merge request.',
+    fix: 'Bind the pull or merge request that delivers this work.',
   },
   not_a_git_repo: {
     kind: 'evidence',
@@ -160,7 +161,7 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   },
   merged_delivery_not_contained: {
     kind: 'factual',
-    message: "The merged pull request's merge commit is not contained by local HEAD.",
+    message: "The merged request's provider-reported merge commit is not contained by local HEAD.",
     fix: 'Fetch and check out the base branch that received the merge (e.g. git pull), then re-run. A rewritten local history cannot prove lineage.',
   },
   merged_lineage_unavailable: {
@@ -171,17 +172,17 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   no_origin: {
     kind: 'factual',
     message: 'The repository has no origin remote.',
-    fix: 'Add an origin remote pointing at the github.com repository.',
+    fix: 'Add an origin remote pointing at the supported forge repository.',
   },
   origin_unresolvable: {
     kind: 'factual',
-    message: 'The origin remote does not resolve to a github.com repository.',
-    fix: 'Point origin at a github.com repository (https or ssh).',
+    message: 'The origin remote does not resolve to a supported forge repository.',
+    fix: 'First correct origin so its host, port, and repository path resolve to a supported forge repository. For a syntactically valid GitLab origin that is not declared yet, run "specgit init --force --gitlab-host <hostname> --no-protect" (omit --force before first init; append --no-ignore for the intentionally tracked authoritative model).',
   },
   gitlab_unsupported: {
     kind: 'factual',
-    message: 'The origin remote points at a GitLab repository; GitLab evidence requires glab support, which is not implemented yet.',
-    fix: 'Declare the platform with "specgit init --gitlab-host <hostname>" and see docs/gitlab-support.md for the glab roadmap.',
+    message: 'The origin looks like GitLab but lacks a matching declaration or falls outside the supported GitLab origin grammar.',
+    fix: 'For an initialized repository declare the exact host with "specgit init --force --gitlab-host <hostname> --no-protect" (omit --force before first init; append --no-ignore for the intentionally tracked authoritative model); if already declared, use a matching port and a group[/subgroup…]/project path with 2–5 segments.',
   },
   gitlab_version_unverified: {
     kind: 'evidence',
@@ -220,48 +221,48 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   },
   evidence_truncated: {
     kind: 'evidence',
-    message: 'A list-shaped evidence input was silently truncated; the verdict cannot be complete.',
-    fix: 'This is a completeness guard, not a delivery defect: the repository exceeds a provider list window (e.g. more than 1000 open issues via GitHub search). Narrow the list — deliver or close issues — and re-run.',
+    message: 'A list-shaped evidence input may be incomplete or truncated; the verdict cannot be complete.',
+    fix: 'Complete or reduce the evidence collection named by the failure, then re-run. Issues, checks, timelines, labels, comments, workflows, and pipelines must never be judged from a partial list.',
   },
   issue_not_found: {
     kind: 'factual',
-    message: 'A bound issue does not exist on GitHub.',
-    fix: 'Remove or correct the issue number in .specgit.yaml.',
+    message: 'A bound issue does not exist on the configured forge.',
+    fix: 'Recreate the binding with "specgit unbind --yes", then run "specgit bind --delivery <id> --issue <n>... --pr <ref>" using only valid issue numbers.',
   },
   issue_is_pull_request: {
     kind: 'factual',
-    message: 'A bound issue number refers to a pull request, not an issue.',
-    fix: 'Bind the underlying issue, not the pull request number.',
+    message: 'A bound issue lookup resolved to a pull request, not an issue.',
+    fix: 'Bind the tracking issue, not the pull request number.',
   },
   pr_not_found: {
     kind: 'factual',
-    message: 'The bound pull request does not exist on GitHub.',
-    fix: 'Bind the correct pull request explicitly with "specgit pr <number>", or run "specgit issue" to open a pull request if none exists yet.',
+    message: 'The bound pull or merge request does not exist on the configured forge.',
+    fix: 'If the request already exists, bind it with "specgit pr <number>". Otherwise create a draft PR/MR from the bound branch with the forge CLI, preserving the required body and every closing reference, then run "specgit pr" to discover and bind it.',
   },
   pr_closed_unmerged: {
     kind: 'factual',
-    message: 'The bound pull request is closed without being merged.',
-    fix: 'Bind a pull request that is open or merged.',
+    message: 'The bound pull or merge request is closed without being merged.',
+    fix: 'Bind a request that is open or merged.',
   },
   pr_draft: {
     kind: 'factual',
-    message: 'The bound pull request is still a draft.',
-    fix: 'Mark the pull request ready for review, then run "specgit accept" again: GitHub "gh pr ready <number>", GitLab "glab mr update <number> --ready". A draft is not done.',
+    message: 'The bound pull or merge request is still a draft.',
+    fix: 'Mark it ready for review, then run "specgit finish" again: GitHub "gh pr ready <number>", GitLab "glab mr update <number> --ready". A draft is not accepted.',
   },
   pr_head_mismatch: {
     kind: 'factual',
-    message: 'The pull request head branch does not match the delivery branch.',
-    fix: 'Update the PR head to the bound branch, or update the binding.',
+    message: 'The pull or merge request head branch does not match the delivery branch.',
+    fix: 'First close the obsolete open request or remove its closing references so it no longer claims the bound issues. Then bind an existing PR/MR whose head matches the delivery with "specgit pr <number>", or create one from the bound branch and bind its number, then re-run.',
   },
   pr_repo_mismatch: {
     kind: 'factual',
-    message: 'The bound pull request URL belongs to a different repository than origin.',
-    fix: 'Bind a pull request from the origin repository.',
+    message: 'The bound request URL belongs to a different repository than origin.',
+    fix: 'Bind a pull or merge request from the origin repository.',
   },
   closing_refs_incomplete: {
     kind: 'factual',
-    message: 'The PR body does not close every bound issue.',
-    fix: 'Add closing keywords (e.g. "Closes #N") for each listed issue to the PR body.',
+    message: 'The pull or merge request body does not close every bound issue.',
+    fix: 'Add closing keywords (e.g. "Closes #N") for each listed issue to the request body.',
   },
   issue_out_of_order: {
     kind: 'factual',
@@ -270,23 +271,23 @@ export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
   },
   checks_missing: {
     kind: 'factual',
-    message: 'A required check did not run at the PR head.',
-    fix: 'Ensure the required GitHub Actions workflow runs on the PR head commit.',
+    message: 'A required check did not run at the request head.',
+    fix: 'Ensure the configured GitHub workflow or GitLab pipeline job runs on the current PR/MR head commit, then run "specgit finish" again.',
   },
   checks_pending: {
     kind: 'factual',
     message:
-      'A required check has not completed at the PR head (transient: queued or in progress).',
-    fix: 'Pending is not failure — nothing needs repair. Wait for the check to finish, then run "specgit accept" again; re-running is safe and idempotent.',
+      'A required check has not completed at the request head (transient: queued or in progress).',
+    fix: 'Pending is not failure — nothing needs repair. Wait for the check to finish, then run "specgit finish" again; re-running is safe and idempotent.',
   },
   checks_failed: {
     kind: 'factual',
-    message: 'A required check failed at the PR head.',
-    fix: 'Fix the failing check, then run "specgit accept" again. A conclusion of action_required means the run never started: it is waiting for maintainer approval (typical for a bot-pushed PR head) — approve the run in the Actions tab or re-push the head from an actor with write access.',
+    message: 'A required check failed at the request head.',
+    fix: 'Fix the failing check, then run "specgit finish" again. On GitHub, action_required means the run never started and needs maintainer approval in Actions or a re-push by an actor with write access.',
   },
   local_head_stale: {
     kind: 'evidence',
-    message: 'The local HEAD is not the PR head; acceptance is about the PR.',
-    fix: 'Pull the PR head if you want local parity.',
+    message: 'The local HEAD is not the request head; acceptance is about the remote request.',
+    fix: "Run git fetch origin, check out the bound request's head branch, update it to the remote head (for a tracking branch, git pull --ff-only), then re-run.",
   },
 };

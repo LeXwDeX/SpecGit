@@ -294,11 +294,17 @@ export function makeGhProvider(
         { ok: true, value: { protected: false, requiredChecks: [] } }
       );
     }),
-    enableBranchProtection: vi.fn(async (repo: RepoRef, branch: string, requiredCheck: string): Promise<Evidence<BranchProtectionFact>> => {
-      calls.push(`enableBranchProtection:${repo.owner}/${repo.repo}:${branch}:${requiredCheck}`);
+    enableBranchProtection: vi.fn(async (repo: RepoRef, branch: string, requiredGate: string): Promise<Evidence<BranchProtectionFact>> => {
+      calls.push(`enableBranchProtection:${repo.owner}/${repo.repo}:${branch}:${requiredGate}`);
       return (
         behavior.enableBranchProtection ??
-        { ok: true, value: { protected: true, requiredChecks: [requiredCheck] } }
+        {
+          ok: true,
+          value: {
+            protected: true,
+            requiredChecks: repo.platform === 'github' ? [requiredGate] : [],
+          },
+        }
       );
     }),
     getRepoAutomerge: vi.fn(async (repo: RepoRef): Promise<Evidence<RepoAutomergeFact>> => {
