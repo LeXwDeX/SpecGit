@@ -310,9 +310,9 @@ describe('completion workflow trust boundary', () => {
         merge_commit_sha: eventSha, mergeCommit: { oid: eventSha } };
       const script = workflow.jobs.identify.steps[0].run.split("<<'NODE'\n")[1].replace(/\nNODE\s*$/, '')
         .replace("import { execFileSync } from 'node:child_process';",
-          `const execFileSync = (_command, args) => JSON.stringify(args[0] === 'api' ? [[${JSON.stringify(request)}]] : ${JSON.stringify(request)});`);
+          "const request = JSON.parse(process.env.FIXTURE_REQUEST); const execFileSync = (_command, args) => JSON.stringify(args[0] === 'api' ? [[request]] : request);");
       const run = () => execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', stdio: 'pipe',
-        env: { ...process.env, GITHUB_EVENT_PATH: join(root, 'event'), GITHUB_REPOSITORY: 'owner/repo', GITHUB_OUTPUT: join(root, 'output') } });
+        env: { ...process.env, FIXTURE_REQUEST: JSON.stringify(request), GITHUB_EVENT_PATH: join(root, 'event'), GITHUB_REPOSITORY: 'owner/repo', GITHUB_OUTPUT: join(root, 'output') } });
       if (mode === 'stale') expect(run).toThrow();
       else {
         run();
