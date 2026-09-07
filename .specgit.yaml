@@ -11,3 +11,4 @@ issueKinds:
     kind: kind::perf
   - issue: 470
     kind: kind::ci
+pr: 471
