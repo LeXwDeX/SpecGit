@@ -37,7 +37,7 @@ describe('specgit init', () => {
     rmDir(root);
   });
 
-  it.each(['changed', 'created', 'deleted', 'during-write', 'lock-timeout', 'after-write'])('preserves concurrently %s authoritative policy and rolls back the harness', { timeout: 10_000 }, async (change) => {
+  it.each(['changed', 'created', 'deleted', 'during-write', 'lock-timeout', 'hook-lock-timeout', 'after-write'])('preserves concurrently %s authoritative policy and rolls back the harness', { timeout: 10_000 }, async (change) => {
     const target = path.join(root, SPEC_GIT_DIR, POLICY_FILENAME);
     const concurrent = '# user edit\nversion: 1\nrequired_checks: [Build, Security]\n';
     if (change !== 'created') await writePolicy(root, { version: 1, required_checks: ['Build'] });
@@ -50,10 +50,11 @@ describe('specgit init', () => {
     };
     t.ctx.record.writePolicy = async (repoRoot, policy, basis) => {
       if (change === 'during-write') mutate();
-      if (change === 'lock-timeout') {
+      if (change === 'lock-timeout' || change === 'hook-lock-timeout') {
         fs.writeFileSync(`${target}.lock`, 'held by another writer');
         const pending = writePolicy(repoRoot, policy, basis);
         mutate();
+        if (change === 'hook-lock-timeout') fs.writeFileSync(path.join(root, '.opencode/hooks.json'), '{"user-added":true}\n');
         return pending;
       }
       const written = await writePolicy(repoRoot, policy, basis);
@@ -71,6 +72,7 @@ describe('specgit init', () => {
     expect(await runCliWith(['node', 'specgit', 'init', '--force', '--required-check', 'Build', '--no-protect', '--json'], t.ctx)).toBe(EXIT_UNKNOWN);
     if (change === 'deleted') expect(fs.existsSync(target)).toBe(false);
     else expect(read(target)).toBe(concurrent);
+    if (change === 'hook-lock-timeout') expect(read(path.join(root, '.opencode/hooks.json'))).toBe('{"user-added":true}\n');
     expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
     expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
     expect(stdoutText(t.io)).toContain('failed');
