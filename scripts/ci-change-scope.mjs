@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // CI scheduling is based on committed changes, never on .gitignore contents.
-// Locked Changesets parsing needs no lifecycle scripts or product build.
+// Verification needs only Node and Git; release assessment uses the locked Changesets parser.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -117,7 +117,7 @@ function eventRange(eventName, event) {
   throw new Error(`No complete change range for event ${JSON.stringify(eventName)}.`);
 }
 
-/** @param {{base?: string, head?: string}} options */
+/** @param {{base?: string, head?: string, verificationOnly?: boolean}} options */
 export function inspectChanges(options = {}) {
   let range;
   if (options.base !== undefined || options.head !== undefined) {
@@ -130,10 +130,13 @@ export function inspectChanges(options = {}) {
     range = eventRange(eventName, event);
   }
   if (range === null) {
-    return { build: true, metadata: false, nix: true, dependencies: true, release_intent: false, paths: [], reason: 'Full verification requested or no prior branch revision.' };
+    return { build: true, metadata: false, nix: true, dependencies: true, release_intent: options.verificationOnly ? null : false, paths: [], reason: 'Full verification requested or no prior branch revision.' };
   }
   const entries = changedEntries(range.base, range.head);
   const result = { ...classifyEntries(entries), base: range.base, head: range.head };
+  // A verification decision is not a release verdict. In particular, metadata
+  // validation still parses changed release notes with the locked parser.
+  if (options.verificationOnly) return { ...result, release_intent: null };
   let releaseIntent = false;
   for (const entry of entries) {
     if (entry.status !== 'D' && CHANGESET.test(entry.path)) {
@@ -152,12 +155,13 @@ export function inspectChanges(options = {}) {
 }
 
 function main() {
-  /** @type {{base?: string, head?: string}} */
+  /** @type {{base?: string, head?: string, verificationOnly?: boolean}} */
   const options = {};
   let assertMetadata = false;
   for (let i = 2; i < process.argv.length; i++) {
     const arg = process.argv[i];
     if (arg === '--assert-metadata') assertMetadata = true;
+    else if (arg === '--verification-only') options.verificationOnly = true;
     else if (arg === '--base' || arg === '--head') {
       if (!process.argv[i + 1]) throw new Error(`Missing value for ${arg}.`);
       if (arg === '--base') options.base = process.argv[++i];

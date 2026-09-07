@@ -42,13 +42,16 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build
         run: pnpm run build
 
       - name: Verify the packed tarball carries the CLI
         run: pnpm run check:pack-version
+        # Verify the build above; npm pack would otherwise invoke prepare again.
+        env:
+          npm_config_ignore_scripts: 'true'
 
       # Stage an RC version for the rest of the job: the dry-run below
       # would otherwise collide with the already-published base version,

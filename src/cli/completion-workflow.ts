@@ -113,10 +113,7 @@ ${input.selfHosted ? `      - uses: actions/checkout@3d3c42e5aac5ba805825da76410
         env:
           GH_TOKEN: \${{ github.token }}
         run: gh auth setup-git
-${input.selfHosted ? `      - name: Install trusted classifier dependencies without lifecycle scripts
-        working-directory: specgit-runtime
-        run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Classify the request using approved source
+${input.selfHosted ? `      - name: Classify the request using approved source
         id: scope
         working-directory: specgit-data
         env:
@@ -186,6 +183,7 @@ ${input.selfHosted ? `          const version = JSON.parse(readFileSync(process.
           } catch (error) {
 ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') throw new Error('runtime_upgrade_required: publish the compatible runtime before completing metadata changes.');
             directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime';
+            execFileSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
             execFileSync('pnpm', ['run', 'build'], { cwd: directory, stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
             if (runtime.REMOTE_DELIVERY_PROTOCOL !== 1) throw new Error('The approved source lacks completion protocol 1.');

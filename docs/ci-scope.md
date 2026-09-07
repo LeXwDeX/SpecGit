@@ -71,9 +71,12 @@ describe only released behavior as currently available.
 | Unknown paths, mixed source/metadata changes, scheduled or explicitly dispatched verification | Full product verification; relevant toolchain checks also run | Fail closed on incomplete change evidence; no inferred release intent |
 
 The exact scheduling map lives in
-[`scripts/ci-change-scope.mjs`](../scripts/ci-change-scope.mjs). It uses committed
-Git evidence and the parser installed by the locked Changesets CLI, without
-running package lifecycle scripts. Ignore patterns do not determine scope.
+[`scripts/ci-change-scope.mjs`](../scripts/ci-change-scope.mjs). Verification
+consumers use `--verification-only`: only Node and Git are needed to classify
+the complete committed diff, before installing a project toolchain. That mode
+reports `release_intent: null`, meaning release intent was not assessed. The
+default release-aware mode uses the parser installed by the locked Changesets
+CLI to validate release notes. Ignore patterns do not determine scope.
 PRs use the merge base and PR head; pushes use the event's before/after commits;
 merge groups use their complete base/head range. Missing or invalid commit
 evidence fails the job. A new branch without a prior revision, scheduled checks
@@ -110,7 +113,8 @@ is part of the published package, while an arbitrary developer build is not a
 substitute for that release verification.
 
 The classifier emits `build`, `metadata`, `nix`, `dependencies`, and
-`release_intent`. Its `--assert-metadata` option proves only that the complete
+`release_intent` (a boolean in release-aware mode, `null` in verification-only
+mode). The release planner rejects an unassessed intent. Its `--assert-metadata` option proves only that the complete
 diff is eligible for metadata verification; it does not validate policy or
 pretend to run product tests. A source change cannot acquire a lightweight
 pass by changing an ignore rule. Changesets use the real Changesets syntax:
@@ -124,6 +128,26 @@ For local inspection, supply explicit committed revisions:
 ```bash
 node scripts/ci-change-scope.mjs --base <base-sha> --head <head-sha>
 ```
+
+For verification scheduling without installing dependencies:
+
+```bash
+node scripts/ci-change-scope.mjs --base <base-sha> --head <head-sha> --verification-only
+```
+
+CI and Security scope jobs use this mode. Self acceptance installs the project
+toolchain only for product changes; metadata acceptance installs only the pinned
+CLI into its isolated prefix. Completion classifies with approved source and
+installs approved source dependencies only if a product change needs the runtime
+fallback. Metadata contracts still validate actual content, including release
+notes; skipping release assessment during scheduling does not exempt that content.
+
+The test matrix, lint/typecheck and RC jobs install locked dependencies with
+`--ignore-scripts` and build explicitly once. RC tarball verification also disables npm lifecycle
+scripts so it checks that explicit build without rebuilding during `npm pack`.
+Normal package installation and the release workflow retain their lifecycle
+behavior. The measured baseline and scheduled broader improvements are recorded
+in the [delivery performance audit](delivery-performance-audit.md).
 
 ## Required verification
 
@@ -166,8 +190,9 @@ dispatch input.
 ## The acceptance job
 
 This repository's generated **SpecGit Acceptance** workflow checks out full
-history, installs locked classifier dependencies with `--ignore-scripts`, and
-classifies the change. Product changes build and run the current CLI.
+history and classifies the change with Node and Git before installing a project
+toolchain. Product changes install locked dependencies with `--ignore-scripts`,
+then build and run the current CLI.
 Metadata-only changes install the exact version declared in `package.json` into
 `$RUNNER_TEMP/specgit-cli`, with lifecycle scripts disabled, and run that
 published CLI without compiling the product. Policy/schema implementation
