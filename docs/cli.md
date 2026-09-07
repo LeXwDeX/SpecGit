@@ -462,6 +462,12 @@ merges an open PR/MR. It is mutually exclusive with `--merge` and an explicit
 request number or URL. Existing closed issues are preserved and retries complete
 only the remaining closures.
 
+Historical authorization currently requires a two-parent merge commit. Manual
+squash, rebase, and fast-forward merges can be identified, but automatic closure
+returns `policy_history_unavailable` until their original target policy can be
+proved. Keep merge commits enabled for this completion path; the runtime never
+substitutes the newly merged policy for prior approval.
+
 `--merge` is a distinct execution mode and cannot be combined with a PR/MR number
 or URL. It uses the current binding and requires `automation.merge: true`.
 The PR/MR must target `automation.target_branch`; a complete acceptance verdict

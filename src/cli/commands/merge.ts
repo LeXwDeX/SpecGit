@@ -51,7 +51,7 @@ export async function runMerge(ctx: CommandContext, options: { closeOnly?: boole
   const { human } = catalogFor(resolveLanguage(policy.value));
   const lineageActions: NextAction[] = [{
     code: 'merge_lineage', command: 'git fetch origin',
-    reason: `Fetch and check out '${automation.target_branch}' containing the merge, then retry specgit pr --merge.`,
+    reason: `Fetch and check out '${automation.target_branch}' containing the merge, then retry specgit pr ${options.closeOnly ? '--close-issues' : '--merge'}.`,
   }];
   const explainLineage = (outcome: PrOutcome): PrOutcome => ({
     ...outcome, nextActions: lineageActions,
@@ -101,7 +101,7 @@ export async function runMerge(ctx: CommandContext, options: { closeOnly?: boole
     }
     if (!lineage.value.contained) {
       return explainLineage(stop('merged_delivery_not_contained', 'Local HEAD does not contain the merged delivery.', EXIT_REJECTED,
-        'Fetch and check out the target branch containing the merge, then retry "specgit pr --merge".'));
+        `Fetch and check out the target branch containing the merge, then retry "specgit pr ${options.closeOnly ? '--close-issues' : '--merge'}".`));
     }
   }
 

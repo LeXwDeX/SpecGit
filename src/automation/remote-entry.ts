@@ -10,7 +10,7 @@ import { DeliveryBindingSchema } from '../record/schema.js';
 import { isAutomationTargetBranch } from '../record/policy.js';
 import { matchesBoundRequest, runRemoteDelivery } from './remote-delivery.js';
 import * as recordIo from '../record/io.js';
-import { resolveGitlabMergeSignal } from '../providers/gitlab/merge-signal.js';
+import { GlabProvider } from '../providers/gitlab/glab-cli.js';
 import type { GitlabCompletionIdentity } from '../providers/gitlab/completion-context.js';
 
 const git = (root: string, hooks: string, args: string[]): string => execFileSync('git', ['-C', root, '-c', `core.hooksPath=${hooks}`, ...args], {
@@ -64,23 +64,17 @@ export async function completeFromEnvironment(): Promise<number> {
     const providers = await recordIo.readProviders(dataRoot);
     if (!providers.ok || !providers.value.gitlab) throw new Error('GitLab completion requires its declared host.');
     const { host, port } = providers.value.gitlab;
-    const read = (path: string): unknown => JSON.parse(execFileSync('glab', ['api', '--hostname', port ? `${host}:${port}` : host, path], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
-    }));
-    const signal = resolveGitlabMergeSignal(repo.value, mergeSha ?? '', targetBranch ?? '', read);
-    if (!signal) return 0; // An ordinary target-branch push has no bound merge to complete.
-    pr = signal.pr;
-    headSha = signal.headSha;
-    const sourceId = Number(process.env.SPECGIT_SOURCE_PIPELINE);
-    if (!Number.isSafeInteger(sourceId) || sourceId <= 0) throw new Error('Missing source pipeline identity.');
-    const endpoint = `projects/${encodeURIComponent(`${repo.value.owner}/${repo.value.repo}`)}/pipelines/${sourceId}`;
+    const provider = new GlabProvider({ hostname: port ? `${host}:${port}` : host });
     const deadline = Date.now() + 20 * 60_000;
     while (true) {
-      const source = read(endpoint) as { status?: string } | null;
-      if (source?.status === 'success') break;
-      if (!['created', 'pending', 'running', 'preparing', 'waiting_for_resource'].includes(source?.status ?? '') || Date.now() >= deadline) {
-        throw new Error('The merged target pipeline did not succeed.');
+      const signal = await provider.resolveMergedPush(repo.value, mergeSha ?? '', targetBranch ?? '', Number(process.env.SPECGIT_SOURCE_PIPELINE));
+      if (signal.ok) {
+        if (!signal.value) return 0; // Ordinary pushes have no issue-closure action.
+        pr = signal.value.pr;
+        headSha = signal.value.headSha;
+        break;
       }
+      if (signal.code !== 'gitlab_completion_source_pending' || Date.now() >= deadline) throw new Error(signal.message);
       await new Promise((resolve) => setTimeout(resolve, 10_000));
     }
   }
