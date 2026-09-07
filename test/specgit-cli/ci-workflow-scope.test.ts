@@ -35,6 +35,24 @@ function assertNoProductBuild(steps: Step[]) {
 }
 
 describe('CI applicability and real verification', () => {
+  it('classifies changes before installing a product toolchain', () => {
+    const commands = ci.jobs.changes.steps!.map((step) => step.run ?? '').join('\n');
+    expect(commands).toContain('node scripts/ci-change-scope.mjs --verification-only');
+    expect(commands).not.toMatch(/(?:pnpm|npm) install/);
+    expect(ci.jobs.changes.steps!.some((step) => step.uses?.startsWith('pnpm/action-setup@'))).toBe(false);
+  });
+
+  it('builds once per product verification job without an installation-time prepare build', () => {
+    for (const job of [ci.jobs.test_matrix, ci.jobs.lint, rc.jobs['rc-verify']]) {
+      const installs = job.steps!.filter((step) => step.run?.includes('pnpm install'));
+      expect(installs).toHaveLength(1);
+      expect(installs[0].run).toContain('--frozen-lockfile --ignore-scripts');
+      expect(job.steps!.filter((step) => step.run === 'pnpm run build')).toHaveLength(1);
+    }
+    const pack = rc.jobs['rc-verify'].steps!.find((step) => step.run === 'pnpm run check:pack-version');
+    expect(pack?.env?.npm_config_ignore_scripts).toBe('true');
+  });
+
   it('keeps an always-run accurately named required check without path-filter pending traps', () => {
     expect(ci.on.pull_request).toBeDefined();
     expect(ci.on.pull_request?.paths).toBeUndefined();

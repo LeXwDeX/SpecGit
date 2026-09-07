@@ -28,17 +28,18 @@ const selectedSteps = (build: 'true' | 'false' | ''): Step[] => steps().filter((
 });
 
 describe('self acceptance CI scope', () => {
-  it('classifies the complete checkout with the locked Changesets parser and no lifecycle scripts', () => {
+  it('classifies the complete checkout before installing the product toolchain', () => {
     const all = steps();
     const checkout = all.find((step) => step.uses?.startsWith('actions/checkout@'));
     expect(checkout?.with?.['fetch-depth']).toBe(0);
     expect(checkout?.with?.['persist-credentials']).toBe(false);
     const classify = all.findIndex((step) => step.id === 'scope');
     expect(classify).toBeGreaterThan(0);
-    expect(all[classify]?.run).toBe('node scripts/ci-change-scope.mjs');
+    expect(all[classify]?.run).toBe('node scripts/ci-change-scope.mjs --verification-only');
     expect(all[classify]?.if).toBeUndefined();
     const install = all.findIndex((step) => step.run?.includes('pnpm install'));
-    expect(install).toBeLessThan(classify);
+    expect(install).toBeGreaterThan(classify);
+    expect(all[install].if).toBe("steps.scope.outputs.build == 'true'");
     expect(all[install].run).toContain('--ignore-scripts');
   });
 
@@ -49,7 +50,8 @@ describe('self acceptance CI scope', () => {
     expect(commands).toContain('require(\'./package.json\').version');
     expect(commands).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
     expect(commands).not.toMatch(/pnpm run build|node bin\/specgit\.js/);
-    expect(commands).toContain('pnpm install --frozen-lockfile --ignore-scripts');
+    expect(commands).not.toContain('pnpm install');
+    expect(selected.some((step) => step.uses?.startsWith('pnpm/action-setup@'))).toBe(false);
     expect(commands).toContain('node "$SPECGIT_POLICY_ENTRY"');
   });
 

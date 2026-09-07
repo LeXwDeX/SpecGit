@@ -452,7 +452,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('an actions/cache step in the gate is detected', () => {
-    const anchor = '      - name: Install classifier dependencies';
+    const anchor = '      - name: Install product dependencies';
     expect(acceptFile).toContain(anchor);
     const mutant = acceptFile.replace(
       anchor,
