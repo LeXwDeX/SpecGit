@@ -1,15 +1,9 @@
 version: 1
-delivery: delivery-cost-optimization
+delivery: configured-issue-completion
 context:
   kind: branch
-  branch: perf/469-delivery-cost-optimization
+  branch: feat/475-configured-issue-completion
 issues:
-  - 469
-  - 470
-  - 479
-issueKinds:
-  - issue: 469
-    kind: kind::perf
-  - issue: 470
-    kind: kind::ci
-pr: 471
+  - 475
+  - 476
+issueKinds: []
