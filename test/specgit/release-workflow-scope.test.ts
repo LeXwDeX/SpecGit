@@ -45,7 +45,8 @@ describe('release and dependency workflow scope (#423)', () => {
     const security = workflow('security');
     const scope = security.jobs.scope;
     expect(scope).toBeDefined();
-    expect(scope.steps.some((step) => step.run === 'node scripts/ci-change-scope.mjs')).toBe(true);
+    expect(scope.steps.some((step) => step.run === 'node scripts/ci-change-scope.mjs --verification-only')).toBe(true);
+    expect(scope.steps.some((step) => step.run?.includes('pnpm install') || step.uses?.startsWith('pnpm/action-setup@'))).toBe(false);
     expect(security.jobs.audit.needs).toBe('scope');
     expect(security.jobs.audit.if).toContain("needs.scope.outputs.dependencies == 'true'");
     expect(security.jobs.audit.if).toContain("github.event_name == 'schedule'");

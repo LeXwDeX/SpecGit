@@ -101,20 +101,22 @@ jobs:
           # repository cache (CodeQL alerts 7-9). ci.yml keeps the warm,
           # branch-scoped cache.
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-
-      - name: Install classifier dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
       - name: Classify CI scope
         id: scope
-        run: node scripts/ci-change-scope.mjs
+        run: node scripts/ci-change-scope.mjs --verification-only
 
       - name: Validate CI scope
         env:
           CI_BUILD: \${{ steps.scope.outputs.build }}
         run: test "$CI_BUILD" = true || test "$CI_BUILD" = false
+
+      - name: Setup pnpm
+        if: steps.scope.outputs.build == 'true'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Install product dependencies
+        if: steps.scope.outputs.build == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build CLI
         if: steps.scope.outputs.build == 'true'

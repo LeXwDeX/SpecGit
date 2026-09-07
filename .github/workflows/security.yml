@@ -30,12 +30,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - name: Install verification dependencies without lifecycle scripts
-        run: pnpm install --frozen-lockfile --ignore-scripts
+          package-manager-cache: false
       - name: Classify the complete change
         id: changes
-        run: node scripts/ci-change-scope.mjs
+        run: node scripts/ci-change-scope.mjs --verification-only
       - name: Verify classification outputs
         env:
           DEPENDENCIES: ${{ steps.changes.outputs.dependencies }}
