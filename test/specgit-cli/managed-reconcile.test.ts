@@ -73,6 +73,19 @@ describe('reconcileManagedAssets', () => {
     expect(read(path.join(root, 'drift.txt'))).toBe('current\n');
   });
 
+  it('preserves a user recreation of a removed file when a later atomic write fails', async () => {
+    const target = path.join(root, 'obsolete.txt');
+    fs.writeFileSync(target, 'old owned bytes\n');
+    await expect(reconcileManagedAssets(root, { steps: [
+      { kind: 'remove', path: 'obsolete.txt', isOwned: () => true },
+      { kind: 'portWrite', path: 'policy.yaml', atomic: true, write: async () => {
+        fs.writeFileSync(target, 'new user bytes\n');
+        throw new Error('atomic writer did not write');
+      } },
+    ] })).rejects.toThrow('rollback incomplete');
+    expect(read(target)).toBe('new user bytes\n');
+  });
+
   it('treats an enforceable mode drift as an update: desired state includes the mode', async () => {
     const target = path.join(root, 'guard.sh');
     fs.writeFileSync(target, 'body\n');

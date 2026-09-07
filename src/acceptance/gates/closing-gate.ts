@@ -5,7 +5,7 @@ import { makeFailure, type GateContext, type GateFailure } from './types.js';
 /**
  * Gate 10 — closing: the PR body closes every bound issue. The dialect
  * follows the origin's platform marker. On a clean pass the gate also
- * raises the stale-head warning when local HEAD is not the PR head.
+ * raises the stale-head warning for an open request when local HEAD differs.
  */
 export function closingGate(ctx: GateContext): GateFailure[] {
   // #115 (grammar parameterization): the dialect follows the origin's
@@ -27,6 +27,7 @@ export function closingGate(ctx: GateContext): GateFailure[] {
     facts !== null &&
     facts.headSha !== null &&
     prFact !== null &&
+    prFact.state === 'open' &&
     prFact.headSha &&
     facts.headSha !== prFact.headSha
   ) {

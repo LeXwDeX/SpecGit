@@ -15,7 +15,9 @@ import {
   HARNESS_WORKFLOW_PATH,
   HarnessWriteError,
   writeHarnessAssets,
+  buildHarnessDesiredState,
 } from '../../src/cli/harness-placement.js';
+import { reconcileManagedAssets } from '../../src/cli/managed-reconcile.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const skipGitHook = { resolveHooksDir: async () => null };
@@ -46,6 +48,22 @@ describe('writeHarnessAssets placement', () => {
 
   afterEach(() => {
     rmDir(root);
+  });
+
+  it('merges user hooks from the current planning bytes after desired-state construction', async () => {
+    const hooksDir = path.join(root, '.git', 'hooks');
+    const json = path.join(root, '.opencode', 'hooks.json');
+    const prePush = path.join(hooksDir, 'pre-push');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.mkdirSync(path.dirname(json), { recursive: true });
+    fs.writeFileSync(json, '{}\n');
+    fs.writeFileSync(prePush, '#!/bin/sh\n');
+    const desired = await buildHarnessDesiredState(root, { resolveHooksDir: async () => hooksDir });
+    fs.writeFileSync(json, '{"user-added":true}\n');
+    fs.writeFileSync(prePush, '#!/bin/sh\necho user-added\n');
+    await reconcileManagedAssets(root, desired);
+    expect(JSON.parse(read(json))['user-added']).toBe(true);
+    expect(read(prePush)).toContain('echo user-added\n');
   });
 
   it('carries trivial fixture bytes through the merge, writes every target', async () => {

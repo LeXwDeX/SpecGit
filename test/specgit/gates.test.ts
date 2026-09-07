@@ -525,6 +525,13 @@ describe('closing gate', () => {
     expect(closingGate(ctx)).toEqual([]);
     expect(ctx.warnings.map((w) => w.code)).toEqual(['local_head_stale']);
   });
+
+  it('does not call the verified merged target a stale source checkout', () => {
+    const ctx = makeContext({ repoRef: REPO, prFact: { ...PR_FACT, state: 'merged' },
+      facts: { ...FACTS, headSha: 'merged-target-head' } });
+    expect(closingGate(ctx)).toEqual([]);
+    expect(ctx.warnings).toEqual([]);
+  });
 });
 
 describe('checks gate', () => {
