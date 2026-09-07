@@ -198,6 +198,8 @@ export function createProgram(
     .option('--repair-label <slug>', 'Label for automatic repair issues; repeatable, replaces the repair mapping', collect)
     .option('--automation <yes|no>', 'Supply the user\'s answer: yes | no (fresh default no; --force preserves when omitted)')
     .option('--merge-target <branch>', 'Target branch for configured merge automation')
+    .option('--close-issues <yes|no>', 'Independently enable or disable closure of bound issues after merge')
+    .option('--close-target <branch>', 'Completion target branch for issue closure, shared with enabled merge automation')
     .option('--no-ignore', 'Skip the managed .gitignore block for authoritative files, hooks, agent entry points, and local state/cache')
     .option('--protect', 'Enable the platform protection gate without asking; does not enable delivery automation')
     .option('--no-protect', 'Skip the branch-protection probe and warning entirely')
@@ -238,9 +240,10 @@ export function createProgram(
 
   program
     .command('pr')
-    .description('Repair the PR/MR binding, or execute configured delivery automation with --merge')
+    .description('Repair the PR/MR binding, merge a delivery, or close issues after a verified merge')
     .argument('[ref]', 'Numeric PR/MR ID, or a full GitHub PR URL; omit to auto-discover by head branch')
     .option('--merge', 'Execute policy-enabled merge after acceptance and all CI/CD checks pass')
+    .option('--close-issues', 'Close bound issues after a verified merge into the configured completion target')
     .option('--json', 'Output as JSON')
     .action(
       wrap('pr', runPr as CommandRun, (rest) => ({

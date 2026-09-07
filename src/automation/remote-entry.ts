@@ -10,6 +10,7 @@ import { DeliveryBindingSchema } from '../record/schema.js';
 import { isAutomationTargetBranch } from '../record/policy.js';
 import { matchesBoundRequest, runRemoteDelivery } from './remote-delivery.js';
 import * as recordIo from '../record/io.js';
+import { GlabProvider } from '../providers/gitlab/glab-cli.js';
 import type { GitlabCompletionIdentity } from '../providers/gitlab/completion-context.js';
 
 const git = (root: string, hooks: string, args: string[]): string => execFileSync('git', ['-C', root, '-c', `core.hooksPath=${hooks}`, ...args], {
@@ -39,13 +40,15 @@ export async function completeFromEnvironment(): Promise<number> {
   if (!repo.ok) throw new Error(repo.message);
   let pr = Number(process.env.SPECGIT_PR);
   let headSha = process.env.SPECGIT_HEAD ?? '';
+  let eventSha: string | undefined;
   if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
     const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? '', 'utf8'));
     const run = event.workflow_run;
     if (run?.event !== 'pull_request' || run?.status !== 'completed' || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY) {
       throw new Error('Completion requires a completed pull-request workflow in this repository.');
     }
-    headSha = run.head_sha;
+    eventSha = run.head_sha;
+    if (!headSha) headSha = run.head_sha;
     const identified = workflowRequestNumber(run.pull_requests, pr);
     if (identified !== undefined) pr = identified;
     else {
@@ -53,6 +56,26 @@ export async function completeFromEnvironment(): Promise<number> {
       const candidates = await ctx.gh.listOpenPrsByHead(repo.value, run.head_branch);
       if (!candidates.ok || candidates.value.length !== 1) throw new Error('The triggering workflow does not identify exactly one pull request.');
       pr = candidates.value[0].number;
+    }
+  }
+  const mergeSha = process.env.SPECGIT_MERGE_SHA;
+  const targetBranch = process.env.SPECGIT_TARGET_BRANCH;
+  if (repo.value.platform === 'gitlab' && (mergeSha !== undefined || targetBranch !== undefined)) {
+    const providers = await recordIo.readProviders(dataRoot);
+    if (!providers.ok || !providers.value.gitlab) throw new Error('GitLab completion requires its declared host.');
+    const { host, port } = providers.value.gitlab;
+    const provider = new GlabProvider({ hostname: port ? `${host}:${port}` : host });
+    const deadline = Date.now() + 20 * 60_000;
+    while (true) {
+      const signal = await provider.resolveMergedPush(repo.value, mergeSha ?? '', targetBranch ?? '', Number(process.env.SPECGIT_SOURCE_PIPELINE));
+      if (signal.ok) {
+        if (!signal.value) return 0; // Ordinary pushes have no issue-closure action.
+        pr = signal.value.pr;
+        headSha = signal.value.headSha;
+        break;
+      }
+      if (signal.code !== 'gitlab_completion_source_pending' || Date.now() >= deadline) throw new Error(signal.message);
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
     }
   }
   if (!Number.isSafeInteger(pr) || pr <= 0 || !/^[a-f0-9]{40}$/i.test(headSha)) {
@@ -66,20 +89,24 @@ export async function completeFromEnvironment(): Promise<number> {
     gitlabCompletion = {
       projectId: Number(process.env.CI_PROJECT_ID), pipelineId: Number(process.env.CI_PIPELINE_ID),
       jobId: Number(process.env.CI_JOB_ID), sourcePipelineId: Number(process.env.SPECGIT_SOURCE_PIPELINE),
+      ...(mergeSha !== undefined ? { mergeSha, targetBranch } : {}),
       pr, headSha, checkoutSha: git(dataRoot, hooks, ['rev-parse', 'HEAD']).trim(),
     };
   }
   const observed = await ctx.gh.getPr(repo.value, pr);
   if (!observed.ok) throw new Error(observed.message);
+  if (eventSha !== undefined && eventSha !== observed.value.headSha &&
+      !(observed.value.state === 'merged' && observed.value.mergeCommitSha === eventSha)) throw new Error('The workflow does not identify this request head or merge.');
   if (observed.value.headSha !== headSha) throw new Error('The triggering request head is stale.');
   if (!isAutomationTargetBranch(observed.value.headBranch) || !isAutomationTargetBranch(observed.value.baseBranch)) {
     throw new Error('The forge returned an unusable branch name.');
   }
-  if (gitlabCompletion !== undefined) {
-    // A GitLab default-branch checkout need not contain MR objects, even at
-    // depth zero. Fetch only the authenticated request ref as inert data.
+  {
+    // Squash merges and deleted source branches need the forge's retained
+    // request ref. Fetch it as data on both platforms, then verify its SHA.
     const requestRef = `refs/specgit/requests/${pr}`;
-    git(dataRoot, hooks, ['fetch', '--no-tags', 'origin', `+refs/merge-requests/${pr}/head:${requestRef}`]);
+    const sourceRef = repo.value.platform === 'gitlab' ? `refs/merge-requests/${pr}/head` : `refs/pull/${pr}/head`;
+    git(dataRoot, hooks, ['fetch', '--no-tags', 'origin', `+${sourceRef}:${requestRef}`]);
     if (git(dataRoot, hooks, ['rev-parse', requestRef]).trim() !== headSha) throw new Error('The fetched MR head changed after the completion event.');
   }
   const record = DeliveryBindingSchema.parse(YAML.parse(git(dataRoot, hooks, ['show', `${headSha}:.specgit.yaml`])));
@@ -90,6 +117,9 @@ export async function completeFromEnvironment(): Promise<number> {
   if (!label || label === '.' || label === '..' || /[\\/\p{Cc}]/u.test(label)) throw new Error('Unsafe worktree label in delivery record.');
   const checkout = join(parent, label);
   const branch = observed.value.state === 'merged' ? observed.value.baseBranch : record.context.branch;
+  if (observed.value.state === 'merged') {
+    git(dataRoot, hooks, ['fetch', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  }
   const revision = observed.value.state === 'merged' ? `refs/remotes/origin/${branch}` : headSha;
   git(dataRoot, hooks, ['worktree', 'add', '--detach', checkout, revision]);
   git(checkout, hooks, ['checkout', '-B', branch, revision]);

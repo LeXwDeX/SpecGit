@@ -20,6 +20,7 @@ import type { CommandContext, DeliveryBinding } from '../types.js';
 export interface PrOptions {
   ref?: string;
   merge?: boolean;
+  closeIssues?: boolean;
   json?: boolean;
 }
 
@@ -28,14 +29,17 @@ function bindPr(record: DeliveryBinding, pr: number | string): DeliveryBinding {
 }
 
 export async function runPr(options: PrOptions, ctx: CommandContext): Promise<PrOutcome> {
-  if (options.merge) {
+  if (options.merge && options.closeIssues) {
+    return { exit: EXIT_USAGE, errors: [errorDiagnostic('automation_action_conflict', 'Choose --merge or --close-issues, not both.')] };
+  }
+  if (options.merge || options.closeIssues) {
     if (options.ref !== undefined) {
       return {
         exit: EXIT_USAGE,
-        errors: [errorDiagnostic('automation_ref_conflict', 'Use "specgit pr --merge" with the existing binding; an explicit PR/MR reference cannot be combined with --merge.')],
+        errors: [errorDiagnostic('automation_ref_conflict', 'Use the existing binding with --merge or --close-issues; an explicit PR/MR reference cannot be combined with a completion action.')],
       };
     }
-    return runMerge(ctx);
+    return runMerge(ctx, { closeOnly: options.closeIssues === true });
   }
   const explicitPr = options.ref === undefined ? null : coercePrRef(options.ref);
   if (explicitPr !== null && !explicitPr.ok) {

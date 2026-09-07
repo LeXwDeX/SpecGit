@@ -70,8 +70,12 @@ Choose the target with `--merge-target <branch>`. When that option is absent,
 init resolves the remote's default branch and refuses to enable automation if it
 cannot establish one; it does not assume `main`. A target must be a branch name,
 such as `main` or `release/stable`, rather than a revision expression, an option,
-or a fully qualified `refs/...` name. Enabling issue closure while merge is
-disabled is invalid. A policy without `automation` keeps automatic merge and
+or a fully qualified `refs/...` name. Issue closure can be enabled while merge is disabled, using
+`specgit init --force --automation no --close-issues yes --close-target preview`.
+The resulting policy has `merge: false`, `close_issues: true`, and
+`target_branch: preview`. `--close-target` and `--merge-target` refer to the same
+completion destination; conflicting values are rejected. Any valid configured
+branch name is supported. A policy without `automation` keeps automatic merge and
 closure disabled.
 
 The configuration authorizes `specgit pr --merge` to complete a delivery after

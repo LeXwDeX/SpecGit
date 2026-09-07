@@ -145,7 +145,7 @@ describe('completion runtime dependency installation', () => {
         const writeRuntime = (directory) => {
           fixtureFs.mkdirSync(fixturePath.join(directory, 'dist/automation'), { recursive: true });
           fixtureFs.writeFileSync(fixturePath.join(directory, 'package.json'), '{"type":"module"}');
-          fixtureFs.writeFileSync(fixturePath.join(directory, 'dist/automation/remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 1;');
+          fixtureFs.writeFileSync(fixturePath.join(directory, 'dist/automation/remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 2;');
         };
         const execFileSync = (command, args, options) => {
           fixtureFs.appendFileSync(process.env.FIXTURE_COMMANDS, JSON.stringify({ command, args, cwd: options.cwd }) + '\\n');

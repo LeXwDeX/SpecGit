@@ -10,7 +10,7 @@ import type { CommandContext, Evidence } from '../types.js';
 
 const FULL_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 
-export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
+export async function runMerge(ctx: CommandContext, options: { closeOnly?: boolean } = {}): Promise<PrOutcome> {
   const progress: PrAutomation = { status: 'blocked', merged: false, closedIssues: [] };
   const stop = (code: string, message: string, exit = EXIT_REJECTED, fix?: string): PrOutcome => ({
     exit,
@@ -33,11 +33,15 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   if (!record.ok) return unavailable(record);
   if (!policy.ok) return unavailable(policy);
   const automation = policy.value.automation;
-  if (automation?.merge !== true) {
+  if (options.closeOnly && automation?.close_issues !== true) {
+    return stop('closure_disabled', 'Automatic issue closure is not enabled in spec_git/policy.yaml.', EXIT_USAGE,
+      'Only the user may enable it: run "specgit init --force --close-issues yes --close-target <branch>".');
+  }
+  if (!options.closeOnly && automation?.merge !== true) {
     return stop('automation_disabled', 'Merge automation is not enabled in spec_git/policy.yaml.', EXIT_USAGE,
       'Only the user may enable it: run "specgit init --force --automation yes --merge-target <branch>" with their explicit target choice.');
   }
-  if (automation.target_branch === undefined) {
+  if (automation?.target_branch === undefined) {
     return stop('automation_target_required', 'Configure automation.target_branch before merging.', EXIT_USAGE);
   }
   if (record.value.pr === undefined || record.value.issues.length === 0) {
@@ -47,7 +51,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   const { human } = catalogFor(resolveLanguage(policy.value));
   const lineageActions: NextAction[] = [{
     code: 'merge_lineage', command: 'git fetch origin',
-    reason: `Fetch and check out '${automation.target_branch}' containing the merge, then retry specgit pr --merge.`,
+    reason: `Fetch and check out '${automation.target_branch}' containing the merge, then retry specgit pr ${options.closeOnly ? '--close-issues' : '--merge'}.`,
   }];
   const explainLineage = (outcome: PrOutcome): PrOutcome => ({
     ...outcome, nextActions: lineageActions,
@@ -69,6 +73,9 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
   }
   if (observed.baseBranch !== automation.target_branch) {
     return stop('automation_target_mismatch', `The PR/MR targets '${observed.baseBranch}', but automation permits '${automation.target_branch}'.`);
+  }
+  if (options.closeOnly && observed.state !== 'merged') {
+    return stop('automation_merge_required', 'Issue closure requires a PR/MR already confirmed merged into the configured target.');
   }
   const originHost = extractOriginHost(facts.originUrl);
   const nonDefaultPort = originHost?.port !== null && originHost?.port !== undefined &&
@@ -94,7 +101,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
     }
     if (!lineage.value.contained) {
       return explainLineage(stop('merged_delivery_not_contained', 'Local HEAD does not contain the merged delivery.', EXIT_REJECTED,
-        'Fetch and check out the target branch containing the merge, then retry "specgit pr --merge".'));
+        `Fetch and check out the target branch containing the merge, then retry "specgit pr ${options.closeOnly ? '--close-issues' : '--merge'}".`));
     }
   }
 
@@ -168,6 +175,7 @@ export async function runMerge(ctx: CommandContext): Promise<PrOutcome> {
     return stop('automation_head_changed', 'The PR/MR changed after CI/CD verification. Retry with fresh evidence.');
   }
   if (beforeMerge.value.state !== 'merged') {
+    if (options.closeOnly) return stop('automation_merge_unconfirmed', 'The request is no longer confirmed merged.');
     if (beforeMerge.value.state !== 'open') return stop('pr_closed_unmerged', 'The PR/MR closed without merging.');
     const merged = await ctx.gh.mergePr(repo.value, observed.number, observed.headSha);
     if (!merged.ok) return unavailable(merged);

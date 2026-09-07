@@ -138,6 +138,14 @@ Explicit options replace only the selected settings. With automation enabled,
 the trusted completion runner can continue after CI, merge only the approved
 target and exact head, confirm the merge, and close every bound issue.
 
+For manual merges with automatic issue closure, use
+`specgit init --force --automation no --close-issues yes --close-target preview`.
+The shared `automation.target_branch` is the destination of the merge and can be
+any valid branch. `pr --close-issues --json` recovers an already merged delivery.
+On GitHub the generated acceptance workflow watches both the default and selected
+target branches; its merged notification runs without installation or checkout.
+The write-capable completion workflow executes on the proven remote default.
+
 ### Project conventions
 
 Configure generated text and optional live-fact validation with explicit flags
