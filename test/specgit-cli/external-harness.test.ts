@@ -63,7 +63,7 @@ describe('external acceptance harness template', () => {
       const parsed = parse(yaml) as {
         on: { pull_request: { branches: string[]; types: string[] } };
       };
-      expect(parsed.on.pull_request.branches).toEqual([branch]);
+      expect(parsed.on.pull_request.branches).toEqual([branch === '!release' ? '\\!release' : branch]);
       expect(parsed.on.pull_request.types).toEqual([
         'opened',
         'synchronize',
@@ -149,6 +149,12 @@ describe('external acceptance harness template', () => {
     } finally { rmDir(root); }
   });
 
+  it.each([['!preview', '\\!preview'], ['release+candidate', 'release\\+candidate'], ['dev(foo)', 'dev\\(foo\\)'], ['release/{stable,next}', 'release/\\{stable,next\\}']])('treats the legal target %s as a literal GitHub branch', (target, expected) => {
+    const workflow = parse(externalAcceptanceWorkflowYaml({ ...INPUT, targets: [target] }));
+    expect(workflow.on.pull_request.branches[1]).toBe(expected);
+    expect(workflow.jobs['closure-signal'].if).toContain("merged == true");
+    expect(workflow.jobs['closure-signal'].steps).toEqual([{ run: "echo 'Merged request ready for trusted completion'" }]);
+  });
   it('contributes exactly the acceptance check name with read-only permissions', () => {
     const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
       name: string;

@@ -53,6 +53,16 @@ function mergeCtx(policy: Policy = samplePolicy({ automation })) {
 }
 
 describe('specgit pr --close-issues: independent merged-delivery completion', () => {
+  it('keeps missing-lineage recovery on the closure-only command', async () => {
+    const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: 'main', close_issues: true } }));
+    t.remote.pr = { ...t.remote.pr, state: 'merged', mergeCommitSha: MERGE };
+    t.gitPort.headContains = vi.fn(async () => ok({ contained: false }));
+    const result = await runPr({ closeIssues: true }, t.ctx);
+    expect(result.errors?.[0]?.fix).toContain('specgit pr --close-issues');
+    expect(result.nextActions?.[0]?.reason).toContain('specgit pr --close-issues');
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+  });
   it('exposes closure through the existing pr command JSON interface', async () => {
     const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: 'main', close_issues: true } }));
     t.remote.pr = { ...t.remote.pr, state: 'merged', mergeCommitSha: MERGE };

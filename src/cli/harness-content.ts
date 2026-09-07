@@ -19,6 +19,7 @@
  * File contents use LF line endings only.
  */
 
+import { literalBranchPattern } from './workflow-branches.js';
 import type { PolicyLanguage } from '../record/policy.js';
 import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
 
@@ -38,7 +39,7 @@ export function harnessWorkflowYaml(defaultBranch = 'main', targets: string[] = 
   }
   // Preserve this repository's historical bytes for the real `main`
   // workflow while quoting every other proved ref as YAML data.
-  const branchLiteral = [...new Set([defaultBranch, ...targets])].map((branch) => branch === 'main' ? 'main' : JSON.stringify(branch)).join(', ');
+  const branchLiteral = [...new Set([defaultBranch, ...targets])].map((branch) => branch === 'main' ? 'main' : JSON.stringify(literalBranchPattern(branch))).join(', ');
   return `name: SpecGit Acceptance
 
 on:

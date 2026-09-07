@@ -31,6 +31,8 @@ import {
   type RepoLabelsFact,
 } from '../../github/port.js';
 import type { TagSpec } from '../../tags/catalog.js';
+import { isAutomationTargetBranch } from '../../record/policy.js';
+import { resolveGitlabMergeSignal } from './merge-signal.js';
 import { verifyGitlabCompletion, type GitlabCompletionIdentity } from './completion-context.js';
 
 /**
@@ -519,6 +521,27 @@ export class GlabProvider implements ForgeProvider {
     return newestId === undefined ? ok([]) : this.checkRunsForPipeline(this.projectPath(repo), newestId);
   }
 
+  /** A target push enters completion only after its real business pipeline succeeds. */
+  async resolveMergedPush(repo: RepoRef, mergeSha: string, target: string, sourcePipelineId: number): Promise<Evidence<{ pr: number; headSha: string } | undefined>> {
+    if (!Number.isSafeInteger(sourcePipelineId) || sourcePipelineId <= 0 || !/^[a-f0-9]{40}$/i.test(mergeSha) || !isAutomationTargetBranch(target)) {
+      return fail('gitlab_completion_unverified', 'Invalid merged-push identity.');
+    }
+    const source = await this.runApi(`projects/${this.projectPath(repo)}/pipelines/${sourcePipelineId}`);
+    if (!source.ok) return source;
+    const pipeline = source.value as { id?: unknown; sha?: unknown; ref?: unknown; source?: unknown; status?: unknown } | null;
+    if (!pipeline || pipeline.id !== sourcePipelineId || pipeline.sha !== mergeSha || pipeline.ref !== target || pipeline.source !== 'push') {
+      return fail('gitlab_completion_unverified', 'The source pipeline does not identify this target push.');
+    }
+    if (['created', 'pending', 'running', 'preparing', 'waiting_for_resource'].includes(String(pipeline.status))) {
+      return fail('gitlab_completion_source_pending', 'The target push pipeline is still running.');
+    }
+    if (pipeline.status !== 'success') return fail('gitlab_completion_unverified', 'The target push pipeline did not succeed.');
+    return resolveGitlabMergeSignal(repo, mergeSha, target, {
+      api: (path) => this.runApi(path),
+      list: (path) => this.paginateList((page) => `${path}?per_page=${LIST_PAGE_SIZE}&page=${page}`, 'merged-push requests'),
+    });
+  }
+
   async getPrChecks(repo: RepoRef, pr: number): Promise<Evidence<MergeChecksFact>> {
     const mrEv = await this.readMrPipeline(repo, pr);
     if (!mrEv.ok) return mrEv;
@@ -528,7 +551,7 @@ export class GlabProvider implements ForgeProvider {
     }
     let completion: { projectId: number; pipelineId: number } | undefined;
     if (this.completion !== undefined) {
-      if (this.completion.pr !== pr || this.completion.headSha !== headSha || this.completion.sourcePipelineId !== pipeline.id || this.completion.projectId !== pipeline.projectId) {
+      if (this.completion.pr !== pr || this.completion.headSha !== headSha || (this.completion.mergeSha === undefined && this.completion.sourcePipelineId !== pipeline.id) || this.completion.projectId !== pipeline.projectId) {
         return fail('gitlab_completion_unverified', 'The completion context differs from the current MR head pipeline.');
       }
       const proof = await verifyGitlabCompletion(repo, this.completion, {

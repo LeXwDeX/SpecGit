@@ -28,6 +28,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { literalBranchPattern } from './workflow-branches.js';
 import { HARNESS_WORKFLOW_PATH } from './harness-placement.js';
 import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
 
@@ -67,7 +68,7 @@ export function externalAcceptanceWorkflowYaml(input: ExternalHarnessInput): str
 
 on:
   pull_request:
-    branches: [${[...new Set([input.defaultBranch, ...(input.targets ?? [])])].map((branch) => JSON.stringify(branch)).join(', ')}]
+    branches: [${[...new Set([input.defaultBranch, ...(input.targets ?? [])])].map((branch) => JSON.stringify(literalBranchPattern(branch))).join(', ')}]
     # A draft PR fails the verdict (pr_draft), so the draft→ready
     # transition must re-verdict. Listing types replaces the defaults,
     # so the default activity types are listed alongside. Title and body
