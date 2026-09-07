@@ -6,6 +6,7 @@ context:
 issues:
   - 469
   - 470
+  - 479
 issueKinds:
   - issue: 469
     kind: kind::perf
