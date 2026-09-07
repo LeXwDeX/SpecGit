@@ -27,6 +27,8 @@ export interface PrFact {
   headBranch: string;
   headSha: string;
   baseBranch: string;
+  /** Provider-backed target revision for this request's history; not necessarily its immediate pre-merge parent. */
+  targetHistorySha?: string;
   body: string;
   /**
    * Whether the pull request is a draft. A draft is a platform-level

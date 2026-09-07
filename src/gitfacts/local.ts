@@ -118,7 +118,7 @@ export class LocalGitAdapter implements GitPort {
     }
   }
 
-  async readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+  async readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string, targetHistorySha?: string): Promise<Evidence<{ sha: string; content: string | null }>> {
     if (!HEX_OBJECT_ID.test(mergeSha) || !HEX_OBJECT_ID.test(headSha) || relativePath !== 'spec_git/policy.yaml') {
       return fail('policy_history_unavailable', 'Historical authorization requires full merge/head identities and the policy path.');
     }
@@ -128,11 +128,25 @@ export class LocalGitAdapter implements GitPort {
     try {
       const result = await this.spawn('git', ['-C', root, 'rev-list', '--parents', '-n', '1', mergeSha], options);
       const parents = result.stdout.trim().split(/\s+/);
-      if (parents.length !== 3 || parents[0] !== mergeSha || parents[2] !== headSha || !HEX_OBJECT_ID.test(parents[1])) {
-        return fail('policy_history_unavailable', 'The merge does not prove its original target parent. Squash, rebase and fast-forward recovery require explicit historical evidence.',
-          'Inspect the merge strategy and approved policy history; never enable automation in a new policy to bypass this check.');
+      let sha: string;
+      if (parents.length === 3 && parents[0] === mergeSha && parents[2] === headSha && HEX_OBJECT_ID.test(parents[1])) {
+        sha = parents[1];
+      } else {
+        if (!targetHistorySha || !HEX_OBJECT_ID.test(targetHistorySha) || targetHistorySha === mergeSha || targetHistorySha === headSha) {
+          return fail('policy_history_unavailable', 'The merge has no proven original target parent or provider-backed target history.',
+            'Refresh the merged request and fetch its target history; never enable automation in a new policy to bypass this check.');
+        }
+        await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', targetHistorySha, mergeSha], options);
+        // A diff version can predate the merge. Inspect all intervening policy
+        // history, including changes later reverted; equal final blobs alone
+        // cannot prove that target authorization stayed unchanged.
+        const changed = await this.spawn('git', ['-C', root, 'rev-list', '--full-history', '-1', `${targetHistorySha}..${mergeSha}`, '--', relativePath], options);
+        if (changed.stdout.trim() !== '') {
+          return fail('policy_history_unavailable', 'Policy changed after the provider-backed target revision, so original merge authorization is ambiguous.',
+            'Inspect the target policy history and complete the issues manually if original authorization cannot be proven.');
+        }
+        sha = targetHistorySha;
       }
-      const sha = parents[1];
       const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
       if (tree.stdout === '') return ok({ sha, content: null });
       if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {

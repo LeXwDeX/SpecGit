@@ -60,7 +60,8 @@ export interface RecordPort {
   writeRecord(root: string, record: DeliveryBinding): Promise<void>;
   deleteRecord(root: string): Promise<void>;
   readPolicy(root: string): Promise<Evidence<Policy>>;
-  writePolicy(root: string, policy: Policy): Promise<void>;
+  readPolicySnapshot(root: string): Promise<{ policy: Evidence<Policy>; content: string | null }>;
+  writePolicy(root: string, policy: Policy, expectedContent?: string | null): Promise<void | boolean>;
 }
 
 export type EvaluateFn = (input: EvaluateInput) => Promise<Verdict>;

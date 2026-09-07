@@ -65,8 +65,8 @@ export interface GitPort extends GitWritePort {
   facts(root: string): Promise<GitFacts>;
   /** Read committed data at the live origin branch, without fetching or modifying local refs. */
   readFileAtRemoteRef(root: string, branch: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>>;
-  /** Original target policy from a proven two-parent merge whose second parent is the request head. */
-  readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>>;
+  /** Original target policy from the merge parent, or an authenticated target ancestor with unchanged policy history. */
+  readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string, targetHistorySha?: string): Promise<Evidence<{ sha: string; content: string | null }>>;
   /**
    * Whether `sha` is contained by local HEAD's history (ancestor-or-equal).
    * The anchor must be a full hex object id — 40 hex chars (sha1) or 64

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { resolveEffectivePolicy } from '../../src/record/effective-policy.js';
 import { LocalGitAdapter } from '../../src/gitfacts/local.js';
+import { GhCliGitHubProvider } from '../../src/providers/github/gh-cli.js';
+import { GlabProvider } from '../../src/providers/gitlab/glab-cli.js';
 import { fail, ok, type Evidence } from '../../src/kernel/evidence.js';
 import { makeGitFacts, sampleBinding, samplePolicy } from '../specgit-cli/helpers.js';
 import { makePrFact } from './helpers/mock-forge.js';
+import { createFakeGh } from './helpers/fake-gh.js';
+import { createFakeGlab } from './helpers/fake-glab.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 const SHA = 'a'.repeat(40);
@@ -67,6 +71,66 @@ describe('approved policy resolution', () => {
 });
 
 describe('read-only committed policy reader', () => {
+  it.each([
+    ['github', 'squash'], ['github', 'rebase'], ['github', 'fast-forward'],
+    ['gitlab', 'squash'], ['gitlab', 'rebase'], ['gitlab', 'fast-forward'],
+  ] as const)('proves %s target authorization through a real %s history', async (platform, strategy) => {
+    const directory = makeTempDir('specgit-policy-strategy-');
+    try {
+      const { root, env } = initRepo(directory);
+      const original = 'version: 1\nrequired_checks: [Review]\nautomation:\n  merge: false\n  close_issues: true\n  target_branch: main\n';
+      const approved = commitFile(root, 'spec_git/policy.yaml', original, env);
+      git(root, ['checkout', '-b', 'delivery'], env);
+      commitFile(root, 'feature.txt', 'delivery\n', env);
+      if (strategy === 'rebase') {
+        git(root, ['checkout', 'main'], env);
+        commitFile(root, 'unrelated.txt', 'target advanced\n', env);
+        git(root, ['checkout', 'delivery'], env);
+        git(root, ['rebase', 'main'], env);
+      }
+      const head = git(root, ['rev-parse', 'HEAD'], env).trim();
+      git(root, ['checkout', 'main'], env);
+      if (strategy === 'squash') {
+        git(root, ['merge', '--squash', 'delivery'], env);
+        git(root, ['commit', '-m', 'squash delivery'], env);
+      } else git(root, ['merge', '--ff-only', 'delivery'], env);
+      const merged = git(root, ['rev-parse', 'HEAD'], env).trim();
+      const adapter = new LocalGitAdapter({ env });
+      const repo = { platform, owner: 'o', repo: 'r' };
+      git(root, ['remote', 'add', 'origin', `https://${platform}.com/o/r.git`], env);
+      const payload = platform === 'github'
+        ? { number: 42, state: 'closed', merged_at: '2026-09-07T00:00:00Z', draft: false,
+          head: { ref: 'delivery', sha: head }, base: { ref: 'main', sha: approved }, merge_commit_sha: merged }
+        : { iid: 42, state: 'merged', draft: false, source_branch: 'delivery', target_branch: 'main', sha: head,
+          merge_commit_sha: null, squash_commit_sha: strategy === 'squash' ? merged : null,
+          diff_refs: { head_sha: head, start_sha: approved } };
+      const rules = [{ match: platform === 'github' ? '/pulls/42$' : '/merge_requests/42$', stdout: JSON.stringify(payload) }];
+      const forge = platform === 'github'
+        ? new GhCliGitHubProvider({ env: createFakeGh(directory, rules).env() })
+        : new GlabProvider({ hostname: 'gitlab.com', env: createFakeGlab(directory, rules).env() });
+      expect(await resolveEffectivePolicy({ root, record: ok(sampleBinding()), git: adapter, forge,
+        parseRepoRef: () => ok(repo), requireApproved: true, readCandidate: async () => { throw new Error('Candidate cannot authorize itself'); } }))
+        .toMatchObject({ ok: true, value: { source: 'approved', sha: approved, policy: { automation: { close_issues: true, merge: false } } } });
+      expect(await adapter.readFileBeforeMerge(root, merged, head, 'spec_git/policy.yaml', approved)).toEqual(ok({ sha: approved, content: original }));
+      expect(await adapter.readFileBeforeMerge(root, merged, head, 'spec_git/policy.yaml')).toMatchObject({ ok: false, code: 'policy_history_unavailable' });
+      expect(await adapter.readFileBeforeMerge(root, merged, head, 'spec_git/policy.yaml', merged)).toMatchObject({ ok: false, code: 'policy_history_unavailable' });
+      expect(await adapter.readFileBeforeMerge(root, merged, head, 'spec_git/policy.yaml', 'f'.repeat(40))).toMatchObject({ ok: false, code: 'policy_history_unavailable' });
+      expect(git(root, ['status', '--porcelain'], env)).toBe('');
+    } finally { rmDir(directory); }
+  });
+  it.each([false, true])('rejects changed target policy even when subsequently restored: %s', async (restore) => {
+    const directory = makeTempDir('specgit-policy-changed-');
+    try {
+      const { root, env } = initRepo(directory);
+      const original = 'version: 1\nrequired_checks: [Review]\n';
+      const approved = commitFile(root, 'spec_git/policy.yaml', original, env);
+      commitFile(root, 'spec_git/policy.yaml', 'version: 1\nrequired_checks: []\n', env);
+      if (restore) commitFile(root, 'spec_git/policy.yaml', original, env);
+      const head = commitFile(root, 'feature.txt', 'delivery\n', env);
+      expect(await new LocalGitAdapter({ env }).readFileBeforeMerge(root, head, head, 'spec_git/policy.yaml', approved))
+        .toMatchObject({ ok: false, code: 'policy_history_unavailable' });
+    } finally { rmDir(directory); }
+  });
   it('recovers only the proved original target parent after a real two-parent merge', async () => {
     const directory = makeTempDir('specgit-policy-history-');
     try {

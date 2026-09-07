@@ -639,6 +639,17 @@ describe('GlabProvider#getPr', () => {
     });
   });
 
+  it.each([
+    { head_sha: 'b'.repeat(40), start_sha: 'c'.repeat(40) },
+    { head_sha: SHA, start_sha: 'main' },
+    { head_sha: SHA },
+  ])('rejects stale or missing target diff identity: %j', async (diff_refs) => {
+    const { provider } = setup([{ match: '/merge_requests/42$', stdout: mrPayload({ state: 'merged', diff_refs }) }]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.targetHistorySha).toBeUndefined();
+  });
+
   it('maps merged with merge_commit_sha, and locked to open', async () => {
     const merged = setup([
       {
