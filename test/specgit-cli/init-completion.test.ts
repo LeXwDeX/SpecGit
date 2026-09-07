@@ -32,7 +32,6 @@ describe('completion scope preserves the original request', () => {
     for (const file of ['ci-change-scope.mjs', 'ci-changesets.mjs']) {
       fs.copyFileSync(path.resolve('scripts', file), path.join(root, 'specgit-runtime/scripts', file));
     }
-    fs.symlinkSync(path.resolve('node_modules'), path.join(root, 'specgit-runtime/node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.12.0', selfHosted: true }));
     const step = workflow.jobs.complete.steps.find((item: { id?: string }) => item.id === 'scope');
     const script = step.run.replace("import { execFileSync } from 'node:child_process';", `
@@ -119,6 +118,54 @@ describe('completion scope preserves the original request', () => {
     const result = classifyRequest(options);
     expect(result.status, result.stderr).not.toBe(0);
     expect(result.output).toBe('');
+  });
+});
+
+describe('completion runtime dependency installation', () => {
+  let root: string;
+  beforeEach(() => { root = makeTempDir('specgit-runtime-install-'); });
+  afterEach(() => { rmDir(root); });
+
+  it.each([
+    ['false', true, 0, []],
+    ['true', true, 0, []],
+    ['false', false, 1, []],
+    ['true', false, 0, ['install', 'run']],
+  ])('selects product=%s compatible=%s without unnecessary source installation', (product, compatible, status, expected) => {
+    const source = path.join(root, 'specgit-runtime');
+    fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ version: '1.14.0', type: 'module' }));
+    const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.14.0', selfHosted: true }));
+    const step = workflow.jobs.complete.steps.find((item: { id?: string }) => item.id === 'runtime');
+    const commands = path.join(root, 'commands.jsonl');
+    const script = step.run.replace(/^node --input-type=module <<'NODE'\n/, '').replace(/\nNODE\s*$/, '')
+      .replace("import { execFileSync } from 'node:child_process';", `
+        import * as fixtureFs from 'node:fs';
+        import * as fixturePath from 'node:path';
+        const writeRuntime = (directory) => {
+          fixtureFs.mkdirSync(fixturePath.join(directory, 'dist/automation'), { recursive: true });
+          fixtureFs.writeFileSync(fixturePath.join(directory, 'package.json'), '{"type":"module"}');
+          fixtureFs.writeFileSync(fixturePath.join(directory, 'dist/automation/remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 1;');
+        };
+        const execFileSync = (command, args, options) => {
+          fixtureFs.appendFileSync(process.env.FIXTURE_COMMANDS, JSON.stringify({ command, args, cwd: options.cwd }) + '\\n');
+          if (command === 'npm') {
+            if (process.env.FIXTURE_COMPATIBLE !== 'true') throw new Error('Unavailable runtime');
+            writeRuntime(fixturePath.join(args[args.indexOf('--prefix') + 1], 'node_modules/specgit'));
+          } else if (command === 'pnpm' && args[0] === 'run') writeRuntime(options.cwd);
+          else if (command !== 'pnpm' || args[0] !== 'install') throw new Error('Unexpected command');
+        };
+      `);
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: {
+      ...process.env, PRODUCT_CHANGE: product, FIXTURE_COMPATIBLE: String(compatible), FIXTURE_COMMANDS: commands,
+      GITHUB_WORKSPACE: root, RUNNER_TEMP: path.join(root, 'runner'), GITHUB_OUTPUT: path.join(root, 'output'),
+    } });
+    expect(result.status, result.stderr).toBe(status);
+    const calls = fs.readFileSync(commands, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { command: string; args: string[]; cwd?: string });
+    const pnpm = calls.filter((call) => call.command === 'pnpm');
+    expect(pnpm.map((call) => call.args[0])).toEqual(expected);
+    for (const call of pnpm) expect(path.normalize(call.cwd ?? '')).toBe(source);
+    if (pnpm.length) expect(pnpm[0].args).toEqual(['install', '--frozen-lockfile', '--ignore-scripts']);
   });
 });
 

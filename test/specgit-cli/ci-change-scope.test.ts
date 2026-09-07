@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,30 @@ describe('complete Git diff classification', () => {
       run(root, git('rev-parse', 'HEAD'), git);
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
+
+  it.each([
+    ['.specgit.yaml', 'issues: [123]\n', false],
+    ['docs/note.md', 'Documentation only.\n', false],
+    ['src/entry.ts', 'export const value = 2;\n', true],
+    ['.changeset/new-release.md', '---\nspecgit: patch\n---\nRelease note.\n', false],
+    ['.changeset/broken.md', 'not a valid release note', false],
+  ])('classifies %s without installing the product toolchain', (file, content, build) => withRepo((root, base, git) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+    git('add', '.'); git('commit', '-qm', 'candidate');
+    const runtime = path.join(root, 'scope-runtime');
+    mkdirSync(runtime);
+    for (const name of ['ci-change-scope.mjs', 'ci-changesets.mjs']) {
+      copyFileSync(path.join(path.dirname(script), name), path.join(runtime, name));
+    }
+    const output = path.join(root, 'scope-output');
+    const result = spawnSync(process.execPath, [realpathSync(path.join(runtime, 'ci-change-scope.mjs')), '--base', base, '--head', 'HEAD', '--verification-only'], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: output },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ build, metadata: !build, release_intent: null });
+    expect(readFileSync(output, 'utf8')).toContain('release_intent=null\n');
+  }));
 
   it('proves metadata applicability without relying on tracked ignore patterns', () => withRepo((root, base, git) => {
     writeFileSync(path.join(root, '.gitignore'), 'src/\n');
