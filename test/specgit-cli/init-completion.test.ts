@@ -164,7 +164,7 @@ describe('completion runtime dependency installation', () => {
     const calls = fs.readFileSync(commands, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { command: string; args: string[]; cwd?: string });
     const pnpm = calls.filter((call) => call.command === 'pnpm');
     expect(pnpm.map((call) => call.args[0])).toEqual(expected);
-    for (const call of pnpm) expect(call.cwd).toBe(source);
+    for (const call of pnpm) expect(path.normalize(call.cwd ?? '')).toBe(source);
     if (pnpm.length) expect(pnpm[0].args).toEqual(['install', '--frozen-lockfile', '--ignore-scripts']);
   });
 });
