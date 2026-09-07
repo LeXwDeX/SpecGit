@@ -85,7 +85,7 @@ export async function runAccept(
         code: 'delivery_merge', command: 'specgit pr --merge', reason: text.automationHandoffReason(),
       }];
     } else if (verdict.state === 'closure_pending') {
-      nextActions = [{ code: 'delivery_finalize', command: 'specgit finish --json',
+      nextActions = [{ code: 'delivery_finalize', command: policy.ok && policy.value.automation?.close_issues === true ? 'specgit pr --close-issues --json' : 'specgit finish --json',
         reason: reasonFor['delivery_finalize'] ?? '' }];
     } else if (verdict.evidence.pr !== null) {
       const facts = await ctx.git.facts(root.value).catch(() => null);

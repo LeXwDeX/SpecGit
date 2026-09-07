@@ -36,6 +36,22 @@ function fixture() {
 }
 
 describe('GitLab independently proven completion pipeline', () => {
+  it.each(['dev', 'preview', 'release/stable'])('proves the merged-target push and its independent closure bridge on %s', async (target) => {
+    const f = fixture();
+    const mergeSha = 'c'.repeat(40);
+    const input = { ...identity, mergeSha, targetBranch: target };
+    f.data['projects/9/merge_requests/42'] = { iid: 42, sha: head, source_project_id: 9, target_project_id: 9,
+      state: 'merged', target_branch: target, merge_commit_sha: mergeSha };
+    f.data['projects/9/pipelines/20'] = { id: 20, project_id: 9, source: 'push', ref: target, sha: mergeSha, status: 'success' };
+    (f.data['projects/9/pipelines/20/trigger_jobs'] as { name: string }[])[0].name = 'specgit-request-closure';
+    expect(await verifyGitlabCompletion(repo, input, f.reads)).toEqual(ok({ projectId: 9, pipelineId: 30 }));
+    for (const patch of [{ ref: 'wrong' }, { sha: head }, { source: 'web' }, { status: 'failed' }]) {
+      const previous = f.data['projects/9/pipelines/20'];
+      f.data['projects/9/pipelines/20'] = { ...previous as object, ...patch };
+      expect(await verifyGitlabCompletion(repo, input, f.reads)).toMatchObject({ ok: false });
+      f.data['projects/9/pipelines/20'] = previous;
+    }
+  });
   it('removes only its own pipeline wait while retaining the source bridge and business jobs', async () => {
     const f = fixture();
     expect(await verifyGitlabCompletion(repo, identity, f.reads)).toEqual(ok({ projectId: 9, pipelineId: 30 }));

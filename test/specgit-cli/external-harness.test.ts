@@ -70,6 +70,7 @@ describe('external acceptance harness template', () => {
         'reopened',
         'ready_for_review',
         'edited',
+        'closed',
       ]);
     }
     expect(externalAcceptanceWorkflowYaml(INPUT)).toContain('branches: ["master"]');
@@ -153,7 +154,7 @@ describe('external acceptance harness template', () => {
       name: string;
       permissions: { contents: string; issues: string; 'pull-requests': string; actions: string };
       concurrency: { group: string; 'cancel-in-progress': boolean };
-      jobs: Record<string, { name: string; 'runs-on': string; 'timeout-minutes': number }>;
+      jobs: Record<string, { name: string; if?: string; 'runs-on': string; 'timeout-minutes': number }>;
     };
     expect(parsed.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(parsed.permissions.contents).toBe('read');
@@ -165,7 +166,8 @@ describe('external acceptance harness template', () => {
     expect(parsed.concurrency.group).toBe('specgit-accept-${{ github.ref }}');
     expect(parsed.concurrency['cancel-in-progress']).toBe(true);
     const job = parsed.jobs['specgit-acceptance'];
-    expect(job.name).toBe(ACCEPTANCE_CHECK_NAME);
+    expect(job.name).toBe("${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}");
+    expect(job.if).toBe("github.event.action != 'closed'");
     expect(job['runs-on']).toBe('ubuntu-latest');
     expect(job['timeout-minutes']).toBe(30);
   });

@@ -279,7 +279,9 @@ specgit init --force --required-check build --required-check test   # repeatable
 | `--allowed-label <slug>` | Repeatable; replaces policy `tags` with exactly these allowed names, retaining metadata for existing declarations. Project mode requires a nonempty vocabulary. |
 | `--repair-label <slug>` | Repeatable; replaces `automation.repair_labels`. Every selected label must obey the configured label rule and declared vocabulary. |
 | `--automation <answer>` | `yes` or `no`; supplies the user's explicit automation choice. First non-interactive init defaults to no; forced refresh preserves the saved choice when omitted. |
-| `--merge-target <branch>` | Approved merge target used when automation is enabled. Must be a branch name, not a revision expression or fully qualified ref. |
+| `--merge-target <branch>` | Completion target shared by enabled merge and issue closure. Must be a branch name, not a revision expression or fully qualified ref. |
+| `--close-issues <yes\|no>` | Enable or disable issue closure independently; preserves automatic merge unless `--automation` is also supplied. |
+| `--close-target <branch>` | Choose the completion target for issue closure. Conflicts with a different `--merge-target` are rejected. |
 | `--no-ignore` | Skip the managed `.gitignore` block that shields the local delivery assets (`/.specgit.yaml`, `/spec_git/`); keep the classic committed model instead. |
 | `--protect` | Enable the platform's protected-merge gate without asking: the acceptance check plus repository auto-merge on GitHub, or a protected branch plus required successful pipelines on GitLab. |
 | `--no-protect` | Skip the protection probe and warning entirely. |
@@ -451,7 +453,14 @@ Repairs the PR/MR binding of the current delivery. Without arguments it auto-dis
 specgit pr                 # auto-discover by head branch
 specgit pr 42              # bind explicitly
 specgit pr --merge         # execute configured merge and bound issue closure
+specgit pr --close-issues  # close bound issues after a confirmed manual merge
 ```
+
+`--close-issues` requires approved `close_issues: true`, a confirmed merge into
+`target_branch`, current-head CI, and verified binding and merge lineage. It never
+merges an open PR/MR. It is mutually exclusive with `--merge` and an explicit
+request number or URL. Existing closed issues are preserved and retries complete
+only the remaining closures.
 
 `--merge` is a distinct execution mode and cannot be combined with a PR/MR number
 or URL. It uses the current binding and requires `automation.merge: true`.

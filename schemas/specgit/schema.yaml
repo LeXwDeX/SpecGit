@@ -193,8 +193,8 @@ documents:
         required: false
         notes: >-
           Disabled when absent. A present object requires merge; omitted close_issues is disabled.
-          merge true requires a nonempty target_branch; close_issues true
-          requires merge true. Fresh initialization asks yes/no, default no;
+          Either merge true or close_issues true requires a target_branch.
+          Issue closure is independent of automatic merge and follows a confirmed merge into that target. Fresh initialization asks yes/no, default no;
           agents cannot answer yes for the user. Ordinary init --force preserves
           the existing choice, target and closure setting. Explicit user-selected
           --automation yes|no changes that choice; a merge target alone does not
@@ -346,7 +346,7 @@ command_surface:
     - setup     # agent entry points (writes the local integration assets)
     - issue     # one-command delivery bootstrap
     - finish    # the acceptance verdict (the CI gate runs this)
-    - pr        # repair the PR binding; --merge executes configured completion
+    - pr        # repair binding; --merge or --close-issues executes configured completion
     - status    # local evidence only
     - doctor    # probe prerequisites
     - bind      # script alias
