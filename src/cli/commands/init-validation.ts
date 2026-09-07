@@ -41,6 +41,10 @@ export interface InitOptions {
   automation?: string;
   /** Merge destination chosen by the user; otherwise resolve the remote default after a yes. */
   mergeTarget?: string;
+  /** Explicit independent issue-closure choice. */
+  closeIssues?: string;
+  /** Completion destination; shares the target with enabled merge automation. */
+  closeTarget?: string;
   json?: boolean;
 }
 
@@ -70,6 +74,19 @@ export function terminalYesNoPrompt(message: string): Promise<string | null> {
 }
 
 export function validateAutomationOptions(options: InitOptions): InitOutcome | null {
+  if (options.closeIssues !== undefined && !['yes', 'no'].includes(options.closeIssues)) {
+    return { exit: EXIT_USAGE, errors: [errorDiagnostic('closure_invalid', 'Issue closure must be answered yes or no.', {
+      fix: 'Pass --close-issues yes or --close-issues no.',
+    })] };
+  }
+  if (options.closeTarget !== undefined && !isAutomationTargetBranch(options.closeTarget)) {
+    return { exit: EXIT_USAGE, errors: [errorDiagnostic('automation_target_invalid', 'The completion target must be a legal branch name.', {
+      fix: 'Pass --close-target <branch>, such as preview or release/stable.',
+    })] };
+  }
+  if (options.closeTarget !== undefined && options.mergeTarget !== undefined && options.closeTarget !== options.mergeTarget) {
+    return { exit: EXIT_USAGE, errors: [errorDiagnostic('automation_target_conflict', 'Merge and issue closure must name the same configured completion target.')] };
+  }
   if (options.automation !== undefined && options.automation !== 'yes' && options.automation !== 'no') {
     return {
       exit: EXIT_USAGE,
@@ -97,6 +114,42 @@ export async function resolveInitAutomation(
   language: PolicyLanguage,
   interaction: InitInteraction,
   existingPolicy?: Policy
+): Promise<InitOutcome | { automation: PolicyAutomation }> {
+  const requestedTarget = options.closeTarget ?? options.mergeTarget;
+  const legacy = await resolveLegacyAutomation({ ...options,
+    mergeTarget: options.automation === 'yes' ? requestedTarget : undefined,
+    ...(!existingPolicy && options.automation === undefined && options.closeIssues !== undefined ? { automation: 'no' } : {}),
+  }, ctx, root, language, interaction, existingPolicy);
+  if ('exit' in legacy) return legacy;
+  const automation = { ...legacy.automation,
+    ...(options.closeIssues !== undefined ? { close_issues: options.closeIssues === 'yes' } : {}),
+  };
+  if (!automation.merge && !automation.close_issues) {
+    if (requestedTarget !== undefined && !(options.automation === 'no' && options.closeTarget === undefined)) return { exit: EXIT_USAGE,
+      errors: [errorDiagnostic('automation_target_disabled', 'A target branch cannot enable disabled merge or issue closure.', {
+        fix: 'Explicitly enable --close-issues yes or --automation yes before choosing a target.',
+      })] };
+    return { automation };
+  }
+  let target = requestedTarget ?? automation.target_branch ?? existingPolicy?.automation?.target_branch;
+  if (target === undefined) {
+    const branch = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+    if (!branch.ok || !isAutomationTargetBranch(branch.value)) return { exit: EXIT_UNKNOWN,
+      errors: [errorDiagnostic('automation_target_unknown', 'Cannot prove a completion target branch.', {
+        fix: 'Pass the intended branch explicitly with --close-target <branch>.',
+      })] };
+    target = branch.value;
+  }
+  if (options.closeIssues !== undefined || options.closeTarget !== undefined) ctx.io.stderr(language === 'zh'
+    ? `Issue 自动关闭：${automation.close_issues ? 'yes' : 'no'}；完成目标分支 ${target}；自动合并 ${automation.merge ? 'yes' : 'no'}。`
+    : `Automatic issue closure: ${automation.close_issues ? 'yes' : 'no'}; completion target ${target}; automatic merge ${automation.merge ? 'yes' : 'no'}.`);
+  return { automation: { ...automation, target_branch: target } };
+}
+
+/** Preserve the established combined yes/no choice for existing integrations. */
+async function resolveLegacyAutomation(
+  options: InitOptions, ctx: CommandContext, root: string, language: PolicyLanguage,
+  interaction: InitInteraction, existingPolicy?: Policy,
 ): Promise<InitOutcome | { automation: PolicyAutomation }> {
   if (options.automation === undefined && existingPolicy !== undefined) {
     const automation = existingPolicy.automation ?? { merge: false, close_issues: false };
@@ -131,7 +184,7 @@ export async function resolveInitAutomation(
     }
   }
   if (answer !== 'yes') {
-    ctx.io.stderr(language === 'zh'
+    if (options.closeIssues === undefined && options.closeTarget === undefined) ctx.io.stderr(language === 'zh'
       ? `自动化合并和关闭：no（${defaulted ? '默认；未明确选择 yes' : '已选择 no'}）。`
       : `Automatic merge and issue closure: no (${defaulted ? 'default; no explicit yes was supplied' : 'selected no'}).`);
     return { automation: { merge: false, close_issues: false } };
@@ -150,7 +203,7 @@ export async function resolveInitAutomation(
     }
     target = branch.value;
   }
-  ctx.io.stderr(language === 'zh'
+  if (options.closeIssues === undefined && options.closeTarget === undefined) ctx.io.stderr(language === 'zh'
     ? `自动化合并和关闭：yes；目标分支 ${target}。`
     : `Automatic merge and issue closure: yes; target branch ${target}.`);
   return { automation: { merge: true, target_branch: target, close_issues: true } };

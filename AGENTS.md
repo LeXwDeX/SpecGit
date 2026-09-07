@@ -77,6 +77,8 @@ already exists); keep manual guidance outside them.
   `target_branch`, fresh acceptance, and all current-head CI, then confirms
   the merge and every bound issue closure before reporting completed.
   A failed closure remains recoverable and is never reported as completed.
+  With independent closure enabled, `specgit pr --close-issues --json`
+  verifies an already merged request against the approved target and closes its bound issues.
 
 ### Issue tags
 
@@ -119,7 +121,9 @@ already exists); keep manual guidance outside them.
   existing policy, use
   `specgit init --force --automation yes --merge-target <branch>`; plain
   `init --force` preserves its current choice and target. An agent must not
-  answer yes for the user.
+  answer yes for the user. Independent closure uses
+  `init --force --automation no --close-issues yes --close-target <branch>`.
+  The completion target may differ from the trusted remote default branch.
 
 ### Before creating an issue, check for duplicates
 

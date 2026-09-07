@@ -43,6 +43,7 @@ function isPlainInit(options: InitOptions): boolean {
     options.repairLabel === undefined &&
     options.ignore !== false &&
     options.automation === undefined &&
+    options.closeIssues === undefined && options.closeTarget === undefined &&
     options.mergeTarget === undefined
   );
 }

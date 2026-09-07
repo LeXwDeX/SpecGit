@@ -9,7 +9,7 @@ import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { Policy } from '../record/policy.js';
 
 /** Checked before a privileged workflow loads this runtime. Increment for incompatible entry contracts. */
-export const REMOTE_DELIVERY_PROTOCOL = 1;
+export const REMOTE_DELIVERY_PROTOCOL = 2;
 
 export interface RemoteDeliveryInput {
   repo: RepoRef;
@@ -101,7 +101,16 @@ export async function runRemoteDelivery(
     }
     if (current.value.draft) return blocked('pr_draft', 'A draft request cannot be completed automatically.', 1);
     if (current.value.state === 'merged' && options.prepareMerged) await options.prepareMerged();
-    outcome = await runMerge(boundContext);
+    const rootEvidence = await ctx.discoverRoot(ctx.cwd);
+    if (!rootEvidence.ok) return blocked(rootEvidence.code, rootEvidence.message);
+    const policyEvidence = await ctx.resolvePolicy(rootEvidence.value, ok(input.record), { requireApproved: true });
+    if (!policyEvidence.ok) return blocked(policyEvidence.code, policyEvidence.message);
+    const automation = policyEvidence.value.policy.automation;
+    const closeOnly = automation?.merge !== true && automation?.close_issues === true;
+    if (closeOnly && current.value.state === 'open') {
+      return { exit: 0, state: 'bound', errors: [] };
+    }
+    outcome = await runMerge(boundContext, { closeOnly });
     if (outcome.exit === 0) return outcome;
     let waitingForCi = false;
     if (outcome.exit === 1 && !outcome.automation?.merged && current.value.state === 'open') {

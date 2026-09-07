@@ -9,6 +9,7 @@
  * or build.
  */
 
+import type { PolicyAutomation } from '../../record/policy.js';
 import { readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 
@@ -57,7 +58,8 @@ async function isSelfRepository(root: string): Promise<boolean> {
  */
 export async function selectWorkflowYaml(
   ctx: CommandContext,
-  root: string
+  root: string,
+  automation?: PolicyAutomation
 ): Promise<Evidence<WorkflowSelection>> {
   const branchEv = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
   if (!branchEv.ok) {
@@ -68,11 +70,13 @@ export async function selectWorkflowYaml(
     );
   }
   const defaultBranch = branchEv.value;
+  const targets = (automation?.merge || automation?.close_issues) && automation.target_branch
+    ? [automation.target_branch] : [];
   if (await isSelfRepository(root)) {
-    return ok({ yaml: harnessWorkflowYaml(defaultBranch), template: 'self', defaultBranch });
+    return ok({ yaml: harnessWorkflowYaml(defaultBranch, targets), template: 'self', defaultBranch });
   }
   return ok({
-    yaml: externalAcceptanceWorkflowYaml({ defaultBranch, version: ctx.version }),
+    yaml: externalAcceptanceWorkflowYaml({ defaultBranch, version: ctx.version, targets }),
     template: 'external',
     defaultBranch,
   });
@@ -112,7 +116,8 @@ export async function selectCompletionWorkflow(
   ctx: CommandContext,
   root: string,
   platform: 'github' | 'gitlab' | 'undecided',
-  enabled: boolean
+  enabled: boolean,
+  targetBranch?: string
 ): Promise<Evidence<CompletionSelection | null>> {
   if (!enabled) return ok(null);
   if (platform === 'undecided') {
@@ -126,7 +131,7 @@ export async function selectCompletionWorkflow(
   }
   try {
     const input = {
-      defaultBranch: branch.value, version: ctx.version, selfHosted: await isSelfRepository(root), platform,
+      defaultBranch: branch.value, version: ctx.version, selfHosted: await isSelfRepository(root), platform, targetBranch,
     };
     return ok({ platform, defaultBranch: branch.value, yaml: completionWorkflowYaml(input),
       ...(platform === 'gitlab' ? { routingYaml: gitlabRoutingWorkflowYaml(input) } : {}),

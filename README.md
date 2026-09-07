@@ -142,6 +142,20 @@ Once enabled, the trusted completion workflow continues after CI.
 target and current head, verifies acceptance and CI, confirms merge, then closes
 bound issues. See [Team Workflow](docs/team-workflow.md) and [Actions](docs/actions.md).
 
+To keep merging manual and close issues after a merge into a chosen branch:
+
+```bash
+specgit init --force --automation no --close-issues yes --close-target preview
+```
+
+The target accepts any valid branch name, such as `dev`, `preview`, or
+`release/stable`. It is the PR/MR destination, not its source branch. The generated
+workflow signals a confirmed merge and the trusted runtime closes bound issues
+through `gh` or `glab`. `specgit pr --close-issues --json` is the recovery command.
+The trusted completion workflow still lives on the remote default branch; deploy
+its approved integration there and the acceptance/notification integration on
+the configured target before relying on automatic closure.
+
 ## Upgrade an existing installation
 
 Updating the package and refreshing a repository are separate steps:

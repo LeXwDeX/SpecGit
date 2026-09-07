@@ -76,7 +76,7 @@ async function validateBusiness(root: string, content: string): Promise<void> {
       throw new GitlabRoutingError(`${name} must contain one CI configuration mapping.`);
     }
     const mapping = config as Record<string, unknown>;
-    if (Object.hasOwn(mapping, 'spec') || Object.hasOwn(mapping, 'specgit-request-completion')) {
+    if (Object.hasOwn(mapping, 'spec') || Object.hasOwn(mapping, 'specgit-request-completion') || Object.hasOwn(mapping, 'specgit-request-closure')) {
       throw new GitlabRoutingError(`${name} contains pipeline inputs or the reserved specgit-request-completion job.`);
     }
     const workflow = mapping.workflow as { rules?: Array<{ if?: string; when?: string }> } | undefined;

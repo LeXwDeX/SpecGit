@@ -97,6 +97,8 @@ required_checks:
 # changes cannot authorize that PR's own merge. finish/accept remain read-only
 # acceptance checks. Final completion also requires merge and issue closure.
 # The settings below are an opt-in example, not the default:
+# Independent manual-merge closure: --automation no --close-issues yes --close-target preview.
+# Either enabled action requires target_branch; both actions share that destination.
 # automation:
 #   merge: true
 #   target_branch: main

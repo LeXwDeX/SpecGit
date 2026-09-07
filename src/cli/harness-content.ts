@@ -32,13 +32,13 @@ export const CLAUDE_FILENAME = 'CLAUDE.md';
 export const BLOCK_START_MARKER = '<!-- specgit:block:start -->';
 export const BLOCK_END_MARKER = '<!-- specgit:block:end -->';
 
-export function harnessWorkflowYaml(defaultBranch = 'main'): string {
+export function harnessWorkflowYaml(defaultBranch = 'main', targets: string[] = []): string {
   if (defaultBranch.length === 0 || /\s/.test(defaultBranch)) {
     throw new Error(`Self harness: "${defaultBranch}" is not a usable remote default branch.`);
   }
   // Preserve this repository's historical bytes for the real `main`
   // workflow while quoting every other proved ref as YAML data.
-  const branchLiteral = defaultBranch === 'main' ? 'main' : JSON.stringify(defaultBranch);
+  const branchLiteral = [...new Set([defaultBranch, ...targets])].map((branch) => branch === 'main' ? 'main' : JSON.stringify(branch)).join(', ');
   return `name: SpecGit Acceptance
 
 on:
@@ -48,7 +48,7 @@ on:
     # transition must re-verdict. Listing types replaces the defaults,
     # so the default activity types are listed alongside. Title and body
     # edits change live acceptance evidence even when the head is unchanged.
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
   workflow_dispatch:
 
 permissions:
@@ -66,8 +66,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  closure-signal:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Merged request ready for trusted completion'
   specgit-acceptance:
-    name: SpecGit Acceptance
+    if: github.event.action != 'closed'
+    name: \${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}
     # Hosted pool on purpose: a required check must not hinge on one
     # self-hosted container.
     runs-on: ubuntu-latest
@@ -321,6 +327,8 @@ already exists); keep manual guidance outside them.
   \`target_branch\`, fresh acceptance, and all current-head CI, then confirms
   the merge and every bound issue closure before reporting completed.
   A failed closure remains recoverable and is never reported as completed.
+  With independent closure enabled, \`specgit pr --close-issues --json\`
+  verifies an already merged request against the approved target and closes its bound issues.
 
 ### Issue tags
 
@@ -363,7 +371,9 @@ already exists); keep manual guidance outside them.
   existing policy, use
   \`specgit init --force --automation yes --merge-target <branch>\`; plain
   \`init --force\` preserves its current choice and target. An agent must not
-  answer yes for the user.
+  answer yes for the user. Independent closure uses
+  \`init --force --automation no --close-issues yes --close-target <branch>\`.
+  The completion target may differ from the trusted remote default branch.
 
 ### Before creating an issue, check for duplicates
 

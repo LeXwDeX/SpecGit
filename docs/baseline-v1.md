@@ -72,7 +72,9 @@ default branch proved from `origin/HEAD`; those paths never guess `main`.
   explicit automation options change it. Agents cannot answer yes for the user.
 - Policy `automation.merge: true` requires `target_branch`; enabling through
   init takes `--merge-target` or a proved remote default branch.
-  `close_issues: true` additionally requires merge automation. Existing
+  `close_issues: true` also requires a target but works with `merge: false`.
+  `init --close-issues yes --close-target <branch>` configures independent closure;
+  `pr --close-issues --json` recovers closure after a manual merge. Existing
   checks, language, ordering, vocabulary and validation settings survive
   `init --force` unless explicitly replaced, including the saved automation
   choice and target. `--protect` does not enable

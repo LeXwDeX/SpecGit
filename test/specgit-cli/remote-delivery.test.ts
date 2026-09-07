@@ -14,7 +14,7 @@ import { makeCtx, makeGhProvider, makeGitFacts, sampleBinding, samplePolicy } fr
 
 const HEAD = 'a'.repeat(40);
 const repo = { platform: 'github' as const, owner: 'LeXwDeX', repo: 'SpecGit' };
-function fixture(platform: 'github' | 'gitlab' = 'github') {
+function fixture(platform: 'github' | 'gitlab' = 'github', merge = true) {
   let pr = makePrFact({ headSha: HEAD, body: 'Closes #123' });
   let closed = false;
   const checks = [makeCheckRun('All checks passed')];
@@ -28,13 +28,28 @@ function fixture(platform: 'github' | 'gitlab' = 'github') {
     closeIssue: vi.fn(async () => { closed = true; return ok({ closed: true }); }),
   };
   const record = sampleBinding();
-  const t = makeCtx({ record, policy: samplePolicy({ automation: { merge: true, target_branch: 'main', close_issues: true } }),
+  const t = makeCtx({ record, policy: samplePolicy({ automation: { merge, target_branch: 'main', close_issues: true } }),
     gh: forge, evaluate, facts: makeGitFacts({ headSha: HEAD }) });
   vi.mocked(t.gitPort.headContains).mockResolvedValue(ok({ contained: true }));
   return { ...t, forge, record, setPr: (value: typeof pr) => { pr = value; } };
 }
 
 describe('trusted remote delivery continuation', () => {
+  it.each(['github', 'gitlab'] as const)('closes a manually merged %s request when automatic merge is disabled', async (platform) => {
+    const f = fixture(platform, false);
+    f.ctx.parseRepoRef = () => ok({ ...repo, platform });
+    const input = { repo: { ...repo, platform }, pr: 42, headSha: HEAD, record: f.record };
+    const waiting = await runRemoteDelivery(input, f.ctx);
+    expect(waiting.exit).toBe(0);
+    expect(waiting.state).toBe('bound');
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+    expect(f.forge.closeIssue).not.toHaveBeenCalled();
+    f.setPr(makePrFact({ headSha: HEAD, state: 'merged', mergeCommitSha: 'b'.repeat(40), body: 'Closes #123' }));
+    const result = await runRemoteDelivery(input, f.ctx);
+    expect(result.state).toBe('completed');
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+    expect(f.forge.closeIssue).toHaveBeenCalledOnce();
+  });
   it('retains an identified merged request when workflow_run omits its PR list, then verifies closure', async () => {
     const f = fixture();
     const pr = workflowRequestNumber([], 42);
@@ -284,6 +299,27 @@ describe('trusted remote delivery continuation', () => {
 });
 
 describe('completion workflow trust boundary', () => {
+  it.each(['head', 'merged', 'stale'])('executes the generated GitHub identity resolver for a %s signal', (mode) => {
+    const root = mkdtempSync(join(tmpdir(), 'specgit-identity-'));
+    try {
+      const eventSha = mode === 'head' ? HEAD : 'b'.repeat(40);
+      writeFileSync(join(root, 'event'), JSON.stringify({ workflow_run: { head_sha: eventSha, pull_requests: [] } }));
+      const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: false }));
+      const request = { number: 42, head: { sha: HEAD }, headRefOid: HEAD,
+        state: mode === 'merged' ? 'MERGED' : 'OPEN', merged_at: mode === 'merged' ? '2026-09-07' : null,
+        merge_commit_sha: eventSha, mergeCommit: { oid: eventSha } };
+      const script = workflow.jobs.identify.steps[0].run.split("<<'NODE'\n")[1].replace(/\nNODE\s*$/, '')
+        .replace("import { execFileSync } from 'node:child_process';",
+          `const execFileSync = (_command, args) => JSON.stringify(args[0] === 'api' ? [[${JSON.stringify(request)}]] : ${JSON.stringify(request)});`);
+      const run = () => execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', stdio: 'pipe',
+        env: { ...process.env, GITHUB_EVENT_PATH: join(root, 'event'), GITHUB_REPOSITORY: 'owner/repo', GITHUB_OUTPUT: join(root, 'output') } });
+      if (mode === 'stale') expect(run).toThrow();
+      else {
+        run();
+        expect(readFileSync(join(root, 'output'), 'utf8')).toBe(`pr=42\nhead=${HEAD}\n`);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it('keeps the checked-in self-hosted workflow synchronized with its generator', () => {
     const version = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).version;
     const expected = completionWorkflowYaml({ defaultBranch: 'main', version, selfHosted: true });
@@ -343,7 +379,7 @@ describe('completion workflow trust boundary', () => {
       const directory = join(root, 'specgit-runtime/node_modules/specgit/dist/automation');
       mkdirSync(directory, { recursive: true });
       writeFileSync(join(root, 'specgit-runtime/node_modules/specgit/package.json'), '{"type":"module"}');
-      writeFileSync(join(directory, 'remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 1;');
+      writeFileSync(join(directory, 'remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 2;');
       mkdirSync(join(root, 'approved/specgit-runtime'), { recursive: true });
       writeFileSync(join(root, 'approved/specgit-runtime/package.json'), JSON.stringify({ version: '9.8.7' }));
       const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.12.0', selfHosted: true }));
@@ -366,7 +402,7 @@ describe('completion workflow trust boundary', () => {
     const text = completionWorkflowYaml({ defaultBranch: 'Dev', version: '2.0.0', selfHosted: false });
     expect(parse(text).on.workflow_run).toEqual({ workflows: ['SpecGit Acceptance'], types: ['completed'] });
     expect(text).toContain('specgit@2.0.0');
-    expect(text).toContain('REMOTE_DELIVERY_PROTOCOL !== 1');
+    expect(text).toContain('REMOTE_DELIVERY_PROTOCOL !== 2');
     expect(text).not.toContain('pnpm');
     expect(text).not.toContain("['run', 'build']");
     expect(parse(text).jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').env.GH_TOKEN)
@@ -374,7 +410,7 @@ describe('completion workflow trust boundary', () => {
   });
   it('provides a separately serialized GitLab default-branch runner', () => {
     const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: false, platform: 'gitlab' }));
-    expect(workflow['specgit-complete'].resource_group).toBe('specgit-complete-$SPECGIT_PR');
+    expect(workflow['specgit-complete'].resource_group).toBe('specgit-complete');
     expect(workflow['specgit-complete'].rules[0].if).toContain('$CI_COMMIT_BRANCH == "main"');
     expect(workflow['specgit-complete'].script.join('\n')).toContain('remote-entry.js');
   });

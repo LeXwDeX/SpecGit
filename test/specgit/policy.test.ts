@@ -141,6 +141,9 @@ describe('policy automation authorization', () => {
     { merge: true, target_branch: 'main' },
     { merge: true, target_branch: 'release/1.2', close_issues: true },
     { merge: true, target_branch: '发布/稳定版', close_issues: false },
+    { merge: false, target_branch: 'preview', close_issues: true },
+    { merge: false, target_branch: 'dev', close_issues: true },
+    { merge: false, target_branch: 'release/stable', close_issues: true },
   ])('preserves valid explicit configuration %j', (automation) => {
     expect(parse(automation)).toEqual({
       success: true,

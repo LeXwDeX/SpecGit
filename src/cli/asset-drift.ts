@@ -178,7 +178,7 @@ export async function inspectGeneratedAssets(args: {
   if (platform === 'gitlab') {
     workflowYaml = null; // desired: no GitHub workflow; an owned one is removable
   } else if (platform === 'github') {
-    const selection = await selectWorkflowYaml(ctx, root);
+    const selection = await selectWorkflowYaml(ctx, root, policy.ok ? policy.value.automation : undefined);
     if (!selection.ok) {
       // The writer cannot prove the branch it must pin, so status makes no
       // workflow claim either. No guessed bytes are compared or written.
@@ -197,10 +197,10 @@ export async function inspectGeneratedAssets(args: {
     );
   }
 
-  const completionEnabled = policy.ok && policy.value.automation?.merge === true;
+  const completionEnabled = policy.ok && (policy.value.automation?.merge === true || policy.value.automation?.close_issues === true);
   const completion = platform === 'providers_invalid' && completionEnabled
     ? { ok: false as const, code: 'automation_platform_unknown' }
-    : await selectCompletionWorkflow(ctx, root, platform === 'providers_invalid' ? 'undecided' : platform, completionEnabled);
+    : await selectCompletionWorkflow(ctx, root, platform === 'providers_invalid' ? 'undecided' : platform, completionEnabled, policy.ok ? policy.value.automation?.target_branch : undefined);
   if (!completion.ok) uninspected.push(completion.code);
   let routingSteps: Awaited<ReturnType<typeof buildGitlabRoutingSteps>> = [];
   if (completion.ok) {

@@ -46,16 +46,18 @@ jobs:
           const head = run?.head_sha || process.env.REQUEST_HEAD;
           let number = process.env.REQUEST_PR || run?.pull_requests?.[0]?.number;
           const query = (args) => JSON.parse(execFileSync('gh', args, { encoding: 'utf8' }));
+          if (!/^[a-f0-9]{40}$/i.test(head || '')) throw new Error('Invalid event commit.');
           if (!number) {
-            if (typeof run?.head_branch !== 'string') throw new Error('Missing triggering branch.');
-            const matches = query(['pr', 'list', '--repo', process.env.GITHUB_REPOSITORY, '--state', 'all', '--head', run.head_branch, '--limit', '100', '--json', 'number,headRefOid']).filter((pr) => pr.headRefOid === head);
+            const pages = query(['api', '--paginate', '--slurp', 'repos/' + process.env.GITHUB_REPOSITORY + '/commits/' + head + '/pulls?per_page=100']);
+            const matches = pages.flat().filter((pr) => pr.head?.sha === head || (pr.merged_at && pr.merge_commit_sha === head));
             if (matches.length !== 1) throw new Error('The event must identify exactly one current request.');
             number = matches[0].number;
           }
-          if (!/^[1-9][0-9]*$/.test(String(number)) || !/^[a-f0-9]{40}$/i.test(head || '')) throw new Error('Invalid request identity.');
-          const current = query(['pr', 'view', String(number), '--repo', process.env.GITHUB_REPOSITORY, '--json', 'number,headRefOid']);
-          if (current.headRefOid !== head) throw new Error('Stale completion event.');
-          appendFileSync(process.env.GITHUB_OUTPUT, 'pr=' + current.number + '\nhead=' + head + '\n');
+          if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Invalid request identity.');
+          const current = query(['pr', 'view', String(number), '--repo', process.env.GITHUB_REPOSITORY, '--json', 'number,headRefOid,state,mergeCommit']);
+          const mergedSignal = run && current.state === 'MERGED' && current.mergeCommit?.oid === head;
+          if (current.headRefOid !== head && !mergedSignal) throw new Error('Stale completion event.');
+          appendFileSync(process.env.GITHUB_OUTPUT, 'pr=' + current.number + '\nhead=' + current.headRefOid + '\n');
           NODE
   complete:
     needs: identify
@@ -159,14 +161,14 @@ jobs:
           try {
             execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', packageSpec], { stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
-            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 1) throw new Error('Incompatible completion runtime.');
+            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('Incompatible completion runtime.');
           } catch (error) {
             if (process.env.PRODUCT_CHANGE !== 'true') throw new Error('runtime_upgrade_required: publish the compatible runtime before completing metadata changes.');
             directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime';
             execFileSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
             execFileSync('pnpm', ['run', 'build'], { cwd: directory, stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
-            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 1) throw new Error('The approved source lacks completion protocol 1.');
+            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('The approved source lacks completion protocol 2.');
           }
           appendFileSync(process.env.GITHUB_OUTPUT, 'directory=' + directory + '\n');
           NODE
