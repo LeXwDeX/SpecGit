@@ -1,10 +1,8 @@
 version: 1
-delivery: configured-issue-completion
+delivery: historical-policy-completion
 context:
   kind: branch
-  branch: feat/475-configured-issue-completion
+  branch: feat/481-historical-policy-completion
 issues:
-  - 475
-  - 476
+  - 481
 issueKinds: []
-pr: 480
