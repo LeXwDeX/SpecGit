@@ -281,9 +281,10 @@ export async function readPolicySnapshot(root: string): Promise<PolicySnapshot> 
   return { content: raw, policy: ok(result.data) };
 }
 
-/** An expected content enables a locked compare-and-write; false means no mutation occurred. */
-export async function writePolicy(root: string, policy: Policy, expectedContent?: string | null): Promise<void | boolean> {
+/** Atomic writer: a thrown error or false means no target write; conditional success returns its exact bytes. */
+export async function writePolicy(root: string, policy: Policy, expectedContent?: string | null): Promise<void | false | string> {
   const target = policyPath(root);
+  const content = YAML.stringify(policy);
   return withFileLock(`${target}.lock`, async () => {
     if (expectedContent !== undefined) {
       let current: string | null;
@@ -291,8 +292,8 @@ export async function writePolicy(root: string, policy: Policy, expectedContent?
       catch (error) { if (!isMissingFile(error)) throw error; current = null; }
       if (current !== expectedContent) return false;
     }
-    await writeFileAtomically(target, YAML.stringify(policy));
-    return expectedContent === undefined ? undefined : true;
+    await writeFileAtomically(target, content);
+    return expectedContent === undefined ? undefined : content;
   });
 }
 

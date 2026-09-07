@@ -37,7 +37,7 @@ describe('specgit init', () => {
     rmDir(root);
   });
 
-  it.each(['changed', 'created', 'deleted', 'during-write'])('preserves concurrently %s authoritative policy and rolls back the harness', async (change) => {
+  it.each(['changed', 'created', 'deleted', 'during-write', 'lock-timeout', 'after-write'])('preserves concurrently %s authoritative policy and rolls back the harness', { timeout: 10_000 }, async (change) => {
     const target = path.join(root, SPEC_GIT_DIR, POLICY_FILENAME);
     const concurrent = '# user edit\nversion: 1\nrequired_checks: [Build, Security]\n';
     if (change !== 'created') await writePolicy(root, { version: 1, required_checks: ['Build'] });
@@ -50,11 +50,22 @@ describe('specgit init', () => {
     };
     t.ctx.record.writePolicy = async (repoRoot, policy, basis) => {
       if (change === 'during-write') mutate();
-      return writePolicy(repoRoot, policy, basis);
+      if (change === 'lock-timeout') {
+        fs.writeFileSync(`${target}.lock`, 'held by another writer');
+        const pending = writePolicy(repoRoot, policy, basis);
+        mutate();
+        return pending;
+      }
+      const written = await writePolicy(repoRoot, policy, basis);
+      if (change === 'after-write') {
+        mutate();
+        fs.mkdirSync(path.join(root, '.gitignore'));
+      }
+      return written;
     };
     const tracked = t.ctx.git.trackedFiles;
     t.ctx.git.trackedFiles = async (repoRoot, paths) => {
-      if (change !== 'during-write' && paths.includes(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`)) mutate();
+      if (['changed', 'created', 'deleted'].includes(change) && paths.includes(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`)) mutate();
       return tracked(repoRoot, paths);
     };
     expect(await runCliWith(['node', 'specgit', 'init', '--force', '--required-check', 'Build', '--no-protect', '--json'], t.ctx)).toBe(EXIT_UNKNOWN);
@@ -62,7 +73,7 @@ describe('specgit init', () => {
     else expect(read(target)).toBe(concurrent);
     expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
     expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
-    expect(stdoutText(t.io)).toContain('changed');
+    expect(stdoutText(t.io)).toContain('failed');
   });
 
   it('creates spec_git/policy.yaml with the declared required checks', async () => {

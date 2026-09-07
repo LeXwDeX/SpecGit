@@ -61,7 +61,8 @@ export interface RecordPort {
   deleteRecord(root: string): Promise<void>;
   readPolicy(root: string): Promise<Evidence<Policy>>;
   readPolicySnapshot(root: string): Promise<{ policy: Evidence<Policy>; content: string | null }>;
-  writePolicy(root: string, policy: Policy, expectedContent?: string | null): Promise<void | boolean>;
+  /** Atomic: exceptions/false precede target mutation; conditional success returns the written bytes. */
+  writePolicy(root: string, policy: Policy, expectedContent?: string | null): Promise<void | false | string>;
 }
 
 export type EvaluateFn = (input: EvaluateInput) => Promise<Verdict>;
