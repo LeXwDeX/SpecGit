@@ -1,5 +1,13 @@
 # specgit
 
+## 1.15.0
+
+### Minor Changes
+
+- [#480](https://github.com/LeXwDeX/SpecGit/pull/480) [`6236d2f`](https://github.com/LeXwDeX/SpecGit/commit/6236d2f8f3c8e0a0ee74b131c7e824aa238011c9) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Support automatic issue closure after manual PR/MR merges into a configured branch, independently of automatic merge. Generate target-aware acceptance and lightweight merge signals with trusted default-branch completion for GitHub and GitLab. Retain approved-policy, current-head CI, merge confirmation, and issue readback checks. Historical authorization currently requires a two-parent merge commit; squash, rebase, and fast-forward recovery remain fail-closed pending explicit historical evidence.
+
+  Reduce dependency installation and duplicate packaging builds for metadata-only deliveries and classified CI jobs.
+
 ## 1.14.0
 
 ### Minor Changes
