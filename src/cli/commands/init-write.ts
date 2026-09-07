@@ -137,6 +137,7 @@ export async function writeHarnessAndPolicy(args: {
     {
       kind: 'portWrite',
       path: POLICY_PATH,
+      atomic: true,
       write: () => ctx.record.writePolicy(root, policy, args.policyBasis),
     },
   ];

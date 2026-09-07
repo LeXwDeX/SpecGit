@@ -126,8 +126,10 @@ export type ManagedStep =
        * as the record port's writePolicy). The transaction still snapshots
        * the target before and classifies the outcome after.
        */
-      /** false proves a compare-and-write refused without mutation; preserve concurrent bytes. */
-      write: () => Promise<void | boolean>;
+      /** A thrown writer error guarantees it did not mutate its target. */
+      atomic?: boolean;
+      /** false means no mutation; a string proves the exact written bytes for conditional rollback. */
+      write: () => Promise<void | false | string>;
     } & ManagedPathScoped
   | {
       kind: 'remove';
@@ -548,11 +550,15 @@ async function pruneEmptyDirs(root: string, removedAt: string): Promise<void> {
  * each snapshot's missingDirs and the tracked createdDirs). Returns the
  * first failure encountered, or null.
  */
-async function rollback(snapshots: Snapshot[], createdDirs: string[]): Promise<string | null> {
+async function rollback(snapshots: Snapshot[], createdDirs: string[], writtenContent: Map<Snapshot, string>): Promise<string | null> {
   let failure: string | null = null;
   for (const snap of [...snapshots].reverse()) {
     try {
-      await restoreManagedSnapshot(snap);
+      const expected = writtenContent.get(snap);
+      if (expected === undefined) await restoreManagedSnapshot(snap);
+      else if (!(await restoreManagedSnapshotIfCurrent(snap, expected))) {
+        failure = `${snap.path} changed after this transaction wrote it; concurrent user content was preserved.`;
+      }
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     }
@@ -691,6 +697,7 @@ export async function reconcileManagedAssets(
     preserved: plan.preserved,
   };
   const snapshots: Snapshot[] = [];
+  const writtenContent = new Map<Snapshot, string>();
   const createdDirs: string[] = [];
   const snap = async (step: Pick<ManagedStep, 'path' | 'scope'>): Promise<Snapshot> => {
     // Build the snapshot fully BEFORE recording it: a read that throws must
@@ -746,12 +753,19 @@ export async function reconcileManagedAssets(
         (before.existed ? report.updated : report.created).push(action.step.path);
       } else if (action.kind === 'portWrite') {
         const before = await snap(action.step);
-        await ensureDirTracked(path.dirname(target), createdDirs);
-        const written = await action.step.write();
+        let written: void | false | string;
+        try {
+          await ensureDirTracked(path.dirname(target), createdDirs);
+          written = await action.step.write();
+        } catch (error) {
+          if (action.step.atomic) snapshots.pop();
+          throw error;
+        }
         if (written === false) {
           snapshots.pop();
           throw new Error(`${action.step.path} changed since it was read; refusing to overwrite concurrent user content.`);
         }
+        if (typeof written === 'string') writtenContent.set(before, written);
         await safeManagedTarget(root, action.step);
         const after = await readIfExists(target);
         if (after === null) {
@@ -792,7 +806,7 @@ export async function reconcileManagedAssets(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const rollbackNote = await rollback(snapshots, createdDirs);
+    const rollbackNote = await rollback(snapshots, createdDirs, writtenContent);
     throw new ManagedReconcileError(
       'commit',
       rollbackNote !== null ? `${message} (rollback incomplete: ${rollbackNote})` : message,
