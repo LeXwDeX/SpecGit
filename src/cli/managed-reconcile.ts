@@ -18,7 +18,9 @@
  *    and directories this run created are removed deepest-first (rmdir
  *    refuses non-empty dirs, so user content can never be deleted here).
  *    Deletes are inside the transaction: a removed owned asset comes
- *    back if a later step fails.
+ *    back if a later step fails. Successful mutations are restored only
+ *    while their resulting bytes or absence still match; concurrent changes
+ *    are preserved and reported as incomplete rollback.
  *    The same holds for the public snapshot/restore pair: a restore returns
  *    the COMPLETE pre-run tree — it prunes the directories the snapshot
  *    watched being created (rmdir only, up to the repository root), and a
@@ -50,7 +52,7 @@
  * API has no compare-and-swap write/unlink primitive, so one residual TOCTOU
  * window remains: another process can change a target after that final
  * lstat/read and before SpecGit's write or unlink (including an ABA change),
- * or after an earlier successful mutation but before a later rollback.
+ * or between a rollback's final comparison and its restore.
  *
  * Paths in specs and reports are repo-relative with forward slashes.
  */
@@ -428,7 +430,8 @@ export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> 
 
 /**
  * Restore a snapshot only while the target still contains the exact bytes
- * written by this run. A missing, replaced, non-file, linked, or byte-changed
+ * written by this run, or remains absent after this run removed it.
+ * For a written file, a missing, replaced, non-file, linked, or byte-changed
  * target is preserved and reported as `false`; it may belong to a concurrent
  * writer. This is the strongest portable compare-before-restore available
  * through Node's file APIs. A process can still race the final check and the
@@ -437,14 +440,18 @@ export async function restoreManagedSnapshot(snapshot: Snapshot): Promise<void> 
  */
 export async function restoreManagedSnapshotIfCurrent(
   snapshot: Snapshot,
-  expectedCurrentContent: string
+  expectedCurrentContent: string | null
 ): Promise<boolean> {
   const boundary = await inspectManagedPathBoundary(snapshot.root, snapshot.path, snapshot.scope);
   if (boundary.symlink !== null) return false;
   const entry = await lstatIfExists(snapshot.target);
-  if (entry === null || !entry.isFile()) return false;
-  const currentContent = await readIfExists(snapshot.target);
-  if (currentContent !== expectedCurrentContent) return false;
+  if (expectedCurrentContent === null) {
+    if (entry !== null) return false;
+  } else {
+    if (entry === null || !entry.isFile()) return false;
+    const currentContent = await readIfExists(snapshot.target);
+    if (currentContent !== expectedCurrentContent) return false;
+  }
   await restoreManagedSnapshot(snapshot);
   return true;
 }
@@ -550,14 +557,14 @@ async function pruneEmptyDirs(root: string, removedAt: string): Promise<void> {
  * each snapshot's missingDirs and the tracked createdDirs). Returns the
  * first failure encountered, or null.
  */
-async function rollback(snapshots: Snapshot[], createdDirs: string[], writtenContent: Map<Snapshot, string>): Promise<string | null> {
+async function rollback(snapshots: Snapshot[], createdDirs: string[], writtenContent: Map<Snapshot, string | null>): Promise<string | null> {
   let failure: string | null = null;
   for (const snap of [...snapshots].reverse()) {
     try {
       const expected = writtenContent.get(snap);
       if (expected === undefined) await restoreManagedSnapshot(snap);
       else if (!(await restoreManagedSnapshotIfCurrent(snap, expected))) {
-        failure = `${snap.path} changed after this transaction wrote it; concurrent user content was preserved.`;
+        failure = `${snap.path} changed after this transaction modified it; concurrent user content was preserved.`;
       }
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -679,7 +686,8 @@ export async function inspectManagedAssets(
 /**
  * Converge `root` to the desired managed-asset state in one reversible
  * transaction and report what happened. Throws `ManagedReconcileError`;
- * after a `commit` failure the tree is back to its pre-run state.
+ * after a `commit` failure the tree is restored unless concurrent changes
+ * prevent compensation, in which case the error reports incomplete rollback.
  */
 export async function reconcileManagedAssets(
   root: string,
@@ -697,7 +705,7 @@ export async function reconcileManagedAssets(
     preserved: plan.preserved,
   };
   const snapshots: Snapshot[] = [];
-  const writtenContent = new Map<Snapshot, string>();
+  const writtenContent = new Map<Snapshot, string | null>();
   const createdDirs: string[] = [];
   const snap = async (step: Pick<ManagedStep, 'path' | 'scope'>): Promise<Snapshot> => {
     // Build the snapshot fully BEFORE recording it: a read that throws must
@@ -747,6 +755,7 @@ export async function reconcileManagedAssets(
         // land the desired (possibly protected) mode (#314).
         await ensureReplaceable(target);
         await fs.writeFile(target, action.content, 'utf-8');
+        writtenContent.set(before, action.content);
         // Full-mode chmod is the platform-maximal enforcement (#314): exact
         // POSIX bits where enforced, the read-only contract on Windows.
         await fs.chmod(target, action.step.mode);
@@ -800,6 +809,7 @@ export async function reconcileManagedAssets(
         // protection first; ownership was already proven from the bytes.
         await ensureReplaceable(target);
         await fs.unlink(target);
+        writtenContent.set(before, null);
         await pruneEmptyDirs(root, target);
         report.removed.push(action.step.path);
       }
