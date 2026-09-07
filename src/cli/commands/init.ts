@@ -106,6 +106,7 @@ async function runValidationPhase(
   | {
       declaredEndpoint: { host: string; port: string | null } | null;
       existingPolicy: Awaited<ReturnType<CommandContext['record']['readPolicy']>>;
+      policyBasis: string | null;
       options: InitOptions;
       guidedUpgrade: boolean;
     }
@@ -119,7 +120,7 @@ async function runValidationPhase(
     declaredEndpoint = declared;
   }
 
-  const existingPolicy = await ctx.record.readPolicy(root);
+  const { policy: existingPolicy, content: policyBasis } = await ctx.record.readPolicySnapshot(root);
   const guided = await guidedUpgradeDecision({ root, ctx, options, policy: existingPolicy, interaction });
   if ('outcome' in guided) return guided.outcome;
   const effectiveOptions: InitOptions = guided.upgrade
@@ -136,7 +137,7 @@ async function runValidationPhase(
   const writableError = await preflightRootWritable(root);
   if (writableError !== null) return writableError;
 
-  return { declaredEndpoint, existingPolicy, options: effectiveOptions, guidedUpgrade: guided.upgrade };
+  return { declaredEndpoint, existingPolicy, policyBasis, options: effectiveOptions, guidedUpgrade: guided.upgrade };
 }
 
 export async function runInit(
@@ -161,7 +162,7 @@ export async function runInit(
 
   const validated = await runValidationPhase(options, ctx, root, interaction);
   if ('exit' in validated) return validated;
-  const { declaredEndpoint, existingPolicy, options: effectiveOptions, guidedUpgrade } = validated;
+  const { declaredEndpoint, existingPolicy, policyBasis, options: effectiveOptions, guidedUpgrade } = validated;
 
   // Explicit inputs and preserved policy checks need no platform evidence.
   // Keep their usage errors ahead of the interactive platform question.
@@ -348,6 +349,7 @@ export async function runInit(
     checks,
     language,
     existingPolicy: existingPolicy.ok ? existingPolicy.value : undefined,
+    policyBasis,
     automation: repair.automation,
     validation: rules.validation,
     tags: rules.tags,

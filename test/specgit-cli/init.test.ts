@@ -16,6 +16,7 @@ import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.j
 import { LOCAL_ASSET_IGNORE_ENTRIES } from '../../src/cli/commands/init-ignore.js';
 import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+import { readPolicy, readPolicySnapshot, writePolicy } from '../../src/record/io.js';
 
 const WORKFLOW_ABS = (root: string) => path.join(root, ...HARNESS_WORKFLOW_PATH.split('/'));
 const AGENTS_ABS = (root: string) => path.join(root, 'AGENTS.md');
@@ -34,6 +35,47 @@ describe('specgit init', () => {
 
   afterEach(() => {
     rmDir(root);
+  });
+
+  it.each(['changed', 'created', 'deleted', 'during-write', 'lock-timeout', 'hook-lock-timeout', 'after-write'])('preserves concurrently %s authoritative policy and rolls back the harness', { timeout: 10_000 }, async (change) => {
+    const target = path.join(root, SPEC_GIT_DIR, POLICY_FILENAME);
+    const concurrent = '# user edit\nversion: 1\nrequired_checks: [Build, Security]\n';
+    if (change !== 'created') await writePolicy(root, { version: 1, required_checks: ['Build'] });
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root });
+    t.ctx.record.readPolicy = readPolicy;
+    t.ctx.record.readPolicySnapshot = readPolicySnapshot;
+    const mutate = () => {
+      if (change === 'deleted') fs.unlinkSync(target);
+      else { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, concurrent); }
+    };
+    t.ctx.record.writePolicy = async (repoRoot, policy, basis) => {
+      if (change === 'during-write') mutate();
+      if (change === 'lock-timeout' || change === 'hook-lock-timeout') {
+        fs.writeFileSync(`${target}.lock`, 'held by another writer');
+        const pending = writePolicy(repoRoot, policy, basis);
+        mutate();
+        if (change === 'hook-lock-timeout') fs.writeFileSync(path.join(root, '.opencode/hooks.json'), '{"user-added":true}\n');
+        return pending;
+      }
+      const written = await writePolicy(repoRoot, policy, basis);
+      if (change === 'after-write') {
+        mutate();
+        fs.mkdirSync(path.join(root, '.gitignore'));
+      }
+      return written;
+    };
+    const tracked = t.ctx.git.trackedFiles;
+    t.ctx.git.trackedFiles = async (repoRoot, paths) => {
+      if (['changed', 'created', 'deleted'].includes(change) && paths.includes(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`)) mutate();
+      return tracked(repoRoot, paths);
+    };
+    expect(await runCliWith(['node', 'specgit', 'init', '--force', '--required-check', 'Build', '--no-protect', '--json'], t.ctx)).toBe(EXIT_UNKNOWN);
+    if (change === 'deleted') expect(fs.existsSync(target)).toBe(false);
+    else expect(read(target)).toBe(concurrent);
+    if (change === 'hook-lock-timeout') expect(read(path.join(root, '.opencode/hooks.json'))).toBe('{"user-added":true}\n');
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+    expect(stdoutText(t.io)).toContain('failed');
   });
 
   it('creates spec_git/policy.yaml with the declared required checks', async () => {

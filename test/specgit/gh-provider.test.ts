@@ -437,6 +437,14 @@ describe('GhCliGitHubProvider', () => {
     expect(result.value.mergeCommitSha).toBe(MERGE_SHA);
   });
 
+  it.each([undefined, 'main', 'a'.repeat(39)])('does not invent target history from an invalid base SHA: %s', async (sha) => {
+    const { provider } = setup([{ match: '/pulls/42$', stdout: JSON.stringify({ number: 42, state: 'closed',
+      merged_at: '2026-09-07T00:00:00Z', draft: false, head: { ref: 'delivery', sha: SHA }, base: { ref: 'main', sha } }) }]);
+    const result = await provider.getPr(REPO, 42);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.targetHistorySha).toBeUndefined();
+  });
+
   it('reports mergeCommitSha null for a merged PR whose payload omits merge_commit_sha', async () => {
     const { provider } = setup([
       {

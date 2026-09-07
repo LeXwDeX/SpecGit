@@ -1,4 +1,6 @@
 import { expect, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { Evidence } from '../../src/kernel/evidence.js';
 import type { Verdict, VerdictEvidence } from '../../src/acceptance/evaluate.js';
 import type { DeliveryBinding } from '../../src/record/schema.js';
@@ -125,6 +127,8 @@ export function makeRecordPort(state: MemoryRecordState = {}): MemoryRecordPort 
       }
       return { ok: true, value: state.policy };
     }),
+    readPolicySnapshot: async (root: string) => ({ policy: await port.readPolicy(root),
+      content: fs.existsSync(path.join(root, 'spec_git/policy.yaml')) ? fs.readFileSync(path.join(root, 'spec_git/policy.yaml'), 'utf-8') : null }),
     writePolicy: vi.fn(async (root: string, policy: SpecGitPolicy): Promise<void> => {
       port.policyWrites.push({ root, policy });
       state.policy = policy;

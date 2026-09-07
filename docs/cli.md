@@ -191,10 +191,11 @@ proven merged lineage and all bound issues confirmed closed. Merged delivery
 with open issues reports `closure_pending`.
 
 After merging a policy-changing PR, same-run closure uses the policy approved
-before merge. Cross-process recovery currently proves that policy only from a
-two-parent merge whose second parent matches the platform PR head. Squash,
-rebase and fast-forward recovery without unique evidence returns
-`policy_history_unavailable`; it cannot invent historical authorization.
+before merge. Cross-process recovery proves that policy from a two-parent merge
+whose second parent matches the platform PR head, or from a provider-backed
+target ancestor with unchanged policy history through the merged result. Squash,
+rebase and fast-forward recovery without this evidence returns
+`policy_history_unavailable`; even a policy change later reverted is ambiguous.
 
 Terminal failures on a ready PR/MR create repair issues for independent causes;
 recurring unresolved causes reuse the repair issue. Drafts, pending checks and
@@ -436,12 +437,13 @@ An open bound issue instead gives `closure_pending`. A failed evidence read leav
 `skipped` and `complete: false`. Invalid replacement arguments or a failed first
 write preserve the completed record; `unbind` is the abandon/reset/uninstall tool.
 
-Success hand-offs render as `Next:` lines and structured `nextActions`. With
-automation enabled, both accepted live work and completed history point to
-`specgit pr --merge`, so interrupted issue closure is confirmed before starting
-another delivery. With automation disabled, accepted live work names the forge's
-merge command, while completed history carries `record_of_merged_delivery` and
-points to `specgit issue "<type>: <title>"`, which atomically replaces the record.
+Success hand-offs render as `Next:` lines and structured `nextActions`. Accepted
+live work points to `specgit pr --merge` when automatic merge is enabled, or the
+forge's merge command otherwise. A merged delivery with pending issue closure
+points to `specgit pr --close-issues --json` when independent closure is enabled.
+Confirmed completed history always points to `specgit issue "<type>: <title>"`,
+which atomically replaces the record; it does not require another merge command
+or checking out the old source branch.
 
 **Agent continuation.** The agent executes `nextActions` within the user's existing authorization: fill scaffold prose, prepare the PR, fix failures, follow required CI, and verify the merge and any authorized release. `finish` itself is read-only; it never marks ready or merges. Recheck the verdict after head/body/check changes. Missing credentials, new scope decisions, and exhausted review limits are explicit blockers; routine commands remain agent work. GitLab description edits use `glab issue update` / `glab mr update` with `--description-file`; GitHub uses `gh issue edit` / `gh pr edit` with `--body-file`.
 
@@ -462,11 +464,15 @@ merges an open PR/MR. It is mutually exclusive with `--merge` and an explicit
 request number or URL. Existing closed issues are preserved and retries complete
 only the remaining closures.
 
-Historical authorization currently requires a two-parent merge commit. Manual
-squash, rebase, and fast-forward merges can be identified, but automatic closure
-returns `policy_history_unavailable` until their original target policy can be
-proved. Keep merge commits enabled for this completion path; the runtime never
-substitutes the newly merged policy for prior approval.
+Historical authorization uses the original target parent for a two-parent merge.
+Squash, rebase, and fast-forward recovery requires the platform's target revision
+to be an ancestor of the result, with no intervening policy change. GitHub's
+merged PR base SHA and GitLab's diff start SHA supply that revision; GitLab's
+diff head must match the merged request head. An older diff remains usable only
+when Git proves unchanged policy throughout the interval. Missing or ambiguous
+history returns `policy_history_unavailable`. Use a merge commit for a
+policy-changing delivery that needs automatic closure recovery; a new policy
+cannot authorize itself.
 
 `--merge` is a distinct execution mode and cannot be combined with a PR/MR number
 or URL. It uses the current binding and requires `automation.merge: true`.

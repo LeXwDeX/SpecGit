@@ -75,6 +75,7 @@ export async function writeHarnessAndPolicy(args: {
   language: PolicyLanguage;
   /** Validated prior policy: preserve fields the init options do not replace. */
   existingPolicy?: Policy;
+  policyBasis: string | null;
   automation: NonNullable<Policy['automation']>;
   validation?: Policy['validation'];
   tags?: Policy['tags'];
@@ -136,7 +137,8 @@ export async function writeHarnessAndPolicy(args: {
     {
       kind: 'portWrite',
       path: POLICY_PATH,
-      write: () => ctx.record.writePolicy(root, policy),
+      atomic: true,
+      write: () => ctx.record.writePolicy(root, policy, args.policyBasis),
     },
   ];
   if (args.writeIgnore) {

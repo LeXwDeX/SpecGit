@@ -389,7 +389,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
       merge_commit_sha?: unknown;
       draft?: unknown;
       head?: { ref?: unknown; sha?: unknown };
-      base?: { ref?: unknown };
+      base?: { ref?: unknown; sha?: unknown };
       body?: unknown;
       title?: unknown;
     };
@@ -412,6 +412,8 @@ export class GhCliGitHubProvider implements ForgeProvider {
       headBranch: typeof parsed.head?.ref === 'string' ? parsed.head.ref : '',
       headSha: typeof parsed.head?.sha === 'string' ? parsed.head.sha : '',
       baseBranch: typeof parsed.base?.ref === 'string' ? parsed.base.ref : '',
+      ...(state === 'merged' && typeof parsed.base?.sha === 'string' && /^[a-f0-9]{40}$/.test(parsed.base.sha)
+        ? { targetHistorySha: parsed.base.sha } : {}),
       body: typeof parsed.body === 'string' ? parsed.body : '',
       mergeCommitSha:
         typeof parsed.merge_commit_sha === 'string' && parsed.merge_commit_sha.length > 0

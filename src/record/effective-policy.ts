@@ -29,7 +29,7 @@ export async function resolveEffectivePolicy(options: {
   const repo = await options.parseRepoRef(facts.originUrl);
   if (!repo.ok) return repo;
   let branch: string;
-  let merged: { mergeSha: string; headSha: string } | undefined;
+  let merged: { mergeSha: string; headSha: string; targetHistorySha?: string } | undefined;
   if (record.ok && record.value.pr !== undefined) {
     if (typeof record.value.pr === 'string') {
       const reference = parsePrUrl(record.value.pr);
@@ -42,7 +42,7 @@ export async function resolveEffectivePolicy(options: {
     branch = pr.value.baseBranch;
     if (options.requireApproved && pr.value.state === 'merged') {
       if (!pr.value.mergeCommitSha) return fail('policy_history_unavailable', 'The merged request has no result commit proving its original authorization.');
-      merged = { mergeSha: pr.value.mergeCommitSha, headSha: pr.value.headSha };
+      merged = { mergeSha: pr.value.mergeCommitSha, headSha: pr.value.headSha, targetHistorySha: pr.value.targetHistorySha };
     }
   } else {
     const defaultBranch = await git.remoteDefaultBranch(root, { requireEvidence: true });
@@ -50,7 +50,7 @@ export async function resolveEffectivePolicy(options: {
     branch = defaultBranch.value;
   }
   const approved = merged
-    ? await git.readFileBeforeMerge(root, merged.mergeSha, merged.headSha, 'spec_git/policy.yaml')
+    ? await git.readFileBeforeMerge(root, merged.mergeSha, merged.headSha, 'spec_git/policy.yaml', merged.targetHistorySha)
     : await git.readFileAtRemoteRef(root, branch, 'spec_git/policy.yaml');
   if (!approved.ok) return approved;
   if (approved.value.content === null) {
