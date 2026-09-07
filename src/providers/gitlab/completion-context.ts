@@ -11,6 +11,8 @@ export interface GitlabCompletionIdentity {
   pr: number;
   headSha: string;
   checkoutSha: string;
+  mergeSha?: string;
+  targetBranch?: string;
 }
 
 export interface GitlabCompletionReads {
@@ -33,6 +35,8 @@ export async function verifyGitlabCompletion(
 ): Promise<Evidence<{ projectId: number; pipelineId: number }>> {
   if (repo.platform !== 'gitlab' || ![input.projectId, input.pipelineId, input.jobId, input.sourcePipelineId, input.pr].every(positive) ||
       input.pipelineId === input.sourcePipelineId || !sha(input.headSha) || !sha(input.checkoutSha)) return mismatch('invalid identity.');
+  const mergeSignal = input.mergeSha !== undefined || input.targetBranch !== undefined;
+  if (mergeSignal && (!sha(input.mergeSha ?? '') || !isAutomationTargetBranch(input.targetBranch ?? ''))) return mismatch('invalid merge signal.');
   const projectResult = await reads.api(`projects/${encodeURIComponent(`${repo.owner}/${repo.repo}`)}`);
   if (!projectResult.ok) return projectResult;
   const project = object(projectResult.value);
@@ -58,17 +62,22 @@ export async function verifyGitlabCompletion(
   const mr = object(mrResult.value);
   const headPipeline = object(mr.head_pipeline);
   if (mr.iid !== input.pr || mr.sha !== input.headSha || mr.source_project_id !== input.projectId || mr.target_project_id !== input.projectId ||
-      headPipeline.id !== input.sourcePipelineId || headPipeline.project_id !== input.projectId || headPipeline.sha !== input.headSha) return mismatch('the source is not the current same-project MR head pipeline.');
+      (!mergeSignal && (headPipeline.id !== input.sourcePipelineId || headPipeline.project_id !== input.projectId || headPipeline.sha !== input.headSha))) return mismatch('the source is not the current same-project MR head pipeline.');
+  if (mergeSignal && (mr.state !== 'merged' || mr.target_branch !== input.targetBranch ||
+      ![mr.merge_commit_sha, mr.squash_commit_sha, mr.sha].includes(input.mergeSha))) return mismatch('the MR does not match the merged target commit.');
   const sourceResult = await reads.api(`${base}/pipelines/${input.sourcePipelineId}`);
   if (!sourceResult.ok) return sourceResult;
   const source = object(sourceResult.value);
-  if (source.id !== input.sourcePipelineId || source.project_id !== input.projectId || source.sha !== input.headSha || source.source !== 'merge_request_event') return mismatch('the source pipeline does not represent this MR head.');
+  if (source.id !== input.sourcePipelineId || source.project_id !== input.projectId) return mismatch('the source pipeline identity differs.');
+  if (mergeSignal) {
+    if (source.sha !== input.mergeSha || source.ref !== input.targetBranch || source.source !== 'push' || source.status !== 'success') return mismatch('the target push pipeline is not successful for this merge.');
+  } else if (source.sha !== input.headSha || source.source !== 'merge_request_event') return mismatch('the source pipeline does not represent this MR head.');
   const bridgesResult = await reads.list(`${base}/pipelines/${input.sourcePipelineId}/trigger_jobs`);
   if (!bridgesResult.ok) return bridgesResult;
   const bridges = bridgesResult.value.map(object).filter((bridge) => object(bridge.downstream_pipeline).id === input.pipelineId);
   const bridge = bridges[0];
   const downstream = object(bridge?.downstream_pipeline);
-  if (bridges.length !== 1 || bridge.name !== 'specgit-request-completion' || !positive(Number(bridge.id)) ||
+  if (bridges.length !== 1 || bridge.name !== (mergeSignal ? 'specgit-request-closure' : 'specgit-request-completion') || !positive(Number(bridge.id)) ||
       !['success', 'running', 'pending'].includes(String(bridge.status)) ||
       downstream.sha !== input.checkoutSha || downstream.ref !== project.default_branch ||
       (downstream.project_id !== undefined && downstream.project_id !== input.projectId)) return mismatch('the current MR pipeline does not own this completion trigger.');

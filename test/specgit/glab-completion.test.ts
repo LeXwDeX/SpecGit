@@ -36,6 +36,53 @@ function fixture() {
 }
 
 describe('GitLab independently proven completion pipeline', () => {
+  it.each(['dev', 'preview', 'release/stable'])('proves the merged-target push and its independent closure bridge on %s', async (target) => {
+    const f = fixture();
+    const mergeSha = 'c'.repeat(40);
+    const input = { ...identity, mergeSha, targetBranch: target };
+    f.data['projects/9/merge_requests/42'] = { iid: 42, sha: head, source_project_id: 9, target_project_id: 9,
+      state: 'merged', target_branch: target, merge_commit_sha: mergeSha };
+    f.data['projects/9/pipelines/20'] = { id: 20, project_id: 9, source: 'push', ref: target, sha: mergeSha, status: 'success' };
+    (f.data['projects/9/pipelines/20/trigger_jobs'] as { name: string }[])[0].name = 'specgit-request-closure';
+    expect(await verifyGitlabCompletion(repo, input, f.reads)).toEqual(ok({ projectId: 9, pipelineId: 30 }));
+    f.data['projects/group%2Fproject/merge_requests/42'] = { iid: 42, sha: head,
+      head_pipeline: { id: 19, project_id: 9, sha: head, status: 'success' } };
+    f.data['projects/9/pipelines/19/jobs'] = [job(190, 'Build', 'success')];
+    f.data['projects/9/pipelines/19/trigger_jobs'] = [];
+    expect(await f.provider(input).getPrChecks(repo, 42)).toMatchObject({ ok: true,
+      value: { headSha: head, pipelineStatus: 'success', checks: [expect.objectContaining({ name: 'Build' })] } });
+    for (const patch of [{ ref: 'wrong' }, { sha: head }, { source: 'web' }, { status: 'failed' }]) {
+      const previous = f.data['projects/9/pipelines/20'];
+      f.data['projects/9/pipelines/20'] = { ...previous as object, ...patch };
+      expect(await verifyGitlabCompletion(repo, input, f.reads)).toMatchObject({ ok: false });
+      f.data['projects/9/pipelines/20'] = previous;
+    }
+  });
+  it('resolves the merged push through configured glab transport and preserves pending or truncated evidence', async () => {
+    const commands: string[] = [];
+    let status = 'running';
+    let fullPages = false;
+    const mergeSha = 'c'.repeat(40);
+    const provider = new GlabProvider({ hostname: 'git.example.com',
+      env: { SPECGIT_GLAB: '/custom/glab', SPECGIT_GLAB_TIMEOUT_MS: '45000' },
+      spawnImpl: async (command, args, options) => {
+        commands.push(command);
+        expect(args).toContain('git.example.com');
+        expect(options?.timeoutMs).toBe(45000);
+        const endpoint = args.find((arg) => arg.startsWith('projects/'))!;
+        const value = endpoint.includes('/pipelines/') ? { id: 21, sha: mergeSha, ref: 'preview', source: 'push', status }
+          : endpoint.includes('/repository/commits/') ? Array.from({ length: fullPages ? 100 : 1 }, (_, i) => ({ iid: i + 42, state: 'merged', target_branch: 'preview' }))
+            : { iid: 42, state: 'merged', target_branch: 'preview', sha: head, merge_commit_sha: mergeSha };
+        return { stdout: JSON.stringify(value), stderr: '' };
+      },
+    });
+    expect(await provider.resolveMergedPush(repo, mergeSha, 'preview', 21)).toMatchObject({ ok: false, code: 'gitlab_completion_source_pending' });
+    status = 'success';
+    expect(await provider.resolveMergedPush(repo, mergeSha, 'preview', 21)).toEqual(ok({ pr: 42, headSha: head }));
+    expect(commands.every((command) => command === '/custom/glab')).toBe(true);
+    fullPages = true;
+    expect(await provider.resolveMergedPush(repo, mergeSha, 'preview', 21)).toMatchObject({ ok: false, code: 'evidence_truncated' });
+  });
   it('removes only its own pipeline wait while retaining the source bridge and business jobs', async () => {
     const f = fixture();
     expect(await verifyGitlabCompletion(repo, identity, f.reads)).toEqual(ok({ projectId: 9, pipelineId: 30 }));

@@ -202,7 +202,8 @@ export async function runInit(
     automation: automation.automation,
   }, interaction, existingPolicy.ok ? existingPolicy.value.automation?.repair_labels : undefined);
   if ('exit' in repair) return repair;
-  const completion = await selectCompletionWorkflow(ctx, root, platformSelection.outcome.mode, automation.automation.merge);
+  const completion = await selectCompletionWorkflow(ctx, root, platformSelection.outcome.mode,
+    automation.automation.merge || automation.automation.close_issues === true, automation.automation.target_branch);
   if (!completion.ok) {
     return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(completion.code, completion.message,
       completion.fix ? { fix: completion.fix } : {})] };
@@ -231,7 +232,7 @@ export async function runInit(
   let workflowBranch: string | undefined;
   if (!gitlabMode) {
     try {
-      const selectionEv = await selectWorkflowYaml(ctx, root);
+      const selectionEv = await selectWorkflowYaml(ctx, root, automation.automation);
       if (!selectionEv.ok) {
         return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic(
           selectionEv.code,

@@ -50,7 +50,7 @@ merge target replaces that identity.
 
 ## Independent completion after MR verification
 
-With an approved `automation.merge` policy, init installs a native MR trigger
+With approved merge or issue-closure automation, init installs a native MR trigger
 and a separate default-branch completion pipeline. The trigger only starts the
 continuation; it does not wait for it. The continuation uses authenticated glab
 facts to verify the project, executing pipeline and job, current MR head pipeline,
@@ -59,6 +59,15 @@ from recursive checks. The original MR pipeline and every other downstream
 pipeline still require success. A matching job name or environment variable is
 insufficient evidence. Merging and issue closure retain the expected-SHA and
 approved-target-policy checks; `finish` remains read-only.
+
+A successful push pipeline on the configured completion target also sends a
+`specgit-request-closure` bridge. The default-branch runtime resolves the exact
+merged MR from the commit association, proves the upstream push, target, merge
+commit and trigger relationship, and requires the target pipeline to succeed.
+It then verifies the original MR head checks before closing bound issues.
+Business workflow rules must permit this target push pipeline. A direct push
+without a matching merge has no issue-closure action. `merge: false` with
+`close_issues: true` keeps merges manual; `pr --close-issues` is the recovery path.
 
 The default branch in those assets is the same branch proved from remote
 evidence before the local transaction. If it cannot be proved, init writes no

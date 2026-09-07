@@ -139,4 +139,36 @@ describe('init automation choice', () => {
     expect(outcome.exit).toBe(0);
     expect(outcome.policy?.automation?.target_branch).toBe('Dev');
   });
+
+  it.each(['dev', 'preview', 'release/stable'])('configures independent issue closure on %s without enabling merge', async (target) => {
+    const t = makeCtx({ root: ok(root), cwd: root });
+    const outcome = await runInit({ ...options, automation: 'no', closeIssues: 'yes', closeTarget: target }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(outcome.policy?.automation).toEqual({ merge: false, close_issues: true, target_branch: target });
+    expect(fs.existsSync(path.join(root, '.github/workflows/specgit-complete.yml'))).toBe(true);
+    const workflow = fs.readFileSync(path.join(root, '.github/workflows/specgit-accept.yml'), 'utf8');
+    expect(workflow).toContain(JSON.stringify(target));
+  });
+
+  it('preserves closure-only settings during an asset refresh', async () => {
+    const previous = samplePolicy({ automation: { merge: false, close_issues: true, target_branch: 'preview' } });
+    const t = makeCtx({ root: ok(root), cwd: root, policy: previous });
+    const outcome = await runInit({ force: true, protect: false }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(outcome.policy).toEqual(previous);
+    expect(fs.existsSync(path.join(root, '.github/workflows/specgit-complete.yml'))).toBe(true);
+  });
+
+  it.each([
+    { closeIssues: 'maybe', closeTarget: 'preview' },
+    { closeIssues: 'yes', closeTarget: '--all' },
+    { closeTarget: 'preview' },
+    { automation: 'yes', mergeTarget: 'main', closeIssues: 'yes', closeTarget: 'preview' },
+  ])('rejects invalid or conflicting completion options %j before writing', async (invalid) => {
+    const t = makeCtx({ root: ok(root), cwd: root });
+    const outcome = await runInit({ ...options, ...invalid }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
 });

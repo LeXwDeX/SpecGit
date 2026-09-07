@@ -502,7 +502,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('dropping edited from the acceptance trigger is detected', () => {
-    const mutant = acceptTemplate.replace(', edited]', ']');
+    const mutant = acceptTemplate.replace(', edited,', ',');
     expect(mutant).not.toBe(acceptTemplate);
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/edited/);
   });

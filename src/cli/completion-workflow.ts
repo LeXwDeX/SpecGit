@@ -7,6 +7,7 @@ export const COMPLETION_CHECK_NAME = 'SpecGit Completion';
 
 export interface CompletionWorkflowInput {
   defaultBranch: string;
+  targetBranch?: string;
   version: string;
   selfHosted: boolean;
   platform?: 'github' | 'gitlab';
@@ -66,16 +67,18 @@ jobs:
           const head = run?.head_sha || process.env.REQUEST_HEAD;
           let number = process.env.REQUEST_PR || run?.pull_requests?.[0]?.number;
           const query = (args) => JSON.parse(execFileSync('gh', args, { encoding: 'utf8' }));
+          if (!/^[a-f0-9]{40}$/i.test(head || '')) throw new Error('Invalid event commit.');
           if (!number) {
-            if (typeof run?.head_branch !== 'string') throw new Error('Missing triggering branch.');
-            const matches = query(['pr', 'list', '--repo', process.env.GITHUB_REPOSITORY, '--state', 'all', '--head', run.head_branch, '--limit', '100', '--json', 'number,headRefOid']).filter((pr) => pr.headRefOid === head);
+            const pages = query(['api', '--paginate', '--slurp', 'repos/' + process.env.GITHUB_REPOSITORY + '/commits/' + head + '/pulls?per_page=100']);
+            const matches = pages.flat().filter((pr) => pr.head?.sha === head || (pr.merged_at && pr.merge_commit_sha === head));
             if (matches.length !== 1) throw new Error('The event must identify exactly one current request.');
             number = matches[0].number;
           }
-          if (!/^[1-9][0-9]*$/.test(String(number)) || !/^[a-f0-9]{40}$/i.test(head || '')) throw new Error('Invalid request identity.');
-          const current = query(['pr', 'view', String(number), '--repo', process.env.GITHUB_REPOSITORY, '--json', 'number,headRefOid']);
-          if (current.headRefOid !== head) throw new Error('Stale completion event.');
-          appendFileSync(process.env.GITHUB_OUTPUT, 'pr=' + current.number + '\\nhead=' + head + '\\n');
+          if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Invalid request identity.');
+          const current = query(['pr', 'view', String(number), '--repo', process.env.GITHUB_REPOSITORY, '--json', 'number,headRefOid,state,mergeCommit']);
+          const mergedSignal = run && current.state === 'MERGED' && current.mergeCommit?.oid === head;
+          if (current.headRefOid !== head && !mergedSignal) throw new Error('Stale completion event.');
+          appendFileSync(process.env.GITHUB_OUTPUT, 'pr=' + current.number + '\\nhead=' + current.headRefOid + '\\n');
           NODE
   complete:
     needs: identify
@@ -179,14 +182,14 @@ ${input.selfHosted ? `          const version = JSON.parse(readFileSync(process.
           try {
             execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', packageSpec], { stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
-            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 1) throw new Error('Incompatible completion runtime.');
+            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('Incompatible completion runtime.');
           } catch (error) {
 ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') throw new Error('runtime_upgrade_required: publish the compatible runtime before completing metadata changes.');
             directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime';
             execFileSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
             execFileSync('pnpm', ['run', 'build'], { cwd: directory, stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
-            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 1) throw new Error('The approved source lacks completion protocol 1.');
+            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('The approved source lacks completion protocol 2.');
 ` : `            throw error;
 `}          }
           appendFileSync(process.env.GITHUB_OUTPUT, 'directory=' + directory + '\\n');
@@ -204,11 +207,13 @@ ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') thr
 
 function gitlabCompletionCondition(input: CompletionWorkflowInput): string {
   if (!isAutomationTargetBranch(input.defaultBranch)) throw new Error('Completion requires a valid default branch.');
-  return `$CI_COMMIT_BRANCH == ${JSON.stringify(input.defaultBranch)} && $CI_PIPELINE_SOURCE == "pipeline" && $SPECGIT_SOURCE_PROJECT == $CI_PROJECT_ID && $SPECGIT_SOURCE_PIPELINE && $SPECGIT_PR && $SPECGIT_HEAD`;
+  return `$CI_COMMIT_BRANCH == ${JSON.stringify(input.defaultBranch)} && $CI_PIPELINE_SOURCE == "pipeline" && $SPECGIT_SOURCE_PROJECT == $CI_PROJECT_ID && $SPECGIT_SOURCE_PIPELINE && (($SPECGIT_PR && $SPECGIT_HEAD) || ($SPECGIT_MERGE_SHA && $SPECGIT_TARGET_BRANCH))`;
 }
 
 /** Ordinary pipelines retain the project's original configuration and execution semantics. */
 export function gitlabRoutingWorkflowYaml(input: CompletionWorkflowInput): string {
+  const target = input.targetBranch ?? input.defaultBranch;
+  if (!isAutomationTargetBranch(target)) throw new Error('Completion requires a valid target branch.');
   const condition = gitlabCompletionCondition(input).replace(/'/g, "''");
   return `# Managed by SpecGit: isolated GitLab routing.
 include:
@@ -241,6 +246,26 @@ specgit-request-completion:
     forward:
       yaml_variables: true
       pipeline_variables: false
+
+specgit-request-closure:
+  stage: .post
+  inherit:
+    default: false
+    variables: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == ${JSON.stringify(target).replace(/'/g, "''")}'
+    - when: never
+  variables:
+    SPECGIT_MERGE_SHA: '$CI_COMMIT_SHA'
+    SPECGIT_TARGET_BRANCH: '$CI_COMMIT_BRANCH'
+    SPECGIT_SOURCE_PROJECT: '$CI_PROJECT_ID'
+    SPECGIT_SOURCE_PIPELINE: '$CI_PIPELINE_ID'
+  trigger:
+    project: '$CI_PROJECT_PATH'
+    branch: ${JSON.stringify(input.defaultBranch)}
+    forward:
+      yaml_variables: true
+      pipeline_variables: false
 `;
 }
 
@@ -250,7 +275,7 @@ function gitlabCompletionWorkflow(input: CompletionWorkflowInput): string {
 # The runner must provide authenticated glab and git; no MR scripts run in this job.
 specgit-complete:
   stage: test
-  resource_group: specgit-complete-$SPECGIT_PR
+  resource_group: specgit-complete
   variables:
     GIT_DEPTH: '0'
     SPECGIT_DATA_ROOT: '$CI_PROJECT_DIR'
@@ -259,7 +284,7 @@ specgit-complete:
     - when: never
   script:
     - npm install --prefix "$CI_PROJECT_DIR/../specgit-runtime" --no-save --ignore-scripts --no-audit --no-fund specgit@${input.version}
-    - node --input-type=module -e 'const r=await import(process.env.CI_PROJECT_DIR+"/../specgit-runtime/node_modules/specgit/dist/automation/remote-delivery.js");if(r.REMOTE_DELIVERY_PROTOCOL!==1)throw new Error("runtime_upgrade_required")'
+    - node --input-type=module -e 'const r=await import(process.env.CI_PROJECT_DIR+"/../specgit-runtime/node_modules/specgit/dist/automation/remote-delivery.js");if(r.REMOTE_DELIVERY_PROTOCOL!==2)throw new Error("runtime_upgrade_required")'
     - node "$CI_PROJECT_DIR/../specgit-runtime/node_modules/specgit/dist/automation/remote-entry.js"
 `;
 }

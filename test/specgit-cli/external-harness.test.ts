@@ -63,13 +63,14 @@ describe('external acceptance harness template', () => {
       const parsed = parse(yaml) as {
         on: { pull_request: { branches: string[]; types: string[] } };
       };
-      expect(parsed.on.pull_request.branches).toEqual([branch]);
+      expect(parsed.on.pull_request.branches).toEqual([branch === '!release' ? '\\!release' : branch]);
       expect(parsed.on.pull_request.types).toEqual([
         'opened',
         'synchronize',
         'reopened',
         'ready_for_review',
         'edited',
+        'closed',
       ]);
     }
     expect(externalAcceptanceWorkflowYaml(INPUT)).toContain('branches: ["master"]');
@@ -148,12 +149,18 @@ describe('external acceptance harness template', () => {
     } finally { rmDir(root); }
   });
 
+  it.each([['!preview', '\\!preview'], ['release+candidate', 'release\\+candidate'], ['dev(foo)', 'dev\\(foo\\)'], ['release/{stable,next}', 'release/\\{stable,next\\}']])('treats the legal target %s as a literal GitHub branch', (target, expected) => {
+    const workflow = parse(externalAcceptanceWorkflowYaml({ ...INPUT, targets: [target] }));
+    expect(workflow.on.pull_request.branches[1]).toBe(expected);
+    expect(workflow.jobs['closure-signal'].if).toContain("merged == true");
+    expect(workflow.jobs['closure-signal'].steps).toEqual([{ run: "echo 'Merged request ready for trusted completion'" }]);
+  });
   it('contributes exactly the acceptance check name with read-only permissions', () => {
     const parsed = parse(externalAcceptanceWorkflowYaml(INPUT)) as {
       name: string;
       permissions: { contents: string; issues: string; 'pull-requests': string; actions: string };
       concurrency: { group: string; 'cancel-in-progress': boolean };
-      jobs: Record<string, { name: string; 'runs-on': string; 'timeout-minutes': number }>;
+      jobs: Record<string, { name: string; if?: string; 'runs-on': string; 'timeout-minutes': number }>;
     };
     expect(parsed.name).toBe(ACCEPTANCE_CHECK_NAME);
     expect(parsed.permissions.contents).toBe('read');
@@ -165,7 +172,8 @@ describe('external acceptance harness template', () => {
     expect(parsed.concurrency.group).toBe('specgit-accept-${{ github.ref }}');
     expect(parsed.concurrency['cancel-in-progress']).toBe(true);
     const job = parsed.jobs['specgit-acceptance'];
-    expect(job.name).toBe(ACCEPTANCE_CHECK_NAME);
+    expect(job.name).toBe("${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}");
+    expect(job.if).toBe("github.event.action != 'closed'");
     expect(job['runs-on']).toBe('ubuntu-latest');
     expect(job['timeout-minutes']).toBe(30);
   });

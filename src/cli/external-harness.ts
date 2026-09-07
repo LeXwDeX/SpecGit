@@ -28,12 +28,14 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { literalBranchPattern } from './workflow-branches.js';
 import { HARNESS_WORKFLOW_PATH } from './harness-placement.js';
 import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
 
 export interface ExternalHarnessInput {
   /** The adopting repository's remote default branch (e.g. `main`, `master`, `trunk`). */
   defaultBranch: string;
+  targets?: string[];
   /** The exact published version to pin and install (no ranges, no tags). */
   version: string;
 }
@@ -66,12 +68,12 @@ export function externalAcceptanceWorkflowYaml(input: ExternalHarnessInput): str
 
 on:
   pull_request:
-    branches: [${JSON.stringify(input.defaultBranch)}]
+    branches: [${[...new Set([input.defaultBranch, ...(input.targets ?? [])])].map((branch) => JSON.stringify(literalBranchPattern(branch))).join(', ')}]
     # A draft PR fails the verdict (pr_draft), so the draft→ready
     # transition must re-verdict. Listing types replaces the defaults,
     # so the default activity types are listed alongside. Title and body
     # edits change live acceptance evidence even when the head is unchanged.
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
   workflow_dispatch:
 
 permissions:
@@ -89,8 +91,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  closure-signal:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Merged request ready for trusted completion'
   specgit-acceptance:
-    name: SpecGit Acceptance
+    if: github.event.action != 'closed'
+    name: \${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}
     # Portable gate for any adopting repository: the published CLI is
     # installed at the exact version \`specgit init\` pinned. The adopting
     # project's own toolchain (package manager, lockfile, build, layout)

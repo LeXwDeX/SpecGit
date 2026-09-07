@@ -52,6 +52,66 @@ function mergeCtx(policy: Policy = samplePolicy({ automation })) {
   return { ...t, gh, remote };
 }
 
+describe('specgit pr --close-issues: independent merged-delivery completion', () => {
+  it('keeps missing-lineage recovery on the closure-only command', async () => {
+    const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: 'main', close_issues: true } }));
+    t.remote.pr = { ...t.remote.pr, state: 'merged', mergeCommitSha: MERGE };
+    t.gitPort.headContains = vi.fn(async () => ok({ contained: false }));
+    const result = await runPr({ closeIssues: true }, t.ctx);
+    expect(result.errors?.[0]?.fix).toContain('specgit pr --close-issues');
+    expect(result.nextActions?.[0]?.reason).toContain('specgit pr --close-issues');
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+  });
+  it('exposes closure through the existing pr command JSON interface', async () => {
+    const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: 'main', close_issues: true } }));
+    t.remote.pr = { ...t.remote.pr, state: 'merged', mergeCommitSha: MERGE };
+    expect(await runCliWith(['node', 'specgit', 'pr', '--close-issues', '--json'], t.ctx)).toBe(0);
+    expect(parseStdoutJson(t.io)).toMatchObject({ command: 'pr', state: 'completed', exit: 0 });
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+  });
+  it.each(['dev', 'preview', 'release/stable'])('closes bound issues after a manual merge into %s without merging again', async (target) => {
+    const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: target, close_issues: true } }));
+    t.remote.pr = { ...t.remote.pr, baseBranch: target, state: 'merged', mergeCommitSha: MERGE };
+    const result = await runPr({ closeIssues: true }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(result.state).toBe('completed');
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+    expect(t.gh.closeIssue).toHaveBeenCalledTimes(1);
+    expect(t.gh.closeIssue.mock.calls[0][1]).toBe(123);
+    expect((await runPr({ closeIssues: true }, t.ctx)).exit).toBe(0);
+    expect(t.gh.closeIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['open', 'closed'] as const)('refuses issue closure while the request is %s', async (state) => {
+    const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: 'main', close_issues: true } }));
+    t.remote.pr.state = state;
+    const result = await runPr({ closeIssues: true }, t.ctx);
+    expect(result.errors?.[0].code).toBe('automation_merge_required');
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it('rejects a wrong destination and failed head checks after manual merge', async () => {
+    const t = mergeCtx(samplePolicy({ automation: { merge: false, target_branch: 'preview', close_issues: true } }));
+    t.remote.pr = { ...t.remote.pr, state: 'merged', mergeCommitSha: MERGE };
+    expect((await runPr({ closeIssues: true }, t.ctx)).errors?.[0].code).toBe('automation_target_mismatch');
+    t.remote.pr.baseBranch = 'preview';
+    t.remote.checks = [makeCheckRun('All checks passed', { conclusion: 'failure' })];
+    expect((await runPr({ closeIssues: true }, t.ctx)).exit).toBe(1);
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit closure authorization and refuses mixed action or replacement flags', async () => {
+    const t = mergeCtx(samplePolicy({ automation: { ...automation, close_issues: false } }));
+    expect((await runPr({ closeIssues: true }, t.ctx)).errors?.[0].code).toBe('closure_disabled');
+    expect((await runPr({ closeIssues: true, merge: true }, t.ctx)).exit).toBe(2);
+    expect((await runPr({ closeIssues: true, ref: '99' }, t.ctx)).exit).toBe(2);
+    expect(t.gh.getPr).not.toHaveBeenCalled();
+  });
+});
+
 describe('specgit pr --merge: configured delivery automation (#382)', () => {
   it('does not complete when the close response succeeds but the issue remains open', async () => {
     const t = mergeCtx();

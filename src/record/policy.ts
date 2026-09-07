@@ -49,11 +49,8 @@ export const PolicyAutomationSchema = z.object({
   close_issues: z.boolean().optional(),
   repair_labels: z.array(z.string().refine(isTagSlug, { message: TAG_GRAMMAR_FIX })).min(1).optional(),
 }).strict().superRefine((automation, ctx) => {
-  if (automation.merge && automation.target_branch === undefined) {
-    ctx.addIssue({ code: 'custom', path: ['target_branch'], message: 'Automatic merge requires an explicit target branch.' });
-  }
-  if (!automation.merge && automation.close_issues === true) {
-    ctx.addIssue({ code: 'custom', path: ['close_issues'], message: 'Automatic issue closure requires automatic merge to be enabled.' });
+  if ((automation.merge || automation.close_issues === true) && automation.target_branch === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['target_branch'], message: 'Automatic merge or issue closure requires an explicit target branch.' });
   }
 });
 
