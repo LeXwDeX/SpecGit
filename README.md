@@ -156,11 +156,13 @@ The trusted completion workflow still lives on the remote default branch; deploy
 its approved integration there and the acceptance/notification integration on
 the configured target before relying on automatic closure.
 
-Historical authorization currently requires a two-parent merge commit. Manual
-squash, rebase, and fast-forward merges can be identified, but automatic closure
-returns `policy_history_unavailable` until their original target policy can be
-proved. Keep merge commits enabled for this completion path; the runtime never
-substitutes the newly merged policy for prior approval.
+Historical authorization uses the original target parent for a two-parent merge.
+Squash, rebase, and fast-forward recovery uses a platform-provided target revision
+only when Git proves it is an ancestor of the merged result and policy remained
+unchanged throughout that history. Missing or ambiguous history returns
+`policy_history_unavailable`; the runtime never substitutes the newly merged
+policy for prior approval. A policy-changing delivery should use a merge commit
+when it needs automatic closure recovery.
 
 ## Upgrade an existing installation
 

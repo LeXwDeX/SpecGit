@@ -232,7 +232,11 @@ export async function buildHarnessDesiredState(
       kind: 'write',
       path: HOOKS_JSON_PATH,
       mode: 0o644,
-      merge: () => hooksJsonMerge.json,
+      merge: (current) => {
+        const merged = mergeHooksJson(current);
+        if (merged.warning !== undefined) throw new Error(merged.warning);
+        return merged.json;
+      },
     });
   }
 
@@ -250,13 +254,12 @@ export async function buildHarnessDesiredState(
   let gitHook: string | null = null;
   if (hooksDir !== null) {
     const gitHookTarget = path.join(hooksDir, 'pre-push');
-    const existing = await readIfExists(gitHookTarget);
     steps.push({
       kind: 'write',
       path: path.relative(root, gitHookTarget).split(path.sep).join('/'),
       scope: 'git-hooks',
       mode: 0o755,
-      merge: () => mergeGitPrePush(existing),
+      merge: (current) => mergeGitPrePush(current),
     });
     gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
   }

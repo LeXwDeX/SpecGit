@@ -126,7 +126,8 @@ export type ManagedStep =
        * as the record port's writePolicy). The transaction still snapshots
        * the target before and classifies the outcome after.
        */
-      write: () => Promise<void>;
+      /** false proves a compare-and-write refused without mutation; preserve concurrent bytes. */
+      write: () => Promise<void | boolean>;
     } & ManagedPathScoped
   | {
       kind: 'remove';
@@ -746,7 +747,11 @@ export async function reconcileManagedAssets(
       } else if (action.kind === 'portWrite') {
         const before = await snap(action.step);
         await ensureDirTracked(path.dirname(target), createdDirs);
-        await action.step.write();
+        const written = await action.step.write();
+        if (written === false) {
+          snapshots.pop();
+          throw new Error(`${action.step.path} changed since it was read; refusing to overwrite concurrent user content.`);
+        }
         await safeManagedTarget(root, action.step);
         const after = await readIfExists(target);
         if (after === null) {

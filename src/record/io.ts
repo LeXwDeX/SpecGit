@@ -241,41 +241,58 @@ export async function deleteRecord(root: string): Promise<void> {
   });
 }
 
+export interface PolicySnapshot {
+  policy: Evidence<Policy>;
+  content: string | null;
+}
+
 export async function readPolicy(root: string): Promise<Evidence<Policy>> {
+  return (await readPolicySnapshot(root)).policy;
+}
+
+export async function readPolicySnapshot(root: string): Promise<PolicySnapshot> {
   let raw: string;
   try {
     raw = await fs.readFile(policyPath(root), 'utf-8');
   } catch (error) {
     if (isMissingFile(error)) {
-      return fail(
+      return { content: null, policy: fail(
         'policy_missing',
         `No policy found at ${policyPath(root)}.`,
         'Run "specgit init --required-check <name>" to declare the checks required for acceptance.'
-      );
+      ) };
     }
     throw error;
   }
 
   const shape = parseYamlObject(raw);
   if (!shape.ok) {
-    return fail('policy_invalid', `Policy is invalid: ${shape.message}`, 'Recreate spec_git/policy.yaml.');
+    return { content: raw, policy: fail('policy_invalid', `Policy is invalid: ${shape.message}`, 'Recreate spec_git/policy.yaml.') };
   }
 
   const result = PolicySchema.safeParse(shape.value);
   if (!result.success) {
-    return fail(
+    return { content: raw, policy: fail(
       'policy_invalid',
       `Policy is invalid: ${zodIssuesMessage(result.error)}`,
       'Recreate spec_git/policy.yaml.'
-    );
+    ) };
   }
-  return ok(result.data);
+  return { content: raw, policy: ok(result.data) };
 }
 
-export async function writePolicy(root: string, policy: Policy): Promise<void> {
+/** An expected content enables a locked compare-and-write; false means no mutation occurred. */
+export async function writePolicy(root: string, policy: Policy, expectedContent?: string | null): Promise<void | boolean> {
   const target = policyPath(root);
-  await withFileLock(`${target}.lock`, async () => {
+  return withFileLock(`${target}.lock`, async () => {
+    if (expectedContent !== undefined) {
+      let current: string | null;
+      try { current = await fs.readFile(target, 'utf-8'); }
+      catch (error) { if (!isMissingFile(error)) throw error; current = null; }
+      if (current !== expectedContent) return false;
+    }
     await writeFileAtomically(target, YAML.stringify(policy));
+    return expectedContent === undefined ? undefined : true;
   });
 }
 

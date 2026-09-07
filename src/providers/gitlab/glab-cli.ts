@@ -435,7 +435,7 @@ export class GlabProvider implements ForgeProvider {
       title?: unknown;
       merge_commit_sha?: unknown;
       squash_commit_sha?: unknown;
-      diff_refs?: { head_sha?: unknown } | null;
+      diff_refs?: { head_sha?: unknown; start_sha?: unknown } | null;
     } | null;
     if (
       parsed === null || typeof parsed !== 'object' ||
@@ -472,6 +472,9 @@ export class GlabProvider implements ForgeProvider {
       headBranch: typeof parsed.source_branch === 'string' ? parsed.source_branch : '',
       headSha: typeof parsed.sha === 'string' ? parsed.sha : '',
       baseBranch: typeof parsed.target_branch === 'string' ? parsed.target_branch : '',
+      ...(state === 'merged' && parsed.diff_refs?.head_sha === parsed.sha &&
+          typeof parsed.diff_refs?.start_sha === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(parsed.diff_refs.start_sha)
+        ? { targetHistorySha: parsed.diff_refs.start_sha } : {}),
       body: typeof parsed.description === 'string' ? parsed.description : '',
       mergeCommitSha,
       draft: parsed.draft,
