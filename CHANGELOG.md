@@ -1,5 +1,13 @@
 # specgit
 
+## 1.15.1
+
+### Patch Changes
+
+- [#483](https://github.com/LeXwDeX/SpecGit/pull/483) [`a8453b3`](https://github.com/LeXwDeX/SpecGit/commit/a8453b3f39698dc45bedd450565eaf7fda3d290f) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Recover configured issue closure after squash, rebase and fast-forward merges using provider-backed target history and immutable Git evidence. Reject missing, mismatched or changed policy history, including changes later reverted, while preserving original-parent authorization for merge commits.
+
+  Preserve concurrent user edits to authoritative policy and local hooks during harness refresh. Align automation references and completed-delivery guidance with the actual CLI, and avoid stale source-head warnings on verified merged targets.
+
 ## 1.15.0
 
 ### Minor Changes
