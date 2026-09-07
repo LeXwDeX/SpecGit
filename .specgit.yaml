@@ -1,11 +1,13 @@
 version: 1
-delivery: align-wiki-availability
+delivery: delivery-cost-optimization
 context:
   kind: branch
-  branch: docs/467-align-wiki-availability
+  branch: perf/469-delivery-cost-optimization
 issues:
-  - 467
+  - 469
+  - 470
 issueKinds:
-  - issue: 467
-    kind: kind::docs
-pr: 468
+  - issue: 469
+    kind: kind::perf
+  - issue: 470
+    kind: kind::ci
