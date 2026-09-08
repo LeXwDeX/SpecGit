@@ -274,7 +274,7 @@ The policy failed validation. Each `required_checks` name must be a non-empty st
 
 ### `harness_stale` (exit 2)
 
-`specgit issue` refused because an acceptance-critical remote harness surface is stale, conflicting, or only partially present for the running CLI version. Today that means the managed `specgit-accept` workflow or GitLab adapter, or trusted `specgit-complete` workflow family, not local AGENTS guidance, guard hooks, or setup entry points. Local integration drift produces the non-blocking `local_assets_stale` warning instead. Run `specgit status --json`, then apply its init repair; append `--no-ignore` for the intentionally tracked authoritative model. A conflict is preserved until a human resolves ownership. A repository with every remote harness asset absent is a fresh adoption and bootstrap proceeds.
+`specgit issue` refused because an acceptance-critical remote harness surface is stale, conflicting, or only partially present for the running CLI version. This includes the managed `specgit-accept` workflow or GitLab adapter, trusted `specgit-complete` workflows, and declared or ownership-proven retiring verification-reuse assets. An unreadable retirement manifest cannot erase drift already proved for another remote asset. Local AGENTS guidance, guard hooks and setup entry points produce the non-blocking `local_assets_stale` warning instead. Run `specgit status --json`, then apply its init repair; append `--no-ignore` for the intentionally tracked authoritative model. A conflict is preserved until a human resolves ownership. A repository with every remote harness asset absent is a fresh adoption and bootstrap proceeds.
 
 ## Completeness
 

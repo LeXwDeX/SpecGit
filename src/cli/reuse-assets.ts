@@ -42,7 +42,11 @@ async function previousPaths(root: string): Promise<string[] | null> {
 
 /** Declared and retiring remote harness assets; ordinary project CI is outside this set. */
 export async function reuseRemoteAssetPaths(root: string, profiles: ReuseProfile[]): Promise<Set<string>> {
-  return new Set([REUSE_ASSET_MANIFEST, ...(await previousPaths(root) ?? []),
+  // Inspection reports unreadable retirement history separately. It must not
+  // erase already-proven drift in declared or standard remote harness assets.
+  // Generation still requires the strict previousPaths ownership check.
+  const previous = await previousPaths(root).catch(() => null);
+  return new Set([REUSE_ASSET_MANIFEST, ...(previous ?? []),
     ...profiles.flatMap((profile) => [
       ...(profile.github ? [profile.github.entry] : []),
       ...(profile.gitlab ? [profile.gitlab.entry, GITLAB_BUSINESS_WORKFLOW_PATH] : []),

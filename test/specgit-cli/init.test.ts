@@ -567,6 +567,33 @@ describe('specgit init', () => {
     expect(read(AGENTS_ABS(root))).toContain(BLOCK_START_MARKER);
   });
 
+  it('reports a generated GitLab reuse acceptance job with automation disabled', async () => {
+    const { ReuseProfileSchema } = await import('../../src/verification/reuse-profile.js');
+    const profile = ReuseProfileSchema.parse({
+      id: 'linux', check: 'Test', max_age_seconds: 3600, node: '20.19.0', pnpm: '9.15.9',
+      runtime: { package: 'specgit@1.15.1', lockfile: 'ci/runtime-lock.json' },
+      commands: [['pnpm', 'test']], fresh_commands: [],
+      gitlab: { image: 'node@sha256:' + 'a'.repeat(64), entry: '.gitlab-ci.yml', tags: ['runner'] },
+    });
+    const policy = { version: 1 as const, required_checks: ['Test'],
+      automation: { merge: false, close_issues: false },
+      verification: { product_checks: ['Test'], reuse: [profile], rules: [] },
+    };
+    await writePolicy(root, policy);
+    const before = read(path.join(root, SPEC_GIT_DIR, POLICY_FILENAME));
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, policy,
+      facts: makeGitFacts({ originUrl: 'git@gitlab.example.com:group/project.git' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--force', '--no-protect',
+      '--gitlab-host', 'gitlab.example.com', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.harness).toEqual({ template: 'gitlab', acceptance: '.gitlab/specgit-accept.mjs' });
+    expect(envelope.warnings?.some((warning: { code: string }) => warning.code === 'gitlab_harness_pending')).not.toBe(true);
+    expect(read(path.join(root, '.gitlab-ci.yml'))).toContain('SpecGit Acceptance');
+    expect(read(path.join(root, SPEC_GIT_DIR, POLICY_FILENAME))).toBe(before);
+  });
+
   it('--gitlab-host never claims to create the workflow it skips (#269)', async () => {
     // The human summary must equal the real side effects: no "Created
     // .github/workflows/specgit-accept.yml" line when nothing was

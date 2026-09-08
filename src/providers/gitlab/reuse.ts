@@ -72,9 +72,11 @@ export class GitLabReuseExecutions implements ReuseExecutionPort {
           preparation.pipeline.sha !== input.sourceSha || preparation.commit.id !== input.sourceSha || preparation.started_at === null) return unavailable();
       const keys = await this.api(`https://${this.options.host}/oauth/discovery/keys`);
       if (!keys.ok) return unavailable();
+      const refPath = await this.configurationRef(parent, preparation.ref);
+      if (!refPath.ok) return refPath;
       const expected = { issuer: `https://${this.options.host}`, projectId: String(parent.project_id), projectPath: this.options.project,
         pipelineId: String(parent.id), jobId: String(preparation.id), sourceSha: input.sourceSha, pipelineSource: parent.source,
-        configPath: this.options.producer.entry, refPath: `refs/heads/${preparation.ref}`,
+        configPath: this.options.producer.entry, refPath: refPath.value,
         createdAt: preparation.created_at, startedAt: preparation.started_at };
       const identity = running
         ? verifyRunningGitLabJobIdentity(assertion, keys.value, { ...expected, observedAt: new Date(input.now).toISOString() })
@@ -169,10 +171,12 @@ export class GitLabReuseExecutions implements ReuseExecutionPort {
       if (!proofResult.ok || !keys.ok) return unavailable();
       const proof = z.object({ assertion: z.string().max(65536) }).strict().safeParse(proofResult.value);
       if (!proof.success) return unavailable();
+      const refPath = await this.configurationRef(p, prep.ref);
+      if (!refPath.ok) return refPath;
       const verified = verifyHistoricalGitLabJobIdentity(proof.data.assertion, keys.value, {
         issuer: `https://${this.options.host}`, projectId: String(projectId), projectPath: this.options.project,
         pipelineId: String(p.id), jobId: String(prep.id), sourceSha: c.sha, pipelineSource: p.source,
-        configPath: this.options.producer.entry, refPath: `refs/heads/${prep.ref}`,
+        configPath: this.options.producer.entry, refPath: refPath.value,
         createdAt: prep.created_at, startedAt: prep.started_at!, finishedAt: prep.finished_at!,
       });
       if (!verified.ok) return verified;
@@ -186,6 +190,23 @@ export class GitLabReuseExecutions implements ReuseExecutionPort {
       return ok({ ref, profile: named.profile, sourceSha: c.sha, recipeDigest: producer.value.recipeDigest,
         inputDigest: named.digest, completedAt: j.finished_at! });
     } catch { return unavailable(); }
+  }
+
+  /** MR execution refs and signed source-branch refs are distinct native identities. */
+  private async configurationRef(pipeline: z.infer<typeof pipelineSchema>, jobRef: string): Promise<Evidence<string>> {
+    if (pipeline.ref !== jobRef) return unavailable();
+    if (pipeline.source !== 'merge_request_event') return ok(`refs/heads/${jobRef}`);
+    const match = /^refs\/merge-requests\/([1-9][0-9]*)\/head$/.exec(jobRef);
+    if (!match) return unavailable();
+    const result = await this.api(`${this.prefix}/merge_requests/${match[1]}`);
+    if (!result.ok) return unavailable();
+    const request = z.object({ iid: id, project_id: id, source_project_id: id, target_project_id: id,
+      source_branch: z.string().min(1).max(1024).regex(/^[^\s\x00-\x1f\x7f]+$/),
+    }).safeParse(result.value);
+    if (!request.success || String(request.data.iid) !== match[1] ||
+        request.data.project_id !== pipeline.project_id || request.data.source_project_id !== pipeline.project_id ||
+        request.data.target_project_id !== pipeline.project_id) return unavailable();
+    return ok(`refs/heads/${request.data.source_branch}`);
   }
 
   private successful(job: z.infer<typeof jobSchema>): boolean {

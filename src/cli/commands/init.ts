@@ -235,6 +235,8 @@ export async function runInit(
   let workflowYaml: string | null = null;
   let workflowTemplate: 'self' | 'external' | 'gitlab' | 'gitlab-pending';
   let workflowBranch: string | undefined;
+  const gitlabAcceptanceGenerated = completion.value !== null ||
+    (existingPolicy.ok && existingPolicy.value.verification?.reuse?.some((profile) => profile.gitlab));
   if (!gitlabMode) {
     try {
       const selectionEv = await selectWorkflowYaml(ctx, root, automation.automation);
@@ -253,7 +255,7 @@ export async function runInit(
       return { exit: EXIT_USAGE, errors: [errorDiagnostic('workflow_input_invalid', message)] };
     }
   } else {
-    workflowTemplate = completion.value === null ? 'gitlab-pending' : 'gitlab';
+    workflowTemplate = gitlabAcceptanceGenerated ? 'gitlab' : 'gitlab-pending';
   }
 
   let protectionBranch: string | null = null;
@@ -337,8 +339,7 @@ export async function runInit(
     outcome: platformSelection.outcome,
     human: platformSelectionHuman(platformSelection, text),
   };
-  if (gitlabMode && completion.value === null &&
-      !(existingPolicy.ok && existingPolicy.value.verification?.reuse?.some((profile) => profile.gitlab))) {
+  if (gitlabMode && !gitlabAcceptanceGenerated) {
     warnings.push({
       severity: 'warning',
       code: 'gitlab_harness_pending',

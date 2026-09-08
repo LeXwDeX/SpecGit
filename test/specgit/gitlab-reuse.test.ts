@@ -33,7 +33,7 @@ function statement(changes: object = {}) {
 
 function fixture(change: { child?: object; job?: object; prepare?: object; bridge?: object; claims?: object;
   jobTokenOnly?: boolean; parent?: object; acceptance?: object; currentRun?: string; currentJob?: object;
-  content?: string; missing?: string; keys?: unknown; hint?: object } = {}) {
+  content?: string; missing?: string; keys?: unknown; hint?: object; request?: object; currentPipeline?: object } = {}) {
   const paths: string[] = [];
   const api = async (endpoint: string): Promise<Evidence<unknown>> => {
     paths.push(endpoint);
@@ -41,6 +41,8 @@ function fixture(change: { child?: object; job?: object; prepare?: object; bridg
     if (change.missing && endpoint.includes(change.missing)) return fail('not_found', 'Missing');
     if (endpoint === 'job') return ok({ ...prepare, status: 'running', finished_at: null, ...change.currentJob });
     if (endpoint.startsWith('https://')) return ok(change.keys ?? jwks);
+    if (endpoint.includes('/merge_requests/')) return ok({ iid: 5, project_id: 20, source_project_id: 20,
+      target_project_id: 20, source_branch: 'feature', ...change.request });
     if (endpoint.includes('/repository/files/') && endpoint.includes('/raw?')) return ok(change.content ?? 'approved');
     if (change.jobTokenOnly && endpoint.includes('/repository/files/')) return fail('unauthorized', 'Metadata endpoint unavailable');
     if (endpoint.includes('/repository/files/')) return ok({ encoding: 'base64', content: Buffer.from(change.content ?? 'approved').toString('base64') });
@@ -53,7 +55,7 @@ function fixture(change: { child?: object; job?: object; prepare?: object; bridg
     if (endpoint.includes('/pipelines/100/jobs')) return ok([{ ...prepare, ...change.prepare },
       ...(change.acceptance ? [{ ...prepare, id: 202, name: 'SpecGit Acceptance', ...change.acceptance }] : []),
     ]);
-    if (endpoint.endsWith('/pipelines/102')) return ok({ ...pipeline, id: 102, status: 'running' });
+    if (endpoint.endsWith('/pipelines/102')) return ok({ ...pipeline, id: 102, status: 'running', ...change.currentPipeline });
     if (endpoint.endsWith('/pipelines/101')) return ok({ ...child, ...change.child });
     if (endpoint.endsWith('/pipelines/100')) return ok({ ...pipeline, ...change.parent });
     if (endpoint.includes('/pipelines?')) return ok([{ ...pipeline, ...change.parent }]);
@@ -94,6 +96,24 @@ describe('GitLab original execution provenance', () => {
     expect(result.value).toMatchObject({ ref, profile: 'linux', sourceSha, inputDigest, completedAt: job.finished_at });
     expect(paths.some((value) => value.includes('/bridges?'))).toBe(true);
     expect(paths).toContain('https://gitlab.example.com/oauth/discovery/keys');
+  });
+
+  it('maps native MR execution refs to the same-project signed source branch', async () => {
+    const mrPipeline = { ...pipeline, source: 'merge_request_event', ref: 'refs/merge-requests/5/head' };
+    const mrPrepare = { ...prepare, pipeline: mrPipeline, ref: mrPipeline.ref };
+    const change = { parent: mrPipeline, prepare: mrPrepare, currentPipeline: { ref: mrPipeline.ref },
+      claims: { pipeline_source: 'merge_request_event' } };
+    expect((await fixture(change).port.original(ref)).ok).toBe(true);
+    const running = { ...change, currentRun: '100', currentJob: { ...mrPrepare, status: 'running', finished_at: null } };
+    expect(await fixture(running).port.currentConfiguration({ ...observation, assertion: statement(change.claims) })).toEqual(ok(entry));
+    for (const request of [{ iid: 6 }, { project_id: 99 }, { source_project_id: 99 },
+      { target_project_id: 99 }, { source_branch: 'other' }]) {
+      expect((await fixture({ ...change, request }).port.original(ref)).ok).toBe(false);
+      expect((await fixture({ ...running, request }).port.currentConfiguration({ ...observation,
+        assertion: statement(change.claims) })).ok).toBe(false);
+    }
+    expect((await fixture({ ...change, missing: '/merge_requests/' }).port.original(ref)).ok).toBe(false);
+    expect((await fixture({ ...change, prepare: { ...mrPrepare, ref: 'refs/merge-requests/6/head' } }).port.original(ref)).ok).toBe(false);
   });
 
   it('proves the same execution using job-token-supported native inventories and immutable raw files', async () => {

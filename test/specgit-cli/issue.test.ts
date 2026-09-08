@@ -1799,16 +1799,23 @@ describe('specgit issue: harness currency gate (#339)', () => {
     expect(t.harness.createdPrs).toHaveLength(0);
   });
 
-  it('continues to reject a conflicting remote acceptance workflow', async () => {
+  it.each([null, '{broken', '{"managed_by":"someone-else","paths":["AGENTS.md"]}'])
+  ('rejects a conflicting remote acceptance workflow despite retirement manifest %s', async (manifest) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-remote-gate-'));
     try {
       fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
       fs.writeFileSync(path.join(root, '.github/workflows/specgit-accept.yml'), 'Unrecognized workflow content');
+      if (manifest !== null) {
+        fs.mkdirSync(path.join(root, 'spec_git'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'spec_git/generated-verification.json'), manifest);
+      }
       const t = issueCtx();
       t.ctx.discoverRoot = async () => ok(root);
       const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
       expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(result.exit).toBe(2);
       expect(t.harness.createdIssues).toHaveLength(0);
+      expect(t.harness.createdPrs).toHaveLength(0);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
