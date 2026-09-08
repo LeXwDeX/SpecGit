@@ -42,6 +42,21 @@ describe('native reuse evidence transport', () => {
     expect(process.env.GLAB_CONFIG_DIR).toBe('/synthetic-user-config');
   });
 
+  it('resolves a relative configured executable before isolating native job identity', async () => {
+    vi.stubEnv('GITLAB_CI', 'true');
+    vi.stubEnv('SPECGIT_GLAB', './tools/glab');
+    const calls: Array<{ command: string; cwd?: string }> = [];
+    const api = reuseApi('gitlab', 'gitlab.example.com', async (command, _args, options) => {
+      calls.push({ command, cwd: options.cwd });
+      return { stdout: '{}', stderr: '' };
+    });
+    expect((await api('job')).ok).toBe(true);
+    expect(calls[0].command).toBe(path.resolve('tools/glab'));
+    expect(calls[0].cwd).not.toBe(process.cwd());
+    expect((await api('projects/group%2Fproject/pipelines/100')).ok).toBe(true);
+    expect(calls[1]).toEqual({ command: './tools/glab', cwd: undefined });
+  });
+
   it('refuses non-CI job identity and cleans isolated configuration after transport failure', async () => {
     vi.stubEnv('GITLAB_CI', 'false');
     let directory = '';
