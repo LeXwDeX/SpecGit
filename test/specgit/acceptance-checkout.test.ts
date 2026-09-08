@@ -11,9 +11,11 @@ const withAcceptanceCheckout = <T>(root: string, run: (checkout: string) => Prom
   prepareCheckout(root, run, { readRecord, git: new LocalGitAdapter(), bindingContextMismatch });
 const dirs: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); dirs.splice(0).forEach(rmDir); });
-function fixture(label = 'delivery') {
+function fixture(label = 'delivery', autocrlf = false) {
   const dir = makeTempDir('specgit-acceptance-checkout-'); dirs.push(dir);
   const { root, env } = initRepo(dir);
+  // Fixture creation and the real adapter must use the same repository checkout convention.
+  git(root, ['config', 'core.autocrlf', String(autocrlf)], env);
   const branch = git(root, ['branch', '--show-current'], env).trim();
   const binding = `version: 1\ndelivery: context-repair\ncontext:\n  kind: worktree\n  label: ${label}\n  branch: ${branch}\nissues: [1]\npr: 2\n`;
   const head = commitFile(root, '.specgit.yaml', binding, env);
@@ -37,6 +39,24 @@ describe('acceptance checkout preparation', () => {
     expect(git(f.root, ['worktree', 'list', '--porcelain'], f.env)).toBe(before);
     expect(git(f.root, ['rev-parse', 'HEAD'], f.env).trim()).toBe(f.head);
     expect(git(f.root, ['branch', '--show-current'], f.env).trim()).toBe(f.branch);
+  });
+
+  it('retains the canonical binding blob and original bytes when Git converts checkout newlines', async () => {
+    const f = fixture('delivery', true);
+    const before = fs.readFileSync(path.join(f.root, '.specgit.yaml'));
+    const blob = git(f.root, ['rev-parse', 'HEAD:.specgit.yaml'], f.env).trim();
+    const refs = git(f.root, ['show-ref'], f.env);
+    const worktrees = git(f.root, ['worktree', 'list', '--porcelain'], f.env);
+    await withAcceptanceCheckout(f.root, async (checkout) => {
+      expect(checkout).not.toBe(f.root);
+      expect(fs.readFileSync(path.join(checkout, '.specgit.yaml'), 'utf8')).toContain('\r\n');
+      expect(git(checkout, ['hash-object', '--path=.specgit.yaml', '.specgit.yaml'], f.env).trim()).toBe(blob);
+      expect(bindingContextMismatch({ kind: 'worktree', label: f.label, branch: f.branch },
+        await new LocalGitAdapter().facts(checkout))).toBeNull();
+    });
+    expect(fs.readFileSync(path.join(f.root, '.specgit.yaml'))).toEqual(before);
+    expect(git(f.root, ['show-ref'], f.env)).toBe(refs);
+    expect(git(f.root, ['worktree', 'list', '--porcelain'], f.env)).toBe(worktrees);
   });
 
   it('keeps wrong-branch evidence intact for the normal gate to reject', async () => {
