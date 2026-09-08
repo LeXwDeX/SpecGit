@@ -115,6 +115,10 @@ description: Run the SpecGit evidence verdict and drive the fix loop to exit 0
 Thin trigger for the acceptance verdict. The canonical behavior lives in the
 AGENTS.md SpecGit block; this command only launches it.
 
+For a declared programme, also run \`specgit finish --scope <name> --json\`.
+Its \`scope\` result is independent of the current delivery verdict; report
+programme completion only when that scope is completed.
+
 ## Steps
 
 1. Complete the authorized PR/MR body and mark the request ready for review, then
@@ -246,6 +250,11 @@ metadata:
 The acceptance verdict. Eleven gates evaluate live evidence: record, policy,
 completeness, context, origin, provider, issues, sequence (ordered
 deliveries), PR/MR, closing refs, and required checks at the request head.
+
+For a declared programme, \`specgit finish --scope <name> --json\` reads its
+approved \`spec_git/scopes/<name>.yaml\` and assesses every required delivery.
+Report the separate \`scope\` state; one delivery's completion never proves
+programme completion. This assessment performs no merge or issue closure.
 
 ## Usage
 

@@ -9,7 +9,7 @@ SpecGit is a dual-platform TypeScript CLI that binds delivery branches to GitHub
 - `test/specgit/`, `test/specgit-cli/`, `test/specgit-e2e/`: domain, CLI, and subprocess tests.
 - `schemas/` and `skills/`: shipped assets; `docs/` and `workflows/`: contracts and workflows. `dist/` is generated.
 
-SpecGit writes three tiers: authoritative delivery files (`.specgit.yaml`, `spec_git/policy.yaml`), the derived committed harness, and local integration assets.
+SpecGit uses three tiers: authoritative declarations (`.specgit.yaml`, `spec_git/policy.yaml`, optional providers and aggregate scopes), the derived committed harness, and local integration assets.
 
 ## Build, Test, and Development Commands
 
@@ -80,6 +80,11 @@ already exists); keep manual guidance outside them.
   A failed closure remains recoverable and is never reported as completed.
   With independent closure enabled, `specgit pr --close-issues --json`
   verifies an already merged request against the approved target and closes its bound issues.
+- For an explicitly declared programme, use `specgit finish --scope <name> --json`
+  to assess its required deliveries independently of the current binding. The
+  approved declaration lives at `spec_git/scopes/<name>.yaml` on the remote
+  default branch. A delivery's completion does not complete the programme;
+  every required member and the parent issue must be confirmed complete.
 
 ### Issue tags
 

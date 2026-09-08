@@ -37,6 +37,8 @@ const MERGE_SHA = 'm'.repeat(40);
 type ContainmentScript = (sha: string) => Evidence<{ contained: boolean }>;
 
 class StubGitPort implements GitPort {
+  async readFileAtCommit(): Promise<never> { throw new Error('No scope evidence configured.'); }
+  async readFileHistory(): Promise<never> { throw new Error('No scope evidence configured.'); }
   readonly headContainsCalls: string[] = [];
   async readFileAtRemoteRef(): Promise<never> {
     throw new Error('Policy resolution is supplied before evaluation.');

@@ -67,13 +67,15 @@ If HEAD is detached, the live branch disagrees with the record, or the worktree 
 repo root/
 ├── spec_git/
 │   ├── policy.yaml       # checks, conventions, templates, automation
-│   └── providers.yaml    # optional — an explicitly declared GitLab host
+│   ├── providers.yaml    # optional — an explicitly declared GitLab host
+│   └── scopes/          # optional approved aggregate declarations
 └── .specgit.yaml         # this delivery's binding — committed on the delivery branch
 ```
 
 - **Policy** (`spec_git/policy.yaml`): the project-level contract — required CI/CD check names plus optional ordering, generated-text language, tags, title/label/body validation, selected templates, and automation. An empty required list is the no-CI policy: the applicable platform acceptance integration remains the gate. Automation defaults to off; only the user's own yes enables `init --automation yes --merge-target <branch>`. Ordinary `init --force` preserves that choice; explicit options change it. Agents cannot answer yes for the user. `automation.target_branch` constrains the merge destination, `automation.repair_labels` selects labels for failure issues, and configured issue closure follows a confirmed merge.
 - **Declaration** (`spec_git/providers.yaml`, optional): present only when `init --gitlab-host` or the interactive GitLab-only confirmation declared the origin, including GitLab.com; committed so the team shares it. Only exact `github.com` selects GitHub without a declaration. An undecided or invalid platform exits `3` before mutation; declaration-write failure also exits `3` and restores the pre-run provider state. When init plans workflow generation or branch protection, an unproved remote default branch exits `3` before the local transaction. GitHub Enterprise has no route.
 - **Record** (`.specgit.yaml`): the delivery-level binding. Written by `specgit issue` (script alias: `bind`), removed by `specgit unbind`. Unknown keys are preserved on rewrite so other tools can coexist in the file.
+- **Scope** (`spec_git/scopes/<name>.yaml`, optional): required issue/target pairs across deliveries, approved on the remote default branch and assessed separately with `finish --scope`. See [aggregate scopes](scopes.md) for membership history and completion rules.
 
 These files declare delivery scope and project policy. Automatic repair work additionally uses writer-verified intent and receipt declarations on its parent PR/MR; see [guarded completion](completion-architecture.md) for their authority and recovery limits. Local artifacts and caches do not establish acceptance. Around these files `init`/`setup` generate derived assets (the acceptance workflow, the managed AGENTS/CLAUDE blocks, guard hooks, agent entry points): regenerated to the running version, never hand-configured. Root discovery is `git rev-parse --show-toplevel` — SpecGit runs only inside a git repository, at its root.
 

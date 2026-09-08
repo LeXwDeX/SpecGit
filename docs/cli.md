@@ -2,6 +2,13 @@
 
 The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `setup` installs agent entry points; `bind`/`unbind`/`accept` are machine aliases for scripts. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
 
+`specgit finish --scope <name> --json` is the optional [aggregate scope assessment](scopes.md).
+It reads an approved `spec_git/scopes/<name>.yaml` independently of the current
+delivery binding and emits `scope` instead of a delivery `verdict`. Exit 0 means
+all required deliveries and the parent issue are complete; exit 1 means incomplete
+or ready to close the parent; exit 3 means unknown evidence. It does not merge or
+close anything. Plain `finish` and `accept` retain the delivery verdict.
+
 The delivery flow at a glance:
 
 ```text
@@ -425,6 +432,7 @@ The verdict command of the human story. The generated GitHub gate runs it with `
 ```bash
 specgit finish            # human-readable verdict
 specgit finish --json     # machine-readable verdict (what CI parses)
+specgit finish --scope programme --json  # separate approved aggregate scope
 ```
 
 Exit semantics: `0` accepted · `1` rejected with complete evidence · `3` cannot determine (missing record/policy, matching forge CLI absent or unauthenticated, transport failure). See [Reference](reference.md) for the gate table and codes, and [Troubleshooting](troubleshooting.md) for fixes.

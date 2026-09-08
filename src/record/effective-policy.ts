@@ -17,7 +17,7 @@ export interface EffectivePolicy {
 export async function resolveEffectivePolicy(options: {
   root: string;
   record: Evidence<DeliveryBinding>;
-  git: Pick<GitPort, 'facts' | 'remoteDefaultBranch' | 'readFileAtRemoteRef' | 'readFileBeforeMerge'>;
+  git: Pick<GitPort, 'facts' | 'remoteDefaultBranch' | 'readFileAtRemoteRef' | 'readFileBeforeMerge' | 'headContains'>;
   forge: Pick<ForgeProvider, 'getPr'>;
   parseRepoRef: (origin: string) => Evidence<RepoRef> | Promise<Evidence<RepoRef>>;
   readCandidate: () => Promise<Evidence<Policy>>;
@@ -42,6 +42,8 @@ export async function resolveEffectivePolicy(options: {
     branch = pr.value.baseBranch;
     if (options.requireApproved && pr.value.state === 'merged') {
       if (!pr.value.mergeCommitSha) return fail('policy_history_unavailable', 'The merged request has no result commit proving its original authorization.');
+      const contained = await git.headContains(root, pr.value.mergeCommitSha);
+      if (!contained.ok || !contained.value.contained) return fail('policy_history_unavailable', 'The checkout does not prove containment of the merged delivery.');
       merged = { mergeSha: pr.value.mergeCommitSha, headSha: pr.value.headSha, targetHistorySha: pr.value.targetHistorySha };
     }
   } else {

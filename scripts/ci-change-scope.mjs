@@ -35,6 +35,7 @@ function metadataPath(file) {
   return METADATA_FILES.has(file) || /^(?:docs|workflows)\/.+\.md$/.test(file)
     || /^\.github\/ISSUE_TEMPLATE\/[^/]+\.(?:md|ya?ml)$/.test(file)
     || file === '.github/PULL_REQUEST_TEMPLATE.md'
+    || /^spec_git\/scopes\/[a-z0-9]+(?:-[a-z0-9]+)*\.yaml$/.test(file)
     || CHANGESET.test(file) || LOCAL_ENTRY.test(file);
 }
 

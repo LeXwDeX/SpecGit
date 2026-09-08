@@ -9,6 +9,10 @@ description: Run the SpecGit evidence verdict and drive the fix loop to exit 0
 Thin trigger for the acceptance verdict. The canonical behavior lives in the
 AGENTS.md SpecGit block; this command only launches it.
 
+For a declared programme, also run `specgit finish --scope <name> --json`.
+Its `scope` result is independent of the current delivery verdict; report
+programme completion only when that scope is completed.
+
 ## Steps
 
 1. Complete the authorized PR/MR body and mark the request ready for review, then
