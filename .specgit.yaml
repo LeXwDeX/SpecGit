@@ -1,14 +1,11 @@
 version: 1
-delivery: gitlab-label-colors
+delivery: private-deployment-redaction
 context:
   kind: worktree
-  label: specgit-gitlab-label-repair-20260908
-  branch: fix/497-gitlab-label-colors
+  label: specgit-private-cleanup-20260909
+  branch: fix/503-private-deployment-redaction
 issues:
-  - 497
-  - 499
-  - 500
+  - 503
 issueKinds:
-  - issue: 497
+  - issue: 503
     kind: kind::fix
-pr: 498
