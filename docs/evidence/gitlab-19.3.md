@@ -1,5 +1,10 @@
 # GitLab 19.3 evidence ledger
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 Committed evidence ledger for the **#236 rebaseline** ([policy and roadmap](../gitlab-support.md),
 [Rebaseline SOP](../gitlab-support.md#rebaseline-sop-moving-the-version-window)).
 Supplements [gitlab-19.2.md](gitlab-19.2.md): rows pinned there carry unless
