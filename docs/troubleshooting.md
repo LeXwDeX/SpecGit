@@ -321,7 +321,7 @@ branch mismatch.
 
 ### `worktree_mismatch`
 
-The record says `kind: worktree`, but the current checkout is not a linked worktree whose label resolves to the record's branch. Either run from the intended worktree (`git worktree list` shows them) or re-bind from this checkout so the context reflects reality.
+The record says `kind: worktree`, but the current checkout is not a linked worktree whose label resolves to the record's branch. Either run from the intended worktree (`git worktree list` shows them) or re-bind from this checkout so the context reflects reality. Generated acceptance workflows reconstruct the bound worktree at the checked-out event commit before running the same verdict; they preserve the binding and branch refs. A wrong event branch or dirty tracked inputs still reach the normal rejecting gates.
 
 ### `no_commits`
 

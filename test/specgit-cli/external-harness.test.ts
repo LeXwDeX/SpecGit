@@ -126,7 +126,7 @@ describe('external acceptance harness template', () => {
 
   it('runs the verdict through the installed CLI, not a workspace path', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
-    expect(yaml).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+    expect(yaml).toContain('node "$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/acceptance-checkout.js"');
     expect(yaml).toContain('GH_TOKEN: ${{ github.token }}');
   });
 

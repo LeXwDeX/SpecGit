@@ -1180,7 +1180,7 @@ describe('specgit init harness generation', () => {
     expect(workflow).toContain('name: SpecGit Acceptance');
     expect(workflow).toContain('pull_request');
     expect(workflow).toContain('branches: [main]');
-    expect(workflow).toContain('node bin/specgit.js finish --json');
+    expect(workflow).toContain('node dist/automation/acceptance-checkout.js');
     expect(workflow).not.toContain('\r');
 
     const agents = read(AGENTS_ABS(root));
@@ -1214,7 +1214,7 @@ describe('specgit init harness generation', () => {
     expect(workflow).toBe(externalAcceptanceWorkflowYaml({ defaultBranch: 'master', version: '0.0.0-test' }));
     expect(workflow).toContain('branches: ["master"]');
     expect(workflow).toContain(`npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@0.0.0-test`);
-    expect(workflow).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+    expect(workflow).toContain('node "$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/acceptance-checkout.js"');
     // The adopting project's toolchain is never invoked.
     expect(workflow).not.toContain('pnpm');
     expect(workflow).not.toContain('bin/specgit.js');

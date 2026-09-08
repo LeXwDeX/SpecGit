@@ -122,7 +122,7 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
     throw new Error(`${label}: workflow_dispatch trigger missing`);
   }
   const steps = allSteps(doc);
-  const finishes = steps.filter((step) => (step.run ?? '').includes('finish --json'));
+  const finishes = steps.filter((step) => ((step.run ?? '').includes('finish --json') || (step.run ?? '').includes('/automation/acceptance-checkout.js')));
   if (finishes.length === 0) {
     throw new Error(`${label}: specgit finish step missing`);
   }
