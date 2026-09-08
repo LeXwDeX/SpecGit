@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ensureFailureIssues } from '../../src/automation/failure-issues.js';
+import { recoverRepairCreations } from '../../src/automation/repair-recovery.js';
 import { readRepairLog } from '../../src/automation/repair-log.js';
 import { fail, ok, type Evidence } from '../../src/kernel/evidence.js';
 import { makeGhProvider, samplePolicy } from '../specgit-cli/helpers.js';
@@ -41,6 +42,36 @@ describe('failed PR repair issue lifecycle', () => {
     expect(await readRepairLog(repo, 42, t.gh)).toMatchObject({ ok: true, value: [{ issue: 200 }] });
   });
 
+  it('ignores a copied marker from a non-writer without blocking or receipting that issue', async () => {
+    const original = fixture();
+    await ensureFailureIssues(original.input, original.gh);
+    const t = fixture();
+    t.issues.push({ ...original.issues[0], number: 800 });
+    vi.mocked(t.gh.getIssueWriterAuthority).mockResolvedValue(ok(false));
+    expect(await ensureFailureIssues(t.input, t.gh)).toEqual(ok({ issues: [201] }));
+    expect(await readRepairLog(repo, 42, t.gh)).toMatchObject({ ok: true, value: [{ issue: 201 }] });
+  });
+
+  it('reuses the existing same-cause repair after a new-head intent loses its receipt', async () => {
+    const t = fixture();
+    const policy = samplePolicy({ automation: { merge: true, target_branch: 'main', close_issues: true } });
+    expect(await ensureFailureIssues({ ...t.input, policy }, t.gh)).toEqual(ok({ issues: [200] }));
+    const next = { ...pr, headSha: 'b'.repeat(40) };
+    t.gh.getPr.mockResolvedValue(ok(next));
+    const append = vi.mocked(t.gh.appendRequestDeclaration).getMockImplementation()!;
+    let count = 0;
+    vi.mocked(t.gh.appendRequestDeclaration).mockImplementation(async (...args) => ++count === 2
+      ? fail('gh_transport', 'receipt response lost before write') : append(...args));
+    expect(await ensureFailureIssues({ ...t.input, policy, pr: next }, t.gh)).toMatchObject({ ok: false });
+    vi.mocked(t.gh.appendRequestDeclaration).mockImplementation(append);
+    expect(await recoverRepairCreations({ repo, request: 42, root: '/repo', headSha: next.headSha,
+      policy, boundIssues: [10] }, t.gh, { isAncestor: async () => ok({ contained: true }) })).toMatchObject({ ok: true });
+    expect(t.gh.createIssue).toHaveBeenCalledOnce();
+    const log = await readRepairLog(repo, 42, t.gh);
+    if (!log.ok) throw new Error(log.message);
+    expect(log.value.map((operation) => operation.issue)).toEqual([200, 200]);
+  });
+
   it('creates no issue when the write-ahead intent cannot be confirmed', async () => {
     const t = fixture();
     vi.mocked(t.gh.appendRequestDeclaration).mockResolvedValue(fail('gh_transport', 'declaration write failed'));
@@ -51,6 +82,7 @@ describe('failed PR repair issue lifecycle', () => {
     const t = fixture();
     const forge = {
       getPr: t.gh.getPr,
+      getIssueWriterAuthority: t.gh.getIssueWriterAuthority,
       getIssue: t.gh.getIssue,
       searchIssueHistory: t.gh.searchIssueHistory,
       getRequestDeclarations: t.gh.getRequestDeclarations,

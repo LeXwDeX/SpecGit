@@ -91,7 +91,7 @@ export async function runRemoteDelivery(
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + (options.deadlineMs ?? 20 * 60_000);
-  const blocked = (code: string, message: string, classification: CompletionClassification = 'unknown'): CompletionObservation => ({ classification, diagnostics: [{ severity: 'error', code, message }] });
+  const blocked = (code: string, message: string, classification: CompletionClassification = 'unknown', fix?: string): CompletionObservation => ({ classification, diagnostics: [{ severity: 'error', code, message, ...(fix ? { fix } : {}) }] });
   if (!Number.isSafeInteger(input.pr) || input.pr <= 0 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(input.headSha) ||
       !matchesBoundRequest(input.record, input.repo, input.pr) || input.record.issues.length === 0) {
     return blocked('automation_event_invalid', 'The completion event must identify one bound request and full head SHA.');
@@ -121,7 +121,7 @@ export async function runRemoteDelivery(
         current.value.baseBranch === automation.target_branch && current.value.state !== 'closed') {
       const repairs = await recoverRepairCreations({ repo: input.repo, request: input.pr, headSha: current.value.headSha,
         root: rootEvidence.value, policy: policyEvidence.value.policy, boundIssues: input.record.issues }, ctx.gh, ctx.git);
-      if (!repairs.ok) return blocked(repairs.code, repairs.message);
+      if (!repairs.ok) return blocked(repairs.code, repairs.message, 'unknown', repairs.fix);
     }
     outcome = await completeDelivery({ root: rootEvidence, closeOnly }, boundContext);
     if (outcome.classification === 'completed') return outcome;
@@ -137,7 +137,7 @@ export async function runRemoteDelivery(
         const repairs = await ensureFailureIssues({ repo: input.repo, pr: current.value,
           delivery: input.record.delivery, issueNumbers: input.record.issues,
           failures: failures.value.failures, policy: approved.value.policy }, ctx.gh);
-        if (!repairs.ok) return blocked(repairs.code, repairs.message);
+        if (!repairs.ok) return blocked(repairs.code, repairs.message, 'unknown', repairs.fix);
         return { ...outcome, classification: 'rejected', ...(outcome.progress ? { progress: { ...outcome.progress, status: 'blocked' } } : {}),
           repairIssues: repairs.value.issues,
           diagnostics: failures.value.failures.map((failure) => ({ severity: 'error', ...failure })) };

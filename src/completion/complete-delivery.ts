@@ -19,10 +19,12 @@ export async function completeDelivery(
 ): Promise<CompletionObservation> {
   const options = input;
   let language: PolicyLanguage | undefined;
+  let repairIssues: number[] | undefined;
   const progress: CompletionProgress = { status: 'blocked', merged: false, closedIssues: [] };
   const stop = (code: string, message: string, classification: CompletionClassification = 'rejected', fix?: string): CompletionObservation => ({
     classification,
     language,
+    ...(repairIssues?.length ? { repairIssues } : {}),
     progress: {
       ...progress,
       status: classification === 'unknown' ? 'unknown' : progress.status,
@@ -109,6 +111,7 @@ export async function completeDelivery(
   }
 
   const verdict = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  repairIssues = verdict.evidence.repairIssues;
   if (verdict.exitCode !== 0 || !verdict.accepted || !verdict.complete) {
     const failure = verdict.gates.flatMap((gate) => gate.failures)[0];
     if (failure?.code === 'checks_pending') progress.status = 'pending';

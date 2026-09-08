@@ -44,31 +44,9 @@ export async function readRequestDeclarations(input: RequestDeclarationInput): P
     const authorId = String(author.id);
     let permitted = permissions.get(authorId);
     if (permitted === undefined) {
-      const app = row.performed_via_github_app as { permissions?: { issues?: unknown } } | null;
-      if (platform === 'github' && author.type === 'Bot' && (isGithubActionsApp(app) || app?.permissions?.issues === 'write')) {
-        permitted = true;
-      } else {
-        const login = platform === 'github' ? author.login : author.username;
-        if (typeof login !== 'string' || !login) return fail('request_declaration_unknown', 'A declaration author has no provider identity.');
-        const permission = await api(platform === 'github'
-          ? `${base}/collaborators/${encodeURIComponent(login)}/permission`
-          : `${base}/members/all/${authorId}`);
-        if (!permission.ok) return permission;
-        if (permission.value === null) permitted = false;
-        else {
-          const value = permission.value as { user?: { id?: unknown }; id?: unknown; permission?: unknown; role_name?: unknown; access_level?: unknown };
-          if (typeof value !== 'object' || String(platform === 'github' ? value.user?.id : value.id) !== authorId) {
-            return fail('request_declaration_unknown', 'The permission evidence does not identify the declaration author.');
-          }
-          if (platform === 'github' ? !['read', 'none', 'write', 'maintain', 'admin'].includes(String(value.permission)) :
-            !Number.isInteger(value.access_level) || Number(value.access_level) < 0) {
-            return fail('request_declaration_unknown', 'The declaration author permission is incomplete.');
-          }
-          permitted = platform === 'github'
-            ? ['write', 'maintain', 'admin'].includes(String(value.permission)) || ['write', 'maintain', 'admin'].includes(String(value.role_name))
-            : typeof value.access_level === 'number' && value.access_level >= 30;
-        }
-      }
+      const authority = await writerAuthority(input, author, row.performed_via_github_app);
+      if (!authority.ok) return authority;
+      permitted = authority.value;
       permissions.set(authorId, permitted);
     }
     if (!permitted) continue;
@@ -97,4 +75,51 @@ export async function appendRequestDeclaration(input: RequestDeclarationInput & 
   if (!confirmed.ok) return confirmed;
   const receipt = confirmed.value.find((item) => item.body === input.body);
   return receipt ? ok({ id: receipt.id }) : fail('request_declaration_unconfirmed', 'The forge has not confirmed the declaration under a repository writer identity.');
+}
+
+
+/** Provider identity and current repository authority, never payload-declared authors. */
+async function writerAuthority(
+  input: Pick<RequestDeclarationInput, 'platform' | 'project' | 'api'>,
+  rawAuthor: unknown, rawApp?: unknown,
+): Promise<Evidence<boolean>> {
+  const { platform, project, api } = input;
+  const author = rawAuthor as { id?: unknown; login?: unknown; username?: unknown; type?: unknown } | null;
+  if (!author || !Number.isSafeInteger(author.id) || Number(author.id) <= 0) {
+    return fail('request_declaration_unknown', 'The forge did not identify the author.');
+  }
+  const app = rawApp as { permissions?: { issues?: unknown } } | null;
+  if (platform === 'github' && author.type === 'Bot' && (isGithubActionsApp(app) || app?.permissions?.issues === 'write')) return ok(true);
+  const login = platform === 'github' ? author.login : author.username;
+  if (typeof login !== 'string' || !login) return fail('request_declaration_unknown', 'The author has no provider identity.');
+  const base = platform === 'github' ? `repos/${project}` : `projects/${encodeURIComponent(project)}`;
+  const permission = await api(platform === 'github'
+    ? `${base}/collaborators/${encodeURIComponent(login)}/permission`
+    : `${base}/members/all/${author.id}`);
+  if (!permission.ok) return permission;
+  if (permission.value === null) return ok(false);
+  const value = permission.value as { user?: { id?: unknown }; id?: unknown; permission?: unknown; role_name?: unknown; access_level?: unknown };
+  if (typeof value !== 'object' || String(platform === 'github' ? value.user?.id : value.id) !== String(author.id)) {
+    return fail('request_declaration_unknown', 'The permission evidence does not identify the author.');
+  }
+  if (platform === 'github' ? !['read', 'none', 'write', 'maintain', 'admin'].includes(String(value.permission)) :
+    !Number.isInteger(value.access_level) || Number(value.access_level) < 0) {
+    return fail('request_declaration_unknown', 'The author permission is incomplete.');
+  }
+  return ok(platform === 'github'
+    ? ['write', 'maintain', 'admin'].includes(String(value.permission)) || ['write', 'maintain', 'admin'].includes(String(value.role_name))
+    : typeof value.access_level === 'number' && value.access_level >= 30);
+}
+
+export async function readIssueWriterAuthority(input: Pick<RequestDeclarationInput, 'platform' | 'project' | 'api'> & {
+  issue: number;
+}): Promise<Evidence<boolean>> {
+  if (!Number.isSafeInteger(input.issue) || input.issue <= 0) return fail('repair_issue_mismatch', 'A valid issue identity is required.');
+  const base = input.platform === 'github' ? `repos/${input.project}` : `projects/${encodeURIComponent(input.project)}`;
+  const issue = await input.api(`${base}/issues/${input.issue}`);
+  if (!issue.ok) return issue;
+  const value = issue.value as { number?: unknown; iid?: unknown; user?: unknown; author?: unknown; pull_request?: unknown; performed_via_github_app?: unknown } | null;
+  if (!value || typeof value !== 'object' || value.pull_request !== undefined ||
+    (input.platform === 'github' ? value.number : value.iid) !== input.issue) return fail('repair_issue_mismatch', 'The candidate is not the expected issue.');
+  return writerAuthority(input, input.platform === 'github' ? value.user : value.author, value.performed_via_github_app);
 }

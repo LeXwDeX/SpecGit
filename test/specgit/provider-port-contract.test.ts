@@ -70,7 +70,7 @@ describe('provider port contract (#80)', () => {
     expect([...FORGE_PROVIDER_MEMBERS].sort()).toEqual(
       [
         'appendRequestDeclaration',
-        'getRequestDeclarations',
+        'getRequestDeclarations', 'getIssueWriterAuthority',
         'addIssueComment',
         'addIssueLabels',
         'createDraftPr',
@@ -115,7 +115,7 @@ describe('provider port contract (#80)', () => {
       expect([...FORGE_READ_PORT_MEMBERS].sort()).toEqual(
         [
           'appendRequestDeclaration',
-        'getRequestDeclarations',
+        'getRequestDeclarations', 'getIssueWriterAuthority',
         'addIssueComment',
           'addIssueLabels',
           'createDraftPr',

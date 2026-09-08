@@ -1,11 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appendRequestDeclaration, readRequestDeclarations } from '../../src/providers/request-declarations.js';
+import { appendRequestDeclaration, readRequestDeclarations, readIssueWriterAuthority } from '../../src/providers/request-declarations.js';
 import { fail, ok, type Evidence } from '../../src/kernel/evidence.js';
 
 const prefix = '<!-- specgit:repair:v1 -->';
 const body = `${prefix}\n{"kind":"intent"}`;
 
 describe('provider-backed request declarations', () => {
+  it.each(['github', 'gitlab'] as const)('independently verifies %s issue identity and creator authority before adoption', async (platform) => {
+    const author = { id: 2, login: 'candidate', username: 'candidate' };
+    let writable = false;
+    let issueNumber = 200;
+    const api = vi.fn(async (path: string): Promise<Evidence<unknown>> => {
+      if (path.includes('/permission')) return ok({ user: { id: 2 }, permission: writable ? 'write' : 'read' });
+      if (path.includes('/members/all/')) return ok({ id: 2, access_level: writable ? 30 : 20 });
+      return ok({ number: issueNumber, iid: issueNumber, user: author, author });
+    });
+    const input = { platform, project: 'owner/repo', issue: 200, api };
+    expect(await readIssueWriterAuthority(input)).toEqual(ok(false));
+    writable = true;
+    expect(await readIssueWriterAuthority(input)).toEqual(ok(true));
+    issueNumber = 201;
+    expect(await readIssueWriterAuthority(input)).toMatchObject({ ok: false, code: 'repair_issue_mismatch' });
+    expect(await readIssueWriterAuthority({ ...input, api: async () => fail('gh_transport', 'unavailable') }))
+      .toMatchObject({ ok: false, code: 'gh_transport' });
+  });
   it.each(['github', 'gitlab'] as const)('accepts %s declarations from verified repository writers and ignores copied outsider comments', async (platform) => {
     const authors = [{ id: 1, login: 'writer', username: 'writer' }, { id: 2, login: 'outsider', username: 'outsider' }];
     const api = vi.fn(async (path: string): Promise<Evidence<unknown>> => {

@@ -56,6 +56,12 @@ async function recordedRepair(checkName = 'Additional check') {
 }
 
 describe('trusted remote delivery continuation', () => {
+  it('preserves the concrete fix when repair recovery cannot read declarations', async () => {
+    const f = fixture();
+    vi.mocked(f.forge.getRequestDeclarations).mockResolvedValue(fail('gh_transport', 'unavailable', 'Restore request comment access.'));
+    const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
+    expect(result.diagnostics[0].fix).toBe('Restore request comment access.');
+  });
   it('keeps read-only acceptance free of a dependency on its own repair check finishing', async () => {
     const f = await recordedRepair('SpecGit Acceptance');
     f.setChecks([makeCheckRun('All checks passed'), makeCheckRun('SpecGit Acceptance', { status: 'in_progress', conclusion: null })]);
@@ -84,6 +90,8 @@ describe('trusted remote delivery continuation', () => {
     const result = await runRemoteDelivery(f.input, f.ctx);
     expect(result.classification).toBe('unknown');
     expect(result.diagnostics[0].code).toBe('repair_resolution_unproven');
+    expect(result.repairIssues).toEqual([200]);
+    expect(presentCompletion(result).nextActions?.[0].command).toContain('--issue 200');
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.states.get(200)).toBe('open');
   });

@@ -3,9 +3,9 @@ import type { GitPort } from '../gitfacts/port.js';
 import type { RepoRef } from '../gitfacts/origin.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { Policy } from '../record/policy.js';
-import { readRepairLog, recordRepairCreation, repairPolicyHash } from './repair-log.js';
+import { readRepairLog, recordRepairCreation, repairPolicyHash, findRepairCandidate } from './repair-log.js';
 
-type RecoveryPort = Pick<ForgeProvider, 'getRequestDeclarations' | 'appendRequestDeclaration' | 'searchIssueHistory' | 'createIssue' | 'getIssue' | 'addIssueLabels'>;
+type RecoveryPort = Pick<ForgeProvider, 'getOpenIssues' | 'getIssueWriterAuthority' | 'getRequestDeclarations' | 'appendRequestDeclaration' | 'searchIssueHistory' | 'createIssue' | 'getIssue' | 'addIssueLabels'>;
 
 /** Resume confirmed intents before acceptance; request-head files are never changed. */
 export async function recoverRepairCreations(input: {
@@ -29,11 +29,9 @@ export async function recoverRepairCreations(input: {
     const marker = `<!-- specgit:repair-operation:${operation.key} -->`;
     let number = operation.issue;
     if (number === undefined) {
-      const history = await forge.searchIssueHistory(input.repo, operation.key);
-      if (!history.ok) return history;
-      const matches = history.value.filter((item) => item.body.split('\n').includes(marker));
-      if (matches.length > 1) return fail('repair_issue_ambiguous', 'Several issues carry one recorded repair operation.');
-      number = matches[0]?.number;
+      const candidate = await findRepairCandidate(input.repo, operation, forge);
+      if (!candidate.ok) return candidate;
+      number = candidate.value;
       if (number === undefined) {
         const permission = await authorized();
         if (!permission.ok) return permission;

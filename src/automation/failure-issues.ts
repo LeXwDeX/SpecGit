@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { ForgeEvidencePort, ForgeDeliveryWritePort, ForgeAdminWritePort, PrFact } from '../github/port.js';
 import type { RepoRef } from '../gitfacts/origin.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
@@ -6,7 +5,7 @@ import type { Policy } from '../record/policy.js';
 import { checkLabelConvention, checkTitleConvention } from '../record/conventions.js';
 import { checkBodyConvention, renderDeliveryTemplate } from '../record/templates.js';
 import { DEFAULT_TAG_CATALOG, fallbackColorFor } from '../tags/catalog.js';
-import { recordRepairIntent, recordRepairCreation, repairPolicyHash } from './repair-log.js';
+import { recordRepairIntent, recordRepairCreation, repairPolicyHash, findRepairCandidate, repairCauseKey } from './repair-log.js';
 
 export interface DeliveryFailure {
   code: string;
@@ -32,7 +31,7 @@ const NON_FAILURES = new Set([
 
 /** The tracker capabilities needed to reconcile repair issues; no merge or protection writes. */
 export type FailureIssuePort =
-  Pick<ForgeEvidencePort, 'getPr' | 'getIssue' | 'getOpenIssues' | 'searchIssueHistory' | 'getRequestDeclarations'> &
+  Pick<ForgeEvidencePort, 'getIssueWriterAuthority' | 'getPr' | 'getIssue' | 'getOpenIssues' | 'searchIssueHistory' | 'getRequestDeclarations'> &
   Pick<ForgeDeliveryWritePort, 'createIssue' | 'addIssueLabels' | 'addIssueComment' | 'appendRequestDeclaration'> &
   Pick<ForgeAdminWritePort, 'ensureRepoLabels'>;
 
@@ -73,8 +72,7 @@ export async function ensureFailureIssues(
   const zh = input.policy.language === 'zh';
   const request = `${input.repo.platform === 'gitlab' ? '!' : '#'}${input.pr.number}`;
   for (const failure of failures) {
-    const identity = failure.target ? `${failure.code}\0${failure.target}` : failure.code;
-    const key = createHash('sha256').update(identity).digest('hex').slice(0, 20);
+    const key = repairCauseKey(failure);
     const marker = `<!-- specgit:failure:${input.pr.number}:${key} -->`;
     const kind = `${failure.code}${failure.target ? `-${failure.target}` : ''}`.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 80) || key;
     const title = zh ? `fix: 修复 PR ${input.pr.number} 的 ${kind}` : `fix: repair ${kind} in PR ${input.pr.number}`;
@@ -113,17 +111,9 @@ export async function ensureFailureIssues(
     }, forge);
     if (!intent.ok) return intent;
     const operationMarker = `<!-- specgit:repair-operation:${intent.value.key} -->`;
-    const matches = pool.value.filter((issue) => issue.body?.split('\n').some((line) => line.trim() === marker));
-    if (matches.length > 1) return fail('repair_issue_ambiguous', `Several open issues track failure ${failure.code} for PR ${input.pr.number}.`,
-      'Resolve the duplicate repair issues before retrying.');
-    let number = intent.value.issue ?? matches[0]?.number;
-    if (number === undefined) {
-      const history = await forge.searchIssueHistory(input.repo, intent.value.key);
-      if (!history.ok) return history;
-      const candidates = history.value.filter((issue) => issue.body.split('\n').includes(operationMarker));
-      if (candidates.length > 1) return fail('repair_issue_ambiguous', 'Several issues carry the same repair operation identity.');
-      number = candidates[0]?.number;
-    }
+    const candidate = await findRepairCandidate(input.repo, intent.value, forge, pool.value);
+    if (!candidate.ok) return candidate;
+    let number = candidate.value;
     if (number === undefined) {
       const bodyWithOperation = `${operationMarker}\n${intent.value.body}`;
       const created = await forge.createIssue(input.repo, intent.value.title, bodyWithOperation);

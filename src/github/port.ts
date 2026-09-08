@@ -202,6 +202,8 @@ export interface LabelsAppliedFact {
  */
 export interface ForgeEvidencePort {
   /** Complete matching declarations; an unavailable permission probe is unknown, not an empty list. */
+  /** Current repository write authority of the provider-identified issue creator. */
+  getIssueWriterAuthority(repo: RepoRef, issue: number): Promise<Evidence<boolean>>;
   getRequestDeclarations(repo: RepoRef, request: number, prefix: string): Promise<Evidence<RequestDeclaration[]>>;
   preflight(): Promise<Evidence<PreflightFact>>;
   /** The platform's configured CI entry path, or null for its default entry point. */
@@ -384,6 +386,7 @@ const FORGE_READ_PORT_MEMBER_FLAGS = {
   addIssueLabels: true,
   getRequestDeclarations: true,
   appendRequestDeclaration: true,
+  getIssueWriterAuthority: true,
 } as const satisfies Record<keyof ForgeReadPort, true>;
 
 /** @deprecated Compatibility inventory for {@link ForgeReadPort}. */
