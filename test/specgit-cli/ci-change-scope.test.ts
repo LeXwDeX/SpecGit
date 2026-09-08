@@ -15,6 +15,7 @@ const classify = (paths: string[]) => JSON.parse(execFileSync(process.execPath, 
 describe('CI change impact', () => {
   it.each([
     '.gitignore', '.specgit.yaml', 'spec_git/policy.yaml', 'spec_git/providers.yaml',
+    'spec_git/scopes/automation-programme.yaml',
     'README.md', 'docs/cli.md', 'docs/路径含空格 test.md', 'AGENTS.md',
     '.agents/skills/specgit-finish/SKILL.md', '.opencode/command/specgit-issue.md',
     '.changeset/fresh-change.md', '.github/workflows/README.md',
@@ -33,6 +34,7 @@ describe('CI change impact', () => {
     '.github/workflows/specgit-complete.yml', '.github/workflows/release-prepare.yml',
     '.github/workflows/rc-verify.yml', '.github/workflows/security.yml',
     'scripts/ci-change-scope.mjs', 'new-runtime/file.xyz',
+    'spec_git/scopes/execute.js', 'spec_git/scopes/nested/programme.yaml',
     '.local/state/gh/device-id', 'docs/executable.js', '.agents/unknown/script.sh',
     '.devcontainer/devcontainer.json', '.opencode/hooks.json',
   ])('requires complete verification for %s', (file) => {

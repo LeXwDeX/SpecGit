@@ -25,6 +25,10 @@ Exact schemas, gates, codes, and behavioral rules. Everything here is normative.
 
 ## `.specgit.yaml` — delivery binding record
 
+For required work spanning several deliveries, use an independent
+[aggregate scope](scopes.md) and `specgit finish --scope <name> --json`.
+Its scope state is separate from the single-delivery verdict described below.
+
 Located at the repository root, committed on the delivery branch.
 
 ```yaml

@@ -16,6 +16,7 @@ function fixture(content: string | null) {
     root: '/repo', record: ok(sampleBinding()),
     git: {
       facts: vi.fn(async () => makeGitFacts()),
+      headContains: vi.fn(async () => ok({ contained: true })),
       remoteDefaultBranch: vi.fn(async () => ok('main')),
       readFileAtRemoteRef: vi.fn(async (): Promise<Evidence<{ sha: string; content: string | null }>> => ok({ sha: SHA, content })),
       readFileBeforeMerge: vi.fn(async () => ok({ sha: SHA, content })),
@@ -27,6 +28,13 @@ function fixture(content: string | null) {
 }
 
 describe('approved policy resolution', () => {
+  it('retains checkout containment for local merged authorization', async () => {
+    const f = fixture('version: 1\nrequired_checks: []');
+    f.forge.getPr.mockResolvedValue(ok(makePrFact({ state: 'merged', mergeCommitSha: 'b'.repeat(40) })));
+    f.git.headContains.mockResolvedValue(ok({ contained: false }));
+    expect(await resolveEffectivePolicy({ ...f, requireApproved: true })).toMatchObject({ ok: false, code: 'policy_history_unavailable' });
+    expect(f.git.readFileBeforeMerge).not.toHaveBeenCalled();
+  });
   it('rejects a foreign bound PR before consulting that repository for policy', async () => {
     const f = fixture('version: 1\nrequired_checks: []');
     f.record = ok(sampleBinding({ pr: 'https://github.com/other/repository/pull/42' }));

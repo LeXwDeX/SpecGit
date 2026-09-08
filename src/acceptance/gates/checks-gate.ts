@@ -72,13 +72,33 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
   // whatever its conclusion says.
   const { anchor, failure: anchorFailure } = await fetchAnchor(ctx);
   if (anchorFailure) return [anchorFailure];
+  const failures = requiredCheckFailures(runs.value, ctx.policy!.required_checks, anchor);
+  // Active acceptance must never wait for its own CI job to complete.
+  // A merged delivery can report completion only after resolving its repairs.
+  if (failures.length === 0 && ctx.prFact!.state === 'merged' &&
+      ctx.repairOperations?.some((operation) => operation.issue !== undefined && !ctx.binding!.issues.includes(operation.issue))) {
+    const checks = await ctx.input.gh!.getPrChecks(ctx.repoRef!, ctx.prFact!.number);
+    if (!checks.ok) return [makeFailure(checks)];
+    const repairs = await verifyRepairResolution({
+      operations: ctx.repairOperations, boundIssues: ctx.binding!.issues,
+      root: ctx.evidence.root!, repo: ctx.repoRef!, request: ctx.prFact!, policy: ctx.policy!,
+      git: ctx.input.git, forge: ctx.input.gh!, checks: checks.value, anchor,
+      host: ctx.repoRef!.platform === 'gitlab' ? ctx.input.gitlabHost : 'github.com',
+    });
+    if (!repairs.ok) failures.push(makeFailure(repairs));
+  }
+  return failures;
+}
+
+/** Shared required-check truth and freshness rules for delivery and historical scope evidence. */
+export function requiredCheckFailures(runs: CheckRunInfo[], requiredNames: readonly string[], anchor: string | null): GateFailure[] {
   const failures: GateFailure[] = [];
-  for (const requiredName of ctx.policy!.required_checks) {
+  for (const requiredName of requiredNames) {
     // #119: re-runs keep every same-name run in the Checks API. The
     // truth run is the latest by started_at, ties broken by the
     // higher check-run id (docs/reference.md, Checks G11); response
     // position is never evidence.
-    const run = truthRun(runs.value, requiredName);
+    const run = truthRun(runs, requiredName);
     if (!run) {
       failures.push(makeFailure('checks_missing', { name: requiredName }));
       continue;
@@ -126,20 +146,6 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
         failures.push(failed);
       }
     }
-  }
-  // Active acceptance must never wait for its own CI job to complete.
-  // A merged delivery can report completion only after resolving its repairs.
-  if (failures.length === 0 && ctx.prFact!.state === 'merged' &&
-      ctx.repairOperations?.some((operation) => operation.issue !== undefined && !ctx.binding!.issues.includes(operation.issue))) {
-    const checks = await ctx.input.gh!.getPrChecks(ctx.repoRef!, ctx.prFact!.number);
-    if (!checks.ok) return [makeFailure(checks)];
-    const repairs = await verifyRepairResolution({
-      operations: ctx.repairOperations, boundIssues: ctx.binding!.issues,
-      root: ctx.evidence.root!, repo: ctx.repoRef!, request: ctx.prFact!, policy: ctx.policy!,
-      git: ctx.input.git, forge: ctx.input.gh!, checks: checks.value, anchor,
-      host: ctx.repoRef!.platform === 'gitlab' ? ctx.input.gitlabHost : 'github.com',
-    });
-    if (!repairs.ok) failures.push(makeFailure(repairs));
   }
   return failures;
 }

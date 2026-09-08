@@ -28,6 +28,10 @@ _Avoid_: acceptance, programme completion, publication
 An independently verifiable failure cause that needs its own tracked resolution while the original delivery remains traceable.
 _Avoid_: failed delivery replacement
 
+**Scope**:
+An approved declaration of a parent issue and required issue/target pairs across deliveries, stored independently of the replaceable binding. Its assessment derives each member's completion from historical Git and forge evidence.
+_Avoid_: current delivery, all open issues, checklist completion
+
 **Repair declaration**:
 A provider-verified repository writer statement on the parent request, recording an intended repair operation or its created issue. It is mutable forge state, not proof of an immutable execution.
 _Avoid_: body marker, binding file, execution attestation
