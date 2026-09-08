@@ -33,7 +33,8 @@ function statement(changes: object = {}) {
 
 function fixture(change: { child?: object; job?: object; prepare?: object; bridge?: object; claims?: object;
   jobTokenOnly?: boolean; parent?: object; acceptance?: object; currentRun?: string; currentJob?: object;
-  content?: string; missing?: string; keys?: unknown; hint?: object; request?: object; currentPipeline?: object } = {}) {
+  content?: string; missing?: string; keys?: unknown; hint?: object; request?: object; currentPipeline?: object;
+  historicalBridge?: object } = {}) {
   const paths: string[] = [];
   const api = async (endpoint: string): Promise<Evidence<unknown>> => {
     paths.push(endpoint);
@@ -50,6 +51,8 @@ function fixture(change: { child?: object; job?: object; prepare?: object; bridg
     if (endpoint.includes('/jobs/200/artifacts/')) return ok({ assertion: statement(change.claims) });
     if (endpoint.includes('/jobs/201')) return ok({ ...job, ...change.job });
     if (endpoint.includes('/jobs/200')) return ok({ ...prepare, ...change.prepare });
+    if (endpoint.includes('/pipelines/90/bridges')) return ok([{ id: 290, name: 'SpecGit dispatch / linux',
+      status: 'skipped', downstream_pipeline: null, ...change.historicalBridge }]);
     if (endpoint.includes('/pipelines/100/bridges')) return ok([{ id: 300, name: 'SpecGit dispatch / linux', status: 'success', downstream_pipeline: child, ...change.bridge }]);
     if (endpoint.includes('/pipelines/101/jobs')) return ok([{ ...job, ...change.job }]);
     if (endpoint.includes('/pipelines/100/jobs')) return ok([{ ...prepare, ...change.prepare },
@@ -58,7 +61,9 @@ function fixture(change: { child?: object; job?: object; prepare?: object; bridg
     if (endpoint.endsWith('/pipelines/102')) return ok({ ...pipeline, id: 102, status: 'running', ...change.currentPipeline });
     if (endpoint.endsWith('/pipelines/101')) return ok({ ...child, ...change.child });
     if (endpoint.endsWith('/pipelines/100')) return ok({ ...pipeline, ...change.parent });
-    if (endpoint.includes('/pipelines?')) return ok([{ ...pipeline, ...change.parent }]);
+    if (endpoint.includes('/pipelines?')) return ok([{ ...pipeline, ...change.parent },
+      ...(change.historicalBridge ? [{ ...pipeline, id: 90 }] : []),
+    ]);
     return ok({ id: 20, path_with_namespace: 'group/project' });
   };
   return { paths, port: new GitLabReuseExecutions({ host: 'gitlab.example.com', project: 'group/project',
@@ -143,6 +148,20 @@ describe('GitLab original execution provenance', () => {
   it('does not omit a failed original or treat a successful reuse gate as an original', async () => {
     expect(await fixture({ job: { status: 'failed' } }).port.candidates(repository, 'linux')).toEqual(ok([ref]));
     expect(await fixture({ job: { name: 'SpecGit reused / linux' } }).port.candidates(repository, 'linux')).toEqual(ok([]));
+  });
+
+  it('distinguishes a proven unexecuted dispatch from unavailable original evidence', async () => {
+    expect(await fixture({ bridge: { status: 'skipped', downstream_pipeline: null } }).port.candidates(repository, 'linux')).toEqual(ok([]));
+    const history = fixture({ historicalBridge: {} }).port;
+    expect(await history.candidates(repository, 'linux')).toEqual(ok([ref]));
+    expect((await history.original(ref)).ok).toBe(true);
+    expect(await fixture({ bridge: { status: 'skipped' } }).port.candidates(repository, 'linux')).toEqual(ok([ref]));
+    const failed = fixture({ bridge: { status: 'skipped' }, job: { status: 'failed' } }).port;
+    expect(await failed.candidates(repository, 'linux')).toEqual(ok([ref]));
+    expect((await failed.original(ref)).ok).toBe(false);
+    for (const status of ['failed', 'canceled', 'running', 'success', 'unknown']) {
+      expect((await fixture({ bridge: { status, downstream_pipeline: null } }).port.candidates(repository, 'linux')).ok).toBe(false);
+    }
   });
 
   it('retains a successful business original when only independent current acceptance failed', async () => {

@@ -106,6 +106,9 @@ export class GitLabReuseExecutions implements ReuseExecutionPort {
         for (const bridge of bridges.value) {
           if (bridge.name !== `SpecGit dispatch / ${profile}`) continue;
           const child = bridge.downstream_pipeline;
+          // Native skipped dispatches without a child contain no execution.
+          // A failed, canceled or missing child remains unavailable evidence.
+          if (bridge.status === 'skipped' && child === null) continue;
           if (!child || child.project_id !== projectId || child.sha !== parent.sha) return unavailable();
           const jobs = await this.jobs(child.id);
           if (!jobs.ok) return jobs;
