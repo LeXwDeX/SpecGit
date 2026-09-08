@@ -53,26 +53,15 @@ function fixture() {
     fs.writeFileSync(path.join(fake.binDir, 'pnpm'), '#!/usr/bin/env node\nconsole.log("9.15.9");\n', { mode: 0o755 });
     fs.writeFileSync(path.join(fake.binDir, 'pnpm.cmd'), '@echo 9.15.9\r\n');
     const module = new URL('../../dist/cli/reuse-state.js', import.meta.url).href;
-    const tools = new URL('../../dist/verification/reuse-runner.js', import.meta.url).href;
-    const source = `
-      const {readReuseCiState}=await import(${JSON.stringify(module)});
-      const state=await readReuseCiState(process.cwd(),'native',process.env,Date.now());
-      let diagnostics;
-      if (!state.context.ok && state.context.code === 'verification_reuse_environment_unavailable') {
-        const {readVerificationTool}=await import(${JSON.stringify(tools)});
-        const observe=async (name) => {
-          try { return {ok:true,version:await readVerificationTool(process.cwd(),name,['--version'],process.env)}; }
-          catch { return {ok:false}; }
-        };
-        diagnostics={pnpm:await observe('pnpm'),git:await observe('git'),node:process.versions.node,
-          platform:process.platform,arch:process.arch,image:process.env.ImageOS,imageVersion:process.env.ImageVersion};
-      }
-      console.log(JSON.stringify({context:state.context,applicable:state.applicable,diagnostics,
-        nativeJob:state.verifyJobName?await state.verifyJobName('SpecGit prepare / native'):null}));
-    `;
+    const source = `const {readReuseCiState}=await import(${JSON.stringify(module)}); const state=await readReuseCiState(process.cwd(),'native',process.env,Date.now()); console.log(JSON.stringify({context:state.context,applicable:state.applicable,nativeJob:state.verifyJobName?await state.verifyJobName('SpecGit prepare / native'):null}));`;
+    // Windows deduplicates environment names case-insensitively before spawning.
+    // Remove every inherited spelling before supplying the controlled image.
+    const childEnv = Object.fromEntries(Object.entries(fake.env({ ...env, GITLAB_CI: 'false',
+      GITHUB_REPOSITORY: 'owner/project', GITHUB_RUN_ID: '11', GITHUB_RUN_ATTEMPT: '1',
+    })).filter(([key]) => !['IMAGEOS', 'IMAGEVERSION'].includes(key.toUpperCase())));
     const output = execFileSync(process.execPath, ['--input-type=module', '-e', source], { cwd: root,
-      env: fake.env({ ...env, GITLAB_CI: 'false', GITHUB_REPOSITORY: 'owner/project', GITHUB_RUN_ID: '11',
-        GITHUB_RUN_ATTEMPT: '1', ImageOS: image, ImageVersion: '20260908.1.0' }), encoding: 'utf8', timeout: 30_000,
+      env: { ...childEnv, ImageOS: image, ImageVersion: '20260908.1.0' },
+      encoding: 'utf8', timeout: 30_000,
     });
     return { result: JSON.parse(output), calls: readFakeGhCalls(fake.logPath) };
   };
