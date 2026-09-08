@@ -4,6 +4,8 @@ const {spawnSync}=require('node:child_process');
 const root=process.cwd();
 const product=path.join(root,'product');
 const fresh=process.argv[2]==='fresh';
+if(fresh&&/^delivery: native-github-fresh-reject$/m.test(fs.readFileSync(path.join(root,'.specgit.yaml'),'utf8'))){console.error('Current binding rejected by the fresh verification fixture');process.exit(1);}
+
 const nonRoot=process.platform==='linux'&&process.getuid()===0;
 function own(directory){
  const s=fs.lstatSync(directory);
