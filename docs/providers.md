@@ -139,13 +139,14 @@ Deprecated compatibility composition → select `ForgeEvidencePort` and
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
 | `addIssueComment` | required | Ensure an exact-body traceability comment exists. Complete remote evidence reconciles retries before posting and returns the existing URL. Read failures and truncation fail closed; independent concurrent writers are not serialized. |
 | `getRequestDeclarations` | required | Exhaust request comments for an exact protocol prefix and verify each matching author's repository write authority. Unavailable permission evidence fails closed. These are current trusted declarations, not immutable execution attestations. |
+| `getIssueWriterAuthority` | required | Verify candidate issue identity and creator write authority independently before repair adoption. Untrusted candidates are ignored; unavailable permission evidence remains unknown. |
 | `appendRequestDeclaration` | required | Append a bounded declaration idempotently and confirm its provider-backed author and contents through complete readback before acknowledging it. |
 | `addIssueLabels` | required | Tag apply (#330): union-semantics label addition for every bound issue after the selection resolves. Idempotent; the response must confirm every requested slug or the call fails closed. |
 
 ### ForgeAdminPort (src/github/port.ts)
 
 Deprecated compatibility composition → select `ForgeEvidencePort` and
-`ForgeAdminWritePort` members for new callers. Its inventory appends the required repair declaration methods.
+`ForgeAdminWritePort` members for new callers. Its administration inventory is unchanged.
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |

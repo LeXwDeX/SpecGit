@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { ForgeProvider } from '../github/port.js';
-import type { CheckRunInfo } from '../github/port.js';
+import type { CheckRunInfo, OpenIssueFact } from '../github/port.js';
 import type { Policy } from '../record/policy.js';
 import type { RepoRef } from '../gitfacts/origin.js';
 
@@ -131,4 +131,47 @@ export async function recordRepairCreation(repo: RepoRef, request: number, key: 
   if (!confirmed.ok) return confirmed;
   return confirmed.value.some((item) => item.key === key && item.issue === issue)
     ? written : fail('repair_log_unconfirmed', 'The repair creation receipt is not visible after append.');
+}
+
+
+/** Markers locate candidates; provider-verified writer authority permits adoption. */
+export async function trustedRepairCandidates<T extends { number: number }>(
+  repo: RepoRef, candidates: readonly T[], forge: Pick<ForgeProvider, 'getIssueWriterAuthority'>,
+): Promise<Evidence<T[]>> {
+  const trusted: T[] = [];
+  for (const candidate of candidates) {
+    const authority = await forge.getIssueWriterAuthority(repo, candidate.number);
+    if (!authority.ok) return authority;
+    if (authority.value) trusted.push(candidate);
+  }
+  return ok(trusted);
+}
+
+
+export function repairCauseKey(cause: RepairIntent['cause']): string {
+  return createHash('sha256').update(cause.target ? `${cause.code}\0${cause.target}` : cause.code).digest('hex').slice(0, 20);
+}
+
+/** One adoption decision for first execution and recovery, including earlier heads of the same cause. */
+export async function findRepairCandidate(
+  repo: RepoRef, operation: RepairOperation,
+  forge: Pick<ForgeProvider, 'getOpenIssues' | 'searchIssueHistory' | 'getIssueWriterAuthority'>,
+  openIssues?: OpenIssueFact[],
+): Promise<Evidence<number | undefined>> {
+  if (operation.issue !== undefined) return ok(operation.issue);
+  const pool = openIssues === undefined ? await forge.getOpenIssues(repo) : ok(openIssues);
+  if (!pool.ok) return pool;
+  const marker = `<!-- specgit:failure:${operation.request}:${repairCauseKey(operation.cause)} -->`;
+  const sameCause = await trustedRepairCandidates(repo,
+    pool.value.filter((issue) => issue.body?.split('\n').some((line) => line.trim() === marker)), forge);
+  if (!sameCause.ok) return sameCause;
+  if (sameCause.value.length > 1) return fail('repair_issue_ambiguous', 'Several trusted open issues track the same failure cause.');
+  if (sameCause.value.length === 1) return ok(sameCause.value[0].number);
+  const history = await forge.searchIssueHistory(repo, operation.key);
+  if (!history.ok) return history;
+  const exact = await trustedRepairCandidates(repo,
+    history.value.filter((issue) => issue.body.split('\n').includes(`<!-- specgit:repair-operation:${operation.key} -->`)), forge);
+  if (!exact.ok) return exact;
+  if (exact.value.length > 1) return fail('repair_issue_ambiguous', 'Several trusted issues carry the same repair operation identity.');
+  return ok(exact.value[0]?.number);
 }

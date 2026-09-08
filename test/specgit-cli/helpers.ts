@@ -286,6 +286,7 @@ export function makeGhProvider(
         { ok: false, code: 'gh_transport', message: 'not configured in fake' }
       );
     }),
+    getIssueWriterAuthority: vi.fn(async () => ok(true)),
     getRequestDeclarations: vi.fn(async (_repo: RepoRef, request: number, prefix: string) =>
       ok((requestDeclarations.get(request) ?? []).filter((item) => item.body.startsWith(`${prefix}\n`)))),
     appendRequestDeclaration: vi.fn(async (_repo: RepoRef, request: number, _prefix: string, body: string) => {

@@ -91,7 +91,7 @@ default branch proved from `origin/HEAD`; those paths never guess `main`.
   completed outcomes. `finish` and `accept` remain read-only.
 - The trusted remote completion workflow continues from CI events using the
   approved target policy. `pr --merge` provides a recovery path. Completion
-  requires a confirmed merge and all bound issues closed; merged work with
+  requires a confirmed merge and all bound issues and verified derived repairs closed; merged work with
   open issues remains `closure_pending`. A proposed policy cannot enable its
   own automatic merge or weaken its own acceptance requirements.
 - Platforms atomically enforce the head SHA, but expose no equivalent
@@ -99,6 +99,30 @@ default branch proved from `origin/HEAD`; those paths never guess `main`.
   after merge, stopping further actions on mismatch. Explicit issue closure
   does not override native forge commit-message closing behavior; see
   [cli.md](cli.md) for the complete boundary.
+
+## Derived repair completion
+
+Trusted remote repair creation confirms a writer-authorized intent on the parent
+PR/MR before creating an issue, then confirms the created-issue receipt.
+Discovered candidates require independently verified creator write authority;
+public body markers alone cannot authorize adoption or block a delivery.
+Declarations are mutable forge state under repository writer control, not
+immutable execution attestations. Ordinary interrupted runs can reconcile
+retained intents and receipts; complete maintainer deletion is outside that
+recovery guarantee.
+
+Completion proves the original failure resolved against the retained request
+head, unchanged approved policy and current CI, then confirms merge and issue
+closure. Open-request acceptance does not wait for its own job to finish.
+Unresolved repair evidence remains unknown or closure-pending as applicable.
+Explicit reviewed adoption uses the existing binding and closing references.
+
+The JSON contract adds optional `evidence.repairIssues` and
+`evidence.repairLogHash` to verdict evidence, and `repairIssues` to completion
+output. Known unresolved IDs remain visible after restart. New repair and
+request-declaration evidence diagnostics are listed in
+[Reference](reference.md#derived-repair-obligations); they use exit `3`.
+The eleven gates, ten commands and existing exit meanings remain unchanged.
 
 ## Exit codes, JSON, and environment
 

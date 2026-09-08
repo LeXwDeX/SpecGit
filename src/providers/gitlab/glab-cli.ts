@@ -1,4 +1,4 @@
-import { readRequestDeclarations, appendRequestDeclaration } from '../request-declarations.js';
+import { readRequestDeclarations, appendRequestDeclaration, readIssueWriterAuthority } from '../request-declarations.js';
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import { defaultSpawn, sanitizeApiText, type SpawnFn, type SpawnOptions } from '../cli-spawn.js';
@@ -849,6 +849,12 @@ export class GlabProvider implements ForgeProvider {
       return fail('glab_transport', 'GitLab returned an unexpected issue payload.');
     }
     return ok({ number: issue.iid, url: issue.web_url });
+  }
+
+  async getIssueWriterAuthority(repo: RepoRef, issue: number) {
+    return readIssueWriterAuthority({ platform: 'gitlab', project: `${repo.owner}/${repo.repo}`, issue,
+      api: (path) => this.runApi(path, path.includes('/members/all/') ? 'permission' : 'issue'),
+    });
   }
 
   async getRequestDeclarations(repo: RepoRef, request: number, prefix: string) {

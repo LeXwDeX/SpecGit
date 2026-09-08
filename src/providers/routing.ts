@@ -167,6 +167,10 @@ export class PlatformRoutingProvider implements ForgeProvider {
     return (await this.forRepo(repo)).listOpenPrsByHead(repo, head);
   }
 
+  async getIssueWriterAuthority(repo: RepoRef, issue: number) {
+    return (await this.delegate(repo)).getIssueWriterAuthority(repo, issue);
+  }
+
   async getRequestDeclarations(repo: RepoRef, request: number, prefix: string) {
     return (await this.forRepo(repo)).getRequestDeclarations(repo, request, prefix);
   }

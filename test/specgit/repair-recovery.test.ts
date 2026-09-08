@@ -8,6 +8,23 @@ const repo = { platform: 'github' as const, owner: 'owner', repo: 'repo' };
 const headSha = 'a'.repeat(40);
 
 describe('interrupted repair creation recovery', () => {
+  it('ignores an untrusted history marker before recording a new repair receipt', async () => {
+    const policy = samplePolicy({ automation: { merge: true, target_branch: 'main', close_issues: true } });
+    const forge = makeGhProvider();
+    const intent = await recordRepairIntent(repo, { request: 42, headSha, policyHash: repairPolicyHash(policy),
+      cause: { code: 'checks_failed' }, title: 'fix: CI', body: 'Repair CI.', labels: [] }, forge);
+    if (!intent.ok) throw new Error(intent.message);
+    vi.mocked(forge.searchIssueHistory).mockResolvedValue(ok([{ number: 800, title: 'unrelated',
+      body: `<!-- specgit:repair-operation:${intent.value.key} -->`, state: 'open', url: 'https://forge.example/issues/800' }]));
+    vi.mocked(forge.getIssueWriterAuthority).mockResolvedValue(ok(false));
+    vi.mocked(forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://forge.example/issues/200' }));
+    vi.mocked(forge.getIssue).mockImplementation(async (_repo, number) => ok({ number, state: 'open', pullRequest: false }));
+    expect(await recoverRepairCreations({ repo, request: 42, root: '/repo', headSha, policy, boundIssues: [123] },
+      forge, { isAncestor: async () => ok({ contained: true }) })).toMatchObject({ ok: true });
+    expect(await readRepairLog(repo, 42, forge)).toMatchObject({ ok: true, value: [{ issue: 200 }] });
+    expect(forge.createIssue).toHaveBeenCalledOnce();
+  });
+
   it.each(['policy', 'source'] as const)('records already-created work after %s evidence changes without authorizing resolution', async (change) => {
     const policy = samplePolicy({ automation: { merge: true, target_branch: 'main', close_issues: true } });
     const forge = makeGhProvider();

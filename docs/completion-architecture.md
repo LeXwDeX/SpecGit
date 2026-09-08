@@ -63,8 +63,9 @@ The binding declares the original scope; approved target policy authorizes
 completion effects. Repair declarations extend that scope only through the
 forge adapter's verification of repository write authority. GitHub uses current
 collaborator permissions or provider-backed writable app evidence; GitLab uses
-current project membership. Issue-body markers are lookup hints and cannot
-independently authorize closure. Untrusted discussion text cannot add an
+current project membership. Historical candidates also require independently
+verified creator write authority before adoption; conclusively untrusted
+candidates are ignored. Body markers remain lookup hints. Untrusted discussion text cannot add an
 obligation; unavailable permission evidence is not an empty log.
 
 These are current writer declarations, not immutable execution attestations.

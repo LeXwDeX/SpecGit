@@ -1,4 +1,4 @@
-import { readRequestDeclarations, appendRequestDeclaration } from '../request-declarations.js';
+import { readRequestDeclarations, appendRequestDeclaration, readIssueWriterAuthority } from '../request-declarations.js';
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import { buildProtectionUpdateBody } from './protection-merge.js';
@@ -752,6 +752,12 @@ export class GhCliGitHubProvider implements ForgeProvider {
       return fail('gh_transport', 'GitHub returned an unexpected issue payload.');
     }
     return ok({ number: issue.number, url: issue.html_url });
+  }
+
+  async getIssueWriterAuthority(repo: RepoRef, issue: number) {
+    return readIssueWriterAuthority({ platform: 'github', project: `${repo.owner}/${repo.repo}`, issue,
+      api: (path) => this.runApi(path, path.includes('/collaborators/') ? 'permission' : 'issue'),
+    });
   }
 
   async getRequestDeclarations(repo: RepoRef, request: number, prefix: string) {
