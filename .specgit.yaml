@@ -1,9 +1,11 @@
 version: 1
-delivery: applicable-verification
+delivery: gitlab-label-colors
 context:
-  kind: branch
-  branch: feat/472-applicable-verification
+  kind: worktree
+  label: specgit-gitlab-label-repair-20260908
+  branch: fix/497-gitlab-label-colors
 issues:
-  - 472
-issueKinds: []
-pr: 495
+  - 497
+issueKinds:
+  - issue: 497
+    kind: kind::fix
