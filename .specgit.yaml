@@ -1,11 +1,8 @@
 version: 1
-delivery: derived-repair-completion
+delivery: aggregate-scope
 context:
   kind: branch
-  branch: fix/489-derived-repair-completion
+  branch: feat/491-aggregate-scope
 issues:
-  - 489
-issueKinds:
-  - issue: 489
-    kind: kind::fix
-pr: 490
+  - 491
+issueKinds: []
