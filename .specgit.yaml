@@ -1,12 +1,10 @@
 version: 1
-delivery: historical-policy-completion
+delivery: derived-repair-completion
 context:
   kind: branch
-  branch: feat/481-historical-policy-completion
+  branch: fix/489-derived-repair-completion
 issues:
-  - 481
-  - 484
-  - 485
-  - 486
-issueKinds: []
-pr: 483
+  - 489
+issueKinds:
+  - issue: 489
+    kind: kind::fix
