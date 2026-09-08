@@ -1,0 +1,20 @@
+version: 1
+name: automation-programme
+parent: 493
+required:
+  - issue: 489
+    target: main
+    request: 490
+  - issue: 491
+    target: main
+    request: 494
+  - issue: 492
+    target: main
+  - issue: 472
+    target: main
+  - issue: 473
+    target: main
+  - issue: 474
+    target: main
+  - issue: 477
+    target: main
