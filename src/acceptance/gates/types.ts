@@ -7,6 +7,7 @@ import type { RepoRef } from '../../gitfacts/origin.js';
 import type { ForgeEvidencePort, PrFact } from '../../github/port.js';
 import { CODE_INFO, type SpecGitCode } from '../codes.js';
 import type { RepairOperation } from '../../automation/repair-log.js';
+import type { VerificationDecision, VerificationGit } from '../../verification/resolve.js';
 
 /**
  * The shared surface of the acceptance gates (#276): the gate identity,
@@ -52,16 +53,19 @@ export interface VerdictEvidence {
   openIssues?: number[];
   repairIssues?: number[];
   repairLogHash?: string;
+  verification?: VerificationDecision;
 }
 
 export interface EvaluateInput {
   root: Evidence<string>;
   record: Evidence<DeliveryBinding>;
   policy: Evidence<Policy>;
-  git: Pick<GitPort, 'facts' | 'headContains' | 'isAncestor'>;
+  /** Approved target revision, or original target revision for merged history. */
+  policySha?: string;
+  git: Pick<GitPort, 'facts' | 'headContains' | 'isAncestor'> & Partial<VerificationGit>;
   gh?: Pick<
     ForgeEvidencePort,
-    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests' | 'getRequestDeclarations' | 'getPrChecks'
+    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests' | 'getCiConfigPath' | 'getRequestDeclarations' | 'getPrChecks'
   >;
   /** Declared GitLab host (spec_git/providers.yaml), if any. */
   gitlabHost?: string;

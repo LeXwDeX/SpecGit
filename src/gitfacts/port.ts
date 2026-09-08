@@ -19,6 +19,20 @@ export interface BranchCheckout {
   created: boolean;
 }
 
+export interface GitChange {
+  path: string;
+  status: 'A' | 'M' | 'D' | 'T';
+  oldMode: string;
+  newMode: string;
+}
+
+export interface GitChangeSet {
+  baseSha: string;
+  mergeBaseSha: string;
+  headSha: string;
+  changes: GitChange[];
+}
+
 /**
  * Local git write operations for the delivery bootstrap (`specgit
  * issue`). Like the read side, everything goes through real local git —
@@ -63,6 +77,8 @@ export interface GitWritePort {
 
 export interface GitPort extends GitWritePort {
   facts(root: string): Promise<GitFacts>;
+  /** Complete immutable PR changes from a single merge base; renames retain deletion and addition. */
+  changesBetween(root: string, baseSha: string, headSha: string): Promise<Evidence<GitChangeSet>>;
   /** Read committed data at the live origin branch, without fetching or modifying local refs. */
   readFileAtRemoteRef(root: string, branch: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>>;
   /** Read a regular file at a full immutable commit identity; never resolve user input as a ref. */
@@ -108,6 +124,7 @@ export interface GitPort extends GitWritePort {
  */
 const GIT_PORT_MEMBER_FLAGS = {
   facts: true,
+  changesBetween: true,
   readFileAtRemoteRef: true,
   readFileAtCommit: true,
   readFileHistory: true,

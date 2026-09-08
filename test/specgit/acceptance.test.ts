@@ -37,6 +37,7 @@ const MERGE_SHA = 'm'.repeat(40);
 type ContainmentScript = (sha: string) => Evidence<{ contained: boolean }>;
 
 class StubGitPort implements GitPort {
+  async changesBetween(): Promise<never> { throw new Error('No verification changes configured.'); }
   async readFileAtCommit(): Promise<never> { throw new Error('No scope evidence configured.'); }
   async readFileHistory(): Promise<never> { throw new Error('No scope evidence configured.'); }
   readonly headContainsCalls: string[] = [];
@@ -142,6 +143,33 @@ function gate(verdict: Verdict, id: GateId) {
 }
 
 describe('acceptance evaluator', () => {
+  it.each(['github', 'gitlab'] as const)('selects current-head verification from approved changes on %s', async (platform) => {
+    const base = 'a'.repeat(40);
+    const given = input({ policy: ok({ version: 1, required_checks: [], verification: { product_checks: ['build'], rules: [] } }) });
+    given.policySha = base;
+    given.gitlabHost = platform === 'gitlab' ? 'gitlab.com' : undefined;
+    given.git = {
+      facts: async () => facts({ originUrl: `https://${platform}.com/LeXwDeX/SpecGit.git` }),
+      headContains: async () => ok({ contained: false }),
+      isAncestor: async () => ok({ contained: true }),
+      changesBetween: async () => ok({ baseSha: base, mergeBaseSha: base, headSha: HEAD,
+        changes: [{ path: 'src/product.ts', status: 'M', oldMode: '100644', newMode: '100644' }] }),
+      readFileAtCommit: async () => fail('git_file_unavailable', 'No binding file read expected'),
+    };
+    const missing = await evaluate(given);
+    expect(missing.exitCode).toBe(1);
+    expect(gate(missing, 'checks').failures).toMatchObject([{ code: 'checks_missing', detail: { name: 'build' } }]);
+    given.gh = new MockForgeProvider({ pr: ok(makePrFact({ headSha: HEAD })), checkRuns: ok([makeCheckRun('build')]) });
+    const passed = await evaluate(given);
+    expect(passed.exitCode).toBe(0);
+    expect(passed.evidence.verification).toMatchObject({ kind: 'applicable', requiredChecks: ['build'], baseSha: base, headSha: HEAD });
+  });
+
+  it('reports missing applicability evidence as unknown, not an empty required-check list', async () => {
+    const given = input({ policy: ok({ version: 1, required_checks: [], verification: { product_checks: ['build'], rules: [] } }) });
+    expect((await evaluate(given)).exitCode).toBe(3);
+  });
+
   it('accepts an all-green delivery', async () => {
     const verdict = await evaluate(input());
     expect(verdict.accepted).toBe(true);

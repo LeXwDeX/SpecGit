@@ -94,7 +94,10 @@ export interface ScopeOutcome extends OutcomeBase {
     declaration: { path: string; branch: string; sha: string; hash: string; history: string[] };
   };
 }
-export type FinishOutcome = AcceptOutcome | ScopeOutcome;
+export interface VerificationOutcome extends OutcomeBase {
+  verification?: import('../verification/resolve.js').VerificationDecision;
+}
+export type FinishOutcome = AcceptOutcome | ScopeOutcome | VerificationOutcome;
 
 /** `specgit bind`: the written record plus the derived binding state. */
 export interface BindOutcome extends OutcomeBase {
@@ -214,6 +217,7 @@ export interface InitOutcome extends OutcomeBase {
 export type CommandOutcome =
   | AcceptOutcome
   | ScopeOutcome
+  | VerificationOutcome
   | BindOutcome
   | UnbindOutcome
   | IssueOutcome
@@ -241,6 +245,7 @@ export function buildEnvelope(
   const optional: Array<[string, unknown]> = [];
   if ('state' in outcome) optional.push(['state', outcome.state]);
   if ('scope' in outcome) optional.push(['scope', outcome.scope]);
+  if ('verification' in outcome) optional.push(['verification', outcome.verification]);
   if ('recordState' in outcome) optional.push(['recordState', outcome.recordState]);
   if ('localContext' in outcome) optional.push(['localContext', outcome.localContext]);
   if ('lifecycle' in outcome) optional.push(['lifecycle', outcome.lifecycle]);

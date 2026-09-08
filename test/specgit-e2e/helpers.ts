@@ -132,6 +132,7 @@ export interface PrShape {
   body: string;
   state?: 'open' | 'closed';
   mergedAt?: string | null;
+  mergeCommitSha?: string;
   draft?: boolean;
 }
 
@@ -140,6 +141,7 @@ export function prJson(pr: PrShape): string {
     number: pr.number,
     state: pr.state ?? 'open',
     merged_at: pr.mergedAt ?? null,
+    ...(pr.mergeCommitSha ? { merge_commit_sha: pr.mergeCommitSha } : {}),
     draft: pr.draft ?? false,
     head: { ref: pr.branch, sha: pr.sha },
     base: { ref: 'main' },

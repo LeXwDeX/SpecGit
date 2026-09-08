@@ -30,6 +30,9 @@ export {
 export type { ExecutionContext, DeliveryBinding } from './record/schema.js';
 
 export { PolicySchema } from './record/policy.js';
+export { VerificationPolicySchema } from './verification/policy.js';
+export type { VerificationPolicy } from './verification/policy.js';
+export type { VerificationDecision } from './verification/resolve.js';
 export { ScopeSchema } from './scope/declaration.js';
 export type { ScopeDeclaration, ScopeMember } from './scope/declaration.js';
 export type { Policy } from './record/policy.js';
@@ -50,6 +53,8 @@ export { discoverRepoRoot } from './record/root.js';
 
 export type {
   GitFacts,
+  GitChange,
+  GitChangeSet,
   GitPort,
   GitWritePort,
   SpawnFn,

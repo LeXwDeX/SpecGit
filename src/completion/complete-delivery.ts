@@ -1,4 +1,5 @@
 /** Approved, exact-head completion shared by local and remote callers. */
+import { verifyCiEntry } from '../verification/resolve.js';
 import { verifyRepairResolution } from '../acceptance/repair-obligations.js';
 import type { PrFact } from '../github/port.js';
 import { classifyCiEligibility } from '../automation/ci-eligibility.js';
@@ -110,7 +111,7 @@ export async function completeDelivery(
     }
   }
 
-  const verdict = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  const verdict = await ctx.evaluate({ root, record, policy, policySha: resolved.ok ? resolved.value.sha : undefined, git: ctx.git, gh: ctx.gh });
   repairIssues = verdict.evidence.repairIssues;
   if (verdict.exitCode !== 0 || !verdict.accepted || !verdict.complete) {
     const failure = verdict.gates.flatMap((gate) => gate.failures)[0];
@@ -134,7 +135,7 @@ export async function completeDelivery(
   if (ci.value.headSha !== observed.headSha) {
     return stop('automation_head_changed', 'CI/CD evidence belongs to a different PR/MR head.');
   }
-  const eligibility = classifyCiEligibility(ci.value.checks, policy.value.required_checks);
+  const eligibility = classifyCiEligibility(ci.value.checks, verdict.evidence.verification?.requiredChecks ?? policy.value.required_checks);
   if (eligibility.empty) return stop('automation_checks_missing', 'No CI/CD checks were reported for the PR/MR head.');
   if (eligibility.missingRequired.length > 0) {
     return stop('automation_checks_missing', `Required checks are missing: ${eligibility.missingRequired.join(', ')}.`);
@@ -187,9 +188,12 @@ export async function completeDelivery(
     if (!currentRecord.ok) return unavailable(currentRecord);
     if (!currentPolicy.ok) return unavailable(currentPolicy);
     if (JSON.stringify(currentRecord.value) !== JSON.stringify(record.value) ||
-        JSON.stringify(currentPolicy.value) !== JSON.stringify(policy.value)) {
+        JSON.stringify(currentPolicy.value) !== JSON.stringify(policy.value) ||
+        (policy.value.verification && resolved.ok && currentResolved.ok && currentResolved.value.sha !== resolved.value.sha)) {
       return stop('automation_binding_changed', 'The delivery binding or policy changed during automation. Retry with fresh evidence.');
     }
+    const entry = await verifyCiEntry({ policy: policy.value, request: observed, repo: repo.value, forge: ctx.gh });
+    if (!entry.ok) return unavailable(entry);
     return null;
   };
   const changedPr = (current: PrFact): boolean =>

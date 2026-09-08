@@ -256,6 +256,7 @@ export function createProgram(
     .command('finish')
     .description('Evidence verdict for the delivery (same evaluation as accept; the CI gate)')
     .option('--scope <name>', 'Assess an approved aggregate scope independently of the current delivery')
+    .option('--plan-checks', 'Plan applicable checks from approved policy and immutable changes (not acceptance)')
     .option('--json', 'Output as JSON')
     .action(wrap('finish', runFinish as CommandRun));
 

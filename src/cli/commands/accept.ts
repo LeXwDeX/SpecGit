@@ -42,7 +42,7 @@ export async function runAccept(
   const resolution = await ctx.resolvePolicy(root.value, record);
   const policy = resolution.ok ? { ok: true as const, value: resolution.value.policy } : resolution;
 
-  const evaluated = await ctx.evaluate({ root, record, policy, git: ctx.git, gh: ctx.gh });
+  const evaluated = await ctx.evaluate({ root, record, policy, policySha: resolution.ok ? resolution.value.sha : undefined, git: ctx.git, gh: ctx.gh });
   if (resolution.ok) evaluated.evidence.policySource = {
     kind: resolution.value.source, branch: resolution.value.branch, sha: resolution.value.sha,
   };

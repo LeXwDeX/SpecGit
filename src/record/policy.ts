@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { isTagSlug, TAG_GRAMMAR_FIX } from '../tags/catalog.js';
+import { VerificationPolicySchema } from '../verification/policy.js';
 
 /**
  * #118 — the presentation languages the generated-text catalog ships.
@@ -72,6 +73,8 @@ export const PolicySchema = z
     // gate. Names that can never appear as check-runs (e.g. the PR merge
     // box aggregate) are rejected at init detection instead.
     required_checks: z.array(z.string().min(1)),
+    /** Opt-in applicable business checks; required_checks remain unconditional. */
+    verification: VerificationPolicySchema.optional(),
     ordered_issues: z.boolean().optional(),
     /** Presentation language of generated text (scaffolds, harness guidance, human prose). Default `en`. */
     language: z.enum(POLICY_LANGUAGES).optional(),

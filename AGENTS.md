@@ -86,6 +86,12 @@ already exists); keep manual guidance outside them.
   default branch. A delivery's completion does not complete the programme;
   every required member and the parent issue must be confirmed complete.
 
+- For applicable verification, wire project CI to the approved `verification`
+  policy and `specgit finish --plan-checks --json` result's
+  `verification.requiredChecks`. Agents can create project-specific GitHub/GitLab
+  business-job scheduling from that decision. Keep a stable always-run acceptance
+  status; a successful plan is not acceptance, and missing evidence is no exemption.
+
 ### Issue tags
 
 - Follow the project's `language` for issues and PRs/MRs. Enabled `validation`

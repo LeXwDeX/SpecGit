@@ -20,6 +20,10 @@ approved `spec_git/scopes/<name>.yaml` and assesses every required delivery.
 Report the separate `scope` state; one delivery's completion never proves
 programme completion. This assessment performs no merge or issue closure.
 
+For project CI scheduling, `specgit finish --plan-checks --json` returns
+`verification.requiredChecks`; keep a stable acceptance status and run ordinary
+finish after applicable checks. A successful plan does not establish acceptance.
+
 ## Usage
 
 ```bash

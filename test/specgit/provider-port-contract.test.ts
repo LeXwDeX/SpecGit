@@ -63,6 +63,7 @@ describe('provider port contract (#80)', () => {
         'pushBranch',
         'readFileAtRemoteRef',
         'readFileAtCommit',
+        'changesBetween',
         'readFileHistory',
         'readFileBeforeMerge',
         'remoteDefaultBranch',

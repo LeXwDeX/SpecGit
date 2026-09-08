@@ -1,6 +1,7 @@
 import { RECORD_MISSING_FIX } from '../kernel/diagnostics.js';
 
 export type SpecGitCode =
+  | 'verification_changes_unavailable'
   | 'request_declaration_invalid'
   | 'request_declaration_unknown'
   | 'request_declaration_unconfirmed'
@@ -75,6 +76,10 @@ export interface CodeInfo {
  * (unknown, exit 3).
  */
 export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
+  verification_changes_unavailable: {
+    kind: 'evidence', message: 'The complete immutable verification inputs are unavailable.',
+    fix: 'Fetch the approved target and request-head history, then retry verification selection.',
+  },
   request_declaration_invalid: {
     kind: 'evidence', message: 'The request declaration input is invalid.',
     fix: 'Preserve the declaration protocol and retry with a valid request identity.',

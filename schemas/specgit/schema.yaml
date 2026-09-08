@@ -127,6 +127,28 @@ documents:
           repository additionally requires Required verification through its
           metadata contract. Acceptance uses approved target-branch policy,
           so a PR cannot weaken its own required checks by changing this file.
+      verification:
+        type: strict object (optional)
+        fields:
+          gitlab_entry: { type: local repository path, required: false, default: .gitlab-ci.yml }
+          product_checks: { type: nonempty array of check names, required: true }
+          rules:
+            type: array of strict path/check rules
+            required: true
+            fields:
+              paths: { type: nonempty array of anchored repository patterns, required: true }
+              checks: { type: array of check names, required: true }
+        notes: >-
+          required_checks remain unconditional. The approved policy selects
+          additional checks by complete immutable changes: unmatched and critical
+          verification inputs use product_checks; matching rules are unioned.
+          Recognized valid binding-only changes require no product checks.
+          Patterns are case-sensitive, with * within a component and ** as an
+          entire component, never leading ** or traversal. Deletions and mode
+          changes use product checks. Self-requiring SpecGit Acceptance or
+          SpecGit Completion is invalid. finish --plan-checks --json returns a
+          separate verification decision, not acceptance. Missing Git evidence
+          exits 3. Historical completion uses original approved target inputs.
       ordered_issues:
         type: boolean
         required: false
