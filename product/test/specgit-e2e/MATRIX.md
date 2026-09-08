@@ -1,0 +1,69 @@
+# External adoption & install matrix (historical tracker #67)
+
+Reproducible evidence map for "the npm package and generated harness
+work in repositories with different branches, package managers, CI
+layouts, and worktrees". Everything below runs from the packed
+candidate artifact (`npm pack` of this repo) installed into throwaway,
+unrelated npm repositories — no workspace, no pnpm, no SpecGit-repo
+paths, no `main` assumption.
+
+## Layers and how to run them
+
+| Layer | What it proves | Command | When it runs |
+|---|---|---|---|
+| file:// adoption (fixtures below) | install/init/issue/resume/pr/finish/doctor + 0/1/2/3 exits from the installed bin | `pnpm run build && pnpm vitest run test/specgit-e2e/external-matrix.e2e.test.ts` | every CI `test_matrix` entry (required) |
+| clean pack | the tarball ships the package surface only | `pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "clean"` | every CI `test_matrix` entry (required) |
+| npx (local) | `npx --no-install specgit` resolves the adopted install | `pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "npx"` | every CI `test_matrix` entry (required) |
+| global install | `npm i -g` into an isolated prefix; PATH shim runs the CLI anywhere | `pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "global"` | every CI `test_matrix` entry (required) |
+| registry-published | the published package itself via `npx --yes specgit@<version>` | `SPECGIT_E2E_PUBLISHED=1 pnpm vitest run test/specgit-e2e/install-smoke.e2e.test.ts -t "registry-published"` | opt-in; offline development and normal repository CI skip it |
+
+Environment knobs: `SPECGIT_E2E_PUBLISHED=1` enables the registry
+smoke; `SPECGIT_E2E_PUBLISHED_VERSION` overrides the pinned version
+(default `0.7.2`, the version already immutable on the registry).
+
+## Fixture × command × verdict matrix (external-matrix.e2e.test.ts)
+
+| Fixture | Default branch | Own CI | Commands exercised from the installed bin | Verdicts |
+|---|---|---|---|---|
+| unrelated npm repo (pushable) | `master` | none | doctor → init → doctor → issue (broken bootstrap, exit 3) → `pr` repair → issue resume (idempotent) → finish | doctor 3→0 · bootstrap 3 · pr 0 · resume 0 · finish **0 accepted** |
+| unrelated npm repo (pushable) | `main` | App CI (`Build`) | init (auto-detect `Build`) → bind → finish on red CI → finish on merged/green | finish **1 rejected** (`checks_failed`) → finish **0 accepted** |
+| linked worktree | `master` | none | init → issue (branch, record `kind: worktree`, push) → finish | issue 0 · finish **0 accepted** (worktree context) |
+| installed bin, non-git cwd | — | — | `status --json` outside any repository | **3** `not_a_git_repo`, one JSON doc, clean stderr |
+| installed bin, git-only PATH | `master` | none | init → bind → finish with gh absent | **3** `gh_missing` (fail-closed) |
+| installed bin, unknown command | — | — | `definitely-not-a-command --json` | **2** usage error, one JSON doc |
+
+## Dimension coverage
+
+- **Node**: exercises the declared floor in CI (`20.19.0` on every
+  `test_matrix` entry); `engines: >=20.19.0` in every fixture manifest.
+- **OS/shell**: the two files are picked up by vitest unconditionally,
+  so they run on the required `linux-bash`, `macos-bash`, and
+  `windows-pwsh` legs (the experimental `self-hosted-linux` shadow leg
+  was retired in #105 before this matrix ran there). No CI workflow
+  edits were needed or made.
+- **Package manager**: adopting repos are plain npm with no lockfile;
+  installs use isolated `npm_config_cache` temp dirs.
+
+## Results
+
+Snapshot of record (#88 finding 1): every count below is an actual run
+pinned to one platform and one commit. Counts quoted in issues, PRs,
+and reviews are point-in-time prose and are superseded by this section
+— this retires the drifted 502/599/600 coexistence. Refreshing means
+re-running the suite and re-pinning all three facts (count, platform,
+commit); never edit a number without its provenance.
+
+- Local (darwin arm64, Node v26.7.0) at `0eff38c` (main, PR #144):
+  full suite `Tests 797 passed | 1 skipped (798)` across `43` files;
+  the two matrix-layer files green (`external-matrix.e2e.test.ts`
+  3 passed; `install-smoke.e2e.test.ts` 6 passed | 1 opt-in skip).
+- CI: populated by the delivery PR's `Test (<label>)` checks — see the
+  pull request's Checks tab for linux-bash / macos-bash / windows-pwsh
+  runs of this exact matrix. Workflow facts since `4df0ae0`: test jobs
+  run with a 20-minute timeout (was 15), and the windows-pwsh leg
+  forces `VITEST_MAX_WORKERS=1` (was 2; linux-bash and macos-bash
+  run 4 workers).
+- Post-publish verification: enable `SPECGIT_E2E_PUBLISHED=1` on the registry
+  layer and link the resulting real external-repository run from the release
+  delivery. Issue #67 contains the original adoption evidence and is a closed
+  historical tracker, not an always-on job.

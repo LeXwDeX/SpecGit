@@ -1,0 +1,2005 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+import { runCliWith } from '../../src/cli/index.js';
+import { EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
+import { SPEC_GIT_DIR, POLICY_FILENAME } from '../../src/cli/types.js';
+import {
+  BLOCK_END_MARKER,
+  BLOCK_START_MARKER,
+  harnessWorkflowYaml,
+  managedPromptBlock,
+} from '../../src/cli/harness-content.js';
+import { HARNESS_WORKFLOW_PATH } from '../../src/cli/harness-placement.js';
+import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
+import { LOCAL_ASSET_IGNORE_ENTRIES } from '../../src/cli/commands/init-ignore.js';
+import { makeCtx, makeGitFacts, makeGhProvider, parseStdoutJson, samplePolicy, stdoutText } from './helpers.js';
+import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+import { readPolicy, readPolicySnapshot, writePolicy } from '../../src/record/io.js';
+
+const WORKFLOW_ABS = (root: string) => path.join(root, ...HARNESS_WORKFLOW_PATH.split('/'));
+const AGENTS_ABS = (root: string) => path.join(root, 'AGENTS.md');
+const CLAUDE_ABS = (root: string) => path.join(root, 'CLAUDE.md');
+
+function read(filePath: string): string {
+  return fs.readFileSync(filePath, 'utf-8');
+}
+
+describe('specgit init', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it.each(['changed', 'created', 'deleted', 'during-write', 'lock-timeout', 'hook-lock-timeout', 'after-write'])('preserves concurrently %s authoritative policy and rolls back the harness', { timeout: 10_000 }, async (change) => {
+    const target = path.join(root, SPEC_GIT_DIR, POLICY_FILENAME);
+    const concurrent = '# user edit\nversion: 1\nrequired_checks: [Build, Security]\n';
+    if (change !== 'created') await writePolicy(root, { version: 1, required_checks: ['Build'] });
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root });
+    t.ctx.record.readPolicy = readPolicy;
+    t.ctx.record.readPolicySnapshot = readPolicySnapshot;
+    const mutate = () => {
+      if (change === 'deleted') fs.unlinkSync(target);
+      else { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, concurrent); }
+    };
+    t.ctx.record.writePolicy = async (repoRoot, policy, basis) => {
+      if (change === 'during-write') mutate();
+      if (change === 'lock-timeout' || change === 'hook-lock-timeout') {
+        fs.writeFileSync(`${target}.lock`, 'held by another writer');
+        const pending = writePolicy(repoRoot, policy, basis);
+        mutate();
+        if (change === 'hook-lock-timeout') fs.writeFileSync(path.join(root, '.opencode/hooks.json'), '{"user-added":true}\n');
+        return pending;
+      }
+      const written = await writePolicy(repoRoot, policy, basis);
+      if (change === 'after-write') {
+        mutate();
+        fs.mkdirSync(path.join(root, '.gitignore'));
+      }
+      return written;
+    };
+    const tracked = t.ctx.git.trackedFiles;
+    t.ctx.git.trackedFiles = async (repoRoot, paths) => {
+      if (['changed', 'created', 'deleted'].includes(change) && paths.includes(`${SPEC_GIT_DIR}/${POLICY_FILENAME}`)) mutate();
+      return tracked(repoRoot, paths);
+    };
+    expect(await runCliWith(['node', 'specgit', 'init', '--force', '--required-check', 'Build', '--no-protect', '--json'], t.ctx)).toBe(EXIT_UNKNOWN);
+    if (change === 'deleted') expect(fs.existsSync(target)).toBe(false);
+    else expect(read(target)).toBe(concurrent);
+    if (change === 'hook-lock-timeout') expect(read(path.join(root, '.opencode/hooks.json'))).toBe('{"user-added":true}\n');
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+    expect(stdoutText(t.io)).toContain('failed');
+  });
+
+  it('creates spec_git/policy.yaml with the declared required checks', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      [
+        'node', 'specgit', 'init',
+        '--required-check', 'Test',
+        '--required-check', 'All checks passed',
+      ],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites).toHaveLength(1);
+    expect(t.recordPort.policyWrites[0]).toEqual({
+      root,
+      policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test', 'All checks passed'] },
+    });
+    expect(t.recordPort.recordWrites).toHaveLength(0);
+  });
+
+  it('prints a human summary with the spec_git path and the harness artifacts', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+    expect(stdoutText(t.io)).toContain(SPEC_GIT_DIR);
+    expect(stdoutText(t.io)).toContain(POLICY_FILENAME);
+    expect(stdoutText(t.io)).toContain(HARNESS_WORKFLOW_PATH);
+    expect(stdoutText(t.io)).toContain('AGENTS.md');
+  });
+
+  it('emits a JSON envelope in --json mode', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('ok');
+    expect(envelope.command).toBe('init');
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test'] });
+  });
+
+  it('probes protection after writing the policy and warns without a TTY (no changes)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.ghProvider.calls).toContain('getBranchProtection:LeXwDeX/SpecGit:main');
+    expect(t.ghProvider.calls).toContain('getRepoAutomerge:LeXwDeX/SpecGit');
+    expect(t.ghProvider.calls).not.toContain('enableBranchProtection:LeXwDeX/SpecGit:main:SpecGit Acceptance');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({
+      branch: 'main',
+      protected: false,
+      automerge: false,
+      action: 'warned',
+    });
+    // The fix guidance must be non-weakening: it may not teach a command
+    // that clears reviews, restrictions, or admin enforcement.
+    const fix = String(envelope.protection.fix ?? '');
+    expect(fix).not.toContain('gh api');
+    expect(fix).not.toContain('"required_pull_request_reviews":null');
+    expect(fix).not.toContain('"restrictions":null');
+    expect(fix).not.toContain('"enforce_admins":false');
+    expect(fix).toContain('SpecGit Acceptance');
+  });
+
+  it('renders the executable GitHub protection repair in human output', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+
+    expect(await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx)).toBe(EXIT_SUCCESS);
+
+    expect(stdoutText(t.io)).toContain('Settings → Branches');
+    expect(stdoutText(t.io)).toContain('specgit init --force --protect');
+  });
+
+  it('--protect enables protection and auto-merge from scripts', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.ghProvider.calls).toContain('enableBranchProtection:LeXwDeX/SpecGit:main:SpecGit Acceptance');
+    expect(t.ghProvider.calls).toContain('enableRepoAutomerge:LeXwDeX/SpecGit');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({
+      protected: true,
+      requiredChecks: ['SpecGit Acceptance'],
+      automerge: true,
+      action: 'protected',
+    });
+  });
+
+  it('treats GitLab protected-branch plus pipeline-success as the protection proof', async () => {
+    const forge = makeGhProvider({
+      branchProtection: { ok: true, value: { protected: true, requiredChecks: [] } },
+      repoAutomerge: { ok: true, value: { enabled: true } },
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(forge.calls).not.toContain('enableBranchProtection:suntao/specgit:main:pipeline-success');
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      protected: true,
+      pipelineRequired: true,
+      action: 'already-protected',
+    });
+  });
+
+  it('--protect enables GitLab branch and pipeline protection without inventing a job name', async () => {
+    const forge = makeGhProvider();
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node',
+        'specgit',
+        'init',
+        '--required-check',
+        'Test',
+        '--gitlab-host',
+        'git.ycgame.com',
+        '--protect',
+        '--json',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(forge.calls).toContain('enableBranchProtection:suntao/specgit:main:pipeline-success');
+    expect(forge.calls.join('\n')).not.toContain('SpecGit Acceptance');
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      protected: true,
+      pipelineRequired: true,
+      action: 'protected',
+    });
+    expect(parseStdoutJson(t.io).protection).not.toHaveProperty('automerge');
+  });
+
+  it('warns with a GitLab pipeline-protection repair and no GitHub Settings path', async () => {
+    const forge = makeGhProvider();
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    const protection = parseStdoutJson(t.io).protection;
+    expect(protection).toMatchObject({
+      protected: false,
+      pipelineRequired: false,
+      action: 'warned',
+    });
+    expect(protection.fix).toContain('specgit init --force --protect');
+    expect(protection.fix).toContain('pipeline');
+    expect(protection.fix).not.toContain('SpecGit Acceptance');
+    expect(protection.fix).not.toContain('Settings');
+  });
+
+  it('does not report protected when GitHub omits the required check from the returned post-state', async () => {
+    const forge = makeGhProvider({
+      enableBranchProtection: { ok: true, value: { protected: true, requiredChecks: [] } },
+    });
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false, gh: forge });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--protect', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).protection).toMatchObject({ action: 'unavailable' });
+  });
+
+  it('does not report protected when GitLab cannot prove the pipeline-success gate was enabled', async () => {
+    const forge = makeGhProvider({
+      enableRepoAutomerge: { ok: true, value: { enabled: false } },
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node',
+        'specgit',
+        'init',
+        '--required-check',
+        'Test',
+        '--gitlab-host',
+        'git.ycgame.com',
+        '--protect',
+        '--json',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      pipelineRequired: false,
+      action: 'unavailable',
+    });
+  });
+
+  it('does not report protected when GitLab omits branch protection from the returned post-state', async () => {
+    const forge = makeGhProvider({
+      enableBranchProtection: { ok: true, value: { protected: false, requiredChecks: [] } },
+      repoAutomerge: { ok: true, value: { enabled: true } },
+    });
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith(
+      [
+        'node',
+        'specgit',
+        'init',
+        '--required-check',
+        'Test',
+        '--gitlab-host',
+        'git.ycgame.com',
+        '--protect',
+        '--json',
+      ],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).protection).toMatchObject({
+      protected: false,
+      pipelineRequired: true,
+      action: 'unavailable',
+    });
+  });
+
+  it('--no-protect skips the probe entirely', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--automation', 'no', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.ghProvider.calls).not.toContain('getBranchProtection:LeXwDeX/SpecGit:main');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toBeUndefined();
+  });
+
+  // #352: a fresh init (harness untracked — nothing has ridden a commit
+  // yet) must hand off the adoption: structured nextActions in the JSON
+  // envelope, the policy force-add hint among them.
+  it('fresh init emits adoption nextActions with the policy force-add hint (#352)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const actions = envelope.nextActions ?? [];
+    expect(actions.map((a: any) => a.code)).toEqual([
+      'adoption_branch',
+      'adoption_commit',
+      'adoption_pr',
+      'adoption_protect',
+      'adoption_setup',
+    ]);
+    const commit = actions.find((a: any) => a.code === 'adoption_commit');
+    expect(commit.command).toContain('git add -f spec_git/policy.yaml');
+    expect(commit.reason).toContain('.gitignore');
+    const protectAction = actions.find((a: any) => a.code === 'adoption_protect');
+    expect(protectAction.command).toContain('specgit init --force --protect');
+  });
+
+  it('fresh init renders the adoption handoff for humans too (#352)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const out = stdoutText(t.io);
+    expect(out).toContain('git add -f spec_git/policy.yaml');
+    expect(out).toContain('specgit init --force --protect');
+  });
+
+  it('an adopted repo (tracked harness) gets no adoption nextActions (#352)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      stdinIsTTY: false,
+      gitWrites: { trackedFiles: (paths) => ({ ok: true, value: paths }) },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.nextActions).toBeUndefined();
+  });
+
+  // #352 review finding: the adoption hand-off must speak the platform's
+  // dialect — a declared GitLab origin gets glab mr create and no
+  // gh-only protection step.
+  it('gitlab mode adapts the adoption nextActions to the platform (#352)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const actions = envelope.nextActions ?? [];
+    const codes = actions.map((a: any) => a.code);
+    expect(codes).not.toContain('adoption_protect');
+    const pr = actions.find((a: any) => a.code === 'adoption_pr');
+    expect(pr.command).toContain('glab mr create');
+    expect(pr.command).not.toContain('gh pr create');
+    const setup = actions.find((a: any) => a.code === 'adoption_setup');
+    expect(setup.command).toContain('specgit status');
+  });
+
+  // #352 review: gitlab mode never writes the GitHub workflow, so the
+  // adoption signal there is the TRACKED POLICY (force-carried by the
+  // adoption commit) — an adopted GitLab repo must not be told to adopt
+  // again on every init --force.
+  it('an adopted gitlab repo (tracked policy) gets no adoption nextActions (#352)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      // Models real git: gitlab mode never writes the GitHub workflow, so
+      // that path is never tracked there; everything else rides commits.
+      gitWrites: {
+        trackedFiles: (paths) => ({
+          ok: true,
+          value: paths.filter((p) => !p.includes('.github')),
+        }),
+      },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.nextActions).toBeUndefined();
+  });
+
+  it('reports already-protected without re-enabling', async () => {
+    const gh = makeGhProvider({
+      branchProtection: { ok: true, value: { protected: true, requiredChecks: ['SpecGit Acceptance'] } },
+      repoAutomerge: { ok: true, value: { enabled: true } },
+    });
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false, gh });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(gh.calls).not.toContain('enableBranchProtection:LeXwDeX/SpecGit:main:SpecGit Acceptance');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({ action: 'already-protected' });
+  });
+
+  it('fail-open: provider failure during probing leaves init succeeding as unavailable', async () => {
+    const gh = makeGhProvider({
+      branchProtection: { ok: false, code: 'gh_transport', message: 'HTTP 403: resource not accessible' },
+    });
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false, gh });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.protection).toMatchObject({ action: 'unavailable' });
+  });
+
+  it('--gitlab-host declares the platform and writes spec_git/providers.yaml', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'git.ycgame.com' });
+    expect(fs.readFileSync(path.join(root, 'spec_git', 'providers.yaml'), 'utf-8')).toContain(
+      'git.ycgame.com'
+    );
+  });
+
+  // #117: a GitHub Actions workflow is wrong-platform output for a
+  // GitLab repository — init on gitlab mode writes every platform-neutral
+  // harness asset (managed blocks, hooks) but NOT the workflow, and states
+  // that the project owns its .gitlab-ci.yml acceptance job.
+  it('--gitlab-host skips the GitHub Actions workflow and warns gitlab_harness_pending (#117)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(envelope.harness).toEqual({ template: 'gitlab-pending', acceptance: '.gitlab/specgit-accept.mjs' });
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'gitlab_harness_pending'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.message).toContain('project-owned .gitlab-ci.yml');
+    expect(warning.message).toContain('specgit finish --json');
+    expect(warning.message).not.toContain('not generated yet');
+    expect(warning.fix).toContain('job key');
+    expect(warning.fix).toContain('--required-check <name>');
+    // Platform-neutral harness assets still land: the managed prompt
+    // block in AGENTS.md.
+    expect(read(AGENTS_ABS(root))).toContain(BLOCK_START_MARKER);
+  });
+
+  it('reports a generated GitLab reuse acceptance job with automation disabled', async () => {
+    const { ReuseProfileSchema } = await import('../../src/verification/reuse-profile.js');
+    const profile = ReuseProfileSchema.parse({
+      id: 'linux', check: 'Test', max_age_seconds: 3600, node: '20.19.0', pnpm: '9.15.9',
+      runtime: { package: 'specgit@1.15.1', lockfile: 'ci/runtime-lock.json' },
+      commands: [['pnpm', 'test']], fresh_commands: [],
+      gitlab: { image: 'node@sha256:' + 'a'.repeat(64), entry: '.gitlab-ci.yml', tags: ['runner'] },
+    });
+    const policy = { version: 1 as const, required_checks: ['Test'],
+      automation: { merge: false, close_issues: false },
+      verification: { product_checks: ['Test'], reuse: [profile], rules: [] },
+    };
+    await writePolicy(root, policy);
+    const before = read(path.join(root, SPEC_GIT_DIR, POLICY_FILENAME));
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, policy,
+      facts: makeGitFacts({ originUrl: 'git@gitlab.example.com:group/project.git' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--force', '--no-protect',
+      '--gitlab-host', 'gitlab.example.com', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.harness).toEqual({ template: 'gitlab', acceptance: '.gitlab/specgit-accept.mjs' });
+    expect(envelope.warnings?.some((warning: { code: string }) => warning.code === 'gitlab_harness_pending')).not.toBe(true);
+    expect(read(path.join(root, '.gitlab-ci.yml'))).toContain('SpecGit Acceptance');
+    expect(read(path.join(root, SPEC_GIT_DIR, POLICY_FILENAME))).toBe(before);
+  });
+
+  it('--gitlab-host never claims to create the workflow it skips (#269)', async () => {
+    // The human summary must equal the real side effects: no "Created
+    // .github/workflows/specgit-accept.yml" line when nothing was
+    // written; the gitlab_harness_pending warning is the only statement.
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(stdoutText(t.io)).not.toContain('specgit-accept.yml');
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+  });
+
+  it('--gitlab-host validates the host against the origin (bare hostname, must match)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'https://evil.com/', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+  });
+
+  it('--gitlab-host on a github.com origin is rejected as nonsensical', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({}),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.example.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+  });
+
+  // #78 + 88-2: the origin-host seam captures host and port structurally,
+  // so explicit-port origins platform-resolve and host:port declarations
+  // validate against the origin's effective port.
+  it('an ssh origin with the default port classifies github without a declaration (#78 seam)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'ssh://git@github.com:22/LeXwDeX/SpecGit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'github' });
+    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'platform_undecided')).toBeFalsy();
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+  });
+
+  it('--gitlab-host host:port declares the platform and persists the port (#78 declaration grammar)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example:8443/o/r.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example:8443', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'git.corp.example:8443' });
+    const providers = fs.readFileSync(path.join(root, 'spec_git', 'providers.yaml'), 'utf-8');
+    expect(providers).toContain('git.corp.example');
+    expect(providers).toMatch(/port: ['"]?8443/);
+  });
+
+  it('--gitlab-host validates the declared port against the origin port (both directions)', async () => {
+    // Port declared, portless origin: the declaration must name the port
+    // the origin actually uses.
+    const portless = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example/o/r.git' }),
+    });
+    const withPort = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example:8443', '--json'],
+      portless.ctx
+    );
+    expect(withPort).toBe(EXIT_USAGE);
+    expect(parseStdoutJson(portless.io).errors[0].code).toBe('gitlab_host_invalid');
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+
+    // Portless declaration, non-default port on the origin: the fix must
+    // teach the host:port grammar.
+    const ported = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example:8443/o/r.git' }),
+    });
+    const withoutPort = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example', '--json'],
+      ported.ctx
+    );
+    expect(withoutPort).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(ported.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+    expect(envelope.errors[0].fix ?? envelope.errors[0].message).toContain('git.corp.example:8443');
+  });
+
+  it('--gitlab-host rejects a malformed port in the declaration', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'https://git.corp.example:8443/o/r.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.corp.example:84x3', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+  });
+
+  it('github.com origin defaults to github mode without asking', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: true,
+      facts: makeGitFacts({}),
+    });
+    // Explicitly decline automation and protection to isolate platform selection.
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--automation', 'no', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.platform).toEqual({ mode: 'github' });
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+  });
+
+  it('non-github origin without a declaration fails closed before generating GitHub assets', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('platform_undecided');
+    expect(envelope.errors?.[0]?.fix).toContain('--gitlab-host');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it('a missing origin fails closed with an actionable platform error and no writes', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: null }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]?.code).toBe('platform_undecided');
+    expect(envelope.errors?.[0]?.message).toContain('origin URL');
+    expect(envelope.errors?.[0]?.fix).toContain('Configure origin');
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+
+  it('with no --required-check and no CI anywhere, writes an empty checks policy (#63)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // A fallback NAME is a name the generated harness can never produce
+    // as a check-run: it would deadlock the wait step and make the
+    // verdict unsatisfiable. Zero checks + branch protection on the
+    // acceptance job is the only satisfiable no-CI policy.
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: [] });
+    expect(envelope.detected.fallback).toBe(true);
+    // The wait step in the generated workflow completes immediately with
+    // zero required checks: the empty policy is one the harness itself
+    // can satisfy (missing.length === 0 on the first poll).
+    const workflow = read(WORKFLOW_ABS(root));
+    expect(workflow).toContain('const required = policy.required_checks ?? [];');
+    expect(workflow).toContain('missing.length === 0');
+  });
+
+  it('with no --required-check, auto-detects job names from .github/workflows', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n  test:\n    name: Test (linux)\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['build', 'Test (linux)'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
+    expect(envelope.detected.fallback).toBe(false);
+  });
+
+  it('detects gitlab-ci job keys on a GitLab origin', async () => {    fs.writeFileSync(
+      path.join(root, '.gitlab-ci.yml'),
+      'stages:\n  - build\n  - test\ninclude:\n  - local: /templates.yml\nbuild-job:\n  script: echo build\ntest-job:\n  script: echo test\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@gitlab.com:team/app.git' }),
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['build-job', 'test-job'] });
+    expect(envelope.detected.sources).toEqual(['.gitlab-ci.yml']);
+  });
+
+  // ---- #310: detection truthfulness — ambiguity is evidence, never a ----
+  // ---- guessed check-run name; exact display names are unique.        ----
+
+  it('a matrix placeholder name is never armed as a proven check-run name (#310)', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  unit:\n' +
+        '    name: Unit Tests (${{ matrix.settings.name }})\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '  lint:\n' +
+        '    name: Lint\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // The placeholder never appears in real check-runs, and the #39 job-id
+    // fallback is NOT the expanded check-run name either — neither is
+    // proven. The job stays out of the policy and is surfaced as ambiguous.
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Lint'] });
+    expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: unit']);
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'checks_name_ambiguous'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.message).toContain('unit');
+    expect(warning.fix).toContain('--required-check');
+  });
+
+  it('matrix fan-out and reusable-workflow jobs are ambiguous even with a literal name (#310)', async () => {
+    // GitHub expands a matrix into one check run per combination (the
+    // literal name is not the reported name), and a reusable call reports
+    // the CALLED job's name — neither literal is provable from this file.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  build:\n' +
+        '    name: Build\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '  legs:\n' +
+        '    name: Test\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '    strategy:\n' +
+        '      matrix:\n' +
+        '        os: [ubuntu-latest, macos-latest]\n' +
+        '  reuse:\n' +
+        '    uses: org/repo/.github/workflows/wf.yml@v1\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Build'] });
+    expect(envelope.detected.ambiguousJobs).toEqual([
+      '.github/workflows/ci.yml: legs',
+      '.github/workflows/ci.yml: reuse',
+    ]);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
+  });
+
+  it('a dynamic string-expression matrix is ambiguous even with a literal name (#310)', async () => {
+    // `matrix: ${{ fromJson(...) }}` fans out over values only the
+    // runtime expression decides — the expansion, and with it every
+    // reported check-run name, is unknowable from this file, so the
+    // literal name is not provable either.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  legs:\n' +
+        '    name: Test\n' +
+        '    runs-on: ubuntu-latest\n' +
+        '    strategy:\n' +
+        '      matrix: ${{ fromJson(needs.gen.outputs.matrix) }}\n' +
+        '  lint:\n' +
+        '    name: Lint\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Lint'] });
+    expect(envelope.detected.ambiguousJobs).toEqual(['.github/workflows/ci.yml: legs']);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
+  });
+
+  it('de-duplicates exact repeated display names across workflows (#310)', async () => {
+    // The dogfood shape: two aggregator jobs in different workflows share
+    // one display name. A wait list naming it twice is noise, not signal.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    for (const file of ['ci.yml', 'gate.yml']) {
+      fs.writeFileSync(
+        path.join(workflowsDir, file),
+        'name: CI\non: [pull_request]\njobs:\n' +
+          '  aggregate:\n' +
+          '    name: All checks passed\n' +
+          '    runs-on: ubuntu-latest\n' +
+          '  lint:\n' +
+          '    name: Lint\n' +
+          '    runs-on: ubuntu-latest\n'
+      );
+    }
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({
+      automation: { merge: false, close_issues: false },
+      version: 1,
+      required_checks: ['All checks passed', 'Lint'],
+    });
+  });
+
+  it('a workflow whose jobs are all ambiguous yields the fail-closed zero-check policy (#310)', async () => {
+    // No proven name at all: the policy falls back to zero checks (#63 —
+    // the acceptance job is the gate) instead of guessing. The JSON/exit
+    // contract is untouched: exit 0, one document, the ambiguity warned.
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n' +
+        '  test_matrix:\n' +
+        '    name: Test (${{ matrix.label }})\n' +
+        '    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: [] });
+    expect(envelope.detected.fallback).toBe(true);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_name_ambiguous')
+    ).toBe(true);
+  });
+
+  it('ignores workflow_dispatch-only workflows', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, 'manual.yml'),
+      'name: Manual\non: workflow_dispatch\njobs:\n  run:\n    runs-on: ubuntu-latest\n'
+    );
+    fs.writeFileSync(
+      path.join(workflowsDir, 'ci.yml'),
+      'name: CI\non: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // Dispatch-only workflows never run on a PR head, so their jobs cannot
+    // appear as check runs there.
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['test'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/ci.yml']);
+    // #121: dispatch-only is one shape of "never reports on a PR head" —
+    // reported, not silently dropped.
+    expect(envelope.detected.nonPrWorkflows).toEqual(['.github/workflows/manual.yml']);
+  });
+
+  it('classifies by PR trigger: push-filtered and schedule workflows never become required checks (#121)', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    // Push-triggered deploy with a branch filter: runs on main pushes
+    // only, never on a PR head — the stillborn-policy shape from #121.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'deploy.yml'),
+      'name: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n'
+    );
+    // Scheduled nightly: tied to cron, never to a PR.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'nightly.yml'),
+      'name: Nightly\non:\n  schedule:\n    - cron: "0 3 * * *"\njobs:\n  nightly:\n    runs-on: ubuntu-latest\n'
+    );
+    // PR-triggered CI (a push trigger alongside pull_request is fine: the
+    // PR trigger is what makes the jobs observable at a PR head).
+    fs.writeFileSync(
+      path.join(workflowsDir, 'verify.yml'),
+      'name: Verify\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    // Only the PR-triggered workflow's jobs are required-check candidates.
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: ['build'] });
+    expect(envelope.detected.sources).toEqual(['.github/workflows/verify.yml']);
+    // The never-on-PR workflows are reported, not silently dropped.
+    expect(envelope.detected.nonPrWorkflows).toEqual([
+      '.github/workflows/deploy.yml',
+      '.github/workflows/nightly.yml',
+    ]);
+    // init warns: those jobs can never report on a PR head, and the fix
+    // names the legitimate repair path for a wrong-at-birth policy.
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'checks_not_pr_visible'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.message).toContain('.github/workflows/deploy.yml');
+    expect(warning.message).toContain('.github/workflows/nightly.yml');
+    expect(warning.fix).toContain('--required-check');
+    expect(warning.fix).toContain('--force');
+  });
+
+  it('pull_request_target and trigger-less workflows do not qualify as PR-head checks', async () => {
+    const workflowsDir = path.join(root, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    // pull_request_target evaluates the trusted default branch, not the PR head.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'guard.yml'),
+      'name: Guard\non: pull_request_target\njobs:\n  guard:\n    runs-on: ubuntu-latest\n'
+    );
+    // A workflow without `on` does not declare an event trigger.
+    fs.writeFileSync(
+      path.join(workflowsDir, 'default.yml'),
+      'name: Default\njobs:\n  checks:\n    runs-on: ubuntu-latest\n'
+    );
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.policy).toEqual({ automation: { merge: false, close_issues: false }, version: 1, required_checks: [] });
+    expect(envelope.detected.sources).toEqual([]);
+    expect(envelope.detected.nonPrWorkflows).toEqual(['.github/workflows/default.yml', '.github/workflows/guard.yml']);
+    expect(
+      (envelope.warnings ?? []).some((w: { code: string }) => w.code === 'checks_not_pr_visible')
+    ).toBe(true);
+  });
+
+  it('reports the detected platform from the origin URL', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, cwd: root, stdinIsTTY: false });
+    await runCliWith(['node', 'specgit', 'init', '--json'], t.ctx);
+    // makeCtx's default facts carry a github.com origin; platform detection
+    // reads it through ctx.git.facts.
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.detected.platform).toBe('github');
+    expect(typeof envelope.detected.clis.gh).toBe('boolean');
+    expect(typeof envelope.detected.clis.glab).toBe('boolean');
+  });
+
+  it('--no-detect without --required-check exits 2 (strict legacy path)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root }, stdinIsTTY: false });
+    const code = await runCliWith(['node', 'specgit', 'init', '--no-detect', '--json'], t.ctx);
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('required_check_required');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+  });
+
+  it('--force rebuilds an existing policy', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'] },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--force', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites).toEqual([
+      { policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['New'] }, root },
+    ]);
+  });
+
+  it('generates the guard hooks and the git pre-push hook', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'T', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(fs.existsSync(path.join(root, '.opencode', 'hooks.json'))).toBe(true);
+    const guard = path.join(root, '.opencode', 'hooks', 'specgit-merge-guard.sh');
+    expect(fs.existsSync(guard)).toBe(true);
+    // Windows filesystems do not carry POSIX exec bits; git-for-windows
+    // executes hooks regardless. Assert the bit only where it exists.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(guard).mode & 0o111).not.toBe(0);
+    }
+    // No .git directory in this fixture → no git hook, but no failure either.
+    expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
+  });
+
+  it('self-template wait step diagnoses an absent policy instead of crashing (#297)', () => {
+    expect(harnessWorkflowYaml()).toContain('policy.yaml is absent at this head');
+    expect(harnessWorkflowYaml()).toContain('existsSync');
+  });
+
+  it('does not overwrite an existing policy', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Existing'] },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('policy_exists');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+    // The rejection happens before any harness write: the tree is untouched.
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+
+  it('fails usage when a required check name is empty, writing nothing', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', ' ', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('required_check_invalid');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+
+  it('fails closed (exit 3) outside a git repository, writing nothing', async () => {
+    const t = makeCtx({
+      root: { ok: false, code: 'not_a_git_repo', message: 'Not a git repository.' },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.status).toBe('unknown');
+    expect(envelope.errors[0].code).toBe('not_a_git_repo');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+});
+
+describe('specgit init harness generation', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-harness-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('generates the acceptance workflow and the AGENTS.md managed block; no CLAUDE.md when absent', async () => {
+    // Self-detection (#63): the root package name `specgit` keeps this
+    // repository shape on the local-build template.
+    fs.writeFileSync(path.join(root, 'package.json'), `${JSON.stringify({ name: 'specgit', version: '0.0.0' }, null, 2)}\n`);
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(parseStdoutJson(t.io).harness).toEqual({ template: 'self' });
+
+    const workflow = read(WORKFLOW_ABS(root));
+    expect(workflow).toBe(harnessWorkflowYaml());
+    expect(workflow).toContain('name: SpecGit Acceptance');
+    expect(workflow).toContain('pull_request');
+    expect(workflow).toContain('branches: [main]');
+    expect(workflow).toContain('await acceptanceMain()');
+    expect(workflow).not.toContain('\r');
+
+    const agents = read(AGENTS_ABS(root));
+    expect(agents).toBe(`${managedPromptBlock()}\n`);
+    expect(agents).toContain(BLOCK_START_MARKER);
+    expect(agents).toContain(BLOCK_END_MARKER);
+    expect(agents).not.toContain('\r');
+
+    expect(fs.existsSync(CLAUDE_ABS(root))).toBe(false);
+  });
+
+  it('adopting repositories get the portable external workflow (#63 wiring)', async () => {
+    // No specgit package at the root: an adopting repository. The remote
+    // default branch (here genuinely non-main) and the CLI version pin
+    // the template; nothing about the adopting stack is assumed.
+    fs.writeFileSync(path.join(root, 'package.json'), `${JSON.stringify({ name: 'unrelated-app', version: '1.0.0' }, null, 2)}\n`);
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: { remoteDefaultBranch: () => ({ ok: true, value: 'master' }) },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Build', '--protect', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.gitPort.remoteDefaultBranch).toHaveBeenCalledWith(root, { requireEvidence: true });
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.harness).toEqual({ template: 'external' });
+
+    const workflow = read(WORKFLOW_ABS(root));
+    expect(workflow).toBe(externalAcceptanceWorkflowYaml({ defaultBranch: 'master', version: '0.0.0-test' }));
+    expect(workflow).toContain('branches: ["master"]');
+    expect(workflow).toContain(`npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@0.0.0-test`);
+    expect(workflow).toContain('await acceptanceMain()');
+    // The adopting project's toolchain is never invoked.
+    expect(workflow).not.toContain('pnpm');
+    expect(workflow).not.toContain('node bin/specgit.js');
+    expect(t.ghProvider.calls).toContain(
+      'enableBranchProtection:LeXwDeX/SpecGit:master:SpecGit Acceptance'
+    );
+    expect(t.ghProvider.calls.join('\n')).not.toContain('LeXwDeX/SpecGit:main');
+  });
+
+  it('the self template and --protect both honor a proved master default branch', async () => {
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      `${JSON.stringify({ name: 'specgit', version: '0.0.0' }, null, 2)}\n`
+    );
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: { remoteDefaultBranch: () => ({ ok: true, value: 'master' }) },
+    });
+
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Build', '--protect', '--json'],
+      t.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(read(WORKFLOW_ABS(root))).toBe(harnessWorkflowYaml('master'));
+    expect(read(WORKFLOW_ABS(root))).toContain('branches: ["master"]');
+    expect(t.ghProvider.calls).toContain(
+      'enableBranchProtection:LeXwDeX/SpecGit:master:SpecGit Acceptance'
+    );
+    expect(t.ghProvider.calls.join('\n')).not.toContain('LeXwDeX/SpecGit:main');
+  });
+
+  it('missing origin/HEAD fails closed before workflow writes or --protect provider calls', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: {
+        remoteDefaultBranch: () => ({
+          ok: false,
+          code: 'git_default_branch_unknown',
+          message: 'no origin/HEAD',
+          fix: 'establish origin/HEAD',
+        }),
+      },
+    });
+    const code = await runCliWith([
+      'node', 'specgit', 'init',
+      '--required-check', 'Build',
+      '--protect',
+      '--json',
+    ], t.ctx);
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors?.[0]).toMatchObject({
+      code: 'workflow_default_branch_unknown',
+      fix: 'establish origin/HEAD',
+    });
+    expect(envelope.errors?.[0]?.message).toContain('proven remote default branch');
+    expect(t.gitPort.remoteDefaultBranch).toHaveBeenCalledExactlyOnceWith(
+      root,
+      { requireEvidence: true }
+    );
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(t.ghProvider.calls).toEqual([]);
+  });
+
+  it('GitLab --protect fails before provider calls when its default branch is unproven', async () => {
+    const forge = makeGhProvider();
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      gitWrites: {
+        remoteDefaultBranch: () => ({
+          ok: false,
+          code: 'git_default_branch_unknown',
+          message: 'origin/HEAD is absent',
+        }),
+      },
+      gh: forge,
+      parseRepoRef: async () => ({
+        ok: true,
+        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+      }),
+    });
+
+    const code = await runCliWith([
+      'node', 'specgit', 'init',
+      '--required-check', 'Build',
+      '--gitlab-host', 'git.ycgame.com',
+      '--protect',
+      '--json',
+    ], t.ctx);
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    expect(parseStdoutJson(t.io).errors?.[0]?.code).toBe(
+      'protection_default_branch_unknown'
+    );
+    expect(t.gitPort.remoteDefaultBranch).toHaveBeenCalledExactlyOnceWith(
+      root,
+      { requireEvidence: true }
+    );
+    expect(forge.calls).toEqual([]);
+    expect(t.recordPort.policyWrites).toEqual([]);
+    expect(fs.existsSync(path.join(root, 'spec_git', 'providers.yaml'))).toBe(false);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+  });
+
+  it('template stays in sync with this repo own workflow file (anti-drift lock)', async () => {
+    // The generated template IS this repository's acceptance workflow:
+    // when the repo file evolves (dispatch trigger, WAIT_SHA fallback…),
+    // the template source must follow, or a re-init silently regresses it.
+    // Normalize line endings: the working tree may carry CRLF on Windows.
+    const readNormalized = (p: string) => fs.readFileSync(p, 'utf-8').replace(/\r\n/g, '\n');
+    const repoWorkflow = readNormalized(
+      path.join(__dirname, '..', '..', '.github', 'workflows', 'specgit-accept.yml')
+    );
+    expect(harnessWorkflowYaml().replace(/\r\n/g, '\n')).toBe(repoWorkflow);
+  });
+
+  it('wait-for-siblings script retries transient API failures', async () => {
+    const workflow = harnessWorkflowYaml();
+    // Retry markers: bounded attempts with exponential backoff on 5xx/429.
+    expect(workflow).toContain('MAX_ATTEMPTS');
+    expect(workflow).toContain('backoff');
+    // #300: the dead retryAfterHeader variable is gone — a fixed ladder only.
+    expect(workflow).not.toContain('retryAfter');
+    // The dispatch trigger and the SHA fallback are part of the synced evolution.
+    expect(workflow).toContain('workflow_dispatch');
+    expect(workflow).toContain('github.event.pull_request.head.sha || github.sha');
+  });
+
+  it('wait-for-siblings script pages the check-runs listing to exhaustion (#300)', async () => {
+    const workflow = harnessWorkflowYaml();
+    expect(workflow).toContain('fetchAllCheckRuns');
+    expect(workflow).toContain('page += 1');
+    expect(workflow).toContain('PER_PAGE');
+    // A short page ends the walk; required names past the first 100 runs
+    // are still observable.
+    expect(workflow).toContain('length < PER_PAGE');
+  });
+
+  it('wait-for-siblings script anchors freshness at the ready-for-review transition (#315)', async () => {
+    const workflow = harnessWorkflowYaml();
+    // The anchor rides the issue-timeline endpoint through the same REST
+    // seam; the PR number arrives via workflow context and stays empty on
+    // non-PR events (no anchor, no freshness bound).
+    expect(workflow).toContain("WAIT_PR: ${{ github.event.pull_request.number || '' }}");
+    expect(workflow).toContain('/issues/');
+    expect(workflow).toContain('/timeline');
+    expect(workflow).toContain('ready_for_review');
+    // A stale terminal run keeps waiting instead of settling the gate.
+    expect(workflow).toContain('Waiting for a fresh run after ready for review: ');
+    // Human-readable `gh pr checks` output is never a parse surface.
+    expect(workflow).not.toContain('pr checks');
+  });
+
+  it('covers the human story, repair, diagnostics, granularity, and iron rules in the block', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const block = managedPromptBlock();
+    expect(block).toContain('specgit issue');
+    expect(block).toContain('specgit finish');
+    expect(block).toContain('specgit pr');
+    expect(block).toContain('specgit status');
+    expect(block).toContain('specgit doctor');
+    expect(block.toLowerCase()).toContain('one issue = one independently verifiable why');
+    expect(block).toContain('never request merge');
+    expect(block.toLowerCase()).toContain('never weaken');
+    expect(block).toContain('--json');
+    expect(block.startsWith(BLOCK_START_MARKER)).toBe(true);
+    expect(block.endsWith(BLOCK_END_MARKER)).toBe(true);
+  });
+
+  // #163 (audit P-4): agents hitting `pr_draft` need the in-context recovery
+  // path — the block states a draft PR always fails and names the command
+  // that marks it ready, before the finish guidance in the delivery story.
+  it('states the draft-to-ready fix path before the finish guidance (#163)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const block = managedPromptBlock();
+    expect(block).toContain('pr_draft');
+    // Both platform commands are named so the fix is copy-pasteable.
+    expect(block).toContain('gh pr ready');
+    expect(block).toContain('glab mr update');
+    expect(block).toContain('--ready');
+    // The fix path lands before the finish guidance in the delivery story.
+    expect(block.indexOf('pr_draft')).toBeLessThan(block.indexOf('`specgit finish` is read-only'));
+    // The written AGENTS.md carries the same guidance.
+    expect(read(AGENTS_ABS(root))).toContain('gh pr ready');
+  });
+
+  it('guides agents to search for similar open issues before creating one', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const agents = read(AGENTS_ABS(root));
+    const block = managedPromptBlock();
+    expect(block).toContain('### Before creating an issue, check for duplicates');
+    // The search step must name the actual gh command agents should run.
+    expect(block).toContain('gh issue list');
+    // Similar candidates must be read, not just listed.
+    expect(block).toContain('gh issue view');
+    // The human decides whether a duplicate is still worth creating.
+    expect(block.toLowerCase()).toContain('ask the requester');
+    expect(agents).toContain('### Before creating an issue, check for duplicates');
+  });
+
+  // #176 (audit P-10): the agent contract lives only in the SpecGit source
+  // repo, so adopter agents never saw it. The essentials ship inside the
+  // managed block and are regenerated deterministically by init --force.
+  it('ships the agent-contract essentials in the managed block (#176)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+
+    const block = managedPromptBlock();
+    expect(block).toContain('### Agent contract essentials');
+    // Acceptance is necessary; configured delivery completion also proves merge and closure.
+    expect(block.toLowerCase()).toContain('exit `0` means accepted');
+    expect(block.toLowerCase()).toContain('configured target merge and every bound issue closure');
+    expect(block.toLowerCase()).toContain('never declare completion');
+    // Exit-code semantics: 1 vs 3 is contractual, exit 3 is never success.
+    expect(block).toContain('Branch on exit codes');
+    expect(block).toContain('specgit doctor');
+    expect(block.toLowerCase()).toContain('never present exit `3` as success');
+    // PR & checks discipline.
+    expect(block).toContain('Closes #n');
+    expect(block.toLowerCase()).toContain('never\n  bypass or reconfig a required check');
+    // Hard prohibition: tokens never leave the authenticated CLI session.
+    expect(block.toLowerCase()).toContain('never read, log, or pass around tokens');
+    // The written AGENTS.md carries the essentials; init --force is the
+    // deterministic regeneration path (byte-stable, verified above).
+    expect(read(AGENTS_ABS(root))).toContain('### Agent contract essentials');
+  });
+
+  it('re-init with an existing policy rejects before writing: drift stays, no probes', async () => {
+    const first = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
+    const workflowAfterFirst = read(WORKFLOW_ABS(root));
+    const agentsAfterFirst = read(AGENTS_ABS(root));
+
+    // Inject drift into every managed artifact.
+    fs.appendFileSync(WORKFLOW_ABS(root), '# drifted local edit\n');
+    fs.appendFileSync(AGENTS_ABS(root), '# drifted tail\n');
+
+    const second = makeCtx({ root: { ok: true, value: root }, policy: samplePolicy() });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json'],
+      second.ctx
+    );
+
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(second.io);
+    expect(envelope.errors[0].code).toBe('policy_exists');
+
+    // policy_exists happens before filesystem AND remote mutation: the
+    // drift is left exactly as it was and no gh probe runs.
+    expect(read(WORKFLOW_ABS(root))).toBe(`${workflowAfterFirst}# drifted local edit\n`);
+    expect(read(AGENTS_ABS(root))).toBe(`${agentsAfterFirst}# drifted tail\n`);
+    expect(second.ghProvider.calls).toHaveLength(0);
+    expect(second.recordPort.policyWrites).toHaveLength(0);
+  });
+
+  it('--force is the refresh path: drifted harness is repaired, policy rebuilt', async () => {
+    const first = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
+    const workflowAfterFirst = read(WORKFLOW_ABS(root));
+    const agentsAfterFirst = read(AGENTS_ABS(root));
+    const markerTail = agentsAfterFirst.slice(
+      agentsAfterFirst.indexOf(BLOCK_END_MARKER) + BLOCK_END_MARKER.length
+    );
+
+    fs.appendFileSync(WORKFLOW_ABS(root), '# drifted local edit\n');
+
+    const second = makeCtx({ root: { ok: true, value: root }, policy: samplePolicy() });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json'],
+      second.ctx
+    );
+
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(read(WORKFLOW_ABS(root))).toBe(workflowAfterFirst);
+    expect(read(AGENTS_ABS(root))).toBe(`${agentsAfterFirst.slice(0, agentsAfterFirst.indexOf(BLOCK_END_MARKER) + BLOCK_END_MARKER.length)}${markerTail}`);
+    // #163 anti-drift: the regenerated block carries the draft-to-ready
+    // fix path deterministically.
+    expect(read(AGENTS_ABS(root))).toContain('gh pr ready');
+    expect(second.recordPort.policyWrites).toEqual([
+      { root, policy: { automation: { merge: false, close_issues: false }, version: 1, required_checks: ['Test'] } },
+    ]);
+  });
+
+  it('injects the block into an existing AGENTS.md without touching surrounding content', async () => {
+    const original = '# Project notes\n\nKeep this header.\n\nTail content stays.\n';
+    fs.writeFileSync(AGENTS_ABS(root), original);
+
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+
+    const updated = read(AGENTS_ABS(root));
+    expect(updated).toBe(`${original}\n${managedPromptBlock()}\n`);
+    expect(updated).toContain('Keep this header.');
+    expect(updated).toContain('Tail content stays.');
+    expect(updated.startsWith('# Project notes')).toBe(true);
+  });
+
+  it('injects the block into an existing CLAUDE.md without creating AGENTS.md copies of it', async () => {
+    fs.writeFileSync(AGENTS_ABS(root), '# Agents\n');
+    fs.writeFileSync(CLAUDE_ABS(root), '# Claude\n');
+
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+
+    const claude = read(CLAUDE_ABS(root));
+    expect(claude).toBe(`# Claude\n\n${managedPromptBlock()}\n`);
+    const agents = read(AGENTS_ABS(root));
+    expect(agents).toBe(`# Agents\n\n${managedPromptBlock()}\n`);
+  });
+
+  it('re-init with --force replaces only the content between the markers (round-trip)', async () => {
+    const first = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test'], first.ctx);
+
+    const canonical = read(AGENTS_ABS(root));
+    const startIndex = canonical.indexOf(BLOCK_START_MARKER);
+    const endIndex = canonical.indexOf(BLOCK_END_MARKER);
+    const prefix = canonical.slice(0, startIndex);
+    const suffix = '\nEdited after the block.\n';
+    fs.writeFileSync(
+      AGENTS_ABS(root),
+      `${prefix}${BLOCK_START_MARKER}\nSTALE CONTENT\n${BLOCK_END_MARKER}${suffix}`
+    );
+
+    const second = makeCtx({ root: { ok: true, value: root }, policy: samplePolicy() });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--force'], second.ctx);
+
+    expect(read(AGENTS_ABS(root))).toBe(`${prefix}${managedPromptBlock()}${suffix}`);
+  });
+});
+
+describe('specgit init validate-before-write', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-order-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('rejects a mismatched --gitlab-host before any filesystem write', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      cwd: root,
+      stdinIsTTY: false,
+      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'evil.example.com', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('gitlab_host_invalid');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+
+  it('fails usage on an unwritable root before any write', async () => {
+    if (process.platform === 'win32') return; // chmod is advisory on Windows
+    const t = makeCtx({ root: { ok: true, value: root } });
+    fs.chmodSync(root, 0o500);
+    let code: number | undefined;
+    try {
+      code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    } finally {
+      fs.chmodSync(root, 0o700);
+    }
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('root_not_writable');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  });
+
+  it('a mid-sequence harness write failure rolls back to the pre-init tree (exit 3)', async () => {
+    // `.opencode` as a regular file: the workflow and prompt writes succeed,
+    // then mkdir('.opencode') fails — everything must roll back.
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# existing notes\n');
+    fs.writeFileSync(path.join(root, '.opencode'), 'not a directory');
+
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+
+    expect(code).toBe(EXIT_UNKNOWN);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('harness_write_failed');
+    expect(read(path.join(root, 'AGENTS.md'))).toBe('# existing notes\n');
+    expect(fs.existsSync(path.join(root, '.github'))).toBe(false);
+    expect(fs.readFileSync(path.join(root, '.opencode'), 'utf-8')).toBe('not a directory');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+  });
+});
+
+describe('specgit init hook merging', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-hooks-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('merges existing hooks.json and git pre-push instead of overwriting', async () => {
+    const gitHooks = path.join(root, 'git-hooks');
+    fs.mkdirSync(gitHooks, { recursive: true });
+    fs.mkdirSync(path.join(root, '.opencode'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.opencode', 'hooks.json'),
+      '{\n  "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "greet.sh" }] }],\n  "custom": { "kept": true }\n}\n'
+    );
+    fs.writeFileSync(path.join(gitHooks, 'pre-push'), '#!/bin/sh\n./scripts/verify.sh || exit 1\n');
+
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      gitWrites: { hooksPath: () => ({ ok: true, value: gitHooks }) },
+    });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+
+    const hooksJson = JSON.parse(read(path.join(root, '.opencode', 'hooks.json'))) as {
+      SessionStart: unknown[];
+      custom: unknown;
+      PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }>;
+    };
+    expect(hooksJson.SessionStart).toHaveLength(1);
+    expect(hooksJson.custom).toEqual({ kept: true });
+    // Located by ownership (the guard command); matcher covers the
+    // file-mutation tools too (#335).
+    const guards = hooksJson.PreToolUse.filter((entry) =>
+      entry.hooks.some((hook) => hook.command === '.opencode/hooks/specgit-merge-guard.sh')
+    );
+    expect(guards).toHaveLength(1);
+    expect(guards[0]?.matcher).toBe('Bash|Edit|Write');
+
+    const prePush = read(path.join(gitHooks, 'pre-push'));
+    expect(prePush).toContain('./scripts/verify.sh');
+    expect(prePush.indexOf('./scripts/verify.sh')).toBeGreaterThan(prePush.indexOf('# <<< specgit:end <<<'));
+
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.warnings ?? []).toEqual([]);
+  });
+
+  it('leaves an unmergeable hooks.json untouched and surfaces a warning', async () => {
+    fs.mkdirSync(path.join(root, '.opencode'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.opencode', 'hooks.json'), '{ broken');
+
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(code).toBe(EXIT_SUCCESS);
+
+    expect(read(path.join(root, '.opencode', 'hooks.json'))).toBe('{ broken');
+    expect(fs.existsSync(path.join(root, '.opencode', 'hooks', 'specgit-merge-guard.sh'))).toBe(true);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.warnings?.some((w: { code: string }) => w.code === 'hooks_json_unmerged')).toBe(true);
+  });
+});
+
+describe('specgit init --language (#118)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-init-lang-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('writes language: zh into the policy and renders the harness guidance in zh', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
+      version: 1,
+      required_checks: ['Test'],
+      language: 'zh',
+    });
+    const agents = read(AGENTS_ABS(root));
+    expect(agents.startsWith(BLOCK_START_MARKER)).toBe(true);
+    expect(agents).toContain('交付');
+    expect(agents).toContain('specgit issue');
+    expect(agents.endsWith(BLOCK_END_MARKER + '\n')).toBe(true);
+  });
+
+  // #183 (audit P-12): with language zh the block is Chinese while
+  // diagnostics, codes, and fix strings stay English by the machine
+  // contract. The zh block must say so, or a reader may try to "fix" the
+  // mixed output by localizing the machine surface.
+  it('the zh block states diagnostics stay English as part of the machine contract (#183)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const agents = read(AGENTS_ABS(root));
+    expect(agents).toContain('诊断信息');
+    expect(agents).toContain('机器契约');
+    // Generated deterministically: identical to the template output.
+    expect(managedPromptBlock('zh')).toContain('诊断信息');
+    // The note is zh-only guidance; the en block is untouched.
+    expect(managedPromptBlock('en')).not.toContain('诊断信息');
+  });
+
+  it('writes no language key for the default (en)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
+      version: 1,
+      required_checks: ['Test'],
+    });
+  });
+
+  it('the acceptance workflow is byte-identical under every language (machine artifact)', async () => {
+    const enRoot = makeTempDir('specgit-init-lang-en-');
+    try {
+      const zh = makeCtx({ root: { ok: true, value: root } });
+      const en = makeCtx({ root: { ok: true, value: enRoot } });
+      await runCliWith(
+        ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--no-protect'],
+        zh.ctx
+      );
+      await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect'], en.ctx);
+      // Adopting repos get the external template; the pin is that the
+      // language never changes the workflow bytes.
+      expect(read(WORKFLOW_ABS(root))).toBe(read(WORKFLOW_ABS(enRoot)));
+      expect(read(WORKFLOW_ABS(root))).not.toBe('');
+    } finally {
+      rmDir(enRoot);
+    }
+  });
+
+  it('rejects an unsupported --language value as a usage error with zero writes', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'fr', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.errors[0].code).toBe('language_invalid');
+    expect(t.recordPort.policyWrites).toHaveLength(0);
+    expect(fs.existsSync(AGENTS_ABS(root))).toBe(false);
+    expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
+    expect(fs.existsSync(path.join(root, SPEC_GIT_DIR, POLICY_FILENAME))).toBe(false);
+  });
+
+  it('--force preserves the existing policy language when no --language is passed', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'], language: 'zh' },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
+      version: 1,
+      required_checks: ['Test'],
+      language: 'zh',
+    });
+    expect(read(AGENTS_ABS(root))).toContain('交付');
+  });
+
+  it('--force preserves explicit verification rules', async () => {
+    const verification = {
+      product_checks: ['Build', 'Test'],
+      rules: [{ paths: ['docs/**'], checks: ['Docs'] }],
+    };
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Summary'], verification },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--force', '--no-protect', '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy.verification).toEqual(verification);
+    expect(t.recordPort.policyWrites[0]?.policy.required_checks).toEqual(['Summary']);
+  });
+
+  it('an explicit --language overrides the existing policy language on --force', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'], language: 'zh' },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--language', 'en', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy).toEqual({
+      automation: { merge: false, close_issues: false },
+      language: 'en',
+      version: 1,
+      required_checks: ['Test'],
+    });
+  });
+
+  // ---- #298: a tracked policy rewritten by --force shows as an uncommitted
+  // modification until committed — warn instead of leaving silent residue. ----
+
+  it('--force warns when the rewritten policy is tracked by git (#298)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'] },
+      gitWrites: {
+        trackedFiles: (paths) => ({ ok: true, value: [...paths] }),
+      },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    const warning = (envelope.warnings ?? []).find(
+      (w: { code: string }) => w.code === 'policy_rewrite_tracked'
+    );
+    expect(warning).toBeDefined();
+    expect(warning.fix).toContain('binding commit');
+  });
+
+  it('--force stays silent when the policy is untracked (the #292 default) (#298)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Old'] },
+      gitWrites: {
+        trackedFiles: () => ({ ok: true, value: [] }),
+      },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--force', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const envelope = parseStdoutJson(t.io);
+    expect(JSON.stringify(envelope.warnings ?? [])).not.toContain('policy_rewrite_tracked');
+  });
+
+  it('renders the human summary in the policy language', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--language', 'zh', '--no-protect'],
+      t.ctx
+    );
+    expect(stdoutText(t.io)).toContain('已创建 spec_git/policy.yaml');
+    expect(stdoutText(t.io)).toContain('必需检查');
+  });
+
+  // ---- #292: init shields the local delivery assets from git by default. ----
+
+  it('writes the local-asset ignore block to .gitignore by default (#292)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    const gitignore = read(path.join(root, '.gitignore'));
+    expect(gitignore).toContain('/.specgit.yaml');
+    expect(gitignore).toContain('/spec_git/');
+    expect(gitignore).toContain('specgit');
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.ignore).toEqual({
+      path: '.gitignore',
+      entries: [...LOCAL_ASSET_IGNORE_ENTRIES],
+      created: true,
+    });
+    expect(stdoutText(t.io)).toContain('.gitignore');
+  });
+
+  it('keeps existing .gitignore content and stays idempotent across re-inits (#292)', async () => {
+    fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\ndist/\n');
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect'],
+      t.ctx
+    );
+    // A --force rebuild runs the write again: the entries must appear once.
+    const forceCtx = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Test'] },
+    });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--force', '--no-protect', '--json'],
+      forceCtx.ctx
+    );
+    const gitignore = read(path.join(root, '.gitignore'));
+    expect(gitignore.startsWith('node_modules/\ndist/\n')).toBe(true);
+    expect(gitignore.split('/.specgit.yaml').length - 1).toBe(1);
+    expect(gitignore.split('/spec_git/').length - 1).toBe(1);
+    const envelope = parseStdoutJson(forceCtx.io);
+    expect(envelope.ignore).toEqual({
+      path: '.gitignore',
+      entries: [...LOCAL_ASSET_IGNORE_ENTRIES],
+      created: false,
+    });
+  });
+
+  it('does not duplicate entries a user already added without the marker (#292)', async () => {
+    fs.writeFileSync(path.join(root, '.gitignore'), '/.specgit.yaml\n/spec_git/\n');
+    const t = makeCtx({ root: { ok: true, value: root } });
+    await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-protect', '--json'],
+      t.ctx
+    );
+    const gitignore = read(path.join(root, '.gitignore'));
+    expect(gitignore.split('/.specgit.yaml').length - 1).toBe(1);
+    expect(gitignore.split('/spec_git/').length - 1).toBe(1);
+  });
+
+  it('--no-ignore leaves .gitignore untouched and omits the ignore field (#292)', async () => {
+    const t = makeCtx({ root: { ok: true, value: root } });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--no-ignore', '--json', '--no-protect'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(fs.existsSync(path.join(root, '.gitignore'))).toBe(false);
+    const envelope = parseStdoutJson(t.io);
+    expect(envelope.ignore).toBeUndefined();
+  });
+
+  it('a rejected init never writes .gitignore (#62/#292)', async () => {
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Existing'] },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--required-check', 'New', '--json'],
+      t.ctx
+    );
+    expect(code).toBe(EXIT_USAGE);
+    expect(fs.existsSync(path.join(root, '.gitignore'))).toBe(false);
+  });
+});

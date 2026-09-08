@@ -1,0 +1,105 @@
+# SpecGit project policy — template.
+# Write this file as `spec_git/policy.yaml` at the repository root and commit
+# it (usually on the default branch). Prefer `specgit init --required-check`,
+# which refuses to overwrite an existing policy.
+#
+# required_checks: list of EXACT check-run names, matched byte-for-byte
+# against check runs reported at the PR head commit. Keep them aligned with
+# the repository's required status checks (branch protection). The schema is
+# strict: unknown keys make the policy invalid. An empty list is the no-CI
+# policy — the SpecGit Acceptance job itself (never listed here, to avoid
+# wait-step self-deadlock) is then the gate; prefer naming the repository's
+# real checks whenever they exist.
+#
+# Upgrades (#310): a no-argument `specgit init --force` PRESERVES this list
+# (and language, validation, templates, tags and automation) exactly — it rebuilds the versioned harness assets and
+# never lets auto-detection replace a working policy. The one intentional
+# replacement path is explicit: `specgit init --force --required-check <name>`
+# (repeatable), which fully replaces the list with the names given.
+
+version: 1
+required_checks:
+  - build
+
+# Optional: generated-text language (#118). `en` is the default (the key may
+# be absent); `zh` renders the issue/PR scaffolds, the managed guidance
+# block, and success prose in Chinese. The machine contract — exit codes,
+# --json field names, diagnostic codes, `Closes #n` — is never localized
+# under any value. Unsupported values fail closed (policy_invalid).
+# language: zh
+
+# Optional: project-declared tag vocabulary (#330) — extra seedable names
+# for the pool-first tag selection beyond the built-in `kind::` catalog.
+# `name` must satisfy the portable tag grammar (lowercase alphanumerics and
+# single hyphens, optional `::axis` scopes, <= 64 chars); `color` is six hex
+# digits without "#"; `description` is at most 300 chars.
+# tags:
+#   - name: module::auth
+#     color: 0ea5e9
+#     description: Authentication subsystem deliveries
+
+# Optional: project conventions. Defaults are titles: false, bodies: false
+# and labels: off; absence preserves existing behavior. Configure interactively
+# with `specgit init --force --configure-rules`, or use --language en|zh,
+# --title-check yes|no, --label-check kind|project|off, and repeatable
+# --allowed-label <slug>. Ordinary upgrades preserve these settings.
+# titles: true checks every issue and PR/MR title: en forbids Unicode Han
+# characters; zh requires at least one (technical names may stay English).
+# labels: kind requires exactly one built-in kind:: label plus only tags
+# extras; project requires a nonempty subset of a nonempty tags vocabulary.
+# Both enforce at most one label per scoped axis. Missing evidence fails
+# closed; known violations reject acceptance. Example opt-in:
+# validation:
+#   titles: true
+#   labels: kind
+#   bodies: true
+#
+# bodies checks nonempty required level-two sections and unfilled prose
+# placeholders. Without a custom required_sections list, the language's
+# built-in issue/PR section names apply. This validates structure, not the
+# adequacy of the work or whether a human reviewed it.
+
+# Optional: inline issue/PR templates. Each selected kind requires body;
+# title and required_sections are optional. An omitted kind uses the built-in
+# language scaffold. Variables: {{title}}, {{summary}}, {{body}}, {{delivery}},
+# {{issues}}. Supplied prose is inserted once, never evaluated as a template.
+# A selected required_sections list enables body validation for that kind,
+# even when validation.bodies is false. PR closing references are preserved.
+# The example expects --body-file / --pr-body-file content for its sections:
+# templates:
+#   issue:
+#     title: '{{title}}'
+#     body: |
+#       ## Requirement
+#       {{body}}
+#     required_sections: [Requirement]
+#   pr:
+#     title: '{{title}}'
+#     body: |
+#       ## Delivery evidence
+#       {{body}}
+#     required_sections: [Delivery evidence]
+
+# Optional: enforce delivery ordering (the sequence gate, G8). When true, no
+# OPEN issue with a smaller number than this delivery's smallest bound issue
+# may exist (issue_out_of_order). Default is false (gate passes vacuously).
+# ordered_issues: true
+
+# Optional: authorize merging an accepted delivery into one named branch,
+# then close its bound issues after the forge confirms the merge.
+# Fresh init asks yes/no, default no. Ordinary init --force preserves the
+# existing choice, target and closure setting; it does not ask again or
+# silently turn automation off. Scripts may supply the user's explicit
+# answer with --automation yes|no. Agents cannot choose yes for the user.
+# A yes uses --merge-target <branch> or the proven remote default branch;
+# it never guesses main. A target alone cannot enable disabled automation.
+# Approved target-branch policy authorizes completion; a PR's proposed rule
+# changes cannot authorize that PR's own merge. finish/accept remain read-only
+# acceptance checks. Final completion also requires merge and issue closure.
+# The settings below are an opt-in example, not the default:
+# Independent manual-merge closure: --automation no --close-issues yes --close-target preview.
+# Either enabled action requires target_branch; both actions share that destination.
+# automation:
+#   merge: true
+#   target_branch: main
+#   close_issues: true

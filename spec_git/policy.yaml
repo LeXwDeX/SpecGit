@@ -1,0 +1,33 @@
+version: 1
+required_checks:
+  - Required verification
+verification:
+  product_checks:
+    - Required verification
+  reuse:
+    - id: github-reuse
+      check: Required verification
+      max_age_seconds: 86400
+      node: 22.23.2
+      pnpm: 9.15.9
+      runtime:
+        archive: ci/reuse-runtime.tgz
+        sha256: 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+        lockfile: ci/runtime-lock.json
+      commands:
+        - - node
+          - ci/test-product.cjs
+          - product
+      fresh_commands:
+        - - node
+          - ci/test-product.cjs
+          - fresh
+      environment: {}
+      github:
+        runner: ubuntu-24.04
+        entry: .github/workflows/specgit-reuse.yml
+  rules: []
+language: en
+automation:
+  merge: false
+  close_issues: false

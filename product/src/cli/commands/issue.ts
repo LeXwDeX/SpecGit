@@ -1,0 +1,1232 @@
+/**
+ * `specgit issue [<title-or-number> ...]` — the one-command delivery
+ * bootstrap: create/reuse N issues (one issue = one independently
+ * verifiable WHY), create the branch `<type>/<first#>-<slug>`, open a
+ * draft PR/MR whose body is the deterministic scaffold rendered from the
+ * bound issues (#87), write `.specgit.yaml`, commit and push. Re-runs
+ * resume: every completed step is detected from the record and the live
+ * branch, so a failure between steps heals on the next invocation with
+ * the same arguments.
+ *
+ * Exactly-once discipline (issue #65): replacement arguments are
+ * validated before any destructive side effect; the record is rewritten
+ * after every issue so partial state is durable; and every remote side
+ * effect carries an idempotency marker — the record itself, an open
+ * issue's exact title (disambiguated by the deterministic scaffold body
+ * on same-title collisions, #77), or the open PR/MR for the head branch —
+ * so a retry adopts what already exists instead of duplicating a WHY.
+ * An idempotency marker that cannot name exactly one remote object is
+ * drift the human resolves: `issue_title_ambiguous`, never a silent
+ * adoption.
+ *
+ * The CLI is non-interactive: no arguments and no record is a usage
+ * error (exit 2). With a live record, no arguments is a pure resume; a
+ * record whose PR/MR merged is completed history — no-args resume is a
+ * usage error naming the way forward, and validated replacement
+ * arguments re-bootstrap in its place (#75). A request closed without a
+ * merge is a failed delivery that must be repaired before any new WHY can
+ * replace it (#463).
+ *
+ * Delivery naming (#246): the branch is always issue number + semantic
+ * name (`<type>/<issue>-<slug>`), and bootstrap never invents a name. When
+ * the title yields no ASCII slug, an interactive session is asked for
+ * a kebab-case delivery name; anything else is a usage error naming
+ * `--delivery <slug>`. Once recorded, resume reuses the name without
+ * asking again.
+ *
+ * Structure (#177): `runIssue` is orchestration only; the readable,
+ * individually testable steps live in named sub-functions —
+ * `resolveRequestLifecycle` (read-only request-state probe), `validateResumeArgs`
+ * (positional resume validation), and `createOrAdoptIssues` (the issue
+ * creation loop with durable per-issue record writes). The tail chain —
+ * checkout, binding commit, push, PR/MR binding, final record commit,
+ * push — is the ordered step list of the DeliveryBootstrap module
+ * (#278, ./bootstrap.ts).
+ */
+
+import { GITLAB_ACCEPTANCE_PATH } from '../acceptance-step.js';
+import { reuseRemoteAssetPaths } from '../reuse-assets.js';
+
+import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../exit-codes.js';
+import { deriveBindingState, resolveExecutionContext } from '../gates.js';
+import {
+  detailLine,
+  errorDiagnostic,
+  humanBuilder,
+  issueList,
+  renderNextActionsHuman,
+  sanitize,
+  type IssueOutcome,
+  type NextAction,
+} from '../output.js';
+import {
+  forgeIssueUrl,
+  forgePrUrl,
+  forgeReadyCommand,
+  forgeWebBase,
+} from '../forge-links.js';
+import { catalogFor, formatRequestRef, resolveLanguage } from '../language.js';
+import { isKebabId, KEBAB_ID_FIX, parseNumericRef, RECORD_FILENAME } from '../../record/schema.js';
+import type { Policy, PolicyLanguage } from '../../record/policy.js';
+import { checkLabelConvention, checkTitleConvention } from '../../record/conventions.js';
+import { DELIVERY_TYPES } from '../../tags/catalog.js';
+import type { CommandContext, DeliveryBinding, Diagnostic, Evidence, GitFacts, RepoRef } from '../types.js';
+import { issueBody, prepareIssuePlan, type IssuePlan } from './issue-plan.js';
+import { BOOTSTRAP_STEPS, passthrough, recordWriteFailure, runBootstrapSteps } from './bootstrap.js';
+import {
+  applyDeliveryTags,
+  validateExplicitTags,
+  type ResolvedTagSelection,
+} from './tagging.js';
+import { inspectGeneratedAssets, type GeneratedAssetsReport } from '../asset-drift.js';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { checkBodyConvention, renderDeliveryTemplate } from '../../record/templates.js';
+import { findIssueHistory, findIssueOccupancy } from '../issue-history.js';
+
+export interface IssueOptions {
+  titles?: string[];
+  json?: boolean;
+  /** Explicit semantic delivery name (#246); wins over the title slug. */
+  delivery?: string;
+  /**
+   * Raw `--tags` value (#330): comma-separated tag slugs. Defined ⇔
+   * explicit selection mode (strict); undefined ⇔ inferred mode, which
+   * applies only the title-linked `kind::<type>` candidate best-effort.
+   */
+  tags?: string;
+  /** One complete body file per title argument; numeric issue reuse keeps its remote body. */
+  bodyFile?: string[];
+  prBodyFile?: string;
+}
+
+/**
+ * Conventional-commit types accepted as the `<type>` of the branch
+ * name. Re-exported from the tags catalog (#330), which is the single
+ * source of truth (#174): the validator below, the `specgit issue
+ * --help` text, the usage-error fix, and the specgit-issue skill all
+ * render from this list — the same list names the seeded `kind::` axis,
+ * so a title's inferred tag always has a home.
+ */
+export const ISSUE_TITLE_TYPES = DELIVERY_TYPES;
+
+const BRANCH_TYPES = new Set<string>(ISSUE_TITLE_TYPES);
+
+const CONVENTIONAL_PREFIX = /^([a-z]+):\s+(.*)$/s;
+export const ISSUE_TYPE_LIST = ISSUE_TITLE_TYPES.join(', ');
+
+export function parseIssueTitle(title: string): { type: string; cleanTitle: string } {
+  const match = CONVENTIONAL_PREFIX.exec(title.trim());
+  if (match && BRANCH_TYPES.has(match[1])) {
+    return { type: match[1], cleanTitle: match[2].trim() };
+  }
+  return { type: 'feat', cleanTitle: title.trim() };
+}
+
+/** First usage error among the titles, or null when every title conforms. Titles may be in any language (#118). */
+export function validateIssueTitles(
+  args: string[]
+): { code: string; message: string; fix: string } | null {
+  for (const arg of args) {
+    if (parseNumericRef(arg) !== null || !arg) continue;
+    const match = CONVENTIONAL_PREFIX.exec(arg.trim());
+    if (!match || !BRANCH_TYPES.has(match[1])) {
+      return {
+        code: 'issue_type_invalid',
+        message: `Issue title '${sanitize(arg)}' must start with a known <type>: prefix.`,
+        fix: `Prefix the title with one of: ${ISSUE_TYPE_LIST}. Example: specgit issue "feat: add login".`,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Kebab slug from the first three ASCII words of the title (#118: the
+ * defined non-ASCII behavior). Any non-ASCII character in the title
+ * yields '' — a mixed title's incidental ASCII words would make a
+ * garbage slug, so slugging is all-or-nothing on ASCII-only titles.
+ * An empty result is a naming gap the caller surfaces (#246): an
+ * interactive session is asked for a name, a scripted one gets a usage
+ * error naming `--delivery <slug>`. Never a silent `issue<N>`.
+ */
+export function slugifyTitle(title: string): string {
+  if (!/^[\x20-\x7E]*$/.test(title)) {
+    return '';
+  }
+  const words = title.match(/[A-Za-z0-9]+/g) ?? [];
+  return words
+    .slice(0, 3)
+    .map((word) => word.toLowerCase())
+    .join('-');
+}
+
+/** The interactive delivery-name prompt is bounded; EOF or exhaustion is a refusal, never a hang (#246). */
+const DELIVERY_NAME_PROMPT_ATTEMPTS = 3;
+
+/**
+ * Default prompt transport (#246): the same prompt stack the init
+ * command uses, writing to stderr so stdout keeps its parse-surface
+ * contract. Returns the trimmed answer, or null on EOF/interrupt.
+ */
+async function terminalDeliveryNamePrompt(message: string): Promise<string | null> {
+  try {
+    const { input } = await import('@inquirer/prompts');
+    const answer = await input({ message }, { output: process.stderr });
+    return answer.trim();
+  } catch (error) {
+    const cancellation = error as { name?: string; code?: string };
+    if (cancellation?.name === 'ExitPromptError' || cancellation?.code === 'ERR_USE_AFTER_EXIT') {
+      throw error;
+    }
+    return null;
+  }
+}
+
+/** The usage error for a delivery whose name cannot be resolved (#246). */
+function deliveryNameRequiredError(reason: string): IssueOutcome {
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issue_delivery_name_required',
+        `The delivery name could not be resolved: ${reason}`,
+        {
+          fix: 'Name the delivery explicitly — specgit issue <title-or-number> --delivery <slug> (kebab-case ASCII, e.g. add-login) — or use an ASCII issue title.',
+        }
+      ),
+    ],
+  };
+}
+
+/**
+ * Delivery-name resolution (#246), in precedence order: an explicit
+ * `--delivery` flag (the operator already named it) → the kebab slug of
+ * the first ASCII title → an interactive prompt → a usage error. The
+ * former silent `issue<N>` fallback is gone: a nameless delivery is a
+ * gap the operator resolves, never one bootstrap papers over.
+ *
+ * Exported for the #246 naming tests: the precedence and prompt loop
+ * are pure given the injected transport.
+ */
+export async function resolveDeliveryName(deps: {
+  cleanTitle: string;
+  override?: string;
+  interactive: boolean;
+  prompt: (message: string) => Promise<string | null>;
+  promptText: string;
+  retryText: string;
+}): Promise<{ name: string } | IssueOutcome> {
+  if (deps.override !== undefined) {
+    return { name: deps.override };
+  }
+  const slug = slugifyTitle(deps.cleanTitle);
+  if (slug && isKebabId(slug)) {
+    return { name: slug };
+  }
+  if (!deps.interactive) {
+    return deliveryNameRequiredError('the title yields no ASCII slug and no explicit name was given.');
+  }
+  for (let attempt = 0; attempt < DELIVERY_NAME_PROMPT_ATTEMPTS; attempt += 1) {
+    const answer = await deps.prompt(attempt === 0 ? deps.promptText : deps.retryText);
+    if (answer === null) {
+      break;
+    }
+    if (isKebabId(answer)) {
+      return { name: answer };
+    }
+  }
+  return deliveryNameRequiredError('no valid kebab-case name was entered.');
+}
+
+function recordSummary(record: DeliveryBinding): Record<string, unknown> {
+  return {
+    version: record.version,
+    delivery: record.delivery,
+    context: record.context,
+    issues: record.issues,
+    ...(record.pr !== undefined ? { pr: record.pr } : {}),
+  };
+}
+
+/**
+ * First title (non-numeric) argument in a consumed prefix: the argument
+ * that produced the delivery's name. Deterministic from the arguments
+ * alone, so a resumed run re-derives the same delivery and branch.
+ */
+function firstTitleArg(prefix: string[]): string | null {
+  for (const arg of prefix) {
+    if (arg && parseNumericRef(arg) === null) {
+      return arg;
+    }
+  }
+  return null;
+}
+
+function driftError(message: string): IssueOutcome {
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic('issue_resume_drift', message, {
+        fix: 'Re-run with the original arguments (or none) to resume, or run "specgit unbind --yes" to abandon this delivery and start over.',
+      }),
+    ],
+  };
+}
+
+/**
+ * Usage validation for arguments that would create issues: non-empty and
+ * conventionally typed. Runs before any side effect so invalid arguments
+ * can never replace a record or create an issue.
+ */
+function validateArgsForCreation(args: string[]): IssueOutcome | null {
+  for (const arg of args) {
+    if (!arg && parseNumericRef(arg) === null) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [
+          errorDiagnostic('issue_title_empty', 'Issue titles must not be empty.', {
+            fix: 'Pass a non-empty quoted title, e.g. specgit issue "feat: add login".',
+          }),
+        ],
+      };
+    }
+  }
+  const invalid = validateIssueTitles(args);
+  if (invalid) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [errorDiagnostic(invalid.code, invalid.message, { fix: invalid.fix })],
+    };
+  }
+  return null;
+}
+
+/**
+ * The #339 harness-currency gate: a bootstrap may only bind a delivery
+ * under generated assets this CLI version produced. Returns the refusal
+ * outcome when a surface is PROVEN stale, missing, or conflicting — the
+ * fix rides the surface's own repair command — and null whenever the
+ * environment cannot answer (probe throws) or reports no proven drift.
+ * Read-only by construction; never a network call.
+ */
+async function harnessCurrencyGate(args: {
+  root: string;
+  ctx: CommandContext;
+  facts: GitFacts;
+  warnings: Diagnostic[];
+}): Promise<IssueOutcome | null> {
+  let report: GeneratedAssetsReport;
+  let reuseAssets: Set<string>;
+  try {
+    const policyEv = await args.ctx.record.readPolicy(args.root);
+    report = await inspectGeneratedAssets({ root: args.root, ctx: args.ctx, policy: policyEv, facts: args.facts });
+    reuseAssets = await reuseRemoteAssetPaths(args.root, policyEv.ok ? policyEv.value.verification?.reuse ?? [] : []);
+  } catch {
+    return null;
+  }
+  // Blocking drift is PROVEN and dangerous; absence is not. A surface
+  // every asset of which is missing is a fresh adopt (nothing to be stale
+  // against) — bootstrap proceeds. A surface with any stale/conflicting
+  // asset, or only PARTIALLY present, was generated by some other state of
+  // the world and must be refreshed before it binds a delivery.
+  const remoteAsset = (asset: { path: string }) => reuseAssets.has(asset.path) || asset.path === GITLAB_ACCEPTANCE_PATH || /(?:^|\/)specgit-(?:accept|complete)\.ya?ml$/.test(asset.path);
+  const localDrift = report.surfaces.flatMap((surface) => surface.assets)
+    .filter((asset) => !remoteAsset(asset) && (asset.state === 'stale' || asset.state === 'conflict'));
+  if (localDrift.length > 0) args.warnings.push({
+    severity: 'warning', code: 'local_assets_stale',
+    message: `Local integration assets need refresh: ${localDrift.map((asset) => asset.path).join(', ')}.`,
+    fix: 'Inspect specgit status, then run the exact surface repair commands it reports. Delivery verification remains enforced.',
+  });
+  const drifted = report.surfaces.filter((surface) => {
+    const states = surface.assets.filter(remoteAsset).map((asset) => asset.state);
+    if (states.length === 0) {
+      return false;
+    }
+    if (states.some((state) => state === 'stale' || state === 'conflict')) {
+      return true;
+    }
+    const missing = states.filter((state) => state === 'missing').length;
+    return missing > 0 && missing < states.length;
+  });
+  if (drifted.length === 0) {
+    return null;
+  }
+  const fix = drifted.find((surface) => surface.fix !== undefined)?.fix ?? 'specgit init --force --no-protect';
+  const names = drifted.map((surface) => surface.surface).join(', ');
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'harness_stale',
+        `Generated harness assets are stale or conflicting for this CLI version (surfaces: ${names}).`,
+        { fix: `Inspect the drift with "specgit status --json", run the reported repair command (${fix}), then re-run this command.` }
+      ),
+    ],
+  };
+}
+
+/**
+ * The closing-loop gate (#347): a merged delivery whose bound issues are
+ * still OPEN has no proven closure — the forge's auto-close never fired
+ * (refs removed post-merge, cross-repo reference, provider close-semantics).
+ * Starting the next delivery on top of unproven closure is refused with
+ * zero side effects, before the merged record could be replaced. Evidence
+ * that cannot be gathered fails closed (exit 3); the check keys on the
+ * forge, never on prose.
+ */
+async function mergedIssuesClosureGate(
+  ctx: CommandContext,
+  repo: RepoRef,
+  record: DeliveryBinding
+): Promise<IssueOutcome | null> {
+  const openEv = await ctx.gh.getOpenIssues(repo);
+  if (!openEv.ok) {
+    return passthrough(openEv);
+  }
+  const open = new Set(openEv.value.map((fact) => fact.number));
+  const stillOpen = record.issues.filter((issue) => open.has(issue));
+  if (stillOpen.length === 0) {
+    return null;
+  }
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issues_not_closed',
+        `The merged delivery '${record.delivery}' still has unclosed bound issue(s): ${issueList(stillOpen)}. The closing reference never fired on the forge.`,
+        {
+          fix: 'Close them on the tracker — check the merged PR/MR body for removed Closes references — then start the next delivery.',
+        }
+      ),
+    ],
+  };
+}
+
+export async function runIssue(
+  options: IssueOptions,
+  ctx: CommandContext
+): Promise<IssueOutcome> {
+  const args = (options.titles ?? []).map((value) => value.trim());
+
+  // #246: an explicit delivery name is validated like any other
+  // argument — before any discovery or side effect.
+  const deliveryOverride = options.delivery?.trim();
+  if (
+    options.delivery !== undefined &&
+    (deliveryOverride === undefined || deliveryOverride === '' || !isKebabId(deliveryOverride))
+  ) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic(
+          'issue_delivery_name_invalid',
+          `--delivery '${sanitize(options.delivery ?? '')}' is not a valid delivery name.`,
+          { fix: `${KEBAB_ID_FIX} Example: specgit issue <title-or-number> --delivery add-login.` }
+        ),
+      ],
+    };
+  }
+
+  const rootEv = await ctx.discoverRoot(ctx.cwd);
+  if (!rootEv.ok) {
+    return passthrough(rootEv);
+  }
+  const root = rootEv.value;
+
+  const facts = await ctx.git.facts(root);
+  const contextEv = resolveExecutionContext(facts);
+  if (!contextEv.ok) {
+    return passthrough(contextEv);
+  }
+
+  if (!facts.originUrl) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic('no_origin', 'No origin remote is configured.', {
+          fix: 'Add an origin for the supported forge: git remote add origin <url>.',
+        }),
+      ],
+    };
+  }
+  const repoEv = await ctx.parseRepoRef(facts.originUrl);
+  if (!repoEv.ok) {
+    return passthrough(repoEv);
+  }
+
+  const policyRead = await ctx.record.readPolicy(root);
+  if (!policyRead.ok && policyRead.code !== 'policy_missing') return passthrough(policyRead);
+  let policy = policyRead.ok ? policyRead.value : undefined;
+  let language = resolveLanguage(policy);
+  let { human } = catalogFor(language);
+  const webOrigin = forgeWebBase(facts.originUrl);
+  const closingHost = webOrigin === null ? undefined : new URL(webOrigin).host;
+
+  const existingRead = await ctx.record.readRecord(root);
+  if (!existingRead.ok && existingRead.code !== 'record_missing') {
+    return passthrough(existingRead);
+  }
+
+  // Remote acceptance assets must be usable. Local guidance drift is a
+  // maintenance warning; it cannot prevent starting or resuming delivery.
+  const maintenanceWarnings: Diagnostic[] = [];
+  const gate = await harnessCurrencyGate({ root, ctx, facts, warnings: maintenanceWarnings });
+  if (gate !== null) {
+    return gate;
+  }
+
+  const lifecycleEv = await resolveRequestLifecycle(ctx, repoEv.value, existingRead.ok ? existingRead : null);
+  if ('exit' in lifecycleEv) {
+    return lifecycleEv;
+  }
+  let existing = lifecycleEv.existing;
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'absent') {
+    return missingRequestError(existing.value);
+  }
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'closed') {
+    return closedRequestError(existing.value);
+  }
+  // An active request is governed by approved target rules until merge.
+  // Candidate settings cannot make its idempotent resume contradict finish.
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'bound') {
+    const approved = await ctx.resolvePolicy(root, existing);
+    if (!approved.ok && approved.code !== 'policy_missing') return passthrough(approved);
+    policy = approved.ok ? approved.value.policy : undefined;
+    language = resolveLanguage(policy);
+    ({ human } = catalogFor(language));
+  }
+  // A merged record has nothing to resume: no-args resume would re-run
+  // the branch/commit/push steps and resurrect a head branch the forge
+  // auto-deleted on merge. End the lifecycle decision before any side
+  // effect, naming the way forward (#75). #347: before that refusal —
+  // and before any replacement re-bootstrap below — prove the merged
+  // delivery's issues actually closed on the forge.
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'merged') {
+    const closure = await mergedIssuesClosureGate(ctx, repoEv.value, existing.value);
+    if (closure !== null) {
+      return closure;
+    }
+  }
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'merged' && args.length === 0) {
+    return mergedDeliveryError(existing.value);
+  }
+
+  // Resolve identity from the original request before a template changes its
+  // title. Only an active binding supplies identity; merged history cannot
+  // name a new delivery. The resolved name also prevents a second prompt.
+  let resolvedDeliveryName = existing !== null && existing.ok && lifecycleEv.requestState !== 'merged'
+    ? existing.value.delivery : deliveryOverride;
+  if ((existing === null || lifecycleEv.requestState === 'merged') && args.length > 0) {
+    const invalid = validateArgsForCreation(args);
+    if (invalid) return invalid;
+    const first = firstTitleArg(args);
+    const name = await resolveDeliveryName({
+      cleanTitle: first === null ? '' : parseIssueTitle(first).cleanTitle,
+      override: deliveryOverride, interactive: options.json !== true && ctx.stdinIsTTY,
+      prompt: terminalDeliveryNamePrompt, promptText: human.deliveryNamePrompt(), retryText: human.deliveryNameRetry(),
+    });
+    if ('exit' in name) return name;
+    resolvedDeliveryName = name.name;
+  }
+  if (policy?.templates?.issue) {
+    for (let i = 0; i < args.length; i += 1) {
+      if (parseNumericRef(args[i]) !== null) continue;
+      const rendered = renderDeliveryTemplate(policy, 'issue', { title: args[i], body: '', delivery: resolvedDeliveryName });
+      if (!rendered.ok) return { exit: EXIT_USAGE, errors: [errorDiagnostic(rendered.code, rendered.message)] };
+      args[i] = rendered.value.title;
+    }
+  }
+
+  // Validate arguments BEFORE any write, scoped to what
+  // those arguments would actually do:
+  //  - fresh bootstrap: every argument is validated (today's contract);
+  //  - merged-record replacement: validated before starting fresh;
+  //  - live resume: arguments are resume keys, not titles-to-create —
+  //    only the still-unconsumed arguments of a partial record, the ones
+  //    that would create issues, are validated.
+  // Invalid or absent arguments never mutate the record.
+  if (existing === null) {
+    if (args.length === 0) {
+      return {
+        exit: EXIT_USAGE,
+        errors: [
+          errorDiagnostic('issue_args_required', 'specgit issue needs at least one issue.', {
+            fix: 'Pass one or more quoted issue titles to create, or existing issue numbers to reuse, e.g. specgit issue "feat: add login".',
+          }),
+        ],
+      };
+    }
+    const invalidFresh = validateArgsForCreation(args);
+    if (invalidFresh) {
+      return invalidFresh;
+    }
+  }
+
+  // Start fresh only after validation and proven closure (#347). Keep the
+  // completed record on disk until the first new issue is durable: the
+  // atomic writer replaces it, so naming, tag, forge, or write failures
+  // before that point preserve the completed delivery (#378).
+  if (existing !== null && existing.ok && lifecycleEv.requestState === 'merged' && args.length > 0) {
+    const invalidReplacement = validateArgsForCreation(args);
+    if (invalidReplacement) {
+      return invalidReplacement;
+    }
+    const closure = await mergedIssuesClosureGate(ctx, repoEv.value, existing.value);
+    if (closure !== null) {
+      return closure;
+    }
+    existing = null;
+  }
+
+  // Resume: the record is the durable step marker; the arguments map
+  // onto it positionally, and the resolution names where creation (if
+  // any) continues.
+  const liveRecord = existing !== null && existing.ok ? existing.value : null;
+  const resumed = liveRecord !== null;
+  const resume = liveRecord !== null ? validateResumeArgs(liveRecord, args) : null;
+  if (resume !== null && 'exit' in resume) {
+    return resume;
+  }
+  if (liveRecord !== null) {
+    const titles = await validateResumeTitles(ctx, repoEv.value, liveRecord, args);
+    if (titles !== null) return titles;
+  }
+  const startIndex = resume !== null ? resume.startIndex : 0;
+  const issueBodies = new Map<number, string>();
+  let prBody: string | undefined;
+  if (liveRecord?.pr === undefined) {
+    const titleIndexes = args.flatMap((arg, i) => parseNumericRef(arg) === null ? [i] : []);
+    if (options.bodyFile?.length && options.bodyFile.length !== titleIndexes.length) {
+      return { exit: EXIT_USAGE, errors: [errorDiagnostic('issue_body_count', 'Supply one --body-file per title argument; existing numeric issues retain their bodies.')] };
+    }
+    try {
+      for (const [position, index] of titleIndexes.entries()) {
+        if (index < startIndex) continue;
+        const supplied = options.bodyFile?.[position];
+        const content = supplied ? await readFile(resolve(root, supplied), 'utf8') : issueBody(args[index], language);
+        if (Buffer.byteLength(content, 'utf8') > 1_000_000) throw new Error('Issue body exceeds 1 MB.');
+        const rendered = renderDeliveryTemplate(policy ?? { version: 1, required_checks: [] }, 'issue', { title: args[index], body: content, delivery: resolvedDeliveryName ?? liveRecord?.delivery, issues: liveRecord?.issues });
+        if (!rendered.ok) return { exit: EXIT_USAGE, errors: [errorDiagnostic(rendered.code, rendered.message)] };
+        issueBodies.set(index, rendered.value.body);
+      }
+      if (options.prBodyFile) {
+        prBody = await readFile(resolve(root, options.prBodyFile), 'utf8');
+        if (Buffer.byteLength(prBody, 'utf8') > 1_000_000) throw new Error('PR/MR body exceeds 1 MB.');
+      }
+    } catch (error) {
+      return { exit: EXIT_USAGE, errors: [errorDiagnostic('issue_body_file_invalid', error instanceof Error ? error.message : String(error))] };
+    }
+  }
+
+  // #330: explicit --tags resolves BEFORE any issue is created — a typo
+  // in the selection must never leave a created issue behind. The pool
+  // probe here is a read; its snapshot travels into the apply step.
+  const rawTags = options.tags?.split(',').map((token) => token.trim()).filter((t) => t !== '');
+  let tagPre: ResolvedTagSelection | undefined;
+  if (rawTags !== undefined && rawTags.length > 0) {
+    const validated = await validateExplicitTags({
+      ctx,
+      root,
+      repo: repoEv.value,
+      language,
+      tokens: [...rawTags],
+    });
+    if ('exit' in validated) {
+      return validated;
+    }
+    tagPre = validated.pre;
+  }
+
+  if (resolvedDeliveryName === undefined) {
+    return deliveryNameRequiredError('no delivery name could be resolved.');
+  }
+  if (policy !== undefined) {
+    for (const title of args.slice(startIndex).filter((arg) => parseNumericRef(arg) === null)) {
+      const checked = checkTitleConvention(policy, title);
+      if (!checked.ok) return conventionFailure(checked);
+    }
+  }
+  const plan = await prepareIssuePlan({
+    provider: ctx.gh, repo: repoEv.value, language, delivery: resolvedDeliveryName,
+    boundIssues: liveRecord?.issues ?? [], args, startIndex,
+  });
+  if ('exit' in plan) return plan;
+  const conventions = await checkIssuePlanConventions({
+    ctx, repo: repoEv.value, policy, record: liveRecord, plan, requested: rawTags, issueBodies,
+  });
+  if (conventions !== null) return conventions;
+
+  const newTitles = args.slice(startIndex).filter((arg) => parseNumericRef(arg) === null);
+  if (newTitles.length > 0) {
+    const history = await findIssueHistory(ctx.gh, repoEv.value, newTitles, resolvedDeliveryName ?? liveRecord?.delivery);
+    if (!history.ok) return passthrough(history);
+    for (const match of history.value) {
+      const relevant = [...match.openCandidates, ...match.closedHistory];
+      if (relevant.length > 0) maintenanceWarnings.push({
+        severity: 'warning', code: 'issue_history_candidates',
+        message: `Review related history for '${sanitize(match.title)}': ${relevant.map((i) => `#${i.number} (${i.state})`).join(', ')}. Similarity does not establish the same WHY.`,
+      });
+      const previous = match.closedHistory.filter((issue) => issue.title === match.title);
+      for (let index = startIndex; index < args.length; index += 1) {
+        if (args[index] !== match.title || previous.length === 0) continue;
+        const links = previous.map((issue) => `#${issue.number}`).join(', ');
+        issueBodies.set(index, `${issueBodies.get(index) ?? issueBody(args[index], language)}\n\n${language === 'zh' ? '相关已关闭历史' : 'Related closed history'}: ${links}\n`);
+      }
+    }
+  }
+  if (liveRecord !== null) {
+    const occupancy = await issueOccupancyGate(ctx, repoEv.value, liveRecord.issues, liveRecord, closingHost);
+    if (occupancy !== null) return occupancy;
+  }
+
+  // A fresh delivery must know its PR/MR target before creating issues or
+  // writing a binding. Existing deliveries can repair/adopt their request;
+  // bindPullRequest resolves a default only when it actually creates one.
+  if (liveRecord === null && policy?.automation?.target_branch === undefined) {
+    const base = await ctx.git.remoteDefaultBranch(root, { requireEvidence: true });
+    if (!base.ok) return passthrough(base);
+  }
+
+  const created = await createOrAdoptIssues({
+    ctx,
+    root,
+    repo: repoEv.value,
+    language,
+    context: contextEv.value,
+    record: liveRecord,
+    plan,
+    firstTitle: resume !== null ? resume.firstTitle : null,
+    issueBodies,
+    closingHost,
+  });
+  if ('exit' in created) {
+    return created;
+  }
+  let record = created.record;
+  const firstTitle = created.firstTitle;
+
+  // #330: the tag step runs after every bound issue is durable in the
+  // record — created, adopted, or resumed alike — and before the PR
+  // chain, so the traceability story lands in one invocation. #338: the
+  // inferred candidates are per-issue — each bound issue's OWN title
+  // kind from the record. Issues without a recorded kind (numeric
+  // reuses, or issues consumed by a pre-#338 run) carry none and never
+  // inherit another title's. An explicit --tags replaces inference
+  // wholesale (already pre-validated above).
+  const inferredByIssue = record.issueKinds !== undefined
+    ? new Map(record.issueKinds.map((entry) => [entry.issue, entry.kind]))
+    : undefined;
+  const tagging = await applyDeliveryTags({
+    ctx,
+    root,
+    repo: repoEv.value,
+    language,
+    issues: record.issues,
+    requested: rawTags === undefined ? undefined : [...rawTags],
+    inferredByIssue,
+    strictEvidence: policy?.validation?.labels !== undefined && policy.validation.labels !== 'off',
+    ...(tagPre !== undefined ? { pre: tagPre } : {}),
+  });
+  if ('exit' in tagging) {
+    return tagging;
+  }
+
+  // #278: the tail chain is data — the DeliveryBootstrap module's
+  // ordered steps (checkout → commit binding → push head → bind PR/MR →
+  // commit record → push). Preconditions read the current branch and
+  // record, so a re-run from any partial state converges;
+  // reordering is a change to BOOTSTRAP_STEPS, reviewable as such.
+  const chained = await runBootstrapSteps(BOOTSTRAP_STEPS, {
+    ctx,
+    root,
+    repo: repoEv.value,
+    language,
+    record,
+    firstTitle,
+    facts,
+    policy,
+    prBody,
+  });
+  if ('exit' in chained) {
+    return chained;
+  }
+  record = chained.record;
+
+  const target = record.context.branch;
+
+  // #330: one summary line when tags were part of this run; skipped runs
+  // stay silent so the quick bootstrap's stderr keeps its old shape.
+  const builder = humanBuilder()
+    .line(human.issueHeader(resumed, record.delivery))
+    .line(human.issueBranch(target))
+    .line(human.issueIssues(issueList(record.issues)));
+  if (tagging.status === 'applied' || tagging.seeded.length > 0 || tagging.applied.length > 0) {
+    builder.line(
+      human.issueTags(
+        tagging.applied.join(', '),
+        tagging.seeded.length > 0 ? tagging.seeded.join(', ') : null
+      )
+    );
+  }
+  // #361: the success hand-off — forge URLs and the steps to
+  // review-ready (fill the issue bodies, fill the PR/MR brief, mark ready).
+  const platform = repoEv.value.platform;
+  const base = forgeWebBase(facts.originUrl);
+  const urls =
+    base !== null && record.pr !== undefined
+      ? {
+          issues: record.issues.map((n) => forgeIssueUrl(base, platform, n)),
+          pr: forgePrUrl(base, platform, record.pr),
+        }
+      : undefined;
+  const issueEdit = platform === 'gitlab' ? 'glab issue update' : 'gh issue edit';
+  const prEdit = platform === 'gitlab' ? 'glab mr update' : 'gh pr edit';
+  const bodyFileFlag = platform === 'gitlab' ? '--description-file' : '--body-file';
+  const reasonFor = human.issueHandoffReasons();
+  const nextActions: NextAction[] | undefined =
+    record.pr !== undefined
+      ? [
+          {
+            code: 'issue_bodies',
+            command: record.issues
+              .map((n) => `${issueEdit} ${n} ${bodyFileFlag} <file-${n}>`)
+              .join(' && '),
+            reason: reasonFor['issue_bodies'] ?? '',
+          },
+          {
+            code: 'pr_brief',
+            command: `${prEdit} ${record.pr} ${bodyFileFlag} <file-pr>`,
+            reason: reasonFor['pr_brief'] ?? '',
+          },
+          {
+            code: 'pr_ready',
+            command: forgeReadyCommand(platform, record.pr),
+            reason: reasonFor['pr_ready'] ?? '',
+          },
+        ]
+      : undefined;
+
+  return {
+    exit: EXIT_SUCCESS,
+    state: deriveBindingState(record),
+    record: recordSummary(record),
+    ...(maintenanceWarnings.length > 0 ? { warnings: maintenanceWarnings } : {}),
+    ...(urls !== undefined ? { urls } : {}),
+    ...(nextActions !== undefined ? { nextActions } : {}),
+    human: builder
+      .line(human.issuePr(record.pr as number | string))
+      .line(human.issueRecorded(RECORD_FILENAME))
+      .append(urls !== undefined ? [detailLine(urls.pr)] : [])
+      .append(renderNextActionsHuman(human.nextHeadline(), nextActions ?? []))
+      .build(),
+  };
+}
+
+/**
+ * Read-only request-state probe (#75/#463): a merged PR/MR is completed
+ * history, a closed-unmerged PR/MR is failed history that requires repair,
+ * and a missing request is a broken binding. Provider failures keep the
+ * existing record (fail-closed — never guess lifecycle state): resuming on
+ * a guess could re-push a branch the forge deleted on merge.
+ */
+type RequestLifecycle = 'unbound' | 'bound' | 'merged' | 'closed' | 'absent';
+
+async function resolveRequestLifecycle(
+  ctx: CommandContext,
+  repo: RepoRef,
+  existing: Evidence<DeliveryBinding> | null
+): Promise<IssueOutcome | {
+  existing: Evidence<DeliveryBinding> | null;
+  requestState: RequestLifecycle;
+}> {
+  if (existing === null || !existing.ok || existing.value.pr === undefined) {
+    return { existing, requestState: 'unbound' };
+  }
+  const prEv = await ctx.gh.getPr(repo, existing.value.pr);
+  if (!prEv.ok) {
+    if (prEv.code === 'pr_not_found') {
+      return { existing, requestState: 'absent' };
+    }
+    return passthrough(prEv);
+  }
+  return {
+    existing,
+    requestState:
+      prEv.value.state === 'merged'
+        ? 'merged'
+        : prEv.value.state === 'closed'
+          ? 'closed'
+          : 'bound',
+  };
+}
+
+/** A closed request without a merge is a failed delivery, never resumable history. */
+function closedRequestError(record: DeliveryBinding): IssueOutcome {
+  if (record.pr === undefined) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'record_invalid',
+          `Delivery '${record.delivery}' has no PR/MR reference whose closed state can be reported.`,
+          { fix: 'Repair or recreate .specgit.yaml before resuming this delivery.' }
+        ),
+      ],
+    };
+  }
+  const closingReferences = record.issues.map((issue) => `Closes #${issue}`).join(', ');
+  return {
+    exit: EXIT_REJECTED,
+    errors: [
+      errorDiagnostic(
+        'pr_closed_unmerged',
+        `Delivery '${record.delivery}' is bound to PR/MR ${formatRequestRef(record.pr)}, which is closed without merge. The failed delivery record was preserved and cannot be resumed or replaced.`,
+        {
+          fix: `Create or find an open draft PR/MR from branch '${record.context.branch}' whose body preserves every closing reference (${closingReferences}); then repair this binding with: specgit pr <number>. Handle any new WHY in a separate issue after this binding is repaired.`,
+        }
+      ),
+    ],
+  };
+}
+
+/** A missing request is a repairable binding failure, never completed history. */
+function missingRequestError(record: DeliveryBinding): IssueOutcome {
+  if (record.pr === undefined) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'record_invalid',
+          `Delivery '${record.delivery}' has no PR/MR reference to repair.`,
+          { fix: 'Repair or recreate .specgit.yaml before resuming this delivery.' }
+        ),
+      ],
+    };
+  }
+  const closingReferences = record.issues.map((issue) => `Closes #${issue}`).join(', ');
+  return {
+    exit: EXIT_UNKNOWN,
+    errors: [
+      errorDiagnostic(
+        'pr_not_found',
+        `Delivery '${record.delivery}' remains bound to PR/MR ${formatRequestRef(record.pr)}, but that request does not exist on the configured forge. The delivery is not complete and its record was preserved.`,
+        {
+          fix: `Find an existing open PR/MR for branch '${record.context.branch}' or create a draft one whose body preserves every closing reference (${closingReferences}); then repair this binding with: specgit pr <number>.`,
+        }
+      ),
+    ],
+  };
+}
+
+/** The no-args refusal for a record whose PR/MR is proven merged (#75). */
+function mergedDeliveryError(record: DeliveryBinding): IssueOutcome {
+  if (record.pr === undefined) {
+    return {
+      exit: EXIT_UNKNOWN,
+      errors: [
+        errorDiagnostic(
+          'record_invalid',
+          `Delivery '${record.delivery}' has no PR/MR reference whose merged state can be reported.`,
+          { fix: 'Repair or recreate .specgit.yaml before resuming this delivery.' }
+        ),
+      ],
+    };
+  }
+  return {
+    exit: EXIT_USAGE,
+    errors: [
+      errorDiagnostic(
+        'issue_delivery_merged',
+        `Delivery '${record.delivery}' is complete because PR/MR ${formatRequestRef(record.pr)} is merged; there is nothing to resume.`,
+        {
+          fix: 'Start the next delivery with replacement arguments, e.g. specgit issue "feat: next why" — it atomically replaces this completed record.',
+        }
+      ),
+    ],
+  };
+}
+
+/**
+ * Resume validation (#177 extraction): map replacement arguments onto a
+ * live record positionally. Every recorded issue is a consumed argument;
+ * numeric arguments are verifiable against the binding, and creation
+ * continues only from a partial record without a PR. Any mismatch is
+ * drift, refused with zero side effects.
+ */
+function validateResumeArgs(
+  record: DeliveryBinding,
+  args: string[]
+): IssueOutcome | { startIndex: number; firstTitle: string | null } {
+  const issues = [...record.issues];
+  if (args.length === 0) {
+    return { startIndex: issues.length, firstTitle: null };
+  }
+  if (args.length < issues.length) {
+    return driftError(
+      `This checkout already carries delivery '${record.delivery}' with ${record.issues.length} bound issue(s); the ${args.length} argument(s) do not match.`
+    );
+  }
+  if (args.length === issues.length) {
+    // Numeric arguments must already be bound. The separate live-title
+    // check verifies title arguments before any resumed mutation.
+    for (const arg of args) {
+      const number = parseNumericRef(arg);
+      if (number !== null && !record.issues.includes(number)) {
+        return driftError(
+          `Argument '${sanitize(arg)}' is not among the issues bound to delivery '${record.delivery}'.`
+        );
+      }
+    }
+    return { startIndex: issues.length, firstTitle: null };
+  }
+  // Partial continuation (issues ⊂ args) is only possible while the
+  // bootstrap is incomplete: no PR/MR recorded yet. A record with a request
+  // bound is a complete delivery — a finished bootstrap never creates
+  // issues, so surplus arguments are drift, refused with zero side
+  // effects before any probe or create.
+  if (record.pr !== undefined) {
+    return driftError(
+      `This checkout already carries the complete delivery '${record.delivery}' with ${record.issues.length} bound issue(s) and PR/MR ${formatRequestRef(record.pr)}; the ${args.length} argument(s) do not match.`
+    );
+  }
+  // Partial record (issues ⊂ args): the first issues.length arguments
+  // were consumed by the previous run — numeric ones are verified
+  // positionally — and creation continues from there.
+  for (let i = 0; i < issues.length; i += 1) {
+    const number = parseNumericRef(args[i]);
+    if (number !== null && number !== issues[i]) {
+      return driftError(
+        `Argument '${sanitize(args[i])}' is not among the issues bound to delivery '${record.delivery}'.`
+      );
+    }
+  }
+  const firstTitle = firstTitleArg(args.slice(0, issues.length));
+  // The remaining arguments will create issues: validate them before
+  // any side effect.
+  const invalidRemaining = validateArgsForCreation(args.slice(issues.length));
+  if (invalidRemaining) {
+    return invalidRemaining;
+  }
+  return { startIndex: issues.length, firstTitle };
+}
+
+/** A title is a resume key only when the bound issue still proves that title. */
+async function validateResumeTitles(
+  ctx: CommandContext,
+  repo: RepoRef,
+  record: DeliveryBinding,
+  args: string[]
+): Promise<IssueOutcome | null> {
+  for (let index = 0; index < Math.min(args.length, record.issues.length); index += 1) {
+    if (parseNumericRef(args[index]) !== null) continue;
+    const number = record.issues[index];
+    const issue = await ctx.gh.getIssue(repo, number);
+    if (!issue.ok) return passthrough(issue);
+    if (issue.value.number !== number || issue.value.pullRequest ||
+        typeof issue.value.title !== 'string' || issue.value.title.trim() === '') {
+      return {
+        exit: EXIT_UNKNOWN,
+        errors: [errorDiagnostic('issue_resume_title_unavailable', `The title of bound issue #${number} could not be verified.`, {
+          fix: 'Resume with no arguments or the bound issue numbers, or retry when issue title evidence is available.',
+        })],
+      };
+    }
+    if (issue.value.title !== args[index]) {
+      return driftError(`Title '${sanitize(args[index])}' does not match bound issue #${number} in delivery '${record.delivery}'.`);
+    }
+  }
+  return null;
+}
+
+function conventionFailure(failure: Extract<Evidence<true>, { ok: false }>): IssueOutcome {
+  return {
+    exit: failure.code === 'title_evidence_missing' || failure.code === 'issue_labels_unavailable' || failure.code === 'body_evidence_missing' ? EXIT_UNKNOWN : EXIT_USAGE,
+    errors: [errorDiagnostic(failure.code, failure.message, failure.fix ? { fix: failure.fix } : {})],
+  };
+}
+
+/** Validate the chosen issues before the first issue or record write. */
+async function checkIssuePlanConventions(deps: {
+  ctx: CommandContext;
+  repo: RepoRef;
+  policy: Policy | undefined;
+  record: DeliveryBinding | null;
+  plan: IssuePlan;
+  requested: string[] | undefined;
+  issueBodies: ReadonlyMap<number, string>;
+}): Promise<IssueOutcome | null> {
+  const { policy, ctx, repo, record } = deps;
+  if (policy === undefined ||
+      (policy.validation?.titles !== true && (policy.validation?.labels ?? 'off') === 'off' &&
+       policy.validation?.bodies !== true && policy.templates?.issue?.required_sections === undefined)) return null;
+  const labelsEnabled = (policy.validation?.labels ?? 'off') !== 'off';
+  const plans: Array<{ number?: number; kind?: string; index?: number }> = [
+    ...(record?.issues ?? []).map((number) => ({
+      number, kind: record?.issueKinds?.find((entry) => entry.issue === number)?.kind,
+    })),
+    ...deps.plan.entries.map((entry) => ({
+      number: entry.action === 'create' ? undefined : entry.number,
+      kind: entry.action === 'reuse' ? undefined : `kind::${parseIssueTitle(entry.title).type}`,
+      index: entry.index,
+    })),
+  ];
+  for (const plan of plans) {
+    let existingLabels: string[] = [];
+    if (plan.number !== undefined) {
+      const issue = await ctx.gh.getIssue(repo, plan.number);
+      if (!issue.ok) return passthrough(issue);
+      if (issue.value.number !== plan.number || issue.value.pullRequest) {
+        return { exit: EXIT_UNKNOWN, errors: [errorDiagnostic('issue_evidence_mismatch', `Issue #${plan.number} did not resolve to that issue.`)] };
+      }
+      const title = checkTitleConvention(policy, issue.value.title);
+      if (!title.ok) return conventionFailure(title);
+      const body = checkBodyConvention(policy, 'issue', issue.value.body);
+      if (!body.ok) return conventionFailure(body);
+      if (labelsEnabled) {
+        if (issue.value.labels === undefined) {
+          const missing = checkLabelConvention(policy, undefined);
+          if (!missing.ok) return conventionFailure(missing);
+        }
+        existingLabels = issue.value.labels ?? [];
+      }
+    }
+    if (plan.number === undefined && plan.index !== undefined) {
+      const body = checkBodyConvention(policy, 'issue', deps.issueBodies.get(plan.index));
+      if (!body.ok) return conventionFailure(body);
+    }
+    if (labelsEnabled) {
+      const selected = deps.requested ?? (plan.kind === undefined ? [] : [plan.kind]);
+      const labels = checkLabelConvention(policy, [...new Set([...existingLabels, ...selected])]);
+      if (!labels.ok) return conventionFailure(labels);
+    }
+  }
+  return null;
+}
+
+/**
+ * The issue creation loop (#177 extraction): for every unconsumed
+ * planned issue, reuse its chosen number or create fresh, then persist
+ * the record so a failure heals on the next invocation without re-creating. The
+ * delivery name is resolved once before any remote side effect (#246);
+ * a resume keeps the recorded name.
+ *
+ * Exported for the #216 guard test: the function proves its own null-record
+ * precondition with an explicit runtime guard instead of a type assertion.
+ */
+export async function createOrAdoptIssues(deps: {
+  ctx: CommandContext;
+  root: string;
+  repo: RepoRef;
+  language: PolicyLanguage;
+  context: DeliveryBinding['context'];
+  record: DeliveryBinding | null;
+  plan: IssuePlan;
+  firstTitle: string | null;
+  issueBodies?: ReadonlyMap<number, string>;
+  closingHost?: string;
+}): Promise<IssueOutcome | { record: DeliveryBinding; firstTitle: string | null }> {
+  const { ctx, root, repo, language, context } = deps;
+  const issues = deps.record !== null ? [...deps.record.issues] : [];
+  // #338: every bound issue carries its OWN title's kind in the record,
+  // so the tag step never makes one issue inherit another's. Kinds ride
+  // the durable per-issue rewrite below; a resume restores them from the
+  // record and continues from the first unconsumed argument.
+  const issueKinds = new Map<number, string>(
+    (deps.record?.issueKinds ?? []).map((entry) => [entry.issue, entry.kind])
+  );
+  let record: DeliveryBinding | null = deps.record;
+  let firstTitle = deps.firstTitle;
+
+  const delivery = deps.plan.delivery;
+  for (const entry of deps.plan.entries) {
+    let number: number;
+    if (entry.action === 'create') {
+      const created = await ctx.gh.createIssue(repo, entry.title,
+        deps.issueBodies?.get(entry.index) ?? issueBody(entry.title, language));
+      if (!created.ok) return passthrough(created);
+      number = created.value.number;
+    } else {
+      number = entry.number;
+    }
+    if (entry.action !== 'reuse' && firstTitle === null) firstTitle = entry.title;
+    const occupancy = await issueOccupancyGate(ctx, repo, [number], deps.record, deps.closingHost);
+    if (occupancy !== null) return occupancy;
+    issues.push(number);
+    if (entry.action !== 'reuse') {
+      // #338: a title-bound issue records its own kind; a reused numeric
+      // issue contributes none — it never inherits another title's.
+      const { type } = parseIssueTitle(entry.title);
+      if (type) {
+        issueKinds.set(number, `kind::${type}`);
+      }
+    }
+
+    // Durable resumable state: rewrite the record after every issue so
+    // any failure heals on the next invocation without re-creating.
+    const { type } =
+      firstTitle !== null ? parseIssueTitle(firstTitle) : { type: 'feat' };
+    const branch = deps.record?.context.branch ?? `${type}/${issues[0]}-${delivery}`;
+    record = {
+      version: 1,
+      delivery,
+      context: { ...context, branch },
+      issues: [...issues],
+      // The writer preserves omitted kinds for surgery callers. Bootstrap
+      // owns the full map, including empty, so a replaced delivery cannot
+      // inherit kinds from its completed predecessor.
+      issueKinds: [...issueKinds.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([issue, kind]) => ({ issue, kind })),
+    };
+    try {
+      await ctx.record.writeRecord(root, record);
+    } catch (error) {
+      return recordWriteFailure(error);
+    }
+  }
+
+  // #216: the loop above assigns `record` on every iteration, so it stays
+  // null only when no iteration ran (no unconsumed arguments). runIssue's
+  // pre-validation makes that path unreachable in production — but this
+  // function proves the precondition explicitly instead of asserting it.
+  if (record === null) {
+    return {
+      exit: EXIT_USAGE,
+      errors: [
+        errorDiagnostic('issue_args_required', 'specgit issue needs at least one issue.', {
+          fix: 'Pass one or more quoted issue titles to create, or existing issue numbers to reuse, e.g. specgit issue "feat: add login".',
+        }),
+      ],
+    };
+  }
+  return { record, firstTitle };
+}
+
+/** Check active claims before a binding write; recovery excludes a proven current PR. */
+async function issueOccupancyGate(
+  ctx: CommandContext, repo: RepoRef, issues: readonly number[], record: DeliveryBinding | null, host?: string
+): Promise<IssueOutcome | null> {
+  let currentPr = typeof record?.pr === 'number' ? record.pr : undefined;
+  if (typeof record?.pr === 'string') {
+    const request = await ctx.gh.getPr(repo, record.pr);
+    if (!request.ok) return passthrough(request);
+    currentPr = request.value.number;
+  }
+  let result = await findIssueOccupancy(ctx.gh, repo, issues, { pr: currentPr, host });
+  if (!result.ok) return passthrough(result);
+  // A partial record can survive a lost PR-creation response. Reconcile by
+  // the same authenticated head lookup used by bootstrap before rejecting it.
+  if (result.value.length > 0 && record !== null && record.pr === undefined) {
+    const discovered = await ctx.gh.listOpenPrsByHead(repo, record.context.branch);
+    if (!discovered.ok) return passthrough(discovered);
+    if (discovered.value.length === 1) {
+      result = await findIssueOccupancy(ctx.gh, repo, issues, { pr: discovered.value[0].number, host });
+      if (!result.ok) return passthrough(result);
+    }
+  }
+  if (result.value.length === 0) return null;
+  return { exit: EXIT_USAGE, errors: [errorDiagnostic('issue_already_claimed',
+    result.value.map((claim) => `Issue #${claim.issue} is already claimed by ${claim.pullRequests.map((pr) => `PR/MR #${pr.number}`).join(', ')}.`).join(' '),
+    { fix: 'Continue the existing delivery, or remove its closing reference before moving this issue.' })] };
+}

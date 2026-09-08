@@ -1,0 +1,104 @@
+[
+ {
+  "id": 11114,
+  "iid": 1,
+  "project_id": 1278,
+  "title": "REDACTED_TEXT",
+  "description": "",
+  "state": "closed",
+  "created_at": "2026-03-30T05:36:40.261Z",
+  "updated_at": "2026-07-29T10:26:55.081Z",
+  "merged_by": null,
+  "merge_user": null,
+  "merged_at": null,
+  "closed_by": {
+   "id": 59,
+   "username": "REDACTED_USER",
+   "public_email": "REDACTED_EMAIL",
+   "name": "REDACTED_NAME",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "REDACTED_URL",
+   "web_url": "REDACTED_USER_URL"
+  },
+  "closed_at": "2026-07-29T10:26:55.125Z",
+  "target_branch": "main",
+  "source_branch": "newyear/dev",
+  "user_notes_count": 0,
+  "upvotes": 0,
+  "downvotes": 0,
+  "author": {
+   "id": 65,
+   "username": "REDACTED_USER",
+   "public_email": "REDACTED_EMAIL",
+   "name": "REDACTED_NAME",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "REDACTED_URL",
+   "web_url": "REDACTED_USER_URL"
+  },
+  "assignees": [
+   {
+    "id": 65,
+    "username": "REDACTED_USER",
+    "public_email": "REDACTED_EMAIL",
+    "name": "REDACTED_NAME",
+    "state": "active",
+    "locked": false,
+    "avatar_url": "REDACTED_URL",
+    "web_url": "REDACTED_USER_URL"
+   }
+  ],
+  "assignee": {
+   "id": 65,
+   "username": "REDACTED_USER",
+   "public_email": "REDACTED_EMAIL",
+   "name": "REDACTED_NAME",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "REDACTED_URL",
+   "web_url": "REDACTED_USER_URL"
+  },
+  "reviewers": [],
+  "source_project_id": 1278,
+  "target_project_id": 1278,
+  "labels": [],
+  "draft": false,
+  "imported": false,
+  "imported_from": "none",
+  "work_in_progress": false,
+  "milestone": null,
+  "merge_when_pipeline_succeeds": false,
+  "merge_status": "cannot_be_merged_recheck",
+  "detailed_merge_status": "not_open",
+  "merge_after": null,
+  "sha": "890a5d4d7f36534129fd9cceb6e61b3f5e229e24",
+  "merge_commit_sha": null,
+  "squash_commit_sha": null,
+  "discussion_locked": null,
+  "should_remove_source_branch": null,
+  "force_remove_source_branch": true,
+  "prepared_at": "2026-03-30T05:36:42.878Z",
+  "reference": "!1",
+  "references": {
+   "short": "!1",
+   "relative": "!1",
+   "full": "<REDACTED_SECRET>!1"
+  },
+  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "time_stats": {
+   "time_estimate": 0,
+   "total_time_spent": 0,
+   "human_time_estimate": null,
+   "human_total_time_spent": null
+  },
+  "squash": false,
+  "squash_on_merge": false,
+  "task_completion_status": {
+   "count": 0,
+   "completed_count": 0
+  },
+  "has_conflicts": false,
+  "blocking_discussions_resolved": true
+ }
+]

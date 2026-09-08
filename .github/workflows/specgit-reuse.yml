@@ -1,0 +1,133 @@
+# Managed by SpecGit: verified-input execution.
+name: SpecGit verification / github-reuse
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: specgit-verify-github-reuse-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  prepare:
+    name: SpecGit prepare / github-reuse
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.prepare.outputs.mode }}
+      job_name: ${{ steps.prepare.outputs.job_name }}
+      checkout_sha: ${{ steps.prepare.outputs.checkout_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 9.15.9
+      - run: node -e "const f=require('node:fs');for(const p of process.argv.slice(1)){const a=p.split('/');for(let i=1;i<=a.length;i++){const s=f.lstatSync(a.slice(0,i).join('/'));if(s.isSymbolicLink()||(i<a.length?!s.isDirectory():!s.isFile()))process.exit(1)}}try{f.lstatSync('.specgit-runtime');process.exit(1)}catch(e){if(e.code!=='ENOENT')throw e}" ci/runtime-lock.json ci/reuse-runtime.tgz
+      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+      - run: node -e "const f=require('node:fs');f.mkdirSync('.specgit-runtime');f.writeFileSync('.specgit-runtime/package.json',JSON.stringify({name:'specgit-verification-runtime',private:true,dependencies:{specgit:process.argv[1]}}));f.copyFileSync(process.argv[2],'.specgit-runtime/package-lock.json')" file:../ci/reuse-runtime.tgz ci/runtime-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .specgit-runtime
+      - id: prepare
+        run: node .specgit-runtime/node_modules/specgit/dist/cli/verification-ci.js prepare github-reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: specgit-plan-github-reuse
+          path: .specgit-reuse/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
+          overwrite: true
+  original:
+    name: ${{ needs.prepare.outputs.job_name }}
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+    if: needs.prepare.outputs.mode == 'execute'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.checkout_sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 9.15.9
+      - run: node -e "const f=require('node:fs');for(const p of process.argv.slice(1)){const a=p.split('/');for(let i=1;i<=a.length;i++){const s=f.lstatSync(a.slice(0,i).join('/'));if(s.isSymbolicLink()||(i<a.length?!s.isDirectory():!s.isFile()))process.exit(1)}}try{f.lstatSync('.specgit-runtime');process.exit(1)}catch(e){if(e.code!=='ENOENT')throw e}" ci/runtime-lock.json ci/reuse-runtime.tgz
+      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+      - run: node -e "const f=require('node:fs');f.mkdirSync('.specgit-runtime');f.writeFileSync('.specgit-runtime/package.json',JSON.stringify({name:'specgit-verification-runtime',private:true,dependencies:{specgit:process.argv[1]}}));f.copyFileSync(process.argv[2],'.specgit-runtime/package-lock.json')" file:../ci/reuse-runtime.tgz ci/runtime-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .specgit-runtime
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: specgit-plan-github-reuse
+          path: .specgit-reuse
+      - name: Execute verified inputs and current checks
+        run: node .specgit-runtime/node_modules/specgit/dist/cli/verification-ci.js execute github-reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+  reused:
+    name: SpecGit reused / github-reuse
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+    if: needs.prepare.outputs.mode == 'reuse'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.checkout_sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 9.15.9
+      - run: node -e "const f=require('node:fs');for(const p of process.argv.slice(1)){const a=p.split('/');for(let i=1;i<=a.length;i++){const s=f.lstatSync(a.slice(0,i).join('/'));if(s.isSymbolicLink()||(i<a.length?!s.isDirectory():!s.isFile()))process.exit(1)}}try{f.lstatSync('.specgit-runtime');process.exit(1)}catch(e){if(e.code!=='ENOENT')throw e}" ci/runtime-lock.json ci/reuse-runtime.tgz
+      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+      - run: node -e "const f=require('node:fs');f.mkdirSync('.specgit-runtime');f.writeFileSync('.specgit-runtime/package.json',JSON.stringify({name:'specgit-verification-runtime',private:true,dependencies:{specgit:process.argv[1]}}));f.copyFileSync(process.argv[2],'.specgit-runtime/package-lock.json')" file:../ci/reuse-runtime.tgz ci/runtime-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .specgit-runtime
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: specgit-plan-github-reuse
+          path: .specgit-reuse
+      - name: Reverify original evidence and current checks
+        run: node .specgit-runtime/node_modules/specgit/dist/cli/verification-ci.js reuse github-reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+  gate:
+    name: Required verification
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - original
+      - reused
+    if: always()
+    steps:
+      - env:
+          PREPARE: ${{ needs.prepare.result }}
+          MODE: ${{ needs.prepare.outputs.mode }}
+          ORIGINAL: ${{ needs.original.result }}
+          REUSED: ${{ needs.reused.result }}
+        run: node -e "const e=process.env;if(e.PREPARE!=='success'||!['execute','reuse'].includes(e.MODE)||e.ORIGINAL!==(e.MODE==='execute'?'success':'skipped')||e.REUSED!==(e.MODE==='reuse'?'success':'skipped'))process.exit(1)"

@@ -1,0 +1,11 @@
+{
+ "version": "19.2.4",
+ "revision": "06e8d813296",
+ "kas": {
+  "enabled": true,
+  "externalUrl": "wss://git.ycgame.com/-/kubernetes-agent/",
+  "externalK8sProxyUrl": "https://git.ycgame.<REDACTED_SECRET>/",
+  "version": "19.2.4"
+ },
+ "enterprise": false
+}

@@ -1,0 +1,82 @@
+[
+ {
+  "id": 46842,
+  "status": "pending",
+  "stage": "probe",
+  "name": "g6-job-token-probe",
+  "ref": "main",
+  "tag": false,
+  "coverage": null,
+  "allow_failure": false,
+  "created_at": "2026-08-20T06:22:25.668Z",
+  "started_at": null,
+  "finished_at": null,
+  "erased_at": null,
+  "duration": null,
+  "queued_duration": 611.736609215,
+  "user": {
+   "id": 59,
+   "username": "REDACTED_USER",
+   "public_email": "REDACTED_EMAIL",
+   "name": "REDACTED_NAME",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "REDACTED_URL",
+   "web_url": "REDACTED_USER_URL",
+   "bio": "",
+   "location": "REDACTED_LOCATION",
+   "linkedin": "",
+   "twitter": "",
+   "discord": "",
+   "website_url": "",
+   "github": "",
+   "job_title": "",
+   "pronouns": "",
+   "organization": "",
+   "bot": false,
+   "work_information": null,
+   "local_time": null
+  },
+  "commit": {
+   "id": "11aed3c81abdd6591851e735de39bb2a79eb0ac7",
+   "short_id": "11aed3c8",
+   "created_at": "2026-08-20T14:22:25.000+08:00",
+   "parent_ids": [
+    "f4f1996b0ea53e024f3f34d9b661c3e3fdbafe24"
+   ],
+   "title": "probe: flatten G6 probe script into single block",
+   "message": "probe: flatten G6 probe script into single block",
+   "author_name": "REDACTED_NAME",
+   "author_email": "REDACTED_EMAIL",
+   "authored_date": "2026-08-20T14:22:25.000+08:00",
+   "committer_name": "REDACTED_NAME",
+   "committer_email": "REDACTED_EMAIL",
+   "committed_date": "2026-08-20T14:22:25.000+08:00",
+   "trailers": {},
+   "extended_trailers": {},
+   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+  },
+  "pipeline": {
+   "id": 29616,
+   "iid": 2,
+   "project_id": 1313,
+   "sha": "11aed3c81abdd6591851e735de39bb2a79eb0ac7",
+   "ref": "main",
+   "status": "pending",
+   "source": "push",
+   "created_at": "2026-08-20T06:22:25.625Z",
+   "updated_at": "2026-08-20T06:22:26.034Z",
+   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+  },
+  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "project": {
+   "ci_job_token_scope_enabled": false
+  },
+  "artifacts": [],
+  "runner": null,
+  "runner_manager": null,
+  "artifacts_expire_at": null,
+  "archived": false,
+  "tag_list": []
+ }
+]

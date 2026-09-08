@@ -1,0 +1,427 @@
+# SpecGit schema guidance (schema-facing documentation).
+#
+# This file documents the normative schemas SpecGit validates:
+#   1. the delivery binding record  — `.specgit.yaml` at the repository root
+#   2. the project policy           — `spec_git/policy.yaml`
+#   3. the platform declaration     — `spec_git/providers.yaml`
+#   4. an optional aggregate scope  — `spec_git/scopes/<name>.yaml`
+# It is guidance for humans and agents; the validating implementation is the
+# specgit CLI (src/record/{schema,policy,providers}.ts and src/scope/declaration.ts). Templates for the
+# record and the policy live in ./templates/.
+#
+# There are intentionally no artifact schemas (proposal/spec/design/tasks):
+# acceptance derives from git, issues, the PR, and checks — never from
+# authored artifacts.
+
+name: specgit
+version: 1
+description: >-
+  Delivery binding schemas. One delivery = execution context (branch or
+  worktree) + forge issues[] (GitHub or a declared GitLab) + one PR + required
+  checks. States are derived per invocation and never persisted; evaluation
+  fails closed.
+
+documents:
+
+  scope:
+    filename: "spec_git/scopes/<name>.yaml"
+    committed: approved on the proved remote default branch
+    schema:
+      version: { type: literal 1, required: true }
+      name: { type: lowercase kebab-case string of at most 100 characters, required: true }
+      parent: { type: positive safe integer, required: true }
+      required:
+        type: array of 1 to 100 strict objects
+        required: true
+        fields:
+          issue: { type: positive safe integer, required: true }
+          target: { type: valid Git branch name, required: true }
+          request: { type: positive safe integer, required: false }
+        notes: Unique issue numbers excluding parent. Unknown keys are invalid.
+    notes: >-
+      ScopeSchema in src/scope/declaration.ts validates this declaration.
+      Complete first-parent history preserves required membership and targets;
+      removal, deletion, parent replacement and replacement of an existing
+      request selection are unsupported in version 1. finish --scope assesses
+      historical delivery evidence independently of ordinary delivery gates.
+      Scope declarations select work; they never prove completion or authorize effects.
+
+  record:
+    filename: ".specgit.yaml"
+    location: repository root (git rev-parse --show-toplevel)
+    committed: on the delivery branch
+    schema:
+      version:
+        type: literal 1
+        required: true
+      delivery:
+        type: string
+        required: true
+        pattern: kebab-case (lowercase alphanumerics, single-hyphen separators)
+        notes: Set once at first bind; rejected on later binds.
+      context:
+        type: discriminated union on "kind"
+        required: true
+        variants:
+          - kind: branch
+            fields:
+              branch: { type: string, required: true, notes: must equal the live branch at evaluation }
+          - kind: worktree
+            fields:
+              label: { type: string, required: true, notes: portable label, never a local path }
+              branch: { type: string, required: true }
+        notes: >-
+          Written by `specgit bind` from live git. No CLI flag can set the
+          context; unknown kinds are invalid. Worktree labels resolve through
+          `git worktree list` to the record branch.
+      issues:
+        type: array of positive integers
+        default: []
+        notes: >-
+          Forge issue numbers (GitHub only before a platform declaration —
+          opaque tracker ids are rejected at bind: issue_ref_not_github).
+          Record cardinality 0..N; acceptance requires >= 1 (issues_empty).
+          Values merge-dedupe across binds, first-seen order kept.
+      issueKinds:
+        type: >-
+          array of objects, each with an `issue` (positive integer) and a
+          `kind` (non-empty string)
+        required: false
+        notes: >-
+          Written by `specgit issue` (#338): each bound issue's own inferred
+          `kind::<type>` slug, so the tag step never lets one issue inherit
+          another title's kind. Reused or unparsable-title issues carry no
+          entry. Absent on records written before the field existed (legacy
+          tagging applies); preserved on rewrite.
+      pr:
+        type: positive integer or non-empty string (URL verbatim)
+        optional: true
+        notes: >-
+          At most one PR per delivery; a new --pr replaces the old. Record
+          cardinality 0..1; acceptance requires exactly one (pr_missing).
+    unknown_keys: parsed-but-ignored and preserved on rewrite
+
+  policy:
+    filename: "policy.yaml"
+    location: spec_git/ under the repository root (the directory marks the project)
+    committed: yes, typically on the default branch
+    schema:
+      version:
+        type: literal 1
+        required: true
+      required_checks:
+        type: array of non-empty strings
+        required: true
+        notes: >-
+          Exact check-run names matched byte-for-byte against check runs
+          reported at the PR head commit. Declared locally, never read from
+          GitHub rulesets. An empty list is the no-CI policy: the
+          repository names zero sibling checks, the acceptance workflow's
+          wait step trivially completes, and the SpecGit Acceptance job
+          itself (kept out of this list to avoid wait-step self-deadlock,
+          enforced through branch protection) is the gate. Init's no-CI
+          detection fallback writes exactly this list — a fallback NAME
+          the harness cannot produce as a check-run would make the
+          verdict unsatisfiable.
+          This no-CI exception is for adopting projects; the SpecGit product
+          repository additionally requires Required verification through its
+          metadata contract. Acceptance uses approved target-branch policy,
+          so a PR cannot weaken its own required checks by changing this file.
+      verification:
+        type: strict object (optional)
+        fields:
+          gitlab_entry: { type: local repository path, required: false, default: .gitlab-ci.yml }
+          product_checks: { type: nonempty array of check names, required: true }
+          reuse:
+            type: array of strict reusable verification profiles (optional, 1..10)
+            fields:
+              id: { type: distinct lowercase hyphenated identifier, required: true }
+              check: { type: distinct public verification check name, required: true }
+              max_age_seconds: { type: integer 60..86400, required: true }
+              node: { type: exact major.minor.patch version, required: true }
+              pnpm: { type: exact major.minor.patch version, required: true }
+              runtime: { type: exact specgit package or local archive with SHA256 plus npm lockfile, required: true }
+              commands: { type: nonempty array of executable/argument arrays, required: true }
+              fresh_commands: { type: array of executable/argument arrays, required: true }
+              environment: { type: noncredential literal environment map, required: false }
+              github: { type: fixed hosted runner and distinct local workflow entry, required: false }
+              gitlab: { type: image digest and local entry plus tags and optional bootstrap argv, required: false }
+            notes: >-
+              At least one provider integration is required. All GitLab profiles
+              share the approved gitlab_entry. Generated paths cannot overlap
+              runtime inputs, authoritative declarations or local integration
+              storage. Reuse requires matching complete input and environment
+              fingerprints and native original-execution provenance within the
+              original completion TTL; reuse never extends that TTL or replaces
+              current delivery acceptance. Missing evidence executes verification.
+
+          rules:
+            type: array of strict path/check rules
+            required: true
+            fields:
+              paths: { type: nonempty array of anchored repository patterns, required: true }
+              checks: { type: array of check names, required: true }
+        notes: >-
+          required_checks remain unconditional. The approved policy selects
+          additional checks by complete immutable changes: unmatched and critical
+          verification inputs use product_checks; matching rules are unioned.
+          Recognized valid binding-only changes require no product checks.
+          Patterns are case-sensitive, with * within a component and ** as an
+          entire component, never leading ** or traversal. Deletions and mode
+          changes use product checks. Self-requiring SpecGit Acceptance or
+          SpecGit Completion is invalid. finish --plan-checks --json returns a
+          separate verification decision, not acceptance. Missing Git evidence
+          exits 3. Historical completion uses original approved target inputs.
+      ordered_issues:
+        type: boolean
+        required: false
+        default: false
+        notes: >-
+          Turns on the sequence gate (G8): with ordered_issues true, no
+          OPEN issue with a smaller number than the delivery's smallest
+          bound issue may exist — deliver or close the earlier issue
+          first (issue_out_of_order). Off (default) passes the gate
+          vacuously.
+      language:
+        type: enum en | zh
+        required: false
+        default: en
+        notes: >-
+          Presentation language of generated text (#118): the issue/PR
+          scaffolds, the managed guidance block, and success-path stderr
+          prose. The machine contract — exit codes, `--json` field names,
+          diagnostic codes, closing references (`Closes #n`) — is never
+          localized under any value. Adding a language is a catalog
+          addition in src/i18n/language.ts, not a policy-format change.
+      validation:
+        type: strict object (optional titles, labels and bodies)
+        required: false
+        fields:
+          titles:
+            type: boolean
+            default: false
+            notes: >-
+              When true, issue and PR/MR titles are required evidence. English
+              forbids Unicode Han characters; Chinese requires at least one.
+              Missing/empty title is title_evidence_missing (exit 3); a known
+              violation is title_language_mismatch (exit 1 at acceptance).
+          labels:
+            type: enum off | kind | project
+            default: off
+            notes: >-
+              kind requires exactly one catalog kind:: label plus only policy
+              tags extras. project requires a nonempty subset of a nonempty
+              policy tags vocabulary. Both allow at most one member per scoped
+              axis. Missing labels are issue_labels_unavailable (exit 3),
+              violations issue_labels_invalid (exit 1 at acceptance).
+          bodies:
+            type: boolean
+            default: false
+            notes: >-
+              Requires nonempty level-two Markdown sections from the selected
+              template, or the built-in language's issue Why / Scope / Approach /
+              Acceptance and PR Why / What changed / Evidence / Checklist.
+              Missing body evidence is body_evidence_missing (exit 3).
+              Empty required sections or unfilled prose placeholders are
+              body_content_incomplete (exit 1 at acceptance). Code fences are
+              content evidence, not template instructions. These are structural
+              checks; they do not prove semantic adequacy or human review.
+        notes: >-
+          Creation preflight and live acceptance (G7/G9) enforce enabled rules.
+          Absent settings retain legacy behavior. Configure with init
+          --force --configure-rules, or explicit --title-check yes|no,
+          --label-check off|kind|project and repeatable --allowed-label.
+      templates:
+        type: strict object (optional issue and pr)
+        required: false
+        fields:
+          issue:
+            type: strict object
+            fields:
+              title: { type: non-empty string, required: false }
+              body: { type: non-empty string, required: true }
+              required_sections: { type: array of trimmed non-empty strings, required: false }
+          pr:
+            type: strict object
+            fields:
+              title: { type: non-empty string, required: false }
+              body: { type: non-empty string, required: true }
+              required_sections: { type: array of trimmed non-empty strings, required: false }
+        notes: >-
+          Inline project templates. An omitted kind retains its built-in
+          language scaffold. Supported variables are {{title}}, {{summary}},
+          {{body}}, {{delivery}} and {{issues}}; supplied content is substituted
+          once, never recursively evaluated. Unsupported variables are rejected.
+          Bootstrap preserves canonical Closes references for every bound issue
+          even with a custom PR body. Explicit required_sections enables body
+          validation for that kind even when validation.bodies is absent or
+          false; an empty list imposes no named-section requirement but still
+          rejects empty bodies and unfilled placeholders.
+      automation:
+        type: strict object (required merge, optional target_branch, close_issues and repair_labels)
+        required: false
+        notes: >-
+          Disabled when absent. A present object requires merge; omitted close_issues is disabled.
+          Either merge true or close_issues true requires a target_branch.
+          Issue closure is independent of automatic merge and follows a confirmed merge into that target. Fresh initialization asks yes/no, default no;
+          agents cannot answer yes for the user. Ordinary init --force preserves
+          the existing choice, target and closure setting. Explicit user-selected
+          --automation yes|no changes that choice; a merge target alone does not
+          enable automation. Proposed policy cannot authorize its own merge.
+          repair_labels is an optional nonempty list of portable label names for
+          automatic repair issues. Repeat init --repair-label to select it;
+          refresh preserves the mapping. Selected labels must satisfy the label
+          convention. Project mode can derive a declared kind::fix or the sole
+          declared label; otherwise initialization asks for a project-vocabulary
+          selection, or rejects scripted input before writes with a concrete flag.
+      tags:
+        type: array of strict objects (name, optional color, optional description)
+        required: false
+        default: []
+        notes: >-
+          Project-declared tag vocabulary (#330): the pool-first selection's
+          additional seedable names beyond the built-in `kind::` catalog.
+          `name` must satisfy the portable tag grammar
+          (^[a-z0-9]+(-[a-z0-9]+)*(::[a-z0-9]+(-[a-z0-9]+)*)?$, <= 64 chars —
+          safe on both forges); `color` is six hex digits without "#" and
+          falls back to the catalog's stable per-name assignment when
+          absent; `description` is at most 300 chars. Declared names are
+          seedable; anything else absent from the repository pool is an
+          unknown slug the selection refuses (issue_tags_unknown).
+    unknown_keys: invalid (strict schema)
+
+  providers:
+    filename: "providers.yaml"
+    location: spec_git/ under the repository root
+    committed: yes — the team shares one declaration
+    schema:
+      gitlab:
+        type: object (optional at the top level; present when the origin's
+          platform is declared GitLab)
+        fields:
+          host:
+            type: non-empty bare hostname (letters, digits, dots, hyphens —
+              no scheme, no path)
+            required: true
+          port:
+            type: integer 1..65535 (or its decimal string form)
+            required: false
+            notes: >-
+              Present only when the instance uses a non-default port (#78):
+              a scheme-default port (:443 https, :22 ssh) classifies like
+              the portless form, and any other port classifies only when
+              the declaration names it.
+          insecure_ssl:
+            type: boolean
+            required: false
+            default: false
+            notes: written by init; reserved for the glab roadmap.
+    unknown_keys: invalid (strict schema)
+    notes: >-
+      The declaration the URL heuristics cannot make: which self-hosted
+      host is a GitLab instance. Classification (origin grammar, depth 2-5
+      group paths, #112), the evaluator's provider routing (#117 — declared
+      GitLab origins evaluate every gate through glab), doctor, and status
+      all read it; an undeclared `*gitlab*` host stays unresolvable
+      (gitlab_unsupported). Written by `specgit init --gitlab-host` or the
+      gitlab.com heuristic; the file's bytes that cannot be read make init
+      and status refuse heuristic classification
+      (platform_providers_invalid) instead of guessing.
+
+acceptance:
+  gates:
+    - g1_record        # record_missing, record_invalid
+    - g2_policy        # policy_missing, policy_invalid
+    - g3_completeness  # issues_empty, pr_missing
+    - g4_context       # not_a_git_repo, git_unavailable, no_commits, detached_head, branch_mismatch, merged_delivery_not_contained, merged_lineage_unavailable, worktree_mismatch
+    - g5_origin        # no_origin, origin_unresolvable, gitlab_unsupported
+    - g6_provider      # gh_missing, gh_unauthenticated, gh_transport on the GitHub route; glab_missing, glab_unauthenticated, glab_transport on a declared GitLab origin
+    - g7_issues        # issue_not_found, issue_is_pull_request; enabled title/label/body rules
+    - g8_sequence      # issue_out_of_order (only when policy.ordered_issues is true)
+    - g9_pr            # pr_not_found, pr_closed_unmerged, pr_draft, pr_head_mismatch, pr_repo_mismatch, issue_already_claimed, issue_occupancy_unknown; enabled title/body rules
+    - g10_closing_refs # closing_refs_incomplete
+    - g11_checks       # checks_missing, checks_pending, checks_failed (per check name)
+  semantics: >-
+    Gates short-circuit across gates and collect all failures within a gate.
+    All evidence gathered and >= 1 gate failed => rejected (exit 1). Evidence
+    unavailable => unknown (exit 3). Every gate passed => accepted (exit 0).
+    Checks evaluate at the PR head SHA; local head staleness is a warning
+    (local_head_stale) only; a dirty tree is evidence, never a gate.
+    Accepted is the read-only finish/accept result. Final completed state
+    additionally requires a confirmed merge and all bound issues closed;
+    a merged delivery with open bound issues is closure_pending. These states
+    are derived from live evidence, never persisted verdict flags.
+
+state_assets:
+  taxonomy: >-
+    Everything specgit writes falls into exactly three tiers (normative
+    table: docs/reference.md#state-and-assets). Authoritative committed
+    files carry the product state and are human-edited; derived committed
+    harness is generated by `specgit init` and regenerated (`init --force`)
+    rather than hand-edited; local integration assets are per-tool entry
+    points written by `specgit setup` and never feed acceptance.
+  tiers:
+    authoritative_committed:
+      paths: [spec_git/policy.yaml, .specgit.yaml, spec_git/providers.yaml]
+      written_by: "specgit init (policy, providers), specgit issue / bind (record)"
+      rule: source of truth; hand-editable, reviewed in PRs like code
+    derived_committed_harness:
+      paths:
+        - .github/workflows/specgit-accept.yml
+        - AGENTS.md (specgit managed block)
+        - CLAUDE.md (specgit managed block, when present)
+      written_by: specgit init
+      rule: regenerate (init --force) instead of hand-editing
+    local_integration_assets:
+      paths:
+        - .opencode/hooks.json (specgit guard entry)
+        - .opencode/hooks/specgit-merge-guard.sh
+        - git pre-push hook (specgit managed markers)
+        - .opencode/command/specgit-issue.md
+        - .opencode/command/specgit-finish.md
+        - .opencode/command/specgit-doctor.md
+        - .opencode/command/specgit-pr.md
+        - .opencode/command/specgit-status.md
+        - .agents/skills/specgit-issue/SKILL.md
+        - .agents/skills/specgit-finish/SKILL.md
+        - .agents/skills/specgit-doctor/SKILL.md
+        - .agents/skills/specgit-pr/SKILL.md
+        - .agents/skills/specgit-status/SKILL.md
+      written_by: specgit init (hooks), specgit setup (entry points)
+      rule: agent conveniences only; never acceptance inputs
+  drift_report: >-
+    #308: `specgit status` reports, under `assets.generated`, whether each
+    managed asset of the last two tiers is current, stale (asset_stale),
+    missing (asset_missing), or conflict (asset_conflict — ownership
+    unproven, a human decision), grouped by the surface that repairs it
+    (init → `specgit init --force` / `specgit init` when no policy exists;
+    opencode → `specgit setup --tool opencode`; generic → `specgit setup
+    --tool generic`). One shared read-only inspector over the writers' own
+    desired states; an uninstalled optional setup surface is `absent`
+    (clean, no missing-file list). The verdict is fail-closed about its
+    own coverage: clean requires complete — every desired part claimed or
+    proven skipped; uninspected codes name the unknown parts that make a
+    report incomplete (workflow_platform_undecided,
+    workflow_platform_providers_invalid, workflow_default_branch_unresolved,
+    hooks_json_unmerged, ignore_tracked_unknown, ignore_unreadable), while
+    skipped names the intentional, proven
+    opt-out (ignore_committed_authoritative — the committed-authoritative
+    model) that never spoils an otherwise current report. Drift never
+    changes the exit code and fail-closed snapshots carry no drift claim.
+
+command_surface:
+  commands:
+    - init      # policy + harness (writes the authoritative policy and the derived harness)
+    - setup     # agent entry points (writes the local integration assets)
+    - issue     # one-command delivery bootstrap
+    - finish    # the acceptance verdict (the CI gate runs this)
+    - pr        # repair binding; --merge or --close-issues executes configured completion
+    - status    # local evidence only
+    - doctor    # probe prerequisites
+    - bind      # script alias
+    - unbind    # script alias
+    - accept    # script/CI alias (same evaluator as finish)
+  notes: >-
+    Ten public commands; bind/unbind/accept are machine aliases. Exit codes
+    0/1/2/3 (130 = SIGINT interruption, the single exception outside the
+    JSON envelope).
