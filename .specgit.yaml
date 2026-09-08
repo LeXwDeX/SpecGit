@@ -9,3 +9,4 @@ issues:
 issueKinds:
   - issue: 503
     kind: kind::fix
+pr: 504
