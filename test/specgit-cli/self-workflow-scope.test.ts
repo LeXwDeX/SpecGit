@@ -48,8 +48,9 @@ describe('self acceptance CI scope', () => {
     const commands = selected.map((step) => step.run ?? '').join('\n');
     expect(commands).toContain('npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --ignore-scripts');
     expect(commands).toContain('require(\'./package.json\').version');
-    expect(commands).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+    expect(commands).toContain('await acceptanceMain()');
     expect(commands).not.toMatch(/pnpm run build|node bin\/specgit\.js/);
+    expect(selected.find((step) => step.name === 'specgit finish with trusted CLI')?.env?.SPECGIT_ACCEPT_RUNTIME).toBe('${{ runner.temp }}/specgit-cli/node_modules/specgit');
     expect(commands).not.toContain('pnpm install');
     expect(selected.some((step) => step.uses?.startsWith('pnpm/action-setup@'))).toBe(false);
     expect(commands).toContain('node "$SPECGIT_POLICY_ENTRY"');
@@ -59,18 +60,18 @@ describe('self acceptance CI scope', () => {
     const commands = selectedSteps('true').map((step) => step.run ?? '').join('\n');
     expect(commands).toContain('pnpm install --frozen-lockfile');
     expect(commands).toContain('pnpm run build');
-    expect(commands).toContain('node bin/specgit.js finish --json');
+    expect(commands).toContain('await acceptanceMain()');
     expect(commands).not.toContain('npm install --prefix');
     expect(commands).not.toContain('--assert-metadata');
   });
 
   it('an absent classification cannot select either verdict path', () => {
     const selected = selectedSteps('');
-    expect(selected.filter((step) => step.run?.includes('finish --json'))).toEqual([]);
+    expect(selected.filter((step) => step.run?.includes('await acceptanceMain()'))).toEqual([]);
     const validation = selected.find((step) => step.name === 'Validate CI scope');
     expect(validation?.env?.CI_BUILD).toBe('${{ steps.scope.outputs.build }}');
     expect(validation?.run).toBe('test "$CI_BUILD" = true || test "$CI_BUILD" = false');
-    for (const step of steps().filter((candidate) => candidate.run?.includes('finish --json'))) {
+    for (const step of steps().filter((candidate) => candidate.run?.includes('await acceptanceMain()'))) {
       expect(step.if).toMatch(/^steps\.scope\.outputs\.build == '(?:true|false)'$/);
       expect(step.env?.GH_TOKEN).toBe('${{ github.token }}');
     }

@@ -11,6 +11,8 @@
  * Paths surfaced in output are repo-relative with forward slashes.
  */
 
+import { acceptanceScript, GITLAB_ACCEPTANCE_PATH, isSpecGitAcceptanceScript } from './acceptance-step.js';
+
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
@@ -64,6 +66,7 @@ export interface HarnessWriteResult {
    */
   workflow: string | null;
   completionWorkflow: string | null;
+  acceptanceScript: string | null;
   prompts: string[];
   hooks: string[];
   gitHook: string | null;
@@ -89,6 +92,7 @@ export async function legacyGitHooksDir(root: string): Promise<string | null> {
 }
 
 export interface HarnessWriteOptions {
+  platform?: 'github' | 'gitlab';
   /**
    * Resolve the directory git actually runs hooks from (absolute), or
    * null to skip the git hook. Production wires this to
@@ -153,6 +157,7 @@ export interface HarnessDesiredState {
   steps: ManagedStep[];
   workflowWritten: boolean;
   completionWorkflow: string | null;
+  acceptanceScript: string | null;
   prompts: string[];
   hooksJsonWritten: boolean;
   gitHook: string | null;
@@ -177,6 +182,12 @@ export async function buildHarnessDesiredState(
     platform: options.workflowYaml === null ? 'gitlab' : 'github', profiles: options.reuseProfiles ?? [],
     routingYaml: options.completion?.routingYaml ?? null,
   })));
+
+  const acceptancePath = options.platform === 'gitlab' ? GITLAB_ACCEPTANCE_PATH : null;
+  steps.push(acceptancePath ? {
+    kind: 'write', path: acceptancePath, mode: 0o644,
+    isOwned: isSpecGitAcceptanceScript, merge: () => acceptanceScript(),
+  } : { kind: 'remove', path: GITLAB_ACCEPTANCE_PATH, isOwned: isSpecGitAcceptanceScript });
 
   const completionWorkflow = options.completion
     ? (options.completion.platform === 'github' ? COMPLETION_WORKFLOW_PATH : GITLAB_COMPLETION_WORKFLOW_PATH)
@@ -269,7 +280,7 @@ export async function buildHarnessDesiredState(
     gitHook = path.relative(root, gitHookTarget).split(path.sep).join('/');
   }
 
-  return { steps, workflowWritten, completionWorkflow, prompts, hooksJsonWritten, gitHook, warnings };
+  return { steps, workflowWritten, completionWorkflow, acceptanceScript: acceptancePath, prompts, hooksJsonWritten, gitHook, warnings };
 }
 
 /** Assemble the #280 result shape from the desired state and the #305 report. */
@@ -281,6 +292,7 @@ export function harnessResultFrom(
   return {
     workflow: desired.workflowWritten ? HARNESS_WORKFLOW_PATH : null,
     completionWorkflow: desired.completionWorkflow,
+    acceptanceScript: desired.acceptanceScript,
     prompts: desired.prompts,
     hooks,
     gitHook: desired.gitHook,

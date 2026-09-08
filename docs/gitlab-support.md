@@ -37,7 +37,7 @@ A GitLab origin is **recognized, not silently misread**:
 - The platform is declared, not guessed: `specgit init --gitlab-host <hostname>` (or `<hostname>:<port>` when the instance uses a non-default port, #78; or the interactive GitLab confirmation) persists the declaration in `spec_git/providers.yaml`, committed so the team shares it. A `github.com` origin defaults to GitHub with no declaration needed. Another endpoint can be confirmed only as GitLab; the alternative is an unsupported-platform refusal because v1 has no GitHub Enterprise route.
 - `parseRepoRef` honors the declared endpoint: since #112 a matching origin **resolves through the GitLab origin grammar** — `group[/subgroup…]/project` paths at depth 2–5, URL-encoded `%2F` separators included, on all three accepted forms — with the full group path as the ref's owner and a `gitlab` platform marker. A deeper well-formed path fails closed as `gitlab_unsupported` naming the bound. Explicit ports follow the #78 rule: a scheme-default port (`:443` https, `:22` ssh) classifies like the portless form; a non-default port classifies only when the declaration names it (`host:port`, persisted as `gitlab.port`). A `gitlab.com`/`*gitlab*` host without a declaration keeps `gitlab_unsupported`; other undeclared non-GitHub origins stay `origin_unresolvable` with a `platform_undecided` warning.
 - The shipped `GlabProvider` and `PlatformRoutingProvider` route a declared GitLab origin's issues, MRs, labels, pipeline jobs, protection, merge, and closure operations through glab. `specgit finish` evaluates all eleven gates there; no gh call receives a GitLab group path.
-- GitLab init never invents the project's business acceptance job. With automation off it generates no GitHub workflow, warns `gitlab_harness_pending`, and leaves the project to run `specgit finish --json` from its reviewed `.gitlab-ci.yml`; init can detect that file's static top-level job keys as required checks. With automation on, init additionally installs the managed conditional `.gitlab-ci.yml` router, preserves the business configuration at `.gitlab/specgit-business.yml`, and writes `.gitlab/specgit-complete.yml` for the trusted post-CI continuation. That completion plumbing does not replace the business acceptance job.
+- GitLab init never invents the project's business acceptance job. With automation off it generates no GitHub workflow, warns `gitlab_harness_pending`, and generates `.gitlab/specgit-accept.mjs` and leaves the project to invoke that adapter from its reviewed `.gitlab-ci.yml`; init can detect that file's static top-level job keys as required checks. With automation on, init additionally installs the managed conditional `.gitlab-ci.yml` router, preserves the business configuration at `.gitlab/specgit-business.yml`, and writes `.gitlab/specgit-complete.yml` for the trusted post-CI continuation. That completion plumbing does not replace the business acceptance job.
 - `specgit doctor` follows the resolved route: `gh` for GitHub, `glab` for a declared GitLab origin. An undeclared GitLab-looking origin stops at `gitlab_unsupported`; no provider is guessed.
 - `specgit init` classifies the origin before mutation, honors an explicit or persisted declaration, and reads statically provable `.gitlab-ci.yml` job keys. A missing/unusable origin or undecided platform exits `3` with `platform_undecided`; invalid provider bytes exit `3` with `platform_providers_invalid`. Both preserve the tree. If declaration persistence itself fails, `providers_write_failed` restores the exact pre-run provider state and stops before policy or harness writes. Policy generation works for GitLab CI without calling a GitHub provider.
 
@@ -47,6 +47,31 @@ first write and carries that branch through generation and protection.
 `workflow_default_branch_unknown` exits `3` without policy, workflow, or
 remote-protection changes; neither a guessed `main` nor an explicit automation
 merge target replaces that identity.
+
+## Project-owned acceptance job
+
+Keep the business CI job and scheduling under project control. After installing an
+exact SpecGit version into an isolated prefix, run these steps in its acceptance
+job (Node.js 20.19 or newer, Git and authenticated glab must already be available):
+
+```sh
+npm install --prefix "$CI_PROJECT_DIR/../specgit-cli" --no-save --ignore-scripts --no-audit --no-fund specgit@1.15.1
+node .gitlab/specgit-accept.mjs --prepare-gitlab-event
+SPECGIT_ACCEPT_RUNTIME="$CI_PROJECT_DIR/../specgit-cli/node_modules/specgit" node .gitlab/specgit-accept.mjs
+```
+
+Use a source-branch pipeline with complete Git history. The explicit preparation
+step verifies `CI_COMMIT_SHA` and restores the source branch from detached HEAD;
+it refuses another checked-out branch, an existing conflicting ref, or a merged
+result pipeline. The acceptance step preserves that prepared checkout and all
+branch refs. For a worktree binding it creates a temporary registered worktree
+with the recorded label, runs the installed public `specgit finish --json`, and
+removes the temporary worktree afterwards. Binding bytes and all normal verdict
+gates remain unchanged. Dirty or unknown Git evidence is never replaced with a
+clean snapshot. The command forwards the public verdict's JSON and exit code.
+
+`specgit init --force` refreshes the owned adapter; `specgit status --json` reports
+its drift. The adapter does not replace or rename the project's business job.
 
 ## Independent completion after MR verification
 

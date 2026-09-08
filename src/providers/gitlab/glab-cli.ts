@@ -1285,7 +1285,7 @@ export class GlabProvider implements ForgeProvider {
    * leave existing names untouched, echo exactly the requested slugs.
    * GitLab answers 409 ("already been taken") for a duplicate title;
    * that is presence, not failure. A spec the forge refuses to confirm
-   * fails closed. Color takes the same no-`#` six-hex form GitHub does.
+   * fails closed. The portable six-hex color becomes CSS hex at this boundary.
    */
   async ensureRepoLabels(
     repo: RepoRef,
@@ -1321,7 +1321,7 @@ export class GlabProvider implements ForgeProvider {
         '-f',
         `name=${spec.name}`,
         '-f',
-        `color=${spec.color}`,
+        `color=#${spec.color}`,
       ]);
       if (!result.ok) {
         if (!GLAB_LABEL_ALREADY_EXISTS_PATTERN.test(result.message ?? '')) {

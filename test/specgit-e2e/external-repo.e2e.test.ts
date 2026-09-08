@@ -190,11 +190,11 @@ describe('e2e external repository adoption (#63)', () => {
       expect(bind.status, bind.stderr).toBe(0);
 
       const finishStep = steps.find((step) => step.name === 'specgit finish');
-      expect(finishStep?.run).toBe('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+      expect(finishStep?.run).toContain('await acceptanceMain()');
       const finish = spawnSync('sh', ['-c', finishStep!.run!], {
         cwd: fixture.dir,
         encoding: 'utf-8',
-        env: { ...env, RUNNER_TEMP: runnerTemp },
+        env: { ...env, RUNNER_TEMP: runnerTemp, SPECGIT_ACCEPT_RUNTIME: path.join(isolatedCli, 'node_modules', 'specgit') },
       });
       expect(finish.status, finish.stderr).toBe(0);
       const envelope = JSON.parse(finish.stdout);

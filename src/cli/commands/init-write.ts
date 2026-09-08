@@ -81,6 +81,7 @@ export async function writeHarnessAndPolicy(args: {
   tags?: Policy['tags'];
   /** null in GitLab mode: a GitHub Actions workflow would be wrong-platform output. */
   workflowYaml: string | null;
+  platform?: 'github' | 'gitlab';
   completion?: CompletionSelection | null;
   routingSteps?: ManagedStep[];
   /** false (--no-ignore) skips the local-asset .gitignore block (#292). */
@@ -104,7 +105,7 @@ export async function writeHarnessAndPolicy(args: {
   // ---- Plan the harness desired state (reads + merges, no writes). ----
   let desired: HarnessDesiredState;
   try {
-    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, language, completion: args.completion, routingSteps: args.routingSteps, reuseProfiles: args.existingPolicy?.verification?.reuse });
+    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, platform: args.platform, language, completion: args.completion, routingSteps: args.routingSteps, reuseProfiles: args.existingPolicy?.verification?.reuse });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -306,6 +307,7 @@ export function buildInitOutcome(args: {
   builder
     // GitLab has separate business routing and trusted completion assets.
     .append(harness.workflow ? [text.initCreatedHook(harness.workflow)] : [])
+    .append(harness.acceptanceScript ? [text.initCreatedHook(harness.acceptanceScript)] : [])
     .append(harness.completionWorkflow ? [text.initCreatedHook(harness.completionWorkflow)] : [])
     .append([...reconciled.created, ...reconciled.updated]
       .filter((asset) => asset === GITLAB_ROUTING_PATH || asset === GITLAB_BUSINESS_WORKFLOW_PATH)
@@ -328,7 +330,7 @@ export function buildInitOutcome(args: {
   return {
     exit: EXIT_SUCCESS,
     policy,
-    harness: { template, ...(harness.completionWorkflow ? { completion: harness.completionWorkflow } : {}) },
+    harness: { template, ...(harness.acceptanceScript ? { acceptance: harness.acceptanceScript } : {}), ...(harness.completionWorkflow ? { completion: harness.completionWorkflow } : {}) },
     reconciled,
     platform: platform.outcome,
     ...(ignore !== null ? { ignore } : {}),
