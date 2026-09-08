@@ -77,8 +77,11 @@ export async function readHistoricalBinding(request: PrFact, deps: HistoricalDep
 
 /** Historical completion has no claim about the caller's working tree or current branch. */
 async function collectHistoricalDelivery(request: PrFact, binding: DeliveryBinding, deps: HistoricalDependencies): Promise<Evidence<HistoricalDelivery>> {
-  if (request.state !== 'merged' || !request.mergeCommitSha || request.draft) {
+  if (request.state !== 'merged') {
     return fail('scope_delivery_unmerged', 'The member has no confirmed merged delivery.');
+  }
+  if (!request.mergeCommitSha || request.draft) {
+    return fail('scope_merge_unproven', 'The confirmed merge has no result identity or contradicts its draft state.');
   }
   const policyFile = await deps.git.readFileBeforeMerge(deps.root, request.mergeCommitSha, request.headSha, 'spec_git/policy.yaml', request.targetHistorySha);
   if (!policyFile.ok) return policyFile;
