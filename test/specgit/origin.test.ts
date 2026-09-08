@@ -201,7 +201,7 @@ describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
       if (!result.ok) return;
       expect(result.value.platform).toBe('gitlab');
     };
-    resolves('git@forge.example.com:example-group/General-Framework-Background-Operations/sample-project.git');
+    resolves('git@forge.example.com:example-group/example-subgroup/sample-project.git');
     resolves('ssh://git@forge.example.com/example-group/Operations/sample-project.git');
     resolves('https://forge.example.com/example-group/Operations/sample-project.git');
     resolves('https://forge.example.com/deep/a/b/c/project.git');
@@ -644,7 +644,7 @@ describe('parseRepoRef — structural host classification (security hardening)',
     resolves('Git@forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
     resolves('forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
     resolves('ssh://git@forge.example.com/o/r', { gitlabHost: 'forge.example.com' });
-    resolves('https://forge.example.com/o/r', { gitlabHost: 'forge.example.com' });
+    resolves('https://FORGE.EXAMPLE.COM/o/r', { gitlabHost: 'FORGE.EXAMPLE.COM' });
     // non-github.com suffixes never match the declaration
     unresolvable('git@forge.example.com.evil.com:o/r', { gitlabHost: 'forge.example.com' });
     unresolvable('git@sourceforge.forge.example.com:o/r', { gitlabHost: 'forge.example.com' });

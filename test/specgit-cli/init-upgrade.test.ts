@@ -327,7 +327,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     const code = await runCliWith(
       [
@@ -367,7 +367,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
 
     const code = await runCliWith(
@@ -411,7 +411,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
 
     const code = await runCliWith(
@@ -467,7 +467,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     const code = await runCliWith(
       [
@@ -501,7 +501,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     const code = await runCliWith(
       [
@@ -593,7 +593,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       throw new Error('simulated disk failure');
@@ -622,7 +622,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       fs.writeFileSync(PROVIDERS_ABS(root), concurrentProviders);
@@ -660,7 +660,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       throw new Error('simulated disk failure');
@@ -692,7 +692,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     const code = await runCliWith(
       [
@@ -723,7 +723,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/adopted.git' }),
     });
     // The failing policy write also replaces the providers file with a
     // directory. Compensation cannot prove that target is still the bytes

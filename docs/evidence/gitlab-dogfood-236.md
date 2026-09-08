@@ -19,7 +19,7 @@ durable record.
 
 | Fact | Value |
 | --- | --- |
-| Project (depth-3 nested group) | `example-group/General-Framework-Background-Operations/sample-project` (project id 1278) |
+| Project (depth-3 nested group) | `example-group/example-subgroup/sample-project` (project id 1278) |
 | Issue | `#2` — closed by MR auto-close on merge |
 | Merge request | `!2` — merged into `main` (merge commit `2902ee3`); MR head `39a8c8cb55757f50bd8ed1e8ba3c3466645f85bd` |
 | Delivery branch | `feat/2-issue2` (branch-context record) |
@@ -60,7 +60,7 @@ window, every gate passes against the live 19.3.0 instance:
       { "id": "checks", "status": "pass" }
     ],
     "evidence": {
-      "repo": "example-group/General-Framework-Background-Operations/sample-project",
+      "repo": "example-group/example-subgroup/sample-project",
       "delivery": "issue2",
       "branch": "feat/2-issue2",
       "headSha": "c5fea9ef545522f40679b1039ac867ac9531878c",

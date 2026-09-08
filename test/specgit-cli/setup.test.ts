@@ -304,7 +304,7 @@ const UNMARKED_SKILL_QUOTING_AUTHOR = `---
 name: specgit-migration-notes
 description: My own notes about released skill metadata
 metadata:
-  author: suntao
+  author: example-team
 ---
 
 # specgit-migration-notes
