@@ -161,7 +161,8 @@ describe('e2e acceptance: one PR closes N issues (branch mode)', () => {
       expect(calls.filter((call) => call.startsWith(`api repos/${OWNER}/${REPO}/issues/${issue}/timeline?`))).toHaveLength(1);
     }
     expect(calls.filter((call) => call.includes('/check-runs'))).toHaveLength(1);
-    expect(calls.filter((call) => call.startsWith('api '))).toHaveLength(8);
+    expect(calls.filter((call) => call.includes('/issues/42/comments?'))).toHaveLength(1);
+    expect(calls.filter((call) => call.startsWith('api '))).toHaveLength(9);
   });
 });
 

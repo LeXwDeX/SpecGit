@@ -1,12 +1,20 @@
-import type { CommandContext } from '../cli/types.js';
-import type { PrOutcome } from '../cli/output.js';
+import type { CompletionDependencies, CompletionObservation, CompletionClassification } from '../completion/types.js';
 import { parsePrUrl, sameRepoRef, type RepoRef } from '../gitfacts/origin.js';
 import type { DeliveryBinding } from '../record/schema.js';
-import { runMerge } from '../cli/commands/merge.js';
-import { ensureFailureIssues, type DeliveryFailure } from './failure-issues.js';
+import { completeDelivery } from '../completion/complete-delivery.js';
+import { ensureFailureIssues, type DeliveryFailure, type FailureIssuePort } from './failure-issues.js';
 import { classifyCiEligibility } from './ci-eligibility.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { Policy } from '../record/policy.js';
+import { repairCheckTarget } from './repair-log.js';
+import { recoverRepairCreations } from './repair-recovery.js';
+
+/** Runner-only discovery and repair capabilities stay outside guarded completion. */
+export interface RemoteDeliveryDependencies extends CompletionDependencies {
+  cwd: string;
+  discoverRoot(cwd: string): Promise<Evidence<string>>;
+  gh: CompletionDependencies['gh'] & FailureIssuePort;
+}
 
 /** Checked before a privileged workflow loads this runtime. Increment for incompatible entry contracts. */
 export const REMOTE_DELIVERY_PROTOCOL = 2;
@@ -34,7 +42,7 @@ const CI_REJECTIONS = new Set([
 ]);
 
 /** CI failures become repair work only after all current checks have settled. */
-async function currentFailures(input: RemoteDeliveryInput, ctx: CommandContext, root: string, policy: Policy): Promise<Evidence<{ failures: DeliveryFailure[]; retryCi: boolean }>> {
+async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDependencies, root: string, policy: Policy): Promise<Evidence<{ failures: DeliveryFailure[]; retryCi: boolean }>> {
   const checks = await ctx.gh.getPrChecks(input.repo, input.pr);
   if (!checks.ok) return checks;
   if (checks.value.headSha !== input.headSha) return fail('automation_head_changed', 'Failure evidence belongs to a different request head.');
@@ -55,8 +63,7 @@ async function currentFailures(input: RemoteDeliveryInput, ctx: CommandContext, 
     const { check } = problem;
     const started = check.startedAt === null ? Number.NaN : Date.parse(check.startedAt);
     if (boundary !== null && (!Number.isFinite(started) || started < boundary)) continue;
-    const name = check.name.replace(/^downstream:(\d+)\/\d+:/, 'downstream:$1:');
-    failures.push({ code: 'checks_failed', target: `${input.repo.platform}:${check.source ?? 'pipeline'}:${name}`,
+    failures.push({ code: 'checks_failed', target: repairCheckTarget(input.repo.platform, check),
       message: `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.` });
   }
   const verdict = await ctx.evaluate({ root: ok(root), record: ok(input.record), policy: ok(policy), git: ctx.git, gh: ctx.gh });
@@ -77,29 +84,29 @@ async function currentFailures(input: RemoteDeliveryInput, ctx: CommandContext, 
 /** The workflow serializes by repository/request; this driver is shared by gh and glab runners. */
 export async function runRemoteDelivery(
   input: RemoteDeliveryInput,
-  ctx: CommandContext,
+  ctx: RemoteDeliveryDependencies,
   options: { deadlineMs?: number; pollMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void>;
     prepareMerged?: () => Promise<void> } = {},
-): Promise<PrOutcome> {
+): Promise<CompletionObservation> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + (options.deadlineMs ?? 20 * 60_000);
-  const blocked = (code: string, message: string, exit = 3): PrOutcome => ({ exit, errors: [{ severity: 'error', code, message }] });
+  const blocked = (code: string, message: string, classification: CompletionClassification = 'unknown', fix?: string): CompletionObservation => ({ classification, diagnostics: [{ severity: 'error', code, message, ...(fix ? { fix } : {}) }] });
   if (!Number.isSafeInteger(input.pr) || input.pr <= 0 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(input.headSha) ||
       !matchesBoundRequest(input.record, input.repo, input.pr) || input.record.issues.length === 0) {
     return blocked('automation_event_invalid', 'The completion event must identify one bound request and full head SHA.');
   }
   // The immutable PR-head record remains available when closure recovery checks
   // out the merged target; a newer delivery's main-branch record cannot replace it.
-  const boundContext: CommandContext = { ...ctx, record: { ...ctx.record, readRecord: async () => ({ ok: true, value: input.record }) } };
-  let outcome: PrOutcome;
+  const boundContext: RemoteDeliveryDependencies = { ...ctx, record: { ...ctx.record, readRecord: async () => ({ ok: true, value: input.record }) } };
+  let outcome: CompletionObservation;
   do {
     const current = await ctx.gh.getPr(input.repo, input.pr);
     if (!current.ok) return blocked(current.code, current.message);
     if (current.value.headSha !== input.headSha || current.value.headBranch !== input.record.context.branch) {
-      return blocked('automation_head_changed', 'The completion event no longer identifies the current delivery head.', 1);
+      return blocked('automation_head_changed', 'The completion event no longer identifies the current delivery head.', 'rejected');
     }
-    if (current.value.draft) return blocked('pr_draft', 'A draft request cannot be completed automatically.', 1);
+    if (current.value.draft) return blocked('pr_draft', 'A draft request cannot be completed automatically.', 'rejected');
     if (current.value.state === 'merged' && options.prepareMerged) await options.prepareMerged();
     const rootEvidence = await ctx.discoverRoot(ctx.cwd);
     if (!rootEvidence.ok) return blocked(rootEvidence.code, rootEvidence.message);
@@ -108,12 +115,18 @@ export async function runRemoteDelivery(
     const automation = policyEvidence.value.policy.automation;
     const closeOnly = automation?.merge !== true && automation?.close_issues === true;
     if (closeOnly && current.value.state === 'open') {
-      return { exit: 0, state: 'bound', errors: [] };
+      return { classification: 'idle', diagnostics: [] };
     }
-    outcome = await runMerge(boundContext, { closeOnly });
-    if (outcome.exit === 0) return outcome;
+    if ((automation?.merge === true || automation?.close_issues === true) &&
+        current.value.baseBranch === automation.target_branch && current.value.state !== 'closed') {
+      const repairs = await recoverRepairCreations({ repo: input.repo, request: input.pr, headSha: current.value.headSha,
+        root: rootEvidence.value, policy: policyEvidence.value.policy, boundIssues: input.record.issues }, ctx.gh, ctx.git);
+      if (!repairs.ok) return blocked(repairs.code, repairs.message, 'unknown', repairs.fix);
+    }
+    outcome = await completeDelivery({ root: rootEvidence, closeOnly }, boundContext);
+    if (outcome.classification === 'completed') return outcome;
     let waitingForCi = false;
-    if (outcome.exit === 1 && !outcome.automation?.merged && current.value.state === 'open') {
+    if (outcome.classification === 'rejected' && !outcome.progress?.merged && current.value.state === 'open') {
       const root = await ctx.discoverRoot(ctx.cwd);
       if (!root.ok) return outcome;
       const approved = await ctx.resolvePolicy(root.value, ok(input.record), { requireApproved: true });
@@ -124,18 +137,19 @@ export async function runRemoteDelivery(
         const repairs = await ensureFailureIssues({ repo: input.repo, pr: current.value,
           delivery: input.record.delivery, issueNumbers: input.record.issues,
           failures: failures.value.failures, policy: approved.value.policy }, ctx.gh);
-        if (!repairs.ok) return blocked(repairs.code, repairs.message);
-        return { ...outcome, exit: 1, ...(outcome.automation ? { automation: { ...outcome.automation, status: 'blocked' } } : {}),
-          errors: failures.value.failures.map((failure) => ({ severity: 'error', ...failure })) };
+        if (!repairs.ok) return blocked(repairs.code, repairs.message, 'unknown', repairs.fix);
+        return { ...outcome, classification: 'rejected', ...(outcome.progress ? { progress: { ...outcome.progress, status: 'blocked' } } : {}),
+          repairIssues: repairs.value.issues,
+          diagnostics: failures.value.failures.map((failure) => ({ severity: 'error', ...failure })) };
       }
-      waitingForCi = failures.value.retryCi && (outcome.errors?.length ?? 0) > 0 &&
-        outcome.errors?.every((error) => CI_REJECTIONS.has(error.code)) === true;
-      if (waitingForCi && outcome.automation) {
-        outcome = { ...outcome, automation: { ...outcome.automation, status: 'pending' } };
+      waitingForCi = failures.value.retryCi && (outcome.diagnostics?.length ?? 0) > 0 &&
+        outcome.diagnostics?.every((error) => CI_REJECTIONS.has(error.code)) === true;
+      if (waitingForCi && outcome.progress) {
+        outcome = { ...outcome, progress: { ...outcome.progress, status: 'pending' } };
       }
     }
-    const waiting = waitingForCi || outcome.automation?.status === 'pending' ||
-      (outcome.automation?.merged === true && outcome.exit === 3 && outcome.errors?.[0]?.code !== 'policy_history_unavailable');
+    const waiting = waitingForCi || outcome.progress?.status === 'pending' ||
+      (outcome.progress?.merged === true && outcome.classification === 'unknown' && outcome.diagnostics?.[0]?.code !== 'policy_history_unavailable');
     if (!waiting) {
       return outcome;
     }

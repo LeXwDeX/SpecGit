@@ -80,6 +80,8 @@ export interface GitPort extends GitWritePort {
    * the caller to classify. Never touches the network.
    */
   headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>>;
+  /** Read-only ancestry between two full commit IDs, independent of the checkout. Missing objects remain unknown. */
+  isAncestor(root: string, ancestorSha: string, descendantSha: string): Promise<Evidence<{ contained: boolean }>>;
   /**
    * Which of `paths` (repo-relative POSIX) are tracked in the index
    * (`git ls-files --`). The answer is the intersection — paths git does
@@ -105,6 +107,7 @@ const GIT_PORT_MEMBER_FLAGS = {
   readFileAtRemoteRef: true,
   readFileBeforeMerge: true,
   headContains: true,
+  isAncestor: true,
   trackedFiles: true,
   checkoutOrCreateBranch: true,
   commitFile: true,

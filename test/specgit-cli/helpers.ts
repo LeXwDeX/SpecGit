@@ -1,3 +1,4 @@
+import { ok } from '../../src/kernel/evidence.js';
 import { expect, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -185,6 +186,7 @@ export function makeGhProvider(
   } & GhScript = {}
 ): RecordingForgeProvider {
   const calls: string[] = [];
+  const requestDeclarations = new Map<number, { id: string; body: string }[]>();
   const preflight = behavior.preflight ?? { ok: true, value: { authenticated: true } };
   // Every method carries the port's real signature (parameters and return
   // type alike), so drift between this double and `ForgeProvider` fails
@@ -283,6 +285,18 @@ export function makeGhProvider(
         behavior.listOpenPrsByHead?.(repo, head) ??
         { ok: false, code: 'gh_transport', message: 'not configured in fake' }
       );
+    }),
+    getIssueWriterAuthority: vi.fn(async () => ok(true)),
+    getRequestDeclarations: vi.fn(async (_repo: RepoRef, request: number, prefix: string) =>
+      ok((requestDeclarations.get(request) ?? []).filter((item) => item.body.startsWith(`${prefix}\n`)))),
+    appendRequestDeclaration: vi.fn(async (_repo: RepoRef, request: number, _prefix: string, body: string) => {
+      const rows = requestDeclarations.get(request) ?? [];
+      const found = rows.find((item) => item.body === body);
+      if (found) return ok({ id: found.id });
+      const id = String(rows.length + 1);
+      rows.push({ id, body });
+      requestDeclarations.set(request, rows);
+      return ok({ id });
     }),
     addIssueComment: vi.fn(async (repo: RepoRef, issue: number, body: string): Promise<Evidence<IssueCommentCreation>> => {
       calls.push(`addIssueComment:${issue}`);
@@ -401,6 +415,9 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       port.defaultBranchCalls.push(_root);
       return writes.remoteDefaultBranch?.(options) ?? { ok: true, value: 'main' };
     }),
+    isAncestor: vi.fn(async (): Promise<Evidence<{ contained: boolean }>> =>
+      ({ ok: false, code: 'merged_lineage_unavailable', message: 'isAncestor not configured in fake' })
+    ),
     headContains: vi.fn(async (): Promise<Evidence<{ contained: boolean }>> =>
       // Fail-closed default: the fake answers no lineage question unless
       // a test explicitly scripts one.

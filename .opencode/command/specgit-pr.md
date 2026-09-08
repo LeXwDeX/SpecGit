@@ -32,12 +32,15 @@ Continue within existing user authorization. With automation enabled, the
 trusted remote completion workflow continues after CI without another user
 confirmation. `specgit pr --merge --json` is its recovery path. It requires
 the approved target policy, `finish` exit 0, and all CI checks passing at the
-current PR/MR head. Completion means the merge and every bound issue closure are
-confirmed; a partial closure remains recoverable. Independent issue closure uses
+current PR/MR head. Completion confirms the merge and closure of every bound
+issue and verified derived repair; a partial closure remains recoverable. Independent issue closure uses
 `specgit pr --close-issues --json` after a confirmed manual merge into the approved
 `automation.target_branch`; it never merges an open request. `finish` is read-only and
 exit 0 means accepted, not necessarily completed. A failed delivery is tracked
 by a repair issue; retries reuse that cause and preserve the original PR/MR.
+Pending repair intents are reconciled by the trusted remote runner. When original
+repair evidence cannot be restored, preserve its Closes reference and explicitly
+adopt it with `specgit bind --issue <number>` before reviewing the delivery.
 Automation defaults to no. Only the user's own yes enables it. A fresh policy
 uses `specgit init --automation yes --merge-target <branch>`; an existing policy
 uses `specgit init --force --automation yes --merge-target <branch>`. Ordinary

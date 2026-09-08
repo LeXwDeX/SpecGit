@@ -169,6 +169,16 @@ export class MockForgeProvider implements ForgeProvider {
     return this.fixtures.listOpenPrsByHead ?? fail('gh_transport', 'listOpenPrsByHead not configured in mock');
   }
 
+  async getIssueWriterAuthority(): Promise<Evidence<boolean>> { return ok(false); }
+
+  async getRequestDeclarations(_repo: RepoRef, _request: number, _prefix: string) {
+    return ok([]);
+  }
+
+  async appendRequestDeclaration(_repo: RepoRef, _request: number, _prefix: string, _body: string): Promise<Evidence<{ id: string }>> {
+    return fail('gh_transport', 'appendRequestDeclaration not configured in mock');
+  }
+
   async addIssueComment(
     repo: RepoRef,
     issue: number,

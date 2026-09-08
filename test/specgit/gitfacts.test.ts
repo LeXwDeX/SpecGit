@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { ok } from '../../src/kernel/evidence.js';
 import { LocalGitAdapter } from '../../src/gitfacts/local.js';
 import { discoverRepoRoot } from '../../src/record/root.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
@@ -161,6 +162,25 @@ describe('LocalGitAdapter', () => {
 
     const facts = await adapter.facts(root);
     expect(facts.upstreamDrift).toEqual({ ahead: 1, behind: 0 });
+  });
+
+  it.each(['squash', 'rebase'])('proves source repair lineage independently of a %s merge checkout', async (mode) => {
+    git(root, ['checkout', '-b', 'feature'], env);
+    const failed = commitFile(root, 'feature.txt', 'failed\n', env);
+    const repaired = commitFile(root, 'feature.txt', 'repaired\n', env);
+    git(root, ['checkout', 'main'], env);
+    commitFile(root, 'target.txt', 'target divergence\n', env);
+    if (mode === 'squash') {
+      git(root, ['merge', '--squash', 'feature'], env);
+      git(root, ['commit', '-m', 'squash feature'], env);
+    } else {
+      git(root, ['cherry-pick', failed, repaired], env);
+    }
+    expect(await adapter.headContains(root, failed)).toEqual(ok({ contained: false }));
+    expect(await adapter.isAncestor(root, failed, repaired)).toEqual(ok({ contained: true }));
+    expect(await adapter.isAncestor(root, repaired, failed)).toEqual(ok({ contained: false }));
+    expect(await adapter.isAncestor(root, failed, 'f'.repeat(40))).toMatchObject({ ok: false });
+    expect(await adapter.isAncestor(root, failed, 'HEAD')).toMatchObject({ ok: false });
   });
 
   describe('headContains (merged-delivery lineage)', () => {

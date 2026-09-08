@@ -38,7 +38,7 @@ function expectExposes(instance: object, members: readonly string[], label: stri
 describe('provider port contract (#80)', () => {
   it('exports disjoint evidence, delivery-write and administration-write capabilities (#412)', () => {
     expectTypeOf<keyof ForgeDeliveryWritePort>().toEqualTypeOf<
-      'mergePr' | 'closeIssue' | 'createIssue' | 'createDraftPr' | 'addIssueComment' | 'addIssueLabels'
+      'mergePr' | 'closeIssue' | 'appendRequestDeclaration' | 'createIssue' | 'createDraftPr' | 'addIssueComment' | 'addIssueLabels'
     >();
     expectTypeOf<keyof ForgeAdminWritePort>().toEqualTypeOf<
       'enableBranchProtection' | 'enableRepoAutomerge' | 'ensureRepoLabels'
@@ -58,6 +58,7 @@ describe('provider port contract (#80)', () => {
         'commitFile',
         'facts',
         'headContains',
+        'isAncestor',
         'hooksPath',
         'pushBranch',
         'readFileAtRemoteRef',
@@ -68,6 +69,8 @@ describe('provider port contract (#80)', () => {
     );
     expect([...FORGE_PROVIDER_MEMBERS].sort()).toEqual(
       [
+        'appendRequestDeclaration',
+        'getRequestDeclarations', 'getIssueWriterAuthority',
         'addIssueComment',
         'addIssueLabels',
         'createDraftPr',
@@ -111,7 +114,9 @@ describe('provider port contract (#80)', () => {
       expect(Array.isArray(FORGE_ADMIN_PORT_MEMBERS)).toBe(true);
       expect([...FORGE_READ_PORT_MEMBERS].sort()).toEqual(
         [
-          'addIssueComment',
+          'appendRequestDeclaration',
+        'getRequestDeclarations', 'getIssueWriterAuthority',
+        'addIssueComment',
           'addIssueLabels',
           'createDraftPr',
           'createIssue',
