@@ -1,5 +1,5 @@
 version: 1
-delivery: native-github-fresh-reject
+delivery: native-github-reuse-acceptance
 context:
   kind: branch
   branch: codex/473-github-reuse-acceptance-20260908
