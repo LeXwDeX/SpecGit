@@ -1,9 +1,8 @@
 version: 1
-delivery: applicable-verification
+delivery: verified-input-reuse
 context:
   kind: branch
-  branch: feat/472-applicable-verification
+  branch: feat/473-verified-input-reuse
 issues:
-  - 472
+  - 473
 issueKinds: []
-pr: 495
