@@ -2,6 +2,7 @@ import type { CheckRunInfo } from '../../github/port.js';
 import { isLaterCheckRun } from '../../github/check-runs.js';
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
 import { verifyRepairResolution } from '../repair-obligations.js';
+import { resolveVerification } from '../../verification/resolve.js';
 
 /**
  * #119: the truth run for a check name — the run with the latest
@@ -63,6 +64,16 @@ async function fetchAnchor(
  * present (see `GATE_FNS` in `index.ts`).
  */
 export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
+  let requiredNames = ctx.policy!.required_checks;
+  if (ctx.policy!.verification) {
+    const { changesBetween, readFileAtCommit } = ctx.input.git;
+    if (!changesBetween || !readFileAtCommit) return [makeFailure('verification_changes_unavailable')];
+    const selected = await resolveVerification({ root: ctx.evidence.root!, policy: ctx.policy!, policySha: ctx.input.policySha,
+      request: ctx.prFact!, repo: ctx.repoRef!, forge: ctx.input.gh!, git: { changesBetween: changesBetween.bind(ctx.input.git), readFileAtCommit: readFileAtCommit.bind(ctx.input.git) } });
+    if (!selected.ok) return [makeFailure(selected)];
+    ctx.evidence.verification = selected.value;
+    requiredNames = selected.value.requiredChecks;
+  }
   const runs = await ctx.input.gh!.getCheckRuns(ctx.repoRef!, ctx.prFact!.headSha, ctx.prFact!.number);
   if (!runs.ok) {
     return [makeFailure(runs)];
@@ -72,7 +83,7 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
   // whatever its conclusion says.
   const { anchor, failure: anchorFailure } = await fetchAnchor(ctx);
   if (anchorFailure) return [anchorFailure];
-  const failures = requiredCheckFailures(runs.value, ctx.policy!.required_checks, anchor);
+  const failures = requiredCheckFailures(runs.value, requiredNames, anchor);
   // Active acceptance must never wait for its own CI job to complete.
   // A merged delivery can report completion only after resolving its repairs.
   if (failures.length === 0 && ctx.prFact!.state === 'merged' &&

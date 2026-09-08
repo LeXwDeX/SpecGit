@@ -89,8 +89,10 @@ Keep unrelated work out of a small documentation delivery.
 Shipped templates, generators, executable workflows, schemas, and distributed
 skills are product inputs, even when they produce Markdown. Their changes need
 the applicable product checks. The binding classification is [CI scope](docs/ci-scope.md).
-An adopting project chooses its own checks and their scope; SpecGit's private
-source-repository CI map does not replace the adopter's business CI.
+Adopting projects can declare [verification rules](docs/verification.md) and use
+`specgit finish --plan-checks --json` to schedule their applicable business jobs.
+Valid binding-only changes can skip product jobs; mixed or unknown inputs retain
+product verification. Existing `required_checks` remain unconditional.
 
 ## Platforms
 

@@ -197,6 +197,11 @@ export function managedPromptBlock(language: PolicyLanguage = 'en'): string {
   从远端默认分支的 \`spec_git/scopes/<name>.yaml\` 及各项交付证据核验范围。
   单项交付完成不代表计划完成；全部必需成员和父议题都须确认完成。
 
+- 配置按变更选择检查时，使用已批准的 \`verification\` 策略和
+  \`specgit finish --plan-checks --json\` 的 \`verification.requiredChecks\`
+  接入项目 CI；Agent 可据此编写 GitHub/GitLab 业务任务的条件调度。
+  保留始终运行的验收状态；计划成功不等于验收成功，缺失证据不可当作免检。
+
 ### 议题标签
 
 - 按项目策略的 \`language\` 填写 issue 与 PR/MR；\`validation\` 启用的标题与
@@ -339,6 +344,12 @@ already exists); keep manual guidance outside them.
   approved declaration lives at \`spec_git/scopes/<name>.yaml\` on the remote
   default branch. A delivery's completion does not complete the programme;
   every required member and the parent issue must be confirmed complete.
+
+- For applicable verification, wire project CI to the approved \`verification\`
+  policy and \`specgit finish --plan-checks --json\` result's
+  \`verification.requiredChecks\`. Agents can create project-specific GitHub/GitLab
+  business-job scheduling from that decision. Keep a stable always-run acceptance
+  status; a successful plan is not acceptance, and missing evidence is no exemption.
 
 ### Issue tags
 

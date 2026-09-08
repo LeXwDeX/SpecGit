@@ -20,6 +20,10 @@ _Avoid_: local settings, agent permission
 A read-only verdict derived from the binding, policy and current Git and forge evidence.
 _Avoid_: merge, completion
 
+**Verification decision**:
+The check names selected from approved policy and complete immutable changes, with per-path reasons. CI planning, acceptance and historical completion share this decision.
+_Avoid_: acceptance, cached green result, execution proof
+
 **Delivery completion**:
 A confirmed merge into the configured target with every bound issue and verified derived repair issue confirmed closed.
 _Avoid_: acceptance, programme completion, publication

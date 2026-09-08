@@ -174,11 +174,15 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
       `api repos/${OWNER}/${REPO}/issues/12/comments -f body=SpecGit delivery branch: \`${deliveryBranch}\` (draft PR/MR #77).`,
     ]);
 
-    // Simulate the merge: PR merged, issues closed by GitHub, checks
-    // green at the (pushed) head commit — finish must accept. The PR
+    // Merge the real delivery so historical policy and containment can
+    // be verified; the forge reports closed issues and checks at its head. The PR
     // keeps the exact scaffold body the bootstrap wrote, proving the
     // created scaffold parses as closing every bound issue.
     const sha = git(repo.dir, 'rev-parse', 'HEAD').trim();
+    git(repo.dir, 'checkout', 'main');
+    git(repo.dir, 'merge', '--no-ff', deliveryBranch, '-m', 'merge delivery');
+    const mergeCommitSha = git(repo.dir, 'rev-parse', 'HEAD').trim();
+    git(repo.dir, 'push', 'origin', 'main');
     const ghMerged = makeGh([
       { match: '^--version$', stdout: 'gh version 2.60.0-specgit-e2e\n' },
       { match: '^auth status', stdout: 'Logged in to github.com\n' },
@@ -192,6 +196,7 @@ describe('e2e issue: one-command bootstrap closes both new issues after merge', 
           sha,
           body: createdBody,
           mergedAt: '2026-01-02T03:04:05Z',
+          mergeCommitSha,
         }),
       },
       emptyTimelineRule(),

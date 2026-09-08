@@ -1803,6 +1803,23 @@ describe('specgit init --language (#118)', () => {
     expect(read(AGENTS_ABS(root))).toContain('交付');
   });
 
+  it('--force preserves explicit verification rules', async () => {
+    const verification = {
+      product_checks: ['Build', 'Test'],
+      rules: [{ paths: ['docs/**'], checks: ['Docs'] }],
+    };
+    const t = makeCtx({
+      root: { ok: true, value: root },
+      policy: { version: 1, required_checks: ['Summary'], verification },
+    });
+    const code = await runCliWith(
+      ['node', 'specgit', 'init', '--force', '--no-protect', '--json'], t.ctx
+    );
+    expect(code).toBe(EXIT_SUCCESS);
+    expect(t.recordPort.policyWrites[0]?.policy.verification).toEqual(verification);
+    expect(t.recordPort.policyWrites[0]?.policy.required_checks).toEqual(['Summary']);
+  });
+
   it('an explicit --language overrides the existing policy language on --force', async () => {
     const t = makeCtx({
       root: { ok: true, value: root },

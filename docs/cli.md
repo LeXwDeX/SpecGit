@@ -9,6 +9,11 @@ all required deliveries and the parent issue are complete; exit 1 means incomple
 or ready to close the parent; exit 3 means unknown evidence. It does not merge or
 close anything. Plain `finish` and `accept` retain the delivery verdict.
 
+`specgit finish --plan-checks --json` returns the approved [verification plan](verification.md)
+for project CI scheduling. Its `verification.requiredChecks` names the applicable
+jobs; exit 0 means planning succeeded, not acceptance. It cannot be combined with
+`--scope`. Run ordinary `finish` after the applicable jobs complete.
+
 The delivery flow at a glance:
 
 ```text

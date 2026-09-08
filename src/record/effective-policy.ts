@@ -40,10 +40,12 @@ export async function resolveEffectivePolicy(options: {
     const pr = await forge.getPr(repo.value, record.value.pr);
     if (!pr.ok) return pr;
     branch = pr.value.baseBranch;
-    if (options.requireApproved && pr.value.state === 'merged') {
+    if (pr.value.state === 'merged') {
       if (!pr.value.mergeCommitSha) return fail('policy_history_unavailable', 'The merged request has no result commit proving its original authorization.');
-      const contained = await git.headContains(root, pr.value.mergeCommitSha);
-      if (!contained.ok || !contained.value.contained) return fail('policy_history_unavailable', 'The checkout does not prove containment of the merged delivery.');
+      if (options.requireApproved) {
+        const contained = await git.headContains(root, pr.value.mergeCommitSha);
+        if (!contained.ok || !contained.value.contained) return fail('policy_history_unavailable', 'The checkout does not prove containment of the merged delivery.');
+      }
       merged = { mergeSha: pr.value.mergeCommitSha, headSha: pr.value.headSha, targetHistorySha: pr.value.targetHistorySha };
     }
   } else {

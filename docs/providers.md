@@ -103,6 +103,7 @@ to those lists member-for-member: change a port, change this page.
 | Member | Kind | Evidence role |
 | --- | --- | --- |
 | `facts` | required | Read side: repo, toplevel, branch, HEAD sha, dirty state, worktree layout, origin URL, upstream drift, git availability. Feeds the context and drift gates. |
+| `changesBetween` | required | Complete raw changes between a single merge base and a full request head, with pinned target/head identities and modes. Retains rename deletion/addition; shallow, ambiguous, truncated or unavailable history fails closed. No network, ref changes, external diff or text conversion. |
 | `headContains` | required | Ancestor-or-equal containment of a full hex object id (40 or 64 hex chars) in local HEAD history; proves merged-delivery lineage (G4). A non-hex anchor (empty, padded, ref-like, abbreviated) fails closed as `merged_lineage_unavailable` without invoking git (#76); containment behavior is unchanged for valid anchors. |
 | `isAncestor` | required | Read-only ancestry between two full commit IDs, independent of checkout HEAD. Repair resolution compares the failed source commit to the retained request head; squash/rebase target lineage is proved separately. Unknown objects or failed probes remain unknown. |
 | `readFileAtRemoteRef` | required | Resolve the current remote branch SHA, then read its file from local Git objects. Proven absence is distinct from unavailable objects; this read never fetches or changes refs. Supplies approved target policy. |

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
-import type { BranchCheckout, GitFacts, GitPort, SpawnFn } from './port.js';
+import type { BranchCheckout, GitChangeSet, GitFacts, GitPort, SpawnFn } from './port.js';
 
 export type { SpawnFn, SpawnOptions } from './port.js';
 
@@ -87,6 +87,40 @@ export class LocalGitAdapter implements GitPort {
   constructor(options: LocalGitAdapterOptions = {}) {
     this.env = options.env;
     this.spawn = options.spawnImpl ?? defaultSpawn;
+  }
+
+  async changesBetween(root: string, baseSha: string, headSha: string): Promise<Evidence<GitChangeSet>> {
+    const unavailable = () => fail<GitChangeSet>('verification_changes_unavailable',
+      'A complete immutable change set with one merge base could not be proven.',
+      'Fetch complete target and request-head history, then retry. Missing or ambiguous evidence cannot grant a verification exemption.');
+    if (!HEX_OBJECT_ID.test(baseSha) || !HEX_OBJECT_ID.test(headSha)) return unavailable();
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER,
+      env: { ...(this.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } };
+    try {
+      for (const sha of [baseSha, headSha]) await this.spawn('git', ['-C', root, 'cat-file', '-e', `${sha}^{commit}`], options);
+      const shallow = await this.spawn('git', ['-C', root, 'rev-parse', '--is-shallow-repository'], options);
+      if (shallow.stdout.trim() !== 'false') return unavailable();
+      const bases = await this.spawn('git', ['-C', root, 'merge-base', '--all', baseSha, headSha], options);
+      const mergeBaseSha = bases.stdout.trim();
+      if (!HEX_OBJECT_ID.test(mergeBaseSha)) return unavailable();
+      const diff = await this.spawn('git', ['-C', root, 'diff', '--raw', '--no-abbrev', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-z', mergeBaseSha, headSha, '--'], options);
+      const fields = diff.stdout === '' ? [] : diff.stdout.split('\0');
+      if (fields.length && fields.pop() !== '') return unavailable();
+      if (fields.length % 2 !== 0) return unavailable();
+      const changes: GitChangeSet['changes'] = [];
+      const paths = new Set<string>();
+      for (let index = 0; index < fields.length; index += 2) {
+        const header = /^:([0-7]{6}) ([0-7]{6}) ([a-f0-9]{40}|[a-f0-9]{64}) ([a-f0-9]{40}|[a-f0-9]{64}) ([AMDT])$/.exec(fields[index]);
+        const path = fields[index + 1];
+        if (!header || !path || /[\\\p{Cc}\p{Cf}\uFFFD]/u.test(path) ||
+            path.split('/').some((part) => !part || part === '.' || part === '..') || paths.has(path)) return unavailable();
+        const status = header[5];
+        if (status !== 'A' && status !== 'M' && status !== 'D' && status !== 'T') return unavailable();
+        changes.push({ path, status, oldMode: header[1], newMode: header[2] });
+        paths.add(path);
+      }
+      return ok({ baseSha, mergeBaseSha, headSha, changes });
+    } catch { return unavailable(); }
   }
 
   async readFileAtRemoteRef(root: string, branch: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {

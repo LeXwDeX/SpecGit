@@ -57,6 +57,19 @@ Nothing else is public surface. Full reference: [cli.md](cli.md).
 
 ### Optional aggregate scope assessment
 
+`finish --plan-checks` is a separate read-only verification decision, not an
+acceptance verdict. Its `verification` result identifies the approved policy,
+base, merge base and head, selected required check names and per-path reasons.
+Missing immutable change evidence exits 3. The optional `verification` policy
+adds `product_checks` and explicit `rules: [{ paths, checks }]` while retaining
+unconditional `required_checks`. Unmatched or critical inputs require product
+checks; only recognized valid binding data receives the intrinsic record-only
+exemption. Rules use case-sensitive repository paths, `*` within a component
+and `**` as a whole component, without a leading `**`. Renames retain both old
+and new paths; deletions and mode/type changes receive product verification.
+The workflow waiter, acceptance and historical completion use the same decision.
+This mode does not reuse old CI evidence or weaken current-head freshness.
+
 `finish --scope <name>` is a separate read-only mode; `accept` remains the alias
 of plain delivery `finish`. A strict version-1 declaration at
 `spec_git/scopes/<name>.yaml` defines a parent and required issue/target pairs,
@@ -191,7 +204,9 @@ malformed input fails; it cannot skip product verification by path alone.
 ## Compatibility
 
 - The record schema (`version: 1`) and policy schema (`version: 1`) are strict; unknown policy keys are invalid, unknown record keys are preserved.
-- Check names match byte-for-byte against `required_checks`.
+- Check names match byte-for-byte against unconditional `required_checks` plus
+  checks selected by the approved `verification` policy. A missing selection
+  input is unknown evidence, never an empty required list.
 - The `accept` alias is permanent for v1 — existing scripts keep working.
 - **Generated text is language-configurable; the machine contract is not** ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). The policy's optional `language` key (`en` default, `zh` supported) selects the language of generated scaffolds, harness guidance, and success-path human prose. Never localized under any value: exit codes, `--json` envelope field names, diagnostic `code` values (and, in v1, diagnostic prose), the closing-reference keywords, the workflow YAML, and the guard scripts. Branch names stay ASCII — a title that yields no ASCII slug never invents `issue<N>`: bootstrap asks for a kebab-case delivery name, and scripted sessions pass `--delivery <slug>` ([#246](https://github.com/LeXwDeX/SpecGit/issues/246)).
 

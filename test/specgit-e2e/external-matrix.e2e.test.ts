@@ -219,8 +219,11 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
       ).toHaveLength(0);
       expect(resumeCalls.filter((args) => args.startsWith('pr create'))).toHaveLength(0);
 
-      // Finish: merged PR, closed issue → accepted with exit 0.
+      // Finish uses a real merge result as historical policy evidence.
       const sha = git(fixture.dir, 'rev-parse', 'HEAD').trim();
+      git(fixture.dir, 'checkout', 'master');
+      git(fixture.dir, 'merge', '--no-ff', deliveryBranch, '-m', 'merge external delivery');
+      const mergeSha = git(fixture.dir, 'rev-parse', 'HEAD').trim();
       const ghMerged = makeGh('specgit-ext-noci-ghmerged-', [
         ...ghVersionRules(),
         {
@@ -233,6 +236,7 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
             number: 9,
             state: 'open',
             merged_at: '2026-01-02T03:04:05Z',
+            merge_commit_sha: mergeSha,
             draft: false,
             head: { ref: deliveryBranch, sha },
             base: { ref: 'master' },
@@ -246,10 +250,10 @@ describe('e2e external matrix (#67): master + npm + no CI', () => {
         },
       ]);
       const finish = runInstalledSpecgit(fixture.dir, ['finish', '--json'], env(ghMerged));
-      expect(finish.status, finish.stderr).toBe(0);
+      expect(finish.status, finish.stdout + finish.stderr).toBe(0);
       const finishEnvelope = parseInstalledJson(finish);
       expect(finishEnvelope.verdict.classification).toBe('accepted');
-      expect(finishEnvelope.verdict.evidence.branch).toBe(deliveryBranch);
+      expect(finishEnvelope.verdict.evidence.branch).toBe('master');
 
       // The bootstrap pushed the delivery branch: the bare origin
       // carries it at the local head.
@@ -343,7 +347,10 @@ describe('e2e external matrix (#67): main + existing CI', () => {
       ).toContain('checks_failed');
       expect(rejectedEnvelope.verdict.evidence.pr).toBe(9);
 
-      // Healed world: green checks, merged PR, closed issue → exit 0.
+      // Healed world includes the real merge, green checks and a closed issue.
+      git(fixture.dir, 'checkout', 'main');
+      git(fixture.dir, 'merge', '--no-ff', deliveryBranch, '-m', 'merge external CI delivery');
+      const mergeSha = git(fixture.dir, 'rev-parse', 'HEAD').trim();
       const ghGreen = makeGh('specgit-ext-mainci-ghgreen-', [
         ...ghVersionRules(),
         {
@@ -356,6 +363,7 @@ describe('e2e external matrix (#67): main + existing CI', () => {
             number: 9,
             state: 'open',
             merged_at: '2026-01-02T03:04:05Z',
+            merge_commit_sha: mergeSha,
             draft: false,
             head: { ref: deliveryBranch, sha },
             base: { ref: 'main' },
@@ -372,7 +380,7 @@ describe('e2e external matrix (#67): main + existing CI', () => {
         },
       ]);
       const accepted = runInstalledSpecgit(fixture.dir, ['finish', '--json'], env(ghGreen));
-      expect(accepted.status, accepted.stderr).toBe(0);
+      expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0);
       expect(parseInstalledJson(accepted).verdict.classification).toBe('accepted');
     }
   );
@@ -435,6 +443,9 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
       expect(fs.existsSync(path.join(wt.mainDir, 'spec_git'))).toBe(false);
 
       const sha = git(wt.worktreeDir, 'rev-parse', 'HEAD').trim();
+      git(wt.mainDir, 'merge', '--no-ff', deliveryBranch, '-m', 'merge worktree delivery');
+      const mergeSha = git(wt.mainDir, 'rev-parse', 'HEAD').trim();
+      git(wt.worktreeDir, 'merge', '--ff-only', 'master');
       const ghMerged = makeGh('specgit-ext-wt-ghmerged-', [
         ...ghVersionRules(),
         {
@@ -447,6 +458,7 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
             number: 9,
             state: 'open',
             merged_at: '2026-01-02T03:04:05Z',
+            merge_commit_sha: mergeSha,
             draft: false,
             head: { ref: deliveryBranch, sha },
             base: { ref: 'master' },
@@ -460,7 +472,7 @@ describe('e2e external matrix (#67): linked worktree delivery', () => {
         },
       ]);
       const finish = runInstalledSpecgit(wt.worktreeDir, ['finish', '--json'], env(ghMerged));
-      expect(finish.status, finish.stderr).toBe(0);
+      expect(finish.status, finish.stdout + finish.stderr).toBe(0);
       const finishEnvelope = parseInstalledJson(finish);
       expect(finishEnvelope.verdict.classification).toBe('accepted');
       expect(finishEnvelope.verdict.evidence.context).toEqual({ kind: 'worktree' });

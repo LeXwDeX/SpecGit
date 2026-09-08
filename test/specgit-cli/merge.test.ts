@@ -113,6 +113,57 @@ describe('specgit pr --close-issues: independent merged-delivery completion', ()
 });
 
 describe('specgit pr --merge: configured delivery automation (#382)', () => {
+  it('stops before merge when the GitLab entry changes after acceptance', async () => {
+    const policy = samplePolicy({ automation, required_checks: [], verification: {
+      product_checks: ['Build'], rules: [{ paths: ['docs/**'], checks: [] }],
+    } });
+    const t = mergeCtx(policy);
+    t.ctx.evaluate = (input) => evaluate({ ...input, gitlabHost: 'gitlab.com' });
+    t.gitPort.facts = vi.fn(async () => makeGitFacts({ headSha: HEAD, originUrl: 'https://gitlab.com/LeXwDeX/SpecGit.git' }));
+    t.ctx.parseRepoRef = () => ok({ owner: 'LeXwDeX', repo: 'SpecGit', platform: 'gitlab' });
+    t.gitPort.changesBetween = vi.fn(async () => ok({ baseSha: HEAD, mergeBaseSha: HEAD, headSha: HEAD,
+      changes: [{ path: 'docs/a.md', status: 'M' as const, oldMode: '100644', newMode: '100644' }] }));
+    t.gh.getPrChecks.mockImplementation(async () => ok({ headSha: HEAD, checks: t.remote.checks, pipelineStatus: 'success' }));
+    vi.mocked(t.gh.getCiConfigPath).mockResolvedValueOnce(ok(null)).mockResolvedValue(ok('ci/changed.yml'));
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.errors?.[0].code).toBe('verification_changes_unavailable');
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it('retries when the approved target revision moves after applicable verification', async () => {
+    const policy = samplePolicy({ automation, required_checks: [], verification: {
+      product_checks: ['build'], rules: [{ paths: ['docs/**'], checks: [] }],
+    } });
+    const t = mergeCtx(policy);
+    t.gitPort.changesBetween = vi.fn(async () => ok({ baseSha: HEAD, mergeBaseSha: HEAD, headSha: HEAD,
+      changes: [{ path: 'docs/a.md', status: 'M' as const, oldMode: '100644', newMode: '100644' }] }));
+    let reads = 0;
+    t.ctx.resolvePolicy = async () => ok({ policy, source: 'approved', branch: 'main',
+      sha: ++reads === 1 ? HEAD : 'c'.repeat(40) });
+    const result = await runPr({ merge: true }, t.ctx);
+    expect(result.errors?.[0].code).toBe('automation_binding_changed');
+    expect(t.gh.mergePr).not.toHaveBeenCalled();
+    expect(t.gh.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it('uses the same applicable checks for acceptance and completion while preserving failed executed jobs', async () => {
+    const policy = samplePolicy({ automation, required_checks: [], verification: {
+      product_checks: ['build'], rules: [{ paths: ['docs/**'], checks: [] }],
+    } });
+    const t = mergeCtx(policy);
+    t.gitPort.changesBetween = vi.fn(async () => ok({ baseSha: HEAD, mergeBaseSha: HEAD, headSha: HEAD,
+      changes: [{ path: 'docs/a.md', status: 'M' as const, oldMode: '100644', newMode: '100644' }] }));
+    t.remote.checks = [makeCheckRun('SpecGit Acceptance'), makeCheckRun('build', { conclusion: 'skipped' })];
+    expect((await runPr({ merge: true }, t.ctx)).state).toBe('completed');
+
+    const failed = mergeCtx(policy);
+    failed.gitPort.changesBetween = t.gitPort.changesBetween;
+    failed.remote.checks = [makeCheckRun('SpecGit Acceptance'), makeCheckRun('build', { conclusion: 'failure' })];
+    expect((await runPr({ merge: true }, failed.ctx)).errors?.[0].code).toBe('automation_checks_failed');
+    expect(failed.gh.mergePr).not.toHaveBeenCalled();
+  });
+
   it('does not complete when the close response succeeds but the issue remains open', async () => {
     const t = mergeCtx();
     t.gh.closeIssue.mockResolvedValue(ok({ closed: true }));
