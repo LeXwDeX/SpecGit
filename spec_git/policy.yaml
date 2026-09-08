@@ -7,7 +7,7 @@ verification:
   reuse:
     - id: github-reuse
       check: Required verification
-      max_age_seconds: 86400
+      max_age_seconds: 300
       node: 22.23.2
       pnpm: 9.15.9
       runtime:
