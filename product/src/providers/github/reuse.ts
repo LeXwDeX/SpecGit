@@ -24,7 +24,7 @@ export class GitHubReuseExecutions implements ReuseExecutionPort {
   private readonly identity: string;
 
   constructor(private readonly options: {
-    repository: string; producer: ApprovedReuseProducer; currentRun: string; since: string; api?: ReuseApi;
+    repository: string; producer: ApprovedReuseProducer; currentRun: string; api?: ReuseApi;
   }) {
     this.api = options.api ?? reuseApi('github', 'github.com');
     this.prefix = `repos/${options.repository}`;
@@ -34,15 +34,15 @@ export class GitHubReuseExecutions implements ReuseExecutionPort {
   async candidates(repository: string, profile: string): Promise<Evidence<ReuseExecutionRef[]>> {
     try {
       if (repository !== this.identity || profile !== this.options.producer.profile ||
-          !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(this.options.repository) ||
-          !Number.isFinite(Date.parse(this.options.since))) return unavailable();
-      const result = await this.api(`${this.prefix}/actions/workflows/${encodeURIComponent(this.options.producer.entry)}/runs?per_page=20&created=${encodeURIComponent(`>=${this.options.since}`)}`);
+          !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(this.options.repository)) return unavailable();
+      // Creation time cannot bound completion age: a long-running original may have just finished.
+      const result = await this.api(`${this.prefix}/actions/workflows/${encodeURIComponent(this.options.producer.entry)}/runs?per_page=20&page=1`);
       if (!result.ok) return unavailable();
       const parsed = z.object({ total_count: z.number().int().min(0), workflow_runs: z.array(runSchema).max(20) }).safeParse(result.value);
-      if (!parsed.success || parsed.data.total_count !== parsed.data.workflow_runs.length) return unavailable();
+      if (!parsed.success || Math.min(parsed.data.total_count, 20) !== parsed.data.workflow_runs.length) return unavailable();
       const refs: ReuseExecutionRef[] = [];
-      const runs = [...parsed.data.workflow_runs].sort((a, b) => b.id - a.id);
-      if (new Set(runs.map((run) => run.id)).size !== runs.length) return unavailable();
+      const runs = parsed.data.workflow_runs;
+      if (runs.some((run, index) => index > 0 && run.id >= runs[index - 1]!.id)) return unavailable();
       for (const run of runs) {
         if (String(run.id) === this.options.currentRun) continue;
         const jobs = await this.jobs(run.id, run.run_attempt);

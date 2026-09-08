@@ -37,7 +37,7 @@ jobs:
         with:
           version: 9.15.9
       - run: node -e "const f=require('node:fs');for(const p of process.argv.slice(1)){const a=p.split('/');for(let i=1;i<=a.length;i++){const s=f.lstatSync(a.slice(0,i).join('/'));if(s.isSymbolicLink()||(i<a.length?!s.isDirectory():!s.isFile()))process.exit(1)}}try{f.lstatSync('.specgit-runtime');process.exit(1)}catch(e){if(e.code!=='ENOENT')throw e}" ci/runtime-lock.json ci/reuse-runtime.tgz
-      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 11074824ad356f5ba651a3c314433ef8946c60a81a099fef7c63935e21d220e0
       - run: node -e "const f=require('node:fs');f.mkdirSync('.specgit-runtime');f.writeFileSync('.specgit-runtime/package.json',JSON.stringify({name:'specgit-verification-runtime',private:true,dependencies:{specgit:process.argv[1]}}));f.copyFileSync(process.argv[2],'.specgit-runtime/package-lock.json')" file:../ci/reuse-runtime.tgz ci/runtime-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .specgit-runtime
       - id: prepare
@@ -73,7 +73,7 @@ jobs:
         with:
           version: 9.15.9
       - run: node -e "const f=require('node:fs');for(const p of process.argv.slice(1)){const a=p.split('/');for(let i=1;i<=a.length;i++){const s=f.lstatSync(a.slice(0,i).join('/'));if(s.isSymbolicLink()||(i<a.length?!s.isDirectory():!s.isFile()))process.exit(1)}}try{f.lstatSync('.specgit-runtime');process.exit(1)}catch(e){if(e.code!=='ENOENT')throw e}" ci/runtime-lock.json ci/reuse-runtime.tgz
-      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 11074824ad356f5ba651a3c314433ef8946c60a81a099fef7c63935e21d220e0
       - run: node -e "const f=require('node:fs');f.mkdirSync('.specgit-runtime');f.writeFileSync('.specgit-runtime/package.json',JSON.stringify({name:'specgit-verification-runtime',private:true,dependencies:{specgit:process.argv[1]}}));f.copyFileSync(process.argv[2],'.specgit-runtime/package-lock.json')" file:../ci/reuse-runtime.tgz ci/runtime-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .specgit-runtime
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
@@ -105,7 +105,7 @@ jobs:
         with:
           version: 9.15.9
       - run: node -e "const f=require('node:fs');for(const p of process.argv.slice(1)){const a=p.split('/');for(let i=1;i<=a.length;i++){const s=f.lstatSync(a.slice(0,i).join('/'));if(s.isSymbolicLink()||(i<a.length?!s.isDirectory():!s.isFile()))process.exit(1)}}try{f.lstatSync('.specgit-runtime');process.exit(1)}catch(e){if(e.code!=='ENOENT')throw e}" ci/runtime-lock.json ci/reuse-runtime.tgz
-      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+      - run: node -e "const f=require('node:fs'),c=require('node:crypto');if(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex')!==process.argv[2])process.exit(1)" ci/reuse-runtime.tgz 11074824ad356f5ba651a3c314433ef8946c60a81a099fef7c63935e21d220e0
       - run: node -e "const f=require('node:fs');f.mkdirSync('.specgit-runtime');f.writeFileSync('.specgit-runtime/package.json',JSON.stringify({name:'specgit-verification-runtime',private:true,dependencies:{specgit:process.argv[1]}}));f.copyFileSync(process.argv[2],'.specgit-runtime/package-lock.json')" file:../ci/reuse-runtime.tgz ci/runtime-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .specgit-runtime
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131

@@ -7,12 +7,12 @@ verification:
   reuse:
     - id: github-reuse
       check: Required verification
-      max_age_seconds: 300
+      max_age_seconds: 120
       node: 22.23.2
       pnpm: 9.15.9
       runtime:
         archive: ci/reuse-runtime.tgz
-        sha256: 6b631f9aeb6e3316e58f56deec117bc9bf86418183431d5b8696f226759c9c87
+        sha256: 11074824ad356f5ba651a3c314433ef8946c60a81a099fef7c63935e21d220e0
         lockfile: ci/runtime-lock.json
       commands:
         - - node

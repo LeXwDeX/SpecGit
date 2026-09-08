@@ -1122,7 +1122,7 @@
     "node_modules/specgit": {
       "version": "1.15.1",
       "resolved": "file:../ci/reuse-runtime.tgz",
-      "integrity": "sha512-h4id4rTFKV/uxCeTMDcxAVWds7/3cvf12VBtBMGbYH2PNgoE2t6u9u6muqrhFYimLddp3lhNdsFIGHkUqgp/vg==",
+      "integrity": "sha512-26mgXTnq+9u6QmUWCHuiirNRScVDYMIurRrJPV5fxdcMRptOg1wfQkZW3ZwlbDiHSejVq9fTjkoxaoCq+HpmGA==",
       "license": "MIT",
       "dependencies": {
         "@inquirer/core": "^11.2.1",
