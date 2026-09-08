@@ -89,7 +89,12 @@ export interface AcceptOutcome extends OutcomeBase {
 }
 
 /** `specgit finish` delegates to the accept evaluation; same shape. */
-export type FinishOutcome = AcceptOutcome;
+export interface ScopeOutcome extends OutcomeBase {
+  scope?: import('../scope/assess.js').ScopeAssessment & {
+    declaration: { path: string; branch: string; sha: string; hash: string; history: string[] };
+  };
+}
+export type FinishOutcome = AcceptOutcome | ScopeOutcome;
 
 /** `specgit bind`: the written record plus the derived binding state. */
 export interface BindOutcome extends OutcomeBase {
@@ -208,6 +213,7 @@ export interface InitOutcome extends OutcomeBase {
 
 export type CommandOutcome =
   | AcceptOutcome
+  | ScopeOutcome
   | BindOutcome
   | UnbindOutcome
   | IssueOutcome
@@ -234,6 +240,7 @@ export function buildEnvelope(
   // documented shape exactly.
   const optional: Array<[string, unknown]> = [];
   if ('state' in outcome) optional.push(['state', outcome.state]);
+  if ('scope' in outcome) optional.push(['scope', outcome.scope]);
   if ('recordState' in outcome) optional.push(['recordState', outcome.recordState]);
   if ('localContext' in outcome) optional.push(['localContext', outcome.localContext]);
   if ('lifecycle' in outcome) optional.push(['lifecycle', outcome.lifecycle]);

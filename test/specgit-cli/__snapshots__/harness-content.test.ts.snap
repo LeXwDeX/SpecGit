@@ -857,6 +857,11 @@ already exists); keep manual guidance outside them.
   A failed closure remains recoverable and is never reported as completed.
   With independent closure enabled, \`specgit pr --close-issues --json\`
   verifies an already merged request against the approved target and closes its bound issues.
+- For an explicitly declared programme, use \`specgit finish --scope <name> --json\`
+  to assess its required deliveries independently of the current binding. The
+  approved declaration lives at \`spec_git/scopes/<name>.yaml\` on the remote
+  default branch. A delivery's completion does not complete the programme;
+  every required member and the parent issue must be confirmed complete.
 
 ### Issue tags
 
@@ -1013,6 +1018,9 @@ exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by iden
   无需再次人工确认；\`specgit pr --merge --json\` 是恢复入口。它验证已批准
   策略的 \`target_branch\`、重新验收及当前 PR/MR 头的全部 CI 检查，确认合并
   与全部绑定议题关闭后才报告 completed；关闭失败保留可恢复的待收尾状态。
+- 对显式声明的整体计划，运行 \`specgit finish --scope <name> --json\`，
+  从远端默认分支的 \`spec_git/scopes/<name>.yaml\` 及各项交付证据核验范围。
+  单项交付完成不代表计划完成；全部必需成员和父议题都须确认完成。
 
 ### 议题标签
 

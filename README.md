@@ -216,6 +216,7 @@ See the [Agent Contract](docs/agent-contract.md) for authorization and completio
 - [Project Wiki](https://github.com/LeXwDeX/SpecGit/wiki) · [中文 Wiki](https://github.com/LeXwDeX/SpecGit/wiki/Home-zh)
 - [Getting Started](docs/getting-started.md) · [Installation](docs/installation.md) · [Existing Projects](docs/existing-projects.md)
 - [Concepts](docs/concepts.md) · [CLI Reference](docs/cli.md) · [Schemas and gates](docs/reference.md)
+- [Aggregate delivery scopes](docs/scopes.md): assess required work spanning several deliveries with `specgit finish --scope <name> --json`.
 - [Team Workflow](docs/team-workflow.md) · [CI scope](docs/ci-scope.md) · [Agent Contract](docs/agent-contract.md)
 - [GitLab support](docs/gitlab-support.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md)
 - [Contributing](CONTRIBUTING.md) · [Release gates](docs/release-gates.md) · [Changelog](CHANGELOG.md)

@@ -30,6 +30,8 @@ export {
 export type { ExecutionContext, DeliveryBinding } from './record/schema.js';
 
 export { PolicySchema } from './record/policy.js';
+export { ScopeSchema } from './scope/declaration.js';
+export type { ScopeDeclaration, ScopeMember } from './scope/declaration.js';
 export type { Policy } from './record/policy.js';
 
 export {

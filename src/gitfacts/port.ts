@@ -65,6 +65,10 @@ export interface GitPort extends GitWritePort {
   facts(root: string): Promise<GitFacts>;
   /** Read committed data at the live origin branch, without fetching or modifying local refs. */
   readFileAtRemoteRef(root: string, branch: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>>;
+  /** Read a regular file at a full immutable commit identity; never resolve user input as a ref. */
+  readFileAtCommit(root: string, sha: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>>;
+  /** Complete bounded first-parent file history, oldest first, including deletions. Shallow or truncated history fails. */
+  readFileHistory(root: string, sha: string, relativePath: string): Promise<Evidence<Array<{ sha: string; content: string | null }>>>;
   /** Original target policy from the merge parent, or an authenticated target ancestor with unchanged policy history. */
   readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string, targetHistorySha?: string): Promise<Evidence<{ sha: string; content: string | null }>>;
   /**
@@ -105,6 +109,8 @@ export interface GitPort extends GitWritePort {
 const GIT_PORT_MEMBER_FLAGS = {
   facts: true,
   readFileAtRemoteRef: true,
+  readFileAtCommit: true,
+  readFileHistory: true,
   readFileBeforeMerge: true,
   headContains: true,
   isAncestor: true,

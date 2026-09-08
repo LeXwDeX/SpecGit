@@ -118,12 +118,59 @@ export class LocalGitAdapter implements GitPort {
     }
   }
 
+  async readFileAtCommit(root: string, sha: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+    if (!HEX_OBJECT_ID.test(sha) || !relativePath || relativePath.startsWith('/') || relativePath.includes('\\') ||
+      relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
+      return fail('git_file_invalid', 'An immutable commit and repository-relative file path are required.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      await this.spawn('git', ['-C', root, 'cat-file', '-e', `${sha}^{commit}`], options);
+      const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
+      if (tree.stdout === '') return ok({ sha, content: null });
+      if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {
+        return fail('git_file_invalid', 'Evidence must be a regular committed file.');
+      }
+      const file = await this.spawn('git', ['-C', root, 'show', `${sha}:${relativePath}`], options);
+      return ok({ sha, content: file.stdout });
+    } catch {
+      return fail('git_file_unavailable', 'The immutable evidence file could not be read.',
+        'Fetch the request head and target history from origin, then retry.');
+    }
+  }
+
+  async readFileHistory(root: string, sha: string, relativePath: string): Promise<Evidence<Array<{ sha: string; content: string | null }>>> {
+    if (!HEX_OBJECT_ID.test(sha) || !/^spec_git\/scopes\/[a-z0-9]+(?:-[a-z0-9]+)*\.yaml$/.test(relativePath)) {
+      return fail('scope_history_unavailable', 'Scope history requires an immutable commit and a scope declaration path.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      const shallow = await this.spawn('git', ['-C', root, 'rev-parse', '--is-shallow-repository'], options);
+      if (shallow.stdout.trim() !== 'false') return fail('scope_history_unavailable', 'Shallow history cannot prove that required work was preserved.', 'Fetch complete origin history, then retry.');
+      const log = await this.spawn('git', ['-C', root, 'rev-list', '--first-parent', '--full-history', '--max-count=1001', sha, '--', relativePath], options);
+      const commits = log.stdout.trim() === '' ? [] : log.stdout.trim().split(/\r?\n/);
+      if (commits.length > 1000 || commits.some((commit) => !HEX_OBJECT_ID.test(commit))) {
+        return fail('scope_history_unavailable', 'Scope history exceeded the supported bound or contained invalid commit identities.');
+      }
+      const revisions: Array<{ sha: string; content: string | null }> = [];
+      for (const commit of commits.reverse()) {
+        const file = await this.readFileAtCommit(root, commit, relativePath);
+        if (!file.ok) return file;
+        revisions.push(file.value);
+      }
+      const current = await this.readFileAtCommit(root, sha, relativePath);
+      if (!current.ok) return current;
+      if (revisions.at(-1)?.sha !== sha) revisions.push(current.value);
+      return ok(revisions);
+    } catch {
+      return fail('scope_history_unavailable', 'The complete approved scope history could not be read.', 'Fetch complete origin history, then retry.');
+    }
+  }
+
   async readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string, targetHistorySha?: string): Promise<Evidence<{ sha: string; content: string | null }>> {
     if (!HEX_OBJECT_ID.test(mergeSha) || !HEX_OBJECT_ID.test(headSha) || relativePath !== 'spec_git/policy.yaml') {
       return fail('policy_history_unavailable', 'Historical authorization requires full merge/head identities and the policy path.');
     }
-    const contained = await this.headContains(root, mergeSha);
-    if (!contained.ok || !contained.value.contained) return fail('policy_history_unavailable', 'The checkout does not prove containment of the merged delivery.');
     const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
     try {
       const result = await this.spawn('git', ['-C', root, 'rev-list', '--parents', '-n', '1', mergeSha], options);

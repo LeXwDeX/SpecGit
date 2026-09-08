@@ -15,6 +15,11 @@ The acceptance verdict. Eleven gates evaluate live evidence: record, policy,
 completeness, context, origin, provider, issues, sequence (ordered
 deliveries), PR/MR, closing refs, and required checks at the request head.
 
+For a declared programme, `specgit finish --scope <name> --json` reads its
+approved `spec_git/scopes/<name>.yaml` and assesses every required delivery.
+Report the separate `scope` state; one delivery's completion never proves
+programme completion. This assessment performs no merge or issue closure.
+
 ## Usage
 
 ```bash
