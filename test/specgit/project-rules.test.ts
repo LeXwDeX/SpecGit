@@ -20,7 +20,7 @@ async function verdict(options: {
   return evaluate({
     root: ok('/repo'), policy: ok(policy),
     record: ok({ version: 1, delivery: 'audit', context: { kind: 'branch', branch: 'feat/123-login' }, issues: [123], pr: 42 }),
-    git: { facts: async () => makeGitFacts(), headContains: async () => ok({ contained: false }) },
+    git: { isAncestor: async () => ok({ contained: false }), facts: async () => makeGitFacts(), headContains: async () => ok({ contained: false }) },
     gh: new MockForgeProvider({
       issues: { 123: ok(makeIssueFact({ number: 123, ...metadata })) },
       pr: ok(makePrFact({ title: options.prTitle ?? 'fix: preserve evidence' })),

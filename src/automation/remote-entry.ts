@@ -1,4 +1,5 @@
 /** Internal trusted-workflow entry. It is deliberately not a public CLI command. */
+import { presentCompletion } from '../cli/completion-output.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -139,8 +140,9 @@ export async function completeFromEnvironment(): Promise<number> {
       git(checkout, hooks, ['checkout', '-B', base, `refs/remotes/origin/${base}`]);
     },
   });
-  console.log(JSON.stringify(result));
-  return result.exit;
+  const output = presentCompletion(result);
+  console.log(JSON.stringify(output));
+  return output.exit;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

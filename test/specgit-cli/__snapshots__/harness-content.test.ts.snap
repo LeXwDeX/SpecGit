@@ -852,7 +852,8 @@ already exists); keep manual guidance outside them.
   remote workflow continues after CI without another confirmation.
   \`specgit pr --merge --json\` is the recovery path: it verifies the approved
   \`target_branch\`, fresh acceptance, and all current-head CI, then confirms
-  the merge and every bound issue closure before reporting completed.
+  the merge and closure of every bound issue and verified derived repair before
+  reporting completed.
   A failed closure remains recoverable and is never reported as completed.
   With independent closure enabled, \`specgit pr --close-issues --json\`
   verifies an already merged request against the approved target and closes its bound issues.
@@ -965,7 +966,10 @@ verified on its own evidence, split it before binding.
   the configured target merge and every bound issue closure are confirmed.
   Never declare completion from task lists, file states, or tests alone.
   Track a failed PR/MR with a new repair issue; repeated causes reuse an open
-  repair issue and do not require abandoning the original PR/MR.
+  repair issue and do not require abandoning the original PR/MR. Pending repair
+  intents are recovered by the trusted remote runner. Unprovable repairs require
+  restored evidence or explicit \`specgit bind --issue <number>\` adoption with
+  their closing references retained and the updated delivery reviewed.
 - Use existing user authorization to complete issue bodies, the PR/MR body
   and ready transition, CI repairs or retries, acceptance, and the authorized
   merge. When user authorization or platform permission is missing, present

@@ -57,6 +57,10 @@ class StubGitPort implements GitPort {
     return this.f;
   }
 
+  async isAncestor(): Promise<Evidence<{ contained: boolean }>> {
+    return fail('merged_lineage_unavailable', 'Source lineage not configured.');
+  }
+
   async headContains(_root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {
     this.headContainsCalls.push(sha);
     return this.containment(sha);

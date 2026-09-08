@@ -202,6 +202,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         encoding: 'utf-8',
       }).trim();
       const readyGlab = createFakeGlab(fixture.dir, [
+        { match: api(`projects/${project}/merge_requests/9/notes\\?per_page=100&page=1$`), stdout: '[]' },
         { match: '^--version$', stdout: 'glab version 1.113.0-fake\n' },
         { match: `^auth status --hostname ${GITLAB_HOST}$`, stdout: 'Logged in\n' },
         { match: api('/metadata$'), stdout: payload('nested/metadata.json', {}) },
