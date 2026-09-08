@@ -1,9 +1,8 @@
 version: 1
-delivery: aggregate-scope
+delivery: applicable-verification
 context:
   kind: branch
-  branch: feat/491-aggregate-scope
+  branch: feat/472-applicable-verification
 issues:
-  - 491
+  - 472
 issueKinds: []
-pr: 494
