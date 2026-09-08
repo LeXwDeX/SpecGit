@@ -6,6 +6,7 @@ context:
   branch: fix/497-gitlab-label-colors
 issues:
   - 497
+  - 499
 issueKinds:
   - issue: 497
     kind: kind::fix
