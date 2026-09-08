@@ -132,7 +132,7 @@ function gitStub(
 }
 
 function forgeStub(members: Partial<ForgeProvider>): ForgeProvider {
-  return members as ForgeProvider;
+  return { getRequestDeclarations: async () => ok([]), ...members } as ForgeProvider;
 }
 
 function codes(failures: Array<{ code: string }>): string[] {

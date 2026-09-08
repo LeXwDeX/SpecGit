@@ -6,6 +6,7 @@ import type { GitFacts, GitPort } from '../../gitfacts/port.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import type { ForgeEvidencePort, PrFact } from '../../github/port.js';
 import { CODE_INFO, type SpecGitCode } from '../codes.js';
+import type { RepairOperation } from '../../automation/repair-log.js';
 
 /**
  * The shared surface of the acceptance gates (#276): the gate identity,
@@ -49,16 +50,18 @@ export interface VerdictEvidence {
   policySource?: { kind: 'approved' | 'adoption'; branch: string; sha: string };
   /** Populated only from complete per-issue forge reads, never from a record claim. */
   openIssues?: number[];
+  repairIssues?: number[];
+  repairLogHash?: string;
 }
 
 export interface EvaluateInput {
   root: Evidence<string>;
   record: Evidence<DeliveryBinding>;
   policy: Evidence<Policy>;
-  git: Pick<GitPort, 'facts' | 'headContains'>;
+  git: Pick<GitPort, 'facts' | 'headContains' | 'isAncestor'>;
   gh?: Pick<
     ForgeEvidencePort,
-    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests'
+    'preflight' | 'getIssue' | 'getOpenIssueNumbers' | 'getPr' | 'getCheckRuns' | 'getEvidenceAnchor' | 'listIssuePullRequests' | 'getRequestDeclarations' | 'getPrChecks'
   >;
   /** Declared GitLab host (spec_git/providers.yaml), if any. */
   gitlabHost?: string;
@@ -89,6 +92,7 @@ export interface GateContext {
   repoRef: RepoRef | null;
   /** The bound pull request fact, published by the pr gate. */
   prFact: PrFact | null;
+  repairOperations?: RepairOperation[];
 }
 
 /** The one gate shape: read the context, publish evidence, return failures. */

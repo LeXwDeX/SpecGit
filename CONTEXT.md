@@ -21,12 +21,16 @@ A read-only verdict derived from the binding, policy and current Git and forge e
 _Avoid_: merge, completion
 
 **Delivery completion**:
-A confirmed merge into the configured target with every bound issue confirmed closed.
+A confirmed merge into the configured target with every bound issue and verified derived repair issue confirmed closed.
 _Avoid_: acceptance, programme completion, publication
 
 **Repair issue**:
 An independently verifiable failure cause that needs its own tracked resolution while the original delivery remains traceable.
 _Avoid_: failed delivery replacement
+
+**Repair declaration**:
+A provider-verified repository writer statement on the parent request, recording an intended repair operation or its created issue. It is mutable forge state, not proof of an immutable execution.
+_Avoid_: body marker, binding file, execution attestation
 
 **Harness**:
 The derived integrations that guide agents and invoke SpecGit using the authoritative policy and binding.

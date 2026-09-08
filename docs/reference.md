@@ -274,3 +274,32 @@ running `specgit pr <number>`; start a new WHY only after that repair.
 ## Exit codes and JSON
 
 Stable contract: `0` success/accepted · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C interruption exception (stderr `Interrupted.`, no envelope — see the [CLI reference](cli.md)). `--json` output is a single JSON envelope on stdout — shape documented in the [CLI reference](cli.md). Telemetry does not exist; the CLI's only environment inputs are `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, `SPECGIT_GLAB_TIMEOUT_MS` (plus hook-only `SPECGIT_GUARD_BUDGET_S`, read by the generated merge-guard hook to size its verdict budget) and standard `NO_COLOR`/`CI` detection.
+
+
+## Derived repair obligations
+
+Automatic repair creation records a writer-verified intent on the parent
+request before creating the issue, then confirms a creation receipt. Both
+platform adapters verify declaration authority; copied issue-body markers
+cannot authorize closure. Acceptance exposes `evidence.repairIssues` and
+`evidence.repairLogHash` when confirmed declarations exist.
+
+Open-request acceptance does not wait for its own CI job. The completion
+operation waits for all current-head CI, then proves the original failure is
+resolved under the unchanged policy and retained failed-head lineage before
+closing derived repairs. A merged request with an open repair remains
+`closure_pending`; unavailable or conflicting repair evidence stays unknown.
+A competing open repair delivery prevents automatic derived closure. Explicit
+adoption uses `specgit bind --issue <number>` after retaining the corresponding
+`Closes #n` in the request body.
+
+Repair evidence diagnostics exit `3`: `request_declaration_invalid`,
+`request_declaration_unknown`, `request_declaration_unconfirmed`,
+`repair_log_invalid`, `repair_log_conflict`, `repair_log_unconfirmed`,
+`repair_log_changed`, `repair_creation_pending`, `repair_resolution_unproven`,
+`repair_issue_ambiguous`, `repair_issue_mismatch`, and `repair_labels_unconfirmed`.
+Resume the trusted completion runner for pending creation or closure; resolve
+conflicting declarations or restore original verification evidence first.
+These mutable writer declarations support interrupted-run recovery, not a
+journal that survives deletion by repository maintainers. See the
+[completion architecture](completion-architecture.md) for the full boundary.

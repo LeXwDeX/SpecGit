@@ -6,6 +6,7 @@ import type { Policy } from '../record/policy.js';
 import { checkLabelConvention, checkTitleConvention } from '../record/conventions.js';
 import { checkBodyConvention, renderDeliveryTemplate } from '../record/templates.js';
 import { DEFAULT_TAG_CATALOG, fallbackColorFor } from '../tags/catalog.js';
+import { recordRepairIntent, recordRepairCreation, repairPolicyHash } from './repair-log.js';
 
 export interface DeliveryFailure {
   code: string;
@@ -31,8 +32,8 @@ const NON_FAILURES = new Set([
 
 /** The tracker capabilities needed to reconcile repair issues; no merge or protection writes. */
 export type FailureIssuePort =
-  Pick<ForgeEvidencePort, 'getPr' | 'getOpenIssues'> &
-  Pick<ForgeDeliveryWritePort, 'createIssue' | 'addIssueLabels' | 'addIssueComment'> &
+  Pick<ForgeEvidencePort, 'getPr' | 'getIssue' | 'getOpenIssues' | 'searchIssueHistory' | 'getRequestDeclarations'> &
+  Pick<ForgeDeliveryWritePort, 'createIssue' | 'addIssueLabels' | 'addIssueComment' | 'appendRequestDeclaration'> &
   Pick<ForgeAdminWritePort, 'ensureRepoLabels'>;
 
 /** A failed delivery gets new repair work; repeated observations reconcile it through the tracker. */
@@ -104,16 +105,37 @@ export async function ensureFailureIssues(
       if (!checked.ok) return checked;
     }
     const repairBody = rendered.value.body.includes(marker) ? rendered.value.body : `${marker}\n${rendered.value.body}`;
+    const intent = await recordRepairIntent(input.repo, {
+      request: input.pr.number, headSha: input.pr.headSha.toLowerCase(),
+      policyHash: repairPolicyHash(input.policy),
+      cause: { code: failure.code, ...(failure.target ? { target: failure.target } : {}) },
+      title: rendered.value.title, body: repairBody, labels,
+    }, forge);
+    if (!intent.ok) return intent;
+    const operationMarker = `<!-- specgit:repair-operation:${intent.value.key} -->`;
     const matches = pool.value.filter((issue) => issue.body?.split('\n').some((line) => line.trim() === marker));
     if (matches.length > 1) return fail('repair_issue_ambiguous', `Several open issues track failure ${failure.code} for PR ${input.pr.number}.`,
       'Resolve the duplicate repair issues before retrying.');
-    let number = matches[0]?.number;
+    let number = intent.value.issue ?? matches[0]?.number;
     if (number === undefined) {
-      const created = await forge.createIssue(input.repo, rendered.value.title, repairBody);
+      const history = await forge.searchIssueHistory(input.repo, intent.value.key);
+      if (!history.ok) return history;
+      const candidates = history.value.filter((issue) => issue.body.split('\n').includes(operationMarker));
+      if (candidates.length > 1) return fail('repair_issue_ambiguous', 'Several issues carry the same repair operation identity.');
+      number = candidates[0]?.number;
+    }
+    if (number === undefined) {
+      const bodyWithOperation = `${operationMarker}\n${intent.value.body}`;
+      const created = await forge.createIssue(input.repo, intent.value.title, bodyWithOperation);
       if (!created.ok) return created;
       number = created.value.number;
-      pool.value.push({ number, title: rendered.value.title, body: repairBody });
+      pool.value.push({ number, title: intent.value.title, body: bodyWithOperation });
     }
+    const issue = await forge.getIssue(input.repo, number);
+    if (!issue.ok) return issue;
+    if (issue.value.number !== number || issue.value.pullRequest) return fail('repair_issue_mismatch', 'The repair did not resolve to the intended issue.');
+    const receipt = await recordRepairCreation(input.repo, input.pr.number, intent.value.key, number, forge);
+    if (!receipt.ok) return receipt;
     const applied = await forge.addIssueLabels(input.repo, number, labels);
     if (!applied.ok) return applied;
     if (!labels.every((label) => applied.value.names.includes(label))) return fail('repair_labels_unconfirmed', 'The repair labels were not confirmed by the forge.');

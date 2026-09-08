@@ -1,3 +1,4 @@
+import { readRequestDeclarations, appendRequestDeclaration } from '../request-declarations.js';
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import { buildProtectionUpdateBody } from './protection-merge.js';
@@ -101,7 +102,7 @@ export interface GhCliGitHubProviderOptions {
   spawnImpl?: SpawnFn;
 }
 
-type CallKind = 'issue' | 'pr' | 'checks' | 'search' | 'labels';
+type CallKind = 'issue' | 'pr' | 'checks' | 'search' | 'labels' | 'permission';
 
 interface CheckRunSnapshot {
   check: CheckRunInfo;
@@ -753,6 +754,22 @@ export class GhCliGitHubProvider implements ForgeProvider {
     return ok({ number: issue.number, url: issue.html_url });
   }
 
+  async getRequestDeclarations(repo: RepoRef, request: number, prefix: string) {
+    return readRequestDeclarations({ platform: 'github', project: `${repo.owner}/${repo.repo}`, request, prefix,
+      api: (path) => this.runApi(path, path.includes('/collaborators/') ? 'permission' : 'pr'),
+    });
+  }
+
+  async appendRequestDeclaration(repo: RepoRef, request: number, prefix: string, body: string) {
+    return appendRequestDeclaration({ platform: 'github', project: `${repo.owner}/${repo.repo}`, request, prefix, body,
+      api: (path) => this.runApi(path, path.includes('/collaborators/') ? 'permission' : 'pr'),
+      append: async (value) => {
+        const result = await this.runCreateGh(['api', `repos/${repo.owner}/${repo.repo}/issues/${request}/comments`, '-f', `body=${value}`]);
+        return result.ok ? ok(undefined) : result;
+      },
+    });
+  }
+
   async addIssueComment(
     repo: RepoRef,
     issue: number,
@@ -1267,6 +1284,7 @@ export class GhCliGitHubProvider implements ForgeProvider {
         return result;
       }
       if (result.code === 'not_found') {
+        if (kind === 'permission') return ok(null);
         if (kind === 'issue') {
           return fail('issue_not_found', 'GitHub reports this issue does not exist.');
         }

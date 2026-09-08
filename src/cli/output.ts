@@ -120,6 +120,7 @@ export interface PrOutcome extends OutcomeBase {
   state?: BindingState;
   record?: Record<string, unknown>;
   automation?: PrAutomation;
+  repairIssues?: number[];
   nextActions?: NextAction[];
 }
 
@@ -253,6 +254,7 @@ export function buildEnvelope(
   if ('urls' in outcome) optional.push(['urls', outcome.urls]);
   if ('assets' in outcome) optional.push(['assets', outcome.assets]);
   if ('automation' in outcome) optional.push(['automation', outcome.automation]);
+  if ('repairIssues' in outcome) optional.push(['repairIssues', outcome.repairIssues]);
   for (const [key, value] of optional) {
     if (value !== undefined) {
       envelope[key] = value;

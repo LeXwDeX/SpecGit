@@ -1,6 +1,18 @@
 import { RECORD_MISSING_FIX } from '../kernel/diagnostics.js';
 
 export type SpecGitCode =
+  | 'request_declaration_invalid'
+  | 'request_declaration_unknown'
+  | 'request_declaration_unconfirmed'
+  | 'repair_log_invalid'
+  | 'repair_log_conflict'
+  | 'repair_log_unconfirmed'
+  | 'repair_log_changed'
+  | 'repair_creation_pending'
+  | 'repair_resolution_unproven'
+  | 'repair_issue_ambiguous'
+  | 'repair_issue_mismatch'
+  | 'repair_labels_unconfirmed'
   | 'record_missing'
   | 'record_invalid'
   | 'policy_missing'
@@ -63,6 +75,54 @@ export interface CodeInfo {
  * (unknown, exit 3).
  */
 export const CODE_INFO: Record<SpecGitCode, CodeInfo> = {
+  request_declaration_invalid: {
+    kind: 'evidence', message: 'The request declaration input is invalid.',
+    fix: 'Preserve the declaration protocol and retry with a valid request identity.',
+  },
+  request_declaration_unknown: {
+    kind: 'evidence', message: 'Complete request declarations or writer permissions could not be verified.',
+    fix: 'Restore forge read and permission evidence before retrying completion.',
+  },
+  request_declaration_unconfirmed: {
+    kind: 'evidence', message: 'The request declaration write has not been confirmed.',
+    fix: 'Retry the trusted completion runner to reconcile the existing declaration.',
+  },
+  repair_log_invalid: {
+    kind: 'evidence', message: 'A trusted repair declaration is invalid.',
+    fix: 'Restore the intended declaration under repository writer authority before retrying.',
+  },
+  repair_log_conflict: {
+    kind: 'evidence', message: 'Repair declarations contain conflicting operation identities.',
+    fix: 'Resolve the conflicting declarations using the original repair evidence.',
+  },
+  repair_log_unconfirmed: {
+    kind: 'evidence', message: 'A repair declaration has not been confirmed.',
+    fix: 'Retry the trusted completion runner; do not infer that a mutation succeeded.',
+  },
+  repair_log_changed: {
+    kind: 'evidence', message: 'Repair obligations changed during completion.',
+    fix: 'Retry completion with fresh repair declarations and acceptance evidence.',
+  },
+  repair_creation_pending: {
+    kind: 'evidence', message: 'A repair intent has no confirmed creation receipt.',
+    fix: 'Resume the trusted completion runner to reconcile the pending operation.',
+  },
+  repair_resolution_unproven: {
+    kind: 'evidence', message: 'Current evidence does not prove the original repair obligation resolved.',
+    fix: 'Restore the original evidence or adopt the repair explicitly with specgit bind and retain its Closes reference.',
+  },
+  repair_issue_ambiguous: {
+    kind: 'evidence', message: 'Several issues claim one repair operation.',
+    fix: 'Resolve the duplicate operation identities before resuming completion.',
+  },
+  repair_issue_mismatch: {
+    kind: 'evidence', message: 'The repair reference does not identify the intended issue.',
+    fix: 'Restore the correct issue identity before resuming completion.',
+  },
+  repair_labels_unconfirmed: {
+    kind: 'evidence', message: 'The repair labels are not confirmed.',
+    fix: 'Restore label write access and resume the trusted completion runner.',
+  },
   issue_already_claimed: {
     kind: 'factual', message: 'A bound issue is already claimed by another active pull or merge request.',
     fix: 'Continue the existing delivery or resolve its binding before accepting another request for the same issue.',

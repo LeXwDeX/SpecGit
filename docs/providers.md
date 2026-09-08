@@ -47,7 +47,7 @@ The full port vocabulary is exported from the public API
 (`src/index.ts`), including the stable port names `GitPort` and
 `ForgeProvider` plus the three #412 capabilities. The two #180 surfaces
 `ForgeReadPort` / `ForgeAdminPort` remain exported as deprecated compatibility
-compositions with exactly their original members (the pre-#169 name
+compositions; repair declarations extend the delivery composition (the pre-#169 name
 `GitHubProvider` stays exported as a
 `@deprecated` compatibility alias), their auxiliary types (`GitWritePort`,
 `BranchCheckout`, `BranchProtectionFact`, `RepoAutomergeFact`), and the
@@ -70,13 +70,14 @@ and prevents later policy or harness writes.
 | Capability | Members and effect |
 | --- | --- |
 | `ForgeEvidencePort` | All forge reads, including `getBranchProtection`, `getRepoAutomerge` and `listRepoLabels`. No mutation methods. |
-| `ForgeDeliveryWritePort` | `mergePr`, `closeIssue`, `createIssue`, `createDraftPr`, `addIssueComment` and `addIssueLabels`. |
+| `ForgeDeliveryWritePort` | `mergePr`, `closeIssue`, `createIssue`, `createDraftPr`, `addIssueComment`, `addIssueLabels` and `appendRequestDeclaration`. |
 | `ForgeAdminWritePort` | `enableBranchProtection`, `enableRepoAutomerge` and `ensureRepoLabels`. |
 
 Callers use `Pick` to request only the members their decision consumes.
-`EvaluateInput.gh` selects its seven evidence methods from `ForgeEvidencePort`.
-The repair-issue flow combines just six methods: `getPr`, `getOpenIssues`,
-`createIssue`, `addIssueLabels`, `addIssueComment` and `ensureRepoLabels`.
+`EvaluateInput.gh` selects nine evidence methods from `ForgeEvidencePort`,
+including trusted repair declarations and current-head CI facts.
+The repair flow also needs issue history and intent/receipt writes so an
+interrupted creation can be reconciled before completion.
 Its caller can supply those methods without implementing merge, protection
 or auto-merge configuration. These type boundaries do not grant runtime
 authorization; every platform operation still uses authenticated `gh` or
@@ -84,7 +85,7 @@ authorization; every platform operation still uses authenticated `gh` or
 
 The deprecated `ForgeReadPort` retains delivery reads and writes;
 `ForgeAdminPort` retains the three administration reads and three writes.
-Their frozen inventories retain the original members and order, and
+Their inventories retain the existing relative order and append the repair declaration members;
 `GITHUB_PROVIDER_MEMBERS` remains the same object as `FORGE_PROVIDER_MEMBERS`.
 No member or method signature was removed by the capability split.
 
@@ -103,6 +104,7 @@ to those lists member-for-member: change a port, change this page.
 | --- | --- | --- |
 | `facts` | required | Read side: repo, toplevel, branch, HEAD sha, dirty state, worktree layout, origin URL, upstream drift, git availability. Feeds the context and drift gates. |
 | `headContains` | required | Ancestor-or-equal containment of a full hex object id (40 or 64 hex chars) in local HEAD history; proves merged-delivery lineage (G4). A non-hex anchor (empty, padded, ref-like, abbreviated) fails closed as `merged_lineage_unavailable` without invoking git (#76); containment behavior is unchanged for valid anchors. |
+| `isAncestor` | required | Read-only ancestry between two full commit IDs, independent of checkout HEAD. Repair resolution compares the failed source commit to the retained request head; squash/rebase target lineage is proved separately. Unknown objects or failed probes remain unknown. |
 | `readFileAtRemoteRef` | required | Resolve the current remote branch SHA, then read its file from local Git objects. Proven absence is distinct from unavailable objects; this read never fetches or changes refs. Supplies approved target policy. |
 | `readFileBeforeMerge` | required | Recover the pre-merge policy only from a locally contained two-parent merge whose second parent is the proven PR head. Ambiguous squash/rebase/fast-forward history remains unknown. |
 | `trackedFiles` | required | Which of the given repo-relative paths the index tracks (`git ls-files --`); read-only intersection. Feeds the merged-delivery lifecycle warnings (#298): a tracked record/policy that gets deleted or rewritten warns instead of leaving silent working-tree residue. Fails closed as `tracked_probe_failed`; callers treat a failed probe as advisory. |
@@ -115,7 +117,7 @@ to those lists member-for-member: change a port, change this page.
 ### ForgeReadPort (src/github/port.ts)
 
 Deprecated compatibility composition → select `ForgeEvidencePort` and
-`ForgeDeliveryWritePort` members for new callers. Its inventory is preserved.
+`ForgeDeliveryWritePort` members for new callers. Its inventory appends the required repair declaration methods.
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |
@@ -136,12 +138,14 @@ Deprecated compatibility composition → select `ForgeEvidencePort` and
 | `createDraftPr` | required | Bootstrap draft PR/MR containing a closing reference for every bound issue. |
 | `listOpenPrsByHead` | required | Remotely discoverable idempotency marker for PR repair (`specgit pr`). |
 | `addIssueComment` | required | Ensure an exact-body traceability comment exists. Complete remote evidence reconciles retries before posting and returns the existing URL. Read failures and truncation fail closed; independent concurrent writers are not serialized. |
+| `getRequestDeclarations` | required | Exhaust request comments for an exact protocol prefix and verify each matching author's repository write authority. Unavailable permission evidence fails closed. These are current trusted declarations, not immutable execution attestations. |
+| `appendRequestDeclaration` | required | Append a bounded declaration idempotently and confirm its provider-backed author and contents through complete readback before acknowledging it. |
 | `addIssueLabels` | required | Tag apply (#330): union-semantics label addition for every bound issue after the selection resolves. Idempotent; the response must confirm every requested slug or the call fails closed. |
 
 ### ForgeAdminPort (src/github/port.ts)
 
 Deprecated compatibility composition → select `ForgeEvidencePort` and
-`ForgeAdminWritePort` members for new callers. Its inventory is preserved.
+`ForgeAdminWritePort` members for new callers. Its inventory appends the required repair declaration methods.
 
 | Member | Kind | Evidence role |
 | --- | --- | --- |

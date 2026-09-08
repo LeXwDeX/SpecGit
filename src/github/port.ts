@@ -119,6 +119,12 @@ export interface IssueCommentCreation {
   url: string;
 }
 
+/** A current request declaration whose author has provider-verified repository write authority. */
+export interface RequestDeclaration {
+  id: string;
+  body: string;
+}
+
 /** An open pull request as listed for one head branch. */
 export interface PrSummary {
   number: number;
@@ -195,6 +201,8 @@ export interface LabelsAppliedFact {
  * this capability grants no delivery or administration writes.
  */
 export interface ForgeEvidencePort {
+  /** Complete matching declarations; an unavailable permission probe is unknown, not an empty list. */
+  getRequestDeclarations(repo: RepoRef, request: number, prefix: string): Promise<Evidence<RequestDeclaration[]>>;
   preflight(): Promise<Evidence<PreflightFact>>;
   /** The platform's configured CI entry path, or null for its default entry point. */
   getCiConfigPath(repo: RepoRef): Promise<Evidence<string | null>>;
@@ -253,6 +261,8 @@ export interface ForgeEvidencePort {
 
 /** Delivery-lifecycle mutations (#412); every write confirms its remote result. */
 export interface ForgeDeliveryWritePort {
+  /** Idempotent append, acknowledged only after an authoritative readback of the declaration. */
+  appendRequestDeclaration(repo: RepoRef, request: number, prefix: string, body: string): Promise<Evidence<{ id: string }>>;
   /** Merge with a server-enforced expected head; never bypass platform protection. */
   mergePr(repo: RepoRef, pr: number, expectedHeadSha: string): Promise<Evidence<{ merged: boolean }>>;
   /** Idempotently close one bound issue and confirm its remote state. */
@@ -318,8 +328,8 @@ export interface ForgeAdminWritePort {
 }
 
 /**
- * The original #180 surface, retaining exactly its evidence and delivery
- * write members for existing consumers.
+ * The original #180 composition, extended with required declaration reads
+ * and writes for the repair lifecycle.
  * @deprecated Select from {@link ForgeEvidencePort} and {@link ForgeDeliveryWritePort}.
  */
 export interface ForgeReadPort extends
@@ -372,6 +382,8 @@ const FORGE_READ_PORT_MEMBER_FLAGS = {
   listOpenPrsByHead: true,
   addIssueComment: true,
   addIssueLabels: true,
+  getRequestDeclarations: true,
+  appendRequestDeclaration: true,
 } as const satisfies Record<keyof ForgeReadPort, true>;
 
 /** @deprecated Compatibility inventory for {@link ForgeReadPort}. */

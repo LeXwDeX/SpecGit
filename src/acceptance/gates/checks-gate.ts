@@ -1,6 +1,7 @@
 import type { CheckRunInfo } from '../../github/port.js';
 import { isLaterCheckRun } from '../../github/check-runs.js';
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
+import { verifyRepairResolution } from '../repair-obligations.js';
 
 /**
  * #119: the truth run for a check name — the run with the latest
@@ -125,6 +126,20 @@ export async function checksGate(ctx: GateContext): Promise<GateFailure[]> {
         failures.push(failed);
       }
     }
+  }
+  // Active acceptance must never wait for its own CI job to complete.
+  // A merged delivery can report completion only after resolving its repairs.
+  if (failures.length === 0 && ctx.prFact!.state === 'merged' &&
+      ctx.repairOperations?.some((operation) => operation.issue !== undefined && !ctx.binding!.issues.includes(operation.issue))) {
+    const checks = await ctx.input.gh!.getPrChecks(ctx.repoRef!, ctx.prFact!.number);
+    if (!checks.ok) return [makeFailure(checks)];
+    const repairs = await verifyRepairResolution({
+      operations: ctx.repairOperations, boundIssues: ctx.binding!.issues,
+      root: ctx.evidence.root!, repo: ctx.repoRef!, request: ctx.prFact!, policy: ctx.policy!,
+      git: ctx.input.git, forge: ctx.input.gh!, checks: checks.value, anchor,
+      host: ctx.repoRef!.platform === 'gitlab' ? ctx.input.gitlabHost : 'github.com',
+    });
+    if (!repairs.ok) failures.push(makeFailure(repairs));
   }
   return failures;
 }

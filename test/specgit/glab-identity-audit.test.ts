@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { evaluate } from '../../src/acceptance/evaluate.js';
-import { ok } from '../../src/kernel/evidence.js';
+import { fail, ok } from '../../src/kernel/evidence.js';
 import type { SpawnFn } from '../../src/kernel/spawn.js';
 import { GlabProvider } from '../../src/providers/gitlab/glab-cli.js';
 import { makeGitFacts } from '../specgit-cli/helpers.js';
@@ -37,6 +37,7 @@ async function verdict(fault?: 'issue' | 'mr') {
     gitlabHost: 'git.example.com',
     git: {
       facts: async () => makeGitFacts({ branch, headSha: head, originUrl: 'https://git.example.com/group/nested/project.git' }),
+      isAncestor: async () => fail('merged_lineage_unavailable', 'not configured'),
       headContains: async () => ok({ contained: false }),
     },
     gh: {
@@ -46,6 +47,8 @@ async function verdict(fault?: 'issue' | 'mr') {
       listIssuePullRequests: async () => ok([]),
       getOpenIssueNumbers: async () => ok([]),
       getCheckRuns: async () => ok([]),
+      getRequestDeclarations: async () => ok([]),
+      getPrChecks: async () => ok({ headSha: head, checks: [], pipelineStatus: 'success' }),
       getEvidenceAnchor: async () => ok({ anchoredAt: null }),
     },
   });

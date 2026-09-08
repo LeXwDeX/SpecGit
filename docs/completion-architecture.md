@@ -1,47 +1,83 @@
 # Guarded delivery completion
 
-CLI completion and trusted remote completion share one domain operation,
-`completeDelivery`. This boundary is part of repair lifecycle work in #489;
-the wider automation programme remains tracked by #493.
+CLI completion and trusted remote completion share `completeDelivery`. This
+boundary implements repair lifecycle work in #489; the whole automation
+programme remains tracked by #493.
 
-## Decision
+## Product responsibilities
 
-The remote driver previously called a CLI command handler and interpreted its
-exit codes and output fields as domain state. Both callers need the same
-approved-policy proof, exact-head acceptance, CI eligibility, guarded merge,
-issue closure and post-write readback. Those rules belong in `src/completion/`.
+A delivery binds a branch or worktree, issues and one request. Acceptance is a
+read-only judgement about that delivery. Completion additionally confirms its
+merge into the configured target and closure of its bound and verified derived
+repair issues. Neither result proves that an entire programme is complete.
 
-The completion operation receives a discovered repository and only its required
-Git, forge, binding-read, policy-resolution and evaluation capabilities. It
-returns domain observations and recovery actions. It cannot create issues,
-write bindings, change repository protection, prompt a user or print output.
-CLI adapters preserve the existing JSON and human output. The remote driver
-owns polling, deadlines and repair creation; its outer entry point owns event
-authentication, trusted runtime selection and the data checkout.
+The completion core owns approved-policy proof, current-head acceptance, CI
+eligibility, guarded merge, closure and readback. It receives narrow Git, forge,
+binding-read, policy-resolution and evaluation capabilities, and returns domain
+observations. It cannot create issues, write bindings, configure protection,
+prompt or print. CLI adapters own process exits and human output. The remote
+driver owns polling, repair creation and recovery; its entry point verifies the
+trigger, trusted runtime and delivery checkout. Init, setup and bootstrap keep
+their separate boundaries.
 
-Initialization, local setup and delivery bootstrap keep their existing
-boundaries. A broad lifecycle dispatcher would give these unrelated callers a
-larger interface without resolving repair identity or incomplete scope. A new
-protected relationship journal would add another authority and operational
-surface; this extraction introduces no persisted state.
+An active acceptance job must not wait for itself to finish. Open-request
+acceptance collects repair obligations and checks the required CI evidence.
+Completion proves resolution only after all current-head CI has settled. A
+read-only verdict for a merged request also checks unresolved repair evidence
+before reporting completion.
 
-## Evidence and authority
+## Repair operation lifecycle
 
-Bindings declare responsibility. Approved target policy authorizes effects.
-Git and forge facts establish whether acceptance and completion hold. The
-harness invokes these rules and does not maintain a second verdict.
+Before creating a repair issue, the trusted runner records an intent in the
+parent PR/MR discussion and confirms its readback. The intent carries the
+repository and request identity, failed head, approved-policy hash, failure
+cause and prepared issue content. After creation or adoption, a second
+confirmed declaration records the issue identity.
 
-Completion rechecks the binding, policy and request before writes, submits the
-expected head to the forge, confirms the merged request and reads every bound
-issue again. A successful mutation response does not establish completion.
-Missing evidence remains unknown; the output adapter alone maps that result to
-the existing process exit contract. A remote deadline does not imply success.
+A fresh runner reconstructs these operations from the complete discussion.
+An intent without a receipt remains pending. Recovery searches relevant open
+and closed issue history using the operation identity before creating anything;
+a lost creation response therefore does not require an in-memory checkpoint.
+Existing materialized work is receipted even after policy or source history
+changes; those changes still prevent new creation and automatic resolution.
+Conflicting identities, incomplete pagination or unavailable reads stay unknown.
+Independent simultaneous writers are not transactionally serialized; ambiguous
+creation is reported for reconciliation rather than selecting an arbitrary issue.
 
-## Migration boundary
+Automatic closure of a derived repair requires the unchanged approved policy,
+failed-head ancestry in the retained PR/MR head, current successful evidence for the original
+failure, and no competing open delivery claiming that repair. Removing a failed
+check does not discharge it. Explicit adoption is available through the existing
+`specgit bind --issue <number>` command after preserving the PR/MR body's closing
+references; that changes the reviewed delivery scope.
 
-The extraction preserves single-delivery behavior. It does not yet implement
-derived repair adoption, aggregate scope, durable sweep recovery, portable CI
-selection, evidence reuse or promotion lineage. Those features need their own
-declarations, evidence and tests; moving orchestration code is not evidence that
-they work. In particular, editable repair markers are discovery hints, never
-authorization to close an unbound issue.
+Completion rechecks the binding, policy, request and repair declarations before
+writes, submits the expected head to the forge, confirms the merged request,
+and reads all relevant issues again. Source repair ancestry is independent of
+the target checkout so squash and rebase merges retain a valid proof. A successful mutation response alone is
+insufficient. Interrupted closure remains recoverable on the next execution.
+
+## Authority and limits
+
+The binding declares the original scope; approved target policy authorizes
+completion effects. Repair declarations extend that scope only through the
+forge adapter's verification of repository write authority. GitHub uses current
+collaborator permissions or provider-backed writable app evidence; GitLab uses
+current project membership. Issue-body markers are lookup hints and cannot
+independently authorize closure. Untrusted discussion text cannot add an
+obligation; unavailable permission evidence is not an empty log.
+
+These are current writer declarations, not immutable execution attestations.
+Writers can modify or delete discussion state. Complete removal of the log, or
+loss of its authors' authority, cannot be reconstructed from the remaining
+comments alone. The design covers ordinary runner interruption while preserving
+the existing forge trust boundary; it does not promise a tamper-proof journal or
+exactly-once writes across unrelated processes. No secret, external database or
+protected metadata branch is introduced.
+
+## Remaining programme boundaries
+
+Aggregate scope (#491), repository-wide recovery after lost events (#492),
+portable CI selection (#472), verified-input reuse (#473), measured Windows
+performance (#474), and Git promotion lineage (#477) remain separate work.
+A repair issue's completion does not close #493 or prove these capabilities.

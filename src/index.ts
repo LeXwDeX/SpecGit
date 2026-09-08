@@ -75,6 +75,7 @@ export type {
   GitHubProvider,
   IssueFact,
   IssueHistoryFact,
+  RequestDeclaration,
   PrFact,
   CheckRunInfo,
   MergeChecksFact,
