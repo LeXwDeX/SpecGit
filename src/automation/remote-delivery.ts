@@ -6,6 +6,8 @@ import { ensureFailureIssues, type DeliveryFailure, type FailureIssuePort } from
 import { classifyCiEligibility } from './ci-eligibility.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import type { Policy } from '../record/policy.js';
+import { repairCheckTarget } from './repair-log.js';
+import { recoverRepairCreations } from './repair-recovery.js';
 
 /** Runner-only discovery and repair capabilities stay outside guarded completion. */
 export interface RemoteDeliveryDependencies extends CompletionDependencies {
@@ -61,8 +63,7 @@ async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDe
     const { check } = problem;
     const started = check.startedAt === null ? Number.NaN : Date.parse(check.startedAt);
     if (boundary !== null && (!Number.isFinite(started) || started < boundary)) continue;
-    const name = check.name.replace(/^downstream:(\d+)\/\d+:/, 'downstream:$1:');
-    failures.push({ code: 'checks_failed', target: `${input.repo.platform}:${check.source ?? 'pipeline'}:${name}`,
+    failures.push({ code: 'checks_failed', target: repairCheckTarget(input.repo.platform, check),
       message: `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.` });
   }
   const verdict = await ctx.evaluate({ root: ok(root), record: ok(input.record), policy: ok(policy), git: ctx.git, gh: ctx.gh });
@@ -116,6 +117,12 @@ export async function runRemoteDelivery(
     if (closeOnly && current.value.state === 'open') {
       return { classification: 'idle', diagnostics: [] };
     }
+    if ((automation?.merge === true || automation?.close_issues === true) &&
+        current.value.baseBranch === automation.target_branch && current.value.state !== 'closed') {
+      const repairs = await recoverRepairCreations({ repo: input.repo, request: input.pr, headSha: current.value.headSha,
+        root: rootEvidence.value, policy: policyEvidence.value.policy, boundIssues: input.record.issues }, ctx.gh, ctx.git);
+      if (!repairs.ok) return blocked(repairs.code, repairs.message);
+    }
     outcome = await completeDelivery({ root: rootEvidence, closeOnly }, boundContext);
     if (outcome.classification === 'completed') return outcome;
     let waitingForCi = false;
@@ -132,6 +139,7 @@ export async function runRemoteDelivery(
           failures: failures.value.failures, policy: approved.value.policy }, ctx.gh);
         if (!repairs.ok) return blocked(repairs.code, repairs.message);
         return { ...outcome, classification: 'rejected', ...(outcome.progress ? { progress: { ...outcome.progress, status: 'blocked' } } : {}),
+          repairIssues: repairs.value.issues,
           diagnostics: failures.value.failures.map((failure) => ({ severity: 'error', ...failure })) };
       }
       waitingForCi = failures.value.retryCi && (outcome.diagnostics?.length ?? 0) > 0 &&

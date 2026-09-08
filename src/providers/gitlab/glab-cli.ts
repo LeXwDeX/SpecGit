@@ -1,3 +1,4 @@
+import { readRequestDeclarations, appendRequestDeclaration } from '../request-declarations.js';
 import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { RepoRef } from '../../gitfacts/origin.js';
 import { defaultSpawn, sanitizeApiText, type SpawnFn, type SpawnOptions } from '../cli-spawn.js';
@@ -850,6 +851,22 @@ export class GlabProvider implements ForgeProvider {
     return ok({ number: issue.iid, url: issue.web_url });
   }
 
+  async getRequestDeclarations(repo: RepoRef, request: number, prefix: string) {
+    return readRequestDeclarations({ platform: 'gitlab', project: `${repo.owner}/${repo.repo}`, request, prefix,
+      api: (path) => this.runApi(path, path.includes('/members/all/') ? 'permission' : 'pr'),
+    });
+  }
+
+  async appendRequestDeclaration(repo: RepoRef, request: number, prefix: string, body: string) {
+    return appendRequestDeclaration({ platform: 'gitlab', project: `${repo.owner}/${repo.repo}`, request, prefix, body,
+      api: (path) => this.runApi(path, path.includes('/members/all/') ? 'permission' : 'pr'),
+      append: async (value) => {
+        const result = await this.runCreate(['api', ...this.hostArgs(), '-X', 'POST', `projects/${this.projectPath(repo)}/merge_requests/${request}/notes`, '-f', `body=${value}`]);
+        return result.ok ? ok(undefined) : this.asFailure(result);
+      },
+    });
+  }
+
   async addIssueComment(
     repo: RepoRef,
     issue: number,
@@ -1440,7 +1457,7 @@ export class GlabProvider implements ForgeProvider {
 
   private async runApi(
     endpoint: string,
-    kind?: 'issue' | 'pr' | 'protection'
+    kind?: 'issue' | 'pr' | 'protection' | 'permission'
   ): Promise<Evidence<unknown>> {
     const result = await this.runGlab(['api', ...this.hostArgs(), endpoint]);
     if (!result.ok) {
@@ -1451,6 +1468,7 @@ export class GlabProvider implements ForgeProvider {
         return fail('glab_unauthenticated', 'GitLab CLI is not authenticated for this host.', this.authFix());
       }
       if (result.code === 'not_found') {
+        if (kind === 'permission') return ok(null);
         if (kind === 'issue') {
           return fail('issue_not_found', 'GitLab reports this issue does not exist.');
         }

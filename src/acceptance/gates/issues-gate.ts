@@ -1,6 +1,7 @@
 import { makeFailure, type GateContext, type GateFailure } from './types.js';
 import { checkLabelConvention, checkTitleConvention } from '../../record/conventions.js';
 import { checkBodyConvention } from '../../record/templates.js';
+import { collectRepairObligations } from '../repair-obligations.js';
 
 /**
  * Gate 7 — issues: every bound issue exists and is an issue, not a pull
@@ -10,7 +11,9 @@ import { checkBodyConvention } from '../../record/templates.js';
 export async function issuesGate(ctx: GateContext): Promise<GateFailure[]> {
   const failures: GateFailure[] = [];
   const openIssues: number[] = [];
-  for (const issueNumber of ctx.binding!.issues) {
+  const derived = await collectRepairObligations(ctx);
+  if (!derived.ok) return [makeFailure(derived)];
+  for (const issueNumber of [...ctx.binding!.issues, ...derived.value]) {
     const issue = await ctx.input.gh!.getIssue(ctx.repoRef!, issueNumber);
     if (!issue.ok) {
       if (issue.code === 'issue_not_found') {

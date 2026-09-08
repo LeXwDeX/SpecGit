@@ -42,6 +42,7 @@ export interface CompletionObservation {
   classification: CompletionClassification;
   progress?: CompletionProgress;
   diagnostics: Diagnostic[];
+  repairIssues?: number[];
   recovery?: { kind: 'fetch-target'; operation: 'close-only' | 'merge-and-close' };
   language?: PolicyLanguage;
 }

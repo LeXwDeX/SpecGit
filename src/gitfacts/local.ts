@@ -372,8 +372,19 @@ export class LocalGitAdapter implements GitPort {
         'The merge anchor arrived malformed from the provider evidence; a ref-like or empty anchor is never resolved by local git. Re-run once the pull request reports a valid merge commit sha.'
       );
     }
+    return this.probeAncestry(root, sha, 'HEAD');
+  }
+
+  async isAncestor(root: string, ancestorSha: string, descendantSha: string): Promise<Evidence<{ contained: boolean }>> {
+    if (!HEX_OBJECT_ID.test(ancestorSha) || !HEX_OBJECT_ID.test(descendantSha)) {
+      return fail('merged_lineage_unavailable', 'Source ancestry requires two full hex commit IDs; local git was not invoked.');
+    }
+    return this.probeAncestry(root, ancestorSha, descendantSha);
+  }
+
+  private async probeAncestry(root: string, sha: string, descendant: string): Promise<Evidence<{ contained: boolean }>> {
     try {
-      await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
+      await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', sha, descendant], {
         timeoutMs: GIT_PROBE_TIMEOUT_MS,
         maxBuffer: GIT_PROBE_MAX_BUFFER,
         env: this.env,
@@ -398,9 +409,9 @@ export class LocalGitAdapter implements GitPort {
       const detail = error instanceof Error ? sanitizeGitText(error.message) : '';
       return fail(
         'merged_lineage_unavailable',
-        `Local git could not verify whether HEAD contains ${sanitizeGitText(sha)}` +
+        `Local git could not verify whether ${descendant} contains ${sanitizeGitText(sha)}` +
           (detail ? `: ${detail}` : '.'),
-        'Fetch the remote (git fetch) and pull the base branch that received the merge, then re-run.'
+        'Fetch the remote (git fetch), including the retained PR/MR head and merged target, then re-run.'
       );
     }
   }

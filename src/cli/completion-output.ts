@@ -12,9 +12,18 @@ export function presentCompletion(observation: CompletionObservation): PrOutcome
     ...(classification === 'completed' ? { state: 'completed' } : classification === 'idle' ? { state: 'bound' } :
       progress?.pr !== undefined ? { state: progress.merged ? 'closure_pending' : 'bound' } : {}),
     ...(progress ? { automation: progress } : {}),
+    ...(observation.repairIssues ? { repairIssues: observation.repairIssues } : {}),
     ...(classification === 'completed' ? {} : { errors: observation.diagnostics }),
   };
   const { human } = catalogFor(observation.language);
+  if (observation.repairIssues?.length) {
+    const nextActions: NextAction[] = [{
+      code: 'bind_repairs',
+      command: `specgit bind ${observation.repairIssues.map((number) => `--issue ${number}`).join(' ')} --json`,
+      reason: `On this delivery's branch, preserve the PR/MR body and add ${observation.repairIssues.map((number) => `Closes #${number}`).join(', ')} before binding these repairs. Implement and verify their fixes before completion.`,
+    }];
+    return { ...outcome, nextActions, human: renderNextActionsHuman(human.nextHeadline(), nextActions) };
+  }
   if (observation.recovery?.kind === 'fetch-target') {
     const nextActions: NextAction[] = [{
       code: 'merge_lineage', command: 'git fetch origin',

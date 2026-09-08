@@ -1,8 +1,10 @@
 /** Approved, exact-head completion shared by local and remote callers. */
+import { verifyRepairResolution } from '../acceptance/repair-obligations.js';
 import type { PrFact } from '../github/port.js';
 import { classifyCiEligibility } from '../automation/ci-eligibility.js';
 import { hasUnboundClosingRefs } from '../github/closing-refs.js';
 import { extractOriginHost } from '../gitfacts/origin.js';
+import { readRepairLog, repairLogHash } from '../automation/repair-log.js';
 import type { Evidence } from '../kernel/evidence.js';
 import type { PolicyLanguage } from '../record/policy.js';
 import type {
@@ -116,6 +118,13 @@ export async function completeDelivery(
   if (verdict.evidence.pr !== observed.number || verdict.evidence.prHead !== observed.headSha) {
     return stop('automation_head_changed', 'The PR/MR changed while acceptance was evaluated. Retry with fresh evidence.');
   }
+  const repairLog = await readRepairLog(repo.value, observed.number, ctx.gh);
+  if (!repairLog.ok) return unavailable(repairLog);
+  const expectedRepairHash = verdict.evidence.repairLogHash ?? repairLogHash([]);
+  if (repairLogHash(repairLog.value) !== expectedRepairHash) {
+    return stop('repair_log_changed', 'Repair obligations changed while acceptance was evaluated.', 'unknown');
+  }
+  const issueNumbers = [...new Set([...record.value.issues, ...(verdict.evidence.repairIssues ?? [])])];
 
   const ci = await ctx.gh.getPrChecks(repo.value, observed.number);
   if (!ci.ok) return unavailable(ci);
@@ -146,11 +155,28 @@ export async function completeDelivery(
   }
   if (eligibility.executedCount === 0) return stop('automation_checks_missing', 'No executed CI/CD checks prove this head successful.');
 
+  if (repairLog.value.some((operation) => operation.issue !== undefined && !record.value.issues.includes(operation.issue))) {
+    const anchor = await ctx.gh.getEvidenceAnchor(repo.value, observed.number);
+    if (!anchor.ok) return unavailable(anchor);
+    const repairs = await verifyRepairResolution({
+      operations: repairLog.value, boundIssues: record.value.issues,
+      root: root.value, repo: repo.value, request: observed, policy: policy.value,
+      git: ctx.git, forge: ctx.gh, checks: ci.value,
+      anchor: anchor.value.anchoredAt ?? null, host: closingHost,
+    });
+    if (!repairs.ok) return unavailable(repairs);
+  }
+
   const bindingUnchanged = async (checkPolicy = true): Promise<CompletionObservation | null> => {
     const currentRecord = await ctx.record.readRecord(root.value);
     if (!currentRecord.ok) return unavailable(currentRecord);
     if (JSON.stringify(currentRecord.value) !== JSON.stringify(record.value)) {
       return stop('automation_binding_changed', 'The delivery binding changed during automation. Retry with fresh evidence.');
+    }
+    const currentRepairs = await readRepairLog(repo.value, observed.number, ctx.gh);
+    if (!currentRepairs.ok) return unavailable(currentRepairs);
+    if (repairLogHash(currentRepairs.value) !== expectedRepairHash) {
+      return stop('repair_log_changed', 'Repair obligations changed during completion. Retry with fresh evidence.', 'unknown');
     }
     if (!checkPolicy) return null;
     const currentResolved = await ctx.resolvePolicy(root.value, currentRecord, { requireApproved: true });
@@ -199,7 +225,7 @@ export async function completeDelivery(
   if (afterMergeChange) return afterMergeChange;
 
   if (automation.close_issues) {
-    for (const number of record.value.issues) {
+    for (const number of issueNumbers) {
       const issue = await ctx.gh.getIssue(repo.value, number);
       if (!issue.ok) return unavailable(issue);
       if (issue.value.number !== number || issue.value.pullRequest) {
@@ -219,7 +245,7 @@ export async function completeDelivery(
   // A successful mutation response is not a final state observation. Check
   // every binding again, including issues the platform closed automatically.
   const stillOpen: number[] = [];
-  for (const number of record.value.issues) {
+  for (const number of issueNumbers) {
     const issue = await ctx.gh.getIssue(repo.value, number);
     if (!issue.ok) return unavailable(issue);
     if (issue.value.number !== number || issue.value.pullRequest) {
@@ -232,6 +258,8 @@ export async function completeDelivery(
     return stop('automation_issue_closure_pending', `The PR/MR is merged; bound issues remain open: ${stillOpen.join(', ')}.`, 'rejected',
       'Retry the configured completion runner after restoring issue-closure access.');
   }
+  const finalChange = await bindingUnchanged(false);
+  if (finalChange) return finalChange;
   progress.status = 'completed';
   return { classification: 'completed', progress, diagnostics: [], language };
 }
