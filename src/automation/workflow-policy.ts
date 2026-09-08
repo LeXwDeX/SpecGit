@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { createDefaultContext } from '../cli/wiring.js';
+import { planBoundVerification } from '../verification/resolve.js';
 
 export const WORKFLOW_POLICY_PROTOCOL = 1;
 
@@ -14,10 +15,14 @@ export async function prepareWorkflowPolicy(target: string): Promise<void> {
   const record = await ctx.record.readRecord(root.value);
   const resolved = await ctx.resolvePolicy(root.value, record);
   if (!resolved.ok) throw new Error(resolved.message);
-  if (resolved.value.policy.required_checks.some((name) => name === 'SpecGit Acceptance' || name === 'SpecGit Completion')) {
+  const selected = await planBoundVerification({ root: root.value, record, resolution: resolved, git: ctx.git, forge: ctx.gh, parseRepoRef: ctx.parseRepoRef });
+  if (!selected.ok) throw new Error(selected.message);
+  if (selected.value.requiredChecks.some((name) => name === 'SpecGit Acceptance' || name === 'SpecGit Completion')) {
     throw new Error('The policy cannot require its own acceptance or completion job as a sibling check.');
   }
-  writeFileSync(target, YAML.stringify(resolved.value.policy), { mode: 0o600 });
+  // This ephemeral waiter input is a projection; the approved policy and its repair hash remain unchanged.
+  writeFileSync(target, YAML.stringify({ ...resolved.value.policy, required_checks: selected.value.requiredChecks }), { mode: 0o600 });
+  console.log(JSON.stringify({ verification: selected.value }));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

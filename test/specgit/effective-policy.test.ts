@@ -28,6 +28,13 @@ function fixture(content: string | null) {
 }
 
 describe('approved policy resolution', () => {
+  it('uses the original merged policy for read-only acceptance even after verification was removed', async () => {
+    const f = fixture('version: 1\nrequired_checks: []');
+    f.forge.getPr.mockResolvedValue(ok(makePrFact({ state: 'merged', mergeCommitSha: 'b'.repeat(40) })));
+    f.git.readFileBeforeMerge.mockResolvedValue(ok({ sha: SHA, content: 'version: 1\nrequired_checks: []\nverification: {product_checks: [build], rules: []}' }));
+    expect(await resolveEffectivePolicy(f)).toMatchObject({ ok: true, value: { sha: SHA, policy: { verification: { product_checks: ['build'] } } } });
+    expect(f.git.readFileAtRemoteRef).not.toHaveBeenCalled();
+  });
   it('retains checkout containment for local merged authorization', async () => {
     const f = fixture('version: 1\nrequired_checks: []');
     f.forge.getPr.mockResolvedValue(ok(makePrFact({ state: 'merged', mergeCommitSha: 'b'.repeat(40) })));
