@@ -9,3 +9,4 @@ issues:
 issueKinds:
   - issue: 505
     kind: kind::chore
+pr: 506
