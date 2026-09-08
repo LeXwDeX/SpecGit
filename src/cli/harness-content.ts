@@ -19,6 +19,8 @@
  * File contents use LF line endings only.
  */
 
+import { acceptanceRunYaml } from './acceptance-step.js';
+
 import { literalBranchPattern } from './workflow-branches.js';
 import type { PolicyLanguage } from '../record/policy.js';
 import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
@@ -146,14 +148,16 @@ ${waitStepYaml('gh', "\${{ steps.scope.outputs.build == 'false' && format('{0}/s
 
       - name: specgit finish
         if: steps.scope.outputs.build == 'true'
-        run: node bin/specgit.js finish --json
+${acceptanceRunYaml()}
         env:
+          SPECGIT_ACCEPT_RUNTIME: \${{ github.workspace }}
           GH_TOKEN: \${{ github.token }}
 
       - name: specgit finish with trusted CLI
         if: steps.scope.outputs.build == 'false'
-        run: '"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json'
+${acceptanceRunYaml()}
         env:
+          SPECGIT_ACCEPT_RUNTIME: \${{ runner.temp }}/specgit-cli/node_modules/specgit
           GH_TOKEN: \${{ github.token }}
 `;
 }

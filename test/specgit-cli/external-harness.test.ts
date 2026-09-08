@@ -113,7 +113,7 @@ describe('external acceptance harness template', () => {
     const lower = yaml.toLowerCase();
     for (const banned of [
       'pnpm',
-      'bin/specgit.js',
+      'node bin/specgit.js',
       'frozen-lockfile',
       'run build',
       'build cli',
@@ -126,7 +126,8 @@ describe('external acceptance harness template', () => {
 
   it('runs the verdict through the installed CLI, not a workspace path', () => {
     const yaml = externalAcceptanceWorkflowYaml(INPUT);
-    expect(yaml).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+    expect(yaml).toContain('await acceptanceMain()');
+    expect(yaml).toContain('SPECGIT_ACCEPT_RUNTIME: ${{ runner.temp }}/specgit-cli/node_modules/specgit');
     expect(yaml).toContain('GH_TOKEN: ${{ github.token }}');
   });
 

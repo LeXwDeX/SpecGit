@@ -552,7 +552,7 @@ describe('specgit init', () => {
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
     expect(fs.existsSync(WORKFLOW_ABS(root))).toBe(false);
-    expect(envelope.harness).toEqual({ template: 'gitlab-pending' });
+    expect(envelope.harness).toEqual({ template: 'gitlab-pending', acceptance: '.gitlab/specgit-accept.mjs' });
     const warning = (envelope.warnings ?? []).find(
       (w: { code: string }) => w.code === 'gitlab_harness_pending'
     );
@@ -1180,7 +1180,7 @@ describe('specgit init harness generation', () => {
     expect(workflow).toContain('name: SpecGit Acceptance');
     expect(workflow).toContain('pull_request');
     expect(workflow).toContain('branches: [main]');
-    expect(workflow).toContain('node bin/specgit.js finish --json');
+    expect(workflow).toContain('await acceptanceMain()');
     expect(workflow).not.toContain('\r');
 
     const agents = read(AGENTS_ABS(root));
@@ -1214,10 +1214,10 @@ describe('specgit init harness generation', () => {
     expect(workflow).toBe(externalAcceptanceWorkflowYaml({ defaultBranch: 'master', version: '0.0.0-test' }));
     expect(workflow).toContain('branches: ["master"]');
     expect(workflow).toContain(`npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --no-audit --no-fund specgit@0.0.0-test`);
-    expect(workflow).toContain('"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json');
+    expect(workflow).toContain('await acceptanceMain()');
     // The adopting project's toolchain is never invoked.
     expect(workflow).not.toContain('pnpm');
-    expect(workflow).not.toContain('bin/specgit.js');
+    expect(workflow).not.toContain('node bin/specgit.js');
     expect(t.ghProvider.calls).toContain(
       'enableBranchProtection:LeXwDeX/SpecGit:master:SpecGit Acceptance'
     );
