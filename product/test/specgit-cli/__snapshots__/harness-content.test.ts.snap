@@ -1,0 +1,1362 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`guard script bytes > is a byte-stable snapshot and spawnable: shebang on line 1 1`] = `
+"#!/bin/sh
+# SpecGit guard (managed by specgit init): start gate + merge guard. Exit 2 = block with reason.
+GUARD_DIR=$(cd "$(dirname "$0")" && pwd)
+export GUARD_DIR
+# Hook payloads arrive as the first argument or on stdin; accept both.
+if [ -n "$1" ]; then
+  payload=$1
+else
+  payload=$(cat)
+fi
+tool=$(printf '%s' "$payload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_name)||'')}catch{process.stdout.write('')}})")
+case "$tool" in
+  edit|write|Edit|Write)
+    # Start gate (#335): mutating files requires the delivery binding on
+    # THIS branch. The record's context.branch is written by specgit and
+    # matched as a fixed WHOLE line — no YAML parsing, no prefix collision
+    # (branch "feat/1-a" must never satisfy a record for "feat/1-a2").
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -z "$branch" ] || [ ! -f .specgit.yaml ] || ! grep -qFx "  branch: $branch" .specgit.yaml; then
+      echo "specgit: start gate - this branch has no delivery binding. Start the delivery first according to the managed guidance: prepare any required body files, then run specgit issue \\"<type>: <title>\\" with them before editing files." >&2
+      exit 2
+    fi
+    exit 0
+    ;;
+esac
+command=$(printf '%s' "$payload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write((j.tool_input&&j.tool_input.command)||'')}catch{process.stdout.write('')}})")
+
+# Classify statically visible forge-merge commands without executing or
+# expanding shell input. The lexer understands quoting, command separators,
+# environment assignments, env/command/exec wrappers, and forge-global repo
+# selectors. It deliberately inspects only each simple command's executable
+# and leading global options, so quoted prose such as echo "gh pr merge" does
+# not trigger the gate.
+merge_command=$(printf '%s' "$command" | node -e '
+  const fs = require("fs");
+  const source = fs.readFileSync(0, "utf8");
+  const SQ = String.fromCharCode(39);
+  const DQ = String.fromCharCode(34);
+  const BS = String.fromCharCode(92);
+
+  function tokenize(text) {
+    const tokens = [];
+    let word = "";
+    let active = false;
+    let quote = 0;
+    const flush = () => {
+      if (!active) return;
+      tokens.push({ kind: "word", value: word });
+      word = "";
+      active = false;
+    };
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      if (quote === 39) {
+        if (char === SQ) quote = 0;
+        else word += char;
+        continue;
+      }
+      if (quote === 34) {
+        if (char === DQ) {
+          quote = 0;
+        } else if (char === BS) {
+          if (index + 1 >= text.length) return null;
+          word += text[++index];
+        } else {
+          word += char;
+        }
+        continue;
+      }
+      if (char === SQ || char === DQ) {
+        quote = char === SQ ? 39 : 34;
+        active = true;
+      } else if (char === BS) {
+        if (index + 1 >= text.length) return null;
+        const next = text[++index];
+        if (next !== "\\n") {
+          word += next;
+          active = true;
+        }
+      } else if (char === " " || char === "\\t" || char === "\\r") {
+        flush();
+      } else if (char === "\\n" || char === ";" || char === "|" ||
+                 char === "&" || char === "(" || char === ")") {
+        flush();
+        if ((char === "|" || char === "&") && text[index + 1] === char) index += 1;
+        tokens.push({ kind: "boundary" });
+      } else if (char === "#" && !active) {
+        while (index + 1 < text.length && text[index + 1] !== "\\n") index += 1;
+      } else {
+        word += char;
+        active = true;
+      }
+    }
+    if (quote !== 0) return null;
+    flush();
+    return tokens;
+  }
+
+  const executable = (word) => {
+    const base = word.replace(/\\\\/g, "/").split("/").pop() || "";
+    return base.toLowerCase().replace(/\\.exe$/, "");
+  };
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+  function unwrap(words) {
+    let index = 0;
+    while (assignment.test(words[index] || "")) index += 1;
+    if (executable(words[index] || "") === "env") {
+      index += 1;
+      while (assignment.test(words[index] || "")) index += 1;
+    }
+    while (["command", "exec"].includes(executable(words[index] || ""))) {
+      index += 1;
+    }
+    return words.slice(index);
+  }
+
+  function isForgeMerge(segment) {
+    const words = unwrap(segment);
+    const forge = executable(words[0] || "");
+    if (forge !== "gh" && forge !== "glab") return false;
+    let index = 1;
+    while (index < words.length) {
+      const option = words[index];
+      if (["-R", "--repo", "--hostname"].includes(option)) {
+        if (index + 1 >= words.length) return false;
+        index += 2;
+      } else if (option === "--" || option.startsWith("--repo=") ||
+                 option.startsWith("--hostname=") ||
+                 (option.startsWith("-R") && option.length > 2)) {
+        index += 1;
+        if (option === "--") break;
+      } else {
+        break;
+      }
+    }
+    return forge === "gh"
+      ? words[index] === "pr" && words[index + 1] === "merge"
+      : words[index] === "mr" && words[index + 1] === "merge";
+  }
+
+  const tokens = tokenize(source);
+  if (tokens === null) {
+    process.stdout.write("indeterminate");
+  } else {
+    let segment = [];
+    for (const token of [...tokens, { kind: "boundary" }]) {
+      if (token.kind === "word") {
+        segment.push(token.value);
+      } else {
+        if (isForgeMerge(segment)) {
+          process.stdout.write("merge");
+          process.exit(0);
+        }
+        segment = [];
+      }
+    }
+  }
+')
+classifier_status=$?
+if [ "$classifier_status" -ne 0 ]; then
+  merge_command=indeterminate
+fi
+
+case "$merge_command" in
+  indeterminate)
+    echo "specgit: command blocked - the merge guard could not safely classify the shell input. Retry with a direct gh pr merge or glab mr merge command." >&2
+    exit 2
+    ;;
+  merge)
+    exec node -e '
+      const { spawn } = require("child_process");
+      const fs = require("fs");
+      const path = require("path");
+      const timeoutMs = ["SPECGIT_GH_TIMEOUT_MS", "SPECGIT_GLAB_TIMEOUT_MS"]
+        .map((name) => parseInt(process.env[name] || "", 10))
+        .map((value) => Number.isFinite(value) && value > 0 ? value : 15000);
+      const providerS = Math.max(1, Math.ceil(Math.max(...timeoutMs) / 1000));
+      let budgetS = Math.max(60, providerS * 8);
+      const overrideRaw = parseInt(process.env.SPECGIT_GUARD_BUDGET_S || "", 10);
+      if (Number.isFinite(overrideRaw) && overrideRaw > 0) {
+        budgetS = Math.max(overrideRaw, providerS);
+      }
+      // The hook runner kills long hooks; surface the mismatch instead of
+      // being cut off mid-verdict.
+      try {
+        const hooks = JSON.parse(
+          fs.readFileSync(path.join(process.env.GUARD_DIR || ".", "..", "hooks.json"), "utf8")
+        );
+        const runner = (hooks.PreToolUse || [])
+          .flatMap((entry) => entry.hooks || [])
+          .map((hook) => hook.timeout)
+          .find((timeout) => typeof timeout === "number");
+        if (runner !== undefined && runner - 10 < budgetS) {
+          console.error(
+            "specgit: guard budget " + budgetS + "s exceeds the hook runner timeout " +
+              runner + "s in .opencode/hooks.json - raise the runner timeout or lower SPECGIT_GUARD_BUDGET_S."
+          );
+        }
+      } catch {}
+      const cp = require("child_process");
+      const isWin = process.platform === "win32";
+      // Windows: cmd.exe cannot exec an extensionless sh shim, so prefer
+      // git-bash sh when present; only then fall back to shell mode.
+      let child;
+      if (isWin) {
+        const probe = cp.spawnSync("sh", ["-c", "exit 0"]);
+        if (probe.status === 0) {
+          child = spawn("sh", ["-c", "specgit finish --json"], {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        }
+      }
+      if (!child) {
+        child = spawn("specgit", ["finish", "--json"], {
+          shell: isWin,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
+      let out = "";
+      let err = "";
+      let expired = false;
+      child.stdout.on("data", (chunk) => (out += chunk));
+      child.stderr.on("data", (chunk) => (err += chunk));
+      const timer = setTimeout(() => {
+        expired = true;
+        // Bound the wait strictly: descendants may inherit the pipes, so
+        // destroy them and exit now — never lag behind orphaned children.
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.kill("SIGKILL");
+        console.error(
+          "specgit: merge blocked - guard budget " + budgetS + "s exhausted before a verdict. This says nothing about the delivery; run specgit finish directly for the full verdict."
+        );
+        process.exit(2);
+      }, budgetS * 1000);
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        console.error(
+          "specgit: merge blocked - the verdict could not run (" + error.message + "). Install specgit on PATH, then retry the merge."
+        );
+        process.exit(2);
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (expired) {
+          process.exit(2);
+        }
+        if (code === 0) {
+          process.exit(0);
+        }
+        let envelope = null;
+        try {
+          envelope = JSON.parse(out);
+        } catch {}
+        const verdict = envelope && envelope.verdict;
+        const gates = (envelope && (envelope.gates || (verdict && verdict.gates))) || [];
+        const failures = [];
+        for (const gate of gates) {
+          for (const failure of (gate && gate.failures) || []) failures.push(failure);
+        }
+        const label = (failure, suffix) => {
+          const detail = failure.detail || {};
+          const name = detail.name || failure.code;
+          const state = suffix || detail.status || detail.conclusion || "";
+          return name + (state ? " [" + state + "]" : "");
+        };
+        const pending = failures.filter((f) => f.code === "checks_pending");
+        const failed = failures.filter((f) => f.code === "checks_failed");
+        const other = failures.filter(
+          (f) => f.code !== "checks_pending" && f.code !== "checks_failed"
+        );
+        const lines = [];
+        if (code === 1) {
+          lines.push(
+            "specgit: merge blocked - verdict rejected (exit 1). Fix what the failures name; never weaken spec_git/policy.yaml to pass."
+          );
+        } else {
+          lines.push(
+            "specgit: merge blocked - no verdict possible (evidence incomplete, exit " + code + "). This is not a rejection: follow errors[].fix in the specgit finish --json result first. Run specgit doctor --json only for git, repository, origin, configured provider CLI/auth, or policy probes, then retry."
+          );
+        }
+        if (pending.length > 0) {
+          lines.push(
+            "  pending (transient - wait, then re-run): " + pending.map((f) => label(f)).join(", ")
+          );
+        }
+        if (failed.length > 0) {
+          lines.push(
+            "  failed (repair required): " +
+              failed
+                .map((f) =>
+                  label(
+                    f,
+                    f.detail && f.detail.conclusion === "action_required"
+                      ? "action_required - run awaits maintainer approval"
+                      : undefined
+                  )
+                )
+                .join(", ")
+          );
+        }
+        if (other.length > 0) {
+          lines.push("  other failures: " + other.map((f) => label(f)).join(", "));
+        }
+        lines.push("Full verdict: specgit finish");
+        console.error(lines.join("\\n"));
+        process.exit(2);
+      });
+    '
+    ;;
+esac
+unset classifier_status merge_command
+
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
+  esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
+case "$command" in
+  git\\ push\\ origin\\ *)
+    default_ref=$(specgit_default_ref) || {
+      echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+      exit 2
+    }
+    default_branch=\${default_ref#refs/remotes/origin/}
+    case "$command" in
+      git\\ push\\ origin\\ "$default_branch"|git\\ push\\ origin\\ "$default_branch"\\ *|git\\ push\\ origin\\ +"$default_branch"|git\\ push\\ origin\\ +"$default_branch"\\ *|git\\ push\\ origin\\ HEAD:"$default_branch"|git\\ push\\ origin\\ HEAD:"$default_branch"\\ *)
+        echo "specgit: direct push to $default_branch is not the delivery path. Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+        exit 2
+        ;;
+    esac
+    ;;
+esac
+exit 0
+"
+`;
+
+exports[`guard script bytes > the fresh-install hooks.json seed parses and carries the PreToolUse guard 1`] = `
+"{
+  "PreToolUse": [
+    {
+      "matcher": "Bash|Edit|Write",
+      "hooks": [
+        {
+          "type": "command",
+          "command": ".opencode/hooks/specgit-merge-guard.sh",
+          "timeout": 600
+        }
+      ]
+    }
+  ]
+}
+"
+`;
+
+exports[`harnessWorkflowYaml > is a byte-stable snapshot 1`] = `
+"name: SpecGit Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    # A draft PR fails the verdict (pr_draft), so the draft→ready
+    # transition must re-verdict. Listing types replaces the defaults,
+    # so the default activity types are listed alongside. Title and body
+    # edits change live acceptance evidence even when the head is unchanged.
+    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: read
+
+# One verdict per head at a time (#319): a newer trigger event (a push
+# after the draft opened, then ready_for_review) supersedes the older
+# run of the same pull request instead of leaving parallel copies
+# burning identical wait budgets. The surviving run re-verdicts fully.
+concurrency:
+  group: specgit-accept-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  closure-signal:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Merged request ready for trusted completion'
+  specgit-acceptance:
+    if: github.event.action != 'closed'
+    name: \${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}
+    # Hosted pool on purpose: a required check must not hinge on one
+    # self-hosted container.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Pin execution to this event; a newer branch push must not change
+          # the code tested by an older run. Manual dispatch uses its own SHA.
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore the event branch
+        if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+        env:
+          SPECGIT_BRANCH: \${{ github.head_ref || github.ref_name }}
+        run: |
+          git check-ref-format --branch "$SPECGIT_BRANCH" >/dev/null
+          git switch --create "$SPECGIT_BRANCH"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+          # No dependency cache here, by design (#66): this job checks out
+          # and executes untrusted PR code (install scripts, build, the CLI
+          # under verdict), so it must never write to or restore from the
+          # repository cache (CodeQL alerts 7-9). ci.yml keeps the warm,
+          # branch-scoped cache.
+
+      - name: Classify CI scope
+        id: scope
+        run: node scripts/ci-change-scope.mjs --verification-only
+
+      - name: Validate CI scope
+        env:
+          CI_BUILD: \${{ steps.scope.outputs.build }}
+        run: test "$CI_BUILD" = true || test "$CI_BUILD" = false
+
+      - name: Setup pnpm
+        if: steps.scope.outputs.build == 'true'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Install product dependencies
+        if: steps.scope.outputs.build == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build CLI
+        if: steps.scope.outputs.build == 'true'
+        run: pnpm run build
+
+      - name: Install trusted CLI for metadata validation
+        if: steps.scope.outputs.build == 'false'
+        run: npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --ignore-scripts --no-audit --no-fund "specgit@$(node -p "require('./package.json').version")"
+
+      - name: Prepare approved policy for acceptance
+        env:
+          GH_TOKEN: \${{ github.token }}
+          SPECGIT_WAIT_POLICY: \${{ runner.temp }}/specgit-policy.yaml
+          SPECGIT_POLICY_ENTRY: \${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli/node_modules/specgit/dist/automation/workflow-policy.js', runner.temp) || 'dist/automation/workflow-policy.js' }}
+        run: |
+          gh auth setup-git
+          node "$SPECGIT_POLICY_ENTRY"
+
+      - name: Wait for sibling checks
+        # The verdict must see the OTHER required checks in a terminal
+        # state. Sibling jobs start in parallel AND may not have registered
+        # their check-runs yet, so an empty poll is not "done": wait until
+        # every name in spec_git/policy.yaml is present with a terminal
+        # conclusion. This job is not in the policy, so no self-deadlock.
+        # #315: a terminal run only counts when it started at/after the
+        # delivery's ready-for-review transition — a stale green keeps
+        # waiting for the fresh run the transition triggers.
+        # All GitHub access goes through the authenticated gh CLI.
+        env:
+          GH_TOKEN: \${{ github.token }}
+          WAIT_REPO: \${{ github.repository }}
+          WAIT_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+          WAIT_PR: \${{ github.event.pull_request.number || '' }}
+          WAIT_POLICY: \${{ runner.temp }}/specgit-policy.yaml
+          SPECGIT_CLI_DIR: \${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli', runner.temp) || '' }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { existsSync, readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          import { createRequire } from 'node:module';
+          const { parse } = process.env.SPECGIT_CLI_DIR
+            ? createRequire(process.env.SPECGIT_CLI_DIR + '/node_modules/specgit/package.json')('yaml')
+            : await import('yaml');
+          const policyPath = process.env.WAIT_POLICY || 'spec_git/policy.yaml';
+          if (!existsSync(policyPath)) {
+            console.error('spec_git/policy.yaml is absent at this head — an adoption PR carries no binding commit yet (expected once; merge it before enabling branch protection), and a delivery PR must carry it via specgit issue.');
+            process.exit(1);
+          }
+          const policy = parse(readFileSync(policyPath, 'utf8'));
+          const required = policy.required_checks ?? [];
+          // gh.cmd needs a shell on Windows; POSIX execs the binary
+
+          // directly (shell stays off where it is not needed). The
+
+          // query rides --field args (never a raw "?" URL): cmd.exe
+
+          // treats a bare "&" as a command separator, so a URL query
+
+          // would be split mid-parameter on Windows.
+
+          const listChecks = (page) =>
+            JSON.parse(
+              execFileSync(
+                'gh',
+                [
+                  'api',
+                  'repos/' + process.env.WAIT_REPO + '/commits/' + process.env.WAIT_SHA + '/check-runs',
+                  '--method', 'GET',
+                  '--field', 'per_page=' + PER_PAGE,
+                  '--field', 'page=' + page,
+                ],
+                { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }
+              )
+            );
+          // Transient API failures (5xx, 429, network) retry with bounded
+
+          // exponential backoff — a platform blip must not fail the gate.
+
+          const MAX_ATTEMPTS = 5;
+          const listChecksWithRetry = async (page) => {
+            for (let attempt = 1; ; attempt += 1) {
+              try {
+                return listChecks(page);
+              } catch (error) {
+                const text = String(error) + ' ' + String(error && error.stderr ? error.stderr : '');
+                const transient = /HTTP 5\\d\\d|HTTP 429|ETIMEDOUT|ECONNRESET|ENOTFOUND|timed out/i.test(text);
+                if (attempt >= MAX_ATTEMPTS || !transient) throw error;
+                const backoff = Math.min(30000, 2000 * 2 ** (attempt - 1));
+                console.log('Transient failure; retry ' + attempt + '/' + MAX_ATTEMPTS + ' in ' + backoff + 'ms');
+                await new Promise((r) => setTimeout(r, backoff));
+              }
+            }
+          };
+          // #315: the ready-for-review anchor rides the issue-timeline
+          // endpoint through gh api --field args (GET, like the listing).
+          const fetchTimelinePage = (page) =>
+            JSON.parse(
+              execFileSync(
+                'gh',
+                [
+                  'api',
+                  'repos/' + process.env.WAIT_REPO + '/issues/' + process.env.WAIT_PR + '/timeline',
+                  '--method', 'GET',
+                  '--field', 'per_page=' + PER_PAGE,
+                  '--field', 'page=' + page,
+                ],
+                { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }
+              )
+            );
+          const fetchTimelineWithRetry = async (page) => {
+            for (let attempt = 1; ; attempt += 1) {
+              try {
+                const payload = fetchTimelinePage(page);
+                if (!Array.isArray(payload)) throw new Error('GitHub returned a non-array timeline payload.');
+                return payload;
+              } catch (error) {
+                if (error && error.message === 'GitHub returned a non-array timeline payload.') throw error;
+                const text = String(error) + ' ' + String(error && error.stderr ? error.stderr : '');
+                const transient = /HTTP 5\\d\\d|HTTP 429|ETIMEDOUT|ECONNRESET|ENOTFOUND|timed out/i.test(text);
+                if (attempt >= MAX_ATTEMPTS || !transient) throw error;
+                const backoff = Math.min(30000, 2000 * 2 ** (attempt - 1));
+                console.log('Transient failure; retry ' + attempt + '/' + MAX_ATTEMPTS + ' in ' + backoff + 'ms');
+                await new Promise((r) => setTimeout(r, backoff));
+              }
+            }
+          };
+          /** @param {unknown} value @returns {value is number} */
+          function positiveIdentity(value) {
+            return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+          }
+
+          /** @param {unknown} app */
+          export function isGithubActionsApp(app) {
+            return typeof app === 'object' && app !== null &&
+              (('slug' in app && app.slug === 'github-actions') || ('id' in app && app.id === 15368));
+          }
+
+          /**
+           * One ownership decision for the provider and embedded wait program.
+           * Callers prove the head and list completeness before passing normalized rows.
+           * Pending owners stay pending; callers decide which jobs must wait for them.
+           * @template {import('./actions-ownership.mjs').ActionsWorkflow} T
+           * @param {readonly T[]} workflows
+           * @returns {import('./actions-ownership.mjs').ActionsOwnership<T>}
+           */
+          export function createActionsOwnership(workflows) {
+            /** @type {Map<string, T>} */
+            const latest = new Map();
+            /** @type {Map<number, T>} */
+            const owners = new Map();
+            const ids = new Set();
+            for (const workflow of workflows) {
+              const check = workflow.check;
+              if (typeof workflow.key !== 'string' || !workflow.key ||
+                  !positiveIdentity(check.id) || !positiveIdentity(workflow.checkSuiteId) ||
+                  !positiveIdentity(workflow.runAttempt) || typeof check.startedAt !== 'string' ||
+                  !Number.isFinite(Date.parse(check.startedAt)) || owners.has(workflow.checkSuiteId) ||
+                  ids.has(check.id) || !['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(check.status)) {
+                throw new Error('GitHub returned incomplete or ambiguous Actions workflow ownership.');
+              }
+              owners.set(workflow.checkSuiteId, workflow);
+              ids.add(check.id);
+              const previous = latest.get(workflow.key);
+              const started = Date.parse(check.startedAt);
+              if (!previous || started > Date.parse(previous.check.startedAt ?? '') ||
+                  (started === Date.parse(previous.check.startedAt ?? '') && check.id > previous.check.id)) {
+                latest.set(workflow.key, workflow);
+              }
+            }
+            return {
+              latest: [...latest.values()],
+              currentFor(checkSuiteId) {
+                if (!positiveIdentity(checkSuiteId)) {
+                  throw new Error('GitHub returned an Actions check without a check-suite identity.');
+                }
+                const owner = owners.get(checkSuiteId);
+                if (!owner) throw new Error('The Actions check has no proven owning workflow run.');
+                return latest.get(owner.key)?.check.id === owner.check.id ? owner : null;
+              },
+            };
+          }
+          const isActions = (check) => isGithubActionsApp(check.app);
+          const listWorkflowsWithRetry = async (page) => {
+            for (let attempt = 1; ; attempt++) {
+              try {
+                return JSON.parse(execFileSync('gh', [
+                    'api', 'repos/' + process.env.WAIT_REPO + '/actions/runs', '--method', 'GET',
+                    '--field', 'head_sha=' + process.env.WAIT_SHA, '--field', 'per_page=' + PER_PAGE, '--field', 'page=' + page,
+                  ], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }));
+              } catch (error) {
+                const text = String(error) + ' ' + String(error && error.stderr ? error.stderr : '');
+                if (attempt >= 5 || !/HTTP 5\\d\\d|HTTP 429|ETIMEDOUT|ECONNRESET|ENOTFOUND|timed out/i.test(text)) throw error;
+                await new Promise((resolve) => setTimeout(resolve, Math.min(30000, 2000 * 2 ** (attempt - 1))));
+              }
+            }
+          };
+          const currentExecutionChecks = async (checks) => {
+            if (!checks.some(isActions)) return checks;
+            const workflows = [];
+            const positive = (value) => Number.isSafeInteger(value) && value > 0;
+            let total;
+            for (let page = 1; page <= 10; page++) {
+              const payload = await listWorkflowsWithRetry(page);
+              if (!Array.isArray(payload?.workflow_runs) || payload.workflow_runs.length > PER_PAGE
+                || !Number.isSafeInteger(payload.total_count) || payload.total_count < 0) throw new Error('GitHub Actions workflow evidence is malformed.');
+              if (payload.total_count > 1000) throw new Error('GitHub Actions workflow evidence exceeds the 1000-run API limit.');
+              if (total !== undefined && total !== payload.total_count) throw new Error('GitHub Actions workflow evidence changed during pagination.');
+              total = payload.total_count;
+              for (const run of payload.workflow_runs) {
+                if (!positive(run?.workflow_id) || run.head_sha !== process.env.WAIT_SHA
+                  || typeof run.event !== 'string' || run.event.length === 0) throw new Error('GitHub Actions workflow ownership is missing, invalid, or ambiguous.');
+                workflows.push({ key: JSON.stringify([run.workflow_id, run.event]), checkSuiteId: run.check_suite_id,
+                  runAttempt: run.run_attempt, check: { id: run.id, startedAt: run.run_started_at, status: run.status } });
+              }
+              if (payload.workflow_runs.length < PER_PAGE) break;
+              if (page === 10) throw new Error('GitHub Actions workflow evidence reached the pagination limit.');
+            }
+            if (workflows.length !== total) throw new Error('GitHub Actions workflow evidence is incomplete.');
+            const ownership = createActionsOwnership(workflows);
+            return checks.flatMap((check) => {
+              if (!isActions(check)) return [check];
+              let owner;
+              try { owner = ownership.currentFor(check.check_suite?.id); }
+              catch { throw new Error('A GitHub Actions check has no verified workflow owner.'); }
+              if (owner === null) return [];
+              // A rerun can retain completed jobs from its prior attempt until new jobs register.
+              return [owner.check.status === 'completed' ? check : { ...check, status: 'in_progress', conclusion: null }];
+            });
+          };
+          const terminal = new Set(['completed']);
+          const PER_PAGE = 100;
+          // #300: page the listing to exhaustion — a head with more than
+
+          // PER_PAGE check-runs must still expose every required name.
+
+          const fetchAllCheckRuns = async () => {
+            const runs = [];
+            for (let page = 1; ; page += 1) {
+              const payload = await listChecksWithRetry(page);
+              runs.push(...(payload.check_runs ?? []));
+              if (!payload.check_runs || payload.check_runs.length < PER_PAGE) break;
+            }
+            return runs;
+          };
+          // #315: the evidence anchor — created_at of the latest
+
+          // ready_for_review event on the pull request's issue timeline,
+
+          // paged to exhaustion through the same transport seam. Empty
+
+          // WAIT_PR (a push or workflow_dispatch event) means no anchor
+
+          // and no freshness bound; a fetch failure fails the step
+
+          // loudly instead of silently unbounding freshness.
+
+          const fetchAnchor = async () => {
+            if (!process.env.WAIT_PR) return null;
+            let anchor = null;
+            let anchorTime = null;
+            for (let page = 1; ; page += 1) {
+              const events = await fetchTimelineWithRetry(page);
+              if (!Array.isArray(events)) throw new Error('GitHub returned a non-array timeline payload.');
+              for (const event of events) {
+                if (event && event.event === 'ready_for_review') {
+                  if (typeof event.created_at !== 'string' || event.created_at === ''
+                    || Number.isNaN(Date.parse(event.created_at))) {
+                    throw new Error('GitHub returned a ready-for-review event without a valid timestamp.');
+                  }
+                  const eventTime = Date.parse(event.created_at);
+                  if (anchor === null || anchorTime === null || eventTime > anchorTime) {
+                    anchor = event.created_at;
+                    anchorTime = eventTime;
+                  }
+                }
+              }
+              if (!Array.isArray(events) || events.length < PER_PAGE) return anchor;
+            }
+          };
+          // Poll deadline sits BELOW the job's timeout-minutes (30) on
+
+          // purpose: when the deadline loses the race against a slow
+
+          // sibling, the script exits with its own diagnosis instead of
+
+          // being killed by the job timeout mid-line.
+
+          const deadline = Date.now() + 25 * 60 * 1000;
+          while (Date.now() < deadline) {
+            // #315: re-read the anchor every cycle — the transition
+
+            // event landing after this job started, or the fresh runs
+
+            // registering late, self-heal on the next poll.
+
+            let anchor;
+            try {
+              anchor = await fetchAnchor();
+            } catch (error) {
+              console.error('Could not read the ready-for-review anchor: '
+                + (error && error.message ? error.message : String(error)));
+              process.exit(1);
+            }
+            const runs = await currentExecutionChecks(await fetchAllCheckRuns());
+            // #119: re-runs keep every same-name run; terminality is
+            // decided on the truth run — latest started_at, ties broken
+            // by the higher check-run id (docs/reference.md) — never on
+            // response position.
+            const truth = new Map();
+            const startedTime = (run) => {
+              if (typeof run.started_at !== 'string') return Number.NEGATIVE_INFINITY;
+              const parsed = Date.parse(run.started_at);
+              return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+            };
+            for (const r of runs) {
+              const cur = truth.get(r.name);
+              const runTime = startedTime(r);
+              const currentTime = cur === undefined ? Number.NEGATIVE_INFINITY : startedTime(cur);
+              const later = cur === undefined
+                || runTime > currentTime
+                || (runTime === currentTime && (r.id || 0) > (cur.id || 0));
+              if (later) truth.set(r.name, r);
+            }
+            const truthRunFor = (name) => {
+              if (truth.has(name)) return truth.get(name);
+              const retried = [...truth.keys()].find((k) => k.startsWith(name + ' ('));
+              return retried === undefined ? undefined : truth.get(retried);
+            };
+            // #315: a required check settles only when its truth run is
+            // terminal AND (when an anchor exists) started at/after the
+            // ready-for-review transition — a stale green keeps waiting.
+            const missing = [];
+            const stale = [];
+            const anchorTime = anchor === null ? null : Date.parse(anchor);
+            for (const name of required) {
+              const run = truthRunFor(name);
+              if (run === undefined || !terminal.has(run.status)) {
+                missing.push(name);
+              } else if (anchorTime !== null && (Number.isNaN(anchorTime) || startedTime(run) < anchorTime)) {
+                stale.push(name);
+              }
+            }
+            if (missing.length === 0 && stale.length === 0) {
+              console.log('All required checks are in a terminal state.');
+              process.exit(0);
+            }
+            if (missing.length > 0) {
+              console.log('Waiting for: ' + missing.join(', '));
+            }
+            if (stale.length > 0) {
+              console.log('Waiting for a fresh run after ready for review: ' + stale.join(', '));
+            }
+            await new Promise((r) => setTimeout(r, 10000));
+          }
+          console.error('Timed out waiting for sibling checks.');
+          process.exit(1);
+          EOF
+
+
+      - name: specgit finish
+        if: steps.scope.outputs.build == 'true'
+        run: |
+          node --input-type=module <<'SPECGIT_ACCEPTANCE'
+          // Managed by SpecGit: acceptance checkout adapter.
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { isAbsolute, join } from 'node:path';
+          import { pathToFileURL } from 'node:url';
+
+          /** Reproduce worktree identity at the event head; ordinary gates still own acceptance. */
+          export async function withAcceptanceCheckout(root, run, { readRecord, git, bindingContextMismatch }) {
+            const record = await readRecord(root);
+            if (!record.ok || record.value.context.kind !== 'worktree') return run(root);
+            const context = record.value.context;
+            const facts = await git.facts(root);
+            if (facts.branch !== context.branch || facts.dirty !== false || !facts.headSha ||
+                bindingContextMismatch(context, facts) === null) return run(root);
+            const label = context.label;
+            if (label === '.' || label === '..' || /[\\\\/:*?"<>|\\p{Cc}]/u.test(label) || /[. ]$/.test(label) ||
+                /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|$)/i.test(label)) throw new Error('Unsafe worktree label in delivery record.');
+            const parent = mkdtempSync(join(tmpdir(), 'specgit-acceptance-'));
+            const hooks = join(parent, 'hooks');
+            const checkout = join(parent, 'checkout', label);
+            mkdirSync(hooks); mkdirSync(join(parent, 'checkout'));
+            const gitCommand = (cwd, args) => execFileSync('git', ['-C', cwd, '-c', \`core.hooksPath=\${hooks}\`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
+            }).trim();
+            let registered = false;
+            try {
+              gitCommand(root, ['worktree', 'add', '--detach', checkout, facts.headSha]);
+              registered = true;
+              // Only the new worktree's HEAD changes. The existing branch ref and original checkout stay intact.
+              gitCommand(checkout, ['symbolic-ref', 'HEAD', \`refs/heads/\${context.branch}\`]);
+              if (gitCommand(checkout, ['rev-parse', 'HEAD']) !== facts.headSha) throw new Error('The event branch changed while preparing acceptance.');
+              return await run(checkout);
+            } finally {
+              if (registered) gitCommand(root, ['worktree', 'remove', '--force', checkout]);
+              rmSync(parent, { recursive: true, force: true });
+            }
+          }
+
+          /** Explicit CI preparation step; only a detached source-head checkout can create an event branch. */
+          export function prepareGitlabEventBranch(root = process.cwd(), env = process.env) {
+            const branch = env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME || env.CI_COMMIT_BRANCH;
+            const sha = env.CI_COMMIT_SHA;
+            if (!branch || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha ?? '') ||
+                (env.CI_MERGE_REQUEST_EVENT_TYPE && env.CI_MERGE_REQUEST_EVENT_TYPE !== 'detached')) {
+              throw new Error('A GitLab source-branch pipeline and exact event SHA are required.');
+            }
+            const hooks = mkdtempSync(join(tmpdir(), 'specgit-event-hooks-'));
+            const git = (args) => execFileSync('git', ['-C', root, '-c', \`core.hooksPath=\${hooks}\`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,
+            }).trim();
+            try {
+              git(['check-ref-format', '--branch', branch]);
+              if (git(['rev-parse', 'HEAD']) !== sha) throw new Error('The checkout differs from the GitLab event SHA.');
+              const current = git(['branch', '--show-current']);
+              if (current === branch) return;
+              if (current !== '') throw new Error('The checkout belongs to a different branch.');
+              git(['switch', '--create', branch]);
+            } finally { rmSync(hooks, { recursive: true, force: true }); }
+          }
+
+          /** Run the installed public verdict with the same source and binding. */
+          export async function acceptanceMain() {
+            try {
+              const runtime = process.env.SPECGIT_ACCEPT_RUNTIME;
+              if (!runtime || !isAbsolute(runtime)) throw new Error('An absolute installed SpecGit runtime path is required.');
+              const load = (file) => import(pathToFileURL(join(runtime, file)).href);
+              const [{ readRecord }, { LocalGitAdapter }, { bindingContextMismatch }] = await Promise.all([
+                load('dist/record/io.js'), load('dist/gitfacts/local.js'), load('dist/record/context-match.js'),
+              ]);
+              process.exitCode = await withAcceptanceCheckout(process.cwd(), async (checkout) => {
+                const result = spawnSync(process.execPath, [join(runtime, 'bin/specgit.js'), 'finish', '--json'], {
+                  cwd: checkout, stdio: 'inherit',
+                });
+                if (result.error || result.signal || result.status === null) throw new Error('The verdict process did not complete.');
+                return result.status;
+              }, { readRecord, git: new LocalGitAdapter(), bindingContextMismatch });
+            } catch {
+              console.error('Acceptance checkout preparation failed; restore the declared context and retry.');
+              process.exitCode = 3;
+            }
+          }
+
+          if (process.argv[2] === '--prepare-gitlab-event') prepareGitlabEventBranch();
+          else await acceptanceMain();
+          SPECGIT_ACCEPTANCE
+        env:
+          SPECGIT_ACCEPT_RUNTIME: \${{ github.workspace }}
+          GH_TOKEN: \${{ github.token }}
+
+      - name: specgit finish with trusted CLI
+        if: steps.scope.outputs.build == 'false'
+        run: |
+          node --input-type=module <<'SPECGIT_ACCEPTANCE'
+          // Managed by SpecGit: acceptance checkout adapter.
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { isAbsolute, join } from 'node:path';
+          import { pathToFileURL } from 'node:url';
+
+          /** Reproduce worktree identity at the event head; ordinary gates still own acceptance. */
+          export async function withAcceptanceCheckout(root, run, { readRecord, git, bindingContextMismatch }) {
+            const record = await readRecord(root);
+            if (!record.ok || record.value.context.kind !== 'worktree') return run(root);
+            const context = record.value.context;
+            const facts = await git.facts(root);
+            if (facts.branch !== context.branch || facts.dirty !== false || !facts.headSha ||
+                bindingContextMismatch(context, facts) === null) return run(root);
+            const label = context.label;
+            if (label === '.' || label === '..' || /[\\\\/:*?"<>|\\p{Cc}]/u.test(label) || /[. ]$/.test(label) ||
+                /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|$)/i.test(label)) throw new Error('Unsafe worktree label in delivery record.');
+            const parent = mkdtempSync(join(tmpdir(), 'specgit-acceptance-'));
+            const hooks = join(parent, 'hooks');
+            const checkout = join(parent, 'checkout', label);
+            mkdirSync(hooks); mkdirSync(join(parent, 'checkout'));
+            const gitCommand = (cwd, args) => execFileSync('git', ['-C', cwd, '-c', \`core.hooksPath=\${hooks}\`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
+            }).trim();
+            let registered = false;
+            try {
+              gitCommand(root, ['worktree', 'add', '--detach', checkout, facts.headSha]);
+              registered = true;
+              // Only the new worktree's HEAD changes. The existing branch ref and original checkout stay intact.
+              gitCommand(checkout, ['symbolic-ref', 'HEAD', \`refs/heads/\${context.branch}\`]);
+              if (gitCommand(checkout, ['rev-parse', 'HEAD']) !== facts.headSha) throw new Error('The event branch changed while preparing acceptance.');
+              return await run(checkout);
+            } finally {
+              if (registered) gitCommand(root, ['worktree', 'remove', '--force', checkout]);
+              rmSync(parent, { recursive: true, force: true });
+            }
+          }
+
+          /** Explicit CI preparation step; only a detached source-head checkout can create an event branch. */
+          export function prepareGitlabEventBranch(root = process.cwd(), env = process.env) {
+            const branch = env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME || env.CI_COMMIT_BRANCH;
+            const sha = env.CI_COMMIT_SHA;
+            if (!branch || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha ?? '') ||
+                (env.CI_MERGE_REQUEST_EVENT_TYPE && env.CI_MERGE_REQUEST_EVENT_TYPE !== 'detached')) {
+              throw new Error('A GitLab source-branch pipeline and exact event SHA are required.');
+            }
+            const hooks = mkdtempSync(join(tmpdir(), 'specgit-event-hooks-'));
+            const git = (args) => execFileSync('git', ['-C', root, '-c', \`core.hooksPath=\${hooks}\`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,
+            }).trim();
+            try {
+              git(['check-ref-format', '--branch', branch]);
+              if (git(['rev-parse', 'HEAD']) !== sha) throw new Error('The checkout differs from the GitLab event SHA.');
+              const current = git(['branch', '--show-current']);
+              if (current === branch) return;
+              if (current !== '') throw new Error('The checkout belongs to a different branch.');
+              git(['switch', '--create', branch]);
+            } finally { rmSync(hooks, { recursive: true, force: true }); }
+          }
+
+          /** Run the installed public verdict with the same source and binding. */
+          export async function acceptanceMain() {
+            try {
+              const runtime = process.env.SPECGIT_ACCEPT_RUNTIME;
+              if (!runtime || !isAbsolute(runtime)) throw new Error('An absolute installed SpecGit runtime path is required.');
+              const load = (file) => import(pathToFileURL(join(runtime, file)).href);
+              const [{ readRecord }, { LocalGitAdapter }, { bindingContextMismatch }] = await Promise.all([
+                load('dist/record/io.js'), load('dist/gitfacts/local.js'), load('dist/record/context-match.js'),
+              ]);
+              process.exitCode = await withAcceptanceCheckout(process.cwd(), async (checkout) => {
+                const result = spawnSync(process.execPath, [join(runtime, 'bin/specgit.js'), 'finish', '--json'], {
+                  cwd: checkout, stdio: 'inherit',
+                });
+                if (result.error || result.signal || result.status === null) throw new Error('The verdict process did not complete.');
+                return result.status;
+              }, { readRecord, git: new LocalGitAdapter(), bindingContextMismatch });
+            } catch {
+              console.error('Acceptance checkout preparation failed; restore the declared context and retry.');
+              process.exitCode = 3;
+            }
+          }
+
+          if (process.argv[2] === '--prepare-gitlab-event') prepareGitlabEventBranch();
+          else await acceptanceMain();
+          SPECGIT_ACCEPTANCE
+        env:
+          SPECGIT_ACCEPT_RUNTIME: \${{ runner.temp }}/specgit-cli/node_modules/specgit
+          GH_TOKEN: \${{ github.token }}
+"
+`;
+
+exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by identical markers 1`] = `
+"<!-- specgit:block:start -->
+## SpecGit delivery harness
+
+Managed by \`specgit init\`. Everything between the markers is regenerated
+whenever init writes the harness (a fresh init, or \`--force\` when a policy
+already exists); keep manual guidance outside them.
+
+### The delivery story
+
+- Start with \`specgit issue <title-or-number>...\`: it creates or reuses
+  the issues, writes and pushes the initial binding on the delivery branch,
+  opens the draft pull or merge request with the supplied body, selected policy
+  template, or built-in scaffold, then records and pushes its number. Re-running
+  resumes; it is idempotent.
+- Use the issue and PR/MR templates explicitly selected by policy. With
+  \`validation.bodies\` or \`required_sections\`, prepare complete content from
+  the discussion before bootstrap and supply \`--body-file <path>\` per new
+  title and \`--pr-body-file <path>\`. Without enforced body rules, the selected
+  policy template or built-in scaffold can be filled after creation. Preserve
+  every \`Closes #n\`; enabled body
+  rules apply at creation and acceptance. Resume keeps existing remote bodies
+  and user edits. Unselected repository templates are not silently loaded.
+- A draft PR/MR always fails the verdict (\`pr_draft\`): before
+  \`specgit finish\`, mark it ready for review — \`gh pr ready <number>\`
+  on GitHub, \`glab mr update <number> --ready\` on GitLab.
+- \`specgit finish\` is read-only: its verdict comes from real git, PR/MR,
+  and CI evidence; exit 0 means accepted. With automation enabled, the trusted
+  remote workflow continues after CI without another confirmation.
+  \`specgit pr --merge --json\` is the recovery path: it verifies the approved
+  \`target_branch\`, fresh acceptance, and all current-head CI, then confirms
+  the merge and closure of every bound issue and verified derived repair before
+  reporting completed.
+  A failed closure remains recoverable and is never reported as completed.
+  With independent closure enabled, \`specgit pr --close-issues --json\`
+  verifies an already merged request against the approved target and closes its bound issues.
+- For an explicitly declared programme, use \`specgit finish --scope <name> --json\`
+  to assess its required deliveries independently of the current binding. The
+  approved declaration lives at \`spec_git/scopes/<name>.yaml\` on the remote
+  default branch. A delivery's completion does not complete the programme;
+  every required member and the parent issue must be confirmed complete.
+
+- For applicable verification, wire project CI to the approved \`verification\`
+  policy and \`specgit finish --plan-checks --json\` result's
+  \`verification.requiredChecks\`. Agents can create project-specific GitHub/GitLab
+  business-job scheduling from that decision. Keep a stable always-run acceptance
+  status; a successful plan is not acceptance, and missing evidence is no exemption.
+
+### Issue tags
+
+- Follow the project's \`language\` for issues and PRs/MRs. Enabled \`validation\`
+  rules check titles and labels before creation and during \`finish\`.
+  \`kind\` mode requires one catalog kind and only declared extras;
+  \`project\` mode selects only policy \`tags\`. Users choose rule changes with
+  \`specgit init --force --configure-rules\`.
+- Every bootstrap applies the title's \`kind::<type>\` member
+  automatically; pass \`--tags <a,b>\` to choose the full set explicitly.
+- Selection is pool-first: existing on-spec labels win verbatim; anything
+  missing is seeded from the built-in \`kind::\` catalog or the policy's
+  \`tags:\` declarations. Unknown vocabulary exits 2 naming the universe.
+- Choose at most one label per axis; omit uncertain optional labels and
+  keep every label required by the selected policy. Existing pool labels
+  cannot override that policy —
+  off-spec pool labels are reported (\`tag_pool_dirty\` warnings are for
+  humans) and never renamed by SpecGit.
+
+### Repair and diagnostics
+
+- \`specgit pr\` repairs the PR/MR binding: with no arguments it
+  auto-discovers the request for this head branch, errors with a fix
+  when none is found, and refuses with a list when several match.
+- \`specgit status\` shows local evidence only: record, state, drift,
+  origin. \`specgit doctor\` probes git, repository, origin, the configured
+  provider CLI (\`gh\`, or \`glab\` for a declared GitLab host), and policy.
+
+### The command surface
+
+- Ten commands: \`specgit init\`, \`specgit setup\`, \`specgit issue\`,
+  \`specgit pr\`, \`specgit finish\`, \`specgit bind\`, \`specgit unbind\`,
+  \`specgit status\`, \`specgit accept\`, \`specgit doctor\`.
+- \`specgit setup\` installs the agent entry points (commands for opencode,
+  portable skills for other tools); \`specgit bind\`, \`specgit unbind\`,
+  and \`specgit accept\` are automation aliases for scripts and CI.
+- Automation defaults to off (\`--automation no\`). For a fresh policy, only
+  when the user personally chooses yes may they enable it with
+  \`specgit init --automation yes --merge-target <branch>\`. To change an
+  existing policy, use
+  \`specgit init --force --automation yes --merge-target <branch>\`; plain
+  \`init --force\` preserves its current choice and target. An agent must not
+  answer yes for the user. Independent closure uses
+  \`init --force --automation no --close-issues yes --close-target <branch>\`.
+  The completion target may differ from the trusted remote default branch.
+
+### Before creating an issue, check for duplicates
+
+- Before running \`specgit issue\` with a new title, search the tracker for
+  similar open work through the authenticated session: on GitHub use
+  \`gh issue list --state open --search "<keywords>"\`; on GitLab use
+  \`glab issue list --search "<keywords>" --in title\`. Narrow
+  further with labels when useful.
+- Open and read every plausible candidate with \`gh issue view <n>\` on GitHub
+  or \`glab issue view <n>\` on GitLab — compare the WHY, not just the wording.
+- If a candidate covers the same WHY, continue that issue instead of
+  creating a new one; if it is close but different, say how they differ.
+- When unsure, ask the requester to decide between continuing the existing
+  issue and creating a duplicate. The team ships one line of work per WHY,
+  never two.
+
+### Issue granularity
+
+One issue = one independently verifiable WHY. If a deliverable cannot be
+verified on its own evidence, split it before binding.
+
+### Iron rules
+
+- \`specgit finish\` exit code other than 0: never request merge. Fix the
+  delivery, not the gate.
+- Never weaken \`spec_git/policy.yaml\` to make a verdict pass.
+- \`--json\` is the only parse surface: stdout is exactly one JSON
+  document; never scrape human-readable output.
+
+### Agent contract essentials
+
+- **SpecGit is the default delivery workflow here.** An intended tracked
+  change — a feature, a fix, a refactor, a docs change, or shared rules — is a delivery:
+  work items live in this tracker as issues, never in private task
+  lists or conversational checklists. The trigger is the decision to
+  start: the moment the conversation settles and you begin turning
+  the plan into changes, the FIRST action is
+  \`specgit issue <type>: <title>...\` — before tracked implementation edits.
+  Preparing temporary body files for bootstrap is part of this first step.
+  Working without a binding is a contract violation, not a style
+  choice. After bootstrap, verify each issue contains the discussed
+  Why / Scope / Approach / Acceptance and fill only missing content with
+  \`gh issue edit\` or \`glab issue update\`,
+  then implement. Mid-conversation inventories
+  ("let me list everything to do") become issues, not chat
+  artifacts. Trivial replies and read-only questions need none of
+  this.
+- Local maintenance: installing or upgrading the CLI and running \`init\` /
+  \`setup\` to refresh local configuration and entry points need no issue, PR/MR,
+  product build, or release when no product or shared-rule change is intended
+  for commit. After a package upgrade, a human may run plain \`specgit init\`
+  and approve its guided refresh when it proves drift; non-interactive agents
+  run \`specgit init --force --no-protect\`, then \`specgit setup --tool all\`,
+  then verify \`specgit status --json\`. Append \`--no-ignore\` to init when
+  authoritative delivery files are intentionally tracked without the managed
+  ignore block; setup preserves that proven choice. Review tracked diffs before choosing what to share; ignore rules
+  are never CI exemptions. Follow the host project's verification policy for
+  the actual changed inputs; documentation may itself be a product input.
+  Publishing requires explicit release intent within existing user authorization;
+  local maintenance and merging do not imply publication.
+- \`specgit finish\` exit \`0\` means accepted. Report completed only after
+  the configured target merge and every bound issue closure are confirmed.
+  Never declare completion from task lists, file states, or tests alone.
+  Track a failed PR/MR with a new repair issue; repeated causes reuse an open
+  repair issue and do not require abandoning the original PR/MR. Pending repair
+  intents are recovered by the trusted remote runner. Unprovable repairs require
+  restored evidence or explicit \`specgit bind --issue <number>\` adoption with
+  their closing references retained and the updated delivery reviewed.
+- Use existing user authorization to complete issue bodies, the PR/MR body
+  and ready transition, CI repairs or retries, acceptance, and the authorized
+  merge. When user authorization or platform permission is missing, present
+  the prepared result and name the specific gap. Documentation and entry
+  points do not grant permission themselves.
+- Branch on exit codes, not phrasing: \`1\` = evidence complete, fix what
+  the gates named; \`3\` = evidence missing, so follow \`errors[].fix\` first.
+  Run \`specgit doctor --json\` only for git, repository, origin, configured
+  provider CLI/auth, or policy probes. Never present exit \`3\` as success.
+- Keep the \`Closes #n\` references in the PR/MR body intact; after changing
+  the PR/MR body, head branch, or CI, re-run \`specgit finish\`. Never
+  bypass or reconfig a required check to make acceptance pass.
+- Forge evidence flows through the user's authenticated CLI session only
+  (\`gh\` / \`glab\`): never read, log, or pass around tokens.
+<!-- specgit:block:end -->"
+`;
+
+exports[`managedPromptBlock > en and zh are byte-stable snapshots framed by identical markers 2`] = `
+"<!-- specgit:block:start -->
+## SpecGit 交付工具链
+
+由 \`specgit init\` 托管。标记之间的内容会在每次 init 写入工具链时重新生成
+（全新 init，或策略已存在时的 \`--force\`）；手工指引请放在标记之外。
+
+### 交付故事
+
+- 用 \`specgit issue <标题或编号>...\` 开始：它会创建或复用议题，在交付
+  分支写入并推送初始绑定，使用显式提供的正文、策略模板或内置骨架创建草稿
+  PR/MR，随后记录并再次推送请求编号。重复执行会恢复现场；它是幂等的。
+- 使用策略明确选择的 issue 与 PR/MR 模板。启用 \`validation.bodies\` 或
+  \`required_sections\` 时，先从对话准备完整正文，创建时通过
+  \`--body-file <path>\`（每个新标题一份）和 \`--pr-body-file <path>\` 传入。
+  未启用正文规则时，所选策略模板或内置骨架可在创建后填写。保留所有 \`Closes #n\`；
+  创建及验收都会检查启用的正文规则。恢复交付保留已有远端正文，
+  不会覆盖用户修改，也不会暗中加载未选择的仓库模板。
+- 草稿 PR/MR 恒使裁决失败（\`pr_draft\`）：在 \`specgit finish\` 之前，
+  先把它标为可评审——GitHub 用 \`gh pr ready <number>\`，GitLab 用
+  \`glab mr update <number> --ready\`。
+- \`specgit finish\` 只读：裁决来自真实的 git、PR/MR 与 CI 证据，退出码
+  0 表示验收通过。已启用自动化时，可信远端工作流在 CI 结束后自动续行，
+  无需再次人工确认；\`specgit pr --merge --json\` 是恢复入口。它验证已批准
+  策略的 \`target_branch\`、重新验收及当前 PR/MR 头的全部 CI 检查，确认合并
+  与全部绑定议题关闭后才报告 completed；关闭失败保留可恢复的待收尾状态。
+- 对显式声明的整体计划，运行 \`specgit finish --scope <name> --json\`，
+  从远端默认分支的 \`spec_git/scopes/<name>.yaml\` 及各项交付证据核验范围。
+  单项交付完成不代表计划完成；全部必需成员和父议题都须确认完成。
+
+- 配置按变更选择检查时，使用已批准的 \`verification\` 策略和
+  \`specgit finish --plan-checks --json\` 的 \`verification.requiredChecks\`
+  接入项目 CI；Agent 可据此编写 GitHub/GitLab 业务任务的条件调度。
+  保留始终运行的验收状态；计划成功不等于验收成功，缺失证据不可当作免检。
+
+### 议题标签
+
+- 按项目策略的 \`language\` 填写 issue 与 PR/MR；\`validation\` 启用的标题与
+  标签规则在创建前和 \`finish\` 中校验。\`kind\` 模式要求一个内置类型，
+  扩展标签须在 \`tags\` 中声明；\`project\` 模式只选 \`tags\` 中的标签。
+  更改规则时，由用户通过 \`specgit init --force --configure-rules\` 选择。
+- 每次引导都会自动应用标题的 \`kind::<type>\` 成员；显式传入
+  \`--tags <a,b>\` 可自选完整集合。
+- 选择以池为先：仓库中符合语法的既有标签原样胜出；缺失的名称从内置的
+  \`kind::\` 目录或策略的 \`tags:\` 声明中播种。未知词汇以退出码 2 指名
+  全集。
+- 每轴至多一个标签；可选标签拿不准就不选，必选标签以策略为准。池外标签会被报告
+  （\`tag_pool_dirty\` 警告是给人看的），SpecGit 绝不重命名它们。
+
+### 修复与诊断
+
+- \`specgit pr\` 修复 PR/MR 绑定：不带参数时按当前头分支自动发现请求，
+  找不到时报错并给出修复办法，找到多个时列出并拒绝。
+- \`specgit status\` 只展示本地证据：记录、状态、漂移、origin。
+  \`specgit doctor\` 探测 git、仓库、origin、已配置的平台 CLI（GitHub 用
+  \`gh\`，已声明 GitLab host 时用 \`glab\`）与策略。
+- 诊断信息（diagnostic 的 message/fix）与诊断 \`code\` 恒为英文——这是
+  机器契约的一部分，任何语言配置都不本地化它们；按 \`code\` 与 \`fix\`
+  行动，不要依赖语言一致性。
+
+### 命令面
+
+- 十个命令：\`specgit init\`、\`specgit setup\`、\`specgit issue\`、
+  \`specgit pr\`、\`specgit finish\`、\`specgit bind\`、\`specgit unbind\`、
+  \`specgit status\`、\`specgit accept\`、\`specgit doctor\`。
+- \`specgit setup\` 安装代理入口（opencode 的命令、其他工具的可移植
+  skill）；\`specgit bind\`、\`specgit unbind\`、\`specgit accept\` 是面向
+  脚本与 CI 的自动化别名。
+- 自动化默认关闭（\`--automation no\`）。新建策略时，只有用户本人选择 yes，
+  才能用 \`specgit init --automation yes --merge-target <branch>\` 开启；已有策略
+  要改为自动化时，使用
+  \`specgit init --force --automation yes --merge-target <branch>\`。普通
+  \`init --force\` 保留已有选择与目标；代理不得替用户回答 yes。
+
+### 建议题之前，先查重
+
+- 用新标题运行 \`specgit issue\` 之前，通过已认证的会话搜索 tracker 中相近的
+  在办工作：GitHub 使用 \`gh issue list --state open --search "<关键词>"\`；GitLab 使用
+  \`glab issue list --search "<关键词>" --in title\`。需要时用标签继续缩小范围。
+- 用 GitHub 的 \`gh issue view <n>\` 或 GitLab 的 \`glab issue view <n>\`
+  打开并阅读每一个疑似候选——比较 WHY 本身，而不是措辞。
+- 若某个候选覆盖了同一个 WHY，继续那个议题而不是新建；若相近但不同，
+  说明差别在哪里。
+- 拿不准时，请提出请求的人决定是继续已有议题还是接受重复。一个团队
+  一个 WHY 只走一条工作线，绝不两条。
+
+### 议题粒度
+
+一个议题 = 一个可独立验证的 WHY。若一个交付物无法凭自身证据验证，
+先拆分再绑定。
+
+### 铁律
+
+- \`specgit finish\` 退出码非 0：绝不请求合并。修交付，不修门槛。
+- 绝不为了通过裁决而削弱 \`spec_git/policy.yaml\`。
+- \`--json\` 是唯一的解析面：stdout 恰好是一个 JSON 文档；绝不抓取
+  人读输出。
+
+### 代理契约要点
+
+- **SpecGit 是这里的默认交付方式。** 有意提交的新功能、修复、重构、
+  文档变更与共享规则变更需要交付绑定：工作项作为议题存放在这个 tracker
+  里，绝不放进私人任务清单或对话式清单。触发点是“决定开工”的那一刻：
+  对话收敛、开始把计划变成变更之时，第一个动作就是
+  \`specgit issue <type>: <标题>...\`——先于受跟踪的实现变更；为引导准备
+  临时正文文件属于这一步。无绑定就实现是违反契约。引导完成后，检查
+  议题是否包含讨论中的 为什么 / 范围 / 做法 / 验收，只用 \`gh issue edit\`
+  或 \`glab issue update\` 补全缺失内容，再开始
+  实现。会话中途的盘点（“让我列出所有要做的事”）也应变成议题，而不是
+  聊天产物。平凡的回复与只读提问无需如此。
+- 本地维护：安装或升级 CLI、运行 \`init\` / \`setup\` 刷新本地配置与入口，
+  在没有计划提交产品或共享规则变更时，无需议题、PR/MR、产品构建或发布。
+  包升级后，人类可运行裸 \`specgit init\`，仅在它证明存在漂移时批准引导刷新；
+  非交互代理依次运行 \`specgit init --force --no-protect\`、
+  \`specgit setup --tool all\`，再以 \`specgit status --json\` 验证。
+  若权威交付文件被有意跟踪且没有托管 ignore 块，则为 init 追加
+  \`--no-ignore\`；setup 会保留这项已证明的选择。
+  先检查跟踪文件的差异，再决定哪些变更需要共享；忽略规则不是 CI 豁免名单。
+  按宿主项目对真实变更输入的验证政策运行检查，文档也可能是产品输入。
+  发布包必须有明确发布意图，并在已有用户授权范围内执行；本地维护与合并本身不代表发布。
+- \`specgit finish\` 退出 \`0\` 表示 accepted；只有配置目标上的合并和全部
+  绑定议题关闭均经核验，才能报告 completed。绝不凭任务清单、文件状态或
+  自己跑过的测试宣布完成。失败 PR/MR 用新的修复议题承接，重复原因复用已有
+  开放修复议题，不要求废弃原 PR/MR。
+- 沿用已有用户授权完成议题正文、PR/MR 正文与 ready、CI 修复或重试、验收
+  以及授权范围内的合并闭环。只在缺少用户授权或平台权限时，携已准备好的
+  结果说明具体缺口；文档与入口指引本身不授予权限。
+- 按退出码分支，不按措辞：\`1\` = 证据齐全，修门槛点名的内容；\`3\` =
+  证据缺失，先按 \`errors[].fix\` 修复。只有 git、仓库、origin、已配置的平台
+  CLI/auth 或策略探针失败时才运行 \`specgit doctor --json\`。绝不把退出 \`3\`
+  当作成功。
+- 保持 PR/MR 正文里的 \`Closes #n\` 引用完整；改动 PR/MR 正文、头分支或 CI
+  后重跑 \`specgit finish\`。绝不为通过验收而绕过或改配置必需检查。
+- 平台证据只经由用户已认证的 CLI 会话（\`gh\` / \`glab\`）流转：绝不
+  读取、记录或传递 token。
+<!-- specgit:block:end -->"
+`;
+
+exports[`mergeGitPrePush: pure byte merge > a fresh install is the spawnable managed file; re-merge is byte-stable 1`] = `
+"#!/bin/sh
+# >>> specgit:start >>>
+# Run first in a subshell and replay stdin for the user's hook.
+specgit_pre_push_refs=$(mktemp) || exit 1
+cat > "$specgit_pre_push_refs" || { rm -f "$specgit_pre_push_refs"; exit 1; }
+(
+# SpecGit pre-push guard (managed by specgit init).
+specgit_default_ref() {
+  specgit_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
+  case "$specgit_ref" in
+    refs/remotes/origin/HEAD) return 1 ;;
+    refs/remotes/origin/?*) ;;
+    *) return 1 ;;
+  esac
+  git rev-parse --verify "$specgit_ref^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$specgit_ref"
+}
+
+default_ref=$(specgit_default_ref) || {
+  echo "specgit: cannot prove origin/HEAD. Run git fetch origin and git remote set-head origin -a before pushing." >&2
+  exit 1
+}
+default_branch=\${default_ref#refs/remotes/origin/}
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/$default_branch" ]; then
+    # A commit already contained by the proved origin default is accepted
+    # history and may be mirrored. A zero sha (deletion) cannot pass.
+    if git merge-base --is-ancestor "$local_sha" "$default_ref" >/dev/null 2>&1; then
+      continue
+    fi
+    echo "specgit: direct push to $default_branch is not the delivery path." >&2
+    echo "Deliveries go: specgit issue -> PR/MR -> CI -> specgit finish (exit 0) -> merge." >&2
+    exit 1
+  fi
+done
+exit 0
+) < "$specgit_pre_push_refs"
+specgit_pre_push_status=$?
+exec < "$specgit_pre_push_refs"
+rm -f "$specgit_pre_push_refs"
+if [ "$specgit_pre_push_status" -ne 0 ]; then
+  exit "$specgit_pre_push_status"
+fi
+unset specgit_pre_push_refs specgit_pre_push_status
+# <<< specgit:end <<<
+"
+`;

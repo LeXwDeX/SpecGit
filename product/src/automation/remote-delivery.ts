@@ -1,0 +1,167 @@
+import type { CompletionDependencies, CompletionObservation, CompletionClassification } from '../completion/types.js';
+import { parsePrUrl, sameRepoRef, type RepoRef } from '../gitfacts/origin.js';
+import type { DeliveryBinding } from '../record/schema.js';
+import { completeDelivery } from '../completion/complete-delivery.js';
+import { ensureFailureIssues, type DeliveryFailure, type FailureIssuePort } from './failure-issues.js';
+import { classifyCiEligibility } from './ci-eligibility.js';
+import { fail, ok, type Evidence } from '../kernel/evidence.js';
+import type { EffectivePolicy } from '../record/effective-policy.js';
+import { resolveVerification } from '../verification/resolve.js';
+import { repairCheckTarget } from './repair-log.js';
+import { recoverRepairCreations } from './repair-recovery.js';
+
+/** Runner-only discovery and repair capabilities stay outside guarded completion. */
+export interface RemoteDeliveryDependencies extends CompletionDependencies {
+  cwd: string;
+  discoverRoot(cwd: string): Promise<Evidence<string>>;
+  gh: CompletionDependencies['gh'] & FailureIssuePort;
+}
+
+/** Checked before a privileged workflow loads this runtime. Increment for incompatible entry contracts. */
+export const REMOTE_DELIVERY_PROTOCOL = 2;
+
+export interface RemoteDeliveryInput {
+  repo: RepoRef;
+  pr: number;
+  headSha: string;
+  record: DeliveryBinding;
+}
+
+/** Retain the public record's numeric and full GitHub URL reference forms. */
+export function matchesBoundRequest(record: DeliveryBinding, repo: RepoRef, pr: number): boolean {
+  if (typeof record.pr === 'number') return record.pr === pr;
+  if (typeof record.pr !== 'string') return false;
+  if (/^[1-9][0-9]*$/.test(record.pr)) return Number(record.pr) === pr;
+  const parsed = parsePrUrl(record.pr);
+  return parsed.ok && parsed.value.repo.platform === repo.platform && sameRepoRef(parsed.value.repo, repo) && parsed.value.pr === pr;
+}
+
+const CI_REJECTIONS = new Set([
+  'checks_pending', 'checks_missing', 'checks_failed',
+  'automation_checks_pending', 'automation_checks_missing', 'automation_checks_failed',
+  'automation_pipeline_not_successful',
+]);
+
+/** CI failures become repair work only after all current checks have settled. */
+async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDependencies, root: string, approved: EffectivePolicy): Promise<Evidence<{ failures: DeliveryFailure[]; retryCi: boolean }>> {
+  const policy = approved.policy;
+  const request = await ctx.gh.getPr(input.repo, input.pr);
+  if (!request.ok) return request;
+  if (request.value.headSha !== input.headSha || request.value.baseBranch !== approved.branch) return fail('automation_head_changed', 'The request changed before failure classification.');
+  const selected = await resolveVerification({ root, policy, policySha: approved.sha, request: request.value, git: ctx.git, forge: ctx.gh, repo: input.repo });
+  if (!selected.ok) return selected;
+  const checks = await ctx.gh.getPrChecks(input.repo, input.pr);
+  if (!checks.ok) return checks;
+  if (checks.value.headSha !== input.headSha) return fail('automation_head_changed', 'Failure evidence belongs to a different request head.');
+  if (input.repo.platform === 'gitlab' && checks.value.pipelineStatus === undefined) {
+    return fail('automation_pipeline_unavailable', 'The GitLab head pipeline status is unavailable.');
+  }
+  const anchor = await ctx.gh.getEvidenceAnchor(input.repo, input.pr);
+  if (!anchor.ok) return anchor;
+  const boundary = anchor.value.anchoredAt == null ? null : Date.parse(anchor.value.anchoredAt);
+  if (boundary !== null && !Number.isFinite(boundary)) return fail('automation_evidence_unknown', 'The failure evidence anchor is unavailable.');
+  const eligibility = classifyCiEligibility(checks.value.checks, selected.value.requiredChecks);
+  const ciPending = eligibility.problems.some((problem) => problem.kind === 'pending') ||
+    (input.repo.platform === 'gitlab' && ['created', 'pending', 'preparing', 'running', 'waiting_for_resource', 'scheduled', 'manual']
+      .includes(checks.value.pipelineStatus ?? ''));
+  const failures: DeliveryFailure[] = [];
+  for (const problem of eligibility.problems) {
+    if (ciPending || problem.kind !== 'failed') continue;
+    const { check } = problem;
+    const started = check.startedAt === null ? Number.NaN : Date.parse(check.startedAt);
+    if (boundary !== null && (!Number.isFinite(started) || started < boundary)) continue;
+    failures.push({ code: 'checks_failed', target: repairCheckTarget(input.repo.platform, check),
+      message: `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.` });
+  }
+  const verdict = await ctx.evaluate({ root: ok(root), record: ok(input.record), policy: ok(policy), policySha: approved.sha, git: ctx.git, gh: ctx.gh });
+  if (verdict.exitCode === 1) {
+    for (const failure of verdict.gates.flatMap((gate) => gate.failures)) {
+      if (['checks_pending', 'checks_missing', 'checks_failed', 'pr_draft'].includes(failure.code)) continue;
+      const detail = failure.detail as { issue?: unknown; name?: unknown } | undefined;
+      const target = detail?.issue !== undefined ? `issue:${String(detail.issue)}` : detail?.name !== undefined ? String(detail.name) : undefined;
+      failures.push({ code: failure.code, message: failure.message, ...(target ? { target } : {}) });
+    }
+  }
+  // A rejection can become stale between the merge verdict and this refresh.
+  // Successful fresh CI still needs a new complete merge verdict before mutation.
+  const ciSucceeded = eligibility.eligible && (input.repo.platform !== 'gitlab' || checks.value.pipelineStatus === 'success');
+  return ok({ failures, retryCi: ciPending || ciSucceeded });
+}
+
+/** The workflow serializes by repository/request; this driver is shared by gh and glab runners. */
+export async function runRemoteDelivery(
+  input: RemoteDeliveryInput,
+  ctx: RemoteDeliveryDependencies,
+  options: { deadlineMs?: number; pollMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void>;
+    prepareMerged?: () => Promise<void> } = {},
+): Promise<CompletionObservation> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + (options.deadlineMs ?? 20 * 60_000);
+  const blocked = (code: string, message: string, classification: CompletionClassification = 'unknown', fix?: string): CompletionObservation => ({ classification, diagnostics: [{ severity: 'error', code, message, ...(fix ? { fix } : {}) }] });
+  if (!Number.isSafeInteger(input.pr) || input.pr <= 0 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(input.headSha) ||
+      !matchesBoundRequest(input.record, input.repo, input.pr) || input.record.issues.length === 0) {
+    return blocked('automation_event_invalid', 'The completion event must identify one bound request and full head SHA.');
+  }
+  // The immutable PR-head record remains available when closure recovery checks
+  // out the merged target; a newer delivery's main-branch record cannot replace it.
+  const boundContext: RemoteDeliveryDependencies = { ...ctx, record: { ...ctx.record, readRecord: async () => ({ ok: true, value: input.record }) } };
+  let outcome: CompletionObservation;
+  do {
+    const current = await ctx.gh.getPr(input.repo, input.pr);
+    if (!current.ok) return blocked(current.code, current.message);
+    if (current.value.headSha !== input.headSha || current.value.headBranch !== input.record.context.branch) {
+      return blocked('automation_head_changed', 'The completion event no longer identifies the current delivery head.', 'rejected');
+    }
+    if (current.value.draft) return blocked('pr_draft', 'A draft request cannot be completed automatically.', 'rejected');
+    if (current.value.state === 'merged' && options.prepareMerged) await options.prepareMerged();
+    const rootEvidence = await ctx.discoverRoot(ctx.cwd);
+    if (!rootEvidence.ok) return blocked(rootEvidence.code, rootEvidence.message);
+    const policyEvidence = await ctx.resolvePolicy(rootEvidence.value, ok(input.record), { requireApproved: true });
+    if (!policyEvidence.ok) return blocked(policyEvidence.code, policyEvidence.message);
+    const automation = policyEvidence.value.policy.automation;
+    const closeOnly = automation?.merge !== true && automation?.close_issues === true;
+    if (closeOnly && current.value.state === 'open') {
+      return { classification: 'idle', diagnostics: [] };
+    }
+    if ((automation?.merge === true || automation?.close_issues === true) &&
+        current.value.baseBranch === automation.target_branch && current.value.state !== 'closed') {
+      const repairs = await recoverRepairCreations({ repo: input.repo, request: input.pr, headSha: current.value.headSha,
+        root: rootEvidence.value, policy: policyEvidence.value.policy, boundIssues: input.record.issues }, ctx.gh, ctx.git);
+      if (!repairs.ok) return blocked(repairs.code, repairs.message, 'unknown', repairs.fix);
+    }
+    outcome = await completeDelivery({ root: rootEvidence, closeOnly }, boundContext);
+    if (outcome.classification === 'completed') return outcome;
+    let waitingForCi = false;
+    if (outcome.classification === 'rejected' && !outcome.progress?.merged && current.value.state === 'open') {
+      const root = await ctx.discoverRoot(ctx.cwd);
+      if (!root.ok) return outcome;
+      const approved = await ctx.resolvePolicy(root.value, ok(input.record), { requireApproved: true });
+      if (!approved.ok) return outcome;
+      const failures = await currentFailures(input, boundContext, root.value, approved.value);
+      if (!failures.ok) return blocked(failures.code, failures.message);
+      if (failures.value.failures.length > 0) {
+        const repairs = await ensureFailureIssues({ repo: input.repo, pr: current.value,
+          delivery: input.record.delivery, issueNumbers: input.record.issues,
+          failures: failures.value.failures, policy: approved.value.policy }, ctx.gh);
+        if (!repairs.ok) return blocked(repairs.code, repairs.message, 'unknown', repairs.fix);
+        return { ...outcome, classification: 'rejected', ...(outcome.progress ? { progress: { ...outcome.progress, status: 'blocked' } } : {}),
+          repairIssues: repairs.value.issues,
+          diagnostics: failures.value.failures.map((failure) => ({ severity: 'error', ...failure })) };
+      }
+      waitingForCi = failures.value.retryCi && (outcome.diagnostics?.length ?? 0) > 0 &&
+        outcome.diagnostics?.every((error) => CI_REJECTIONS.has(error.code)) === true;
+      if (waitingForCi && outcome.progress) {
+        outcome = { ...outcome, progress: { ...outcome.progress, status: 'pending' } };
+      }
+    }
+    const waiting = waitingForCi || outcome.progress?.status === 'pending' ||
+      (outcome.progress?.merged === true && outcome.classification === 'unknown' && outcome.diagnostics?.[0]?.code !== 'policy_history_unavailable');
+    if (!waiting) {
+      return outcome;
+    }
+    if (now() >= deadline) return outcome;
+    await sleep(Math.min(options.pollMs ?? 10_000, Math.max(0, deadline - now())));
+  } while (now() <= deadline);
+  return outcome;
+}

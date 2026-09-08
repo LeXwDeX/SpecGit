@@ -1,0 +1,88 @@
+{
+  "name": "specgit",
+  "version": "1.15.1",
+  "description": "Delivery binding and acceptance harness: bind a branch or worktree to forge issues and one pull or merge request, then derive acceptance from real git, request, and CI evidence",
+  "keywords": [
+    "specgit",
+    "delivery-binding",
+    "acceptance",
+    "github",
+    "gitlab",
+    "pull-request",
+    "merge-request",
+    "ci",
+    "cli"
+  ],
+  "homepage": "https://github.com/LeXwDeX/SpecGit",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LeXwDeX/SpecGit"
+  },
+  "license": "MIT",
+  "author": "SpecGit Contributors",
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "specgit": "./bin/specgit.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "schemas",
+    "!dist/**/*.test.js",
+    "!dist/**/__tests__",
+    "!dist/**/*.map"
+  ],
+  "scripts": {
+    "lint": "eslint src/",
+    "build": "node build.js",
+    "build:skills": "node scripts/build-skills.mjs",
+    "dev": "tsc --watch",
+    "dev:cli": "pnpm build && node bin/specgit.js",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "prepare": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
+    "check:pack-version": "node scripts/pack-version-check.mjs",
+    "release": "pnpm run release:ci",
+    "release:ci": "pnpm run check:pack-version && pnpm exec changeset publish",
+    "changeset": "changeset"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.1",
+    "@types/node": "^20.19.43",
+    "@vitest/ui": "^3.2.6",
+    "eslint": "^10.5.0",
+    "smol-toml": "^1.7.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^3.2.6"
+  },
+  "dependencies": {
+    "@inquirer/core": "^11.2.1",
+    "@inquirer/prompts": "^8.5.2",
+    "chalk": "^5.6.2",
+    "commander": "^15.0.0",
+    "cross-spawn": "7.0.6",
+    "fast-glob": "^3.3.3",
+    "ora": "^9.4.1",
+    "yaml": "^2.8.3",
+    "zod": "^4.4.3"
+  }
+}

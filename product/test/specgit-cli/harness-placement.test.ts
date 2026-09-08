@@ -1,0 +1,193 @@
+/**
+ * Harness placement (#280): takes content bytes and owns planning,
+ * writing, and rollback. Existing files are seeded with trivial fixture
+ * bytes — placement must carry them through without inspecting them —
+ * and the two failure phases report distinguishable errors: `plan`
+ * (content) before anything is written, `commit` (write) with rollback.
+ */
+
+import { acceptanceScript, GITLAB_ACCEPTANCE_PATH } from '../../src/cli/acceptance-step.js';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+import { BLOCK_START_MARKER } from '../../src/cli/harness-content.js';
+import {
+  HARNESS_WORKFLOW_PATH,
+  HarnessWriteError,
+  writeHarnessAssets,
+  buildHarnessDesiredState,
+} from '../../src/cli/harness-placement.js';
+import { reconcileManagedAssets } from '../../src/cli/managed-reconcile.js';
+import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
+
+const skipGitHook = { resolveHooksDir: async () => null };
+
+function read(target: string): string {
+  return fs.readFileSync(target, 'utf-8');
+}
+
+function treeBytes(root: string): Map<string, string> {
+  const bytes = new Map<string, string>();
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else bytes.set(path.relative(root, full), read(full));
+    }
+  };
+  walk(root);
+  return bytes;
+}
+
+describe('writeHarnessAssets placement', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir('specgit-placement-');
+  });
+
+  afterEach(() => {
+    rmDir(root);
+  });
+
+  it('merges user hooks from the current planning bytes after desired-state construction', async () => {
+    const hooksDir = path.join(root, '.git', 'hooks');
+    const json = path.join(root, '.opencode', 'hooks.json');
+    const prePush = path.join(hooksDir, 'pre-push');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.mkdirSync(path.dirname(json), { recursive: true });
+    fs.writeFileSync(json, '{}\n');
+    fs.writeFileSync(prePush, '#!/bin/sh\n');
+    const desired = await buildHarnessDesiredState(root, { resolveHooksDir: async () => hooksDir });
+    fs.writeFileSync(json, '{"user-added":true}\n');
+    fs.writeFileSync(prePush, '#!/bin/sh\necho user-added\n');
+    await reconcileManagedAssets(root, desired);
+    expect(JSON.parse(read(json))['user-added']).toBe(true);
+    expect(read(prePush)).toContain('echo user-added\n');
+  });
+
+  it('carries trivial fixture bytes through the merge, writes every target', async () => {
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# trivial notes\n');
+    fs.mkdirSync(path.join(root, '.opencode'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.opencode', 'hooks.json'), '{ "custom": true }\n');
+
+    const result = await writeHarnessAssets(root, { ...skipGitHook, workflowYaml: 'name: fixture\n' });
+
+    expect(result.workflow).toBe(HARNESS_WORKFLOW_PATH);
+    expect(result.warnings).toEqual([]);
+    // The fixture bytes survive; the managed region is added after them.
+    const agents = read(path.join(root, 'AGENTS.md'));
+    expect(agents.startsWith('# trivial notes\n')).toBe(true);
+    expect(agents).toContain(BLOCK_START_MARKER);
+    const hooksJson = JSON.parse(read(path.join(root, '.opencode', 'hooks.json'))) as {
+      custom: boolean;
+    };
+    expect(hooksJson.custom).toBe(true);
+    // The caller-supplied workflow bytes are written verbatim: placement
+    // never inspects what the bytes say.
+    expect(read(path.join(root, ...HARNESS_WORKFLOW_PATH.split('/')))).toBe('name: fixture\n');
+  });
+
+  it('writes and refreshes the GitLab adapter while preserving project business CI, then retires it on GitHub', async () => {
+    const business = 'verify:\n  script: run-project-tests\n';
+    fs.writeFileSync(path.join(root, '.gitlab-ci.yml'), business);
+    const options = { ...skipGitHook, platform: 'gitlab' as const, workflowYaml: null };
+    const result = await writeHarnessAssets(root, options);
+    expect(result.acceptanceScript).toBe(GITLAB_ACCEPTANCE_PATH);
+    const target = path.join(root, GITLAB_ACCEPTANCE_PATH);
+    expect(read(target)).toBe(acceptanceScript());
+    fs.appendFileSync(target, '// stale\n');
+    await writeHarnessAssets(root, options);
+    expect(read(target)).toBe(acceptanceScript());
+    expect(read(path.join(root, '.gitlab-ci.yml'))).toBe(business);
+    const switched = await writeHarnessAssets(root, { ...skipGitHook, platform: 'github' });
+    expect(switched.removed).toContain(GITLAB_ACCEPTANCE_PATH);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('preserves a user file at the GitLab adapter path', async () => {
+    const target = path.join(root, GITLAB_ACCEPTANCE_PATH);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '// user adapter\n');
+    const before = treeBytes(root);
+    await expect(writeHarnessAssets(root, { ...skipGitHook, platform: 'gitlab', workflowYaml: null })).rejects.toThrow();
+    expect(treeBytes(root)).toEqual(before);
+  });
+
+  it('rejects a symlinked GitLab adapter directory without touching the destination', async () => {
+    const outside = makeTempDir('specgit-adapter-outside-');
+    try {
+      fs.writeFileSync(path.join(outside, 'specgit-accept.mjs'), '// outside\n');
+      fs.symlinkSync(outside, path.join(root, '.gitlab'), 'junction');
+      await expect(writeHarnessAssets(root, { ...skipGitHook, platform: 'gitlab', workflowYaml: null })).rejects.toThrow();
+      expect(read(path.join(outside, 'specgit-accept.mjs'))).toBe('// outside\n');
+    } finally { rmDir(outside); }
+  });
+
+  it('rolls back the new GitLab adapter when a later asset cannot be written', async () => {
+    fs.writeFileSync(path.join(root, '.opencode'), 'not a directory');
+    const before = treeBytes(root);
+    await expect(writeHarnessAssets(root, { ...skipGitHook, platform: 'gitlab', workflowYaml: null })).rejects.toThrow();
+    expect(treeBytes(root)).toEqual(before);
+  });
+
+  it('is byte-stable: a second write leaves the whole tree identical', async () => {
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# trivial notes\n');
+    await writeHarnessAssets(root, skipGitHook);
+    const first = treeBytes(root);
+    await writeHarnessAssets(root, skipGitHook);
+    expect(treeBytes(root)).toEqual(first);
+  });
+
+  it('reports no workflow when the workflow write is skipped (#269)', async () => {
+    // GitLab platform mode passes workflowYaml: null — nothing is written
+    // under .github, so the result must not name a workflow path: the
+    // reported side effects must equal the real side effects.
+    const result = await writeHarnessAssets(root, { ...skipGitHook, workflowYaml: null });
+    expect(result.workflow).toBeNull();
+    expect(fs.existsSync(path.join(root, '.github'))).toBe(false);
+  });
+
+  it('a commit-phase failure reports phase `commit` and rolls back the tree', async () => {
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# trivial notes\n');
+    // `.opencode` as a regular file: mkdir inside it fails mid-commit.
+    fs.writeFileSync(path.join(root, '.opencode'), 'not a directory');
+
+    let caught: unknown;
+    try {
+      await writeHarnessAssets(root, skipGitHook);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HarnessWriteError);
+    expect((caught as HarnessWriteError).phase).toBe('commit');
+    // Rollback restored the fixture bytes and removed everything created.
+    expect(read(path.join(root, 'AGENTS.md'))).toBe('# trivial notes\n');
+    expect(read(path.join(root, '.opencode'))).toBe('not a directory');
+    expect(fs.existsSync(path.join(root, '.github'))).toBe(false);
+  });
+
+  it('a plan-phase failure reports phase `plan` before any write happens', async () => {
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# trivial notes\n');
+    const before = treeBytes(root);
+
+    let caught: unknown;
+    try {
+      await writeHarnessAssets(root, {
+        workflowYaml: 'name: fixture\n',
+        resolveHooksDir: async () => {
+          throw new Error('hooks resolution exploded');
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HarnessWriteError);
+    expect((caught as HarnessWriteError).phase).toBe('plan');
+    expect((caught as HarnessWriteError).message).toContain('hooks resolution exploded');
+    // Nothing was written: the phases are distinguishable by tree state too.
+    expect(treeBytes(root)).toEqual(before);
+  });
+});

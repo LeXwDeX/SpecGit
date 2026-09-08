@@ -1,0 +1,89 @@
+---
+name: specgit-finish
+description: Run the SpecGit evidence verdict — fail-closed acceptance derived from real git, PR/MR, and CI evidence; exit 0 means accepted; completion requires confirmed merge and issue closure.
+allowed-tools: Bash(specgit:*), Bash(git:*), Bash(gh:*), Bash(glab:*)
+license: MIT
+metadata:
+  author: specgit
+---
+
+<!-- specgit-managed-entry-point -->
+
+# specgit-finish
+
+The acceptance verdict. Eleven gates evaluate live evidence: record, policy,
+completeness, context, origin, provider, issues, sequence (ordered
+deliveries), PR/MR, closing refs, and required checks at the request head.
+
+For a declared programme, `specgit finish --scope <name> --json` reads its
+approved `spec_git/scopes/<name>.yaml` and assesses every required delivery.
+Report the separate `scope` state; one delivery's completion never proves
+programme completion. This assessment performs no merge or issue closure.
+
+For project CI scheduling, `specgit finish --plan-checks --json` returns
+`verification.requiredChecks`; keep a stable acceptance status and run ordinary
+finish after applicable checks. A successful plan does not establish acceptance.
+
+## Usage
+
+```bash
+specgit finish --json
+```
+
+## Steps
+
+1. Before running the verdict, confirm the bound pull or merge request is not a
+   draft — a draft always fails with `pr_draft` (factual, exit 1). If it
+   is still a draft, mark it ready for review first:
+
+   ```bash
+   gh pr ready <number>              # GitHub deliveries
+   glab mr update <number> --ready   # GitLab deliveries
+   ```
+
+2. Run the verdict from the delivery branch:
+
+   ```bash
+   specgit finish --json
+   ```
+
+3. Branch on the exit code using the contract below; on `1` fix exactly
+   what the failures name and re-run until `0`.
+
+## Exit contract
+
+- `0` accepted — report the verdict and continue the authorized merge
+  through the guidance below.
+- `1` rejected — each failure carries a `fix`; fix what the gates name,
+  re-run until 0.
+- `3` unknown — read `errors[].fix` first and repair the named evidence.
+  Use `specgit doctor --json` for git, repository, origin, configured
+  provider CLI/auth, or policy probes, then retry.
+
+## Rules
+
+- Policy defines the requirements; real git, PR/MR, issue, and CI evidence
+  decides the verdict. Task lists and specification prose are not acceptance evidence.
+- Never weaken `spec_git/policy.yaml` to make a verdict pass.
+- `--json` is the only parse surface.
+
+Continue within existing user authorization. With automation enabled, the
+trusted remote completion workflow continues after CI without another user
+confirmation. `specgit pr --merge --json` is its recovery path. It requires
+the approved target policy, `finish` exit 0, and all CI checks passing at the
+current PR/MR head. Completion confirms the merge and closure of every bound
+issue and verified derived repair; a partial closure remains recoverable. Independent issue closure uses
+`specgit pr --close-issues --json` after a confirmed manual merge into the approved
+`automation.target_branch`; it never merges an open request. `finish` is read-only and
+exit 0 means accepted, not necessarily completed. A failed delivery is tracked
+by a repair issue; retries reuse that cause and preserve the original PR/MR.
+Pending repair intents are reconciled by the trusted remote runner. When original
+repair evidence cannot be restored, preserve its Closes reference and explicitly
+adopt it with `specgit bind --issue <number>` before reviewing the delivery.
+Automation defaults to no. Only the user's own yes enables it. A fresh policy
+uses `specgit init --automation yes --merge-target <branch>`; an existing policy
+uses `specgit init --force --automation yes --merge-target <branch>`. Ordinary
+`init --force` preserves that choice and target. Independent closure uses `init --force --automation no --close-issues yes --close-target <branch>`.
+An agent must not choose yes for the user. When an
+action lacks user authorization or platform permission, report the specific
+missing permission with the prepared result.

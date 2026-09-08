@@ -1,0 +1,2050 @@
+/**
+ * `specgit issue` — one-command delivery bootstrap, focused tests with
+ * injected ports. The human story: create/reuse N issues → branch →
+ * draft PR closing every issue → record → commit → push, resumable.
+ */
+
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import { describe, expect, it, vi } from 'vitest';
+import type { DeliveryBinding } from '../../src/record/schema.js';
+import { deleteRecord, readRecord, recordPath, writeRecord } from '../../src/record/io.js';
+import { fail, ok } from '../../src/kernel/evidence.js';
+import type { PrSummary } from '../../src/github/port.js';
+import { renderPrScaffold } from '../../src/github/pr-scaffold.js';
+import { createOrAdoptIssues, runIssue } from '../../src/cli/commands/issue.js';
+import { EXIT_USAGE } from '../../src/cli/exit-codes.js';
+import { parseRepoRef } from '../../src/gitfacts/origin.js';
+import {
+  makeCtx,
+  makeGitFacts,
+  makeGhProvider,
+  sampleBinding,
+  type GhScript,
+  type GitWriteScript,
+} from './helpers.js';
+
+interface IssueHarness {
+  createdIssues: Array<{ title: string; body: string }>;
+  createdPrs: Array<{ head: string; base: string; title: string; body: string }>;
+  issueComments: Array<{ issue: number; body: string }>;
+}
+
+/** Remotely discoverable state for the exactly-once reconciliation probes. */
+interface ReconcileScript {
+  openIssues?: Array<{ number: number; title?: string; body?: string }>;
+  openIssuesFail?: { code: string; message: string };
+  openPrs?: Array<{ number: number; title: string; url: string }>;
+  openPrsFail?: { code: string; message: string };
+}
+
+function issueCtx(
+  options: {
+    facts?: Partial<GitFactsLike>;
+    record?: DeliveryBinding;
+    gh?: GhScript;
+    writes?: GitWriteScript;
+    reconcile?: ReconcileScript;
+  } = {}
+) {
+  const harness: IssueHarness = { createdIssues: [], createdPrs: [], issueComments: [] };
+  const gh = makeGhProvider({
+    addIssueComment: (_repo, issue, body) => {
+      harness.issueComments.push({ issue, body });
+      return {
+        ok: true,
+        value: { url: `https://github.com/LeXwDeX/SpecGit/issues/${issue}#issuecomment-1` },
+      };
+    },
+    createIssue: (_repo, title, body) => {
+      harness.createdIssues.push({ title, body });
+      return {
+        ok: true,
+        value: {
+          number: 10 + harness.createdIssues.length,
+          url: `https://github.com/LeXwDeX/SpecGit/issues/${10 + harness.createdIssues.length}`,
+        },
+      };
+    },
+    createDraftPr: (_repo, head, base, title, body) => {
+      harness.createdPrs.push({ head, base, title, body });
+      return {
+        ok: true,
+        value: { number: 42, url: 'https://github.com/LeXwDeX/SpecGit/pull/42' },
+      };
+    },
+    ...(options.gh ?? {}),
+  });
+  // Exactly-once seams: reconciliation probes and the PR idempotency marker.
+  // Defaults describe an empty remote so the plain flows stay deterministic.
+  const reconcile = options.reconcile ?? {};
+  type OpenIssueScript = NonNullable<ReconcileScript['openIssues']>;
+  gh.getOpenIssues = vi.fn(async () => {
+    gh.calls.push('getOpenIssues');
+    if (reconcile.openIssuesFail) {
+      return fail<OpenIssueScript>(reconcile.openIssuesFail.code, reconcile.openIssuesFail.message);
+    }
+    return ok(reconcile.openIssues ?? []);
+  });
+  gh.listOpenPrsByHead = vi.fn(async (_repo: unknown, head: string) => {
+    gh.calls.push(`listOpenPrsByHead:${head}`);
+    if (reconcile.openPrsFail) {
+      return fail<PrSummary[]>(reconcile.openPrsFail.code, reconcile.openPrsFail.message);
+    }
+    return ok(reconcile.openPrs ?? []);
+  });
+  const t = makeCtx({
+    facts: makeGitFacts((options.facts ?? {}) as Partial<GitFactsLike>),
+    ...(options.record !== undefined ? { record: options.record } : {}),
+    gh,
+    ...(options.writes !== undefined ? { gitWrites: options.writes } : {}),
+  });
+  return { ...t, harness, gh };
+}
+
+/** Makes the next `failures` writeRecord calls throw, then delegate again. */
+function failRecordWrites(t: ReturnType<typeof issueCtx>, failures: number): void {
+  const original = t.recordPort.writeRecord;
+  let failed = 0;
+  t.recordPort.writeRecord = vi.fn(async (root: string, record: DeliveryBinding) => {
+    failed += 1;
+    if (failed <= failures) {
+      throw new Error(' simulated disk full (ENOSPC)');
+    }
+    return original(root, record);
+  });
+}
+
+type GitFactsLike = ReturnType<typeof makeGitFacts>;
+
+function issuesOnly(overrides: Partial<DeliveryBinding> = {}): DeliveryBinding {
+  const binding = sampleBinding({
+    delivery: 'strict-delivery-harness',
+    context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+    issues: [11, 12],
+    ...overrides,
+  });
+  delete (binding as Partial<DeliveryBinding>).pr;
+  return binding;
+}
+
+describe('specgit issue: usage', () => {
+  it('without arguments and no record is a usage error (exit 2)', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_args_required');
+  });
+
+  it('rejects a whitespace-only title', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['   '] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_empty');
+  });
+});
+
+describe('specgit issue: fresh bootstrap', () => {
+  it.each([
+    {
+      platform: 'GitHub',
+      origin: 'https://github.com/LeXwDeX/SpecGit.git',
+      issueCommand: 'gh issue edit',
+      prCommand: 'gh pr edit',
+      fileFlag: '--body-file',
+    },
+    {
+      platform: 'GitLab',
+      origin: 'git@forge.example.com:example-team/specgit.git',
+      issueCommand: 'glab issue update',
+      prCommand: 'glab mr update',
+      fileFlag: '--description-file',
+    },
+  ])('renders executable $platform body-edit next actions', async ({ origin, issueCommand, prCommand, fileFlag }) => {
+    const t = issueCtx({ facts: { branch: 'main', originUrl: origin } });
+    t.ctx.parseRepoRef = (url) => parseRepoRef(url, { gitlabHost: 'forge.example.com' });
+    const outcome = await runIssue({ titles: ['feat: first why', 'fix: second why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(outcome.nextActions?.find((a) => a.code === 'issue_bodies')?.command).toBe(
+      `${issueCommand} 11 ${fileFlag} <file-11> && ${issueCommand} 12 ${fileFlag} <file-12>`
+    );
+    expect(outcome.nextActions?.find((a) => a.code === 'pr_brief')?.command).toBe(
+      `${prCommand} 42 ${fileFlag} <file-pr>`
+    );
+  });
+
+  it('refuses missing default-branch evidence before fresh delivery mutations', async () => {
+    const t = issueCtx({ writes: {
+      remoteDefaultBranch: () => fail('git_default_branch_unknown', 'origin/HEAD is missing'),
+    } });
+    const outcome = await runIssue({ titles: ['fix: avoid guessing the target'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('git_default_branch_unknown');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutOrCreateBranch).not.toHaveBeenCalled();
+    expect(t.gitPort.commitFile).not.toHaveBeenCalled();
+    expect(t.gitPort.pushBranch).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicitly configured PR target without inventing default-branch evidence', async () => {
+    const t = issueCtx({ writes: {
+      remoteDefaultBranch: () => fail('git_default_branch_unknown', 'origin/HEAD is missing'),
+    } });
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      automation: { merge: true, target_branch: 'release/stable', close_issues: true },
+    });
+    const outcome = await runIssue({ titles: ['fix: respect the chosen target'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdPrs[0].base).toBe('release/stable');
+    // Read-only asset inspection may probe the default; its absence cannot
+    // override an explicitly configured request target.
+  });
+
+  it('creates every title issue, derives branch/delivery, opens the draft PR, records, commits, pushes', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['feat: strict delivery harness', 'fix: harden the evaluator'] },
+      t.ctx
+    );
+
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(2);
+    expect(t.harness.createdIssues[0].title).toBe('feat: strict delivery harness');
+    expect(t.harness.createdIssues[0].body).toContain('## Why');
+    expect(t.harness.createdIssues[0].body).toContain('## Why\n');
+    expect(t.harness.createdIssues[0].body).toContain('## Scope\n');
+    // #368: the scaffold carries the four sections the guidance names —
+    // Approach sits between Scope and Acceptance, matching the prompts.
+    expect(t.harness.createdIssues[0].body).toContain('## Approach\n');
+    const issueBody = t.harness.createdIssues[0].body;
+    expect(issueBody.indexOf('## Scope')).toBeLessThan(issueBody.indexOf('## Approach'));
+    expect(issueBody.indexOf('## Approach')).toBeLessThan(issueBody.indexOf('## Acceptance'));
+    expect(t.harness.createdIssues[0].body).toContain('## Acceptance\n');
+    expect(t.harness.createdIssues[0].body).toContain('`specgit finish` must exit 0');
+    // branch <type>/<first#>-<slug> with the type from the conventional prefix
+    expect(t.harness.createdPrs.length).toBe(1);
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-strict-delivery-harness');
+    expect(t.harness.createdPrs[0].base).toBe('main');
+    expect(t.harness.createdPrs[0].title).toBe('feat: strict delivery harness');
+    // #87: the draft body is the deterministic scaffold — closing refs
+    // for every bound issue first, then the advisory sections.
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11, 12]));
+    for (const section of ['## Why', '## What changed', '## Evidence', '## Checklist']) {
+      expect(t.harness.createdPrs[0].body).toContain(section);
+    }
+    expect(t.harness.createdPrs[0].body.startsWith('Closes #11\nCloses #12\n')).toBe(true);
+
+    expect(t.gitPort.checkoutCalls).toEqual(['feat/11-strict-delivery-harness']);
+    // #323: TWO carrying commits — the binding BEFORE PR creation (a
+    // head equal to the base is refused by both platforms) and the
+    // final record after the PR number is persisted.
+    expect(t.gitPort.commitCalls.length).toBe(2);
+    // #292: each carrying commit force-carries every authoritative
+    // delivery file that exists — here only the record.
+    for (const commit of t.gitPort.commitCalls) {
+      expect(commit.paths).toEqual(['.specgit.yaml']);
+      expect(commit.message).toBe('chore: record delivery binding for strict-delivery-harness');
+    }
+    // #270/#323: the branch is pushed with the binding already in it,
+    // before the draft PR is created, and the final record commit rides
+    // a second push to the remote.
+    expect(t.gitPort.pushCalls).toEqual([
+      'feat/11-strict-delivery-harness',
+      'feat/11-strict-delivery-harness',
+    ]);
+
+    // Traceability edge issue→branch (#160): every bound issue gets the
+    // delivery branch and PR as a comment, exactly once per binding.
+    expect(t.harness.issueComments).toEqual([
+      { issue: 11, body: expect.stringContaining('`feat/11-strict-delivery-harness`') },
+      { issue: 12, body: expect.stringContaining('`feat/11-strict-delivery-harness`') },
+    ]);
+    for (const c of t.harness.issueComments) {
+      expect(c.body).toContain('#42');
+    }
+
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written).toMatchObject({
+      version: 1,
+      delivery: 'strict-delivery-harness',
+      context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+      issues: [11, 12],
+      pr: 42,
+    });
+    expect(outcome.state).toBe('bound');
+    expect(outcome.human?.join('\n')).toContain('strict-delivery-harness');
+
+    // #361: the success hand-off — forge URLs and the steps to
+    // review-ready (fill the issue bodies, fill the PR brief, mark ready).
+    expect(outcome.urls).toEqual({
+      issues: [
+        'https://github.com/LeXwDeX/SpecGit/issues/11',
+        'https://github.com/LeXwDeX/SpecGit/issues/12',
+      ],
+      pr: 'https://github.com/LeXwDeX/SpecGit/pull/42',
+    });
+    expect((outcome.nextActions ?? []).map((a) => a.code)).toEqual([
+      'issue_bodies',
+      'pr_brief',
+      'pr_ready',
+    ]);
+    const ready = outcome.nextActions?.find((a) => a.code === 'pr_ready');
+    expect(ready?.command).toContain('gh pr ready 42');
+    expect(outcome.human?.join('\n')).toContain('gh pr ready 42');
+  });
+
+  it('rejects a title without a type prefix as a usage error', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['Add login flow'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    expect(outcome.errors?.[0]?.fix).toContain('feat');
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('rejects an unknown type prefix and lists the full whitelist', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feature: add login'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    for (const type of ['security', 'deprecate', 'dogfood', 'revert', 'ci']) {
+      expect(outcome.errors?.[0]?.fix).toContain(type);
+    }
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('validates every title before creating any issue', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feat: ok first why', 'bogus second why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('accepts a non-ASCII title with an explicit delivery name (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['feat: 严格交付'], delivery: 'strict-delivery' },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues).toHaveLength(1);
+    expect(t.harness.createdIssues[0].title).toBe('feat: 严格交付');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-strict-delivery');
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('strict-delivery');
+  });
+
+  it('refuses a non-ASCII title without a name in a non-interactive session (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feat: 严格交付'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    // Zero side effects: the naming gap is refused before any issue is created.
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('honors other conventional types (fix:)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    await runIssue({ titles: ['fix: crash on save'] }, t.ctx);
+    expect(t.harness.createdPrs[0].head).toBe('fix/11-crash-on-save');
+  });
+
+  it('accepts the extended whitelist types in branch names', async () => {
+    for (const [title, head] of [
+      ['security: harden token', 'security/11-harden-token'],
+      ['deprecate: remove old flags', 'deprecate/11-remove-old-flags'],
+      ['dogfood: use specgit itself', 'dogfood/11-use-specgit-itself'],
+    ] as const) {
+      const t = issueCtx({ facts: { branch: 'main' } });
+      const outcome = await runIssue({ titles: [title] }, t.ctx);
+      expect(outcome.exit).toBe(0);
+      expect(t.harness.createdPrs[0].head).toBe(head);
+    }
+  });
+
+  it('caps the slug at three ASCII words', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    await runIssue({ titles: ['feat: one two three four five'] }, t.ctx);
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-one-two-three');
+  });
+
+  it('refuses a title with no ASCII words instead of inventing issue<N> (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['feat: !!!'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+    expect(t.harness.createdIssues.length).toBe(0);
+    // The explicit flag heals the same gap.
+    const healed = issueCtx({ facts: { branch: 'main' } });
+    const named = await runIssue({ titles: ['feat: !!!'], delivery: 'bang-path' }, healed.ctx);
+    expect(named.exit).toBe(0);
+    expect(healed.harness.createdPrs[0].head).toBe('feat/11-bang-path');
+    const written = healed.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.delivery).toBe('bang-path');
+  });
+
+  it('rejects a malformed --delivery flag before any side effect (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['feat: add login'], delivery: 'Not Kebab!' },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_invalid');
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('an explicit --delivery name wins over the derived title slug (#246)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['feat: add login'], delivery: 'auth-flow' },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-auth-flow');
+  });
+
+  it('reuses existing issues given as pure numbers and creates the rest', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue({ titles: ['4', 'feat: add telemetry'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(1);
+    expect(t.harness.createdIssues[0].title).toBe('feat: add telemetry');
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([4, 11]);
+    expect(t.harness.createdPrs[0].head).toBe('feat/4-add-telemetry');
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([4, 11]));
+  });
+
+  it('checks out and creates the delivery branch when not on it', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    await runIssue({ titles: ['feat: x'] }, t.ctx);
+    expect(t.gitPort.checkoutCalls).toEqual(['feat/11-x']);
+  });
+
+  it('fails closed when issue creation is unauthenticated', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      gh: {
+        createIssue: () => ({
+          ok: false as const,
+          code: 'gh_unauthenticated',
+          message: 'GitHub CLI is not authenticated.',
+          fix: 'Run "gh auth login" to authenticate.',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: x'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_unauthenticated');
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('keeps the issues-only record when PR creation fails (resumable)', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      gh: {
+        createDraftPr: () => ({
+          ok: false as const,
+          code: 'gh_transport',
+          message: 'GitHub CLI failed: boom',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: x'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11]);
+    expect(written?.pr).toBeUndefined();
+  });
+});
+
+describe('specgit issue: idempotent resume', () => {
+  it('refuses a different same-count title without mutating the existing delivery (#408)', async () => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [11] }),
+      gh: { getIssue: () => ok({ number: 11, state: 'open', pullRequest: false, title: 'feat: strict delivery harness' }) },
+    });
+    const outcome = await runIssue({ titles: ['fix: completely unrelated work'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+  });
+
+  it('fails closed when a resume title cannot be verified (#408)', async () => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [11] }),
+      gh: { getIssue: () => ok({ number: 11, state: 'open', pullRequest: false }) },
+    });
+    const outcome = await runIssue({ titles: ['feat: strict delivery harness'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_title_unavailable');
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
+  it.each(['', '   '])('fails closed when a resume title is blank: %j (#408)', async (title) => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [11] }),
+      gh: { getIssue: () => ok({ number: 11, state: 'open', pullRequest: false, title }) },
+    });
+    const outcome = await runIssue({ titles: ['feat: strict delivery harness'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_title_unavailable');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+  });
+
+  it('resumes after a failure between steps without creating issues again', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+      gh: { getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: number === 11 ? 'feat: strict delivery harness' : 'Harden the evaluator' }) },
+    });
+    const outcome = await runIssue(
+      { titles: ['feat: strict delivery harness', 'Harden the evaluator'] },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(1);
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11, 12]));
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.pr).toBe(42);
+    expect(outcome.human?.join('\n').toLowerCase()).toContain('resumed');
+  });
+
+  it('resumes with no arguments when a record exists', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('does not re-comment issues when the record already carries the PR binding', async () => {
+    // record.pr is the persisted exactly-once marker for the traceability
+    // comment (#160): a completed binding must stay quiet on re-runs.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: sampleBinding({
+        delivery: 'strict-delivery-harness',
+        context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        // Complete-record resume probes the PR's mergedness first.
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11\nCloses #12\n',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.issueComments).toEqual([]);
+  });
+
+  it('refuses argument drift on resume (different count)', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+    });
+    const outcome = await runIssue({ titles: ['feat: something else'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+  });
+
+  it('replaces a merged-delivery record instead of refusing (lifecycle)', async () => {
+    // The record's PR is merged: completed history. A new issue run must
+    // replace the record and bootstrap a fresh delivery.
+    const mergedRecord = sampleBinding({
+      delivery: 'strict-delivery-harness',
+      context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+      issues: [11, 12],
+      pr: 42,
+    });
+    const t = issueCtx({
+      facts: { branch: 'feat/77-brand-new-work' },
+      record: mergedRecord,
+      gh: {
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'merged' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'd'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11 Closes #12',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new work'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: brand new work']);
+    expect(t.harness.createdPrs).toHaveLength(1);
+  });
+
+  it('refuses numeric arguments that are not in the record', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+    });
+    const outcome = await runIssue({ titles: ['11', '99'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+  });
+
+  it('is a healing no-op when the record is complete and its PR is live', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: sampleBinding({
+        delivery: 'x',
+        context: { kind: 'branch', branch: 'feat/11-x' },
+        issues: [11],
+        pr: 42,
+      }),
+      gh: {
+        // A complete record is only healable once its PR is proven live
+        // (not merged): the mergedness probe is part of the resume.
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/11-x',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11\n',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.gitPort.pushCalls).toEqual(['feat/11-x', 'feat/11-x']);
+  });
+});
+
+describe('specgit issue: fail-closed write steps', () => {
+  it('branch checkout failure exits 3 with the git code', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        checkoutOrCreateBranch: () => ({
+          ok: false as const,
+          code: 'git_branch_failed',
+          message: 'git checkout failed: refuse',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('git_branch_failed');
+  });
+
+  it('commit failure exits 3', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        commitFile: () => ({
+          ok: false as const,
+          code: 'git_commit_failed',
+          message: 'git commit failed: hook refused',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('git_commit_failed');
+  });
+
+  it('push failure exits 3 before PR creation (resumable, #270)', async () => {
+    // The branch push now precedes PR/MR creation: a push failure leaves
+    // no pull request behind — the record keeps its issues and the next
+    // run pushes, then retries the PR step.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        pushBranch: () => ({
+          ok: false as const,
+          code: 'git_push_failed',
+          message: 'git push failed: no access',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('git_push_failed');
+    expect(t.harness.createdPrs.length).toBe(0);
+  });
+
+  it('pushes the branch before creating the draft PR (#270)', async () => {
+    const order: string[] = [];
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        pushBranch: (branch) => {
+          order.push(`push:${branch}`);
+          return { ok: true as const, value: { pushed: true } };
+        },
+      },
+      gh: {
+        createDraftPr: (_repo, head) => {
+          order.push(`createDraftPr:${head}`);
+          return {
+            ok: true as const,
+            value: { number: 42, url: 'https://github.com/LeXwDeX/SpecGit/pull/42' },
+          };
+        },
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(order).toEqual([
+      'push:feat/11-x',
+      'createDraftPr:feat/11-x',
+      'push:feat/11-x',
+    ]);
+  });
+
+  it('a run whose push failed heals on re-run: push first, then the PR (#270)', async () => {
+    let pushShouldFail = true;
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      writes: {
+        pushBranch: () =>
+          pushShouldFail
+            ? { ok: false as const, code: 'git_push_failed', message: 'transient push failure' }
+            : { ok: true as const, value: { pushed: true } },
+      },
+    });
+    const first = await runIssue({ titles: [] }, t.ctx);
+    expect(first.exit).toBe(3);
+    expect(t.harness.createdPrs.length).toBe(0);
+
+    pushShouldFail = false;
+    const second = await runIssue({ titles: [] }, t.ctx);
+    expect(second.exit).toBe(0);
+    // The healing run pushed the unpushed branch before creating the PR.
+    expect(t.harness.createdPrs.length).toBe(1);
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-x');
+    expect(second.record).toMatchObject({ pr: 42 });
+  });
+
+  it('comment failure fails closed before record.pr is written (re-runnable)', async () => {
+    // The traceability comment is part of the binding, not a decoration
+    // (#160): if it cannot be posted, the PR number must not land in the
+    // record — a re-run then re-enters the adopt path and posts it.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-x' },
+      record: issuesOnly({ delivery: 'x', context: { kind: 'branch', branch: 'feat/11-x' }, issues: [11] }),
+      gh: {
+        addIssueComment: () => ({
+          ok: false as const,
+          code: 'gh_transport',
+          message: 'gh issue comment failed: network',
+        }),
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.pr).toBeUndefined();
+  });
+
+  it('missing origin exits 3', async () => {
+    const t = issueCtx({ facts: { originUrl: null } });
+    const outcome = await runIssue({ titles: ['feat: x'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('no_origin');
+  });
+});
+
+function mergedRecordCtx(
+  args: { gh?: GhScript; reconcile?: ReconcileScript } = {}
+) {
+  const mergedRecord = sampleBinding({
+    delivery: 'strict-delivery-harness',
+    context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+    issues: [11, 12],
+    pr: 42,
+  });
+  return issueCtx({
+    facts: { branch: 'feat/11-strict-delivery-harness' },
+    record: mergedRecord,
+    ...(args.reconcile !== undefined ? { reconcile: args.reconcile } : {}),
+    gh: {
+      getPr: () =>
+        ok({
+          number: 42,
+          state: 'merged' as const,
+          headBranch: 'feat/11-strict-delivery-harness',
+          headSha: 'd'.repeat(40),
+          baseBranch: 'main',
+          body: 'Closes #11 Closes #12',
+          mergeCommitSha: null,
+          draft: false,
+        }),
+      ...(args.gh ?? {}),
+    },
+  });
+}
+
+async function withCompletedRecordOnDisk(
+  check: (t: ReturnType<typeof mergedRecordCtx>, root: string, originalBytes: string) => Promise<void>
+): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-completed-record-'));
+  try {
+    const t = mergedRecordCtx();
+    const original = await t.recordPort.readRecord(root);
+    if (!original.ok) throw new Error(original.message);
+    await writeRecord(root, {
+      ...original.value,
+      issueKinds: [{ issue: 11, kind: 'kind::fix' }],
+    });
+    fs.appendFileSync(recordPath(root), 'auditNote: preserve this extension\n');
+    const originalBytes = fs.readFileSync(recordPath(root), 'utf8');
+    t.ctx.discoverRoot = vi.fn(async () => ok(root));
+    t.recordPort.readRecord = readRecord;
+    t.recordPort.writeRecord = writeRecord;
+    t.recordPort.deleteRecord = vi.fn(deleteRecord);
+    await check(t, root, originalBytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe('specgit issue: replacement validation is non-destructive', () => {
+  it('preserves completed record bytes when explicit tags are invalid', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      const outcome = await runIssue(
+        { titles: ['feat: next delivery'], tags: 'module::ghost' }, t.ctx
+      );
+      expect(outcome.errors?.[0]?.code).toBe('issue_tags_unknown');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+      expect(t.harness.createdIssues).toEqual([]);
+    });
+  });
+
+  it('preserves completed record bytes when a Chinese title needs a delivery name', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      const outcome = await runIssue({ titles: ['feat: 下一次交付'], json: true }, t.ctx);
+      expect(outcome.errors?.[0]?.code).toBe('issue_delivery_name_required');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+      expect(t.harness.createdIssues).toEqual([]);
+    });
+  });
+
+  it('preserves completed record bytes when the first issue creation fails', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      t.gh.createIssue = vi.fn<typeof t.gh.createIssue>(async () => fail('gh_transport', 'offline'));
+      const outcome = await runIssue({ titles: ['feat: next delivery'] }, t.ctx);
+      expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+      expect(t.harness.createdPrs).toEqual([]);
+    });
+  });
+
+  it('preserves completed record bytes after a first-write failure and adopts the issue on retry', async () => {
+    await withCompletedRecordOnDisk(async (t, root, originalBytes) => {
+      t.gh.createIssue = vi.fn(async () => ok({ number: 21, url: 'https://example.com/issues/21' }));
+      failRecordWrites(t, 1);
+      const first = await runIssue({ titles: ['feat: next delivery'] }, t.ctx);
+      expect(first.errors?.[0]?.code).toBe('record_write_failed');
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toBe(originalBytes);
+
+      t.gh.getOpenIssues = vi.fn(async () => ok([{ number: 21, title: 'feat: next delivery' }]));
+      const retried = await runIssue({ titles: ['feat: next delivery'] }, t.ctx);
+      expect(retried.exit).toBe(0);
+      expect(t.gh.createIssue).toHaveBeenCalledTimes(1);
+      expect(await readRecord(root)).toMatchObject({ ok: true, value: { issues: [21] } });
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toContain('auditNote: preserve this extension');
+    });
+  });
+
+  it('atomically replaces completed fields with a resumable numeric delivery and preserves extensions', async () => {
+    await withCompletedRecordOnDisk(async (t, root) => {
+      const checkout = t.gitPort.checkoutOrCreateBranch;
+      t.gitPort.checkoutOrCreateBranch = vi.fn<typeof t.gitPort.checkoutOrCreateBranch>(
+        async () => fail('git_checkout_failed', 'interrupted')
+      );
+      const first = await runIssue({ titles: ['77'], delivery: 'next-delivery' }, t.ctx);
+      expect(first.errors?.[0]?.code).toBe('git_checkout_failed');
+      expect(await readRecord(root)).toEqual(ok({
+        version: 1,
+        delivery: 'next-delivery',
+        context: { kind: 'branch', branch: 'feat/77-next-delivery' },
+        issues: [77],
+        issueKinds: [],
+        auditNote: 'preserve this extension',
+      }));
+      expect(fs.readFileSync(recordPath(root), 'utf8')).toContain('auditNote: preserve this extension');
+      expect(t.recordPort.deleteRecord).not.toHaveBeenCalled();
+
+      t.gitPort.checkoutOrCreateBranch = checkout;
+      const resumed = await runIssue({}, t.ctx);
+      expect(resumed.exit).toBe(0);
+      expect(t.harness.createdIssues).toEqual([]);
+      expect(t.harness.createdPrs).toHaveLength(1);
+      expect(t.harness.createdPrs[0].body).toContain('Closes #77');
+    });
+  });
+
+  it('never deletes a merged record for invalid replacement arguments (type)', async () => {
+    const t = mergedRecordCtx();
+    const outcome = await runIssue({ titles: ['bogus replacement'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_type_invalid');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('never deletes a merged record for invalid replacement arguments (empty)', async () => {
+    const t = mergedRecordCtx();
+    const outcome = await runIssue({ titles: ['   '] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_empty');
+    expect(t.recordPort.deletes).toEqual([]);
+  });
+
+  it('refuses a no-args resume of a merged delivery instead of resurrecting it (lifecycle)', async () => {
+    // #75: the record's PR is merged — completed history. No-args resume
+    // must never re-create, commit, or push the branch the forge deleted on
+    // merge; the decision is a usage diagnostic naming the way forward.
+    const t = mergedRecordCtx();
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
+    expect(outcome.errors?.[0]?.message).toContain('is complete because PR/MR #42 is merged');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
+    expect(outcome.errors?.[0]?.fix).not.toContain('unbind');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+
+  it('replaces the merged record without deleting it after replacement arguments validate', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/77-brand-new-work' },
+      record: sampleBinding({
+        delivery: 'strict-delivery-harness',
+        context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'merged' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'd'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11 Closes #12',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new work'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['feat: brand new work']);
+  });
+});
+
+describe('specgit issue: mergedness probe fails closed (provider failure)', () => {
+  function prProbeFailsCtx() {
+    return issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: sampleBinding({
+        delivery: 'strict-delivery-harness',
+        context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () => fail('gh_transport', 'GitHub CLI failed: network down'),
+      },
+    });
+  }
+
+  it('keeps the record and refuses to resume when the probe fails (no args)', async () => {
+    // Fail-closed: without the PR fact, resume would guess "not merged"
+    // and could re-push a merged delivery's branch. Exit 3, record kept,
+    // no git side effects (#75).
+    const t = prProbeFailsCtx();
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+
+  it('keeps the record when the probe fails with replacement arguments present', async () => {
+    // Replacement requires proof of merge; resume requires proof of life.
+    // Neither is knowable — the record survives untouched, nothing is
+    // created, and the provider error surfaces verbatim.
+    const t = prProbeFailsCtx();
+    const outcome = await runIssue({ titles: ['feat: next why'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+});
+
+describe('specgit issue: a bound PR/MR that does not exist remains repairable (#284)', () => {
+  // A missing request is proven absent, but absence is not proof of merge
+  // or completion. Keep the binding and tell the operator how to recreate
+  // or find the request and bind its number. Transport failures remain the
+  // distinct fail-closed probe result covered above.
+  function missingPrCtx() {
+    return issueCtx({
+      facts: { branch: 'main' },
+      record: sampleBinding({
+        delivery: 'stale-cross-platform',
+        context: { kind: 'branch', branch: 'feat/11-stale-cross-platform' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () => fail('pr_not_found', 'The platform reports this pull request does not exist.'),
+      },
+    });
+  }
+
+  it('replacement arguments cannot discard the repairable delivery', async () => {
+    const t = missingPrCtx();
+    const outcome = await runIssue({ titles: ['feat: next why'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('pr_not_found');
+    expect(outcome.errors?.[0]?.message).toContain('The delivery is not complete');
+    expect(outcome.errors?.[0]?.fix).toContain("branch 'feat/11-stale-cross-platform'");
+    expect(outcome.errors?.[0]?.fix).toContain('Closes #11, Closes #12');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr <number>');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+
+  it('a no-args resume reports the same repair path without calling it merged', async () => {
+    const t = missingPrCtx();
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('pr_not_found');
+    expect(outcome.errors?.[0]?.message).not.toContain('complete because');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr <number>');
+    expect(outcome.errors?.[0]?.fix).not.toContain('specgit issue');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+});
+
+describe('specgit issue: a closed-unmerged PR/MR cannot resume (#463)', () => {
+  function closedPrCtx() {
+    return issueCtx({
+      facts: { branch: 'feat/11-failed-delivery' },
+      record: sampleBinding({
+        delivery: 'failed-delivery',
+        context: { kind: 'branch', branch: 'feat/11-failed-delivery' },
+        issues: [11, 12],
+        pr: 42,
+      }),
+      gh: {
+        getPr: () => ok({
+          number: 42,
+          state: 'closed' as const,
+          headBranch: 'feat/11-failed-delivery',
+          headSha: 'c'.repeat(40),
+          baseBranch: 'main',
+          body: 'Closes #11\nCloses #12\n',
+          mergeCommitSha: null,
+          draft: false,
+        }),
+      },
+    });
+  }
+
+  it.each([
+    { titles: [] as string[] },
+    { titles: ['fix: unrelated replacement'] },
+  ])('rejects before every mutation for arguments $titles', async ({ titles }) => {
+    const t = closedPrCtx();
+    const outcome = await runIssue({ titles }, t.ctx);
+    expect(outcome.exit).toBe(1);
+    expect(outcome.errors?.[0]?.code).toBe('pr_closed_unmerged');
+    expect(outcome.errors?.[0]?.message).toContain('closed without merge');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr <number>');
+    expect(outcome.errors?.[0]?.fix).toContain("branch 'feat/11-failed-delivery'");
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+  });
+});
+
+describe('specgit issue: exactly-once issue creation (fault injection)', () => {
+  it('resolves every adoption before creating the first issue, even with convention validation off (#415)', async () => {
+    const t = issueCtx({
+      reconcile: { openIssues: [
+        { number: 31, title: 'fix: ambiguous why', body: 'First independent issue.' },
+        { number: 32, title: 'fix: ambiguous why', body: 'Second independent issue.' },
+      ] },
+    });
+    const outcome = await runIssue({ titles: ['feat: new why', 'fix: ambiguous why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_ambiguous');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+  });
+
+  it('persists mixed reuse, adoption and creation in argument order from one snapshot (#415)', async () => {
+    const t = issueCtx({ reconcile: { openIssues: [{ number: 22, title: 'fix: existing why' }] } });
+    const outcome = await runIssue({ titles: ['21', 'fix: existing why', 'docs: new why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gh.getOpenIssues).toHaveBeenCalledOnce();
+    expect(t.harness.createdIssues.map((issue) => issue.title)).toEqual(['docs: new why']);
+    expect(t.recordPort.recordWrites.slice(0, 3).map(({ record }) => record.issues)).toEqual([
+      [21], [21, 22], [21, 22, 11],
+    ]);
+    expect(t.recordPort.recordWrites[2].record.issueKinds).toEqual([
+      { issue: 11, kind: 'kind::docs' }, { issue: 22, kind: 'kind::fix' },
+    ]);
+  });
+
+  it('rechecks a later planned issue after an earlier record write (#415)', async () => {
+    const t = issueCtx();
+    t.ctx.gh.listIssuePullRequests = vi.fn(async (_repo, issue) => ok(
+      issue === 22 && t.recordPort.recordWrites.length > 0 ? [{
+        number: 90, state: 'open' as const, headBranch: 'other-work', headSha: 'a'.repeat(40),
+        baseBranch: 'main', body: 'Closes #22', draft: true, mergeCommitSha: null,
+      }] : []
+    ));
+    const outcome = await runIssue({ titles: ['21', '22'], delivery: 'dynamic-claims' }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_already_claimed');
+    expect(t.recordPort.recordWrites.map(({ record }) => record.issues)).toEqual([[21]]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+  });
+
+  it('persists each created issue incrementally, so a mid-loop failure resumes without duplicates', async () => {
+    // Fault: the second createIssue fails after the first succeeded.
+    let created = 0;
+    const broken = issueCtx({
+      facts: { branch: 'main' },
+      gh: {
+        createIssue: (_repo, title, body) => {
+          created += 1;
+          if (created === 2) {
+            return { ok: false as const, code: 'gh_transport', message: 'GitHub CLI failed: boom' };
+          }
+          return {
+            ok: true as const,
+            value: { number: 11, url: 'https://github.com/LeXwDeX/SpecGit/issues/11' },
+          };
+        },
+      },
+    });
+    const args = ['feat: alpha why', 'fix: beta why'];
+    const first = await runIssue({ titles: args }, broken.ctx);
+    expect(first.exit).toBe(3);
+    // The durable partial record exists with exactly the first issue.
+    const partial = broken.recordPort.recordWrites.at(-1)?.record;
+    expect(partial?.issues).toEqual([11]);
+    expect(partial?.pr).toBeUndefined();
+
+    // Retry with the transport healed: only the second WHY is created.
+    const healed = issueCtx({
+      facts: { branch: 'main' },
+      record: partial,
+      gh: {
+        getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'feat: alpha why' }),
+        createIssue: (_repo, title, body) => {
+          healed.harness.createdIssues.push({ title, body });
+          return {
+            ok: true as const,
+            value: { number: 12, url: 'https://github.com/LeXwDeX/SpecGit/issues/12' },
+          };
+        },
+      },
+    });
+    const second = await runIssue({ titles: args }, healed.ctx);
+    expect(second.exit).toBe(0);
+    expect(healed.harness.createdIssues.map((i) => i.title)).toEqual(['fix: beta why']);
+    const written = healed.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11, 12]);
+    expect(healed.harness.createdPrs[0].body).toBe(renderPrScaffold([11, 12]));
+  });
+
+  it('reconciles a remotely created issue by title when the record write failed (lost durability)', async () => {
+    // Fault: issue #11 was created, then writeRecord failed — no record on disk.
+    const broken = issueCtx({ facts: { branch: 'main' } });
+    failRecordWrites(broken, 1);
+    const first = await runIssue({ titles: ['feat: alpha why'] }, broken.ctx);
+    expect(first.exit).toBe(3);
+    expect(first.errors?.[0]?.code).toBe('record_write_failed');
+    expect(broken.harness.createdIssues.length).toBe(1);
+
+    // Retry: the remote still has #11 with the exact title — adopt, never re-create.
+    const healed = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: { openIssues: [{ number: 11, title: 'feat: alpha why' }] },
+    });
+    const second = await runIssue({ titles: ['feat: alpha why'] }, healed.ctx);
+    expect(second.exit).toBe(0);
+    expect(healed.harness.createdIssues.length).toBe(0);
+    expect(healed.gh.calls).not.toContain('createIssue:feat: alpha why');
+    const written = healed.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11]);
+  });
+
+  it('continues a renamed partial issue by number while refusing its stale title (#408)', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      record: issuesOnly({
+        delivery: 'alpha-why',
+        context: { kind: 'branch', branch: 'feat/11-alpha-why' },
+        issues: [11],
+      }),
+      reconcile: {
+        openIssues: [{ number: 11, title: 'renamed by a teammate' }],
+      },
+      gh: {
+        getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'renamed by a teammate' }),
+        createIssue: (_repo, title, body) => {
+          t.harness.createdIssues.push({ title, body });
+          return {
+            ok: true as const,
+            value: { number: 12, url: 'https://github.com/LeXwDeX/SpecGit/issues/12' },
+          };
+        },
+      },
+    });
+    const stale = await runIssue({ titles: ['feat: alpha why', 'fix: beta why'] }, t.ctx);
+    expect(stale.exit).toBe(2);
+    expect(stale.errors?.[0]?.code).toBe('issue_resume_drift');
+    expect(t.recordPort.recordWrites).toEqual([]);
+    const outcome = await runIssue({ titles: ['11', 'fix: beta why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(outcome.record?.context).toEqual({ kind: 'branch', branch: 'feat/11-alpha-why' });
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['fix: beta why']);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11, 12]);
+  });
+
+  it('adopts an open issue whose title matches exactly instead of creating a duplicate', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'chore: unrelated work' },
+          { number: 11, title: 'feat: alpha why' },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11]);
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([11]));
+  });
+
+  it('never adopts an issue the open-issues evidence does not carry (closed issues are invisible)', async () => {
+    // The probe reads only open issues (the provider search pins
+    // `is:issue+is:open`); a closed issue with the same title is not
+    // evidence, so the title argument creates fresh — never binds history.
+    const t = issueCtx({ facts: { branch: 'main' }, reconcile: { openIssues: [] } });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(1);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11]);
+  });
+
+  // The deterministic issue body specgit writes on creation — the
+  // boundary marker that disambiguates a same-title collision (#77).
+  const scaffoldBody = (title: string): string =>
+    [
+      '## Why',
+      title,
+      '',
+      '## Scope',
+      '',
+      '## Approach',
+      '',
+      '## Acceptance',
+      'The delivery PR/MR closes this issue; `specgit finish` must exit 0.',
+      '',
+    ].join('\n');
+
+  it('diagnoses an unresolved same-title collision instead of silently adopting (exit 2)', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'feat: alpha why', body: 'someone else typed the same title' },
+          { number: 9, title: 'feat: alpha why', body: 'another unrelated body' },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_ambiguous');
+    expect(outcome.errors?.[0]?.message).toContain('#5');
+    expect(outcome.errors?.[0]?.message).toContain('#9');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit issue');
+    // Zero side effects: ambiguity is a usage diagnostic, never a binding.
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+    expect(t.gitPort.checkoutCalls.length + t.gitPort.commitCalls.length + t.gitPort.pushCalls.length).toBe(0);
+  });
+
+  it('still diagnoses when every same-title candidate carries the scaffold body', async () => {
+    // Two specgit-created duplicates of one WHY is not resumable state to
+    // heal silently — the human decides which number is the delivery.
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'feat: alpha why', body: scaffoldBody('feat: alpha why') },
+          { number: 9, title: 'feat: alpha why', body: scaffoldBody('feat: alpha why') },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_title_ambiguous');
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('adopts the sole same-title candidate carrying the deterministic scaffold body (#77)', async () => {
+    // A human issue shares the title with a previously created-but-unrecorded
+    // specgit issue. The scaffold body is the boundary that proves ownership.
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssues: [
+          { number: 5, title: 'feat: alpha why', body: 'an unrelated human issue' },
+          { number: 9, title: 'feat: alpha why', body: scaffoldBody('feat: alpha why') },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([9]);
+    expect(t.harness.createdPrs[0].body).toBe(renderPrScaffold([9]));
+  });
+
+  it('adopts beyond the first search page and stays inside the call budget (>100 open issues)', async () => {
+    // 150 open issues; the adoptable title rides #137 — beyond the old
+    // single-page blind spot. One title-carrying scan replaces the per-issue
+    // probe calls entirely (#77 trust/coverage/cost facets).
+    const openIssues = Array.from({ length: 150 }, (_, i) => ({
+      number: i + 1,
+      title: i === 136 ? 'feat: alpha why' : `chore: filler why ${i + 1}`,
+    }));
+    const t = issueCtx({ facts: { branch: 'main' }, reconcile: { openIssues } });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([137]);
+    // Call budget: exactly one title-carrying scan, zero per-issue lookups.
+    expect(t.gh.calls.filter((c) => c === 'getOpenIssues')).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => c.startsWith('getIssue:'))).toHaveLength(0);
+  });
+
+  it('fails closed when the reconciliation probe cannot gather evidence', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      reconcile: {
+        openIssuesFail: { code: 'gh_unreachable', message: 'search API down' },
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_unreachable');
+    expect(t.harness.createdIssues.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('skips the probe for purely numeric arguments (no title to reconcile)', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    // A number-only bootstrap has no title to slug — the explicit name
+    // supplies the semantic half of the branch (#246).
+    const outcome = await runIssue({ titles: ['4'], delivery: 'reuse-four' }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gh.calls).not.toContain('getOpenIssues');
+    expect(t.recordPort.recordWrites.at(-1)?.record?.issues).toEqual([4]);
+  });
+});
+
+describe('specgit issue: exactly-once PR creation (fault injection)', () => {
+  it('adopts the single open PR for the head branch instead of creating another', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+      reconcile: {
+        openPrs: [{ number: 77, title: 'Delivery', url: 'https://github.com/LeXwDeX/SpecGit/pull/77' }],
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdPrs.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.pr).toBe(77);
+  });
+
+  it('refuses with pr_ambiguous when several open PRs share the head branch', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+      reconcile: {
+        openPrs: [
+          { number: 77, title: 'one', url: 'https://github.com/LeXwDeX/SpecGit/pull/77' },
+          { number: 78, title: 'two', url: 'https://github.com/LeXwDeX/SpecGit/pull/78' },
+        ],
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('pr_ambiguous');
+    expect(outcome.errors?.[0]?.fix).toContain('specgit pr');
+    expect(t.harness.createdPrs.length).toBe(0);
+    expect(t.recordPort.recordWrites.length).toBe(0);
+  });
+
+  it('fails closed when the PR idempotency probe cannot gather evidence', async () => {
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record: issuesOnly(),
+      reconcile: {
+        openPrsFail: { code: 'gh_transport', message: 'GitHub CLI failed: boom' },
+      },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(outcome.errors?.[0]?.code).toBe('gh_transport');
+    expect(t.harness.createdPrs.length).toBe(0);
+  });
+});
+
+describe('specgit issue: partial-resume drift guards', () => {
+  it('refuses a numeric argument that contradicts the consumed position', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      record: issuesOnly({
+        delivery: 'alpha-why',
+        context: { kind: 'branch', branch: 'feat/11-alpha-why' },
+        issues: [11],
+      }),
+    });
+    const outcome = await runIssue({ titles: ['99', 'fix: beta why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    expect(t.harness.createdIssues.length).toBe(0);
+  });
+
+  it('continues a partial resume with numeric reuse arguments', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      record: issuesOnly({
+        delivery: 'alpha-why',
+        context: { kind: 'branch', branch: 'feat/11-alpha-why' },
+        issues: [11],
+      }),
+    });
+    const outcome = await runIssue({ titles: ['11', '99'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.length).toBe(0);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11, 99]);
+  });
+});
+
+describe('specgit issue: complete-record argument drift (P1 regression)', () => {
+  // A live complete record — every bound issue recorded AND the PR bound —
+  // is a finished bootstrap. Extra arguments are drift: usage exit 2 with
+  // zero side effects (no probes, no creates, byte-identical record).
+  function completeRecordCtx() {
+    const record = sampleBinding({
+      delivery: 'strict-delivery-harness',
+      context: { kind: 'branch', branch: 'feat/11-strict-delivery-harness' },
+      issues: [11, 12],
+      pr: 42,
+    });
+    const t = issueCtx({
+      facts: { branch: 'feat/11-strict-delivery-harness' },
+      record,
+      gh: {
+        getPr: () =>
+          ok({
+            number: 42,
+            state: 'open' as const,
+            headBranch: 'feat/11-strict-delivery-harness',
+            headSha: 'a'.repeat(40),
+            baseBranch: 'main',
+            body: 'Closes #11\nCloses #12\n',
+            mergeCommitSha: null,
+            draft: false,
+          }),
+      },
+    });
+    return { t, record };
+  }
+
+  /** Creation-path probe and create calls — must stay empty on drift. */
+  function creationPathCalls(calls: string[]): string[] {
+    return calls.filter(
+      (c) =>
+        c === 'getOpenIssues' ||
+        c.startsWith('getIssue:') ||
+        c.startsWith('createIssue') ||
+        c.startsWith('listOpenPrsByHead') ||
+        c.startsWith('createDraftPr')
+    );
+  }
+
+  async function expectZeroSideEffects(
+    t: ReturnType<typeof issueCtx>,
+    record: DeliveryBinding
+  ): Promise<void> {
+    expect(creationPathCalls(t.gh.calls)).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+    expect(t.recordPort.recordWrites).toEqual([]);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.gitPort.checkoutCalls).toEqual([]);
+    expect(t.gitPort.commitCalls).toEqual([]);
+    expect(t.gitPort.pushCalls).toEqual([]);
+    // Byte-identical .specgit.yaml: nothing was rewritten, and reading the
+    // record back yields the identical binding.
+    const reread = await t.recordPort.readRecord('/repo');
+    expect(reread.ok && JSON.stringify(reread.value)).toBe(JSON.stringify(record));
+  }
+
+  it('refuses a numeric-extra argument on a live complete record with zero side effects', async () => {
+    const { t, record } = completeRecordCtx();
+    const outcome = await runIssue({ titles: ['11', '12', '99'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    await expectZeroSideEffects(t, record);
+  });
+
+  it('refuses a title-extra argument on a live complete record with zero side effects', async () => {
+    const { t, record } = completeRecordCtx();
+    const outcome = await runIssue(
+      { titles: ['feat: alpha why', 'fix: beta why', 'chore: gamma why'] },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_resume_drift');
+    await expectZeroSideEffects(t, record);
+  });
+
+  it('keeps the exact-count numeric resume of a complete record a healing no-op', async () => {
+    const { t } = completeRecordCtx();
+    const outcome = await runIssue({ titles: ['11', '12'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(creationPathCalls(t.gh.calls)).toEqual([]);
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+  });
+
+  it('still continues a partial record (no PR bound) with extra arguments', async () => {
+    // Legitimate partial records keep healing: the gate is record.pr ===
+    // undefined, so a crash between issue creation and PR opening resumes.
+    const t = issueCtx({
+      facts: { branch: 'feat/11-alpha-why' },
+      record: issuesOnly({
+        delivery: 'alpha-why',
+        context: { kind: 'branch', branch: 'feat/11-alpha-why' },
+        issues: [11],
+      }),
+      gh: {
+        getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'feat: alpha why' }),
+        createIssue: (_repo, title, body) => {
+          t.harness.createdIssues.push({ title, body });
+          return {
+            ok: true as const,
+            value: { number: 12, url: 'https://github.com/LeXwDeX/SpecGit/issues/12' },
+          };
+        },
+      },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha why', 'fix: beta why'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues.map((i) => i.title)).toEqual(['fix: beta why']);
+    const written = t.recordPort.recordWrites.at(-1)?.record;
+    expect(written?.issues).toEqual([11, 12]);
+    expect(written?.pr).toBe(42);
+  });
+});
+
+describe('createOrAdoptIssues explicit null guard (#216)', () => {
+  it('fails closed with a usage diagnostic instead of casting a null record', async () => {
+    // Unreachable through runIssue (absent arguments are refused before
+    // the loop, and a resume always carries a live record) — but the
+    // function itself must prove it, not assert it. A null record with
+    // nothing consumed returns an error diagnostic, never a cast.
+    const t = makeCtx();
+    const repoEv = parseRepoRef('https://github.com/LeXwDeX/SpecGit.git');
+    if (!repoEv.ok) {
+      throw new Error('test setup: the GitHub origin must parse');
+    }
+    const outcome = await createOrAdoptIssues({
+      ctx: t.ctx,
+      root: '/repo',
+      repo: repoEv.value,
+      language: 'en',
+      context: { kind: 'branch', branch: 'feat/1-guard' },
+      record: null,
+      plan: { delivery: 'guard', entries: [] },
+      firstTitle: null,
+    });
+    expect('exit' in outcome).toBe(true);
+    if ('exit' in outcome) {
+      expect(outcome.exit).toBe(EXIT_USAGE);
+      expect(outcome.errors?.[0]?.code).toBe('issue_args_required');
+    }
+  });
+});
+
+describe('specgit issue: delivery tags (#330)', () => {
+  it('infers kind::<type> from the first title, seeds it once into the empty pool, and applies to every bound issue', async () => {
+    const t = issueCtx({ facts: { branch: 'main' } });
+    const outcome = await runIssue(
+      { titles: ['fix: infer the kind tag'] },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    // Pool probe → seed (kind::fix, empty pool) → one apply per bound issue.
+    expect(t.gh.calls.filter((c) => c === 'listRepoLabels:LeXwDeX/SpecGit')).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => /^ensureRepoLabels/.test(c))).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => /^ensureRepoLabels.*kind::fix/.test(c))).toHaveLength(1);
+    expect(t.gh.calls.filter((c) => /^addIssueLabels:11:kind::fix$/.test(c))).toHaveLength(1);
+    // The stderr hint stream stays clean; nothing degraded.
+    expect(t.io.stderr.join('\n')).not.toContain('Warning');
+  });
+
+  it('renders the Tags summary line in text mode when tags were part of the run', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      gh: {
+        listRepoLabels: () =>
+          ok({ names: ['kind::feat'] }),
+      },
+    });
+    const outcome = await runIssue(
+      { titles: ['feat: tagged bootstrap'], json: false },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(0);
+    // kind::feat comes from the pool verbatim: no seed call at all.
+    expect(t.gh.calls.some((c) => c.startsWith('ensureRepoLabels'))).toBe(false);
+    // Human lines render through the outcome (the wrap layer prints them).
+    expect(outcome.human?.join('\n')).toContain('Tags: kind::feat');
+  });
+
+  it('refuses an unknown --tags slug with exit 2 before any issue is created', async () => {
+    const t = issueCtx({
+      facts: { branch: 'main' },
+      gh: { listRepoLabels: () => ok({ names: ['bug'] }) },
+    });
+    const outcome = await runIssue(
+      { titles: ['feat: never lands'], tags: 'module::ghost' },
+      t.ctx
+    );
+    expect(outcome.exit).toBe(EXIT_USAGE);
+    expect(outcome.errors?.[0]?.code).toBe('issue_tags_unknown');
+    expect(t.harness.createdIssues).toEqual([]);
+    expect(t.harness.createdPrs).toEqual([]);
+  });
+});
+
+describe('specgit issue: harness currency gate (#339)', () => {
+  it('uses project templates and supplied bodies while preserving closing references and the configured target', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-template-bodies-'));
+    try {
+      const issuePath = path.join(root, 'issue.md');
+      const prPath = path.join(root, 'pr.md');
+      fs.writeFileSync(issuePath, 'A real login regression.');
+      fs.writeFileSync(prPath, 'Reproduced the failure and verified the repair.');
+      const t = issueCtx();
+      t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+        automation: { merge: true, target_branch: 'dev', close_issues: true },
+        templates: {
+          issue: { title: 'fix: {{summary}}', body: '## Why\n{{body}}', required_sections: ['Why'] },
+          pr: { body: '## Evidence\n{{body}}', required_sections: ['Evidence'] },
+        },
+      });
+      const result = await runIssue({ titles: ['feat: correct login'], bodyFile: [issuePath], prBodyFile: prPath }, t.ctx);
+      expect(result.exit).toBe(0);
+      expect(t.harness.createdIssues).toEqual([{ title: 'fix: correct login', body: '## Why\nA real login regression.' }]);
+      expect(t.harness.createdPrs[0]).toMatchObject({ base: 'dev', body: 'Closes #11\n\n## Evidence\nReproduced the failure and verified the repair.' });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('renders the resolved delivery name in a selected issue body before validation', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { body: '## Why\nRepair delivery {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['fix: restore login'], delivery: 'login-repair' }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues[0].body).toBe('## Why\nRepair delivery login-repair.');
+  });
+
+  it('infers the fresh delivery from the raw title before rendering its title template', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { title: 'feat: {{delivery}}', body: '## Why\nDeliver {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['feat: add login'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues).toEqual([{ title: 'feat: add-login', body: '## Why\nDeliver add-login.' }]);
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('add-login');
+    expect(t.harness.createdPrs[0].head).toBe('feat/11-add-login');
+  });
+
+  it('never uses a completed record delivery in a new issue title template', async () => {
+    const t = mergedRecordCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [],
+      templates: { issue: { title: 'fix: {{delivery}}', body: '## Why\nRepair {{delivery}}.', required_sections: ['Why'] } },
+    });
+    const result = await runIssue({ titles: ['fix: restore billing'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues).toEqual([{ title: 'fix: restore-billing', body: '## Why\nRepair restore-billing.' }]);
+    expect(t.recordPort.recordWrites.at(-1)?.record.delivery).toBe('restore-billing');
+    expect(t.harness.createdPrs[0].head).toBe('fix/11-restore-billing');
+  });
+
+  it('resumes an active request under approved rules while candidate content rules are changing', async () => {
+    const record = sampleBinding({ pr: 42 });
+    const t = issueCtx({ record, gh: { getPr: () => ok({
+      number: 42, state: 'open', headBranch: record.context.branch, headSha: 'a'.repeat(40),
+      baseBranch: 'main', body: record.issues.map((n) => `Closes #${n}`).join('\n'), draft: true, mergeCommitSha: null,
+    }) } });
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [], validation: { bodies: true } });
+    t.ctx.resolvePolicy = vi.fn(async () => ok({ policy: { version: 1 as const, required_checks: [] }, source: 'approved' as const, branch: 'main', sha: 'b'.repeat(40) }));
+    const result = await runIssue({}, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.ctx.resolvePolicy).toHaveBeenCalled();
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+
+  it('rejects an incomplete configured issue body before creating any remote work', async () => {
+    const t = issueCtx();
+    t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [], validation: { bodies: true } });
+    const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+    expect(result.exit).toBe(2);
+    expect(result.errors?.[0]?.code).toBe('body_content_incomplete');
+    expect(t.harness.createdIssues).toHaveLength(0);
+    expect(t.harness.createdPrs).toHaveLength(0);
+  });
+
+  it.each([null, '{broken', '{"managed_by":"someone-else","paths":["AGENTS.md"]}'])
+  ('rejects a conflicting remote acceptance workflow despite retirement manifest %s', async (manifest) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-remote-gate-'));
+    try {
+      fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.github/workflows/specgit-accept.yml'), 'Unrecognized workflow content');
+      if (manifest !== null) {
+        fs.mkdirSync(path.join(root, 'spec_git'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'spec_git/generated-verification.json'), manifest);
+      }
+      const t = issueCtx();
+      t.ctx.discoverRoot = async () => ok(root);
+      const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+      expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(result.exit).toBe(2);
+      expect(t.harness.createdIssues).toHaveLength(0);
+      expect(t.harness.createdPrs).toHaveLength(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('refuses a conflicting GitLab acceptance adapter before creating remote work', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-gitlab-adapter-gate-'));
+    try {
+      fs.mkdirSync(path.join(root, '.gitlab'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'spec_git'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'spec_git/providers.yaml'), 'gitlab:\n  host: gitlab.example.com\n');
+      fs.writeFileSync(path.join(root, '.gitlab/specgit-accept.mjs'), '// unrelated user script\n');
+      const t = issueCtx({ facts: { originUrl: 'https://gitlab.example.com/group/project.git' } });
+      t.ctx.parseRepoRef = (url) => parseRepoRef(url, { gitlabHost: 'gitlab.example.com' });
+      t.ctx.discoverRoot = async () => ok(root);
+      const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+      expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['stale', 'conflict', 'missing'] as const)
+  ('refuses a %s declared reuse workflow before creating remote work', async (state) => {
+    const { writeHarnessAssets } = await import('../../src/cli/harness-placement.js');
+    const { externalAcceptanceWorkflowYaml } = await import('../../src/cli/external-harness.js');
+    const { ReuseProfileSchema } = await import('../../src/verification/reuse-profile.js');
+    const profile = ReuseProfileSchema.parse({ id: 'linux', check: 'Test (linux)', max_age_seconds: 3600,
+      node: '20.19.0', pnpm: '9.15.9', runtime: { package: 'specgit@1.15.1', lockfile: 'ci/runtime-lock.json' },
+      commands: [['pnpm', 'test']], fresh_commands: [],
+      github: { runner: 'ubuntu-24.04', entry: '.github/workflows/reuse-linux.yml' },
+    });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-reuse-gate-'));
+    try {
+      const t = issueCtx();
+      t.ctx.discoverRoot = async () => ok(root);
+      t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [profile.check],
+        verification: { product_checks: [profile.check], reuse: [profile], rules: [] },
+      });
+      await writeHarnessAssets(root, {
+        workflowYaml: externalAcceptanceWorkflowYaml({ version: t.ctx.version, defaultBranch: 'main' }),
+        reuseProfiles: [profile],
+      });
+      const file = path.join(root, profile.github!.entry);
+      if (state === 'missing') fs.unlinkSync(file);
+      else if (state === 'stale') fs.appendFileSync(file, '# old generation\n');
+      else fs.writeFileSync(file, 'test: {script: manual}\n');
+      const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+      expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(result.warnings?.some((warning) => warning.code === 'local_assets_stale')).not.toBe(true);
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  /** A real directory whose managed block predates the current CLI. */
+  const staleRoot = (): string => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));
+    fs.writeFileSync(
+      path.join(root, 'AGENTS.md'),
+      '# Repo\n\n<!-- specgit:block:start -->\nstale guidance from an older CLI\n<!-- specgit:block:end -->\n'
+    );
+    return root;
+  };
+
+  it('allows delivery with an advisory when only local guidance is stale', async () => {
+    const root = staleRoot();
+    try {
+      const t = issueCtx();
+      t.ctx.discoverRoot = vi.fn(async () => ok(root));
+      const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
+      expect(outcome.exit).toBe(0);
+      expect(outcome.warnings?.[0]?.code).toBe('local_assets_stale');
+      expect(t.harness.createdIssues).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows a valid resume despite stale local guidance', async () => {
+    const root = staleRoot();
+    try {
+      const t = issueCtx({
+        record: sampleBinding({
+          context: { kind: 'branch', branch: 'feat/9-gate' },
+          issues: [9],
+        }),
+        gh: { getPr: () => ok({ number: 42, state: 'open', headBranch: 'feat/9-gate', headSha: 'a'.repeat(40), baseBranch: 'main', body: 'Closes #9', draft: true, mergeCommitSha: null }) },
+      });
+      t.ctx.discoverRoot = vi.fn(async () => ok(root));
+      const outcome = await runIssue({}, t.ctx);
+      expect(outcome.exit).toBe(0);
+      expect(outcome.warnings?.[0]?.code).toBe('local_assets_stale');
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('proceeds when the harness is absent (fresh adopt)', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));
+    try {
+      const t = issueCtx();
+      t.ctx.discoverRoot = vi.fn(async () => ok(root));
+      const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
+      expect(outcome.exit).toBe(0);
+      expect(t.harness.createdIssues).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('proceeds silently when the harness is uninspectable (virtual root)', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['feat: gate test'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.harness.createdIssues).toHaveLength(1);
+  });
+});
+
+describe('specgit issue: closing-loop gate (#347)', () => {
+  it('refuses a no-args resume of a merged delivery whose bound issue is still open', async () => {
+    const t = mergedRecordCtx({
+      reconcile: { openIssues: [{ number: 12, title: 'docs: half done', body: '## Why' }] },
+    });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issues_not_closed');
+    expect(outcome.errors?.[0]?.message).toContain('#12');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+
+  it('refuses a replacement re-bootstrap while a bound issue is still open', async () => {
+    const t = mergedRecordCtx({
+      reconcile: { openIssues: [{ number: 12, title: 'docs: half done' }] },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new why'] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issues_not_closed');
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+
+  it('a merged delivery with every issue closed keeps its existing lifecycle', async () => {
+    const t = mergedRecordCtx({ gh: { getOpenIssues: () => ok([]) } });
+    const outcome = await runIssue({ titles: [] }, t.ctx);
+    expect(outcome.exit).toBe(2);
+    expect(outcome.errors?.[0]?.code).toBe('issue_delivery_merged');
+  });
+
+  it('fails closed when open-issue evidence cannot be gathered', async () => {
+    const t = mergedRecordCtx({
+      reconcile: { openIssuesFail: { code: 'gh_transport', message: 'down' } },
+    });
+    const outcome = await runIssue({ titles: ['feat: brand new why'] }, t.ctx);
+    expect(outcome.exit).toBe(3);
+    expect(t.recordPort.deletes).toEqual([]);
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+});
+
+describe('specgit issue: per-issue kind tags (#338)', () => {
+  it('labels each created issue with its own title kind', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['feat: alpha bits', 'docs: beta pages'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    expect(t.gh.calls).toContain('addIssueLabels:11:kind::feat');
+    expect(t.gh.calls).toContain('addIssueLabels:12:kind::docs');
+    // Seeding covers the union of every issue's own kind.
+    expect(t.gh.calls.some((c) => c.startsWith('ensureRepoLabels:kind::feat|kind::docs'))).toBe(
+      true
+    );
+    // The record carries each issue's own kind so resumes re-tag faithfully.
+    const lastWrite = t.recordPort.recordWrites.at(-1);
+    expect(lastWrite?.record.issueKinds).toEqual([
+      { issue: 11, kind: 'kind::feat' },
+      { issue: 12, kind: 'kind::docs' },
+    ]);
+  });
+
+  it('a reused numeric issue inherits no kind from another title', async () => {
+    const t = issueCtx();
+    const outcome = await runIssue({ titles: ['21', 'chore: gamma tools'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    // The created issue (fake provider numbers from 11) carries its own kind.
+    expect(t.gh.calls).toContain('addIssueLabels:11:kind::chore');
+    expect(t.gh.calls.some((c) => c.startsWith('addIssueLabels:21:'))).toBe(false);
+  });
+
+  it('a pre-#338 record without issueKinds never inherits a kind on continuation', async () => {
+    const t = issueCtx({
+      record: issuesOnly({ issues: [30] }),
+      gh: { getIssue: (_repo, number) => ok({ number, state: 'open', pullRequest: false, title: 'feat: alpha bits' }) },
+    });
+    const outcome = await runIssue({ titles: ['feat: alpha bits', 'docs: beta pages'] }, t.ctx);
+    expect(outcome.exit).toBe(0);
+    // The newly created issue carries its own kind; the consumed issue
+    // without a recorded kind is left untouched — never an inheritance.
+    expect(t.gh.calls).toContain('addIssueLabels:11:kind::docs');
+    expect(t.gh.calls.some((c) => c.startsWith('addIssueLabels:30:'))).toBe(false);
+  });
+});
+
+describe('issue history and active claims', () => {
+  it('links matching closed history and reports similar open work without a similarity veto', async () => {
+    const t = issueCtx();
+    t.ctx.gh.searchIssueHistory = vi.fn(async () => ok([
+      { number: 6, state: 'closed' as const, title: 'fix: restore login', body: 'Earlier regression.', url: 'https://github.com/LeXwDeX/SpecGit/issues/6' },
+      { number: 7, state: 'open' as const, title: 'feat: add login provider', body: 'A different WHY.', url: 'https://github.com/LeXwDeX/SpecGit/issues/7' },
+    ]));
+    const result = await runIssue({ titles: ['fix: restore login'] }, t.ctx);
+    expect(result.exit).toBe(0);
+    expect(t.harness.createdIssues[0].body).toContain('Related closed history: #6');
+    expect(result.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'issue_history_candidates' })]));
+  });
+  it('rejects a numeric issue claimed by a different open request before recording or branching', async () => {
+    const t = issueCtx();
+    t.ctx.gh.listIssuePullRequests = vi.fn(async () => ok([{
+      number: 90, state: 'open' as const, headBranch: 'other-work', headSha: 'a'.repeat(40),
+      baseBranch: 'main', body: 'Closes #15', draft: true, mergeCommitSha: null,
+    }]));
+    const result = await runIssue({ titles: ['15'], delivery: 'restore-login' }, t.ctx);
+    expect(result.exit).toBe(2);
+    expect(result.errors?.[0]?.code).toBe('issue_already_claimed');
+    expect(t.harness.createdPrs).toHaveLength(0);
+    expect(t.ctx.record.writeRecord).not.toHaveBeenCalled();
+  });
+  it('does not create a new issue when history evidence is unavailable', async () => {
+    const t = issueCtx();
+    t.ctx.gh.searchIssueHistory = vi.fn(async () => fail<never>('issue_history_unavailable', 'Search is unavailable.'));
+    const result = await runIssue({ titles: ['fix: restore login'] }, t.ctx);
+    expect(result.exit).toBe(3);
+    expect(t.harness.createdIssues).toHaveLength(0);
+  });
+});

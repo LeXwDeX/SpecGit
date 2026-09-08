@@ -1,0 +1,612 @@
+import { execFile } from 'node:child_process';
+import { lstat, realpath } from 'node:fs/promises';
+import * as path from 'node:path';
+import { promisify } from 'node:util';
+
+import { fail, ok, type Evidence } from '../kernel/evidence.js';
+import type { BranchCheckout, GitChangeSet, GitFacts, GitPort, SpawnFn } from './port.js';
+
+export type { SpawnFn, SpawnOptions } from './port.js';
+
+const execFileAsync = promisify(execFile);
+
+const GIT_PROBE_TIMEOUT_MS = 10_000;
+const GIT_PROBE_MAX_BUFFER = 1024 * 1024;
+const GIT_WRITE_TIMEOUT_MS = 60_000;
+const GIT_WRITE_MAX_BUFFER = 4 * 1024 * 1024;
+const MAX_EMBEDDED_TEXT = 400;
+
+/** A full git object id: 40 hex chars (sha1) or 64 (sha256), lowercase. */
+const HEX_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+const defaultSpawn: SpawnFn = async (command, args, options) => {
+  const { stdout, stderr } = await execFileAsync(command, args, {
+    timeout: options.timeoutMs,
+    maxBuffer: options.maxBuffer,
+    env: options.env,
+    cwd: options.cwd,
+    encoding: 'utf-8',
+  });
+  return { stdout, stderr };
+};
+
+function isSpawnNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
+/** Git stderr can carry ANSI or hostile bytes; embedded text is stripped and capped. */
+function sanitizeGitText(text: string): string {
+  const stripped = text
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\u001b./g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+  const flat = stripped.replace(/\s+/g, ' ').trim();
+  return flat.length > MAX_EMBEDDED_TEXT ? `${flat.slice(0, MAX_EMBEDDED_TEXT)}…` : flat;
+}
+
+/** Resolve absent leaf directories without treating a dangling symlink as an absent directory. */
+async function physicalHooksPath(target: string): Promise<string> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const entry = await lstat(target).catch((statError: unknown) => {
+      if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw statError;
+    });
+    const parent = path.dirname(target);
+    if (entry !== null || parent === target) throw error;
+    return path.join(await physicalHooksPath(parent), path.basename(target));
+  }
+}
+
+function withinDirectory(target: string, directory: string): boolean {
+  const relative = path.relative(directory, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+export interface LocalGitAdapterOptions {
+  env?: NodeJS.ProcessEnv;
+  spawnImpl?: SpawnFn;
+}
+
+/**
+ * Local git facts and delivery-scoped writes. Fact probes are read-only
+ * and null-on-failure; explicit write methods handle branch, commit and
+ * push operations through git.
+ */
+export class LocalGitAdapter implements GitPort {
+  private readonly env: NodeJS.ProcessEnv | undefined;
+  private readonly spawn: SpawnFn;
+
+  constructor(options: LocalGitAdapterOptions = {}) {
+    this.env = options.env;
+    this.spawn = options.spawnImpl ?? defaultSpawn;
+  }
+
+  async changesBetween(root: string, baseSha: string, headSha: string): Promise<Evidence<GitChangeSet>> {
+    const unavailable = () => fail<GitChangeSet>('verification_changes_unavailable',
+      'A complete immutable change set with one merge base could not be proven.',
+      'Fetch complete target and request-head history, then retry. Missing or ambiguous evidence cannot grant a verification exemption.');
+    if (!HEX_OBJECT_ID.test(baseSha) || !HEX_OBJECT_ID.test(headSha)) return unavailable();
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER,
+      env: { ...(this.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } };
+    try {
+      for (const sha of [baseSha, headSha]) await this.spawn('git', ['-C', root, 'cat-file', '-e', `${sha}^{commit}`], options);
+      const shallow = await this.spawn('git', ['-C', root, 'rev-parse', '--is-shallow-repository'], options);
+      if (shallow.stdout.trim() !== 'false') return unavailable();
+      const bases = await this.spawn('git', ['-C', root, 'merge-base', '--all', baseSha, headSha], options);
+      const mergeBaseSha = bases.stdout.trim();
+      if (!HEX_OBJECT_ID.test(mergeBaseSha)) return unavailable();
+      const diff = await this.spawn('git', ['-C', root, 'diff', '--raw', '--no-abbrev', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-z', mergeBaseSha, headSha, '--'], options);
+      const fields = diff.stdout === '' ? [] : diff.stdout.split('\0');
+      if (fields.length && fields.pop() !== '') return unavailable();
+      if (fields.length % 2 !== 0) return unavailable();
+      const changes: GitChangeSet['changes'] = [];
+      const paths = new Set<string>();
+      for (let index = 0; index < fields.length; index += 2) {
+        const header = /^:([0-7]{6}) ([0-7]{6}) ([a-f0-9]{40}|[a-f0-9]{64}) ([a-f0-9]{40}|[a-f0-9]{64}) ([AMDT])$/.exec(fields[index]);
+        const path = fields[index + 1];
+        if (!header || !path || /[\\\p{Cc}\p{Cf}\uFFFD]/u.test(path) ||
+            path.split('/').some((part) => !part || part === '.' || part === '..') || paths.has(path)) return unavailable();
+        const status = header[5];
+        if (status !== 'A' && status !== 'M' && status !== 'D' && status !== 'T') return unavailable();
+        changes.push({ path, status, oldMode: header[1], newMode: header[2] });
+        paths.add(path);
+      }
+      return ok({ baseSha, mergeBaseSha, headSha, changes });
+    } catch { return unavailable(); }
+  }
+
+  async readFileAtRemoteRef(root: string, branch: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+    if (!branch || branch.startsWith('-') || branch.startsWith('refs/') || /[\s~^:?*\[\\]/.test(branch) ||
+        branch.includes('..') || branch.includes('@{') || branch.split('/').some((part) => !part || part.startsWith('.')) ||
+        !relativePath || relativePath.startsWith('/') || relativePath.includes('\\') ||
+        relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
+      return fail('policy_ref_invalid', 'A branch name and repository-relative policy path are required.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      const ref = `refs/heads/${branch}`;
+      const remote = await this.spawn('git', ['-C', root, 'ls-remote', '--exit-code', 'origin', ref], options);
+      const rows = remote.stdout.trim().split(/\r?\n/);
+      const [sha, returnedRef] = (rows[0] ?? '').split(/\s+/);
+      if (rows.length !== 1 || !HEX_OBJECT_ID.test(sha ?? '') || returnedRef !== ref) {
+        return fail('policy_ref_unavailable', 'Origin did not identify exactly one approved policy revision.');
+      }
+      const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
+      if (tree.stdout === '') return ok({ sha, content: null });
+      if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {
+        return fail('policy_ref_invalid', 'The approved policy must be a regular committed file.');
+      }
+      const file = await this.spawn('git', ['-C', root, 'show', `${sha}:${relativePath}`], options);
+      return ok({ sha, content: file.stdout });
+    } catch {
+      return fail('policy_ref_unavailable', 'The approved target-branch policy is unavailable locally.',
+        'Fetch origin and retry. An adoption must put its policy on the target branch before it can authorize a delivery.');
+    }
+  }
+
+  async readFileAtCommit(root: string, sha: string, relativePath: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+    if (!HEX_OBJECT_ID.test(sha) || !relativePath || relativePath.startsWith('/') || relativePath.includes('\\') ||
+      relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
+      return fail('git_file_invalid', 'An immutable commit and repository-relative file path are required.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      await this.spawn('git', ['-C', root, 'cat-file', '-e', `${sha}^{commit}`], options);
+      const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
+      if (tree.stdout === '') return ok({ sha, content: null });
+      if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {
+        return fail('git_file_invalid', 'Evidence must be a regular committed file.');
+      }
+      const file = await this.spawn('git', ['-C', root, 'show', `${sha}:${relativePath}`], options);
+      return ok({ sha, content: file.stdout });
+    } catch {
+      return fail('git_file_unavailable', 'The immutable evidence file could not be read.',
+        'Fetch the request head and target history from origin, then retry.');
+    }
+  }
+
+  async readFileHistory(root: string, sha: string, relativePath: string): Promise<Evidence<Array<{ sha: string; content: string | null }>>> {
+    if (!HEX_OBJECT_ID.test(sha) || !/^spec_git\/scopes\/[a-z0-9]+(?:-[a-z0-9]+)*\.yaml$/.test(relativePath)) {
+      return fail('scope_history_unavailable', 'Scope history requires an immutable commit and a scope declaration path.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      const shallow = await this.spawn('git', ['-C', root, 'rev-parse', '--is-shallow-repository'], options);
+      if (shallow.stdout.trim() !== 'false') return fail('scope_history_unavailable', 'Shallow history cannot prove that required work was preserved.', 'Fetch complete origin history, then retry.');
+      const log = await this.spawn('git', ['-C', root, 'rev-list', '--first-parent', '--full-history', '--max-count=1001', sha, '--', relativePath], options);
+      const commits = log.stdout.trim() === '' ? [] : log.stdout.trim().split(/\r?\n/);
+      if (commits.length > 1000 || commits.some((commit) => !HEX_OBJECT_ID.test(commit))) {
+        return fail('scope_history_unavailable', 'Scope history exceeded the supported bound or contained invalid commit identities.');
+      }
+      const revisions: Array<{ sha: string; content: string | null }> = [];
+      for (const commit of commits.reverse()) {
+        const file = await this.readFileAtCommit(root, commit, relativePath);
+        if (!file.ok) return file;
+        revisions.push(file.value);
+      }
+      const current = await this.readFileAtCommit(root, sha, relativePath);
+      if (!current.ok) return current;
+      if (revisions.at(-1)?.sha !== sha) revisions.push(current.value);
+      return ok(revisions);
+    } catch {
+      return fail('scope_history_unavailable', 'The complete approved scope history could not be read.', 'Fetch complete origin history, then retry.');
+    }
+  }
+
+  async readFileBeforeMerge(root: string, mergeSha: string, headSha: string, relativePath: string, targetHistorySha?: string): Promise<Evidence<{ sha: string; content: string | null }>> {
+    if (!HEX_OBJECT_ID.test(mergeSha) || !HEX_OBJECT_ID.test(headSha) || relativePath !== 'spec_git/policy.yaml') {
+      return fail('policy_history_unavailable', 'Historical authorization requires full merge/head identities and the policy path.');
+    }
+    const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env };
+    try {
+      const result = await this.spawn('git', ['-C', root, 'rev-list', '--parents', '-n', '1', mergeSha], options);
+      const parents = result.stdout.trim().split(/\s+/);
+      let sha: string;
+      if (parents.length === 3 && parents[0] === mergeSha && parents[2] === headSha && HEX_OBJECT_ID.test(parents[1])) {
+        sha = parents[1];
+      } else {
+        if (!targetHistorySha || !HEX_OBJECT_ID.test(targetHistorySha) || targetHistorySha === mergeSha || targetHistorySha === headSha) {
+          return fail('policy_history_unavailable', 'The merge has no proven original target parent or provider-backed target history.',
+            'Refresh the merged request and fetch its target history; never enable automation in a new policy to bypass this check.');
+        }
+        await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', targetHistorySha, mergeSha], options);
+        // A diff version can predate the merge. Inspect all intervening policy
+        // history, including changes later reverted; equal final blobs alone
+        // cannot prove that target authorization stayed unchanged.
+        const changed = await this.spawn('git', ['-C', root, 'rev-list', '--full-history', '-1', `${targetHistorySha}..${mergeSha}`, '--', relativePath], options);
+        if (changed.stdout.trim() !== '') {
+          return fail('policy_history_unavailable', 'Policy changed after the provider-backed target revision, so original merge authorization is ambiguous.',
+            'Inspect the target policy history and complete the issues manually if original authorization cannot be proven.');
+        }
+        sha = targetHistorySha;
+      }
+      const tree = await this.spawn('git', ['-C', root, 'ls-tree', '-z', sha, '--', relativePath], options);
+      if (tree.stdout === '') return ok({ sha, content: null });
+      if (!/^100(?:644|755) blob [a-f0-9]+\t/.test(tree.stdout) || tree.stdout.split('\0').filter(Boolean).length !== 1) {
+        return fail('policy_history_unavailable', 'The original approved policy is not a regular file.');
+      }
+      const file = await this.spawn('git', ['-C', root, 'show', `${sha}:${relativePath}`], options);
+      return ok({ sha, content: file.stdout });
+    } catch {
+      return fail('policy_history_unavailable', 'The original approved merge policy could not be read.', 'Fetch the merge and its parents, then retry completion.');
+    }
+  }
+
+  async facts(root: string): Promise<GitFacts> {
+    let gitAvailable = true;
+
+    const probe = async (args: string[]): Promise<string | null> => {
+      try {
+        const { stdout } = await this.spawn('git', ['-C', root, ...args], {
+          timeoutMs: GIT_PROBE_TIMEOUT_MS,
+          maxBuffer: GIT_PROBE_MAX_BUFFER,
+          env: this.env,
+        });
+        return stdout;
+      } catch (error) {
+        if (isSpawnNotFoundError(error)) {
+          gitAvailable = false;
+        }
+        return null;
+      }
+    };
+
+    const empty: GitFacts = {
+      repo: false,
+      toplevel: null,
+      branch: null,
+      headSha: null,
+      dirty: null,
+      isLinkedWorktree: null,
+      worktreeLabel: null,
+      worktrees: [],
+      originUrl: null,
+      upstreamDrift: null,
+      gitAvailable,
+    };
+
+    const toplevel = (await probe(['rev-parse', '--show-toplevel']))?.replace(/\r?\n$/, '');
+    if (!toplevel) {
+      return { ...empty, gitAvailable };
+    }
+
+    const branch = (await probe(['symbolic-ref', '--quiet', '--short', 'HEAD']))?.trim() || null;
+    const headSha = (await probe(['rev-parse', 'HEAD']))?.trim() || null;
+
+    const status = await probe(['status', '--porcelain']);
+    const dirty = status === null ? null : status.trim().length > 0;
+
+    const absoluteGitDir = (await probe(['rev-parse', '--absolute-git-dir']))?.replace(/\r?\n$/, '') || null;
+    const commonDir = (await probe(['rev-parse', '--git-common-dir']))?.replace(/\r?\n$/, '') || null;
+    let isLinkedWorktree: boolean | null = null;
+    if (absoluteGitDir && commonDir) {
+      const resolvedCommon = path.isAbsolute(commonDir)
+        ? path.resolve(commonDir)
+        : path.resolve(toplevel, commonDir);
+      isLinkedWorktree = path.resolve(absoluteGitDir) !== resolvedCommon;
+    }
+    const worktreeLabel = isLinkedWorktree ? path.basename(toplevel) : null;
+
+    const worktrees = await this.listWorktrees(probe);
+
+    // Raw config value, not `git remote get-url`: url.<x>.insteadOf
+    // rewrites apply to the latter, which would mask the GitHub origin
+    // this harness binds to.
+    const originUrl = (await probe(['config', '--get', 'remote.origin.url']))?.trim() || null;
+
+    const upstreamDrift = await this.trackingDrift(probe);
+
+    return {
+      repo: true,
+      toplevel,
+      branch,
+      headSha,
+      dirty,
+      isLinkedWorktree,
+      worktreeLabel,
+      worktrees,
+      originUrl,
+      upstreamDrift,
+      gitAvailable,
+    };
+  }
+
+  async checkoutOrCreateBranch(root: string, branch: string): Promise<Evidence<BranchCheckout>> {
+    const create = await this.write('checkout', ['-C', root, 'checkout', '-b', branch]);
+    if (create.ok) {
+      return ok({ branch, created: true });
+    }
+    if (/already exists/i.test(create.message)) {
+      const checkout = await this.write('checkout', ['-C', root, 'checkout', branch]);
+      if (checkout.ok) {
+        return ok({ branch, created: false });
+      }
+      return checkout;
+    }
+    return create;
+  }
+
+  async commitFile(
+    root: string,
+    relativePaths: string[],
+    message: string
+  ): Promise<Evidence<{ committed: boolean }>> {
+    // #292: -f stages past the tool-installed local-asset ignore — the
+    // binding commit is the authoritative files' intended entry into git.
+    const add = await this.write('commit', ['-C', root, 'add', '-f', '--', ...relativePaths]);
+    if (!add.ok) {
+      return add;
+    }
+    // Locale-independent emptiness probe: `git diff --cached --quiet`
+    // exits 1 exactly when a path has staged changes. (git's own
+    // "nothing to commit" text is localized and must not be parsed.)
+    const hasStagedChanges = await this.spawn(
+      'git',
+      ['-C', root, 'diff', '--cached', '--quiet', '--', ...relativePaths],
+      { timeoutMs: GIT_WRITE_TIMEOUT_MS, maxBuffer: GIT_PROBE_MAX_BUFFER, env: this.env }
+    ).then(
+      () => false,
+      () => true
+    );
+    if (!hasStagedChanges) {
+      return ok({ committed: false });
+    }
+    const commit = await this.write('commit', [
+      '-C',
+      root,
+      'commit',
+      '-m',
+      message,
+      '--',
+      ...relativePaths,
+    ]);
+    if (commit.ok) {
+      return ok({ committed: true });
+    }
+    return commit;
+  }
+
+  async pushBranch(root: string, branch: string): Promise<Evidence<{ pushed: boolean }>> {
+    const push = await this.write('push', ['-C', root, 'push', '-u', 'origin', branch]);
+    return push.ok ? ok({ pushed: true }) : push;
+  }
+
+  async remoteDefaultBranch(root: string, _options: { requireEvidence?: boolean } = {}): Promise<Evidence<string>> {
+    const resolved = await this.write('branch', [
+      '-C',
+      root,
+      'symbolic-ref',
+      '--quiet',
+      'refs/remotes/origin/HEAD',
+    ]);
+    if (resolved.ok) {
+      const ref = resolved.value.trim();
+      const prefix = 'refs/remotes/origin/';
+      const name = ref.slice(prefix.length);
+      if (ref.startsWith(prefix) && name && name !== 'HEAD') {
+        const commit = await this.write('branch', ['-C', root, 'rev-parse', '--verify', `${ref}^{commit}`]);
+        if (commit.ok) return ok(name);
+      }
+    }
+    return fail(
+      'git_default_branch_unknown',
+      'The local origin/HEAD does not prove a remote default branch.',
+      'Run git fetch origin and git remote set-head origin -a, then retry. An explicit PR/MR target cannot replace default-branch evidence for init.'
+    );
+  }
+
+  /** #298: which of `paths` the index tracks (`git ls-files --`). */
+  async trackedFiles(root: string, paths: string[]): Promise<Evidence<string[]>> {
+    if (paths.length === 0) {
+      return ok([]);
+    }
+    try {
+      const { stdout } = await this.spawn('git', ['-C', root, 'ls-files', '--', ...paths], {
+        timeoutMs: GIT_PROBE_TIMEOUT_MS,
+        maxBuffer: GIT_PROBE_MAX_BUFFER,
+        env: this.env,
+      });
+      const listed = new Set(
+        stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      );
+      // `git ls-files` echoes paths in its own normalized form; match the
+      // caller's spelling against the listing (both repo-relative POSIX).
+      return ok(paths.filter((p) => listed.has(p)));
+    } catch (error) {
+      if (isSpawnNotFoundError(error)) {
+        return fail(
+          'git_unavailable',
+          'The git executable could not be found on PATH.',
+          'Install git and ensure it is on PATH.'
+        );
+      }
+      const detail = error instanceof Error ? sanitizeGitText(error.message) : '';
+      return fail(
+        'tracked_probe_failed',
+        `git ls-files failed: ${detail || 'unknown error'}`,
+        'Re-run once git answers in this repository (specgit doctor probes it).'
+      );
+    }
+  }
+
+  async headContains(root: string, sha: string): Promise<Evidence<{ contained: boolean }>> {    // The anchor is provider-derived text; only a full hex object id may
+    // reach git. Anything else — empty, padded, ref-like, abbreviated —
+    // would either ride git's opaque exit-128 path or be resolved as a
+    // ref instead of rejected as an object id (#76), so it is classified
+    // here without invoking git at all.
+    if (!HEX_OBJECT_ID.test(sha)) {
+      const shown = sanitizeGitText(sha);
+      return fail(
+        'merged_lineage_unavailable',
+        `The merged-delivery anchor '${shown}' is not a hex object id (40 or 64 hex chars); local git was not invoked.`,
+        'The merge anchor arrived malformed from the provider evidence; a ref-like or empty anchor is never resolved by local git. Re-run once the pull request reports a valid merge commit sha.'
+      );
+    }
+    return this.probeAncestry(root, sha, 'HEAD');
+  }
+
+  async isAncestor(root: string, ancestorSha: string, descendantSha: string): Promise<Evidence<{ contained: boolean }>> {
+    if (!HEX_OBJECT_ID.test(ancestorSha) || !HEX_OBJECT_ID.test(descendantSha)) {
+      return fail('merged_lineage_unavailable', 'Source ancestry requires two full hex commit IDs; local git was not invoked.');
+    }
+    return this.probeAncestry(root, ancestorSha, descendantSha);
+  }
+
+  private async probeAncestry(root: string, sha: string, descendant: string): Promise<Evidence<{ contained: boolean }>> {
+    try {
+      await this.spawn('git', ['-C', root, 'merge-base', '--is-ancestor', sha, descendant], {
+        timeoutMs: GIT_PROBE_TIMEOUT_MS,
+        maxBuffer: GIT_PROBE_MAX_BUFFER,
+        env: this.env,
+      });
+      return ok({ contained: true });
+    } catch (error) {
+      if (isSpawnNotFoundError(error)) {
+        return fail(
+          'git_unavailable',
+          'The git executable could not be found on PATH.',
+          'Install git and ensure it is on PATH.'
+        );
+      }
+      const err = error as { code?: unknown; killed?: boolean };
+      // Exit 1 is git's decisive answer: both commits are locally known
+      // and the first is not an ancestor of HEAD.
+      if (!err.killed && err.code === 1) {
+        return ok({ contained: false });
+      }
+      // Any other failure — unknown object (exit 128), timeout, repo
+      // problems — leaves the lineage question unanswered: fail closed.
+      const detail = error instanceof Error ? sanitizeGitText(error.message) : '';
+      return fail(
+        'merged_lineage_unavailable',
+        `Local git could not verify whether ${descendant} contains ${sanitizeGitText(sha)}` +
+          (detail ? `: ${detail}` : '.'),
+        'Fetch the remote (git fetch), including the retained PR/MR head and merged target, then re-run.'
+      );
+    }
+  }
+
+  async hooksPath(root: string): Promise<Evidence<string>> {
+    // Relative results resolve against the worktree root. Shared worktree
+    // hooks are permitted only inside this repository's common gitdir;
+    // a global core.hooksPath must never alter another repository's guard.
+    const resolved = await this.write('hooks', ['-C', root, 'rev-parse', '--git-path', 'hooks']);
+    if (!resolved.ok) {
+      return resolved;
+    }
+    const raw = resolved.value.replace(/\r?\n$/, '');
+    if (!raw) {
+      return fail('git_hooks_failed', 'git rev-parse --git-path hooks returned an empty path.');
+    }
+    const target = path.normalize(path.isAbsolute(raw) ? raw : path.resolve(root, raw));
+    const common = await this.write('hooks', ['-C', root, 'rev-parse', '--git-common-dir']);
+    if (!common.ok || common.value.replace(/\r?\n$/, '') === '') {
+      return fail('git_hooks_unverified', 'The repository ownership of its hooks directory could not be verified; git hook installation was skipped.');
+    }
+    try {
+      const commonPath = path.resolve(root, common.value.replace(/\r?\n$/, ''));
+      const [physicalTarget, physicalRoot, physicalCommon] = await Promise.all([
+        physicalHooksPath(target), realpath(root), realpath(commonPath),
+      ]);
+      if (!withinDirectory(physicalTarget, physicalRoot) && !withinDirectory(physicalTarget, physicalCommon)) {
+        return fail('git_hooks_external', 'The configured hooks directory is outside this repository and its common gitdir; git hook installation was skipped.',
+          'Keep the shared hooks unchanged, or explicitly configure a repository-owned core.hooksPath.');
+      }
+      return ok(target);
+    } catch {
+      return fail('git_hooks_unverified', 'The physical ownership of the hooks directory could not be verified; git hook installation was skipped.',
+        'Repair inaccessible paths or dangling symlinks before installing a repository-local hook.');
+    }
+  }
+
+  /**
+   * Runs one write-side git invocation and maps failures to Evidence.
+   * `kind` picks the stable diagnostic code (git_checkout_failed, …).
+   */
+  private write(
+    kind: 'checkout' | 'commit' | 'push' | 'branch' | 'hooks',
+    args: string[]
+  ): Promise<Evidence<string>> {
+    return this.spawn('git', args, {
+      timeoutMs: GIT_WRITE_TIMEOUT_MS,
+      maxBuffer: GIT_WRITE_MAX_BUFFER,
+      env: this.env,
+    }).then(
+      (result) => ok(result.stdout),
+      (error: unknown) => {
+        if (isSpawnNotFoundError(error)) {
+          return fail(
+            'git_unavailable',
+            'The git executable could not be found on PATH.',
+            'Install git and ensure it is on PATH.'
+          );
+        }
+        const err = error as { killed?: boolean; stderr?: unknown; message?: unknown };
+        if (err.killed) {
+          return fail(
+            `git_${kind}_failed`,
+            `git ${kind} timed out after ${GIT_WRITE_TIMEOUT_MS} ms.`
+          );
+        }
+        const detail =
+          (typeof err.stderr === 'string' && err.stderr.trim()) ||
+          (error instanceof Error ? error.message : String(error));
+        return fail(`git_${kind}_failed`, `git ${kind} failed: ${sanitizeGitText(detail)}`);
+      }
+    );
+  }
+
+  private async listWorktrees(
+    probe: (args: string[]) => Promise<string | null>
+  ): Promise<Array<{ label: string; branch: string | null }>> {
+    const raw = await probe(['worktree', 'list', '--porcelain', '-z']);
+    if (raw === null) return [];
+
+    const worktrees: Array<{ label: string; branch: string | null }> = [];
+    let currentPath: string | null = null;
+    let currentBranch: string | null = null;
+
+    const flush = () => {
+      if (currentPath !== null) {
+        worktrees.push({ label: path.basename(currentPath), branch: currentBranch });
+      }
+      currentPath = null;
+      currentBranch = null;
+    };
+
+    for (const line of raw.split('\0')) {
+      if (line.startsWith('worktree ')) {
+        flush();
+        currentPath = line.slice('worktree '.length);
+      } else if (line.startsWith('branch ')) {
+        currentBranch = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '');
+      } else if (line.trim() === 'detached') {
+        currentBranch = null;
+      }
+    }
+    flush();
+
+    return worktrees;
+  }
+
+  private async trackingDrift(
+    probe: (args: string[]) => Promise<string | null>
+  ): Promise<{ ahead: number; behind: number } | null> {
+    const raw = await probe(['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
+    if (raw === null) return null;
+    const match = raw.trim().match(/^(\d+)\s+(\d+)$/);
+    if (!match) return null;
+    return { behind: Number(match[1]), ahead: Number(match[2]) };
+  }
+}

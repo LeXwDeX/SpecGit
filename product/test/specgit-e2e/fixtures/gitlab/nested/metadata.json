@@ -1,0 +1,11 @@
+{
+ "version": "19.2.4",
+ "revision": "06e8d813296",
+ "kas": {
+  "enabled": true,
+  "externalUrl": "wss://forge.example.com/-/kubernetes-agent/",
+  "externalK8sProxyUrl": "https://forge.example.<REDACTED_SECRET>/",
+  "version": "19.2.4"
+ },
+ "enterprise": false
+}
