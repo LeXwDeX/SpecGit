@@ -1,5 +1,10 @@
 # Rebaseline dogfood evidence — real GitLab 19.3.0 delivery (#236)
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 The Rebaseline SOP step-3 witness: one real probe delivery on the new target
 version whose `specgit finish` exits 0. Executed 2026-08-22 on
 `forge.example.com` (**19.3.0 CE**, `enterprise: false`, revision

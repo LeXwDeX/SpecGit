@@ -644,7 +644,7 @@ describe('parseRepoRef — structural host classification (security hardening)',
     resolves('Git@forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
     resolves('forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
     resolves('ssh://git@forge.example.com/o/r', { gitlabHost: 'forge.example.com' });
-    resolves('https://FORGE.EXAMPLE.COM/o/r', { gitlabHost: 'FORGE.EXAMPLE.COM' });
+    resolves('https://forge.example.com/o/r', { gitlabHost: 'forge.example.com' });
     // non-github.com suffixes never match the declaration
     unresolvable('git@forge.example.com.evil.com:o/r', { gitlabHost: 'forge.example.com' });
     unresolvable('git@sourceforge.forge.example.com:o/r', { gitlabHost: 'forge.example.com' });

@@ -1,11 +1,16 @@
 # GA-4 dogfood evidence — nested-group GitLab delivery (#117)
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 The GA gate-4 condition (release-gates §3.4): rc dogfood `specgit finish`
 exits `0` on a real nested-group GitLab delivery. Executed 2026-08-21 on
 `forge.example.com` (**19.2.4 CE**, `enterprise: false`, revision `06e8d813296`
 — in the supported window, ledger row 5) as an **isolated disposable
 probe** (prefix `specgit-evidence-probe-`), deleted after archival per the
-isolation discipline — the URLs below were live at archival time; the
+isolation discipline — the original private URLs were live at archival time; the
 committed artifacts in this file are the durable record.
 
 ## The delivery

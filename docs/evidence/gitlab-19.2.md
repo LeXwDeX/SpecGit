@@ -1,5 +1,10 @@
 # GitLab 19.2 evidence ledger
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 Committed evidence ledger for GitLab support ([policy and roadmap](../gitlab-support.md)).
 Every GitLab/glab behavioral claim that SpecGit will rely on is pinned here
 **before** code: review rejects unanchored claims. Bound issues: #93–#100.

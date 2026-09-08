@@ -364,12 +364,12 @@ export function makePushableExternalRepo(
 // GitLab variant (#117): the same adoption shape on a nested-group
 // self-managed origin. The recorded evidence payloads
 // (test/specgit-e2e/fixtures/gitlab/, GitLab 19.2.4 CE on
-// forge.example.com) drive the offline fake-glab rule tables — the e2e
+// an anonymized deployment) drive the offline fake-glab rule tables — the e2e
 // clones those payload SHAPES and pins the local delivery state (shas,
 // branches, iids) onto them, exactly like the #114 contract tests.
 // ---------------------------------------------------------------------------
 
-/** The recorded instance host (public delivery record; ledger row 6). */
+/** Fixed example host for offline fixtures; never a live deployment endpoint. */
 export const GITLAB_HOST = 'forge.example.com';
 /** Synthetic nested-group project path (depth 3 — the #95 reproducer shape). */
 export const GITLAB_GROUP_PATH = 'specgit-evidence/probe';
