@@ -31,8 +31,18 @@ A successful original is reusable only when all of these facts are proved:
   execution. Generated producer files match the approved bytes at that commit.
 - Its original completion time remains inside `max_age_seconds` (60–86400).
   Reusing a result does not restart the clock and never creates a new original.
-- The bounded native inventory is complete. An unprovable or failed newer
-  original cannot be hidden by an older green result.
+- The selected native discovery window is complete. An unprovable or failed
+  original inside it cannot be hidden by an older green result.
+
+GitHub inspects the latest 20 native workflow run identities, in descending run
+ID order, and each run's complete current-attempt job inventory. Creation time
+does not limit discovery: even a run longer than `max_age_seconds` can be reused
+just after it finishes. Completion time alone determines its age. This bounded
+window does not cover all historical runs or retries of older runs outside it;
+without an eligible original in the window, verification executes. The selected
+original's current attempt is checked again, so retrying that run invalidates
+an older attempt reference. Short, unordered, ambiguous or incomplete window
+responses cannot grant reuse.
 
 GitLab runs current delivery acceptance in a separate authenticated job after
 all public verification checks. A draft can fail that acceptance while its

@@ -174,7 +174,7 @@ export async function readReuseCiState(
     if (!selection.ok) return uncached();
     state.applicable = selection.value.requiredChecks.includes(profile.check);
     state.context = ok({ repository: state.repository, profile: { id: profileId, maxAgeSeconds: profile.max_age_seconds }, inputs: inputs.value });
-    state.executions = gitlabExecutions ?? new GitHubReuseExecutions({ repository: project, producer, currentRun: run, since });
+    state.executions = gitlabExecutions ?? new GitHubReuseExecutions({ repository: project, producer, currentRun: run });
     return state;
   } catch { return uncached(); }
 }
