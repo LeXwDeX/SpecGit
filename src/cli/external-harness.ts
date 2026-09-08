@@ -147,7 +147,7 @@ jobs:
 ${waitStepYaml('gh')}
 
       - name: specgit finish
-        run: '"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json'
+        run: 'node "$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/acceptance-checkout.js"'
         env:
           GH_TOKEN: \${{ github.token }}
 `;

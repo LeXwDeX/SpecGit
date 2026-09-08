@@ -809,13 +809,13 @@ jobs:
 
       - name: specgit finish
         if: steps.scope.outputs.build == 'true'
-        run: node bin/specgit.js finish --json
+        run: node dist/automation/acceptance-checkout.js
         env:
           GH_TOKEN: \${{ github.token }}
 
       - name: specgit finish with trusted CLI
         if: steps.scope.outputs.build == 'false'
-        run: '"$RUNNER_TEMP/specgit-cli/node_modules/.bin/specgit" finish --json'
+        run: 'node "$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/acceptance-checkout.js"'
         env:
           GH_TOKEN: \${{ github.token }}
 "
