@@ -1,0 +1,8 @@
+version: 1
+delivery: native-github-completion-ttl
+context:
+  kind: branch
+  branch: codex/473-github-reuse-acceptance-20260908
+issues:
+  - 502
+pr: 501
