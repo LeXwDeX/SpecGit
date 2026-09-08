@@ -398,6 +398,8 @@ export function makeGitPort(facts: GitFacts, writes: GitWriteScript = {}): Recor
       return facts;
     }),
     readFileAtRemoteRef: vi.fn(async () => ({ ok: false as const, code: 'policy_ref_unavailable', message: 'Approved policy not configured in fake.' })),
+    readFileAtCommit: vi.fn(async () => ({ ok: false as const, code: 'git_file_unavailable', message: 'Immutable file not configured in fake.' })),
+    readFileHistory: vi.fn(async () => ({ ok: false as const, code: 'scope_history_unavailable', message: 'Scope history not configured in fake.' })),
     readFileBeforeMerge: vi.fn(async () => ({ ok: false as const, code: 'policy_history_unavailable', message: 'Historical policy not configured in fake.' })),
     checkoutOrCreateBranch: vi.fn(async (_root: string, branch: string): Promise<Evidence<BranchCheckout>> => {
       port.checkoutCalls.push(branch);

@@ -11,6 +11,11 @@ read-only judgement about that delivery. Completion additionally confirms its
 merge into the configured target and closure of its bound and verified derived
 repair issues. Neither result proves that an entire programme is complete.
 
+An [aggregate scope](scopes.md) supplies explicit required membership independently
+of the current binding. Its read-only historical observer reuses required-check,
+CI, convention and repair-resolution rules without invoking checkout gates for
+unrelated deliveries. Scope declarations do not grant merge or closure effects.
+
 The completion core owns approved-policy proof, current-head acceptance, CI
 eligibility, guarded merge, closure and readback. It receives narrow Git, forge,
 binding-read, policy-resolution and evaluation capabilities, and returns domain
@@ -78,7 +83,7 @@ protected metadata branch is introduced.
 
 ## Remaining programme boundaries
 
-Aggregate scope (#491), repository-wide recovery after lost events (#492),
-portable CI selection (#472), verified-input reuse (#473), measured Windows
+Repository-wide recovery after lost events (#492), portable CI selection (#472),
+verified-input reuse (#473), measured Windows
 performance (#474), and Git promotion lineage (#477) remain separate work.
 A repair issue's completion does not close #493 or prove these capabilities.

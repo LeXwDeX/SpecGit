@@ -10,6 +10,7 @@ import {
 } from '../../scripts/ci-metadata-content.js';
 import { parseReleaseNote } from '../../scripts/ci-changesets.mjs';
 import { PolicySchema } from '../../src/record/policy.js';
+import { parseScope } from '../../src/scope/declaration.js';
 import { harnessWorkflowYaml, managedPromptBlock } from '../../src/cli/harness-content.js';
 import { buildAgentSurfaceDesiredState } from '../../src/cli/agent-surface.js';
 
@@ -61,6 +62,15 @@ async function writeGeneratedFixture(fixture: string): Promise<string[]> {
 }
 
 describe('metadata content validation', () => {
+  it('validates every committed aggregate scope with the production schema', () => {
+    const directory = path.join(root, 'spec_git/scopes');
+    if (!existsSync(directory)) return;
+    for (const file of readdirSync(directory)) {
+      if (/^[a-z0-9]+(?:-[a-z0-9]+)*\.yaml$/.test(file)) {
+        expect(parseScope(file.slice(0, -5), read(`spec_git/scopes/${file}`)), file).toMatchObject({ ok: true });
+      }
+    }
+  });
   it('validates every pending note with the real Changesets grammar', () => {
     for (const file of readdirSync(path.join(root, '.changeset'))) {
       if (file.endsWith('.md') && file !== 'README.md') expect(() => parseReleaseNote(read(`.changeset/${file}`), file)).not.toThrow();

@@ -20,8 +20,8 @@ export interface StateAssetTier {
 export const STATE_ASSET_TAXONOMY = {
   authoritativeCommitted: {
     description:
-      'Committed source-of-truth files: the project policy, the platform declarations, and the delivery record.',
-    paths: ['spec_git/policy.yaml', 'spec_git/providers.yaml', '.specgit.yaml'],
+      'Committed source-of-truth files: the project policy, platform declarations, delivery record, and optional aggregate scopes.',
+    paths: ['spec_git/policy.yaml', 'spec_git/providers.yaml', '.specgit.yaml', 'spec_git/scopes/<name>.yaml'],
   },
   derivedCommittedHarness: {
     description:
