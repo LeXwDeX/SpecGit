@@ -35,6 +35,8 @@
  *   where the writer itself would guess.
  */
 
+import { GITLAB_ACCEPTANCE_PATH } from './acceptance-step.js';
+
 import { buildAgentSurfaceDesiredState } from './agent-surface.js';
 import {
   buildHarnessDesiredState,
@@ -211,6 +213,7 @@ export async function inspectGeneratedAssets(args: {
     }
   }
   const harness = await buildHarnessDesiredState(root, {
+    platform: platform === 'gitlab' ? 'gitlab' : 'github',
     resolveHooksDir: async (repoRoot) => {
       const hooksEv = await ctx.git.hooksPath(repoRoot);
       if (!hooksEv.ok && (hooksEv.code === 'git_hooks_external' || hooksEv.code === 'git_hooks_unverified')) {
@@ -233,6 +236,7 @@ export async function inspectGeneratedAssets(args: {
     uninspected.push(warning.code);
   }
   const initSteps = harness.steps.filter((step) =>
+    ((platform === 'gitlab' || platform === 'github') || step.path !== GITLAB_ACCEPTANCE_PATH) &&
     (workflowYaml !== undefined || step.path !== HARNESS_WORKFLOW_PATH) &&
     (completion.ok || (step.path !== COMPLETION_WORKFLOW_PATH && step.path !== GITLAB_COMPLETION_WORKFLOW_PATH)));
 

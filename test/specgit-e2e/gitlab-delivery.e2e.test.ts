@@ -22,7 +22,9 @@
  *     touching a GitHub account. System PATH remains available to git hooks.
  */
 
-import { execFileSync } from 'node:child_process';
+import { parse, stringify } from 'yaml';
+
+import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,7 +158,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
       expect(initEnvelope.platform).toEqual({ mode: 'gitlab', gitlabHost: GITLAB_HOST });
       expect(initEnvelope.policy).toEqual({ version: 1, required_checks: [GITLAB_CHECK], automation: { merge: false, close_issues: false } });
       expect(initEnvelope.detected.sources).toEqual(['.gitlab-ci.yml']);
-      expect(initEnvelope.harness).toEqual({ template: 'gitlab-pending' });
+      expect(initEnvelope.harness).toEqual({ template: 'gitlab-pending', acceptance: '.gitlab/specgit-accept.mjs' });
       expect(
         initEnvelope.warnings.some((w: { code: string }) => w.code === 'gitlab_harness_pending')
       ).toBe(true);
@@ -197,6 +199,15 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
 
       // ---- Phase 3: the human marks the MR ready out of band; finish
       // accepts from GitLab-shaped evidence pinned to the branch tip.
+      // A delivery may be bound in a developer worktree while CI checks out its branch normally.
+      const recordPath = path.join(fixture.dir, '.specgit.yaml');
+      const record = parse(fs.readFileSync(recordPath, 'utf8'));
+      record.context = { ...record.context, kind: 'worktree', label: 'delivery-ci' };
+      fs.writeFileSync(recordPath, stringify(record));
+      // CI receives committed harness assets; local npm and fake-provider files stay outside its inputs.
+      fs.appendFileSync(path.join(fixture.dir, '.gitignore'), '\nnode_modules/\nfake-glab-bin/\nfake-glab-calls.jsonl\nfake-glab-config.json\n.opencode/\n');
+      execFileSync('git', ['add', '-f', '.specgit.yaml', '.gitignore', '.gitlab/specgit-accept.mjs', 'AGENTS.md'], { cwd: fixture.dir });
+      execFileSync('git', ['commit', '-m', 'test: bind worktree delivery'], { cwd: fixture.dir, stdio: 'pipe' });
       const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: fixture.dir,
         encoding: 'utf-8',
@@ -253,8 +264,24 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         SPECGIT_GH: missingGh,
       });
 
-      const finish = runInstalledSpecgit(fixture.dir, ['finish', '--json'], finishEnv);
-      expect(finish.status, finish.stderr).toBe(0);
+      const adapter = path.join(fixture.dir, '.gitlab/specgit-accept.mjs');
+      const eventBranch = 'feat/7-gitlab-delivery-story';
+      execFileSync('git', ['branch', '-m', 'fixture-ci-source'], { cwd: fixture.dir });
+      execFileSync('git', ['checkout', '--detach', headSha], { cwd: fixture.dir, stdio: 'pipe' });
+      const prepare = spawnSync(process.execPath, [adapter, '--prepare-gitlab-event'], {
+        cwd: fixture.dir, encoding: 'utf8', env: { ...finishEnv, CI_COMMIT_SHA: headSha,
+          CI_MERGE_REQUEST_SOURCE_BRANCH_NAME: eventBranch, CI_MERGE_REQUEST_EVENT_TYPE: 'detached' },
+      });
+      expect(prepare.status, prepare.stderr).toBe(0);
+      expect(execFileSync('git', ['status', '--porcelain'], { cwd: fixture.dir, encoding: 'utf8' })).toBe('');
+      const refsBefore = execFileSync('git', ['show-ref'], { cwd: fixture.dir, encoding: 'utf8' });
+      const worktreesBefore = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: fixture.dir, encoding: 'utf8' });
+      const runAcceptance = () => spawnSync(process.execPath, [adapter], {
+        cwd: fixture.dir, encoding: 'utf8', env: { ...finishEnv,
+          SPECGIT_ACCEPT_RUNTIME: path.join(fixture.dir, 'node_modules/specgit') },
+      });
+      const finish = runAcceptance();
+      expect(finish.status, `${finish.stderr}\n${finish.stdout}`).toBe(0);
       const envelope = JSON.parse(finish.stdout);
       expect(envelope.status).toBe('ok');
       expect(envelope.verdict.classification).toBe('accepted');
@@ -298,7 +325,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
           allow_failure: false,
         }]);
         fs.writeFileSync(readyGlab.configPath, JSON.stringify(readyConfig));
-        const retry = runInstalledSpecgit(fixture.dir, ['finish', '--json'], finishEnv);
+        const retry = runAcceptance();
         expect(retry.status, retry.stderr).toBe(1);
         const retryEnvelope = JSON.parse(retry.stdout);
         expect(retryEnvelope.verdict.classification).toBe('rejected');
@@ -307,6 +334,10 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
       }
       jobsRule.stdout = successJobs;
       fs.writeFileSync(readyGlab.configPath, JSON.stringify(readyConfig));
+
+      expect(execFileSync('git', ['show-ref'], { cwd: fixture.dir, encoding: 'utf8' })).toBe(refsBefore);
+      expect(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: fixture.dir, encoding: 'utf8' })).toBe(worktreesBefore);
+      expect(parse(fs.readFileSync(recordPath, 'utf8'))).toEqual(record);
 
       // The verdict came from glab alone: every recorded call in the
       // finish phase is the glab CLI (host-scoped api or its own

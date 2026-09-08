@@ -322,6 +322,7 @@ describe('CLI contract: state/asset taxonomy (#69)', () => {
 
     const derived = STATE_ASSET_TAXONOMY.derivedCommittedHarness.paths as string[];
     expect(derived).toContain('.github/workflows/specgit-accept.yml');
+    expect(derived).toContain('.gitlab/specgit-accept.mjs');
 
     const local = STATE_ASSET_TAXONOMY.localIntegrationAssets.paths as string[];
     expect(local.some((p) => p.startsWith('.agents/skills/'))).toBe(true);

@@ -26,7 +26,7 @@ try {
   runTsc();
   // The provider imports this module; workflow generators embed these same bytes.
   mkdirSync('dist/harness-runtime', { recursive: true });
-  for (const file of ['actions-ownership.mjs', 'actions-ownership.d.mts']) {
+  for (const file of ['actions-ownership.mjs', 'actions-ownership.d.mts', 'acceptance-checkout.mjs', 'acceptance-checkout.d.mts']) {
     copyFileSync(`src/harness-runtime/${file}`, `dist/harness-runtime/${file}`);
   }
   console.log('\n✅ Build completed successfully!');
