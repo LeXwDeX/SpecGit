@@ -32,12 +32,14 @@ function statement(changes: object = {}) {
 }
 
 function fixture(change: { child?: object; job?: object; prepare?: object; bridge?: object; claims?: object;
-  jobTokenOnly?: boolean; parent?: object; content?: string; missing?: string; keys?: unknown; hint?: object } = {}) {
+  jobTokenOnly?: boolean; parent?: object; acceptance?: object; currentRun?: string; currentJob?: object;
+  content?: string; missing?: string; keys?: unknown; hint?: object } = {}) {
   const paths: string[] = [];
   const api = async (endpoint: string): Promise<Evidence<unknown>> => {
     paths.push(endpoint);
     if (change.jobTokenOnly && (/^projects\/[^/]+$/.test(endpoint) || /\/jobs\/[0-9]+$/.test(endpoint))) return fail('unauthorized', 'Endpoint unavailable to job tokens');
     if (change.missing && endpoint.includes(change.missing)) return fail('not_found', 'Missing');
+    if (endpoint === 'job') return ok({ ...prepare, status: 'running', finished_at: null, ...change.currentJob });
     if (endpoint.startsWith('https://')) return ok(change.keys ?? jwks);
     if (endpoint.includes('/repository/files/') && endpoint.includes('/raw?')) return ok(change.content ?? 'approved');
     if (change.jobTokenOnly && endpoint.includes('/repository/files/')) return fail('unauthorized', 'Metadata endpoint unavailable');
@@ -48,7 +50,9 @@ function fixture(change: { child?: object; job?: object; prepare?: object; bridg
     if (endpoint.includes('/jobs/200')) return ok({ ...prepare, ...change.prepare });
     if (endpoint.includes('/pipelines/100/bridges')) return ok([{ id: 300, name: 'SpecGit dispatch / linux', status: 'success', downstream_pipeline: child, ...change.bridge }]);
     if (endpoint.includes('/pipelines/101/jobs')) return ok([{ ...job, ...change.job }]);
-    if (endpoint.includes('/pipelines/100/jobs')) return ok([{ ...prepare, ...change.prepare }]);
+    if (endpoint.includes('/pipelines/100/jobs')) return ok([{ ...prepare, ...change.prepare },
+      ...(change.acceptance ? [{ ...prepare, id: 202, name: 'SpecGit Acceptance', ...change.acceptance }] : []),
+    ]);
     if (endpoint.endsWith('/pipelines/102')) return ok({ ...pipeline, id: 102, status: 'running' });
     if (endpoint.endsWith('/pipelines/101')) return ok({ ...child, ...change.child });
     if (endpoint.endsWith('/pipelines/100')) return ok({ ...pipeline, ...change.parent });
@@ -56,10 +60,31 @@ function fixture(change: { child?: object; job?: object; prepare?: object; bridg
     return ok({ id: 20, path_with_namespace: 'group/project' });
   };
   return { paths, port: new GitLabReuseExecutions({ host: 'gitlab.example.com', project: 'group/project',
-    producer, currentRun: '102', since: '2026-09-07T00:00:00Z', api }) };
+    producer, currentRun: change.currentRun ?? '102', since: '2026-09-07T00:00:00Z', api }) };
 }
 
 describe('GitLab original execution provenance', () => {
+  const observation = { jobId: '200', pipelineId: '100', sourceSha, now: Date.parse('2026-09-08T00:00:20Z') };
+
+  it('proves the running preparation configuration without project metadata access', async () => {
+    const { port, paths } = fixture({ currentRun: '100', jobTokenOnly: true });
+    expect(await port.currentConfiguration({ ...observation, assertion: statement() })).toEqual(ok(entry));
+    expect(paths.some((path) => /^projects\/[^/]+$/.test(path))).toBe(false);
+    expect((await port.currentConfiguration(observation)).ok).toBe(false);
+    expect((await port.currentConfiguration({ ...observation, assertion: statement({ ci_config_sha: 'c'.repeat(40) }) })).ok).toBe(false);
+    expect((await port.currentConfiguration({ ...observation, jobId: '999', assertion: statement() })).ok).toBe(false);
+    expect((await port.currentConfiguration({ ...observation, now: Date.parse('2026-09-08T00:00:01Z'), assertion: statement() })).ok).toBe(false);
+  });
+
+  it('reverifies the native parent configuration from its artifact during child execution', async () => {
+    const change = { currentRun: '100', currentJob: { ...job, status: 'running', finished_at: null } };
+    const input = { ...observation, jobId: '201', pipelineId: '101' };
+    expect(await fixture(change).port.currentConfiguration(input)).toEqual(ok(entry));
+    expect((await fixture({ ...change, bridge: { downstream_pipeline: { ...child, id: 999 } } }).port.currentConfiguration(input)).ok).toBe(false);
+    expect((await fixture({ ...change, missing: '/artifacts/' }).port.currentConfiguration(input)).ok).toBe(false);
+    expect((await fixture({ ...change, claims: { ci_config_ref_uri: 'other/config' } }).port.currentConfiguration(input)).ok).toBe(false);
+  });
+
   it('requires the native child, bridge, parent preparation and signed historical root configuration', async () => {
     const { port, paths } = fixture();
     expect(await port.candidates(repository, 'linux')).toEqual(ok([ref]));
@@ -98,6 +123,23 @@ describe('GitLab original execution provenance', () => {
   it('does not omit a failed original or treat a successful reuse gate as an original', async () => {
     expect(await fixture({ job: { status: 'failed' } }).port.candidates(repository, 'linux')).toEqual(ok([ref]));
     expect(await fixture({ job: { name: 'SpecGit reused / linux' } }).port.candidates(repository, 'linux')).toEqual(ok([]));
+  });
+
+  it('retains a successful business original when only independent current acceptance failed', async () => {
+    const change = { parent: { status: 'failed' }, acceptance: { status: 'failed' } };
+    expect((await fixture(change).port.original(ref)).ok).toBe(true);
+    expect((await fixture({ ...change, job: { status: 'failed' } }).port.original(ref)).ok).toBe(false);
+    expect((await fixture({ ...change, prepare: { status: 'failed' } }).port.original(ref)).ok).toBe(false);
+  });
+
+  it.each([
+    { parent: { status: 'failed' } },
+    { parent: { status: 'failed' }, acceptance: { status: 'canceled' } },
+    { parent: { status: 'running' }, acceptance: { status: 'failed' } },
+    { parent: { status: 'failed' }, acceptance: { status: 'failed', erased_at: '2026-09-08T01:00:00Z' } },
+    { parent: { status: 'failed' }, acceptance: { status: 'failed', finished_at: 'unknown' } },
+  ])('refuses an unproven or nonterminal parent failure: %j', async (change) => {
+    expect((await fixture(change).port.original(ref)).ok).toBe(false);
   });
 
   it('rejects candidates and originals from a different branch than the current native pipeline', async () => {

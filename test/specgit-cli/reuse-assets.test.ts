@@ -7,6 +7,10 @@ import { reconcileManagedAssets } from '../../src/cli/managed-reconcile.js';
 import { ReuseProfileSchema } from '../../src/verification/reuse-profile.js';
 import { githubReuseWorkflow, gitlabReuseWorkflow } from '../../src/verification/reuse-workflow.js';
 import { GITLAB_BUSINESS_WORKFLOW_PATH, gitlabRoutingWorkflowYaml } from '../../src/cli/completion-workflow.js';
+import { completionWorkflowYaml } from '../../src/cli/completion-workflow.js';
+import { buildHarnessDesiredState } from '../../src/cli/harness-placement.js';
+import { acceptanceScript } from '../../src/cli/acceptance-step.js';
+import YAML from 'yaml';
 
 const profile = ReuseProfileSchema.parse({ id: 'linux', check: 'Test (linux)', max_age_seconds: 3600,
   node: '20.19.0', pnpm: '9.15.9', runtime: { package: 'specgit@1.15.1', lockfile: 'ci/runtime-lock.json' },
@@ -38,6 +42,25 @@ describe('derived verification workflow lifecycle', () => {
     await writeFile(path.join(root, '.gitlab-ci.yml'), 'deploy: {script: ship}\n');
     await expect(apply('gitlab')).rejects.toThrow(/owned|conflict|preserv/i);
     expect(await readFile(path.join(root, '.gitlab-ci.yml'), 'utf8')).toBe('deploy: {script: ship}\n');
+  });
+
+  it.each(['off', 'close-only', 'merge'] as const)
+  ('installs independent GitLab acceptance with automation %s', async (mode) => {
+    const input = { platform: 'gitlab' as const, selfHosted: false, defaultBranch: 'main', version: '1.15.1', targetBranch: 'preview' };
+    const completion = mode === 'off' ? null : { platform: 'gitlab' as const, defaultBranch: 'main',
+      yaml: completionWorkflowYaml(input), routingYaml: gitlabRoutingWorkflowYaml(input),
+    };
+    const policy = { automation: { merge: mode === 'merge', close_issues: mode !== 'off', target_branch: 'preview' } };
+    const desired = await buildHarnessDesiredState(root, { platform: 'gitlab', workflowYaml: null,
+      reuseProfiles: [profile], completion: policy.automation.merge || policy.automation.close_issues ? completion : null,
+    });
+    await reconcileManagedAssets(root, { steps: desired.steps });
+    expect(await readFile(path.join(root, '.gitlab/specgit-accept.mjs'), 'utf8')).toBe(acceptanceScript());
+    const entry = mode === 'off' ? '.gitlab-ci.yml' : GITLAB_BUSINESS_WORKFLOW_PATH;
+    const config = YAML.parse(await readFile(path.join(root, entry), 'utf8'));
+    expect(config['SpecGit Acceptance'].needs).toEqual([{ job: profile.check, artifacts: false }]);
+    expect(config['SpecGit Acceptance'].script.at(-1)).toBe('node .gitlab/specgit-accept.mjs');
+    expect(config['SpecGit Acceptance'].allow_failure).toBeUndefined();
   });
 
   it('composes with completion routing and restores its managed business root when disabled', async () => {

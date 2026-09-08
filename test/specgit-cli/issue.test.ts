@@ -1828,6 +1828,38 @@ describe('specgit issue: harness currency gate (#339)', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
+  it.each(['stale', 'conflict', 'missing'] as const)
+  ('refuses a %s declared reuse workflow before creating remote work', async (state) => {
+    const { writeHarnessAssets } = await import('../../src/cli/harness-placement.js');
+    const { externalAcceptanceWorkflowYaml } = await import('../../src/cli/external-harness.js');
+    const { ReuseProfileSchema } = await import('../../src/verification/reuse-profile.js');
+    const profile = ReuseProfileSchema.parse({ id: 'linux', check: 'Test (linux)', max_age_seconds: 3600,
+      node: '20.19.0', pnpm: '9.15.9', runtime: { package: 'specgit@1.15.1', lockfile: 'ci/runtime-lock.json' },
+      commands: [['pnpm', 'test']], fresh_commands: [],
+      github: { runner: 'ubuntu-24.04', entry: '.github/workflows/reuse-linux.yml' },
+    });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-reuse-gate-'));
+    try {
+      const t = issueCtx();
+      t.ctx.discoverRoot = async () => ok(root);
+      t.ctx.record.readPolicy = async () => ok({ version: 1, required_checks: [profile.check],
+        verification: { product_checks: [profile.check], reuse: [profile], rules: [] },
+      });
+      await writeHarnessAssets(root, {
+        workflowYaml: externalAcceptanceWorkflowYaml({ version: t.ctx.version, defaultBranch: 'main' }),
+        reuseProfiles: [profile],
+      });
+      const file = path.join(root, profile.github!.entry);
+      if (state === 'missing') fs.unlinkSync(file);
+      else if (state === 'stale') fs.appendFileSync(file, '# old generation\n');
+      else fs.writeFileSync(file, 'test: {script: manual}\n');
+      const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+      expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(result.warnings?.some((warning) => warning.code === 'local_assets_stale')).not.toBe(true);
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   /** A real directory whose managed block predates the current CLI. */
   const staleRoot = (): string => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));

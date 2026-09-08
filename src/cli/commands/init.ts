@@ -337,7 +337,8 @@ export async function runInit(
     outcome: platformSelection.outcome,
     human: platformSelectionHuman(platformSelection, text),
   };
-  if (gitlabMode && completion.value === null) {
+  if (gitlabMode && completion.value === null &&
+      !(existingPolicy.ok && existingPolicy.value.verification?.reuse?.some((profile) => profile.gitlab))) {
     warnings.push({
       severity: 'warning',
       code: 'gitlab_harness_pending',

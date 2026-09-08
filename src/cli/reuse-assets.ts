@@ -33,13 +33,28 @@ async function readLocal(root: string, relative: string): Promise<string | null>
   return readFile(path.join(root, relative), 'utf8');
 }
 
+/** Only a valid derived manifest can nominate previously generated assets. */
+async function previousPaths(root: string): Promise<string[] | null> {
+  const manifest = await readLocal(root, REUSE_ASSET_MANIFEST);
+  if (manifest !== null && !isOwnedManifest(manifest)) throw new Error('Preserve the conflicting generated-verification manifest before refreshing the harness.');
+  return manifest === null ? null : manifestSchema.parse(JSON.parse(manifest)).paths;
+}
+
+/** Declared and retiring remote harness assets; ordinary project CI is outside this set. */
+export async function reuseRemoteAssetPaths(root: string, profiles: ReuseProfile[]): Promise<Set<string>> {
+  return new Set([REUSE_ASSET_MANIFEST, ...(await previousPaths(root) ?? []),
+    ...profiles.flatMap((profile) => [
+      ...(profile.github ? [profile.github.entry] : []),
+      ...(profile.gitlab ? [profile.gitlab.entry, GITLAB_BUSINESS_WORKFLOW_PATH] : []),
+    ]),
+  ]);
+}
+
 /** Plan workflow generation, completion composition and ownership-proven retirement together. */
 export async function buildReuseAssetSteps(root: string, options: {
   platform: 'github' | 'gitlab'; profiles: ReuseProfile[]; routingYaml: string | null;
 }): Promise<ManagedStep[]> {
-  const manifest = await readLocal(root, REUSE_ASSET_MANIFEST);
-  if (manifest !== null && !isOwnedManifest(manifest)) throw new Error('Preserve the conflicting generated-verification manifest before refreshing the harness.');
-  const previous = manifest === null ? [] : manifestSchema.parse(JSON.parse(manifest)).paths;
+  const previous = await previousPaths(root);
   const desired = new Map<string, string>();
   const gitlab = options.platform === 'gitlab' ? options.profiles.filter((profile) => profile.gitlab) : [];
   for (const profile of options.profiles) {
@@ -60,21 +75,21 @@ export async function buildReuseAssetSteps(root: string, options: {
   }
   let routing: ManagedStep[] = [];
   if (!gitlab.length) {
-    if (options.routingYaml !== null && previous.includes(GITLAB_BUSINESS_WORKFLOW_PATH)) {
+    if (options.routingYaml !== null && previous?.includes(GITLAB_BUSINESS_WORKFLOW_PATH)) {
       throw new Error('Completion still requires business CI. Replace the managed verification business workflow before removing its last profile.');
     }
-    if (!previous.includes('.gitlab-ci.yml')) routing = await buildGitlabRoutingSteps(root, options.routingYaml);
+    if (!previous?.includes('.gitlab-ci.yml')) routing = await buildGitlabRoutingSteps(root, options.routingYaml);
   }
   const owned = (content: string) => isOwnedReuseWorkflow(content) || isSpecGitOwnedGitlabRouting(content);
   const steps: ManagedStep[] = [...routing];
   for (const [file, content] of desired) steps.push({ kind: 'write', path: file, mode: 0o644, isOwned: owned, merge: () => content });
   const retained = new Set([...desired.keys(), ...routing.map((step) => step.path)]);
-  for (const file of new Set(previous)) {
+  for (const file of new Set(previous ?? [])) {
     if (!retained.has(file) && file !== REUSE_ASSET_MANIFEST) steps.push({ kind: 'remove', path: file, isOwned: owned });
   }
   if (desired.size) {
     const content = JSON.stringify({ managed_by: 'specgit-verification', version: 1, paths: [...desired.keys()].sort() }, null, 2) + '\n';
     steps.push({ kind: 'write', path: REUSE_ASSET_MANIFEST, mode: 0o644, isOwned: isOwnedManifest, merge: () => content });
-  } else if (manifest !== null) steps.push({ kind: 'remove', path: REUSE_ASSET_MANIFEST, isOwned: isOwnedManifest });
+  } else if (previous !== null) steps.push({ kind: 'remove', path: REUSE_ASSET_MANIFEST, isOwned: isOwnedManifest });
   return steps;
 }

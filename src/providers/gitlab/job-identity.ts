@@ -44,6 +44,15 @@ export interface GitLabConfigurationIdentity {
   issuedAt: number;
 }
 
+/** A running job's native start and observation bound issuance; this is configuration evidence, not auth. */
+export function verifyRunningGitLabJobIdentity(
+  assertion: string, issuerKeys: unknown,
+  expected: Omit<GitLabJobIdentityContext, 'finishedAt'> & { observedAt: string },
+): Evidence<GitLabConfigurationIdentity> {
+  const { observedAt, ...identity } = expected;
+  return verifyHistoricalGitLabJobIdentity(assertion, issuerKeys, { ...identity, finishedAt: observedAt });
+}
+
 /**
  * Verify a historical signed job statement, never current authentication.
  * The caller obtains keys from the approved issuer and job facts through glab;

@@ -29,6 +29,10 @@ export const STATE_ASSET_TAXONOMY = {
     paths: [
       '.github/workflows/specgit-accept.yml',
       '.gitlab/specgit-accept.mjs',
+      'verification.reuse[].github.entry (declared workflow path)',
+      'verification.reuse[].gitlab.entry (declared workflow path)',
+      '.gitlab/specgit-business.yml (with completion routing)',
+      'spec_git/generated-verification.json',
       'AGENTS.md (specgit managed block)',
       'CLAUDE.md (specgit managed block, when present)',
     ],

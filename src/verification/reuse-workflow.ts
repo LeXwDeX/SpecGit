@@ -92,7 +92,7 @@ export function gitlabReuseWorkflow(inputs: ReuseProfile[]): string {
   const root: Record<string, unknown> = {
     workflow: { rules: [{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' },
       { if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS', when: 'never' }, { if: '$CI_COMMIT_BRANCH' }] },
-    stages: ['prepare', 'verify', 'gate'],
+    stages: ['prepare', 'verify', 'gate', 'acceptance'],
     variables: { GIT_DEPTH: '0', CI_DEBUG_TRACE: 'false', GLAB_ENABLE_CI_AUTOLOGIN: 'true' },
   };
   for (const profile of profiles) {
@@ -113,6 +113,22 @@ export function gitlabReuseWorkflow(inputs: ReuseProfile[]): string {
     root[profile.check] = { stage: 'gate', image: profile.gitlab!.image, tags: profile.gitlab!.tags,
       needs: [bridge], cache: [], before_script: [], after_script: [], script: ['exit 0'] };
   }
+  // Current delivery acceptance owns an authenticated checkout, separate from business commands.
+  const acceptance = profiles[0];
+  root['SpecGit Acceptance'] = {
+    stage: 'acceptance', image: acceptance.gitlab!.image, tags: acceptance.gitlab!.tags, timeout: '10m',
+    rules: [{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' },
+      { if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH' }],
+    needs: profiles.map((profile) => ({ job: profile.check, artifacts: false })),
+    cache: [], before_script: [], after_script: [],
+    script: [...gitlabSetup(acceptance),
+      'export SPECGIT_ACCEPT_ROOT="$(mktemp -d)"',
+      'mv .specgit-runtime "$SPECGIT_ACCEPT_ROOT/runtime"',
+      'export SPECGIT_ACCEPT_RUNTIME="$SPECGIT_ACCEPT_ROOT/runtime/node_modules/specgit"',
+      'node .gitlab/specgit-accept.mjs --prepare-gitlab-event',
+      'node .gitlab/specgit-accept.mjs',
+    ],
+  };
   return render(root);
 }
 

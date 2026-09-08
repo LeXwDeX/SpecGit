@@ -51,6 +51,26 @@ describe('fixed native verification reuse integrations', () => {
     expect(child[name].artifacts.paths).toContain('.specgit-reuse/parent.json');
   });
 
+  it('runs one independent authenticated acceptance after every public verification gate', () => {
+    const second = { ...profile, id: 'second', check: 'Test (second)' };
+    const config = YAML.parse(gitlabReuseWorkflow([profile, second]));
+    const acceptance = config['SpecGit Acceptance'];
+    expect(acceptance.stage).toBe('acceptance');
+    expect(acceptance.needs).toEqual([
+      { job: profile.check, artifacts: false }, { job: second.check, artifacts: false },
+    ]);
+    expect(acceptance.allow_failure).toBeUndefined();
+    expect(acceptance.id_tokens).toBeUndefined();
+    expect(acceptance.script.slice(-5)).toEqual([
+      'export SPECGIT_ACCEPT_ROOT="$(mktemp -d)"',
+      'mv .specgit-runtime "$SPECGIT_ACCEPT_ROOT/runtime"',
+      'export SPECGIT_ACCEPT_RUNTIME="$SPECGIT_ACCEPT_ROOT/runtime/node_modules/specgit"',
+      'node .gitlab/specgit-accept.mjs --prepare-gitlab-event',
+      'node .gitlab/specgit-accept.mjs',
+    ]);
+    expect(acceptance.script.join('\n')).not.toContain('verification-ci.js execute');
+  });
+
   it('never labels a reuse-only child as a native original', () => {
     const child = YAML.parse(gitlabReuseChild(profile, { parentPipeline: '100', jobName: 'SpecGit reused / linux', mode: 'reuse' }));
     expect(child['SpecGit reused / linux'].script.join('\n')).toContain(' reuse linux');

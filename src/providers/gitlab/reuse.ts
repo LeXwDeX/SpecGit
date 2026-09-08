@@ -3,7 +3,7 @@ import { fail, ok, type Evidence } from '../../kernel/evidence.js';
 import type { OriginalExecution, ReuseExecutionPort, ReuseExecutionRef } from '../../verification/reuse-decision.js';
 import { parseOriginalJobName, verifyReuseProducer, type ApprovedReuseProducer } from '../../verification/reuse-producer.js';
 import { reuseApi, type ReuseApi } from '../reuse-api.js';
-import { verifyHistoricalGitLabJobIdentity } from './job-identity.js';
+import { verifyHistoricalGitLabJobIdentity, verifyRunningGitLabJobIdentity } from './job-identity.js';
 
 const id = z.number().int().positive().safe();
 const idText = z.string().regex(/^[1-9][0-9]*$/).max(30);
@@ -31,6 +31,56 @@ export class GitLabReuseExecutions implements ReuseExecutionPort {
     this.api = options.api ?? reuseApi('gitlab', options.host);
     this.prefix = `projects/${encodeURIComponent(options.project)}`;
     this.identity = `${options.host}/${options.project}`;
+  }
+
+  /** Signed executing configuration replaces no authority; it proves the native CI entry directly. */
+  async currentConfiguration(input: {
+    jobId: string; pipelineId: string; sourceSha: string; assertion?: string; now: number;
+  }): Promise<Evidence<string>> {
+    try {
+      const current = await this.currentPipeline();
+      const native = await this.api('job');
+      if (!current.ok || !native.ok) return unavailable();
+      const parsed = jobSchema.safeParse(native.value);
+      if (!parsed.success) return unavailable();
+      const job = parsed.data;
+      const parent = current.value;
+      if (String(job.id) !== input.jobId || String(job.pipeline.id) !== input.pipelineId || job.status !== 'running' ||
+          job.pipeline.project_id !== parent.project_id || job.pipeline.sha !== input.sourceSha || job.commit.id !== input.sourceSha ||
+          parent.sha !== input.sourceSha || !['push', 'merge_request_event', 'web'].includes(parent.source)) return unavailable();
+      let preparation = job;
+      let assertion = input.assertion;
+      const running = String(job.pipeline.id) === this.options.currentRun;
+      if (!running) {
+        const bridges = await this.bridges(parent.id);
+        const preparations = await this.jobs(parent.id);
+        if (!bridges.ok || !preparations.ok) return unavailable();
+        const matching = bridges.value.filter((bridge) => bridge.name === `SpecGit dispatch / ${this.options.producer.profile}` &&
+          bridge.downstream_pipeline?.id === job.pipeline.id && bridge.downstream_pipeline.project_id === parent.project_id &&
+          bridge.downstream_pipeline.sha === input.sourceSha);
+        const prepared = preparations.value.filter((item) => item.name === `SpecGit prepare / ${this.options.producer.profile}`);
+        if (matching.length !== 1 || prepared.length !== 1 || !this.successful(prepared[0])) return unavailable();
+        preparation = prepared[0];
+        const proof = await this.api(`${this.prefix}/jobs/${preparation.id}/artifacts/.specgit-reuse/identity.json`);
+        if (!proof.ok) return unavailable();
+        const stored = z.object({ assertion: z.string().max(65536) }).strict().safeParse(proof.value);
+        if (!stored.success) return unavailable();
+        assertion = stored.data.assertion;
+      }
+      if (!assertion || preparation.name !== `SpecGit prepare / ${this.options.producer.profile}` ||
+          preparation.pipeline.id !== parent.id || preparation.pipeline.project_id !== parent.project_id ||
+          preparation.pipeline.sha !== input.sourceSha || preparation.commit.id !== input.sourceSha || preparation.started_at === null) return unavailable();
+      const keys = await this.api(`https://${this.options.host}/oauth/discovery/keys`);
+      if (!keys.ok) return unavailable();
+      const expected = { issuer: `https://${this.options.host}`, projectId: String(parent.project_id), projectPath: this.options.project,
+        pipelineId: String(parent.id), jobId: String(preparation.id), sourceSha: input.sourceSha, pipelineSource: parent.source,
+        configPath: this.options.producer.entry, refPath: `refs/heads/${preparation.ref}`,
+        createdAt: preparation.created_at, startedAt: preparation.started_at };
+      const identity = running
+        ? verifyRunningGitLabJobIdentity(assertion, keys.value, { ...expected, observedAt: new Date(input.now).toISOString() })
+        : verifyHistoricalGitLabJobIdentity(assertion, keys.value, { ...expected, finishedAt: preparation.finished_at! });
+      return identity.ok ? ok(identity.value.configPath) : identity;
+    } catch { return unavailable(); }
   }
 
   async candidates(repository: string, profile: string): Promise<Evidence<ReuseExecutionRef[]>> {
@@ -96,7 +146,16 @@ export class GitLabReuseExecutions implements ReuseExecutionPort {
       const prep = preparationJobs.value.find((item) => String(item.id) === hint.data.prepareJob);
       if (!prep || preparationJobs.value.filter((item) => item.name === prep.name).length !== 1) return unavailable();
       const p = parent.value;
-      if (p.project_id !== projectId || p.ref !== current.value.ref || p.sha !== c.sha || p.status !== 'success' ||
+      // A draft can fail current acceptance after successful business verification.
+      // Only that exact independent failure may coexist with reusable original evidence.
+      const acceptanceOnlyFailure = p.status === 'failed' &&
+        preparationJobs.value.filter((item) => item.name === 'SpecGit Acceptance').length === 1 &&
+        preparationJobs.value.every((item) => item.name === 'SpecGit Acceptance'
+          ? item.status === 'failed' && item.started_at !== null && item.finished_at !== null && item.erased_at === null &&
+            Number.isFinite(Date.parse(item.started_at)) && Number.isFinite(Date.parse(item.finished_at))
+          : this.successful(item));
+      if (p.project_id !== projectId || p.ref !== current.value.ref || p.sha !== c.sha ||
+          (p.status !== 'success' && !acceptanceOnlyFailure) ||
           !['push', 'merge_request_event', 'web'].includes(p.source) ||
           prep.pipeline.id !== p.id || prep.pipeline.project_id !== projectId || prep.pipeline.sha !== c.sha ||
           prep.commit.id !== c.sha || prep.name !== `SpecGit prepare / ${named.profile}` || !this.successful(prep)) return unavailable();

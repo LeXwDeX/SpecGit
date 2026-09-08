@@ -34,6 +34,12 @@ A successful original is reusable only when all of these facts are proved:
 - The bounded native inventory is complete. An unprovable or failed newer
   original cannot be hidden by an older green result.
 
+GitLab runs current delivery acceptance in a separate authenticated job after
+all public verification checks. A draft can fail that acceptance while its
+business verification succeeds. Only a proved independent acceptance failure
+may coexist with reusable original evidence; a failed original, preparation,
+bridge or another business check still prevents reuse.
+
 At selection, unknown, missing, erased, changed or expired original evidence
 causes actual verification to execute. A changed input or invalid plan discovered
 after preparation rejects that attempt and requires a fresh run. A failed current command remains a failure. This is evidence-based
@@ -72,6 +78,17 @@ GitLab provenance links the original child job to its native parent bridge and
 signed preparation identity. The parent assertion remains a native artifact;
 the child's downloaded copy is removed before business commands run. No custom
 signing service or user token distribution is required.
+The same signed native configuration proves the current pipeline's entry; a
+mutable project-settings response is not substituted for that execution proof.
+
+The generated `SpecGit Acceptance` job invokes `.gitlab/specgit-accept.mjs`
+with the first GitLab profile's pinned runtime and bootstrap tools. It runs with
+the project's authenticated glab session, outside the isolated business runner,
+whether completion automation is off, close-only or merge-enabled. Its runtime
+is moved outside the checkout before the ordinary dirty/context gates run.
+No preparation artifacts are downloaded into this job. Read-only job-token
+capability sufficient for reuse is not a substitute for the forge capabilities
+required by `finish`; unavailable acceptance evidence still exits 3.
 
 Run `specgit init --force --no-protect` to regenerate the declared workflows,
 then inspect `specgit status --json` and review the diff before committing.

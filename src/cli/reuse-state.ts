@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
 import { createDefaultContext } from './wiring.js';
+import { acceptanceScript, GITLAB_ACCEPTANCE_PATH } from './acceptance-step.js';
 import { reuseApi } from '../providers/reuse-api.js';
 import { GitHubReuseExecutions } from '../providers/github/reuse.js';
 import { GitLabReuseExecutions } from '../providers/gitlab/reuse.js';
@@ -105,6 +106,7 @@ export async function readReuseCiState(
     const entry = platform === 'github' ? approved.github?.entry : approved.gitlab?.entry;
     if (!entry) return uncached();
     const files: Array<{ path: string; content: string }> = [];
+    if (platform === 'gitlab') files.push({ path: GITLAB_ACCEPTANCE_PATH, content: acceptanceScript() });
     let expected = platform === 'github' ? githubReuseWorkflow(approved)
       : gitlabReuseWorkflow(resolution.value.policy.verification!.reuse!);
     if (platform === 'gitlab' && (resolution.value.policy.automation?.merge || resolution.value.policy.automation?.close_issues)) {
@@ -154,15 +156,25 @@ export async function readReuseCiState(
       baseSha: resolution.value.sha, policySha: resolution.value.sha,
       recipeDigest: currentProducer.value.recipeDigest, environmentDigest: environment.value.digest });
     if (!inputs.ok) return uncached();
+    const since = new Date(now - profile.max_age_seconds * 1000).toISOString();
+    const gitlabExecutions = platform === 'gitlab'
+      ? new GitLabReuseExecutions({ host, project, producer, currentRun: run, since }) : undefined;
+    let entryEvidence: Evidence<string> | undefined;
+    if (gitlabExecutions) {
+      stage = 'ci_configuration';
+      entryEvidence = await gitlabExecutions.currentConfiguration({ jobId: env.CI_JOB_ID ?? '',
+        pipelineId: env.CI_PIPELINE_ID ?? '', sourceSha: facts.headSha, assertion: env.SPECGIT_REUSE_IDENTITY, now });
+      if (!entryEvidence.ok) return uncached();
+    }
     stage = 'selection';
     const selection = await resolveVerification({ root, policy: resolution.value.policy, policySha: resolution.value.sha,
-      request: request.value, repo: repo.value, forge: ctx.gh, git: ctx.git });
+      request: request.value, repo: repo.value,
+      // Native signed configuration is evidence of the executing entry, not a guessed project setting.
+      forge: entryEvidence ? { getCiConfigPath: async () => entryEvidence! } : ctx.gh, git: ctx.git });
     if (!selection.ok) return uncached();
     state.applicable = selection.value.requiredChecks.includes(profile.check);
     state.context = ok({ repository: state.repository, profile: { id: profileId, maxAgeSeconds: profile.max_age_seconds }, inputs: inputs.value });
-    const since = new Date(now - profile.max_age_seconds * 1000).toISOString();
-    state.executions = platform === 'github' ? new GitHubReuseExecutions({ repository: project, producer, currentRun: run, since })
-      : new GitLabReuseExecutions({ host, project, producer, currentRun: run, since });
+    state.executions = gitlabExecutions ?? new GitHubReuseExecutions({ repository: project, producer, currentRun: run, since });
     return state;
   } catch { return uncached(); }
 }

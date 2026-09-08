@@ -48,8 +48,8 @@ const GITHUB_PROTECT_FIX = (branch: string) =>
 
 const GITLAB_PROTECT_FIX = (branch: string) =>
   `Run "specgit init --force --protect" to protect ${branch} and require a successful GitLab ` +
-  'pipeline before merge. SpecGit does not create or rename the project-owned .gitlab-ci.yml ' +
-  'acceptance job; keep that job responsible for running .gitlab/specgit-accept.mjs with the pinned CLI runtime (see docs/gitlab-support.md).';
+  'pipeline before merge. Keep the project-owned acceptance job, or the explicitly configured ' +
+  'verified-input acceptance job, responsible for running .gitlab/specgit-accept.mjs with the pinned CLI runtime (see docs/gitlab-support.md).';
 
 function protectFix(platform: RepoRef['platform'], branch: string, detail?: string): string {
   const base = platform === 'github' ? GITHUB_PROTECT_FIX(branch) : GITLAB_PROTECT_FIX(branch);
