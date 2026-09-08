@@ -112,14 +112,8 @@ export interface IssueOutcome extends OutcomeBase {
   nextActions?: NextAction[];
 }
 
-export interface PrAutomation {
-  status: 'pending' | 'blocked' | 'unknown' | 'completed';
-  pr?: number;
-  headSha?: string;
-  targetBranch?: string;
-  merged: boolean;
-  closedIssues: number[];
-}
+export type { CompletionProgress as PrAutomation } from '../completion/types.js';
+import type { CompletionProgress as PrAutomation } from '../completion/types.js';
 
 /** `specgit pr`: repaired binding or configured merge execution. */
 export interface PrOutcome extends OutcomeBase {

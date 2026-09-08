@@ -40,13 +40,12 @@ describe('trusted remote delivery continuation', () => {
     f.ctx.parseRepoRef = () => ok({ ...repo, platform });
     const input = { repo: { ...repo, platform }, pr: 42, headSha: HEAD, record: f.record };
     const waiting = await runRemoteDelivery(input, f.ctx);
-    expect(waiting.exit).toBe(0);
-    expect(waiting.state).toBe('bound');
+    expect(waiting.classification).toBe('idle');
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.forge.closeIssue).not.toHaveBeenCalled();
     f.setPr(makePrFact({ headSha: HEAD, state: 'merged', mergeCommitSha: 'b'.repeat(40), body: 'Closes #123' }));
     const result = await runRemoteDelivery(input, f.ctx);
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.forge.closeIssue).toHaveBeenCalledOnce();
   });
@@ -58,7 +57,7 @@ describe('trusted remote delivery continuation', () => {
     expect(workflowRequestNumber([{ number: 43 }], 42)).toBe(43);
     f.setPr(makePrFact({ headSha: HEAD, state: 'merged', mergeCommitSha: 'b'.repeat(40), body: 'Closes #123' }));
     const result = await runRemoteDelivery({ repo, pr: pr!, headSha: HEAD, record: f.record }, f.ctx);
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.forge.getPr).toHaveBeenCalled();
     expect(f.forge.closeIssue).toHaveBeenCalledOnce();
@@ -73,7 +72,7 @@ describe('trusted remote delivery continuation', () => {
     f.forge.getPrChecks.mockResolvedValueOnce(ok({ headSha: HEAD, checks: [makeCheckRun('All checks passed', { status: 'in_progress', conclusion: null })] }));
     const sleep = vi.fn(async () => undefined);
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(f.forge.mergePr).toHaveBeenCalledTimes(1);
     expect(f.forge.getIssue.mock.calls.length).toBeGreaterThan(2);
@@ -81,7 +80,7 @@ describe('trusted remote delivery continuation', () => {
   it('rejects a stale event before merge, issue closure, or repair issue creation', async () => {
     const f = fixture();
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: 'c'.repeat(40), record: f.record }, f.ctx);
-    expect(result.errors?.[0].code).toBe('automation_head_changed');
+    expect(result.diagnostics?.[0].code).toBe('automation_head_changed');
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.forge.closeIssue).not.toHaveBeenCalled();
     expect(f.forge.calls.some((call) => call.startsWith('createIssue'))).toBe(false);
@@ -102,7 +101,7 @@ describe('trusted remote delivery continuation', () => {
     });
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
     expect(sleep).toHaveBeenCalledOnce();
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(f.forge.createIssue).not.toHaveBeenCalled();
     expect(f.forge.mergePr).toHaveBeenCalledOnce();
     expect(f.forge.closeIssue).toHaveBeenCalledOnce();
@@ -121,7 +120,7 @@ describe('trusted remote delivery continuation', () => {
     });
     const result = await runRemoteDelivery({ repo: { ...repo, platform: 'gitlab' }, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
     expect(sleep).toHaveBeenCalledOnce();
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(f.forge.createIssue).not.toHaveBeenCalled();
   });
   it('retries a stale CI rejection when the next snapshot has already settled successfully', async () => {
@@ -133,7 +132,7 @@ describe('trusted remote delivery continuation', () => {
       .mockResolvedValue(ok({ headSha: HEAD, checks: [makeCheckRun('All checks passed'), makeCheckRun('CodeQL'), makeCheckRun('Workflow CI')] }));
     const sleep = vi.fn(async () => undefined);
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(sleep).toHaveBeenCalledOnce();
     expect(f.forge.createIssue).not.toHaveBeenCalled();
     expect(f.forge.mergePr).toHaveBeenCalledOnce();
@@ -156,13 +155,13 @@ describe('trusted remote delivery continuation', () => {
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
     expect(sleep).toHaveBeenCalledOnce();
     if (conclusion === 'success') {
-      expect(result.state).toBe('completed');
+      expect(result.classification).toBe('completed');
       expect(f.forge.mergePr).toHaveBeenCalledOnce();
       expect(f.forge.createIssue).not.toHaveBeenCalled();
     } else {
-      expect(result.exit).toBe(1);
-      expect(result.automation?.status).toBe('blocked');
-      expect(result.errors).toMatchObject([{ code: 'checks_failed', message: `CI/CD check 'All checks passed' concluded ${conclusion}.` }]);
+      expect(result.classification).toBe('rejected');
+      expect(result.progress?.status).toBe('blocked');
+      expect(result.diagnostics).toMatchObject([{ code: 'checks_failed', message: `CI/CD check 'All checks passed' concluded ${conclusion}.` }]);
       expect(f.forge.createIssue).toHaveBeenCalledOnce();
       expect(f.forge.mergePr).not.toHaveBeenCalled();
       expect(f.forge.closeIssue).not.toHaveBeenCalled();
@@ -179,8 +178,8 @@ describe('trusted remote delivery continuation', () => {
       { now: () => time, sleep, deadlineMs: 10, pollMs: 5 });
     expect(time).toBe(10);
     expect(sleep).toHaveBeenCalledTimes(2);
-    expect(result.exit).toBe(1);
-    expect(result.automation?.status).toBe('pending');
+    expect(result.classification).toBe('rejected');
+    expect(result.progress?.status).toBe('pending');
     expect(f.forge.createIssue).not.toHaveBeenCalled();
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.forge.closeIssue).not.toHaveBeenCalled();
@@ -193,7 +192,7 @@ describe('trusted remote delivery continuation', () => {
     const sleep = vi.fn(async () => { f.setPr(makePrFact({ headSha: 'c'.repeat(40), body: 'Closes #123' })); });
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
     expect(sleep).toHaveBeenCalledOnce();
-    expect(result.errors?.[0].code).toBe('automation_head_changed');
+    expect(result.diagnostics?.[0].code).toBe('automation_head_changed');
     expect(f.forge.createIssue).not.toHaveBeenCalled();
     expect(f.forge.mergePr).not.toHaveBeenCalled();
     expect(f.forge.closeIssue).not.toHaveBeenCalled();
@@ -205,8 +204,8 @@ describe('trusted remote delivery continuation', () => {
       .mockResolvedValue(fail('gh_transport', 'The CI response is unavailable.'));
     const sleep = vi.fn(async () => undefined);
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
-    expect(result.exit).toBe(3);
-    expect(result.errors?.[0].code).toBe('gh_transport');
+    expect(result.classification).toBe('unknown');
+    expect(result.diagnostics?.[0].code).toBe('gh_transport');
     expect(sleep).not.toHaveBeenCalled();
     expect(f.forge.createIssue).not.toHaveBeenCalled();
     expect(f.forge.mergePr).not.toHaveBeenCalled();
@@ -219,8 +218,8 @@ describe('trusted remote delivery continuation', () => {
     f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks }));
     vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://gitlab.com/LeXwDeX/SpecGit/-/issues/200' }));
     const result = await runRemoteDelivery({ repo: { ...repo, platform: 'gitlab' }, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
-    expect(result.exit).toBe(3);
-    expect(result.errors?.[0].code).toBe('automation_pipeline_unavailable');
+    expect(result.classification).toBe('unknown');
+    expect(result.diagnostics?.[0].code).toBe('automation_pipeline_unavailable');
     expect(f.forge.createIssue).not.toHaveBeenCalled();
     expect(f.forge.mergePr).not.toHaveBeenCalled();
   });
@@ -234,9 +233,9 @@ describe('trusted remote delivery continuation', () => {
     vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://github.com/LeXwDeX/SpecGit/issues/200' }));
     const sleep = vi.fn(async () => undefined);
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { sleep });
-    expect(result.exit).toBe(1);
-    expect(result.errors).toMatchObject([{ code: 'closing_refs_incomplete' }]);
-    expect(result.errors).toHaveLength(1);
+    expect(result.classification).toBe('rejected');
+    expect(result.diagnostics).toMatchObject([{ code: 'closing_refs_incomplete' }]);
+    expect(result.diagnostics).toHaveLength(1);
     expect(f.forge.createIssue).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
     expect(f.forge.mergePr).not.toHaveBeenCalled();
@@ -253,8 +252,8 @@ describe('trusted remote delivery continuation', () => {
     let nextIssue = 200;
     vi.mocked(f.forge.createIssue).mockImplementation(async () => ok({ number: nextIssue++, url: 'https://github.com/LeXwDeX/SpecGit/issues/200' }));
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
-    expect(result.exit).toBe(1);
-    expect(result.errors).toMatchObject([
+    expect(result.classification).toBe('rejected');
+    expect(result.diagnostics).toMatchObject([
       { code: 'checks_failed', target: 'github:app:1:Lint' },
       { code: 'checks_failed', target: 'github:app:1:Tests' },
     ]);
@@ -277,7 +276,7 @@ describe('trusted remote delivery continuation', () => {
     f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks }));
     vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://github.com/LeXwDeX/SpecGit/issues/200' }));
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
-    expect(result.exit).toBe(1);
+    expect(result.classification).toBe('rejected');
     expect(f.forge.createIssue).toHaveBeenCalledOnce();
     expect(vi.mocked(f.forge.createIssue).mock.calls[0][2]).toContain(`## Delivery\n${f.record.delivery}\n`);
     expect(f.forge.mergePr).not.toHaveBeenCalled();
@@ -286,14 +285,14 @@ describe('trusted remote delivery continuation', () => {
     const f = fixture();
     f.setPr(makePrFact({ headSha: HEAD, draft: true }));
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
-    expect(result.errors?.[0].code).toBe('pr_draft');
+    expect(result.diagnostics?.[0].code).toBe('pr_draft');
     expect(f.forge.mergePr).not.toHaveBeenCalled();
   });
   it('uses the same executor for the GitLab forge and requires pipeline success', async () => {
     const f = fixture('gitlab');
     f.ctx.parseRepoRef = () => ok({ ...repo, platform: 'gitlab' });
     const result = await runRemoteDelivery({ repo: { ...repo, platform: 'gitlab' }, pr: 42, headSha: HEAD, record: f.record }, f.ctx);
-    expect(result.state).toBe('completed');
+    expect(result.classification).toBe('completed');
     expect(f.forge.mergePr).toHaveBeenCalledTimes(1);
   });
 });
