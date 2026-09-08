@@ -22,6 +22,7 @@ export interface ScopeAssessment {
 export async function assessScope(scope: ScopeDeclaration, deps: HistoricalDependencies): Promise<ScopeAssessment> {
   const bindings = new Map<number, Promise<Evidence<DeliveryBinding | null>>>();
   const deliveries = new Map<number, Promise<HistoricalObservation>>();
+  const requestIdentities = new Map<number, string>();
   const members: MemberAssessment[] = [];
   const parent = await deps.forge.getIssue(deps.repo, scope.parent);
   const parentValid = parent.ok && parent.value.number === scope.parent && !parent.value.pullRequest;
@@ -42,6 +43,13 @@ export async function assessScope(scope: ScopeDeclaration, deps: HistoricalDepen
     if (!candidates.ok) { unavailable(candidates); continue; }
     const matches: Array<{ request: PrFact; binding: DeliveryBinding }> = [];
     for (const request of [...new Map(candidates.value.map((pr) => [pr.number, pr])).values()]) {
+      const identity = JSON.stringify(request);
+      const previous = requestIdentities.get(request.number);
+      if (previous !== undefined && previous !== identity) {
+        result.diagnostics.push({ code: 'scope_request_changed', message: `Request #${request.number} changed between member observations. Retry with fresh evidence.` });
+        continue;
+      }
+      requestIdentities.set(request.number, identity);
       if (request.baseBranch !== member.target || request.state === 'closed') continue;
       let pending = bindings.get(request.number);
       if (!pending) { pending = readHistoricalBinding(request, deps); bindings.set(request.number, pending); }
@@ -61,6 +69,10 @@ export async function assessScope(scope: ScopeDeclaration, deps: HistoricalDepen
     } else {
       const { request, binding } = matches[0];
       if (request.state !== 'merged') result.state = 'open';
+      else if (issue.value.state === 'open') {
+        result.state = 'incomplete';
+        result.diagnostics.push({ code: 'scope_closure_pending', message: `Issue #${member.issue} remains open.` });
+      }
       else {
         let pending = deliveries.get(request.number);
         if (!pending) { pending = observeHistoricalDelivery(request, binding, deps); deliveries.set(request.number, pending); }
