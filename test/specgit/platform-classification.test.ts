@@ -55,7 +55,7 @@ describe('isGitHubOrigin', () => {
 
 describe('isGitLabHeuristic', () => {
   it('is a substring probe on the extracted host — diagnostic only', () => {
-    expect(isGitLabHeuristic(urlShape({ host: 'git.ycgame.com' }))).toBe(false);
+    expect(isGitLabHeuristic(urlShape({ host: 'forge.example.com' }))).toBe(false);
     expect(isGitLabHeuristic(urlShape({ host: 'gitlab.example.com' }))).toBe(true);
     expect(isGitLabHeuristic(scpShape({ host: 'my-gitlab.internal' }))).toBe(true);
     expect(isGitLabHeuristic(scpShape({ host: 'my-gitlab.internal', user: 'someone' }))).toBe(false);

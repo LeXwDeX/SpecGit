@@ -186,7 +186,7 @@
 
 ### Patch Changes
 
-- [#272](https://github.com/LeXwDeX/SpecGit/pull/272) [`24c0c36`](https://github.com/LeXwDeX/SpecGit/commit/24c0c364346759244cb3837fcd57e8f9456c2222) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Document the `gitlab-mirror` remote as the GitLab live-test and release-sync target in AGENTS.md: GitLab live testing and release syncing go through `git@git.ycgame.com:suntao/specgit.git` (glab-authenticated), and a release counts as done only after `main` and every version tag are pushed to it and verified ([#271](https://github.com/LeXwDeX/SpecGit/issues/271)).
+- [#272](https://github.com/LeXwDeX/SpecGit/pull/272) [`24c0c36`](https://github.com/LeXwDeX/SpecGit/commit/24c0c364346759244cb3837fcd57e8f9456c2222) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - Document the `gitlab-mirror` remote as the GitLab live-test and release-sync target in AGENTS.md: GitLab live testing and release syncing go through `git@forge.example.com:example-team/specgit.git` (glab-authenticated), and a release counts as done only after `main` and every version tag are pushed to it and verified ([#271](https://github.com/LeXwDeX/SpecGit/issues/271)).
 
 ## 1.4.1
 
@@ -272,7 +272,7 @@
 - [#239](https://github.com/LeXwDeX/SpecGit/pull/239) [`45cc10b`](https://github.com/LeXwDeX/SpecGit/commit/45cc10b8862673fc382d9e3f0f07b1761fe18147) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ## GitLab 19.3 rebaseline
 
   - Widen the self-managed GitLab support window from `>= 19.2.4 < 19.3.0`
-    to `>= 19.2.4 < 19.4.0` ([#236](https://github.com/LeXwDeX/SpecGit/issues/236)): 19.3 instances such as `git.ycgame.com`
+    to `>= 19.2.4 < 19.4.0` ([#236](https://github.com/LeXwDeX/SpecGit/issues/236)): 19.3 instances such as `forge.example.com`
     (19.3.0 CE, probed live) no longer fail closed with
     `gitlab_version_unsupported` (exit 3) at preflight
   - Evidence chain: release tag anchor `v19.3.0-ee` @ `8f83039b` (tagged
@@ -556,7 +556,7 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
     the `Draft: ` prefix and the deterministic scaffold → finish exit 0,
     all gates green, zero gh reachable).
   - Dogfood evidence (GA gate 4): a real nested-group delivery on
-    git.ycgame.com 19.2.4 CE with `specgit finish` exit 0 — archived in
+    forge.example.com 19.2.4 CE with `specgit finish` exit 0 — archived in
     [docs/release-gates.md](docs/release-gates.md) GA-4 and
     [docs/evidence/gitlab-19.2.md](docs/evidence/gitlab-19.2.md);
     FU-5 (read-only project access token) applied as the CI-side glab
@@ -1117,7 +1117,7 @@ passed | 1 skipped (798)` across `43` files, matrix-layer files
 
 - [#42](https://github.com/LeXwDeX/SpecGit/pull/42) [`6bb6033`](https://github.com/LeXwDeX/SpecGit/commit/6bb6033c44b6abf225e2c087744f37faec151ed2) Thanks [@LeXwDeX](https://github.com/LeXwDeX)! - ### Platform-mode model for GitHub and GitLab
 
-  Self-hosted GitLab origins (git.ycgame.com, git.corp.example, …) are no
+  Self-hosted GitLab origins (forge.example.com, git.corp.example, …) are no
   longer misclassified as generic `origin_unresolvable`:
 
   - `specgit init` resolves a platform mode: a `github.com` origin defaults

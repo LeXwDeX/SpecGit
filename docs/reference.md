@@ -117,7 +117,7 @@ select GitHub Enterprise.
 
 ```yaml
 gitlab:
-  host: git.ycgame.com
+  host: forge.example.com
   insecure_ssl: false
 ```
 

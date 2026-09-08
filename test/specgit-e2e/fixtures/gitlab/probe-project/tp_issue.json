@@ -33,7 +33,7 @@
  "confidential": false,
  "discussion_locked": null,
  "issue_type": "issue",
- "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+ "web_url": "https://forge.example.<REDACTED_SECRET>",
  "time_stats": {
   "time_estimate": 0,
   "total_time_spent": 0,
@@ -47,10 +47,10 @@
  "has_tasks": true,
  "task_status": "0 of 0 checklist items completed",
  "_links": {
-  "self": "https://git.ycgame.<REDACTED_SECRET>",
-  "notes": "https://git.ycgame.<REDACTED_SECRET>",
-  "award_emoji": "https://git.ycgame.<REDACTED_SECRET>",
-  "project": "https://git.ycgame.com/api/v4/projects/1313",
+  "self": "https://forge.example.<REDACTED_SECRET>",
+  "notes": "https://forge.example.<REDACTED_SECRET>",
+  "award_emoji": "https://forge.example.<REDACTED_SECRET>",
+  "project": "https://forge.example.com/api/v4/projects/1313",
   "closed_as_duplicate_of": null
  },
  "references": {

@@ -76,10 +76,10 @@ describe('init-platform: endpoint and port judgment (#220)', () => {
   });
 
   it('parses the host(:port) declaration grammar', () => {
-    expect(DECLARED_ENDPOINT.exec('git.ycgame.com')?.[1]).toBe('git.ycgame.com');
-    expect(DECLARED_ENDPOINT.exec('git.ycgame.com')?.[2]).toBeUndefined();
-    const ported = DECLARED_ENDPOINT.exec('git.ycgame.com:8443');
-    expect(ported?.[1]).toBe('git.ycgame.com');
+    expect(DECLARED_ENDPOINT.exec('forge.example.com')?.[1]).toBe('forge.example.com');
+    expect(DECLARED_ENDPOINT.exec('forge.example.com')?.[2]).toBeUndefined();
+    const ported = DECLARED_ENDPOINT.exec('forge.example.com:8443');
+    expect(ported?.[1]).toBe('forge.example.com');
     expect(ported?.[2]).toBe('8443');
     expect(DECLARED_ENDPOINT.exec('https://git.example.com')).toBeNull();
   });

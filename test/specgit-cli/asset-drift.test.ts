@@ -374,8 +374,8 @@ describe('inspectGeneratedAssets: surface grouping and exact fixes (#308)', () =
   it('a declared GitLab platform desires no workflow: owned is stale, unowned is conflict, neutral assets still inspected', async () => {
     write(root, HARNESS_WORKFLOW_PATH, OWNED_MARKER_CONTENT);
     write(root, 'AGENTS.md', `# notes\n`);
-    const gitlabFacts = makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' });
-    write(root, 'spec_git/providers.yaml', 'gitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n');
+    const gitlabFacts = makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' });
+    write(root, 'spec_git/providers.yaml', 'gitlab:\n  host: forge.example.com\n  insecure_ssl: false\n');
 
     const report = await inspect(gitlabFacts);
     const init = report.surfaces.find((s) => s.surface === 'init');

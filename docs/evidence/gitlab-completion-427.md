@@ -1,7 +1,12 @@
 # GitLab completion routing evidence (#427)
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 Validated on 2026-09-04 through authenticated `glab` against the existing
-`suntao/specgit` mirror, project 1309 on `git.ycgame.com`. No token values
+`example-team/specgit` mirror, project 1309 on `forge.example.com`. No token values
 were read, stored or included in the evidence.
 
 ## CI compiler evidence
@@ -34,7 +39,7 @@ completion protocol.
 
 Read-only queries against existing pipeline 29645 confirmed:
 
-- Project identity: `id: 1309`, `path_with_namespace: suntao/specgit`,
+- Project identity: `id: 1309`, `path_with_namespace: example-team/specgit`,
   `default_branch: main`, `ci_config_path: null`.
 - Pipeline detail includes numeric `id` and `project_id`, `source`, `ref`, `sha`,
   and the boolean `tag: false`.

@@ -182,21 +182,21 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       gh: forge,
       parseRepoRef: async () => ({
         ok: true,
-        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+        value: { owner: 'example-team', repo: 'specgit', platform: 'gitlab' },
       }),
     });
 
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com', '--json'],
       t.ctx
     );
 
     expect(code).toBe(EXIT_SUCCESS);
-    expect(forge.calls).not.toContain('enableBranchProtection:suntao/specgit:main:pipeline-success');
+    expect(forge.calls).not.toContain('enableBranchProtection:example-team/specgit:main:pipeline-success');
     expect(parseStdoutJson(t.io).protection).toMatchObject({
       protected: true,
       pipelineRequired: true,
@@ -210,11 +210,11 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       gh: forge,
       parseRepoRef: async () => ({
         ok: true,
-        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+        value: { owner: 'example-team', repo: 'specgit', platform: 'gitlab' },
       }),
     });
 
@@ -226,7 +226,7 @@ describe('specgit init', () => {
         '--required-check',
         'Test',
         '--gitlab-host',
-        'git.ycgame.com',
+        'forge.example.com',
         '--protect',
         '--json',
       ],
@@ -234,7 +234,7 @@ describe('specgit init', () => {
     );
 
     expect(code).toBe(EXIT_SUCCESS);
-    expect(forge.calls).toContain('enableBranchProtection:suntao/specgit:main:pipeline-success');
+    expect(forge.calls).toContain('enableBranchProtection:example-team/specgit:main:pipeline-success');
     expect(forge.calls.join('\n')).not.toContain('SpecGit Acceptance');
     expect(parseStdoutJson(t.io).protection).toMatchObject({
       protected: true,
@@ -250,16 +250,16 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       gh: forge,
       parseRepoRef: async () => ({
         ok: true,
-        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+        value: { owner: 'example-team', repo: 'specgit', platform: 'gitlab' },
       }),
     });
 
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com', '--json'],
       t.ctx
     );
 
@@ -299,11 +299,11 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       gh: forge,
       parseRepoRef: async () => ({
         ok: true,
-        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+        value: { owner: 'example-team', repo: 'specgit', platform: 'gitlab' },
       }),
     });
 
@@ -315,7 +315,7 @@ describe('specgit init', () => {
         '--required-check',
         'Test',
         '--gitlab-host',
-        'git.ycgame.com',
+        'forge.example.com',
         '--protect',
         '--json',
       ],
@@ -338,11 +338,11 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       gh: forge,
       parseRepoRef: async () => ({
         ok: true,
-        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+        value: { owner: 'example-team', repo: 'specgit', platform: 'gitlab' },
       }),
     });
 
@@ -354,7 +354,7 @@ describe('specgit init', () => {
         '--required-check',
         'Test',
         '--gitlab-host',
-        'git.ycgame.com',
+        'forge.example.com',
         '--protect',
         '--json',
       ],
@@ -439,10 +439,10 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com', '--json'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
@@ -466,7 +466,7 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       // Models real git: gitlab mode never writes the GitHub workflow, so
       // that path is never tracked there; everything else rides commits.
       gitWrites: {
@@ -477,7 +477,7 @@ describe('specgit init', () => {
       },
     });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com', '--json'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
@@ -520,17 +520,17 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com', '--json'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'git.ycgame.com' });
+    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'forge.example.com' });
     expect(fs.readFileSync(path.join(root, 'spec_git', 'providers.yaml'), 'utf-8')).toContain(
-      'git.ycgame.com'
+      'forge.example.com'
     );
   });
 
@@ -543,10 +543,10 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com', '--json'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com', '--json'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
@@ -575,10 +575,10 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(
-      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'git.ycgame.com'],
+      ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'forge.example.com'],
       t.ctx
     );
     expect(code).toBe(EXIT_SUCCESS);
@@ -591,7 +591,7 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(
       ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'https://evil.com/', '--json'],
@@ -733,7 +733,7 @@ describe('specgit init', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(['node', 'specgit', 'init', '--required-check', 'Test', '--json'], t.ctx);
     expect(code).toBe(EXIT_UNKNOWN);
@@ -1288,7 +1288,7 @@ describe('specgit init harness generation', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
       gitWrites: {
         remoteDefaultBranch: () => ({
           ok: false,
@@ -1299,14 +1299,14 @@ describe('specgit init harness generation', () => {
       gh: forge,
       parseRepoRef: async () => ({
         ok: true,
-        value: { owner: 'suntao', repo: 'specgit', platform: 'gitlab' },
+        value: { owner: 'example-team', repo: 'specgit', platform: 'gitlab' },
       }),
     });
 
     const code = await runCliWith([
       'node', 'specgit', 'init',
       '--required-check', 'Build',
-      '--gitlab-host', 'git.ycgame.com',
+      '--gitlab-host', 'forge.example.com',
       '--protect',
       '--json',
     ], t.ctx);
@@ -1576,7 +1576,7 @@ describe('specgit init validate-before-write', () => {
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/specgit.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:example-team/specgit.git' }),
     });
     const code = await runCliWith(
       ['node', 'specgit', 'init', '--required-check', 'Test', '--gitlab-host', 'evil.example.com', '--json'],

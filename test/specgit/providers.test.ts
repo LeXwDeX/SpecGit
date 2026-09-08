@@ -35,12 +35,12 @@ describe('providers io', () => {
 
   it('round-trips a gitlab host with insecure ssl', async () => {
     await writeProviders(root, {
-      gitlab: { host: 'git.ycgame.com', insecure_ssl: true },
+      gitlab: { host: 'forge.example.com', insecure_ssl: true },
     });
     const read = await readProviders(root);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    expect(read.value.gitlab).toEqual({ host: 'git.ycgame.com', insecure_ssl: true });
+    expect(read.value.gitlab).toEqual({ host: 'forge.example.com', insecure_ssl: true });
     expect(fs.existsSync(path.join(root, SPEC_GIT_DIR, 'providers.yaml'))).toBe(true);
   });
 

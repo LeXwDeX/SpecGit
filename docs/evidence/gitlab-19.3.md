@@ -1,5 +1,10 @@
 # GitLab 19.3 evidence ledger
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 Committed evidence ledger for the **#236 rebaseline** ([policy and roadmap](../gitlab-support.md),
 [Rebaseline SOP](../gitlab-support.md#rebaseline-sop-moving-the-version-window)).
 Supplements [gitlab-19.2.md](gitlab-19.2.md): rows pinned there carry unless
@@ -15,7 +20,7 @@ the suffix-stripping version comparison (rule 4).
    fail-closed outside (`gitlab_version_unsupported`, exit 3). Widened from
    `>= 19.2.4 < 19.3.0` by the #236 rebaseline delivery; the floor anchor
    stays `v19.2.4-ee`.
-6. Live-instance cells below were probed on `git.ycgame.com` = **19.3.0 CE**
+6. Live-instance cells below were probed on `forge.example.com` = **19.3.0 CE**
    (`enterprise:false`, revision `2c30df7828b`, authenticated
    `glab api /metadata`, 2026-08-22) using **glab 1.113.0** pinned to
    gitlab-org/cli tag `v1.113.0` (commit `d6288130`).
@@ -29,7 +34,7 @@ the suffix-stripping version comparison (rule 4).
 | 3 | No unauthenticated version channel at 19.3 either: both version endpoints are documented **token-authenticated** (PRIVATE-TOKEN) at the tag ⇒ version probing stays on authenticated `glab api /metadata` | https://gitlab.com/gitlab-org/gitlab/-/blob/v19.3.0-ee/doc/api/metadata.md | `v19.3.0-ee` | Both tiers | raw fetch of `doc/api/metadata.md` at the tag | High | ✅ pinned (#236) |
 | 4 | Recorded payload fixtures need no refresh: the recorded shapes (metadata, issues, MR detail/list, pipelines, jobs, protected branches) parsed unchanged while the dogfood delivery below ran its full evidence pass on 19.3.0 | [`test/specgit-e2e/fixtures/gitlab/`](../../test/specgit-e2e/fixtures/gitlab/README.md) | live 19.3.0 CE | Free | live read-only probes during the dogfood delivery | High | ✅ pinned (#236) |
 | 5 | Support range statement: **>= 19.2.4 < 19.4.0** — this ledger widens the window per the SOP; `VERSION_WINDOW_MAX_EXCLUSIVE` moves `[19,3,0]` → `[19,4,0]`, MIN unchanged | this delivery (#236) | — | — | — | — | ✅ pinned (#236) |
-| 6 | CE issue notes carry **no `web_url`**: `POST projects/:id/issues/:iid/notes` returns `{id, noteable_iid, …}` without `web_url` at 19.3.0 CE/Free ⇒ the adapter derives the note deep-link from the returned id (#252); only a payload with neither fails closed | live write probe on `git.ycgame.com` (note id `88688`, 19.3.0 CE) | live 19.3.0 CE | Free | authenticated live POST during the all-flow simulation | High | ✅ pinned (#252) |
+| 6 | CE issue notes carry **no `web_url`**: `POST projects/:id/issues/:iid/notes` returns `{id, noteable_iid, …}` without `web_url` at 19.3.0 CE/Free ⇒ the adapter derives the note deep-link from the returned id (#252); only a payload with neither fails closed | live write probe on `forge.example.com` (note id `88688`, 19.3.0 CE) | live 19.3.0 CE | Free | authenticated live POST during the all-flow simulation | High | ✅ pinned (#252) |
 
 > **Superseded in part (#241).** Row 5's out-of-window semantics — fail
 > closed with `gitlab_version_unsupported`, exit 3 — was downgraded by the

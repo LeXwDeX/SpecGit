@@ -98,20 +98,20 @@ describe('parseRepoRef', () => {
   // consumers can route instead of handing a group path to gh.
   it('resolves a configured self-hosted gitlab host with the gitlab platform marker (#112)', () => {
     for (const url of [
-      'git@git.ycgame.com:suntao/specgit.git',
-      'ssh://git@git.ycgame.com/suntao/specgit.git',
-      'https://git.ycgame.com/suntao/specgit.git',
+      'git@forge.example.com:example-team/specgit.git',
+      'ssh://git@forge.example.com/example-team/specgit.git',
+      'https://forge.example.com/example-team/specgit.git',
     ]) {
-      const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+      const result = parseRepoRef(url, { gitlabHost: 'forge.example.com' });
       expect(result.ok).toBe(true);
       if (!result.ok) continue;
-      expect(result.value).toEqual({ owner: 'suntao', repo: 'specgit', platform: 'gitlab' });
+      expect(result.value).toEqual({ owner: 'example-team', repo: 'specgit', platform: 'gitlab' });
     }
   });
 
   it('a configured gitlab host does not capture other hosts', () => {
     const result = parseRepoRef('https://git.other.com/o/r.git', {
-      gitlabHost: 'git.ycgame.com',
+      gitlabHost: 'forge.example.com',
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -120,11 +120,11 @@ describe('parseRepoRef', () => {
 
   it('a suffix-spoofing host stays unresolvable (anchored match)', () => {
     for (const url of [
-      'git@git.ycgame.com.evil.com:o/r.git',
-      'https://git.ycgame.com.evil.com/o/r.git',
-      'ssh://git@git.ycgame.com.evil.com/o/r.git',
+      'git@forge.example.com.evil.com:o/r.git',
+      'https://forge.example.com.evil.com/o/r.git',
+      'ssh://git@forge.example.com.evil.com/o/r.git',
     ]) {
-      const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+      const result = parseRepoRef(url, { gitlabHost: 'forge.example.com' });
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.code).toBe('origin_unresolvable');
@@ -176,7 +176,7 @@ describe('parseRepoRef', () => {
 // #95: a nested-group GitLab origin (depth >= 2 subgroups, >= 3 path
 // segments) is a recognized-but-unsupported platform — never a
 // misdiagnosed "unresolvable" URL carrying GitHub-pointing repair
-// advice. Reproduction: git.ycgame.com declared in providers.yaml with a
+// advice. Reproduction: forge.example.com declared in providers.yaml with a
 // three-segment scp origin reported origin_unresolvable on 0.7.1/0.7.2.
 describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
   const nestedGitlab = (url: string, options?: { gitlabHost?: string }) => {
@@ -196,22 +196,22 @@ describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
 
   it('declared-host nested origins resolve on all three accepted forms (#112)', () => {
     const resolves = (url: string) => {
-      const result = parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+      const result = parseRepoRef(url, { gitlabHost: 'forge.example.com' });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.platform).toBe('gitlab');
     };
-    resolves('git@git.ycgame.com:ycgame/General-Framework-Background-Operations/main_art-ai.git');
-    resolves('ssh://git@git.ycgame.com/ycgame/Operations/main_art-ai.git');
-    resolves('https://git.ycgame.com/ycgame/Operations/main_art-ai.git');
-    resolves('https://git.ycgame.com/deep/a/b/c/project.git');
-    const nested = parseRepoRef('https://git.ycgame.com/ycgame/Operations/main_art-ai.git', {
-      gitlabHost: 'git.ycgame.com',
+    resolves('git@forge.example.com:example-group/General-Framework-Background-Operations/sample-project.git');
+    resolves('ssh://git@forge.example.com/example-group/Operations/sample-project.git');
+    resolves('https://forge.example.com/example-group/Operations/sample-project.git');
+    resolves('https://forge.example.com/deep/a/b/c/project.git');
+    const nested = parseRepoRef('https://forge.example.com/example-group/Operations/sample-project.git', {
+      gitlabHost: 'forge.example.com',
     });
     expect(nested.ok).toBe(true);
     if (nested.ok) {
-      expect(nested.value.owner).toBe('ycgame/Operations');
-      expect(nested.value.repo).toBe('main_art-ai');
+      expect(nested.value.owner).toBe('example-group/Operations');
+      expect(nested.value.repo).toBe('sample-project');
     }
   });
 
@@ -225,23 +225,23 @@ describe('parseRepoRef — nested-group GitLab origins (#95)', () => {
     unresolvable('https://github.com/a/b/c.git');
     unresolvable('git@github.com:a/b/c.git');
     unresolvable('https://example.com/a/b/c.git');
-    unresolvable('https://git.undeclared.com/a/b/c.git', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('https://git.undeclared.com/a/b/c.git', { gitlabHost: 'forge.example.com' });
   });
 
   it('malformed paths on declared GitLab hosts keep origin_unresolvable', () => {
-    unresolvable('git@git.ycgame.com:only.git', { gitlabHost: 'git.ycgame.com' });
-    unresolvable('git@git.ycgame.com:a//b.git', { gitlabHost: 'git.ycgame.com' });
-    unresolvable('https://git.ycgame.com/', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('git@forge.example.com:only.git', { gitlabHost: 'forge.example.com' });
+    unresolvable('git@forge.example.com:a//b.git', { gitlabHost: 'forge.example.com' });
+    unresolvable('https://forge.example.com/', { gitlabHost: 'forge.example.com' });
   });
 
   it('the spoofing and port corpus stays intact for nested paths', () => {
     // suffix-spoofed declared host: structural host match fails
-    unresolvable('git@git.ycgame.com.evil.com:a/b/c.git', { gitlabHost: 'git.ycgame.com' });
-    unresolvable('https://git.ycgame.com.evil.com/a/b/c.git', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('git@forge.example.com.evil.com:a/b/c.git', { gitlabHost: 'forge.example.com' });
+    unresolvable('https://forge.example.com.evil.com/a/b/c.git', { gitlabHost: 'forge.example.com' });
     // userinfo smuggling on the real host is still rejected (fail-closed)
-    unresolvable('ssh://bob@git.ycgame.com/a/b/c.git', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('ssh://bob@forge.example.com/a/b/c.git', { gitlabHost: 'forge.example.com' });
     // explicit ports keep today's fail-closed rejection (#78 owns that change)
-    unresolvable('https://git.ycgame.com:8443/a/b/c.git', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('https://forge.example.com:8443/a/b/c.git', { gitlabHost: 'forge.example.com' });
   });
 });
 
@@ -585,11 +585,11 @@ describe('parseRepoRef — structural host classification (security hardening)',
     unresolvable('https://github.com:8443/o/r');
     unresolvable('ssh://git@github.com:2222/o/r');
     unresolvable('https://gitlab.com:8443/o/r');
-    unresolvable('https://git.ycgame.com:8443/o/r', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('https://forge.example.com:8443/o/r', { gitlabHost: 'forge.example.com' });
     // scp syntax has no port slot: a port-looking segment breaks the
     // two-segment owner/repo shape and stays unresolvable
     unresolvable('git@gitlab.com:8443/o/r');
-    unresolvable('git@git.ycgame.com:8443/o/r', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('git@forge.example.com:8443/o/r', { gitlabHost: 'forge.example.com' });
   });
 
   it('pins the widened shapes: default https port and normalized host case', () => {
@@ -640,16 +640,16 @@ describe('parseRepoRef — structural host classification (security hardening)',
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.platform).toBe('gitlab');
     };
-    resolves('git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    resolves('Git@git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    resolves('git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    resolves('ssh://git@git.ycgame.com/o/r', { gitlabHost: 'git.ycgame.com' });
-    resolves('https://GIT.YCGAME.COM/o/r', { gitlabHost: 'GIT.YCGAME.COM' });
+    resolves('git@forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
+    resolves('Git@forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
+    resolves('forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
+    resolves('ssh://git@forge.example.com/o/r', { gitlabHost: 'forge.example.com' });
+    resolves('https://forge.example.com/o/r', { gitlabHost: 'forge.example.com' });
     // non-github.com suffixes never match the declaration
-    unresolvable('git@git.ycgame.com.evil.com:o/r', { gitlabHost: 'git.ycgame.com' });
-    unresolvable('git@sourceforge.git.ycgame.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    unresolvable('git@forge.example.com.evil.com:o/r', { gitlabHost: 'forge.example.com' });
+    unresolvable('git@sourceforge.forge.example.com:o/r', { gitlabHost: 'forge.example.com' });
     // a declared host never captures the github.com exact match
-    const githubWins = parseRepoRef('git@github.com:o/r', { gitlabHost: 'git.ycgame.com' });
+    const githubWins = parseRepoRef('git@github.com:o/r', { gitlabHost: 'forge.example.com' });
     expect(githubWins.ok).toBe(true);
     if (githubWins.ok) expect(githubWins.value.platform).toBe('github');
   });

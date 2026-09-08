@@ -1,11 +1,16 @@
 # GA-4 dogfood evidence — nested-group GitLab delivery (#117)
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 The GA gate-4 condition (release-gates §3.4): rc dogfood `specgit finish`
 exits `0` on a real nested-group GitLab delivery. Executed 2026-08-21 on
-`git.ycgame.com` (**19.2.4 CE**, `enterprise: false`, revision `06e8d813296`
+`forge.example.com` (**19.2.4 CE**, `enterprise: false`, revision `06e8d813296`
 — in the supported window, ledger row 5) as an **isolated disposable
 probe** (prefix `specgit-evidence-probe-`), deleted after archival per the
-isolation discipline — the URLs below were live at archival time; the
+isolation discipline — the original private URLs were live at archival time; the
 committed artifacts in this file are the durable record.
 
 ## The delivery
@@ -14,11 +19,11 @@ committed artifacts in this file are the durable record.
 | --- | --- |
 | Project (depth-3 nested group) | `specgit-evidence-probe-20260821/specgit-evidence-probe-20260821-nested/specgit-evidence-probe-20260821-app` (project id 1314; group 1390 → subgroup 1391) |
 | Issue | `#1` — `feat: nested-group dogfood delivery`, created by `specgit issue` |
-| Merge request | `!1` — created as `Draft:` by `specgit issue`, marked ready via API; description = the deterministic scaffold (`Closes #1`) — https://git.ycgame.com/specgit-evidence-probe-20260821/specgit-evidence-probe-20260821-nested/specgit-evidence-probe-20260821-app/-/merge_requests/1 |
+| Merge request | `!1` — created as `Draft:` by `specgit issue`, marked ready via API; description = the deterministic scaffold (`Closes #1`) — https://forge.example.com/specgit-evidence-probe-20260821/specgit-evidence-probe-20260821-nested/specgit-evidence-probe-20260821-app/-/merge_requests/1 |
 | Delivery branch | `feat/1-nested-group-dogfood` (branch-context record, committed) |
 | Head SHA | `9839d096d2d229b3f3a14ccbaa1a7e2dc716baee` |
 | Policy | `required_checks: [build-app]` (explicit `--required-check`, excluding the acceptance job — the same self-exclusion semantics as the GitHub harness's `SpecGit Acceptance`) |
-| Platform declaration | `spec_git/providers.yaml`: `gitlab.host: git.ycgame.com` |
+| Platform declaration | `spec_git/providers.yaml`: `gitlab.host: forge.example.com` |
 | CLI under test | the #117 build (routing: `PlatformRoutingProvider` → `GlabProvider`) |
 
 ## The verdicts (two independent `specgit finish` runs, both exit 0)
@@ -57,7 +62,7 @@ committed artifacts in this file are the durable record.
 
 2. **CI verdict — FU-5 applied** (the `specgit-acceptance` pipeline job at
    the same head, pipeline
-   https://git.ycgame.com/specgit-evidence-probe-20260821/specgit-evidence-probe-20260821-nested/specgit-evidence-probe-20260821-app/-/pipelines/29621,
+   https://forge.example.com/specgit-evidence-probe-20260821/specgit-evidence-probe-20260821-nested/specgit-evidence-probe-20260821-app/-/pipelines/29621,
    job 46852): the job checks out the branch by name (`git checkout
    "$CI_COMMIT_REF_NAME"` — HEAD on the branch for the context gate),
    installs the packed #117 CLI from the committed tarball, installs

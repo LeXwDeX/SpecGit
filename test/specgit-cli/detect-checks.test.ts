@@ -167,8 +167,8 @@ describe('classifyPlatform — one pinned matrix with parseRepoRef', () => {
   });
 
   it('an undeclared self-host without the gitlab token stays unknown (declaration threading is not origin-string state)', async () => {
-    await expect(platform('git@git.ycgame.com:suntao/specgit.git')).resolves.toBe('unknown');
-    await expect(platform('https://git.ycgame.com/suntao/specgit.git')).resolves.toBe('unknown');
+    await expect(platform('git@forge.example.com:example-team/specgit.git')).resolves.toBe('unknown');
+    await expect(platform('https://forge.example.com/example-team/specgit.git')).resolves.toBe('unknown');
   });
 });
 

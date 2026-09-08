@@ -1,8 +1,13 @@
 # Rebaseline dogfood evidence — real GitLab 19.3.0 delivery (#236)
 
+Deployment locators in this historical record are anonymized: `forge.example.com`
+and example namespace paths are placeholders, not live evidence links. Recorded
+API shapes, versions and outcomes are retained; private locators belong only in
+local evidence. This edit does not repeat or revalidate the original live run.
+
 The Rebaseline SOP step-3 witness: one real probe delivery on the new target
 version whose `specgit finish` exits 0. Executed 2026-08-22 on
-`git.ycgame.com` (**19.3.0 CE**, `enterprise: false`, revision
+`forge.example.com` (**19.3.0 CE**, `enterprise: false`, revision
 `2c30df7828b` — outside the old window `>= 19.2.4 < 19.3.0`, inside the
 widened `>= 19.2.4 < 19.4.0`) with **glab 1.113.0** (gitlab-org/cli tag
 `v1.113.0`, commit `d6288130`). Unlike the isolated disposable probe of
@@ -14,13 +19,13 @@ durable record.
 
 | Fact | Value |
 | --- | --- |
-| Project (depth-3 nested group) | `ycgame/General-Framework-Background-Operations/main_art-ai` (project id 1278) |
+| Project (depth-3 nested group) | `example-group/General-Framework-Background-Operations/sample-project` (project id 1278) |
 | Issue | `#2` — closed by MR auto-close on merge |
 | Merge request | `!2` — merged into `main` (merge commit `2902ee3`); MR head `39a8c8cb55757f50bd8ed1e8ba3c3466645f85bd` |
 | Delivery branch | `feat/2-issue2` (branch-context record) |
 | Record repair | `specgit pr 2` bound the missing `pr: 2` (the binding commit `c5fea9e` never reached `main`) |
 | Policy | `required_checks: []` |
-| Platform declaration | `spec_git/providers.yaml`: `gitlab.host: git.ycgame.com` |
+| Platform declaration | `spec_git/providers.yaml`: `gitlab.host: forge.example.com` |
 | CLI under test | the #236 build (window `>= 19.2.4 < 19.4.0`; package version 1.1.1 pre-bump) |
 
 ## The verdict (`specgit finish --json`, exit 0)
@@ -55,7 +60,7 @@ window, every gate passes against the live 19.3.0 instance:
       { "id": "checks", "status": "pass" }
     ],
     "evidence": {
-      "repo": "ycgame/General-Framework-Background-Operations/main_art-ai",
+      "repo": "example-group/General-Framework-Background-Operations/sample-project",
       "delivery": "issue2",
       "branch": "feat/2-issue2",
       "headSha": "c5fea9ef545522f40679b1039ac867ac9531878c",

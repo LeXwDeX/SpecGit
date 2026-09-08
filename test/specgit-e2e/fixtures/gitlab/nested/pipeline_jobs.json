@@ -54,7 +54,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -66,9 +66,9 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },
@@ -134,7 +134,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -146,9 +146,9 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },
@@ -214,7 +214,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -226,9 +226,9 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },
@@ -294,7 +294,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -306,10 +306,10 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "failure_reason": "<REDACTED_SECRET>",
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },
@@ -375,7 +375,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -387,10 +387,10 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "failure_reason": "<REDACTED_SECRET>",
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },
@@ -456,7 +456,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -468,10 +468,10 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "failure_reason": "<REDACTED_SECRET>",
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },
@@ -537,7 +537,7 @@
    "committed_date": "2026-08-20T12:56:15.000+08:00",
    "trailers": {},
    "extended_trailers": {},
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "pipeline": {
    "id": 29614,
@@ -549,10 +549,10 @@
    "source": "push",
    "created_at": "2026-08-20T04:56:27.849Z",
    "updated_at": "2026-08-20T06:00:12.245Z",
-   "web_url": "https://git.ycgame.<REDACTED_SECRET>"
+   "web_url": "https://forge.example.<REDACTED_SECRET>"
   },
   "failure_reason": "<REDACTED_SECRET>",
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "project": {
    "ci_job_token_scope_enabled": false
   },

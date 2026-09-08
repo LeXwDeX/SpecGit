@@ -166,7 +166,7 @@ describe('e2e GitLab delivery on a nested-group origin (#117)', () => {
         false
       );
       expect(fs.readFileSync(path.join(fixture.dir, 'spec_git', 'providers.yaml'), 'utf-8')).toContain(
-        'git.ycgame.com'
+        'forge.example.com'
       );
 
       // ---- Phase 2: the one-command bootstrap creates the issue and the

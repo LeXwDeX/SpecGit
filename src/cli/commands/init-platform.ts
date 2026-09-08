@@ -81,7 +81,7 @@ export async function validateGitlabHost(
           'gitlab_host_invalid',
           `"${raw}" is not a bare hostname or host:port declaration (no scheme, no path).`,
           {
-            fix: 'Pass the host only, e.g. --gitlab-host git.ycgame.com, or host:port for a non-default port, e.g. --gitlab-host git.ycgame.com:8443.',
+            fix: 'Pass the host only, e.g. --gitlab-host forge.example.com, or host:port for a non-default port, e.g. --gitlab-host forge.example.com:8443.',
           }
         ),
       ],

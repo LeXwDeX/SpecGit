@@ -327,14 +327,14 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     const code = await runCliWith(
       [
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -348,13 +348,13 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     // …and platform-neutral assets still land.
     expect(read(AGENTS_ABS(root))).toContain(BLOCK_START_MARKER);
     const envelope = parseStdoutJson(t.io);
-    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'git.ycgame.com' });
+    expect(envelope.platform).toEqual({ mode: 'gitlab', gitlabHost: 'forge.example.com' });
     expect(envelope.reconciled?.removed ?? []).toEqual([HARNESS_WORKFLOW_PATH]);
   });
 
   it('an atomic provider write failure exits 3, preserves exact bytes, and stops before later init writes', async () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
-    const seededProviders = '# team-owned formatting\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
+    const seededProviders = '# team-owned formatting\ngitlab:\n  host: forge.example.com\n  insecure_ssl: false\n';
     fs.writeFileSync(PROVIDERS_ABS(root), seededProviders);
     fs.chmodSync(PROVIDERS_ABS(root), 0o640);
     const before = treeState(root);
@@ -367,7 +367,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
 
     const code = await runCliWith(
@@ -375,7 +375,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -395,10 +395,10 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
 
   it('a busy provider lock preserves the other writer update when init never committed', async () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
-    fs.writeFileSync(PROVIDERS_ABS(root), '# original config\ngitlab:\n  host: git.ycgame.com\n');
+    fs.writeFileSync(PROVIDERS_ABS(root), '# original config\ngitlab:\n  host: forge.example.com\n');
     const lockPath = `${PROVIDERS_ABS(root)}.lock`;
     fs.writeFileSync(lockPath, 'other-writer');
-    const concurrentContent = '# concurrent user update\ngitlab:\n  host: git.ycgame.com\n';
+    const concurrentContent = '# concurrent user update\ngitlab:\n  host: forge.example.com\n';
     const realWriteProviders = recordIo.writeProviders;
     vi.spyOn(recordIo, 'writeProviders').mockImplementationOnce(async (writeRoot, providers) => {
       // The other writer changes its file after init took its snapshot.
@@ -411,12 +411,12 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
 
     const code = await runCliWith(
       ['node', 'specgit', 'init', '--required-check', 'Test', '--force',
-        '--gitlab-host', 'git.ycgame.com', '--json', '--no-protect'],
+        '--gitlab-host', 'forge.example.com', '--json', '--no-protect'],
       t.ctx
     );
 
@@ -467,14 +467,14 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     const code = await runCliWith(
       [
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -501,14 +501,14 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     const code = await runCliWith(
       [
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -585,7 +585,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     // resolution re-reads the declaration); a later failure must still
     // round-trip the file — including the user's comments in it.
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
-    const seededProviders = '# team config\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
+    const seededProviders = '# team config\ngitlab:\n  host: forge.example.com\n  insecure_ssl: false\n';
     fs.writeFileSync(PROVIDERS_ABS(root), seededProviders);
 
     const t = makeCtx({
@@ -593,7 +593,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       throw new Error('simulated disk failure');
@@ -603,7 +603,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -614,15 +614,15 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
 
   it('a failed GitLab refresh preserves provider bytes changed after its own persistence', async () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
-    const seededProviders = '# pre-run config\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
-    const concurrentProviders = '# concurrent user edit\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n';
+    const seededProviders = '# pre-run config\ngitlab:\n  host: forge.example.com\n  insecure_ssl: false\n';
+    const concurrentProviders = '# concurrent user edit\ngitlab:\n  host: forge.example.com\n  insecure_ssl: false\n';
     fs.writeFileSync(PROVIDERS_ABS(root), seededProviders);
     const t = makeCtx({
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       fs.writeFileSync(PROVIDERS_ABS(root), concurrentProviders);
@@ -634,7 +634,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -660,7 +660,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     t.recordPort.writePolicy = vi.fn(async (): Promise<void> => {
       throw new Error('simulated disk failure');
@@ -670,7 +670,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -692,14 +692,14 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     const code = await runCliWith(
       [
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx
@@ -716,14 +716,14 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
     fs.mkdirSync(path.dirname(PROVIDERS_ABS(root)), { recursive: true });
     fs.writeFileSync(
       PROVIDERS_ABS(root),
-      '# team config\ngitlab:\n  host: git.ycgame.com\n  insecure_ssl: false\n'
+      '# team config\ngitlab:\n  host: forge.example.com\n  insecure_ssl: false\n'
     );
     const t = makeCtx({
       root: { ok: true, value: root },
       cwd: root,
       stdinIsTTY: false,
       policy: samplePolicy(),
-      facts: makeGitFacts({ originUrl: 'git@git.ycgame.com:suntao/adopted.git' }),
+      facts: makeGitFacts({ originUrl: 'git@forge.example.com:suntao/adopted.git' }),
     });
     // The failing policy write also replaces the providers file with a
     // directory. Compensation cannot prove that target is still the bytes
@@ -738,7 +738,7 @@ describe('specgit init --force: version-upgrade convergence (#305)', () => {
         'node', 'specgit', 'init',
         '--required-check', 'Test',
         '--force',
-        '--gitlab-host', 'git.ycgame.com',
+        '--gitlab-host', 'forge.example.com',
         '--json', '--no-protect',
       ],
       t.ctx

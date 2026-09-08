@@ -10,7 +10,7 @@ export const ProvidersSchema = z
   .object({
     gitlab: z
       .object({
-        /** Bare hostname (git.ycgame.com); no scheme, no path. */
+        /** Bare hostname (forge.example.com); no scheme, no path. */
         host: z
           .string()
           .min(1)

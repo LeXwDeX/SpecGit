@@ -85,7 +85,7 @@
    "relative": "!1",
    "full": "<REDACTED_SECRET>!1"
   },
-  "web_url": "https://git.ycgame.<REDACTED_SECRET>",
+  "web_url": "https://forge.example.<REDACTED_SECRET>",
   "time_stats": {
    "time_estimate": 0,
    "total_time_spent": 0,

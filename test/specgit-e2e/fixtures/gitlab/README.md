@@ -29,7 +29,7 @@ surface); a `Draft:`-prefixed merge request (`draft: true`,
 
 ## Redaction
 
-Two deterministic passes, in order:
+Three deterministic passes, in order:
 
 1. **Bundle pass (G6 probe block)** — user objects neutralized
    (`username`/`name`/emails/avatars/URLs → `REDACTED_*`), token patterns and
@@ -42,8 +42,18 @@ Two deterministic passes, in order:
    `REDACTED_LOCATION`, `local_time` → `null`, and any free-text string
    containing Han script (titles, descriptions, commit messages) →
    `REDACTED_TEXT`. No usernames, personal names, emails, tokens, or
-   organizational free text remain; the `git.ycgame.com` host and structural
-   ids/paths survive because the evidence requires them (the host and
-   project paths are already part of the public delivery record).
+   organizational free text remain in these fields.
+3. **Deployment privacy pass** — deployment hostnames, truncated hostname
+   fragments and identifying namespace/project names are replaced consistently
+   with `forge.example.com` and synthetic example paths. Numeric fixture IDs
+   and response shapes are retained for relationships; the private host itself
+   is not required to prove provider behavior. Placeholder URLs are not live
+   evidence links. Full private locators belong only in ignored local evidence.
 
 Capture logs were not committed (data only).
+
+Offline fixtures use fixed example addresses so tests cannot depend on a
+developer's remotes or environment. Live acceptance should derive its endpoint
+from an explicitly selected Git remote, with an explicit environment override
+when the API endpoint differs. Keep that deployment configuration and live
+receipts local; do not substitute real addresses into these recorded fixtures.

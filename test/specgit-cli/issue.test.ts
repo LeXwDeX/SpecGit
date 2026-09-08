@@ -157,14 +157,14 @@ describe('specgit issue: fresh bootstrap', () => {
     },
     {
       platform: 'GitLab',
-      origin: 'git@git.ycgame.com:suntao/specgit.git',
+      origin: 'git@forge.example.com:example-team/specgit.git',
       issueCommand: 'glab issue update',
       prCommand: 'glab mr update',
       fileFlag: '--description-file',
     },
   ])('renders executable $platform body-edit next actions', async ({ origin, issueCommand, prCommand, fileFlag }) => {
     const t = issueCtx({ facts: { branch: 'main', originUrl: origin } });
-    t.ctx.parseRepoRef = (url) => parseRepoRef(url, { gitlabHost: 'git.ycgame.com' });
+    t.ctx.parseRepoRef = (url) => parseRepoRef(url, { gitlabHost: 'forge.example.com' });
     const outcome = await runIssue({ titles: ['feat: first why', 'fix: second why'] }, t.ctx);
     expect(outcome.exit).toBe(0);
     expect(outcome.nextActions?.find((a) => a.code === 'issue_bodies')?.command).toBe(

@@ -586,7 +586,7 @@ describe('checks gate', () => {
       repoRef: REPO,
       prFact: PR_FACT,
       gh: greenForge([]),
-      gitlabHost: 'git.ycgame.com',
+      gitlabHost: 'forge.example.com',
     });
     const failures = await checksGate(ctx);
     expect(codes(failures)).toEqual(['checks_missing']);
