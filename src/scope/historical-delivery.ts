@@ -13,13 +13,14 @@ import { checkLabelConvention, checkTitleConvention } from '../record/convention
 import { PolicySchema } from '../record/policy.js';
 import { DeliveryBindingSchema, parseNumericRef, type DeliveryBinding } from '../record/schema.js';
 import { checkBodyConvention } from '../record/templates.js';
+import { resolveVerification, type VerificationDecision } from '../verification/resolve.js';
 
 export interface HistoricalDependencies {
   root: string;
   repo: RepoRef;
   host?: string;
-  git: Pick<GitPort, 'readFileAtCommit' | 'readFileBeforeMerge' | 'isAncestor'>;
-  forge: Pick<ForgeEvidencePort, 'getIssue' | 'getPr' | 'listIssuePullRequests' | 'getCheckRuns' | 'getPrChecks' | 'getEvidenceAnchor' | 'getRequestDeclarations'>;
+  git: Pick<GitPort, 'readFileAtCommit' | 'readFileBeforeMerge' | 'isAncestor' | 'changesBetween'>;
+  forge: Pick<ForgeEvidencePort, 'getCiConfigPath' | 'getIssue' | 'getPr' | 'listIssuePullRequests' | 'getCheckRuns' | 'getPrChecks' | 'getEvidenceAnchor' | 'getRequestDeclarations'>;
 }
 
 export interface HistoricalDelivery {
@@ -31,6 +32,7 @@ export interface HistoricalDelivery {
   boundIssues: number[];
   repairIssues: number[];
   repairLogHash: string;
+  verification?: VerificationDecision;
 }
 
 export type HistoricalObservation = { state: 'completed'; delivery: HistoricalDelivery } | {
@@ -125,14 +127,16 @@ async function collectHistoricalDelivery(request: PrFact, binding: DeliveryBindi
       ? fail('scope_pipeline_unproven', 'The GitLab request-head pipeline state is unavailable.')
       : fail('scope_pipeline_incomplete', `The GitLab request-head pipeline is ${checks.value.pipelineStatus}.`);
   }
-  if (!classifyCiEligibility(checks.value.checks, policy.required_checks).eligible) {
+  const selected = await resolveVerification({ root: deps.root, policy, policySha: policyFile.value.sha, request, git: deps.git, repo: deps.repo, forge: deps.forge });
+  if (!selected.ok) return selected;
+  if (!classifyCiEligibility(checks.value.checks, selected.value.requiredChecks).eligible) {
     return fail('scope_ci_incomplete', 'Applicable CI checks do not prove this delivery successful.');
   }
   const runs = await deps.forge.getCheckRuns(deps.repo, request.headSha, request.number);
   if (!runs.ok) return runs;
   const anchor = await deps.forge.getEvidenceAnchor(deps.repo, request.number);
   if (!anchor.ok) return anchor;
-  const failures = requiredCheckFailures(runs.value, policy.required_checks, anchor.value.anchoredAt);
+  const failures = requiredCheckFailures(runs.value, selected.value.requiredChecks, anchor.value.anchoredAt);
   if (failures.length) return fail(failures[0].code, failures[0].message, failures[0].fix);
   const resolution = await verifyRepairResolution({ operations: log.value, boundIssues: binding.issues,
     root: deps.root, repo: deps.repo, request, policy, git: deps.git, forge: deps.forge,
@@ -146,5 +150,6 @@ async function collectHistoricalDelivery(request: PrFact, binding: DeliveryBindi
   if (repairLogHash(log.value) !== repairLogHash(finalLog.value)) return fail('repair_log_changed', 'Repair obligations changed during scope assessment.');
   return ok({ request: request.number, headSha: request.headSha, mergeSha: request.mergeCommitSha,
     target: request.baseBranch, policySha: policyFile.value.sha, boundIssues: binding.issues,
-    repairIssues: repairs, repairLogHash: repairLogHash(log.value) });
+    repairIssues: repairs, repairLogHash: repairLogHash(log.value),
+    ...(policy.verification ? { verification: selected.value } : {}) });
 }

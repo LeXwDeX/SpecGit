@@ -56,6 +56,23 @@ async function recordedRepair(checkName = 'Additional check') {
 }
 
 describe('trusted remote delivery continuation', () => {
+  it.each(['github', 'gitlab'] as const)('creates repair work for a skipped applicable product check on %s', async (platform) => {
+    const f = fixture(platform);
+    const policy = samplePolicy({ required_checks: [], verification: { product_checks: ['Build'], rules: [] },
+      automation: { merge: true, target_branch: 'main', close_issues: true } });
+    f.ctx.resolvePolicy = async () => ok({ policy, source: 'approved', branch: 'main', sha: HEAD });
+    f.gitPort.changesBetween = vi.fn(async () => ok({ baseSha: HEAD, headSha: HEAD, mergeBaseSha: HEAD,
+      changes: [{ path: 'app.js', status: 'M' as const, oldMode: '100644', newMode: '100644' }] }));
+    const checks = [makeCheckRun('SpecGit Acceptance'), makeCheckRun('Build', { conclusion: 'skipped' })];
+    f.forge.getCheckRuns.mockResolvedValue(ok(checks));
+    f.forge.getPrChecks.mockResolvedValue(ok({ headSha: HEAD, checks, ...(platform === 'gitlab' ? { pipelineStatus: 'success' } : {}) }));
+    vi.mocked(f.forge.createIssue).mockResolvedValue(ok({ number: 200, url: 'https://forge.example/issues/200' }));
+    const result = await runRemoteDelivery({ repo: { ...repo, platform }, pr: 42, headSha: HEAD, record: f.record }, f.ctx, { deadlineMs: 0 });
+    expect(result.repairIssues).toEqual([200]);
+    expect(result.diagnostics[0].code).toBe('checks_failed');
+    expect(f.forge.mergePr).not.toHaveBeenCalled();
+  });
+
   it('preserves the concrete fix when repair recovery cannot read declarations', async () => {
     const f = fixture();
     vi.mocked(f.forge.getRequestDeclarations).mockResolvedValue(fail('gh_transport', 'unavailable', 'Restore request comment access.'));

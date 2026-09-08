@@ -41,6 +41,7 @@ async function verdict(fault?: 'issue' | 'mr') {
       headContains: async () => ok({ contained: false }),
     },
     gh: {
+      getCiConfigPath: async () => ok(null),
       preflight: async () => ok({ authenticated: true }),
       getIssue: (project, number) => provider.getIssue(project, number),
       getPr: (project, number) => provider.getPr(project, number),

@@ -31,6 +31,15 @@ Completion proves resolution only after all current-head CI has settled. A
 read-only verdict for a merged request also checks unresolved repair evidence
 before reporting completion.
 
+An optional [verification policy](verification.md) supplies one shared decision
+to CI planning, the sibling-check waiter, acceptance, completion and historical
+scope assessment. Selection binds the approved policy revision, merge base and
+request head. Historical assessment reads the original policy; later edits cannot
+erase required evidence. Completion rechecks the selected policy revision before
+effects. The waiter receives an ephemeral projection, preserving the authoritative
+policy and repair identity. Selection schedules checks; it does not execute jobs
+or authorize merge and closure.
+
 ## Repair operation lifecycle
 
 Before creating a repair issue, the trusted runner records an intent in the

@@ -5,7 +5,8 @@ import { completeDelivery } from '../completion/complete-delivery.js';
 import { ensureFailureIssues, type DeliveryFailure, type FailureIssuePort } from './failure-issues.js';
 import { classifyCiEligibility } from './ci-eligibility.js';
 import { fail, ok, type Evidence } from '../kernel/evidence.js';
-import type { Policy } from '../record/policy.js';
+import type { EffectivePolicy } from '../record/effective-policy.js';
+import { resolveVerification } from '../verification/resolve.js';
 import { repairCheckTarget } from './repair-log.js';
 import { recoverRepairCreations } from './repair-recovery.js';
 
@@ -42,7 +43,13 @@ const CI_REJECTIONS = new Set([
 ]);
 
 /** CI failures become repair work only after all current checks have settled. */
-async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDependencies, root: string, policy: Policy): Promise<Evidence<{ failures: DeliveryFailure[]; retryCi: boolean }>> {
+async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDependencies, root: string, approved: EffectivePolicy): Promise<Evidence<{ failures: DeliveryFailure[]; retryCi: boolean }>> {
+  const policy = approved.policy;
+  const request = await ctx.gh.getPr(input.repo, input.pr);
+  if (!request.ok) return request;
+  if (request.value.headSha !== input.headSha || request.value.baseBranch !== approved.branch) return fail('automation_head_changed', 'The request changed before failure classification.');
+  const selected = await resolveVerification({ root, policy, policySha: approved.sha, request: request.value, git: ctx.git, forge: ctx.gh, repo: input.repo });
+  if (!selected.ok) return selected;
   const checks = await ctx.gh.getPrChecks(input.repo, input.pr);
   if (!checks.ok) return checks;
   if (checks.value.headSha !== input.headSha) return fail('automation_head_changed', 'Failure evidence belongs to a different request head.');
@@ -53,7 +60,7 @@ async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDe
   if (!anchor.ok) return anchor;
   const boundary = anchor.value.anchoredAt == null ? null : Date.parse(anchor.value.anchoredAt);
   if (boundary !== null && !Number.isFinite(boundary)) return fail('automation_evidence_unknown', 'The failure evidence anchor is unavailable.');
-  const eligibility = classifyCiEligibility(checks.value.checks, policy.required_checks);
+  const eligibility = classifyCiEligibility(checks.value.checks, selected.value.requiredChecks);
   const ciPending = eligibility.problems.some((problem) => problem.kind === 'pending') ||
     (input.repo.platform === 'gitlab' && ['created', 'pending', 'preparing', 'running', 'waiting_for_resource', 'scheduled', 'manual']
       .includes(checks.value.pipelineStatus ?? ''));
@@ -66,7 +73,7 @@ async function currentFailures(input: RemoteDeliveryInput, ctx: RemoteDeliveryDe
     failures.push({ code: 'checks_failed', target: repairCheckTarget(input.repo.platform, check),
       message: `CI/CD check '${check.name}' concluded ${check.conclusion ?? 'unknown'}.` });
   }
-  const verdict = await ctx.evaluate({ root: ok(root), record: ok(input.record), policy: ok(policy), git: ctx.git, gh: ctx.gh });
+  const verdict = await ctx.evaluate({ root: ok(root), record: ok(input.record), policy: ok(policy), policySha: approved.sha, git: ctx.git, gh: ctx.gh });
   if (verdict.exitCode === 1) {
     for (const failure of verdict.gates.flatMap((gate) => gate.failures)) {
       if (['checks_pending', 'checks_missing', 'checks_failed', 'pr_draft'].includes(failure.code)) continue;
@@ -131,7 +138,7 @@ export async function runRemoteDelivery(
       if (!root.ok) return outcome;
       const approved = await ctx.resolvePolicy(root.value, ok(input.record), { requireApproved: true });
       if (!approved.ok) return outcome;
-      const failures = await currentFailures(input, boundContext, root.value, approved.value.policy);
+      const failures = await currentFailures(input, boundContext, root.value, approved.value);
       if (!failures.ok) return blocked(failures.code, failures.message);
       if (failures.value.failures.length > 0) {
         const repairs = await ensureFailureIssues({ repo: input.repo, pr: current.value,

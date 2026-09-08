@@ -20,6 +20,7 @@ function fixture(platform: 'github' | 'gitlab' = 'github') {
   const deps = {
     root: '/repo', repo: { platform, owner: 'o', repo: 'r' },
     git: {
+      changesBetween: vi.fn(async (): Promise<Evidence<import('../../src/gitfacts/port.js').GitChangeSet>> => fail('verification_changes_unavailable', 'Not configured')),
       readFileAtCommit: vi.fn(async (_root: string, sha: string) => {
         const request = [...requests.values()].find((pr) => pr.headSha === sha)!;
         return ok({ sha, content: JSON.stringify({ version: 1, delivery: 'work', context: { kind: 'branch', branch: request.headBranch }, pr: request.number, issues: [request.number - 10] }) });
@@ -28,6 +29,7 @@ function fixture(platform: 'github' | 'gitlab' = 'github') {
       isAncestor: vi.fn(async () => ok({ contained: true })),
     },
     forge: {
+      getCiConfigPath: vi.fn(async () => ok(null)),
       getIssue: vi.fn(async (_repo: unknown, issue: number) => ok({ number: issue, state: open.has(issue) ? 'open' as const : 'closed' as const, pullRequest: false })),
       getPr: vi.fn(async (_repo: unknown, number: number | string) => ok(requests.get(Number(number))!)),
       listIssuePullRequests: vi.fn(async (_repo: unknown, issue: number) => ok([requests.get(issue + 10)!].filter(Boolean))),
@@ -59,6 +61,22 @@ async function addRepair(f: ReturnType<typeof fixture>, receipt: boolean) {
 }
 
 describe.each(['github', 'gitlab'] as const)('scope evidence on %s', (platform) => {
+  it('recomputes historical applicability from the original approved revision', async () => {
+    const f = fixture(platform);
+    const single = { ...declaration, required: [declaration.required[0]] };
+    const base = 'e'.repeat(40);
+    f.deps.git.readFileBeforeMerge.mockResolvedValue(ok({ sha: base, content: 'version: 1\nrequired_checks: []\nverification:\n  product_checks: [build]\n  rules: [{paths: ["docs/**"], checks: []}]' }));
+    f.deps.git.changesBetween.mockResolvedValue(ok({ baseSha: base, mergeBaseSha: base, headSha: HEAD,
+      changes: [{ path: 'src/a.ts', status: 'M', oldMode: '100644', newMode: '100644' }] }));
+    expect(await assessScope(single, f.deps)).toMatchObject({ state: 'incomplete', members: [{ diagnostics: [{ code: 'scope_ci_incomplete' }] }] });
+    expect(f.deps.git.changesBetween).toHaveBeenCalledWith('/repo', base, HEAD);
+    f.deps.git.changesBetween.mockResolvedValue(ok({ baseSha: base, mergeBaseSha: base, headSha: HEAD,
+      changes: [{ path: 'docs/a.md', status: 'M', oldMode: '100644', newMode: '100644' }] }));
+    expect(await assessScope(single, f.deps)).toMatchObject({ state: 'completed', members: [{ delivery: { verification: { requiredChecks: [], baseSha: base } } }] });
+    f.deps.git.changesBetween.mockResolvedValue(fail('verification_changes_unavailable', 'missing history'));
+    expect(await assessScope(single, f.deps)).toMatchObject({ state: 'unknown' });
+  });
+
   it('requires both deliveries and reports each immutable result on its own configured target', async () => {
     const f = fixture(platform);
     expect(await assessScope(declaration, f.deps)).toMatchObject({ state: 'completed', members: [
