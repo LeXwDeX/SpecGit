@@ -104,7 +104,7 @@ export async function writeHarnessAndPolicy(args: {
   // ---- Plan the harness desired state (reads + merges, no writes). ----
   let desired: HarnessDesiredState;
   try {
-    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, language, completion: args.completion, routingSteps: args.routingSteps });
+    desired = await buildHarnessDesiredState(root, { resolveHooksDir, workflowYaml, language, completion: args.completion, routingSteps: args.routingSteps, reuseProfiles: args.existingPolicy?.verification?.reuse });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {

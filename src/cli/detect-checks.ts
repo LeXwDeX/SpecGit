@@ -17,18 +17,13 @@ import { promisify } from 'node:util';
 import { parse } from 'yaml';
 
 import { extractOriginHost } from '../gitfacts/origin.js';
+import { isGitLabJobName } from '../providers/gitlab/job-name.js';
 
 const execFileAsync = promisify(execFile);
 
 const WORKFLOWS_DIR_SEGMENTS = ['.github', 'workflows'];
 const EXCLUDED_CHECK = 'SpecGit Acceptance';
 const GITLAB_CI_FILENAME = '.gitlab-ci.yml';
-
-// GitLab CI top-level reserved keys that are not jobs.
-const GITLAB_RESERVED_KEYS = new Set([
-  'stages', 'include', 'workflow', 'default', 'variables', 'image',
-  'services', 'before_script', 'after_script', 'cache', 'types', 'spec',
-]);
 
 export type OriginPlatform = 'github' | 'gitlab' | 'unknown';
 
@@ -247,7 +242,7 @@ async function detectGitlabChecks(root: string, sources: string[], ambiguousJobs
   if (typeof parsed !== 'object' || parsed === null) return [];
   sources.push(GITLAB_CI_FILENAME);
   return Object.entries(parsed as Record<string, unknown>).flatMap(([key, value]) => {
-    if (key.startsWith('.') || GITLAB_RESERVED_KEYS.has(key) ||
+    if (!isGitLabJobName(key) ||
       typeof value !== 'object' || value === null || Array.isArray(value)) return [];
     if ('parallel' in value || key.includes('$[[')) {
       ambiguousJobs.push(`${GITLAB_CI_FILENAME}: ${key}`);

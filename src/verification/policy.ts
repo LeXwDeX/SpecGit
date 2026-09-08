@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ReuseProfileSchema } from './reuse-profile.js';
 
 /** Portable, case-sensitive repository paths: * within a component, ** as a whole component. */
 export function isVerificationPattern(pattern: string): boolean {
@@ -18,12 +19,27 @@ export const VerificationPolicySchema = z.object({
     isVerificationPattern(value) && !/[*:@%]/.test(value) && value === value.trim(),
   { message: 'Use a local GitLab CI entry path without URL, project, ref or wildcard syntax.' }).optional(),
   product_checks: z.array(CheckNameSchema).min(1).max(100),
+  reuse: z.array(ReuseProfileSchema).min(1).max(10).optional(),
   rules: z.array(z.object({
     paths: z.array(z.string().refine(isVerificationPattern, {
       message: 'Use anchored repository paths with * or component **; no traversal or leading **.',
     })).min(1).max(100),
     checks: z.array(CheckNameSchema).max(100),
   }).strict()).max(100),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const profiles = value.reuse ?? [];
+  for (const [field, values] of [
+    ['id', profiles.map((profile) => profile.id)],
+    ['check', profiles.map((profile) => profile.check)],
+    ['github.entry', profiles.flatMap((profile) => profile.github ? [profile.github.entry] : [])],
+  ] as const) {
+    if (new Set(values).size !== values.length) ctx.addIssue({ code: 'custom', path: ['reuse'],
+      message: `Reuse profiles must have distinct ${field} values.` });
+  }
+  const entries = profiles.flatMap((profile) => profile.gitlab ? [profile.gitlab.entry] : []);
+  if (new Set(entries).size > 1 || (entries.length > 0 && entries[0] !== (value.gitlab_entry ?? '.gitlab-ci.yml'))) {
+    ctx.addIssue({ code: 'custom', path: ['reuse'], message: 'All GitLab profiles must use the approved verification.gitlab_entry.' });
+  }
+});
 
 export type VerificationPolicy = z.infer<typeof VerificationPolicySchema>;

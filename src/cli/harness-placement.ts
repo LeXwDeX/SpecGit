@@ -17,7 +17,8 @@ import * as path from 'node:path';
 import type { PolicyLanguage } from '../record/policy.js';
 import { COMPLETION_WORKFLOW_PATH, GITLAB_COMPLETION_WORKFLOW_PATH } from './completion-workflow.js';
 import type { CompletionSelection } from './commands/init-workflow.js';
-import { buildGitlabRoutingSteps } from './gitlab-routing.js';
+import { buildReuseAssetSteps } from './reuse-assets.js';
+import type { ReuseProfile } from '../verification/reuse-profile.js';
 import {
   AGENTS_FILENAME,
   CLAUDE_FILENAME,
@@ -112,6 +113,7 @@ export interface HarnessWriteOptions {
   completion?: CompletionSelection | null;
   /** An init/status preflight can supply the already-validated local routing plan. */
   routingSteps?: ManagedStep[];
+  reuseProfiles?: ReuseProfile[];
   /**
    * Guidance language (#118): the managed prompt block renders in the
    * policy's language. Defaults to `en`; the workflow YAML and guard
@@ -171,7 +173,10 @@ export async function buildHarnessDesiredState(
   const block = managedPromptBlock(options.language);
   const steps: ManagedStep[] = [];
   const prompts: string[] = [];
-  steps.push(...(options.routingSteps ?? await buildGitlabRoutingSteps(root, options.completion?.routingYaml ?? null)));
+  steps.push(...(options.routingSteps ?? await buildReuseAssetSteps(root, {
+    platform: options.workflowYaml === null ? 'gitlab' : 'github', profiles: options.reuseProfiles ?? [],
+    routingYaml: options.completion?.routingYaml ?? null,
+  })));
 
   const completionWorkflow = options.completion
     ? (options.completion.platform === 'github' ? COMPLETION_WORKFLOW_PATH : GITLAB_COMPLETION_WORKFLOW_PATH)

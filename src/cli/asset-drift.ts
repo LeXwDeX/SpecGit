@@ -57,7 +57,8 @@ import {
 import { resolveLanguage } from './language.js';
 import type { Evidence } from '../kernel/evidence.js';
 import type { CommandContext, GitFacts, Policy } from './types.js';
-import { buildGitlabRoutingSteps, GitlabRoutingError } from './gitlab-routing.js';
+import { GitlabRoutingError } from './gitlab-routing.js';
+import { buildReuseAssetSteps } from './reuse-assets.js';
 
 export type { ManagedAssetFinding, ManagedAssetState } from './managed-reconcile.js';
 
@@ -202,10 +203,12 @@ export async function inspectGeneratedAssets(args: {
     ? { ok: false as const, code: 'automation_platform_unknown' }
     : await selectCompletionWorkflow(ctx, root, platform === 'providers_invalid' ? 'undecided' : platform, completionEnabled, policy.ok ? policy.value.automation?.target_branch : undefined);
   if (!completion.ok) uninspected.push(completion.code);
-  let routingSteps: Awaited<ReturnType<typeof buildGitlabRoutingSteps>> = [];
-  if (completion.ok) {
+  let routingSteps: Awaited<ReturnType<typeof buildReuseAssetSteps>> = [];
+  if (completion.ok && (platform === 'github' || platform === 'gitlab')) {
     try {
-      routingSteps = await buildGitlabRoutingSteps(root, completion.value?.routingYaml ?? null);
+      routingSteps = await buildReuseAssetSteps(root, { platform, profiles: policy.ok ? policy.value.verification?.reuse ?? [] : [],
+        routingYaml: completion.value?.routingYaml ?? null,
+      });
     } catch (error) {
       uninspected.push(error instanceof GitlabRoutingError ? error.code : 'gitlab_ci_unreadable');
     }

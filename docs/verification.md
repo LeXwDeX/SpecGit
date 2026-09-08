@@ -71,8 +71,10 @@ applicable checks. `--plan-checks` and `--scope` cannot be combined.
   adoption retains the existing adoption boundary; it cannot authorize its own
   automated merge.
 
-The plan does not reuse older green runs. Required checks still need current-head
-truth and freshness. An executed failed check still blocks guarded completion
+The applicability plan alone does not reuse older green runs. Projects may separately
+opt into [verified-input reuse](verification-reuse.md); its current run still proves
+original execution identity, unchanged inputs, and fresh delivery checks. Required
+checks retain current-head truth and freshness. An executed failed check still blocks guarded completion
 even when it was not selected. A skipped non-applicable business check may be
 omitted; at least one executed successful check must still prove completion.
 

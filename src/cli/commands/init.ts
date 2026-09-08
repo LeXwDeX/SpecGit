@@ -84,7 +84,8 @@ import { HARNESS_WORKFLOW_PATH } from '../harness-placement.js';
 import { trackedIncludes } from '../gates.js';
 import { buildInitOutcome, writeHarnessAndPolicy } from './init-write.js';
 import { resolveProjectRules, resolveRepairLabels } from './init-rules.js';
-import { buildGitlabRoutingSteps, GitlabRoutingError } from '../gitlab-routing.js';
+import { GitlabRoutingError } from '../gitlab-routing.js';
+import { buildReuseAssetSteps } from '../reuse-assets.js';
 import { runSetup } from './setup.js';
 import { finishGuidedUpgrade, guidedUpgradeDecision } from './init-upgrade.js';
 
@@ -215,7 +216,10 @@ export async function runInit(
   }
   let routingSteps;
   try {
-    routingSteps = await buildGitlabRoutingSteps(root, completion.value?.routingYaml ?? null);
+    routingSteps = await buildReuseAssetSteps(root, { platform: gitlabMode ? 'gitlab' : 'github',
+      profiles: existingPolicy.ok ? existingPolicy.value.verification?.reuse ?? [] : [],
+      routingYaml: completion.value?.routingYaml ?? null,
+    });
   } catch (error) {
     return { exit: error instanceof GitlabRoutingError ? EXIT_USAGE : EXIT_UNKNOWN,
       errors: [errorDiagnostic(error instanceof GitlabRoutingError ? error.code : 'gitlab_ci_unreadable',

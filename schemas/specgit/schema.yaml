@@ -132,6 +132,29 @@ documents:
         fields:
           gitlab_entry: { type: local repository path, required: false, default: .gitlab-ci.yml }
           product_checks: { type: nonempty array of check names, required: true }
+          reuse:
+            type: array of strict reusable verification profiles (optional, 1..10)
+            fields:
+              id: { type: distinct lowercase hyphenated identifier, required: true }
+              check: { type: distinct public verification check name, required: true }
+              max_age_seconds: { type: integer 60..86400, required: true }
+              node: { type: exact major.minor.patch version, required: true }
+              pnpm: { type: exact major.minor.patch version, required: true }
+              runtime: { type: exact specgit package or local archive with SHA256 plus npm lockfile, required: true }
+              commands: { type: nonempty array of executable/argument arrays, required: true }
+              fresh_commands: { type: array of executable/argument arrays, required: true }
+              environment: { type: noncredential literal environment map, required: false }
+              github: { type: fixed hosted runner and distinct local workflow entry, required: false }
+              gitlab: { type: image digest and local entry plus tags and optional bootstrap argv, required: false }
+            notes: >-
+              At least one provider integration is required. All GitLab profiles
+              share the approved gitlab_entry. Generated paths cannot overlap
+              runtime inputs, authoritative declarations or local integration
+              storage. Reuse requires matching complete input and environment
+              fingerprints and native original-execution provenance within the
+              original completion TTL; reuse never extends that TTL or replaces
+              current delivery acceptance. Missing evidence executes verification.
+
           rules:
             type: array of strict path/check rules
             required: true

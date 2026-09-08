@@ -23,7 +23,7 @@ const RecognizedBindingSchema = DeliveryBindingSchema.extend({
   issueKinds: DeliveryBindingSchema.shape.issueKinds.unwrap().element.strict().array().optional(),
 }).strict();
 
-function recognizedBinding(content: string | null): boolean {
+export function recognizedBinding(content: string | null): boolean {
   if (content === null) return true; // A first binding has no previous file.
   try { return RecognizedBindingSchema.safeParse(YAML.parse(content)).success; }
   catch { return false; }
