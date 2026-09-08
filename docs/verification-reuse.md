@@ -90,6 +90,13 @@ No preparation artifacts are downloaded into this job. Read-only job-token
 capability sufficient for reuse is not a substitute for the forge capabilities
 required by `finish`; unavailable acceptance evidence still exits 3.
 
+GitLab's `/job` endpoint identifies the executing job through its native CI
+session. SpecGit queries that endpoint through glab in temporary empty
+configuration, excluding user-token overrides for that call only. Other forge
+evidence and `finish` retain the project's authenticated session. This keeps
+configured acceptance credentials from overriding native job identity; SpecGit
+does not extract credentials or write them into the temporary configuration.
+
 Run `specgit init --force --no-protect` to regenerate the declared workflows,
 then inspect `specgit status --json` and review the diff before committing.
 Generated verification files and their retirement manifest are derived harness
