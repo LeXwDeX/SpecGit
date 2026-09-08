@@ -55,6 +55,24 @@ referenced by the [Public Launch v1.0 milestone](https://github.com/LeXwDeX/Spec
 
 Nothing else is public surface. Full reference: [cli.md](cli.md).
 
+### Optional aggregate scope assessment
+
+`finish --scope <name>` is a separate read-only mode; `accept` remains the alias
+of plain delivery `finish`. A strict version-1 declaration at
+`spec_git/scopes/<name>.yaml` defines a parent and required issue/target pairs,
+with optional request selections. It is independent of the replaceable binding.
+Only the proved remote default branch approves it; workspace bytes are proposals.
+Required history is append-only in this version, and incomplete history cannot
+approve a smaller scope. See [aggregate scopes](scopes.md) for schema and limits.
+
+The JSON envelope emits `scope` instead of `verdict`. Confirmed member deliveries
+plus a closed parent yield `completed`/exit 0. Known unfinished work yields
+`incomplete`/exit 1; completed members with an open parent yield
+`ready_to_close`/exit 1. Missing or ambiguous evidence yields `unknown`/exit 3.
+Historical completion reuses policy, binding, CI and repair proof without
+inventing current-checkout facts. The result does not authorize effects, close
+the parent, or imply publication. Ordinary delivery gates remain unchanged.
+
 `init` requires a supported forge platform before any mutation. Only
 `github.com` auto-selects GitHub; another endpoint may be declared or confirmed
 only as GitLab, because GitHub Enterprise has no v1 route. Undecided or invalid
@@ -197,7 +215,7 @@ define the configuration choices and diagnostics.
 
 - No GitHub Enterprise declaration or evidence route; self-managed GitLab CE/Free evidence is supported per [gitlab-support.md](gitlab-support.md).
 - No direct REST clients, no token storage, no telemetry.
-- No spec-artifact or task-list inputs — evidence is git + the forge (GitHub or GitLab) only.
+- No spec-artifact or narrative task-list completion proof — delivery evidence is Git + the forge (GitHub or GitLab). Approved aggregate scopes only select required work; they cannot satisfy it.
 - No cross-platform deliveries (one delivery, one platform, one PR).
 - No weakening of `spec_git/policy.yaml` to pass a verdict, ever — weakening a policy that was right at birth is forbidden; correcting one that was wrong at birth (e.g. a detected check that never runs on PR heads) is required, via explicit `init --force --required-check <verified-name>` replacement or a reviewed edit; ordinary upgrades preserve existing checks.
 

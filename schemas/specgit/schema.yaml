@@ -1,11 +1,12 @@
 # SpecGit schema guidance (schema-facing documentation).
 #
-# This file documents the three normative schemas SpecGit validates:
+# This file documents the normative schemas SpecGit validates:
 #   1. the delivery binding record  — `.specgit.yaml` at the repository root
 #   2. the project policy           — `spec_git/policy.yaml`
 #   3. the platform declaration     — `spec_git/providers.yaml`
+#   4. an optional aggregate scope  — `spec_git/scopes/<name>.yaml`
 # It is guidance for humans and agents; the validating implementation is the
-# specgit CLI (src/record/{schema,policy,providers}.ts). Templates for the
+# specgit CLI (src/record/{schema,policy,providers}.ts and src/scope/declaration.ts). Templates for the
 # record and the policy live in ./templates/.
 #
 # There are intentionally no artifact schemas (proposal/spec/design/tasks):
@@ -21,6 +22,29 @@ description: >-
   fails closed.
 
 documents:
+
+  scope:
+    filename: "spec_git/scopes/<name>.yaml"
+    committed: approved on the proved remote default branch
+    schema:
+      version: { type: literal 1, required: true }
+      name: { type: lowercase kebab-case string of at most 100 characters, required: true }
+      parent: { type: positive safe integer, required: true }
+      required:
+        type: array of 1 to 100 strict objects
+        required: true
+        fields:
+          issue: { type: positive safe integer, required: true }
+          target: { type: valid Git branch name, required: true }
+          request: { type: positive safe integer, required: false }
+        notes: Unique issue numbers excluding parent. Unknown keys are invalid.
+    notes: >-
+      ScopeSchema in src/scope/declaration.ts validates this declaration.
+      Complete first-parent history preserves required membership and targets;
+      removal, deletion, parent replacement and replacement of an existing
+      request selection are unsupported in version 1. finish --scope assesses
+      historical delivery evidence independently of ordinary delivery gates.
+      Scope declarations select work; they never prove completion or authorize effects.
 
   record:
     filename: ".specgit.yaml"

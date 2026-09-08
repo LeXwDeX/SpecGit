@@ -118,6 +118,12 @@ describe.each(['github', 'gitlab'] as const)('scope evidence on %s', (platform) 
     expect((await assessScope(declaration, f.deps)).state).toBe('unknown');
   });
 
+  it('keeps a confirmed merge without its result identity unknown', async () => {
+    const f = fixture(platform);
+    f.requests.set(20, { ...f.requests.get(20)!, mergeCommitSha: null });
+    expect((await assessScope(declaration, f.deps)).state).toBe('unknown');
+  });
+
   it('requires an explicit selection for competing proven requests', async () => {
     const f = fixture(platform);
     const duplicate = { ...f.requests.get(20)!, number: 22, headSha: 'f'.repeat(40) };
