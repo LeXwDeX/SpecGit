@@ -1,0 +1,11 @@
+version: 1
+required_checks:
+  - Required verification
+language: en
+validation:
+  titles: true
+  labels: kind
+automation:
+  merge: true
+  target_branch: main
+  close_issues: true

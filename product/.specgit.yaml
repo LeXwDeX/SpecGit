@@ -1,0 +1,9 @@
+version: 1
+delivery: verified-input-reuse
+context:
+  kind: branch
+  branch: feat/473-verified-input-reuse
+issues:
+  - 473
+issueKinds: []
+pr: 496
