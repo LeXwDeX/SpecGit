@@ -274,7 +274,7 @@ The policy failed validation. Each `required_checks` name must be a non-empty st
 
 ### `harness_stale` (exit 2)
 
-`specgit issue` refused because an acceptance-critical remote harness surface is stale, conflicting, or only partially present for the running CLI version. Today that means the managed `specgit-accept` or trusted `specgit-complete` workflow family, not local AGENTS guidance, guard hooks, or setup entry points. Local integration drift produces the non-blocking `local_assets_stale` warning instead. Run `specgit status --json`, then apply its init repair; append `--no-ignore` for the intentionally tracked authoritative model. A conflict is preserved until a human resolves ownership. A repository with every remote harness asset absent is a fresh adoption and bootstrap proceeds.
+`specgit issue` refused because an acceptance-critical remote harness surface is stale, conflicting, or only partially present for the running CLI version. Today that means the managed `specgit-accept` workflow or GitLab adapter, or trusted `specgit-complete` workflow family, not local AGENTS guidance, guard hooks, or setup entry points. Local integration drift produces the non-blocking `local_assets_stale` warning instead. Run `specgit status --json`, then apply its init repair; append `--no-ignore` for the intentionally tracked authoritative model. A conflict is preserved until a human resolves ownership. A repository with every remote harness asset absent is a fresh adoption and bootstrap proceeds.
 
 ## Completeness
 
@@ -321,7 +321,7 @@ branch mismatch.
 
 ### `worktree_mismatch`
 
-The record says `kind: worktree`, but the current checkout is not a linked worktree whose label resolves to the record's branch. Either run from the intended worktree (`git worktree list` shows them) or re-bind from this checkout so the context reflects reality. Generated acceptance workflows reconstruct the bound worktree at the checked-out event commit before running the same verdict; they preserve the binding and branch refs. A wrong event branch or dirty tracked inputs still reach the normal rejecting gates.
+The record says `kind: worktree`, but the current checkout is not a linked worktree whose label resolves to the record's branch. Either run from the intended worktree (`git worktree list` shows them) or re-bind from this checkout so the context reflects reality. Generated acceptance workflows reconstruct the bound worktree at the checked-out event commit before running the same verdict; they preserve the binding and branch refs. The GitLab project-owned job invokes the generated adapter after explicit source-branch preparation (see [GitLab acceptance](gitlab-support.md#project-owned-acceptance-job)). Wrong branches, dirty inputs, and unknown cleanliness are not replaced with a clean snapshot.
 
 ### `no_commits`
 

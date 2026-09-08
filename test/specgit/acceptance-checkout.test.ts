@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { withAcceptanceCheckout } from '../../src/automation/acceptance-checkout.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { withAcceptanceCheckout as prepareCheckout, prepareGitlabEventBranch } from '../../src/harness-runtime/acceptance-checkout.mjs';
+import { readRecord } from '../../src/record/io.js';
 import { LocalGitAdapter } from '../../src/gitfacts/local.js';
 import { bindingContextMismatch } from '../../src/record/context-match.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
+const withAcceptanceCheckout = <T>(root: string, run: (checkout: string) => Promise<T>) =>
+  prepareCheckout(root, run, { readRecord, git: new LocalGitAdapter(), bindingContextMismatch });
 const dirs: string[] = [];
-afterEach(() => dirs.splice(0).forEach(rmDir));
+afterEach(() => { vi.restoreAllMocks(); dirs.splice(0).forEach(rmDir); });
 function fixture(label = 'delivery') {
   const dir = makeTempDir('specgit-acceptance-checkout-'); dirs.push(dir);
   const { root, env } = initRepo(dir);
@@ -52,6 +55,13 @@ describe('acceptance checkout preparation', () => {
     });
   });
 
+  it('preserves unknown dirty evidence instead of making a clean worktree', async () => {
+    const f = fixture();
+    const facts = await new LocalGitAdapter().facts(f.root);
+    vi.spyOn(LocalGitAdapter.prototype, 'facts').mockResolvedValue({ ...facts, dirty: null });
+    await withAcceptanceCheckout(f.root, async (root) => { expect(root).toBe(f.root); });
+  });
+
   it('cleans up registration when the verdict callback fails', async () => {
     const f = fixture();
     const before = git(f.root, ['worktree', 'list', '--porcelain'], f.env);
@@ -62,5 +72,39 @@ describe('acceptance checkout preparation', () => {
   it.each(['..', '../outside'])('refuses unsafe label %s', async (label) => {
     const f = fixture(label);
     await expect(withAcceptanceCheckout(f.root, async () => 0)).rejects.toThrow(/label/i);
+  });
+});
+
+describe('explicit GitLab event checkout preparation', () => {
+  it('creates the exact event branch from a detached source head and then supports the declared worktree', async () => {
+    const f = fixture();
+    const eventBranch = 'test/event-head';
+    commitFile(f.root, '.specgit.yaml', f.binding.replace(`branch: ${f.branch}`, `branch: ${eventBranch}`), f.env);
+    const sha = git(f.root, ['rev-parse', 'HEAD'], f.env).trim();
+    const originalRef = git(f.root, ['rev-parse', f.branch], f.env);
+    git(f.root, ['checkout', '--detach'], f.env);
+    const event = { CI_COMMIT_SHA: sha, CI_MERGE_REQUEST_SOURCE_BRANCH_NAME: eventBranch, CI_MERGE_REQUEST_EVENT_TYPE: 'detached' };
+    prepareGitlabEventBranch(f.root, event);
+    expect(git(f.root, ['branch', '--show-current'], f.env).trim()).toBe(eventBranch);
+    const refs = git(f.root, ['show-ref'], f.env);
+    await withAcceptanceCheckout(f.root, async (checkout) => {
+      expect((await new LocalGitAdapter().facts(checkout)).headSha).toBe(sha);
+      expect(checkout).not.toBe(f.root);
+    });
+    expect(git(f.root, ['show-ref'], f.env)).toBe(refs);
+    expect(git(f.root, ['rev-parse', f.branch], f.env)).toBe(originalRef);
+  });
+
+  it.each(['wrong-sha', 'wrong-branch', 'merged-result', 'existing-ref'])('rejects %s without rewriting refs', (kind) => {
+    const f = fixture();
+    const event = { CI_COMMIT_SHA: kind === 'wrong-sha' ? '0'.repeat(40) : f.head,
+      CI_COMMIT_BRANCH: kind === 'existing-ref' ? f.branch : 'test/event',
+      CI_MERGE_REQUEST_EVENT_TYPE: kind === 'merged-result' ? 'merged_result' : 'detached' };
+    if (kind !== 'wrong-branch') git(f.root, ['checkout', '--detach'], f.env);
+    const refs = git(f.root, ['show-ref'], f.env);
+    const head = git(f.root, ['rev-parse', 'HEAD'], f.env);
+    expect(() => prepareGitlabEventBranch(f.root, event)).toThrow();
+    expect(git(f.root, ['show-ref'], f.env)).toBe(refs);
+    expect(git(f.root, ['rev-parse', 'HEAD'], f.env)).toBe(head);
   });
 });

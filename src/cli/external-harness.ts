@@ -25,6 +25,8 @@
  * non-destructive contract).
  */
 
+import { acceptanceRunYaml } from './acceptance-step.js';
+
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
@@ -147,8 +149,9 @@ jobs:
 ${waitStepYaml('gh')}
 
       - name: specgit finish
-        run: 'node "$RUNNER_TEMP/specgit-cli/node_modules/specgit/dist/automation/acceptance-checkout.js"'
+${acceptanceRunYaml()}
         env:
+          SPECGIT_ACCEPT_RUNTIME: \${{ runner.temp }}/specgit-cli/node_modules/specgit
           GH_TOKEN: \${{ github.token }}
 `;
 }

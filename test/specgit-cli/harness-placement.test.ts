@@ -6,6 +6,8 @@
  * (content) before anything is written, `commit` (write) with rollback.
  */
 
+import { acceptanceScript, GITLAB_ACCEPTANCE_PATH } from '../../src/cli/acceptance-step.js';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -86,6 +88,49 @@ describe('writeHarnessAssets placement', () => {
     // The caller-supplied workflow bytes are written verbatim: placement
     // never inspects what the bytes say.
     expect(read(path.join(root, ...HARNESS_WORKFLOW_PATH.split('/')))).toBe('name: fixture\n');
+  });
+
+  it('writes and refreshes the GitLab adapter while preserving project business CI, then retires it on GitHub', async () => {
+    const business = 'verify:\n  script: run-project-tests\n';
+    fs.writeFileSync(path.join(root, '.gitlab-ci.yml'), business);
+    const options = { ...skipGitHook, platform: 'gitlab' as const, workflowYaml: null };
+    const result = await writeHarnessAssets(root, options);
+    expect(result.acceptanceScript).toBe(GITLAB_ACCEPTANCE_PATH);
+    const target = path.join(root, GITLAB_ACCEPTANCE_PATH);
+    expect(read(target)).toBe(acceptanceScript());
+    fs.appendFileSync(target, '// stale\n');
+    await writeHarnessAssets(root, options);
+    expect(read(target)).toBe(acceptanceScript());
+    expect(read(path.join(root, '.gitlab-ci.yml'))).toBe(business);
+    const switched = await writeHarnessAssets(root, { ...skipGitHook, platform: 'github' });
+    expect(switched.removed).toContain(GITLAB_ACCEPTANCE_PATH);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('preserves a user file at the GitLab adapter path', async () => {
+    const target = path.join(root, GITLAB_ACCEPTANCE_PATH);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '// user adapter\n');
+    const before = treeBytes(root);
+    await expect(writeHarnessAssets(root, { ...skipGitHook, platform: 'gitlab', workflowYaml: null })).rejects.toThrow();
+    expect(treeBytes(root)).toEqual(before);
+  });
+
+  it('rejects a symlinked GitLab adapter directory without touching the destination', async () => {
+    const outside = makeTempDir('specgit-adapter-outside-');
+    try {
+      fs.writeFileSync(path.join(outside, 'specgit-accept.mjs'), '// outside\n');
+      fs.symlinkSync(outside, path.join(root, '.gitlab'), 'junction');
+      await expect(writeHarnessAssets(root, { ...skipGitHook, platform: 'gitlab', workflowYaml: null })).rejects.toThrow();
+      expect(read(path.join(outside, 'specgit-accept.mjs'))).toBe('// outside\n');
+    } finally { rmDir(outside); }
+  });
+
+  it('rolls back the new GitLab adapter when a later asset cannot be written', async () => {
+    fs.writeFileSync(path.join(root, '.opencode'), 'not a directory');
+    const before = treeBytes(root);
+    await expect(writeHarnessAssets(root, { ...skipGitHook, platform: 'gitlab', workflowYaml: null })).rejects.toThrow();
+    expect(treeBytes(root)).toEqual(before);
   });
 
   it('is byte-stable: a second write leaves the whole tree identical', async () => {

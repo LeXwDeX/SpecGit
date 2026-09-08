@@ -122,7 +122,7 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
     throw new Error(`${label}: workflow_dispatch trigger missing`);
   }
   const steps = allSteps(doc);
-  const finishes = steps.filter((step) => ((step.run ?? '').includes('finish --json') || (step.run ?? '').includes('/automation/acceptance-checkout.js')));
+  const finishes = steps.filter((step) => ((step.run ?? '').includes('finish --json') || (step.run ?? '').includes('await acceptanceMain()')));
   if (finishes.length === 0) {
     throw new Error(`${label}: specgit finish step missing`);
   }
@@ -509,7 +509,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
 
   it('removing the trusted metadata verdict token is detected', () => {
     const mutant = acceptTemplate.replace(
-      /(- name: specgit finish with trusted CLI[\s\S]*?env:\n)          GH_TOKEN: [^\n]+/,
+      /(- name: specgit finish with trusted CLI[\s\S]*?env:\n[\s\S]*?)          GH_TOKEN: [^\n]+/,
       '$1          GH_TOKEN: missing',
     );
     expect(mutant).not.toBe(acceptTemplate);
