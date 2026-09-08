@@ -4,5 +4,5 @@ context:
   kind: branch
   branch: codex/473-github-reuse-acceptance-20260908
 issues:
-  - 473
+  - 502
 pr: 501
