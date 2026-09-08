@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { assessScope } from '../../src/scope/assess.js';
 import type { HistoricalDependencies } from '../../src/scope/historical-delivery.js';
-import { ok, fail } from '../../src/kernel/evidence.js';
+import { ok, fail, type Evidence } from '../../src/kernel/evidence.js';
+import { recordRepairIntent, recordRepairCreation, repairPolicyHash } from '../../src/automation/repair-log.js';
 import { makePrFact } from './helpers/mock-forge.js';
-import type { PrFact } from '../../src/github/port.js';
+import type { PrFact, RequestDeclaration } from '../../src/github/port.js';
 
 const HEAD = 'a'.repeat(40);
 const MERGE = 'b'.repeat(40);
@@ -33,10 +34,28 @@ function fixture(platform: 'github' | 'gitlab' = 'github') {
       getPrChecks: vi.fn(async (_repo: unknown, number: number) => ok({ headSha: requests.get(number)!.headSha, checks: [check], pipelineStatus: 'success' })),
       getCheckRuns: vi.fn(async () => ok([check])),
       getEvidenceAnchor: vi.fn(async () => ok({ anchoredAt: '2026-01-01T00:00:00Z' })),
-      getRequestDeclarations: vi.fn(async () => ok([])),
+      getRequestDeclarations: vi.fn(async (): Promise<Evidence<RequestDeclaration[]>> => ok([])),
     },
   } satisfies HistoricalDependencies;
   return { deps, requests, open };
+}
+
+async function addRepair(f: ReturnType<typeof fixture>, receipt: boolean) {
+  const declarations: RequestDeclaration[] = [];
+  const log = {
+    getRequestDeclarations: async (_repo: unknown, request: number) => ok(request === 20 ? declarations : []),
+    appendRequestDeclaration: async (_repo: unknown, _request: number, _prefix: string, body: string) => {
+      const id = String(declarations.length + 1);
+      declarations.push({ id, body }); return ok({ id });
+    },
+  };
+  const operation = await recordRepairIntent(f.deps.repo, { request: 20, headSha: HEAD,
+    policyHash: repairPolicyHash({ version: 1, required_checks: ['test'] }),
+    cause: { code: 'checks_failed', target: `${f.deps.repo.platform}:pipeline:test` },
+    title: 'fix: test failure', body: 'Restore the required test.', labels: [] }, log);
+  expect(operation.ok).toBe(true);
+  if (operation.ok && receipt) expect((await recordRepairCreation(f.deps.repo, 20, operation.value.key, 99, log)).ok).toBe(true);
+  f.deps.forge.getRequestDeclarations = vi.fn(log.getRequestDeclarations);
 }
 
 describe.each(['github', 'gitlab'] as const)('scope evidence on %s', (platform) => {
@@ -138,5 +157,50 @@ describe.each(['github', 'gitlab'] as const)('scope evidence on %s', (platform) 
     expect((await assessScope(declaration, f.deps)).members[0].state).toBe('ambiguous');
     const selected = { ...declaration, required: [{ issue: 10, target: 'preview', request: 20 }] };
     expect((await assessScope(selected, f.deps)).state).toBe('completed');
+  });
+
+  it('cannot complete without original approved policy evidence', async () => {
+    const f = fixture(platform);
+    f.deps.git.readFileBeforeMerge.mockImplementation(async () => fail('policy_history_unavailable', 'Missing original policy'));
+    expect((await assessScope(declaration, f.deps)).state).toBe('unknown');
+  });
+
+  it('cannot complete with a repair intent awaiting its creation receipt', async () => {
+    const f = fixture(platform); await addRepair(f, false);
+    expect((await assessScope(declaration, f.deps)).members[0]).toMatchObject({ state: 'unknown', diagnostics: [expect.objectContaining({ code: 'repair_creation_pending' })] });
+  });
+
+  it('requires resolution evidence even when a derived repair was closed', async () => {
+    const f = fixture(platform); await addRepair(f, true);
+    f.deps.git.isAncestor.mockResolvedValue(ok({ contained: false }));
+    expect((await assessScope(declaration, f.deps)).members[0]).toMatchObject({ state: 'unknown', diagnostics: [expect.objectContaining({ code: 'repair_resolution_unproven' })] });
+  });
+
+  it('retains the ID of a closed and proven repair in completed evidence', async () => {
+    const f = fixture(platform); await addRepair(f, true);
+    expect((await assessScope(declaration, f.deps)).members[0]).toMatchObject({ state: 'completed', delivery: { repairIssues: [99] } });
+  });
+
+  it('does not reuse a request result after its target evidence changes between members', async () => {
+    const f = fixture(platform);
+    const request = { ...f.requests.get(20)!, body: 'Closes #10\nCloses #11' };
+    f.requests.set(20, request);
+    f.deps.git.readFileAtCommit.mockImplementation(async (_root, sha) => ok({ sha, content: JSON.stringify({
+      version: 1, delivery: 'shared', context: { kind: 'branch', branch: request.headBranch }, pr: 20, issues: [10, 11],
+    }) }));
+    const shared = { ...declaration, required: [{ issue: 10, target: 'preview' }, { issue: 11, target: 'preview' }] };
+    f.deps.forge.listIssuePullRequests.mockResolvedValue(ok([request]));
+    expect((await assessScope(shared, f.deps)).state).toBe('completed');
+    expect(f.deps.forge.getPrChecks).toHaveBeenCalledTimes(1);
+    expect(f.deps.git.readFileAtCommit).toHaveBeenCalledTimes(1);
+    f.deps.forge.listIssuePullRequests.mockImplementation(async (_repo, issue) => ok([
+      issue === 10 ? request : { ...request, baseBranch: 'dev' },
+    ]));
+    expect((await assessScope(declaration, f.deps)).state).toBe('unknown');
+    f.deps.forge.listIssuePullRequests.mockResolvedValue(ok([request]));
+    let companionReads = 0;
+    f.deps.forge.getIssue.mockImplementation(async (_repo, number) => ok({ number,
+      state: number === 11 && ++companionReads > 1 ? 'open' : 'closed', pullRequest: false }));
+    expect((await assessScope(shared, f.deps)).state).toBe('incomplete');
   });
 });

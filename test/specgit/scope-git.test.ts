@@ -4,6 +4,33 @@ import { verifyScopeHistory } from '../../src/scope/declaration.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from './helpers/temp-repo.js';
 
 describe('immutable scope history', () => {
+  it('accepts an appended declaration merged by PR and detects a later merged reduction', async () => {
+    const temp = makeTempDir();
+    try {
+      const { root, env } = initRepo(temp);
+      const path = 'spec_git/scopes/programme.yaml';
+      const scope = (issues: number[]) => JSON.stringify({ version: 1, name: 'programme', parent: 1, required: issues.map((issue) => ({ issue, target: 'preview' })) });
+      commitFile(root, path, scope([10]), env);
+      git(root, ['checkout', '-b', 'declare-append'], env);
+      commitFile(root, path, scope([10, 11]), env);
+      git(root, ['checkout', 'main'], env);
+      git(root, ['merge', '--no-ff', 'declare-append', '-m', 'merge scope append'], env);
+      const adapter = new LocalGitAdapter({ env });
+      const read = async () => {
+        const history = await adapter.readFileHistory(root, git(root, ['rev-parse', 'HEAD'], env).trim(), path);
+        expect(history.ok).toBe(true);
+        if (!history.ok) throw new Error(history.message);
+        return verifyScopeHistory('programme', history.value.map((revision) => revision.content));
+      };
+      expect(await read()).toMatchObject({ ok: true, value: { required: [{ issue: 10 }, { issue: 11 }] } });
+      git(root, ['checkout', '-b', 'declare-reduction'], env);
+      commitFile(root, path, scope([10]), env);
+      git(root, ['checkout', 'main'], env);
+      git(root, ['merge', '--no-ff', 'declare-reduction', '-m', 'merge scope reduction'], env);
+      expect(await read()).toMatchObject({ ok: false, code: 'scope_amendment_unsupported' });
+    } finally { rmDir(temp); }
+  });
+
   it('retains removed members across real commits and later reverts independently of checkout', async () => {
     const temp = makeTempDir();
     try {
