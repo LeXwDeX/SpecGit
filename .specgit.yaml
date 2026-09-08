@@ -1,12 +1,11 @@
 version: 1
-delivery: private-deployment-redaction
+delivery: anonymized-package-release
 context:
   kind: worktree
-  label: specgit-private-cleanup-20260909
-  branch: fix/503-private-deployment-redaction
+  label: specgit-anonymous-release-20260909
+  branch: chore/505-anonymized-package-release
 issues:
-  - 503
+  - 505
 issueKinds:
-  - issue: 503
-    kind: kind::fix
-pr: 504
+  - issue: 505
+    kind: kind::chore
