@@ -54,7 +54,6 @@ Field rules:
 | Field | Type | Rule |
 | --- | --- | --- |
 | `version` | `1` | Only `1` is accepted. |
-| `verification` | object | Optional [applicable verification](verification.md): nonempty `product_checks` fallback and explicit `rules` mapping paths to checks. Unconditional `required_checks` are always retained. Complete immutable Git evidence and the approved policy select additional checks; missing evidence exits 3. Ordinary `init --force` preserves this field. |
 | `delivery` | string | kebab-case: lowercase alphanumerics, single `-` separators, no leading/trailing `-`. Set on first bind only. |
 | `context.kind` | `branch` \| `worktree` | Required discriminant. Unknown kinds are invalid. |
 | `context.branch` | string | Non-empty. Must equal the live branch at evaluation. |
@@ -94,6 +93,7 @@ automation:
 | --- | --- | --- |
 | `version` | `1` | Only `1` is accepted. |
 | `required_checks` | string[] | List of non-empty check names, matched exactly. May be empty — the **no-CI policy** (`init`'s fallback when the repository has no CI files): the generated acceptance job itself, enforced through branch protection, is then the gate. |
+| `verification` | object | Optional [applicable verification](verification.md): nonempty `product_checks` fallback and explicit `rules` mapping paths to checks. Unconditional `required_checks` are always retained. Complete immutable Git evidence and the approved policy select additional checks; missing evidence exits 3. Ordinary `init --force` preserves this field. |
 | `ordered_issues` | boolean | Optional, default `false`. When `true`, deliveries must merge in ascending issue order: `specgit finish` rejects (`issue_out_of_order`, exit 1) if any open issue has a number smaller than the smallest bound issue of this delivery. Close or deliver the earlier issue first. |
 | `language` | `en` \| `zh` | Optional, default `en` (key may be absent). Presentation language of **generated** text: issue/PR body scaffolds, the init harness guidance block, success-path human prose ([#118](https://github.com/LeXwDeX/SpecGit/issues/118)). Set via `specgit init --language <lang>`; `init --force` inherits the existing value unless overridden. Unsupported values fail closed (`policy_invalid`). Never localized under any value: exit codes, `--json` field names, diagnostic `code` values, closing-reference keywords, the workflow YAML and guard scripts. Branch names stay ASCII: when a title yields no ASCII slug, bootstrap never invents one — an interactive session is prompted for a kebab-case delivery name, a scripted session gets `issue_delivery_name_required` naming `--delivery <slug>` ([#246](https://github.com/LeXwDeX/SpecGit/issues/246)). |
 | `tags` | object[] | Optional declared label vocabulary. Each object has `name` (portable tag slug), optional six-hex `color`, and optional `description` (at most 300 characters). Used for seeding and for enforced label rules. |
