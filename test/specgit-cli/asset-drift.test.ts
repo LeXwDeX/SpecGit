@@ -16,6 +16,8 @@
  * production composition injects.
  */
 
+import { acceptanceScript, GITLAB_ACCEPTANCE_PATH } from '../../src/cli/acceptance-step.js';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -228,6 +230,22 @@ describe('inspectGeneratedAssets: surface grouping and exact fixes (#308)', () =
     });
     return inspectGeneratedAssets({ root, ctx: t.ctx, policy, facts });
   }
+
+  it('inspects the GitLab adapter from the same desired source as init and preserves unknown-platform boundaries', async () => {
+    write(root, 'spec_git/providers.yaml', 'gitlab:\n  host: gitlab.example.com\n');
+    const facts = makeGitFacts({ originUrl: 'https://gitlab.example.com/group/project.git' });
+    const asset = (report: GeneratedAssetsReport) => report.surfaces.flatMap((surface) => surface.assets)
+      .find((entry) => entry.path === GITLAB_ACCEPTANCE_PATH);
+    expect(asset(await inspect(facts))?.state).toBe('missing');
+    write(root, GITLAB_ACCEPTANCE_PATH, acceptanceScript());
+    expect(asset(await inspect(facts))?.state).toBe('current');
+    fs.appendFileSync(path.join(root, GITLAB_ACCEPTANCE_PATH), '// drift\n');
+    expect(asset(await inspect(facts))?.state).toBe('stale');
+    fs.unlinkSync(path.join(root, 'spec_git/providers.yaml'));
+    const unknown = await inspect(makeGitFacts({ originUrl: 'https://git.example.com/group/project.git' }));
+    expect(unknown.complete).toBe(false);
+    expect(asset(unknown)).toBeUndefined();
+  });
 
   it('an empty repository: init surface missing with the --force fix, setup surfaces absent and clean-listed nowhere', async () => {
     const report = await inspect();

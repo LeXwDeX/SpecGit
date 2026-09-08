@@ -338,8 +338,8 @@ export async function runInit(
       severity: 'warning',
       code: 'gitlab_harness_pending',
       message:
-        'SpecGit does not generate or own the GitLab CI acceptance job; the project-owned .gitlab-ci.yml must run "specgit finish --json" for merge requests.',
-      fix: 'Keep a top-level job in the project-owned .gitlab-ci.yml responsible for "specgit finish --json"; SpecGit can detect its job key or you can declare it explicitly with "--required-check <name>".',
+        'SpecGit does not generate or own the GitLab CI acceptance job; the project-owned .gitlab-ci.yml must invoke the generated .gitlab/specgit-accept.mjs adapter for "specgit finish --json" on merge requests.',
+      fix: 'Keep a top-level job in the project-owned .gitlab-ci.yml responsible for the generated adapter (see docs/gitlab-support.md for the event-branch preparation and pinned CLI runtime); SpecGit can detect its job key or you can declare it explicitly with "--required-check <name>".',
     });
   }
 
@@ -354,6 +354,7 @@ export async function runInit(
     validation: rules.validation,
     tags: rules.tags,
     workflowYaml,
+    platform: gitlabMode ? 'gitlab' : 'github',
     completion: completion.value,
     routingSteps,
     writeIgnore: effectiveOptions.ignore !== false,

@@ -1812,6 +1812,22 @@ describe('specgit issue: harness currency gate (#339)', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
+  it('refuses a conflicting GitLab acceptance adapter before creating remote work', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-gitlab-adapter-gate-'));
+    try {
+      fs.mkdirSync(path.join(root, '.gitlab'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'spec_git'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'spec_git/providers.yaml'), 'gitlab:\n  host: gitlab.example.com\n');
+      fs.writeFileSync(path.join(root, '.gitlab/specgit-accept.mjs'), '// unrelated user script\n');
+      const t = issueCtx({ facts: { originUrl: 'https://gitlab.example.com/group/project.git' } });
+      t.ctx.parseRepoRef = (url) => parseRepoRef(url, { gitlabHost: 'gitlab.example.com' });
+      t.ctx.discoverRoot = async () => ok(root);
+      const result = await runIssue({ titles: ['fix: repair login'] }, t.ctx);
+      expect(result.errors?.[0]?.code).toBe('harness_stale');
+      expect(t.harness.createdIssues).toHaveLength(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   /** A real directory whose managed block predates the current CLI. */
   const staleRoot = (): string => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-issue-gate-'));
