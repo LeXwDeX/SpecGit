@@ -19,7 +19,7 @@ export interface OriginalExecution {
 
 /** Adapters must prove the native original execution and its approved recipe. */
 export interface ReuseExecutionPort {
-  /** Complete bounded inventory, newest first; unknown/failed originals cannot be hidden. */
+  /** Complete provider window, descending run/job identity; preserve unknown/failed originals inside it. */
   candidates(repository: string, profile: string): Promise<Evidence<ReuseExecutionRef[]>>;
   original(ref: ReuseExecutionRef): Promise<Evidence<OriginalExecution>>;
 }
