@@ -137,3 +137,13 @@ fn native_closing_keywords_are_case_insensitive_and_other_forms_fail_closed() {
     }
     assert!(spec::references("```\nFixes other/repo#2\n```\n<!-- resolves #4 -->").unwrap().is_empty());
 }
+
+#[test]
+fn ordinary_closing_verbs_are_not_issue_associations() {
+    for body in ["Fix the login timeout.", "Resolve conflicting configuration values.", "Close the dialog.", "Fixes crash after startup.", "User prose discusses fixes."] {
+        assert!(spec::references(body).unwrap().is_empty(), "{body}");
+        let associated = spec::with_references(body, &[1]).unwrap();
+        assert!(associated.starts_with(body));
+        assert_eq!(spec::references(&associated).unwrap().into_iter().collect::<Vec<_>>(), [1]);
+    }
+}
