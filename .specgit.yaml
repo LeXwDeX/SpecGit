@@ -6,5 +6,6 @@ context:
   branch: feat/511-rust-project-init
 issues:
   - 511
+  - 526
 issueKinds: []
 pr: 522
