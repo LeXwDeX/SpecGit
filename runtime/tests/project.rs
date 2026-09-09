@@ -46,3 +46,70 @@ fn spoofed_or_credential_origins_never_select_a_forge() {
     assert!(valid_oid(&"a".repeat(40)));
     assert!(valid_oid(&"a".repeat(64)));
 }
+
+#[tokio::test]
+async fn linked_worktrees_and_ambiguous_remotes_preserve_local_identity() {
+    use specgit::{diagnostic::Code, process::Process, project::resolve};
+    use std::process::Command;
+    let root = tempfile::tempdir().unwrap();
+    let main = root.path().join("main 空格");
+    std::fs::create_dir(&main).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .current_dir(&main)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init"]);
+    git(&["config", "user.name", "Fixture"]);
+    git(&["config", "user.email", "fixture@example.invalid"]);
+    git(&["commit", "--allow-empty", "-m", "fixture"]);
+    git(&["remote", "add", "origin", "git@github.com:owner/repo.git"]);
+    let linked = root.path().join("linked 空格");
+    git(&[
+        "worktree",
+        "add",
+        "--detach",
+        linked.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let process = Process::default();
+    let original = resolve(&process, &main, None, None, None).await.unwrap();
+    std::fs::write(linked.join("foreign.txt"), "preserve").unwrap();
+    let observed = resolve(&process, &linked, None, None, None).await.unwrap();
+    assert_eq!(original.head, observed.head);
+    assert_eq!(
+        original.common_dir.canonicalize().unwrap(),
+        observed.common_dir.canonicalize().unwrap()
+    );
+    assert_ne!(original.git_dir, observed.git_dir);
+    assert!(original.branch.is_some());
+    assert!(observed.branch.is_none());
+    assert!(!original.dirty);
+    assert!(observed.dirty);
+    git(&["remote", "add", "second", "git@gitlab.com:group/repo.git"]);
+    assert_eq!(
+        resolve(&process, &linked, None, None, None)
+            .await
+            .unwrap_err()
+            .code,
+        Code::AmbiguousRemote
+    );
+    assert_eq!(
+        resolve(&process, &linked, Some("origin"), None, None)
+            .await
+            .unwrap()
+            .repository,
+        original.repository
+    );
+    assert_eq!(
+        std::fs::read_to_string(linked.join("foreign.txt")).unwrap(),
+        "preserve"
+    );
+}

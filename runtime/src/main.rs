@@ -117,7 +117,11 @@ async fn main() {
                     .await
                     {
                         Ok(context) => Some(context),
-                        Err(d) => return Report::failure("doctor", d),
+                        Err(d) => {
+                            let mut report = Report::failure("doctor", d);
+                            report.evidence = serde_json::json!({"probes":probes,"write_permissions":"not_checked"});
+                            return report;
+                        }
                     }
                 };
                 let host = context

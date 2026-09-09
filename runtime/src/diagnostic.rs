@@ -68,7 +68,15 @@ impl std::error::Error for Diagnostic {}
 /// Only classification crosses the adapter boundary; raw bytes are never logged.
 pub fn classify_failure(operation: &str, stderr: &[u8]) -> Diagnostic {
     let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
-    let (code, message, remedy) = if text.contains("rate limit") || text.contains("http 429") {
+    let (code, message, remedy) = if operation == "git"
+        && (text.contains("not a git repository") || text.contains("must be run in a work tree"))
+    {
+        (
+            Code::MissingProject,
+            "This directory is not a Git working tree.",
+            "Run project operations from an existing Git working tree; account-only probes need no repository.",
+        )
+    } else if text.contains("rate limit") || text.contains("http 429") {
         (
             Code::RateLimited,
             "The API rate limit prevents this read.",
