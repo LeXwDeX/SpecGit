@@ -4,6 +4,7 @@ mod acceptance;
 #[path = "support/delivery.rs"]
 mod delivery;
 use acceptance::fixture;
+use delivery::executable;
 use serde_json::{Value, json};
 use specgit::watch_store::{self, EventState, Identity, Revision, Store};
 fn watch(goal: &str) -> [&str; 8] {
@@ -232,7 +233,7 @@ fn process_death_releases_lease_and_resume_rereads_before_delivery() {
     let identity: Identity =
         serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
     let mut child = f
-        .command(&[
+        .native_command(&[
             "watch",
             "--request",
             "41",
@@ -553,7 +554,7 @@ fn real_claude_host_consumes_async_observer_event_on_the_next_model_turn() {
         .args([
             "scripts/claude-local-host-probe.py",
             "--binary",
-            env!("CARGO_BIN_EXE_specgit"),
+            executable::binary().to_str().unwrap(),
             "--project",
             f.root.to_str().unwrap(),
             "--observe",
@@ -580,7 +581,7 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
     let identity: Identity =
         serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
     let mut child = f
-        .command(&[
+        .native_command(&[
             "watch",
             "--request",
             "41",
@@ -644,7 +645,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         .as_str()
         .unwrap();
     let mut child = f
-        .command(&[
+        .native_command(&[
             "watch",
             "--request",
             "41",

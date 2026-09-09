@@ -402,7 +402,7 @@ async fn main() {
     tokio::pin!(task);
     let result = tokio::select! {
         result=&mut task=>result,
-        _=tokio::signal::ctrl_c()=> {cancel.cancel(); task.await},
+        _=interrupted()=> {cancel.cancel(); task.await},
     };
     let mut report = result.unwrap_or_else(|_| {
         Report::failure(
@@ -429,6 +429,21 @@ async fn main() {
     let exit = report.exit;
     emit(report, json);
     std::process::exit(i32::from(exit));
+}
+async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut hangup = signal(SignalKind::hangup()).expect("install SIGHUP handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = term.recv() => {},
+            _ = hangup.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 fn emit(report: Report, json: bool) {
     if json {

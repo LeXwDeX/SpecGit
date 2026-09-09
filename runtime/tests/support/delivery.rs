@@ -1,3 +1,5 @@
+#[path = "executable.rs"]
+pub(crate) mod executable;
 #[path = "snapshot.rs"]
 mod snapshot;
 use serde_json::{Value, json};
@@ -86,11 +88,17 @@ impl Fixture {
         value
     }
     pub fn command(&self, args: &[&str]) -> Command {
+        self.configure(args, executable::command())
+    }
+    #[allow(dead_code)]
+    pub fn native_command(&self, args: &[&str]) -> Command {
+        self.configure(args, Command::new(executable::binary()))
+    }
+    fn configure(&self, args: &[&str], mut command: Command) -> Command {
         let mut paths = vec![self.bin.clone()];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
-        let mut command = Command::new(env!("CARGO_BIN_EXE_specgit"));
         command
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())

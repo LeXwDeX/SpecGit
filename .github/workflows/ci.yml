@@ -330,10 +330,13 @@ jobs:
         include:
           - os: [self-hosted, Linux, X64]
             label: linux
+            target: x86_64-unknown-linux-gnu
           - os: [self-hosted, macOS, ARM64]
             label: macos
+            target: aarch64-apple-darwin
           - os: [self-hosted, Windows, X64]
             label: windows
+            target: x86_64-pc-windows-msvc
     defaults:
       run:
         shell: bash
@@ -391,12 +394,18 @@ jobs:
       - name: Rust public interface and real subprocess regressions
         timeout-minutes: 15
         run: cargo test --locked --all-targets --features test-fixtures
-      - name: Install native binary and smoke outside repository
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+      - name: Build remapped release packages and install with scripts disabled
         run: |
-          cargo install --locked --path . --root "$RUNNER_TEMP/specgit-native" --debug
-          cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/specgit-native/bin/specgit" --version
-          "$RUNNER_TEMP/specgit-native/bin/specgit" --help
+          node --test distribution/*.test.mjs
+          node distribution/stage.mjs --target '${{ matrix.target }}' --output "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}"
+          node distribution/verify-install.mjs --stage "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Repeat public journeys through the installed npm entrypoint
+        timeout-minutes: 15
+        run: cargo test --locked --all-targets --features test-fixtures
 
   required_verification:
     name: Required verification

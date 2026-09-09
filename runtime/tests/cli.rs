@@ -1,7 +1,109 @@
+#[path = "support/executable.rs"]
+mod executable;
 use std::process::Command;
+#[cfg(all(windows, feature = "test-fixtures"))]
+#[test]
+fn console_interrupt_preserves_native_cancellation_json_through_the_installed_entrypoint() {
+    use std::{fs, os::windows::process::CommandExt};
+    use windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE;
+    let root = tempfile::tempdir().unwrap();
+    fs::copy(
+        env!("CARGO_BIN_EXE_specgit-process-fixture"),
+        root.path().join("git.exe"),
+    )
+    .unwrap();
+    let entry = executable::command();
+    let mut helper = Command::new(env!("CARGO_BIN_EXE_specgit-process-fixture"));
+    helper
+        .creation_flags(CREATE_NEW_CONSOLE)
+        .arg("console-interrupt")
+        .arg(entry.get_program())
+        .args(entry.get_args())
+        .args(["status", "--json"])
+        .current_dir(root.path())
+        .env("PATH", root.path())
+        .env("SPECGIT_FIXTURE_GIT_TIMEOUT", "1")
+        .env("SPECGIT_FIXTURE_READY_PID", root.path().join("ready"));
+    let out = helper.output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(130),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["exit"],
+        130
+    );
+    assert!(out.stderr.is_empty());
+}
+#[cfg(all(unix, feature = "test-fixtures"))]
+#[test]
+fn interrupts_preserve_json_and_reap_the_native_child_through_the_installed_entrypoint() {
+    use std::{
+        fs,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        let root = tempfile::tempdir().unwrap();
+        fs::copy(
+            env!("CARGO_BIN_EXE_specgit-process-fixture"),
+            root.path().join("git"),
+        )
+        .unwrap();
+        let ready = root.path().join("ready");
+        let mut child = executable::command()
+            .current_dir(root.path())
+            .env("PATH", root.path())
+            .env("SPECGIT_FIXTURE_GIT_TIMEOUT", "1")
+            .env("SPECGIT_FIXTURE_READY_PID", &ready)
+            .args(["status", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !ready.exists() {
+            let _ = child.kill();
+            panic!("native Git child never became ready");
+        }
+        // SAFETY: this is the exact child spawned and still owned by this test.
+        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+        while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if child.try_wait().unwrap().is_none() {
+            let _ = child.kill();
+            panic!("cancellation did not finish within its bound");
+        }
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(130),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["exit"],
+            130
+        );
+        assert!(out.stderr.is_empty());
+        let pid: i32 = fs::read_to_string(ready).unwrap().parse().unwrap();
+        assert_eq!(
+            // SAFETY: signal zero only probes whether the recorded owned child remains.
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "native child outlived cancelled entrypoint"
+        );
+    }
+}
 #[test]
 fn json_invalid_arguments_have_one_document_and_matching_exit() {
-    let output = Command::new(env!("CARGO_BIN_EXE_specgit"))
+    let output = executable::command()
         .args(["doctor", "--json"])
         .output()
         .unwrap();
@@ -13,10 +115,7 @@ fn json_invalid_arguments_have_one_document_and_matching_exit() {
 }
 #[test]
 fn binary_version_matches_package() {
-    let output = Command::new(env!("CARGO_BIN_EXE_specgit"))
-        .arg("--version")
-        .output()
-        .unwrap();
+    let output = executable::command().arg("--version").output().unwrap();
     assert!(output.status.success());
     assert!(
         String::from_utf8(output.stdout)
@@ -51,7 +150,7 @@ fn offline_status_does_not_discard_an_existing_declaration() {
         );
     }
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_specgit"))
+        executable::command()
             .current_dir(root.path())
             .args(["status", "--json"])
             .output()
@@ -92,7 +191,7 @@ fn offline_status_does_not_discard_an_existing_declaration() {
 fn project_diagnostics_keep_missing_executable_distinct_from_missing_repository() {
     let root = tempfile::tempdir().unwrap();
     let run = |missing_git| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_specgit"));
+        let mut command = executable::command();
         command
             .current_dir(root.path())
             .env("LC_ALL", "zh_CN.UTF-8")
@@ -124,7 +223,7 @@ fn project_diagnostic_preserves_native_git_timeout() {
         root.path().join(name),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
+    let out = executable::command()
         .current_dir(root.path())
         .env("PATH", root.path())
         .env("SPECGIT_FIXTURE_GIT_TIMEOUT", "1")
@@ -161,7 +260,7 @@ fn successful_help_never_substitutes_for_account_api_evidence() {
             ("forbidden", "permission_denied"),
             ("bad", "malformed_response"),
         ] {
-            let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
+            let out = executable::command()
                 .current_dir(root.path())
                 .env("PATH", root.path())
                 .env("SPECGIT_FIXTURE_PROBE_MODE", "1")
