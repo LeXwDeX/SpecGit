@@ -1,3 +1,5 @@
+#[path = "../support/snapshot.rs"]
+mod snapshot;
 use std::{
     io::{Read, Write},
     time::Duration,
@@ -22,7 +24,7 @@ fn main() {
                 .any(|c| c["method"] == "GET")
         {
             state["hanging_git_pid"] = serde_json::json!(std::process::id());
-            std::fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+            snapshot::write(&path, &state);
             std::thread::sleep(Duration::from_secs(120));
         }
         let status = std::process::Command::new(real_git)
@@ -217,7 +219,7 @@ fn native_api(args: &[String], path: &std::path::Path) {
                         issue["state"] = json!("closed");
                     }
                 }
-                std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+                snapshot::write(path, &state);
                 if response.starts_with("lost_") || response == "denied" {
                     eprintln!("HTTP 403 native operation denied or response lost");
                     std::process::exit(1);
@@ -239,7 +241,7 @@ fn native_api(args: &[String], path: &std::path::Path) {
             {
                 r["title"] = json!(title);
             }
-            std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+            snapshot::write(path, &state);
             println!("ready");
             return;
         }
@@ -268,7 +270,7 @@ fn native_api(args: &[String], path: &std::path::Path) {
         .push(json!({"method":method,"endpoint":endpoint,"body":input}));
     if method == "GET" && state["read_failure"].is_string() {
         state["hanging_reader_pid"] = json!(std::process::id());
-        std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+        snapshot::write(path, &state);
         if state["read_failure"] == "hang" {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
@@ -277,7 +279,7 @@ fn native_api(args: &[String], path: &std::path::Path) {
         eprintln!("HTTP 401 authentication failed");
         std::process::exit(1);
     }
-    std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    snapshot::write(path, &state);
     if state["deny"].as_bool() == Some(true) {
         eprintln!("HTTP 403");
         std::process::exit(1);
@@ -325,7 +327,7 @@ fn native_api(args: &[String], path: &std::path::Path) {
             std::process::exit(2);
         }
         state["project"][key] = input[key].clone();
-        std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+        snapshot::write(path, &state);
         println!("{}", state["project"]);
     } else {
         std::process::exit(2);
@@ -373,7 +375,7 @@ fn request_api(
         let head = &state["branch_heads"][source];
         let r = json!({"id":number+100,"number":number,"iid":number,"title":input["title"],"body":input["body"],"description":input["description"],"labels":[],"draft":true,"state":if gh {"open"} else {"opened"},"merged":false,"head":{"ref":source,"sha":head,"repo":{"id":7}},"base":{"ref":target,"repo":{"id":7}},"source_branch":source,"target_branch":target,"sha":head,"source_project_id":7,"target_project_id":7,"updated_at":"2026-09-09T00:00:00Z"});
         state["requests"].as_array_mut().unwrap().push(r.clone());
-        std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+        snapshot::write(path, state);
         if state["lose_request_response"] == true {
             eprintln!("connection reset after native request creation");
             std::process::exit(1);
@@ -441,7 +443,7 @@ fn request_api(
     } else {
         return false;
     };
-    std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+    snapshot::write(path, state);
     println!("{value}");
     true
 }
@@ -509,7 +511,7 @@ fn delivery_api(
         };
         let value = json!({"id":number+100,"number":number,"iid":number,"project_id":7,"title":input["title"],"body":input["body"],"description":input["description"],"labels":labels,"state":if gh {"open"} else {"opened"},"updated_at":"2026-09-09T00:00:00Z"});
         state["issues"].as_array_mut().unwrap().push(value.clone());
-        std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+        snapshot::write(path, state);
         if state["lose_issue_response"].as_bool() == Some(true) {
             eprintln!("connection reset after server write");
             std::process::exit(1);
@@ -518,7 +520,7 @@ fn delivery_api(
     } else {
         return false;
     };
-    std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+    snapshot::write(path, state);
     println!("{response}");
     true
 }

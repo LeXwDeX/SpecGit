@@ -1,3 +1,5 @@
+#[path = "snapshot.rs"]
+mod snapshot;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf, process::Command};
 pub struct Fixture {
@@ -103,7 +105,7 @@ impl Fixture {
     pub fn edit(&self, f: impl FnOnce(&mut Value)) {
         let mut s = self.state();
         f(&mut s);
-        fs::write(&self.state, s.to_string()).unwrap();
+        snapshot::write(&self.state, &s);
     }
     pub fn writes(&self) -> usize {
         self.state()["calls"]
