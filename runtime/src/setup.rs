@@ -68,9 +68,9 @@ fn conflict(message: &str) -> Diagnostic {
 pub fn default_root() -> Result<PathBuf, Diagnostic> {
     #[cfg(windows)]
     {
-        return std::env::var_os("LOCALAPPDATA")
+        std::env::var_os("LOCALAPPDATA")
             .map(|p| PathBuf::from(p).join("SpecGit"))
-            .ok_or_else(|| Diagnostic::input("LOCALAPPDATA is unavailable; supply --root."));
+            .ok_or_else(|| Diagnostic::input("LOCALAPPDATA is unavailable; supply --root."))
     }
     #[cfg(not(windows))]
     {
