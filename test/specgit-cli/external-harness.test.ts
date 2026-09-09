@@ -232,11 +232,10 @@ describe('external acceptance harness template', () => {
     } finally { rmDir(root); }
   });
 
-  it('renders both wait steps through authenticated gh with the shared evidence rules', () => {
+  it('keeps waiting on adopters while self acceptance releases the shared runner', () => {
     const external = externalAcceptanceWorkflowYaml(INPUT);
     const self = harnessWorkflowYaml();
-    // The shared skeleton (pagination, truth-run rule, absent-policy
-    // diagnosis) and transport are shared by both templates.
+    // Adopting projects keep the wait contract; source CI orders its jobs.
     for (const shared of [
       'fetchAllCheckRuns',
       'const truth = new Map();',
@@ -244,11 +243,11 @@ describe('external acceptance harness template', () => {
       "const terminal = new Set(['completed']);",
     ]) {
       expect(external).toContain(shared);
-      expect(self).toContain(shared);
+      expect(self).not.toContain(shared);
     }
     expect(external).toContain("'gh',");
     expect(self).not.toContain('api.github.com');
-    expect(self).toContain("'gh',");
+    expect(self).toContain('gh auth setup-git');
     expect(external).not.toContain('api.github.com');
   });
 

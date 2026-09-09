@@ -27,8 +27,11 @@ export function workflowRequestNumber(requests: unknown, supplied: number): numb
   return Number.isSafeInteger(supplied) && supplied > 0 ? supplied : undefined;
 }
 
+/** Capability checked by workflows that must release a shared runner immediately. */
+export const REMOTE_ENTRY_SINGLE_PASS = true;
+
 /** Call from a trusted default-branch pipeline with gh/glab authentication and a full-history data checkout. */
-export async function completeFromEnvironment(): Promise<number> {
+export async function completeFromEnvironment(options: { singlePass?: boolean } = {}): Promise<number> {
   const parent = mkdtempSync(join(tmpdir(), 'specgit-completion-'));
   const hooks = join(parent, 'hooks');
   mkdirSync(hooks);
@@ -66,7 +69,7 @@ export async function completeFromEnvironment(): Promise<number> {
     if (!providers.ok || !providers.value.gitlab) throw new Error('GitLab completion requires its declared host.');
     const { host, port } = providers.value.gitlab;
     const provider = new GlabProvider({ hostname: port ? `${host}:${port}` : host });
-    const deadline = Date.now() + 20 * 60_000;
+    const deadline = Date.now() + (options.singlePass ? 0 : 20 * 60_000);
     while (true) {
       const signal = await provider.resolveMergedPush(repo.value, mergeSha ?? '', targetBranch ?? '', Number(process.env.SPECGIT_SOURCE_PIPELINE));
       if (signal.ok) {
@@ -134,6 +137,7 @@ export async function completeFromEnvironment(): Promise<number> {
     if (!execution.ok) throw new Error(execution.message);
   }
   const result = await runRemoteDelivery({ repo: repo.value, pr, headSha, record }, isolated, {
+    ...(options.singlePass ? { deadlineMs: 0 } : {}),
     prepareMerged: async () => {
       const base = observed.value.baseBranch;
       git(checkout, hooks, ['fetch', '--no-tags', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
@@ -146,7 +150,7 @@ export async function completeFromEnvironment(): Promise<number> {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  completeFromEnvironment().then((code) => { process.exitCode = code; }).catch((error: unknown) => {
+  completeFromEnvironment({ singlePass: process.argv.includes('--single-pass') }).then((code) => { process.exitCode = code; }).catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 3;
   });
