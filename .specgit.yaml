@@ -1,12 +1,9 @@
 version: 1
-delivery: private-deployment-redaction
+delivery: private-acceptance-check-access
 context:
   kind: worktree
-  label: specgit-private-cleanup-20260909
-  branch: fix/503-private-deployment-redaction
+  label: specgit
+  branch: feat/515-private-acceptance-check-access
 issues:
-  - 503
-issueKinds:
-  - issue: 503
-    kind: kind::fix
-pr: 504
+  - 515
+issueKinds: []
