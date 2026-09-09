@@ -140,7 +140,10 @@ fn read_receipt(root: &Path) -> Result<(Snapshot, Receipt), Diagnostic> {
 }
 fn manifest(binary: &Path, root: &Path) -> BTreeMap<String, Value> {
     ["SessionStart","PreToolUse","PostToolUse","Stop"].into_iter().map(|event|{
-        let entry=json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ "Write|Edit|MultiEdit|Bash|PowerShell" }else{""},"hooks":[{"type":"command","command":binary,"args":["hook","--event",event,"--state-root",root],"timeout":5}]});
+        let mut entry=json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ "Write|Edit|MultiEdit|Bash|PowerShell" }else{""},"hooks":[{"type":"command","command":binary,"args":["hook","--event",event,"--state-root",root],"timeout":5}]});
+        if event == "PostToolUse" {
+            entry["hooks"].as_array_mut().expect("hooks is an array").push(json!({"type":"command","command":binary,"args":["hook","--event",event,"--state-root",root,"--observe"],"async":true,"timeout":1830}));
+        }
         (event.into(),entry)
     }).collect()
 }

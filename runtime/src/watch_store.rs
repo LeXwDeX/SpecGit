@@ -148,6 +148,10 @@ pub fn read(identity: &Identity, state_root: Option<&Path>) -> Result<Option<Sta
     let state: State =
         serde_json::from_value(crate::input::json(&bytes, crate::config::MAX_BYTES, 24)?)
             .map_err(|_| invalid())?;
+    validate(&state, identity)?;
+    Ok(Some(state))
+}
+fn validate(state: &State, identity: &Identity) -> Result<(), Diagnostic> {
     if state.version != 2
         || state.identity != *identity
         || state.events.len() > MAX_EVENTS
@@ -165,7 +169,7 @@ pub fn read(identity: &Identity, state_root: Option<&Path>) -> Result<Option<Sta
     {
         return Err(invalid());
     }
-    Ok(Some(state))
+    Ok(())
 }
 pub struct Store {
     root: PathBuf,
@@ -265,6 +269,7 @@ impl Store {
                 "Inspect and acknowledge retained event IDs before resuming; no pending result was silently discarded.",
             ));
         }
+        validate(&state, &self.identity)?;
         lock.checkpoint(&path, &expected, &bytes)?;
         Ok(state)
     }

@@ -111,6 +111,22 @@ fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
         .filter_map(Value::as_str)
         .collect();
     let codes: Vec<_> = report.diagnostics.iter().map(|d| &d.code).collect();
+    let required_terminal_failure = evidence["required_checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|required| {
+            evidence["checks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|check| {
+                    check["name"] == required["name"]
+                        && (required["app"].is_null() || check["app"] == required["app"])
+                        && check["status"] == "completed"
+                        && check["conclusion"] != "success"
+                })
+        });
     let state = if revision.head != revision.local_head
         || (request["source"].is_string()
             && request["source"].as_str() != context.branch.as_deref())
@@ -126,7 +142,8 @@ fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
         EventState::Cancelled
     } else if report.exit == 3 || report.exit == 2 {
         EventState::Unknown
-    } else if (report.exit == 1 && !evidence["checks"].is_array())
+    } else if required_terminal_failure
+        || (report.exit == 1 && !evidence["checks"].is_array())
         || blockers
             .iter()
             .any(|b| b.starts_with("check_failed:") || *b == "spec_invalid")
@@ -161,15 +178,20 @@ fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
             | EventState::IdentityChanged
     ) || (state == EventState::ChecksPassed && goal == Goal::Checks)
         || (state == EventState::Unknown && !retryable);
-    let reason = if blockers.is_empty() {
+    let mut reason = if blockers.is_empty() {
         if codes.is_empty() {
             report.status.clone()
         } else {
             serde_json::to_string(&codes).expect("codes serialize")
         }
     } else {
-        blockers.join(", ").chars().take(4096).collect()
+        blockers.join(", ")
     };
+    let mut end = reason.len().min(4096);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    reason.truncate(end);
     let next_action = match state {
         EventState::Completed => "The selected native request and associated issues are complete; programme completion is separate.",
         EventState::ChecksPassed if goal == Goal::Checks => "Current checks passed. Review, merge and issue closure remain separate native facts.",
@@ -296,22 +318,34 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
             .await
         };
         if !process.cancellation.is_cancelled() && Instant::now() < deadline {
-            match local(&process, cwd).await {
-                Ok(current)
+            let refreshed =
+                tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), async {
+                    let current = local(&process, cwd).await?;
+                    let digest = config::snapshot(&current.root)?.digest();
+                    Ok::<_, Diagnostic>((current, digest))
+                })
+                .await;
+            match refreshed {
+                Ok(Ok((current, digest)))
                     if Identity::new(&current, &o.session, o.request, o.goal)? == identity =>
                 {
-                    if current.head != context.head
-                        || current.branch != context.branch
-                        || current.dirty != context.dirty
-                        || config::snapshot(&current.root)?.digest() != declaration_before
-                    {
+                    if current.branch != context.branch || digest != declaration_before {
                         observation.state = EventState::IdentityChanged;
-                        observation.reason = "Local head/branch changed during observation; the previous assessment was superseded.".into();
+                        observation.reason = "Local branch/declaration changed during observation; the previous assessment was superseded.".into();
                         observation.revision.local_head = current.head.clone();
                         observation.terminal = true;
+                    } else if current.head != context.head || current.dirty != context.dirty {
+                        observation.state = EventState::Pending;
+                        observation.reason = "Local changes superseded the assessment; the selected source branch will be observed again.".into();
+                        observation.next_action = "Continue this subscription with fresh native evidence for the current local revision.".into();
+                        observation.revision.local_head = current.head.clone();
+                        observation.terminal = false;
+                        observation.retryable = false;
                     }
                     context = current;
                 }
+                Err(_) => {} // The deadline is classified below, after child cleanup.
+                Ok(Err(d)) if d.code == Code::Cancelled => {}
                 _ => {
                     observation.state = EventState::IdentityChanged;
                     observation.reason =
@@ -319,6 +353,17 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
                     observation.terminal = true;
                 }
             }
+        }
+        if process.cancellation.is_cancelled() || Instant::now() >= deadline {
+            observation.state = if process.cancellation.is_cancelled() {
+                EventState::Cancelled
+            } else {
+                EventState::TimedOut
+            };
+            observation.reason = "The bounded subscription remains resumable.".into();
+            observation.next_action =
+                "Resume this exact subscription for fresh native evidence.".into();
+            observation.terminal = true;
         }
         if observation.state == EventState::IdentityChanged {
             observation.next_action = "Reconcile the current subscriber identity and resume for a fresh native assessment.".into();

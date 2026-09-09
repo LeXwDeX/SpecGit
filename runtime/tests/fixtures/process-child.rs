@@ -4,6 +4,33 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(real_git) = std::env::var_os("SPECGIT_FIXTURE_REAL_GIT")
+        && std::env::current_exe()
+            .unwrap()
+            .file_stem()
+            .is_some_and(|n| n == "git")
+    {
+        let path = std::env::var_os("SPECGIT_FIXTURE_API_FILE").unwrap();
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        if args.first().is_some_and(|a| a == "rev-parse")
+            && args.get(1).is_some_and(|a| a == "--show-toplevel")
+            && state["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["method"] == "GET")
+        {
+            state["hanging_git_pid"] = serde_json::json!(std::process::id());
+            std::fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+            std::thread::sleep(Duration::from_secs(120));
+        }
+        let status = std::process::Command::new(real_git)
+            .args(&args)
+            .status()
+            .unwrap();
+        std::process::exit(status.code().unwrap_or(1));
+    }
     if let Some(path) = std::env::var_os("SPECGIT_FIXTURE_API_FILE") {
         native_api(&args, &std::path::PathBuf::from(path));
         return;
