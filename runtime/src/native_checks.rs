@@ -173,6 +173,7 @@ pub async fn github(
             &mut checks,
             format!("workflow:{workflow}:{event}"),
             Check {
+                lineage: crate::delivery_model::CheckLineage::CurrentHead,
                 name: format!("workflow: {} ({event})", text(run, "name")?),
                 source: "workflow".into(),
                 head: head.into(),
@@ -296,6 +297,7 @@ pub async fn github(
             &mut checks,
             format!("check:{app}:{name}"),
             Check {
+                lineage: crate::delivery_model::CheckLineage::CurrentHead,
                 name,
                 source: "check".into(),
                 head: head.into(),
@@ -329,6 +331,7 @@ pub async fn github(
             &mut checks,
             format!("status:{name}"),
             Check {
+                lineage: crate::delivery_model::CheckLineage::CurrentHead,
                 name,
                 source: "status".into(),
                 head: head.into(),
@@ -388,10 +391,10 @@ pub async fn gitlab(
     {
         return Err(malformed());
     }
-    let mut queue = vec![(root.0, root.1, head.to_owned(), BTreeSet::new())];
+    let mut queue = vec![(root.0, root.1, head.to_owned(), BTreeSet::new(), vec![])];
     let mut visited = BTreeSet::new();
     let mut checks = BTreeMap::new();
-    while let Some((project, pipeline, sha, mut ancestors)) = queue.pop() {
+    while let Some((project, pipeline, sha, mut ancestors, links)) = queue.pop() {
         if !ancestors.insert((project, pipeline)) {
             return Err(malformed());
         }
@@ -418,6 +421,11 @@ pub async fn gitlab(
         checks.insert(
             format!("pipeline:{project}/{pipeline}"),
             Check {
+                lineage: if (project, pipeline) == root {
+                    crate::delivery_model::CheckLineage::CurrentHead
+                } else {
+                    crate::delivery_model::CheckLineage::downstream(links.clone())
+                },
                 name: format!("{prefix}pipeline"),
                 source: "pipeline".into(),
                 head: sha.clone(),
@@ -465,6 +473,11 @@ pub async fn gitlab(
                 checks.insert(
                     key,
                     Check {
+                        lineage: if (project, pipeline) == root {
+                            crate::delivery_model::CheckLineage::CurrentHead
+                        } else {
+                            crate::delivery_model::CheckLineage::downstream(links.clone())
+                        },
                         name: format!("{prefix}{name}"),
                         source: collection.into(),
                         head: sha.clone(),
@@ -490,11 +503,20 @@ pub async fn gitlab(
                             if !crate::project::valid_oid(child_sha) {
                                 return Err(malformed());
                             }
+                            let child_project = number(next, "project_id")?;
+                            let child_pipeline = number(next, "id")?;
+                            let mut child_links = links.clone();
+                            child_links.push(crate::delivery_model::PipelineLink::observed(
+                                (&sha, project, pipeline),
+                                id,
+                                (child_sha, child_project, child_pipeline),
+                            ));
                             queue.push((
-                                number(next, "project_id")?,
-                                number(next, "id")?,
+                                child_project,
+                                child_pipeline,
                                 child_sha.into(),
                                 ancestors.clone(),
+                                child_links,
                             ));
                         }
                         None => return Err(malformed()),

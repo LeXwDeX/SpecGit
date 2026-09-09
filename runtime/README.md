@@ -12,7 +12,13 @@ against that installed artifact's actual help output.
 
 The native delivery path shares typed facts from `delivery_model`. `observation`
 collects and re-reads native/worktree facts; `assessment` evaluates those facts
-in memory, including missing or changed observations. `finish` renders the result,
+in memory, including missing or changed observations. Typed blockers and check
+outcomes drive observation; exit codes and blocker text are output mappings.
+Current-head checks must match request identity and consistent workflow attempts.
+Native downstream checks retain their own SHA/project and an acquisition-owned
+chain of parent pipelines, trigger IDs and child identities; assessment verifies
+those links against the supplied snapshot before using the result.
+`finish` renders the result,
 while `watch` and `merge` consume the typed outcome directly. Report JSON is an
 output protocol. Concrete `forge/github` and `forge/gitlab` adapters own merge
 capability and association protocols; opaque snapshots retain full native
