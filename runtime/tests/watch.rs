@@ -629,3 +629,104 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
     child.wait().unwrap();
     assert_eq!(f.run(&watch("checks"))["status"], "checks_passed");
 }
+
+#[test]
+fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes() {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    let f = fixture("github");
+    let first = f.run(&watch("lifecycle"));
+    let identity: Identity =
+        serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
+    let old_head = first["evidence"]["events"][0]["revision"]["local_head"]
+        .as_str()
+        .unwrap();
+    let mut child = f
+        .command(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+            "--poll-seconds",
+            "1",
+            "--timeout-seconds",
+            "30",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    loop {
+        let state = watch_store::read(&identity, None).unwrap().unwrap();
+        if state
+            .lease
+            .is_some_and(|l| l.pid == child.id() && l.polls_completed > 0)
+        {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["commit", "--allow-empty", "-m", "unpushed work"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let new_head = String::from_utf8(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let started = Instant::now();
+    loop {
+        let state = watch_store::read(&identity, None).unwrap().unwrap();
+        if state
+            .lease
+            .is_some_and(|l| l.pid == child.id() && l.polls_completed >= 4)
+            && state.events.last().is_some_and(|e| {
+                e.state == EventState::Pending && e.reason.contains("Local commits are ahead")
+            })
+        {
+            break;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "Observer exited while local commits awaited push"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "No multi-poll pending state"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Native fixture now reports the pushed head and later completed lifecycle.
+    f.edit(|s| {
+        *s = serde_json::from_str(&s.to_string().replace(old_head, &new_head)).unwrap();
+        s["requests"][0]["state"] = json!("closed");
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+    });
+    let out = child.wait_with_output().unwrap();
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["status"], "completed", "{result}");
+    assert!(out.status.success());
+    assert_eq!(
+        result["evidence"]["events"][0]["revision"]["head"],
+        new_head
+    );
+}
