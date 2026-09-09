@@ -249,6 +249,9 @@ return migration diagnostics instead of new meanings.
 | pr | Selected issues, exact source/target/request and native references | Explicit create/bind/reference update/ready/native merge request; no closure/delete fallback |
 | status | Local declaration/checkpoint/outbox | None; no hidden network call |
 | finish | Fresh shared rules, complete issue/request/check/review evidence | None |
+| merge | Exact current request, native capabilities and accepted checks | Explicit native SHA-guarded merge delegation and ignored intent; no closure/delete fallback |
+| promotion | Native commit/request/issue associations and exact Git range/postimages | None; candidates require deliberate association |
+| inbox | Exact subscription and optionally fresh native facts | Local explicit event receipt only |
 | watch | Live delivery snapshots and local subscriptions | Local lease/outbox only; bounded background child |
 | hook | Event payload and local project/subscriber context | Local context/inbox plus read-only watch handoff |
 
@@ -445,6 +448,34 @@ the branch reports protected, including branches protected only by rulesets;
 ambiguous 404s are not converted into an unprotected branch. Cleanup is reported
 independently and requires a complete branch list to establish deletion. The
 observer exposes no close-issue, delete-branch or merge fallback.
+
+## Promotion association discovery
+
+`promotion --request <id> [--source-request <id,...>]` inspects an exact clean,
+pushed same-project source worktree and its selected native target. Native commit
+association endpoints discover candidates; explicit source IDs supplement that
+bounded platform view. Neither mode claims exhaustive historical discovery.
+The output preserves source request IDs and observed issue states, including
+already closed issues. It never writes a request body, closes or reopens issues.
+
+The native merge/squash anchor must appear in `target..head`. A two-parent merge
+requires the recorded source head as its second parent. An explicit GitLab squash
+anchor is supported; a one-parent GitHub anchor additionally requires equality
+with the complete original source delta, so the last rebased commit cannot stand
+in for a whole request. All changed paths must retain exact final modes/blob IDs
+at the promotion head. Complete reverts are excluded; later/partial modifications
+remain unverified. Branch names carry no stage authority. Deleted source branches
+do not remove platform associations; unavailable source objects retain those
+associations with a precise missing-proof result. Unanchored cherry-picks and
+unsupported partial rebase/squash require explicit review, never title or patch
+similarity inference.
+
+Limits are 200 range commits, 100 source requests, 100 paths per source delta,
+two pages per native association query and a 180-second overall deadline. Shallow
+history is rejected. Requests, issues, target, association lists and local facts
+are re-read before returning candidates. `suggested_issue_ids` includes only
+proven full deltas; unresolved candidates make the result `partial` with exit 3.
+The normalized option schema is `runtime/schemas/promotion-options.schema.json`.
 
 ## Observation, storage and host protocol
 

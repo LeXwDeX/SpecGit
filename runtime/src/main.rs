@@ -31,6 +31,8 @@ enum Commands {
     Issue(specgit::issue::Options),
     /// Create or adopt a native request after real pushed changes, preserving issue references.
     Pr(specgit::pr::Options),
+    /// Inspect native source issue associations in an exact promotion range.
+    Promotion(specgit::promotion::Options),
     /// Assess current native specs, checks and lifecycle without remote writes.
     Finish(specgit::finish::Options),
     /// Explicitly delegate a freshly accepted request to native protected merge.
@@ -177,6 +179,9 @@ async fn main() {
     let task = tokio::spawn(async move {
         match cli.command {
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
+            Commands::Promotion(options) => {
+                Box::pin(specgit::promotion::run(options, process, &cwd)).await
+            }
             Commands::Pr(options) => Box::pin(specgit::pr::run(options, process, &cwd)).await,
             Commands::Merge(options) => Box::pin(specgit::merge::run(options, process, &cwd)).await,
             Commands::Watch(options) => Box::pin(specgit::watch::run(options, process, &cwd)).await,

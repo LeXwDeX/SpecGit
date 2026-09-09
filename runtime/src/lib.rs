@@ -27,3 +27,5 @@ pub mod spec;
 pub mod templates;
 pub mod watch;
 pub mod watch_store;
+
+pub mod promotion;

@@ -3,7 +3,7 @@
 This private development Cargo package builds the SpecGit 2 library and native
 executable. The foundation exposes `doctor` and offline `status`; the global
 integration additions provide `setup`, `hook`, `init`, native `issue`/`pr`, read-only
-`finish`, explicit `merge`, bounded `watch` and durable `inbox`. Migration and distribution remain programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
+`finish`, explicit `merge`, bounded `watch`, durable `inbox` and read-only `promotion`. Migration and distribution remain programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
 
 `merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
 and delegates through the authenticated native CLI with the assessed source SHA.
@@ -156,3 +156,14 @@ precedence. Native form candidates and inherited-template uncertainty remain
 visible. Issue creation and selected-template metadata reconciliation belong to
 the issue/PR integration stage. Real read-only GitHub/GitLab init probes passed;
 actual setting writes and native closure lifecycle fixtures remain unverified.
+
+## Promotion association inspection (#477)
+
+`promotion --request 41 --source-request 42,43` combines native commit associations
+with deliberately selected source requests. It reports the original issues and
+current states for the actual target-to-head Git range. Full exact merge/squash
+postimages can be suggested for deliberate association; reverts are excluded and
+partial changes or unanchored cherry-picks stay unverified. Native associations
+survive branch deletion; missing Git history is an actionable proof limitation.
+The command never closes/reopens issues or edits the promotion body. Native
+association discovery is explicitly non-exhaustive, with a 200-commit bound.
