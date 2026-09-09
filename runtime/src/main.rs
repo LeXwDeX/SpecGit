@@ -83,6 +83,9 @@ enum Commands {
     Hook {
         #[arg(long)]
         event: String,
+        /// Bounded native observation for the host's asynchronous PostToolUse hook.
+        #[arg(long)]
+        observe: bool,
         #[arg(long)]
         state_root: Option<PathBuf>,
     },
@@ -152,8 +155,13 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    if let Commands::Hook { event, state_root } = &cli.command {
-        let output = specgit::hook::stdin(event, state_root.as_deref()).await;
+    if let Commands::Hook {
+        event,
+        state_root,
+        observe,
+    } = &cli.command
+    {
+        let output = specgit::hook::stdin(event, state_root.as_deref(), *observe).await;
         if let Some(value) = output.json {
             println!("{}", value);
         }

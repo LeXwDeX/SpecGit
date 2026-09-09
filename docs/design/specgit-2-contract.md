@@ -484,6 +484,17 @@ New native attempts, head/target changes and relevant local changes invalidate
 the previous offered event. These mechanisms do not by themselves prove a host
 imported or presented asynchronous output.
 
+Claude registration places a separate `hook --observe` command in PostToolUse
+with `async: true` and a 1,830-second host timeout. It resumes the selected native
+request for the payload session/worktree and uses the same durable lifecycle
+subscription as explicit watch/inbox. Ordinary edits invalidate the assessment
+and continue that subscription; branch/declaration changes require explicit
+reconciliation. Synchronous SessionStart/relevant PostToolUse can surface pending
+IDs without native reads. Async output offers fresh timestamped events without
+acknowledging them. Real Claude 2.1.241 qualification with an isolated loopback API
+proved a durable ID in a later actual model request; immediate idle wake and
+external model/human receipt remain unverified.
+
 Events carry stable ID, repository/request, head/target, goal, state, reason,
 observation time and actionable next step. Deliver at least once; acknowledge
 only the strongest transport event the host proves and deduplicate by event ID.

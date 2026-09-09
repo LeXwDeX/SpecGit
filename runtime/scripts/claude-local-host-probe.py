@@ -6,17 +6,22 @@ from pathlib import Path
 import http.server,threading,subprocess,os,signal,json,re,time,tempfile
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary',required=True,type=Path)
+parser.add_argument('--project',type=Path)
+parser.add_argument('--observe',action='store_true')
 args=parser.parse_args()
+observe=args.observe
 binary=args.binary.resolve(strict=True)
 root=Path(tempfile.mkdtemp(prefix='specgit-native-host-')).resolve()
-project=root/'project';project.mkdir()
+project=args.project.resolve(strict=True) if args.project else root/'project'
 config=root/'claude';config.mkdir()
-for command in [['git','init','-b','fixture'],['git','config','user.name','Fixture'],['git','config','user.email','fixture@example.invalid'],['git','remote','add','origin','https://github.com/fixture/context.git']]:
- subprocess.run(command,cwd=project,check=True,capture_output=True)
-(project/'README.md').write_text('Synthetic host fixture.\n')
-subprocess.run(['git','add','.'],cwd=project,check=True,capture_output=True)
-subprocess.run(['git','commit','-m','fixture'],cwd=project,check=True,capture_output=True)
-(project/'.specgit.yaml').write_text('version: 2\nprovider: github\nremote: origin\nlanguage: en\n')
+if not args.project:
+ project.mkdir()
+ for command in [['git','init','-b','fixture'],['git','config','user.name','Fixture'],['git','config','user.email','fixture@example.invalid'],['git','remote','add','origin','https://github.com/fixture/context.git']]:
+  subprocess.run(command,cwd=project,check=True,capture_output=True)
+ (project/'README.md').write_text('Synthetic host fixture.\n')
+ subprocess.run(['git','add','.'],cwd=project,check=True,capture_output=True)
+ subprocess.run(['git','commit','-m','fixture'],cwd=project,check=True,capture_output=True)
+ (project/'.specgit.yaml').write_text('version: 2\nprovider: github\nremote: origin\nlanguage: en\n')
 (root/'mcp.json').write_text('{"mcpServers":{}}')
 setup=subprocess.run([str(binary),'setup','--provider','github','--root',str(root/'assets'),'--register-claude','--claude-settings',str(config/'settings.json'),'--json'],cwd=project,env={'PATH':'','HOME':str(root)},capture_output=True,timeout=30)
 report=json.loads(setup.stdout)
@@ -34,15 +39,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
   body=json.loads(self.rfile.read(length) or b'{}')
   serialized=json.dumps(body,ensure_ascii=False)
   ids=re.findall(r'SpecGit 2 \[([0-9a-f]{16})\]',serialized)
-  observed.append({'path':self.path,'context_ids':ids,'stream':bool(body.get('stream'))})
+  event_ids=[]
+  for path in (root/'assets'/'subscriptions').glob('*/state.json'):
+   try:
+    state=json.loads(path.read_text())
+    event_ids.extend(e['id'] for e in state['events'] if e['id'] in serialized)
+   except (ValueError,OSError):pass
+  observed.append({'path':self.path,'context_ids':ids,'event_ids':event_ids,'stream':bool(body.get('stream'))})
   if 'count_tokens' in self.path:
    self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"input_tokens":100}');return
-  response=ids[-1] if ids else 'MISSING'
+  response=event_ids[-1] if observe and event_ids else (ids[-1] if ids else 'MISSING')
+  rounds=len([r for r in observed if r['path'].split('?')[0]=='/v1/messages'])
+  tool=observe and not event_ids and rounds<=5
+  command='git add --dry-run .specgit.yaml' if rounds==1 else 'sleep 1'
   message={'id':'msg_local_fixture','type':'message','role':'assistant','model':'claude-sonnet-4-6','content':[],'stop_reason':None,'stop_sequence':None,'usage':{'input_tokens':100,'output_tokens':0}}
   self.send_response(200)
   if body.get('stream'):
    self.send_header('Content-Type','text/event-stream');self.end_headers()
    events=[('message_start',{'type':'message_start','message':message}),('content_block_start',{'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}}),('content_block_delta',{'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':response}}),('content_block_stop',{'type':'content_block_stop','index':0}),('message_delta',{'type':'message_delta','delta':{'stop_reason':'end_turn','stop_sequence':None},'usage':{'output_tokens':8}}),('message_stop',{'type':'message_stop'})]
+   if tool:
+    events=[('message_start',{'type':'message_start','message':message}),('content_block_start',{'type':'content_block_start','index':0,'content_block':{'type':'tool_use','id':f'tool_local_{rounds}','name':'Bash','input':{}}}),('content_block_delta',{'type':'content_block_delta','index':0,'delta':{'type':'input_json_delta','partial_json':json.dumps({'command':command})}}),('content_block_stop',{'type':'content_block_stop','index':0}),('message_delta',{'type':'message_delta','delta':{'stop_reason':'tool_use','stop_sequence':None},'usage':{'output_tokens':20}}),('message_stop',{'type':'message_stop'})]
    for name,data in events:self.wfile.write(('event: '+name+'\ndata: '+json.dumps(data)+'\n\n').encode());self.wfile.flush()
   else:
    self.send_header('Content-Type','application/json');self.end_headers();message['content']=[{'type':'text','text':response}];message['stop_reason']='end_turn';self.wfile.write(json.dumps(message).encode())
@@ -50,10 +66,10 @@ server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 endpoint='http://127.0.0.1:'+str(server.server_port)
 
-env={k:os.environ[k]for k in ['PATH','HOME','USER','TMPDIR','SHELL','LANG','LC_ALL']if k in os.environ}
+env={k:os.environ[k]for k in ['PATH','HOME','USER','TMPDIR','SHELL','LANG','LC_ALL','SPECGIT_FIXTURE_API_FILE']if k in os.environ}
 env.update({'CLAUDE_CONFIG_DIR':str(config),'ANTHROPIC_API_KEY':'sk-ant-fixture-not-a-real-key','ANTHROPIC_BASE_URL':endpoint,'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC':'1','CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL':'1','HTTP_PROXY':endpoint,'HTTPS_PROXY':endpoint,'ALL_PROXY':endpoint,'NO_PROXY':'127.0.0.1,localhost'})
-args=['claude','-p','--settings',str(config/'settings.json'),'--setting-sources','user','--model','sonnet','--tools','','--strict-mcp-config','--mcp-config',str(root/'mcp.json'),'--no-session-persistence','--output-format','stream-json','--include-hook-events','--verbose','Local synthetic transport test. Return the SpecGit hook context identifier.']
-p=subprocess.Popen(args,cwd=root/'project',env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+args=['claude','-p','--settings',str(config/'settings.json'),'--setting-sources','user','--model','sonnet','--tools','Bash' if observe else '','--allowedTools','Bash(git add --dry-run *) Bash(sleep *)','--strict-mcp-config','--mcp-config',str(root/'mcp.json'),'--no-session-persistence','--output-format','stream-json','--include-hook-events','--verbose','Local synthetic transport test. Return the SpecGit hook context identifier.']
+p=subprocess.Popen(args,cwd=project,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
 try:out,err=p.communicate(timeout=45)
 except subprocess.TimeoutExpired:
  os.killpg(p.pid,signal.SIGTERM)
@@ -73,7 +89,12 @@ for name,data in [('claude-local-stream.jsonl',out),('claude-local-stderr.log',e
  with os.fdopen(fd,'wb')as f:f.write(data)
 requests=[r for r in observed if r['path'].split('?')[0]=='/v1/messages']
 result=summary.get('result',{})
-summary['passed']=summary.get('skill_registered',False) and p.returncode==0 and len(requests)==1 and bool(requests[0]['context_ids']) and result.get('result') in requests[0]['context_ids'] and not result.get('is_error',True)
+if observe:
+ received=[event_id for r in requests for event_id in r['event_ids']]
+ summary['passed']=summary.get('skill_registered',False) and p.returncode==0 and bool(received) and result.get('result') in received and not result.get('is_error',True)
+ summary['delivery']='real host next-turn context; no immediate idle wake claim'
+else:
+ summary['passed']=summary.get('skill_registered',False) and p.returncode==0 and len(requests)==1 and bool(requests[0]['context_ids']) and result.get('result') in requests[0]['context_ids'] and not result.get('is_error',True)
 summary['evidence_directory']=str(root)
 (root/'claude-local-evidence.json').write_text(json.dumps(summary,indent=2))
 print(json.dumps(summary,indent=2))

@@ -3,9 +3,7 @@
 This private development Cargo package builds the SpecGit 2 library and native
 executable. The foundation exposes `doctor` and offline `status`; the global
 integration additions provide `setup`, `hook`, `init`, native `issue`/`pr`, read-only
-`finish`, explicit `merge`, bounded `watch` and durable `inbox`. Host integration,
-migration and distribution remain
-programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
+`finish`, explicit `merge`, bounded `watch` and durable `inbox`. Migration and distribution remain programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
 
 `merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
 and delegates through the authenticated native CLI with the assessed source SHA.
@@ -21,7 +19,13 @@ merge or closure; `--once` performs one fresh read. `inbox` with the same identi
 refreshes before offering pending events. `--no-refresh` shows unverified receipt
 IDs only, while `--ack <id>` records explicit transport receipt. Events remain
 session/worktree scoped, carry stable IDs and are superseded by new evidence.
-No immediate host wake-up is claimed by these foreground CLI commands.
+Installed Claude PostToolUse registration includes a separate asynchronous hook
+with a 30-minute observer and a 1,830-second host timeout. Relevant edits resume
+the selected native request for that session/worktree. Concurrent triggers use
+the same OS lease; ordinary local edits invalidate assessments while observation
+continues. Branch/declaration identity changes stop with a resumable event.
+SessionStart and relevant synchronous PostToolUse hooks surface unverified pending
+IDs without network calls. Immediate idle wake is not claimed.
 
 Use the pinned toolchain from this directory:
 
@@ -93,10 +97,10 @@ bounds stdin and collection time, emits informational diagnostics with exit 0,
 and remains silent for uninitialized projects and irrelevant tools. It never
 emits a permission grant. Stop uses an informational system message rather than
 requesting another model turn. Session/worktree/head context has a stable local
-identifier. Full declaration validation belongs to #511; issue-selection checks,
-background observation, durable deduplication and pending result delivery remain
-integration work in #512/#492. These pending portions keep #510's integrated
-acceptance unfinished.
+identifier. Native issue selection and durable bounded background observation are integrated.
+The hook never acknowledges its own output. A transport receipt remains pending
+until an explicit `inbox --ack`; host configuration writes alone still do not
+prove host delivery.
 
 A Claude Code 2.1.241 smoke used an installed binary, isolated configuration,
 fake credentials and a loopback-only Messages API fixture. The real host executed
@@ -117,6 +121,14 @@ placeholder key and a loopback API, and leaves private evidence in its reported
 temporary directory. It exits nonzero if the registered skill is absent, the
 context identifier is missing, the host fails, or more than one model request
 occurs. No external model response is involved.
+
+The asynchronous regression uses the same real host against an isolated complete
+native-request fixture. It verifies that a persisted event ID enters an actual
+later model request and is returned by the synthetic API. Reproduce explicitly
+from `runtime/` with `cargo test --features test-fixtures --test watch
+real_claude_host_consumes_async_observer_event_on_the_next_model_turn -- --ignored
+--nocapture`. This proves next-turn context delivery, not immediate idle wake,
+a real remote forge lifecycle, external model interpretation or human reading.
 
 ## Project initialization stage (#511)
 
