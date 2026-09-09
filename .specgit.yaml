@@ -6,6 +6,7 @@ context:
   branch: ci/528-selfhosted-ci-validation
 issues:
   - 528
+  - 530
 issueKinds:
   - issue: 528
     kind: kind::ci
