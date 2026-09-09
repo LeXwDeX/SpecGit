@@ -6,5 +6,6 @@ context:
   branch: feat/512-rust-native-delivery
 issues:
   - 512
+  - 492
 issueKinds: []
 pr: 525
