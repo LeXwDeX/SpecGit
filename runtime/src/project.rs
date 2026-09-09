@@ -59,9 +59,11 @@ fn trim_line(bytes: Vec<u8>) -> Result<String, Diagnostic> {
     Ok(s)
 }
 pub async fn git(process: &Process, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
-    let output = process
-        .run(Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied()))
-        .await?;
+    let mut request =
+        Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied());
+    // Native error classification is a machine protocol, independent of the caller's UI locale.
+    request.env.insert("LC_ALL".into(), "C".into());
+    let output = process.run(request).await?;
     if output.code != 0 {
         return Err(classify_failure("git", &output.stderr));
     }
