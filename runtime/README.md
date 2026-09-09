@@ -86,3 +86,16 @@ SessionStart/Stop and included the hook context identifier in its actual request
 there was one request, so Stop did not loop. The API response was synthetic. This
 proves the host import/context construction path, not external model delivery or
 human acknowledgment. The external model readback remains unverified.
+
+Reproduce the host import and skill discovery check with Python 3 and an installed
+Claude Code (currently a POSIX probe):
+
+```sh
+python3 runtime/scripts/claude-local-host-probe.py --binary /absolute/path/to/specgit
+```
+
+The probe creates a synthetic repository and isolated host configuration, uses a
+placeholder key and a loopback API, and leaves private evidence in its reported
+temporary directory. It exits nonzero if the registered skill is absent, the
+context identifier is missing, the host fails, or more than one model request
+occurs. No external model response is involved.
