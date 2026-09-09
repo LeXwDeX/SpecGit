@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "delivery": 509,
+  "repair": 518,
+  "pull_request": 517,
+  "design_revision": "b3bf9c07b2f79e9fccecca6805d23f80b2ff3c1d",
+  "implementation_revision": "cd7a686ab5e5d17fb8873d5cf63888bf43dc505c",
+  "test_repair_revision": "c46286ed",
+  "artifact": {
+    "version": "2.0.0-dev.0",
+    "platform": "aarch64-apple-darwin",
+    "rust": "1.97.0",
+    "sha256": "2266e282918aaa8e6166b228af0a1689fd50f9c7e3488053fd0a252ccffbf6d8",
+    "install": "cargo install --offline --locked --path runtime --root <isolated-prefix> --debug"
+  },
+  "verdict": "not_run",
+  "reason": "Foundation candidate; current-head native CI and merge/closure still pending. This is not a complete feature/programme verdict.",
+  "evidence": [
+    {
+      "method": "Regression",
+      "command": "cargo test --manifest-path runtime/Cargo.toml --locked --all-targets --features test-fixtures",
+      "platform": "macOS",
+      "expected": "19 pass, no ignored tests",
+      "actual": "19 pass, 0 failed, 0 ignored",
+      "status": "pass"
+    },
+    {
+      "method": "Regression",
+      "command": "cargo test --manifest-path runtime/Cargo.toml --locked --test process --features test-fixtures",
+      "revision": "c46286ed",
+      "expected": "6 pass including actual canonical cwd and process tree cleanup",
+      "actual": "6 pass",
+      "status": "pass"
+    },
+    {
+      "method": "Live",
+      "command": "specgit doctor --provider <github|gitlab> --remote <selected-native-remote> --json",
+      "expected": "command and authenticated account/project identity available; write permissions not_checked",
+      "actual": {
+        "github": {
+          "exit": 0,
+          "probes": [
+            {
+              "operation": "git_version",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "git --help",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "git rev-parse -h",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "git worktree -h",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "git status -h",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "git remote -h",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "gh_version",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "gh --help",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "gh api --help",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "gh issue view --help",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "gh pr view --help",
+              "status": "available",
+              "observed_at": 1788920724
+            },
+            {
+              "operation": "account_api",
+              "status": "available",
+              "observed_at": 1788920725
+            },
+            {
+              "operation": "project_api",
+              "status": "available",
+              "observed_at": 1788920725
+            }
+          ],
+          "write_permissions": "not_checked"
+        },
+        "gitlab": {
+          "exit": 0,
+          "probes": [
+            {
+              "operation": "git_version",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "git --help",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "git rev-parse -h",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "git worktree -h",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "git status -h",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "git remote -h",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "glab_version",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "glab --help",
+              "status": "available",
+              "observed_at": 1788920729
+            },
+            {
+              "operation": "glab api --help",
+              "status": "available",
+              "observed_at": 1788920730
+            },
+            {
+              "operation": "glab issue view --help",
+              "status": "available",
+              "observed_at": 1788920730
+            },
+            {
+              "operation": "glab mr view --help",
+              "status": "available",
+              "observed_at": 1788920730
+            },
+            {
+              "operation": "account_api",
+              "status": "available",
+              "observed_at": 1788920730
+            },
+            {
+              "operation": "project_api",
+              "status": "available",
+              "observed_at": 1788920730
+            }
+          ],
+          "write_permissions": "not_checked"
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "method": "CI",
+      "run_url": "https://github.com/LeXwDeX/SpecGit/actions/runs/34302969766",
+      "platform": "Windows",
+      "expected": "complete real process regression suite",
+      "actual": "cwd spelling mismatch, repaired by #518; no skipped cases or raised timeouts",
+      "status": "fail"
+    },
+    {
+      "method": "Code",
+      "actual": "Standards 0 findings; one Spec diagnostic-loss finding fixed and re-reviewed at cd7a686a",
+      "status": "pass"
+    }
+  ],
+  "feature_portions": {
+    "F01": "Cargo native entrypoint implemented; npm launcher #514 not_run",
+    "F02": "local regressions pass; repaired Windows current-head CI pending",
+    "F03": "observation JSON and exit2/3/130; assessment1/0 #512 not_run",
+    "F04": "selected executable/help fresh each invocation; native probes pass",
+    "F05": "real account/project GET identity reads both providers pass; init #511 not_run",
+    "F06": "ForgeRead exposes GET only, rejects option-shaped endpoints; watcher #492 not_run",
+    "F07": "owned by #511, not_run",
+    "F22": "linkedworktree/detached/dirty/ambiguousremote regression pass; fork write refusal #512 not_run",
+    "F24": "offline identity and legacy diagnostic implemented; durable locator/subscription #512/#492 not_run",
+    "F26": "bounded complete pagination implemented; check/review generation assessment #512 not_run"
+  },
+  "limitations": [
+    "No public npm distribution or release",
+    "No project configuration, issue/bootstrap, finish/merge, hooks or observation worker yet",
+    "The TypeScript runtime is intentionally retained until #513 migration",
+    "Historical rows remain subject to the programme ledger; 1.x outcomes are not Rust acceptance evidence",
+    "Raw native reports stay local; private hosts, paths and account names are omitted"
+  ]
+}
