@@ -171,7 +171,9 @@ pub async fn resolve(
     provider: Option<Provider>,
     api_host: Option<&str>,
 ) -> Result<Context, Diagnostic> {
-    let root = PathBuf::from(trim_line(git(process, cwd, &["rev-parse", "--show-toplevel"]).await.map_err(|_| Diagnostic::new(Code::MissingProject, "project", "This directory is not a readable Git working tree.", "Run project operations from an existing Git working tree; global setup needs no repository."))?)?);
+    let root = PathBuf::from(trim_line(
+        git(process, cwd, &["rev-parse", "--show-toplevel"]).await?,
+    )?);
     let remotes = trim_line(git(process, &root, &["remote"]).await?)?;
     let names: Vec<_> = remotes.lines().filter(|s| !s.is_empty()).collect();
     let remote = match remote {

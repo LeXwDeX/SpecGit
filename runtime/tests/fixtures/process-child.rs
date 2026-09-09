@@ -4,6 +4,21 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if std::env::var_os("SPECGIT_FIXTURE_PROBE_MODE").is_some()
+        && args.first().map(String::as_str) != Some("api")
+    {
+        println!("fixture command help");
+        return;
+    }
+    if std::env::var_os("SPECGIT_FIXTURE_GIT_TIMEOUT").is_some() {
+        if args.first().map(String::as_str) == Some("rev-parse")
+            && args.get(1).map(String::as_str) == Some("--show-toplevel")
+        {
+            std::thread::sleep(Duration::from_secs(120));
+        }
+        println!("fixture command help");
+        return;
+    }
     match args.first().map(String::as_str).unwrap_or("") {
         "echo" => {
             let mut bytes = vec![];
