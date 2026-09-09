@@ -215,7 +215,7 @@ impl Declaration {
                 Code::MigrationRequired,
                 "configuration",
                 "A legacy v1 declaration requires explicit migration.",
-                "Use the existing CLI or the explicit migration operation; no files were modified.",
+                "Keep using the v1 executable or preview specgit migrate --config-file <v2.yaml>; no files were modified.",
             ));
         }
         let result: Self = serde_yaml_ng::from_slice(bytes).map_err(|_| invalid())?;

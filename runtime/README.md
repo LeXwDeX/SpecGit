@@ -167,3 +167,32 @@ partial changes or unanchored cherry-picks stay unverified. Native associations
 survive branch deletion; missing Git history is an actionable proof limitation.
 The command never closes/reopens issues or edits the promotion body. Native
 association discovery is explicitly non-exhaustive, with a 200-commit bound.
+
+## Explicit migration stage (#513)
+
+`migrate --config-file /absolute/next-v2.yaml` previews the exact local inventory,
+proposed content hashes, preserved old request/issue binding and native retirement
+evidence. Supply a complete v2 declaration explicitly; the operation does not
+silently map old automation, independent closure, aggregate scopes or reuse flags.
+`--apply --expect <preview_sha256>` applies only the matching preview. Restorable
+preimages and an archive of all bounded legacy inputs are saved before any owned
+writer is retired. V2 configuration is written last. `--rollback <transaction>`
+restores expected content and refuses to overwrite later user edits.
+
+`--retire-only` stages local retirement while leaving the v1 declaration in place.
+It supports a separately reviewed native workflow retirement before cutover.
+The migration command itself never changes native settings, workflows, protection,
+issues, requests, schedules or source branches. GitHub activation checks the native
+workflow catalogue, exact-default-commit configuration and unfinished run states.
+GitLab reads the complete bounded native tree, follows static local CI includes,
+and checks ordinary/child pipelines and active schedule refs. External/dynamic include boundaries, unknown
+legacy assets and non-quiescent native execution prevent activation. These are
+observations of known v1 integration, not a proof about arbitrary business scripts
+or a guarantee against future external reconfiguration.
+
+Owned block removal preserves surrounding prose and hook code. Unknown JSON
+fields and foreign hook entries remain intact. GitLab's preserved business file
+is restored to the root when its generated router is retired. Hooks shared by v1 worktrees are reported from either the main or linked
+checkout and left to coordinated repository migration.
+Untracked/private fixtures, policies/scopes and old drafts remain available to the
+v1 executable; no old binding becomes a v2 native association automatically.
