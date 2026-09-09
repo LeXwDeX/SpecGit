@@ -203,3 +203,43 @@ fn foreign_lock_content_is_preserved_and_rejected_after_acquisition() {
     assert!(matches!(result, Err(d) if d.code==Code::OwnershipConflict));
     assert_eq!(std::fs::read(path).unwrap(), b"user-owned content");
 }
+
+#[cfg(unix)]
+#[test]
+fn rollback_preserves_later_chmod_and_restores_permission_only_transactions() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, root) = fixture();
+    let path = root.join("settings");
+    std::fs::write(&path, b"before").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let store = store(&root);
+    let applied = store
+        .apply(vec![
+            Change::new(path.clone(), Some(b"after".to_vec())).unwrap(),
+        ])
+        .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        store.rollback(&applied.transaction).unwrap_err().code,
+        Code::RollbackConflict
+    );
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"after");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    store.rollback(&applied.transaction).unwrap();
+    let mut change = Change::new(path.clone(), Some(b"before".to_vec())).unwrap();
+    change.permissions = Some(std::fs::Permissions::from_mode(0o600));
+    let applied = store.apply(vec![change]).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    store.rollback(&applied.transaction).unwrap();
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+}
