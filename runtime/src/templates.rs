@@ -3,13 +3,14 @@ use crate::{
     config::{Language, MAX_BYTES, Source, Template, relative_path},
     diagnostic::{Code, Diagnostic},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, io::Read, path::Path};
 #[derive(Debug, Serialize)]
 pub struct Prepared {
     pub source: String,
     pub body: String,
     pub title: Option<String>,
+    pub labels: Vec<String>,
     pub required_sections: Vec<String>,
 }
 #[derive(Debug, Serialize)]
@@ -86,6 +87,8 @@ pub fn prepare(
         .required_sections
         .clone()
         .unwrap_or_else(|| sections(language, issue));
+    let mut native_title = None;
+    let mut labels = vec![];
     let (source, body) = if let Some(path) = body_file {
         ("body_file".into(), read_text(path)?)
     } else {
@@ -120,25 +123,100 @@ pub fn prepare(
                         "Prepare explicit Markdown content; form interaction and native form validation remain unverified.",
                     ));
                 }
-                (
-                    format!("repository:{}", path.display()),
-                    read_text(&root.join(path))?,
-                )
+                let raw = read_text(&root.join(&path))?;
+                let (metadata, body) = markdown_metadata(&raw)?;
+                native_title = metadata.title;
+                labels = metadata.labels;
+                (format!("repository:{}", path.display()), body)
             }
         };
-        (source, substitute(&raw, values)?)
+        let body = if matches!(selector.source, Source::Repository) {
+            raw
+        } else {
+            substitute(&raw, values)?
+        };
+        (source, body)
     };
     let title = selector
         .title
         .as_ref()
         .map(|s| substitute(s, values))
-        .transpose()?;
+        .transpose()?
+        .or(native_title);
     Ok(Prepared {
         source,
         body,
         title,
+        labels,
         required_sections,
     })
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeMetadata {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default, deserialize_with = "metadata_labels")]
+    labels: Vec<String>,
+    #[serde(default, rename = "name")]
+    _name: Option<String>,
+    #[serde(default, rename = "about")]
+    _about: Option<String>,
+    // Assignment is a separate write, never authorized by selecting a template.
+    #[serde(default)]
+    assignees: Option<serde_yaml_ng::Value>,
+}
+fn metadata_labels<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Names {
+        Text(String),
+        List(Vec<String>),
+    }
+    Ok(match Names::deserialize(d)? {
+        Names::Text(s) => s
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect(),
+        Names::List(s) => s,
+    })
+}
+fn markdown_metadata(raw: &str) -> Result<(NativeMetadata, String), Diagnostic> {
+    let Some(rest) = raw
+        .strip_prefix("---\n")
+        .or_else(|| raw.strip_prefix("---\r\n"))
+    else {
+        return Ok((NativeMetadata::default(), raw.into()));
+    };
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            let meta: NativeMetadata = serde_yaml_ng::from_str(&rest[..offset]).map_err(|_| {
+                invalid("Invalid or unsupported native Markdown template metadata.")
+            })?;
+            if meta.assignees.as_ref().is_some_and(|v| match v {
+                serde_yaml_ng::Value::Null => false,
+                serde_yaml_ng::Value::String(s) => !s.trim().is_empty(),
+                serde_yaml_ng::Value::Sequence(s) => !s.is_empty(),
+                _ => true,
+            }) {
+                return Err(invalid(
+                    "Template assignees require an explicit assignment operation.",
+                ));
+            }
+            if meta.labels.len() > 100 || meta.labels.iter().any(|s| !crate::spec::label_name(s)) {
+                return Err(invalid(
+                    "Native template labels must follow portable label grammar.",
+                ));
+            }
+            return Ok((meta, rest[offset + line.len()..].into()));
+        }
+        offset += line.len();
+    }
+    Err(invalid("Unterminated native Markdown template metadata."))
 }
 pub fn discover(root: &Path) -> Result<Vec<Candidate>, Diagnostic> {
     let mut out = vec![];

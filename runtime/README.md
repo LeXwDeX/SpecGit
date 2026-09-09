@@ -2,7 +2,7 @@
 
 This private development Cargo package builds the SpecGit 2 library and native
 executable. The foundation exposes `doctor` and offline `status`; the global
-integration additions below provide `setup`, `hook` and `init`. Delivery
+integration additions below provide `setup`, `hook`, `init` and native `issue`. Delivery
 assessment and distribution remain subsequent programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
 
 Use the pinned toolchain from this directory:

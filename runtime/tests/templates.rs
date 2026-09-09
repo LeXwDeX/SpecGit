@@ -4,6 +4,37 @@ use specgit::{
 };
 use std::collections::BTreeMap;
 #[test]
+fn native_markdown_metadata_preserves_intent_without_executing_assignments_or_variables() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let path = root.join("native.md");
+    let selector = Template {
+        source: Source::Repository,
+        path: Some("native.md".into()),
+        ..Template::default()
+    };
+    std::fs::write(&path, "---\r\nname: Bug\r\nabout: Report a bug\r\ntitle: 'fix: Native'\r\nlabels: 'kind::fix, area::cli'\r\nassignees: ''\r\n---\r\nNative {{provider_variable}}\r\n").unwrap();
+    let p =
+        templates::prepare(&root, &selector, Language::En, true, None, &BTreeMap::new()).unwrap();
+    assert_eq!(p.title.as_deref(), Some("fix: Native"));
+    assert_eq!(p.labels, ["kind::fix", "area::cli"]);
+    assert_eq!(p.body, "Native {{provider_variable}}\r\n");
+    for metadata in [
+        "assignees: admin",
+        "assignees: [admin]",
+        "title: first\ntitle: second",
+        "unknown: ignored",
+        "labels: [invalid label]",
+    ] {
+        std::fs::write(&path, format!("---\n{metadata}\n---\nBody")).unwrap();
+        assert!(
+            templates::prepare(&root, &selector, Language::En, true, None, &BTreeMap::new())
+                .is_err(),
+            "{metadata}"
+        );
+    }
+}
+#[test]
 fn explicit_content_is_final_and_substitutions_do_not_recurse_or_execute() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();

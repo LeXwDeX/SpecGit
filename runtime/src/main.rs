@@ -27,6 +27,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Commands {
+    /// Prepare, create or adopt complete specs using native issues and a local checkpoint.
+    Issue(specgit::issue::Options),
     /// Inspect native flow and install the shared project declaration and guidance.
     Init {
         #[arg(long)]
@@ -156,6 +158,7 @@ async fn main() {
     let cancel = process.cancellation.clone();
     let task = tokio::spawn(async move {
         match cli.command {
+            Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
             Commands::Init {
                 remote,
                 provider,
@@ -318,15 +321,21 @@ async fn main() {
                 )
                 .await
                 {
-                    Ok(context) => Report::success(
-                        "status",
-                        if declaration.is_some() {
-                            "initialized"
-                        } else {
-                            "uninitialized"
-                        },
-                        serde_json::json!({"context":context,"declaration":declaration,"remote_state":"not_checked"}),
-                    ),
+                    Ok(context) => {
+                        let selection = match specgit::selection::read(&context) {
+                            Ok(s) => s,
+                            Err(d) => return Report::failure("status", d),
+                        };
+                        Report::success(
+                            "status",
+                            if declaration.is_some() {
+                                "initialized"
+                            } else {
+                                "uninitialized"
+                            },
+                            serde_json::json!({"context":context,"declaration":declaration,"selection":selection,"remote_state":"not_checked"}),
+                        )
+                    }
                     Err(d) => Report::failure("status", d),
                 }
             }
