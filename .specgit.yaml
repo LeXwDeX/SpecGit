@@ -1,11 +1,9 @@
 version: 1
-delivery: rust-runtime-foundation
+delivery: rust-global-hooks
 context:
   kind: worktree
-  label: specgit
-  branch: feat/509-rust-runtime-foundation
+  label: specgit-rust-hooks-20260909
+  branch: feat/510-rust-global-hooks
 issues:
-  - 509
-  - 518
+  - 510
 issueKinds: []
-pr: 517
