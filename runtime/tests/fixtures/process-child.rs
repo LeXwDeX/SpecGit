@@ -181,6 +181,16 @@ fn native_api(args: &[String], path: &std::path::Path) {
         eprintln!("HTTP 403");
         std::process::exit(1);
     }
+    if method == "GET" {
+        if let Some(value) = state.get("read_routes").and_then(|r| r.get(endpoint)) {
+            println!("{value}");
+            return;
+        }
+        if state.get("read_routes").is_some() && state["request_fixture"].as_bool() != Some(true) {
+            eprintln!("HTTP 404");
+            std::process::exit(1);
+        }
+    }
     let project_endpoint =
         endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo";
     if state["request_fixture"].as_bool() == Some(true)

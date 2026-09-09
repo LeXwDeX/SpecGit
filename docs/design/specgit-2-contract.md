@@ -397,6 +397,28 @@ request creation and observation. If merge succeeds with open issues, emit
 states are observed and why native behavior may not close them. No custom close
 or delete endpoint is available to any observer/hook/merge-recovery path.
 
+The native Rust `finish [--request <id>]` command reads the declaration at the
+current immutable target commit and compares the pushed candidate declaration
+separately. Complete native root trees prove first adoption; a failed file read
+never proves absence. Its normalized option schema is
+`runtime/schemas/finish-options.schema.json`. An open delivery also requires a
+clean selected worktree whose HEAD matches the observed native request.
+
+GitHub check reads retain workflow identity, event, current attempt, current job
+IDs and owning check suites, with full bounded lists and matching job/check
+results. GitLab starts at the request's `head_pipeline`, follows bounded native
+child pipelines, and keeps project/pipeline/job identity and allowed failures.
+Current checks and protection inputs are read again before acceptance. Explicit
+required names still require success even when a job otherwise allows failure.
+
+Unavailable protection or approval APIs, incomplete pagination, fork source
+identity and unsupported merged-result pipeline identities remain unknown. The
+current GitHub observer requires a readable classic protection response whenever
+the branch reports protected, including branches protected only by rulesets;
+ambiguous 404s are not converted into an unprotected branch. Cleanup is reported
+independently and requires a complete branch list to establish deletion. The
+observer exposes no close-issue, delete-branch or merge fallback.
+
 ## Observation, storage and host protocol
 
 Use a bounded process per subscription initially; cross-subscription polling

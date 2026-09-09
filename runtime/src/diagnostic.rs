@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Code {
     InvalidInput,
+    EvidenceRejected,
     MissingExecutable,
     UnsupportedOperation,
     AuthenticationFailed,
@@ -59,6 +60,7 @@ impl Diagnostic {
         match self.code {
             Code::InvalidInput | Code::InputLimit => 2,
             Code::Cancelled => 130,
+            Code::EvidenceRejected => 1,
             _ => 3,
         }
     }

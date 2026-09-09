@@ -241,6 +241,9 @@ pub async fn pull_request(
             requests(repo.provider)
         ))
         .await?;
+    request_value(&v, repo, number)
+}
+pub fn request_value(v: &Value, repo: &Repository, number: u64) -> Result<PullRequest, Diagnostic> {
     let gh = repo.provider == Provider::Github;
     let (source, target, head, source_project, target_project) = if gh {
         let source = v.get("head").ok_or_else(malformed)?;
@@ -254,17 +257,17 @@ pub async fn pull_request(
         )
     } else {
         (
-            text(&v, "source_branch")?,
-            text(&v, "target_branch")?,
-            text(&v, "sha")?,
-            id(&v, "source_project_id")?,
-            id(&v, "target_project_id")?,
+            text(v, "source_branch")?,
+            text(v, "target_branch")?,
+            text(v, "sha")?,
+            id(v, "source_project_id")?,
+            id(v, "target_project_id")?,
         )
     };
     if !crate::project::valid_oid(&head) {
         return Err(malformed());
     }
-    let mut state = text(&v, "state")?;
+    let mut state = text(v, "state")?;
     if gh
         && v.get("merged")
             .and_then(Value::as_bool)
@@ -276,10 +279,10 @@ pub async fn pull_request(
         return Err(malformed());
     }
     let result = PullRequest {
-        id: id(&v, if gh { "number" } else { "iid" })?,
-        title: text(&v, "title")?,
-        body: body(&v, repo.provider)?,
-        labels: labels(&v, repo.provider)?,
+        id: id(v, if gh { "number" } else { "iid" })?,
+        title: text(v, "title")?,
+        body: body(v, repo.provider)?,
+        labels: labels(v, repo.provider)?,
         state,
         draft: v
             .get("draft")
@@ -290,7 +293,7 @@ pub async fn pull_request(
         target,
         source_project,
         target_project,
-        updated_at: text(&v, "updated_at")?,
+        updated_at: text(v, "updated_at")?,
     };
     if result.id != number {
         return Err(malformed());

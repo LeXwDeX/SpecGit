@@ -31,6 +31,8 @@ enum Commands {
     Issue(specgit::issue::Options),
     /// Create or adopt a native request after real pushed changes, preserving issue references.
     Pr(specgit::pr::Options),
+    /// Assess current native specs, checks and lifecycle without remote writes.
+    Finish(specgit::finish::Options),
     /// Inspect native flow and install the shared project declaration and guidance.
     Init {
         #[arg(long)]
@@ -162,6 +164,9 @@ async fn main() {
         match cli.command {
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
             Commands::Pr(options) => Box::pin(specgit::pr::run(options, process, &cwd)).await,
+            Commands::Finish(options) => {
+                Box::pin(specgit::finish::run(options, process, &cwd)).await
+            }
             Commands::Init {
                 remote,
                 provider,

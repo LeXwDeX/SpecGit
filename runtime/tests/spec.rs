@@ -129,21 +129,52 @@ fn closing_references_preserve_foreign_prose_and_reject_hidden_or_cross_repo_bin
 
 #[test]
 fn native_closing_keywords_are_case_insensitive_and_other_forms_fail_closed() {
-    for keyword in ["close", "Closes", "CLOSED", "fix", "FIXES", "Fixed", "resolve", "resolves", "Resolved"] {
-        assert_eq!(spec::references(&format!("{keyword} #2")).unwrap().into_iter().collect::<Vec<_>>(), [2]);
+    for keyword in [
+        "close", "Closes", "CLOSED", "fix", "FIXES", "Fixed", "resolve", "resolves", "Resolved",
+    ] {
+        assert_eq!(
+            spec::references(&format!("{keyword} #2"))
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            [2]
+        );
     }
-    for body in ["fixes other/repo#2", "text closes #2", "- Fixes #2", "CLOSES #2 and #3", "Closes #0", "Resolves https://github.com/owner/repo/issues/2"] {
+    for body in [
+        "fixes other/repo#2",
+        "text closes #2",
+        "- Fixes #2",
+        "CLOSES #2 and #3",
+        "Closes #0",
+        "Resolves https://github.com/owner/repo/issues/2",
+    ] {
         assert!(spec::references(body).is_err(), "{body}");
     }
-    assert!(spec::references("```\nFixes other/repo#2\n```\n<!-- resolves #4 -->").unwrap().is_empty());
+    assert!(
+        spec::references("```\nFixes other/repo#2\n```\n<!-- resolves #4 -->")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
 fn ordinary_closing_verbs_are_not_issue_associations() {
-    for body in ["Fix the login timeout.", "Resolve conflicting configuration values.", "Close the dialog.", "Fixes crash after startup.", "User prose discusses fixes."] {
+    for body in [
+        "Fix the login timeout.",
+        "Resolve conflicting configuration values.",
+        "Close the dialog.",
+        "Fixes crash after startup.",
+        "User prose discusses fixes.",
+    ] {
         assert!(spec::references(body).unwrap().is_empty(), "{body}");
         let associated = spec::with_references(body, &[1]).unwrap();
         assert!(associated.starts_with(body));
-        assert_eq!(spec::references(&associated).unwrap().into_iter().collect::<Vec<_>>(), [1]);
+        assert_eq!(
+            spec::references(&associated)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            [1]
+        );
     }
 }
