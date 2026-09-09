@@ -6,5 +6,6 @@ context:
   branch: feat/509-rust-runtime-foundation
 issues:
   - 509
+  - 518
 issueKinds: []
 pr: 517
