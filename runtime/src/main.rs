@@ -27,6 +27,30 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Commands {
+    /// Install global owned assets; explicit registration is separate from host verification.
+    Setup {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        provider: Option<Provider>,
+        #[arg(long)]
+        api_host: Option<String>,
+        #[arg(long)]
+        register_claude: bool,
+        #[arg(long, requires = "register_claude")]
+        claude_settings: Option<PathBuf>,
+        #[arg(long, conflicts_with = "rollback")]
+        uninstall: bool,
+        #[arg(long)]
+        rollback: Option<String>,
+    },
+    /// Native host adapter: event JSON framing, not the ordinary --json report protocol.
+    Hook {
+        #[arg(long)]
+        event: String,
+        #[arg(long)]
+        state_root: Option<PathBuf>,
+    },
     /// Probe native command support and authenticated read-only API access.
     Doctor {
         #[arg(long, value_enum)]
@@ -93,10 +117,61 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    if let Commands::Hook { event, state_root } = &cli.command {
+        let output = specgit::hook::stdin(event, state_root.as_deref()).await;
+        if let Some(value) = output.json {
+            println!("{}", value);
+        }
+        if let Some(message) = output.diagnostic {
+            eprintln!("{}", message);
+        }
+        // Tokio stdin uses a blocking reader. Exit after framing so a stalled
+        // host stdin cannot hold runtime shutdown past the hook deadline.
+        std::process::exit(0);
+    }
     let process = Process::default();
     let cancel = process.cancellation.clone();
     let task = tokio::spawn(async move {
         match cli.command {
+            Commands::Hook { .. } => unreachable!("hook has its own framing"),
+            Commands::Setup {
+                root,
+                provider,
+                api_host,
+                register_claude,
+                claude_settings,
+                uninstall,
+                rollback,
+            } => {
+                let root = match root.map(Ok).unwrap_or_else(specgit::setup::default_root) {
+                    Ok(p) => p,
+                    Err(d) => return Report::failure("setup", d),
+                };
+                let settings = if register_claude {
+                    match claude_settings
+                        .map(Ok)
+                        .unwrap_or_else(specgit::setup::claude_settings)
+                    {
+                        Ok(p) => Some(p),
+                        Err(d) => return Report::failure("setup", d),
+                    }
+                } else {
+                    None
+                };
+                specgit::setup::run(
+                    specgit::setup::Options {
+                        root,
+                        provider,
+                        api_host,
+                        claude_settings: settings,
+                        uninstall,
+                        rollback,
+                    },
+                    process,
+                    &cwd,
+                )
+                .await
+            }
             Commands::Doctor {
                 provider,
                 remote,

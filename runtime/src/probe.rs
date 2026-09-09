@@ -39,7 +39,7 @@ impl Probe {
             evidence,
         }
     }
-    fn failed(operation: &str, diagnostic: Diagnostic) -> Self {
+    pub(crate) fn failed(operation: &str, diagnostic: Diagnostic) -> Self {
         let status = match diagnostic.code {
             Code::PermissionDenied => Capability::Forbidden,
             Code::MissingExecutable | Code::UnsupportedOperation => Capability::Unavailable,
