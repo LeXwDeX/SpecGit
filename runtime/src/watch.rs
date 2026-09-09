@@ -1,14 +1,15 @@
 //! Bounded observation through read-only finish; durable transport is not acceptance.
 use crate::{
+    assessment::{Assessment, Status},
     config,
     diagnostic::{Code, Diagnostic},
-    finish,
+    observation,
     process::Process,
     project::{self, Context},
     report::Report,
     watch_store::{self, EventState, Goal, Identity, Revision, State, Store},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -76,84 +77,100 @@ struct Observation {
     retryable: bool,
     same_source_mismatch: bool,
 }
-fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
-    let evidence = &report.evidence;
-    let request = &evidence["request"];
-    let head = request["head"].as_str().unwrap_or(&context.head).to_owned();
-    let target = request["target"].as_str().unwrap_or("").to_owned();
-    let declaration = evidence["declaration"]["approved_digest"]
-        .as_str()
-        .map(String::from)
+fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observation {
+    let evidence = &assessment.evidence;
+    let request = evidence.request.as_ref();
+    let declaration = evidence.declaration.as_ref();
+    let head = request.map_or_else(|| context.head.clone(), |r| r.head.clone());
+    let target = request.map_or_else(String::new, |r| r.target.clone());
+    let declaration_digest = declaration
+        .map(|d| d.approved_digest.clone())
         .or_else(|| {
             config::snapshot(&context.root)
                 .ok()
                 .and_then(|s| s.digest())
         })
         .unwrap_or_default();
-    let issues: Vec<_> = evidence["issues"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|i| json!({"id":i["id"],"state":i["state"]}))
-        .collect();
-    // Full private descriptions and raw native responses never enter the outbox.
-    let digest = crate::assets::hash(&serde_json::to_vec(&json!({"checks":evidence["checks"],"required":evidence["required_checks"],"blockers":evidence["blockers"],"issues":issues,"request_state":request["state"],"draft":request["draft"],"target_commit":evidence["declaration"]["target_commit"],"diagnostics":report.diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>()})).expect("projection serializes"));
+    #[derive(serde::Serialize)]
+    struct IssueState<'a> {
+        id: u64,
+        state: &'a str,
+    }
+    #[derive(serde::Serialize)]
+    struct Projection<'a> {
+        checks: &'a Option<Vec<crate::delivery_model::Check>>,
+        required: &'a Option<Vec<crate::delivery_model::RequiredCheck>>,
+        blockers: &'a Option<Vec<String>>,
+        issues: Vec<IssueState<'a>>,
+        request_state: Option<&'a str>,
+        draft: Option<bool>,
+        target_commit: Option<&'a str>,
+        diagnostics: Vec<&'a Code>,
+    }
+    // Only the bounded typed projection enters durable transport; never private descriptions.
+    let projection = Projection {
+        checks: &evidence.checks,
+        required: &evidence.required_checks,
+        blockers: &evidence.blockers,
+        issues: evidence
+            .issues
+            .iter()
+            .flatten()
+            .map(|i| IssueState {
+                id: i.id,
+                state: &i.state,
+            })
+            .collect(),
+        request_state: request.map(|r| r.state.as_str()),
+        draft: request.map(|r| r.draft),
+        target_commit: declaration.map(|d| d.target_commit.as_str()),
+        diagnostics: assessment.diagnostics.iter().map(|d| &d.code).collect(),
+    };
     let revision = Revision {
         head,
         local_head: context.head.clone(),
         target,
-        declaration,
-        evidence_digest: digest,
+        declaration: declaration_digest,
+        evidence_digest: crate::assets::hash(
+            &serde_json::to_vec(&serde_json::to_value(&projection).expect("projection serializes"))
+                .expect("canonical projection serializes"),
+        ),
     };
-    let blockers: Vec<_> = evidence["blockers"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    let codes: Vec<_> = report.diagnostics.iter().map(|d| &d.code).collect();
-    let required_terminal_failure = evidence["required_checks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|required| {
-            evidence["checks"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|check| {
-                    check["name"] == required["name"]
-                        && (required["app"].is_null() || check["app"] == required["app"])
-                        && check["status"] == "completed"
-                        && check["conclusion"] != "success"
-                })
-        });
+    let blockers = evidence.blockers.as_deref().unwrap_or(&[]);
+    let codes: Vec<_> = assessment.diagnostics.iter().map(|d| &d.code).collect();
+    let required_terminal_failure = evidence.required_checks.iter().flatten().any(|required| {
+        evidence.checks.iter().flatten().any(|check| {
+            check.name == required.name
+                && required.app.is_none_or(|app| check.app == Some(app))
+                && check.status == "completed"
+                && check.conclusion.as_deref() != Some("success")
+        })
+    });
     let state = if revision.head != revision.local_head
-        || (request["source"].is_string()
-            && request["source"].as_str() != context.branch.as_deref())
+        || request.is_some_and(|r| Some(r.source.as_str()) != context.branch.as_deref())
     {
         EventState::IdentityChanged
-    } else if report.status == "completed" {
+    } else if assessment.status == Status::Completed {
         EventState::Completed
-    } else if report.status == "merged_issues_open" {
+    } else if assessment.status == Status::MergedIssuesOpen {
         EventState::MergedIssuesOpen
-    } else if request["state"] == "closed" {
+    } else if request.is_some_and(|r| r.state == "closed") {
         EventState::ClosedUnmerged
     } else if codes.contains(&&Code::Cancelled) {
         EventState::Cancelled
-    } else if report.exit == 3 || report.exit == 2 {
+    } else if matches!(assessment.status, Status::Unknown | Status::InvalidInput) {
         EventState::Unknown
     } else if required_terminal_failure
-        || (report.exit == 1 && !evidence["checks"].is_array())
+        || (assessment.exit() == 1 && evidence.checks.is_none())
         || blockers
             .iter()
-            .any(|b| b.starts_with("check_failed:") || *b == "spec_invalid")
+            .any(|b| b.starts_with("check_failed:") || b == "spec_invalid")
     {
         EventState::Failed
-    } else if evidence["checks"].is_array()
+    } else if evidence.checks.is_some()
         && !blockers
             .iter()
-            .any(|b| b.starts_with("check_") || *b == "head_pipeline_missing")
+            .any(|b| b.starts_with("check_") || b == "head_pipeline_missing")
     {
         EventState::ChecksPassed
     } else {
@@ -181,7 +198,7 @@ fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
         || (state == EventState::Unknown && !retryable);
     let mut reason = if blockers.is_empty() {
         if codes.is_empty() {
-            report.status.clone()
+            assessment.status.as_str().to_owned()
         } else {
             serde_json::to_string(&codes).expect("codes serialize")
         }
@@ -210,11 +227,13 @@ fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
         next_action,
         terminal,
         retryable,
-        same_source_mismatch: evidence["project_id"].as_u64().is_some_and(|id| id > 0)
-            && request["source_project"] == evidence["project_id"]
-            && request["target_project"] == evidence["project_id"]
-            && request["target"] == evidence["target"]
-            && request["source"].as_str() == context.branch.as_deref(),
+        same_source_mismatch: request.is_some_and(|r| {
+            evidence
+                .project_id
+                .is_some_and(|id| id > 0 && r.source_project == id && r.target_project == id)
+                && evidence.target.as_deref() == Some(r.target.as_str())
+                && Some(r.source.as_str()) == context.branch.as_deref()
+        }),
     }
 }
 async fn observe(
@@ -223,31 +242,27 @@ async fn observe(
     process: &Process,
     budget: Duration,
 ) -> Observation {
-    let report = match tokio::time::timeout(
+    let assessment = match tokio::time::timeout(
         budget,
-        Box::pin(finish::run(
-            finish::Options {
-                request: Some(identity.request),
-            },
+        Box::pin(observation::observe(
+            Some(identity.request),
             process.clone(),
             &context.root,
         )),
     )
     .await
     {
-        Ok(r) => r,
-        Err(_) => Report::failure(
+        Ok(a) => a,
+        Err(_) => Assessment::unavailable(Diagnostic::new(
+            Code::Timeout,
             "watch",
-            Diagnostic::new(
-                Code::Timeout,
-                "watch",
-                "The native observation deadline expired.",
-                "Resume; partial evidence is not acceptance.",
-            ),
-        ),
+            "The native observation deadline expired.",
+            "Resume; partial evidence is not acceptance.",
+        )),
     };
-    normalized(&report, context, identity.goal)
+    normalized(&assessment, context, identity.goal)
 }
+
 fn report(state: &State, event_state: &EventState) -> Report {
     let events: Vec<_> = state
         .events

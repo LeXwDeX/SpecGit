@@ -32,3 +32,8 @@ pub mod watch;
 pub mod watch_store;
 
 pub mod promotion;
+
+pub mod assessment;
+pub mod delivery_model;
+pub mod forge;
+pub mod observation;

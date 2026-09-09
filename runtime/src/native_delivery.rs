@@ -5,34 +5,10 @@ use crate::{
     process::{Process, Request, resolve_executable},
     project::{Provider, Repository},
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Issue {
-    pub id: u64,
-    pub title: String,
-    pub body: String,
-    pub labels: Vec<String>,
-    pub state: String,
-    pub updated_at: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PullRequest {
-    pub id: u64,
-    pub title: String,
-    pub body: String,
-    pub labels: Vec<String>,
-    pub state: String,
-    pub draft: bool,
-    pub head: String,
-    pub source: String,
-    pub target: String,
-    pub source_project: u64,
-    pub target_project: u64,
-    pub updated_at: String,
-}
+pub use crate::delivery_model::{Issue, PullRequest};
 fn malformed() -> Diagnostic {
     Diagnostic::new(
         Code::MalformedResponse,
@@ -409,10 +385,10 @@ impl ForgeWrite {
         &self,
         number: u64,
         head: &str,
-        mode: crate::merge::Mode,
-        strategy: crate::merge::Strategy,
+        mode: crate::delivery_model::Mode,
+        strategy: crate::delivery_model::Strategy,
     ) -> Result<(), Diagnostic> {
-        use crate::merge::{Mode, Strategy};
+        use crate::delivery_model::{Mode, Strategy};
         if number == 0 || !crate::project::valid_oid(head) {
             return Err(malformed());
         }

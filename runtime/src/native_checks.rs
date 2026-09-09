@@ -1,42 +1,13 @@
 //! Complete, identity-bearing current-head check snapshots through read-only native APIs.
+pub use crate::delivery_model::Check;
 use crate::{
     diagnostic::{Code, Diagnostic},
     native_delivery::prefix,
     probe::ForgeRead,
     project::Repository,
 };
-use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Check {
-    pub name: String,
-    pub source: String,
-    pub head: String,
-    pub id: u64,
-    pub app: Option<u64>,
-    pub workflow: Option<u64>,
-    pub workflow_attempt: Option<u64>,
-    pub pipeline: Option<u64>,
-    pub project: Option<u64>,
-    pub status: String,
-    pub conclusion: Option<String>,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    pub allow_failure: bool,
-}
-impl Check {
-    pub fn successful(&self) -> bool {
-        self.status == "completed" && self.conclusion.as_deref() == Some("success")
-    }
-    pub fn failed(&self) -> bool {
-        self.status == "completed"
-            && !matches!(
-                self.conclusion.as_deref(),
-                Some("success" | "neutral" | "skipped")
-            )
-    }
-}
 pub fn malformed() -> Diagnostic {
     Diagnostic::new(
         Code::MalformedResponse,

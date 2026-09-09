@@ -1,31 +1,21 @@
 //! Explicit native merge delegation. No fallback mutation or closure capability.
 use crate::{
+    assessment::Assessment,
     assets::{AssetStore, Snapshot},
     delivery_context::Workspace,
     diagnostic::{Code, Diagnostic},
-    finish,
+    forge,
     native_delivery::{self, ForgeWrite, PullRequest},
+    observation,
     process::Process,
     project::Provider,
     report::Report,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{path::Path, time::Duration};
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Mode {
-    Now,
-    Auto,
-}
-#[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Strategy {
-    Merge,
-    Squash,
-    Rebase,
-}
+pub use crate::delivery_model::{Mode, Strategy};
 #[derive(Debug, clap::Args)]
 pub struct Options {
     /// Exact request to merge. This command never creates or marks a request ready.
@@ -56,98 +46,9 @@ fn unknown(message: &str) -> Diagnostic {
         "Inspect the exact request in the native forge. No fallback merge, issue closure or branch deletion was attempted.",
     )
 }
-fn route(w: &Workspace, number: u64) -> String {
-    format!(
-        "{}/{}/{number}",
-        native_delivery::prefix(&w.context.repository),
-        if w.context.repository.provider == Provider::Github {
-            "pulls"
-        } else {
-            "merge_requests"
-        }
-    )
-}
-fn queued(raw: &Value, provider: Provider) -> bool {
-    if provider == Provider::Github {
-        // REST exposes an enabled native auto-merge request; an opaque queue-only
-        // response remains unknown rather than being inferred from CLI stdout.
-        raw.get("auto_merge").is_some_and(|v| {
-            v.is_object()
-                && v.get("merge_method")
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| ["merge", "squash", "rebase"].contains(&s))
-                && v.pointer("/enabled_by/id")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|id| id > 0)
-        })
-    } else {
-        raw.get("merge_when_pipeline_succeeds")
-            .and_then(Value::as_bool)
-            == Some(true)
-    }
-}
-async fn gitlab_capability(
-    w: &Workspace,
-    r: &PullRequest,
-    o: &Options,
-) -> Result<Value, Diagnostic> {
-    if o.strategy == Strategy::Rebase {
-        return Err(unknown(
-            "GitLab rebase changes the assessed head and is not delegated by merge.",
-        ));
-    }
-    let project = w
-        .reader
-        .get(&native_delivery::prefix(&w.context.repository))
-        .await?;
-    let raw = w.reader.get(&route(w, r.id)).await?;
-    if project.get("id").and_then(Value::as_u64) != Some(w.facts.id)
-        || project.get("merge_trains_enabled").and_then(Value::as_bool) != Some(false)
-    {
-        return Err(unknown(
-            "GitLab merge-train routing is enabled or cannot be proven disabled.",
-        ));
-    }
-    // glab omits API Squash when its bool flag is false, even if explicitly set.
-    // A project-enforced 'never' policy is the only qualified no-squash path.
-    let squash = project.get("squash_option").and_then(Value::as_str);
-    if (o.strategy == Strategy::Merge && squash != Some("never"))
-        || (o.strategy == Strategy::Squash
-            && !matches!(squash, Some("always" | "default_on" | "default_off")))
-    {
-        return Err(unknown(
-            "The native GitLab squash policy cannot enforce the requested strategy through glab.",
-        ));
-    }
-    // glab consumes legacy `pipeline` separately from `head_pipeline`; it
-    // silently omits AutoMerge when that legacy field is absent.
-    if o.mode == Mode::Auto
-        && (["head_pipeline", "pipeline"].iter().any(|field| {
-            let pipeline = &raw[field];
-            !pipeline.is_object()
-                || pipeline
-                    .get("id")
-                    .and_then(Value::as_u64)
-                    .is_none_or(|id| id == 0)
-                || pipeline.get("sha").and_then(Value::as_str) != Some(&r.head)
-        }) || raw["head_pipeline"]["id"] != raw["pipeline"]["id"])
-    {
-        return Err(unknown(
-            "GitLab auto-merge requires a confirmed current-head pipeline; glab otherwise submits an immediate merge.",
-        ));
-    }
-    if native_delivery::request_value(&raw, &w.context.repository, r.id)? != *r {
-        return Err(unknown(
-            "The native request changed during merge capability qualification.",
-        ));
-    }
-    Ok(
-        json!({"squash_option":squash,"merge_trains_enabled":false,"head_pipeline":raw.get("head_pipeline"),"pipeline":raw.get("pipeline")}),
-    )
-}
-async fn readback(w: &Workspace, expected: &PullRequest) -> Result<Option<Report>, Diagnostic> {
-    let raw = w.reader.get(&route(w, expected.id)).await?;
-    let r = native_delivery::request_value(&raw, &w.context.repository, expected.id)?;
+async fn readback(w: &Workspace, expected: &PullRequest) -> Result<Option<Outcome>, Diagnostic> {
+    let observed = forge::request(&w.reader, &w.context.repository, expected.id).await?;
+    let r = &observed.facts;
     if r.head != expected.head
         || r.source != expected.source
         || r.target != expected.target
@@ -159,36 +60,32 @@ async fn readback(w: &Workspace, expected: &PullRequest) -> Result<Option<Report
         ));
     }
     if r.state == "merged" {
-        let mut report = finish::run(
-            finish::Options {
-                request: Some(r.id),
-            },
-            w.process.clone(),
-            &w.context.root,
-        )
-        .await;
-        report.operation = "merge".into();
-        return Ok(Some(report));
-    }
-    if ["open", "opened"].contains(&r.state.as_str())
-        && !r.draft
-        && queued(&raw, w.context.repository.provider)
-    {
-        return Ok(Some(Report::success(
-            "merge",
-            "queued",
-            json!({"request":r,"native_auto_merge":true,"completed":false}),
+        return Ok(Some(Outcome::Assessed(
+            observation::observe(Some(r.id), w.process.clone(), &w.context.root).await,
         )));
+    }
+
+    if ["open", "opened"].contains(&r.state.as_str()) && !r.draft && observed.queued() {
+        return Ok(Some(Outcome::Queued(r.clone())));
     }
     Ok(None)
 }
 pub async fn run(o: Options, process: Process, cwd: &Path) -> Report {
     match Box::pin(execute(o, process, cwd)).await {
-        Ok(r) => r,
+        Ok(Outcome::Assessed(a)) => Report::assessment("merge", a),
+        Ok(Outcome::Queued(r)) => Report::success(
+            "merge",
+            "queued",
+            json!({"request":r,"native_auto_merge":true,"completed":false}),
+        ),
         Err(d) => Report::failure("merge", d),
     }
 }
-async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Diagnostic> {
+enum Outcome {
+    Assessed(Assessment),
+    Queued(PullRequest),
+}
+async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Outcome, Diagnostic> {
     if o.request == 0 {
         return Err(Diagnostic::input("Request IDs must be positive."));
     }
@@ -234,37 +131,24 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
         return Err(unknown(detail));
     }
     let capability = if repo.provider == Provider::Gitlab {
-        Some(gitlab_capability(&w, &r, &o).await?)
+        Some(forge::gitlab::capability(&w.reader, repo, w.facts.id, &r, o.mode, o.strategy).await?)
     } else {
         None
     };
-    let mut assessment = finish::run(
-        finish::Options {
-            request: Some(r.id),
-        },
-        w.process.clone(),
-        cwd,
-    )
-    .await;
-    assessment.operation = "merge".into();
-    if !["accepted", "accepted_initial_adoption"].contains(&assessment.status.as_str())
-        || assessment.exit != 0
-    {
-        return Ok(assessment);
+    let assessment = observation::observe(Some(r.id), w.process.clone(), cwd).await;
+    if !assessment.accepted() {
+        return Ok(Outcome::Assessed(assessment));
     }
     let current = native_delivery::pull_request(&w.reader, repo, r.id).await?;
-    if current != r
-        || assessment.evidence["request"]
-            != serde_json::to_value(&r)
-                .map_err(|_| unknown("Request identity cannot be serialized."))?
-    {
+    if current != r || assessment.evidence.request.as_ref() != Some(&r) {
         return Err(unknown(
             "The request changed between selection and fresh acceptance.",
         ));
     }
     w.unchanged().await?;
     if let Some(previous) = capability
-        && gitlab_capability(&w, &r, &o).await? != previous
+        && forge::gitlab::capability(&w.reader, repo, w.facts.id, &r, o.mode, o.strategy).await?
+            != previous
     {
         return Err(unknown(
             "Native GitLab merge capabilities changed before submission.",

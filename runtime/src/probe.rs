@@ -253,14 +253,7 @@ fn identity_error() -> Diagnostic {
         "Check for transfer/rename or wrong host routing before adopting the returned project.",
     )
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectFacts {
-    pub id: u64,
-    pub repository: Repository,
-    pub default_branch: String,
-    pub native_source_cleanup: Option<bool>,
-    pub native_issue_closing: Option<bool>,
-}
+pub use crate::delivery_model::ProjectFacts;
 
 pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<Probe> {
     let mut results = vec![];
