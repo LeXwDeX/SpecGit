@@ -1,10 +1,12 @@
 version: 1
-delivery: private-acceptance-check-access
+delivery: v2-hooks-architecture
 context:
   kind: worktree
-  label: specgit
-  branch: feat/515-private-acceptance-check-access
+  label: specgit-v2-20260909
+  branch: docs/507-v2-hooks-architecture
 issues:
-  - 515
-issueKinds: []
-pr: 516
+  - 507
+issueKinds:
+  - issue: 507
+    kind: kind::docs
+pr: 508
