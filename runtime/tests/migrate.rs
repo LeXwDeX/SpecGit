@@ -182,10 +182,7 @@ fn native_cutover_and_rollback_preserve_old_work_and_foreign_bytes_on_both_forge
             serde_json::from_slice(&fs::read(a["evidence"]["backup"].as_str().unwrap()).unwrap())
                 .unwrap();
         assert!(archive["entries"].as_array().unwrap().iter().any(|e| {
-            e["path"]
-                .as_str()
-                .unwrap()
-                .ends_with("spec_git/scopes/old.yaml")
+            Path::new(e["path"].as_str().unwrap()).ends_with("spec_git/scopes/old.yaml")
         }));
         let r = f.run(&[
             "migrate",
@@ -273,6 +270,46 @@ fn rollback_keeps_post_migration_user_edits_and_retains_backups() {
         "user changed after migration\n"
     );
     assert!(Path::new(a["evidence"]["backup"].as_str().unwrap()).exists());
+}
+#[cfg(windows)]
+#[test]
+fn ordinary_and_verbatim_hook_paths_have_the_same_migration_identity() {
+    let (f, path) = fixture("github");
+    let hooks = f.root.join(".git/hooks").canonicalize().unwrap();
+    let verbatim = hooks.to_str().unwrap();
+    let ordinary = verbatim.strip_prefix(r"\\?\").unwrap();
+    git(&f.root, &["config", "core.hooksPath", ordinary]);
+    let first = preview(&f, &path, &[]);
+    assert_eq!(first["exit"], 0, "{first}");
+    git(&f.root, &["config", "core.hooksPath", verbatim]);
+    let second = preview(&f, &path, &[]);
+    assert_eq!(second["exit"], 0, "{second}");
+    assert_eq!(
+        first["evidence"]["inventory"],
+        second["evidence"]["inventory"]
+    );
+    assert_eq!(
+        first["evidence"]["preview_sha256"],
+        second["evidence"]["preview_sha256"]
+    );
+    let applied = apply(&f, &path, &second, &[]);
+    assert_eq!(applied["exit"], 0, "{applied}");
+    assert_eq!(
+        fs::read_to_string(hooks.join("pre-push")).unwrap(),
+        "#!/bin/sh\necho user\n"
+    );
+}
+#[test]
+fn absent_in_project_hook_directory_does_not_block_verified_migration() {
+    let (f, path) = fixture("github");
+    git(
+        &f.root,
+        &["config", "core.hooksPath", "missing/native-hooks"],
+    );
+    let p = preview(&f, &path, &[]);
+    assert_eq!(p["exit"], 0, "{p}");
+    assert_eq!(apply(&f, &path, &p, &[])["exit"], 0);
+    assert!(!f.root.join("missing/native-hooks").exists());
 }
 #[cfg(unix)]
 #[test]

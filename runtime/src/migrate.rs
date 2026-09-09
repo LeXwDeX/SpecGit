@@ -1,6 +1,6 @@
 //! Explicit, recoverable v1 cutover. It never writes to a forge or reuses a v1 delivery binding.
 use crate::{
-    assets::{AssetStore, Change, hash},
+    assets::{AssetStore, Change, hash, safe_path},
     config::{self, Declaration},
     diagnostic::{Code, Diagnostic},
     guidance,
@@ -62,11 +62,40 @@ async fn git_path(process: &Process, cwd: &Path, args: &[&str]) -> Result<PathBu
     let text = String::from_utf8(bytes)
         .map_err(|_| Diagnostic::input("Git returned an invalid filesystem path."))?;
     let path = PathBuf::from(text.trim_end_matches(['\r', '\n']));
-    Ok(if path.is_absolute() {
+    path_identity(&if path.is_absolute() {
         path
     } else {
         cwd.join(path)
     })
+}
+fn path_identity(path: &Path) -> Result<PathBuf, Diagnostic> {
+    // Keep symbolic-link/traversal rejection before normalizing aliases. Windows
+    // Git drive paths and filesystem verbatim paths must compare as one identity.
+    safe_path(path)?;
+    let mut parent = path.to_owned();
+    let mut absent = Vec::new();
+    loop {
+        match parent.canonicalize() {
+            Ok(mut normalized) => {
+                for component in absent.iter().rev() {
+                    normalized.push(component);
+                }
+                return Ok(normalized);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                absent.push(
+                    parent
+                        .file_name()
+                        .ok_or_else(|| failure("A filesystem identity is unavailable."))?
+                        .to_owned(),
+                );
+                if !parent.pop() {
+                    return Err(failure("A filesystem identity is unavailable."));
+                }
+            }
+            Err(_) => return Err(failure("A filesystem identity cannot be verified.")),
+        }
+    }
 }
 async fn shares_v1_hook(process: &Process, root: &Path, hook: &Path) -> Result<bool, Diagnostic> {
     let list = project::git(process, root, &["worktree", "list", "--porcelain", "-z"]).await?;
@@ -79,9 +108,9 @@ async fn shares_v1_hook(process: &Process, root: &Path, hook: &Path) -> Result<b
         if count > 64 {
             return Err(failure("Shared hook discovery exceeds 64 worktrees."));
         }
-        let sibling = PathBuf::from(
+        let sibling = path_identity(&PathBuf::from(
             std::str::from_utf8(raw).map_err(|_| failure("A worktree path cannot be verified."))?,
-        );
+        ))?;
         if sibling == root {
             continue;
         }
