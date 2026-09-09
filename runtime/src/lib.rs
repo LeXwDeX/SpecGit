@@ -25,3 +25,5 @@ pub mod selection;
 pub mod setup;
 pub mod spec;
 pub mod templates;
+pub mod watch;
+pub mod watch_store;

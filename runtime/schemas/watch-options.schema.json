@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecGit 2 native observer options",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "session", "goal"],
+  "properties": {
+    "request": { "type": "integer", "minimum": 1 },
+    "session": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$" },
+    "goal": { "enum": ["checks", "lifecycle"] },
+    "state_root": { "type": ["string", "null"], "description": "Absolute native path; defaults to the selected worktree Git directory." },
+    "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 1800 },
+    "poll_seconds": { "type": "integer", "minimum": 1, "maximum": 300, "default": 15 },
+    "once": { "type": "boolean", "default": false }
+  }
+}

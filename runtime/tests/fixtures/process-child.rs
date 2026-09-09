@@ -239,6 +239,17 @@ fn native_api(args: &[String], path: &std::path::Path) {
         .as_array_mut()
         .unwrap()
         .push(json!({"method":method,"endpoint":endpoint,"body":input}));
+    if method == "GET" && state["read_failure"].is_string() {
+        state["hanging_reader_pid"] = json!(std::process::id());
+        std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+        if state["read_failure"] == "hang" {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+        eprintln!("HTTP 401 authentication failed");
+        std::process::exit(1);
+    }
     std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
     if state["deny"].as_bool() == Some(true) {
         eprintln!("HTTP 403");

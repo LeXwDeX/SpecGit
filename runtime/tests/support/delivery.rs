@@ -77,22 +77,25 @@ impl Fixture {
         }
     }
     pub fn run(&self, args: &[&str]) -> Value {
-        let mut paths = vec![self.bin.clone()];
-        paths.extend(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
-        ));
-        let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
-            .current_dir(&self.root)
-            .env("PATH", std::env::join_paths(paths).unwrap())
-            .env("SPECGIT_FIXTURE_API_FILE", &self.state)
-            .args(args)
-            .arg("--json")
-            .output()
-            .unwrap();
+        let out = self.command(args).output().unwrap();
         let value: Value = serde_json::from_slice(&out.stdout)
             .unwrap_or_else(|_| panic!("stdout={:?} stderr={:?}", out.stdout, out.stderr));
         assert_eq!(value["exit"].as_i64(), out.status.code().map(i64::from));
         value
+    }
+    pub fn command(&self, args: &[&str]) -> Command {
+        let mut paths = vec![self.bin.clone()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_specgit"));
+        command
+            .current_dir(&self.root)
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("SPECGIT_FIXTURE_API_FILE", &self.state)
+            .args(args)
+            .arg("--json");
+        command
     }
     pub fn state(&self) -> Value {
         serde_json::from_slice(&fs::read(&self.state).unwrap()).unwrap()
