@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,22 @@ describe('CI workflow consistency (#85: deprecated Nix cache path)', () => {
         text,
         `${file} must not use DeterminateSystems/magic-nix-cache-action (deprecated; #85)`,
       ).not.toContain('magic-nix-cache');
+    }
+  });
+});
+
+
+describe('fresh self-hosted runner prerequisites', () => {
+  it('provides Node and npm before installing pnpm in both product verification jobs', () => {
+    const workflow = parse(fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8'));
+    for (const name of ['test_matrix', 'lint']) {
+      const steps = workflow.jobs[name].steps as { uses?: string; with?: Record<string, unknown> }[];
+      const node = steps.findIndex((step) => step.uses?.startsWith('actions/setup-node@'));
+      const pnpm = steps.findIndex((step) => step.uses?.startsWith('pnpm/action-setup@'));
+      expect(node).toBeGreaterThanOrEqual(0);
+      expect(pnpm).toBeGreaterThan(node);
+      expect(steps[node].with?.cache).toBeUndefined();
+      expect(steps[pnpm].with?.cache).toBe(true);
     }
   });
 });
