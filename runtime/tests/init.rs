@@ -300,6 +300,7 @@ fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration()
                 .success()
         )
     };
+    git(&["config", "core.autocrlf", "true"]);
     git(&["add", ".specgit.yaml", "AGENTS.md"]);
     git(&["commit", "-m", "Chinese branch"]);
     git(&["checkout", "-b", "english"]);

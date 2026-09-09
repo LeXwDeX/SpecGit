@@ -61,11 +61,18 @@ pub fn change(
             let current = &before[*start..end];
             // A worktree-local receipt may describe another checked-out branch.
             // Exact current-version generation is independently pristine evidence.
-            if current != render(previous)
+            let canonical = current.replace("\r\n", "\n");
+            if canonical != render(previous)
                 && recorded_hash != Some(hash(current.as_bytes()).as_str())
+                && recorded_hash != Some(hash(canonical.as_bytes()).as_str())
             {
                 return Err(conflict());
             }
+            let block = if current.contains("\r\n") {
+                block.replace('\n', "\r\n")
+            } else {
+                block
+            };
             format!("{}{}{}", &before[..*start], block, &before[end..])
         }
         _ => return Err(conflict()),

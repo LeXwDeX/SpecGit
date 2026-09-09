@@ -70,3 +70,40 @@ fn persisted_hash_allows_runtime_upgrade_without_allowing_an_edited_block() {
     .unwrap();
     assert!(guidance::changes(&root, &private, &d, &d, false).is_err());
 }
+
+#[test]
+fn crlf_owned_block_refresh_preserves_line_endings_and_exact_foreign_bytes() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().canonicalize().unwrap().join("AGENTS.md");
+    let d = Declaration::default();
+    let block = guidance::render(&d);
+    let prefix = "Foreign LF\nForeign CRLF\r\n";
+    let suffix = "\r\nForeign tail\n";
+    std::fs::write(
+        &path,
+        format!("{prefix}{}{suffix}", block.replace('\n', "\r\n")),
+    )
+    .unwrap();
+    let mut next = d.clone();
+    next.language = Language::Zh;
+    let hash = specgit::assets::hash(block.as_bytes());
+    let after = guidance::change(&path, &next, &next, Some(&hash))
+        .unwrap()
+        .after
+        .unwrap();
+    assert!(after.starts_with(prefix.as_bytes()));
+    assert!(after.ends_with(suffix.as_bytes()));
+    assert!(
+        String::from_utf8(after)
+            .unwrap()
+            .contains(&guidance::render(&next).replace('\n', "\r\n"))
+    );
+    std::fs::write(
+        &path,
+        block
+            .replace("Hook notices", "User edited")
+            .replace('\n', "\r\n"),
+    )
+    .unwrap();
+    assert!(guidance::change(&path, &d, &next, Some(&hash)).is_err());
+}
