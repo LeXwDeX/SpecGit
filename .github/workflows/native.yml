@@ -1,0 +1,44 @@
+name: Native fixture verification
+on:
+  pull_request:
+    branches: [codex/v2-native-qualification-base-20260909]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: native-fixture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: Native verification
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify complete fixture inputs
+        id: inputs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PYTHON'
+          import os,re,subprocess
+          base,head=os.environ['BASE_SHA'],os.environ['HEAD_SHA']
+          assert all(re.fullmatch('[0-9a-f]{40}',v) for v in [base,head])
+          files=subprocess.check_output(['git','diff','--name-only','-z',base+'...'+head]).decode().split('\0')
+          business=any(p.startswith(('product/','.github/')) or p=='.specgit.yaml' for p in files if p)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:out.write('business='+str(business).lower()+'\n')
+          print('changed_paths='+str(len([p for p in files if p])))
+          print('business_execution='+str(business).lower())
+          PYTHON
+      - name: Business verification
+        if: steps.inputs.outputs.business == 'true'
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          assert Path('product/behavior.txt').read_text().strip() == 'ok'
+          print('native_business_verified=true')
+          PYTHON

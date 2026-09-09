@@ -1,0 +1,18 @@
+version: 2
+remote: origin
+provider: github
+target: codex/v2-native-qualification-base-20260909
+language: en
+validation:
+  titles: true
+  labels: kind
+  bodies: true
+templates:
+  issue:
+    source: repository
+    path: .github/ISSUE_TEMPLATE/native.md
+  pr:
+    source: repository
+    path: .github/PULL_REQUEST_TEMPLATE.md
+verification:
+  required_checks: [Native verification]
