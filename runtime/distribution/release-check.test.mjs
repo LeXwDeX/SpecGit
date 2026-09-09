@@ -68,7 +68,7 @@ test('synthetic archive qualification remains valid after cross-runner artifact 
     const artifact = archive(manifest, bytes, platform.os === 'win32' ? 'specgit.exe' : 'specgit');
     const file = `${name}.json`;
     evidenceNames.push(file);
-    writeFileSync(path.join(source, file), JSON.stringify({ version: '2.0.0', platform: name, packages: [artifact, wrapperArtifact], checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials'] }));
+    writeFileSync(path.join(source, file), JSON.stringify({ version: '2.0.0', platform: name, packages: [artifact, wrapperArtifact], checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'] }));
   }
   cpSync(source, destination, { recursive: true });
   rmSync(source, { recursive: true });

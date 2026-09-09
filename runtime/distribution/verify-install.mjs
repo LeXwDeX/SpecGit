@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { run } from './stage.mjs';
+import { checkSurfaces } from './check-surfaces.mjs';
 
 function npm(args, cwd) {
   args = ['--cache', path.join(output, 'npm-cache'), ...args];
@@ -25,7 +26,7 @@ const packed = staging.packages.map(directory => {
   const result = JSON.parse(npm(['pack', '--ignore-scripts', '--json', '--pack-destination', output], directory));
   const [packed] = Array.isArray(result) ? result : Object.values(result);
   assert.equal(packed.version, staging.version);
-  assert(packed.files.every(file => /^(package\.json$|LICENSE$|THIRD_PARTY_LICENSES\.json$|bin\/|licenses\/)/.test(file.path)), 'Only explicit distribution assets may enter a package.');
+  assert(packed.files.every(file => /^(package\.json$|LICENSE$|README\.md$|THIRD_PARTY_LICENSES\.json$|bin\/|licenses\/|schemas\/[a-z-]+\.schema\.json$)/.test(file.path)), 'Only explicit distribution assets may enter a package.');
   assert(!packed.files.some(file => /\.(rs|pdb|dSYM|map)$/.test(file.path)), 'No source or debug sidecars.');
   const tarball = path.join(output, packed.filename);
   assert.equal(packed.integrity, 'sha512-' + createHash('sha512').update(readFileSync(tarball)).digest('base64'));
@@ -58,7 +59,8 @@ const hook = invoke(['hook', '--event', 'PostToolUse'], JSON.stringify({ session
 assert.equal(hook.status, 0, hook.stderr);
 assert.equal(hook.stdout, '');
 assert.equal(hook.stderr, '');
-const evidence = { version: staging.version, platform: staging.platform, binary, launcher, node: process.execPath, packages: packed.map(p => ({ ...p, tarball: path.basename(p.tarball) })), checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials'] };
+const surfaces = checkSurfaces(launcher, path.join(output, 'node_modules', 'specgit'));
+const evidence = { version: staging.version, platform: staging.platform, binary, launcher, node: process.execPath, surfaces, packages: packed.map(p => ({ ...p, tarball: path.basename(p.tarball) })), checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'] };
 writeFileSync(path.join(output, 'installed.json'), JSON.stringify(evidence, null, 2) + '\n');
 if (process.env.GITHUB_ENV) {
   const { appendFileSync } = await import('node:fs');

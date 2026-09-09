@@ -6,6 +6,9 @@ read-only `finish`, explicit `merge`, bounded `watch`, durable `inbox`, read-onl
 `promotion` and explicit `migrate`. Native npm staging and installed-entrypoint
 checks are documented in [distribution](distribution/README.md). The TypeScript
 publication entrypoint remains authoritative during this staged rewrite.
+The [native command reference](REFERENCE.md) and `schemas/` are also included in
+the staged npm wrapper; installation smoke compares every command/option name
+against that installed artifact's actual help output.
 
 `merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
 and delegates through the authenticated native CLI with the assessed source SHA.

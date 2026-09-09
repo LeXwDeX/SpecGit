@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecGit 2 doctor options",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "provider": {
+      "enum": [
+        "github",
+        "gitlab"
+      ]
+    },
+    "remote": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "api_host": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "account_only": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "provider"
+  ],
+  "description": "Normalized CLI options, not a JSON-input transport. Optional null values mean absent. Global --json and --cwd are described in cli-options.schema.json; command-specific cross-option preflight remains authoritative."
+}

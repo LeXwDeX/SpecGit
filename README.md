@@ -14,6 +14,11 @@ project's required checks. It derives acceptance from Git and your authenticated
 GitHub or GitLab session. Teams and coding agents get a shared, verifiable
 meaning of acceptance and completion.
 
+This page and the root package describe the retained **1.x** distribution. The
+**Rust 2 development artifact** has its own [native command reference](runtime/REFERENCE.md),
+[installation qualification](runtime/distribution/README.md) and explicit migration
+path. It has not replaced or published over 1.x.
+
 ## Design principles
 
 - **Evidence determines acceptance.** The record declares the delivery; Git,
