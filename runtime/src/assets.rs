@@ -372,6 +372,10 @@ impl AssetStore {
                 after: change.after.as_deref().map(hash),
                 backup,
                 permissions: PermissionRecord::capture(change.before.permissions.as_ref()),
+                after_permissions: Some(PermissionRecord::after(
+                    change.after.is_some(),
+                    change.permissions.as_ref(),
+                )),
             });
         }
         self.save_journal(&directory, &journal)?;
@@ -389,7 +393,7 @@ impl AssetStore {
                 // Restore only our own writes. A concurrent edit to the current
                 // uncommitted entry belongs to its writer and is left intact.
                 let current_was_written = Snapshot::read(&change.path)
-                    .map(|s| s.digest() == journal.entries[i].after)
+                    .map(|s| journal.entries[i].matches(&s, true))
                     .unwrap_or(false);
                 let end = if current_was_written { i + 1 } else { i };
                 if self.restore(&directory, &journal.entries[..end]).is_err() {
@@ -425,15 +429,6 @@ impl AssetStore {
         }
         Ok(())
     }
-    fn expected(&self, path: &Path, expected: &Option<String>) -> Result<(), Diagnostic> {
-        if &Snapshot::read(path)?.digest() != expected {
-            return Err(error(
-                Code::ConcurrentEdit,
-                "An asset changed after it was inspected; no overwrite is authorized.",
-            ));
-        }
-        Ok(())
-    }
     fn save_journal(&self, directory: &Path, journal: &Journal) -> Result<(), Diagnostic> {
         let bytes = serde_json::to_vec_pretty(journal).map_err(|_| io_error())?;
         if bytes.len() > JOURNAL_LIMIT {
@@ -448,8 +443,14 @@ impl AssetStore {
         // Validate every preimage before the first restore, including backup hashes.
         for entry in entries {
             self.validate(&entry.path)?;
-            let current = Snapshot::read(&entry.path)?.digest();
-            if current != entry.before && current != entry.after {
+            if entry.after_permissions.is_none() {
+                return Err(error(
+                    Code::RollbackConflict,
+                    "Legacy rollback evidence lacks post-write permissions; preserve backups and inspect explicitly.",
+                ));
+            }
+            let current = Snapshot::read(&entry.path)?;
+            if !entry.matches(&current, false) && !entry.matches(&current, true) {
                 return Err(error(
                     Code::RollbackConflict,
                     "A concurrent edit prevents safe rollback.",
@@ -468,11 +469,16 @@ impl AssetStore {
             }
         }
         for entry in entries.iter().rev() {
-            let current = Snapshot::read(&entry.path)?.digest();
-            if current == entry.before {
+            let current = Snapshot::read(&entry.path)?;
+            if entry.matches(&current, false) {
                 continue;
             }
-            self.expected(&entry.path, &entry.after)?;
+            if !entry.matches(&current, true) {
+                return Err(error(
+                    Code::RollbackConflict,
+                    "A concurrent content or permission edit prevents rollback.",
+                ));
+            }
             match &entry.before {
                 Some(_) => {
                     let backup = Snapshot::read(&directory.join(&entry.backup))?;
@@ -533,6 +539,19 @@ struct Entry {
     after: Option<String>,
     backup: String,
     permissions: PermissionRecord,
+    #[serde(default)]
+    after_permissions: Option<PermissionRecord>,
+}
+impl Entry {
+    fn matches(&self, snapshot: &Snapshot, after: bool) -> bool {
+        let (digest, permissions) = if after {
+            (&self.after, self.after_permissions.as_ref())
+        } else {
+            (&self.before, Some(&self.permissions))
+        };
+        snapshot.digest() == *digest
+            && permissions == Some(&PermissionRecord::capture(snapshot.permissions.as_ref()))
+    }
 }
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 struct PermissionRecord {
@@ -540,11 +559,23 @@ struct PermissionRecord {
     unix_mode: Option<u32>,
 }
 impl PermissionRecord {
+    fn after(present: bool, permissions: Option<&Permissions>) -> Self {
+        if !present {
+            return Self::capture(None);
+        }
+        if let Some(p) = permissions {
+            return Self::capture(Some(p));
+        }
+        Self {
+            readonly: Some(false),
+            unix_mode: if cfg!(unix) { Some(0o600) } else { None },
+        }
+    }
     fn capture(p: Option<&Permissions>) -> Self {
         #[cfg(unix)]
         let unix_mode = {
             use std::os::unix::fs::PermissionsExt;
-            p.map(|p| p.mode())
+            p.map(|p| p.mode() & 0o7777)
         };
         #[cfg(not(unix))]
         let unix_mode = None;
@@ -587,6 +618,13 @@ fn atomic(path: &Path, bytes: &[u8], permissions: Option<&Permissions>) -> Resul
     safe_path(path)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|_| io_error())?;
     temp.write_all(bytes).map_err(|_| io_error())?;
+    #[cfg(unix)]
+    if permissions.is_none() {
+        use std::os::unix::fs::PermissionsExt;
+        temp.as_file()
+            .set_permissions(Permissions::from_mode(0o600))
+            .map_err(|_| io_error())?;
+    }
     if let Some(permissions) = permissions {
         temp.as_file()
             .set_permissions(permissions.clone())
