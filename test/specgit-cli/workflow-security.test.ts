@@ -3,9 +3,9 @@ import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 
-import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
+import { harnessWorkflowYaml, selfAcceptanceJobYaml } from '../../src/cli/harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 
 // #66: security invariants for the workflows that execute untrusted code.
@@ -115,7 +115,7 @@ const assertPersistCredentialsFalse = (text: string, label: string): void => {
 // pull requests against main, still supports manual dispatch, still
 // checks out the PR head branch (the execution-context gate reads live
 // git), and still runs the verdict with the run token.
-const assertAcceptanceGateSemantics = (text: string, label: string): void => {
+const assertAcceptanceGateSemantics = (text: string, label: string, sourceRepository = true): void => {
   const doc = parse(text) as Workflow;
   const on = doc.on ?? {};
   const pullRequest = on.pull_request as { branches?: string[]; types?: string[] } | undefined;
@@ -125,7 +125,7 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
   // #122: a draft PR fails the verdict (pr_draft), so the draft→ready
   // transition must re-verdict. `types` replaces the defaults, so the
   // default activity types must be listed alongside ready_for_review.
-  const requiredTypes = ['opened', 'synchronize', 'reopened', 'ready_for_review', 'edited'];
+  const requiredTypes = sourceRepository ? ['edited', 'closed'] : ['opened', 'synchronize', 'reopened', 'ready_for_review', 'edited'];
   if (
     !Array.isArray(pullRequest.types) ||
     !requiredTypes.every((t) => pullRequest.types!.includes(t))
@@ -337,10 +337,16 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     for (const text of [acceptFile, acceptTemplate, externalTemplate]) {
       assertAcceptanceReadCapabilities(text);
       for (const scope of ['checks', 'statuses']) {
-        expect(() => assertAcceptanceReadCapabilities(text.replace(`  ${scope}: read\n`, ''))).toThrow(`${scope}: read`);
+        const mutant = parse(text) as Workflow;
+        delete (mutant.jobs!['specgit-acceptance'].permissions ?? mutant.permissions)![scope];
+        expect(() => assertAcceptanceReadCapabilities(stringify(mutant))).toThrow(`${scope}: read`);
       }
-      expect(() => assertAcceptanceReadCapabilities(text.replace('  specgit-acceptance:\n', '  specgit-acceptance:\n    permissions:\n      contents: read\n'))).toThrow(/issues: read/);
-      expect(() => assertAcceptanceReadCapabilities(text.replace('  checks: read', '  checks: write'))).toThrow(/checks: read/);
+      const override = parse(text) as Workflow;
+      override.jobs!['specgit-acceptance'].permissions = { contents: 'read' };
+      expect(() => assertAcceptanceReadCapabilities(stringify(override))).toThrow(/issues: read/);
+      const write = parse(text) as Workflow;
+      (write.jobs!['specgit-acceptance'].permissions ?? write.permissions)!.checks = 'write';
+      expect(() => assertAcceptanceReadCapabilities(stringify(write))).toThrow(/checks: read/);
     }
   });
 
@@ -360,7 +366,7 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('acceptance gate semantics survive the hardening (triggers, head-ref checkout, finish, token)', () => {
     assertAcceptanceGateSemantics(acceptFile, 'specgit-accept.yml');
     assertAcceptanceGateSemantics(acceptTemplate, 'harnessWorkflowYaml()');
-    assertAcceptanceGateSemantics(externalTemplate, 'externalAcceptanceWorkflowYaml()');
+    assertAcceptanceGateSemantics(externalTemplate, 'externalAcceptanceWorkflowYaml()', false);
   });
 
   it.skipIf(process.platform === 'win32').each([
@@ -418,6 +424,17 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     expect(jobs.test_matrix).toBeDefined();
     expect(jobs.rust).toBeDefined();
     for (const [name, text] of workflowFiles) assertSelfHostedRouting(text, name);
+  });
+
+  it('workflow security keeps source acceptance behind CI without occupying its only runner while waiting', () => {
+    const ci = parse(ciFile) as Workflow;
+    const generated = parse(selfAcceptanceJobYaml(true)) as Record<string, Job>;
+    expect(ci.jobs?.['specgit-acceptance']).toEqual(generated['specgit-acceptance']);
+    expect(generated['specgit-acceptance'].needs).toBe('required_verification');
+    expect(generated['specgit-acceptance'].if).toBe("always() && github.event_name == 'pull_request'");
+    expect(allSteps(ci).some((step) => step.name === 'Wait for sibling checks')).toBe(false);
+    expect(allSteps(parse(acceptFile) as Workflow).some((step) => step.name === 'Wait for sibling checks')).toBe(false);
+    expect((parse(acceptFile) as Workflow).on?.pull_request).toEqual({ branches: ['main'], types: ['edited', 'closed'] });
   });
 
   it('every job-level if uses only job-level-legal contexts (github, needs, vars, inputs)', () => {
@@ -519,16 +536,17 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('dropping ready_for_review from the accept trigger (breaking draft re-verdict) is detected', () => {
-    const mutant = acceptFile.replace(
+    const external = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.15.1' });
+    const mutant = external.replace(
       /    types: \[[^\n]+\]\n/,
       ''
     );
-    expect(mutant).not.toBe(acceptFile);
-    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/ready_for_review/);
+    expect(mutant).not.toBe(external);
+    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant', false)).toThrow(/ready_for_review/);
   });
 
   it('dropping edited from the acceptance trigger is detected', () => {
-    const mutant = acceptTemplate.replace(', edited,', ',');
+    const mutant = acceptTemplate.replace('[edited, closed]', '[closed]');
     expect(mutant).not.toBe(acceptTemplate);
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/edited/);
   });

@@ -23,7 +23,7 @@ import { acceptanceRunYaml } from './acceptance-step.js';
 
 import { literalBranchPattern } from './workflow-branches.js';
 import type { PolicyLanguage } from '../record/policy.js';
-import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
+import { ACCEPTANCE_JOB_MINUTES } from './wait-step.js';
 
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
@@ -47,11 +47,10 @@ export function harnessWorkflowYaml(defaultBranch = 'main', targets: string[] = 
 on:
   pull_request:
     branches: [${branchLiteral}]
-    # A draft PR fails the verdict (pr_draft), so the draft→ready
-    # transition must re-verdict. Listing types replaces the defaults,
-    # so the default activity types are listed alongside. Title and body
-    # edits change live acceptance evidence even when the head is unchanged.
-    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
+    # Code changes and ready transitions are assessed after required CI.
+    # Body edits reassess once without restarting product jobs or waiting
+    # while occupying the sole Linux worker. Closed requests signal completion.
+    types: [edited, closed]
   workflow_dispatch:
 
 permissions:
@@ -76,11 +75,24 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - run: echo 'Merged request ready for trusted completion'
-  specgit-acceptance:
-    if: github.event.action != 'closed'
-    name: \${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}
-    # Hosted pool on purpose: a required check must not hinge on one
-    # self-hosted container.
+${selfAcceptanceJobYaml()}`;
+}
+
+/** The source repository shares one verdict job between CI and body-only reassessment. */
+export function selfAcceptanceJobYaml(afterVerification = false): string {
+  return `  specgit-acceptance:
+${afterVerification ? `    needs: required_verification
+    if: always() && github.event_name == 'pull_request'
+` : `    if: github.event.action != 'closed'
+`}    name: SpecGit Acceptance
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+      checks: read
+      statuses: read
+    # The repository owner requires self-hosted execution for all CI/CD.
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: ${ACCEPTANCE_JOB_MINUTES}
     steps:
@@ -145,8 +157,6 @@ jobs:
         run: |
           gh auth setup-git
           node "$SPECGIT_POLICY_ENTRY"
-
-${waitStepYaml('gh', "\${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli', runner.temp) || '' }}")}
 
       - name: specgit finish
         if: steps.scope.outputs.build == 'true'

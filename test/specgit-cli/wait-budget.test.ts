@@ -8,7 +8,6 @@ import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.j
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
 const workflows = [
-  ['self', harnessWorkflowYaml],
   ['adopting project', () => externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.13.0' })],
 ] as const;
 
@@ -43,6 +42,10 @@ function runWait(workflow: string, terminalAfterMinutes: number) {
 }
 
 describe('bounded acceptance waiting', () => {
+  it('leaves self-hosted sibling scheduling to CI dependencies without a polling step', () => {
+    const job = parse(harnessWorkflowYaml()).jobs['specgit-acceptance'];
+    expect(job.steps.some((step: { name?: string }) => step.name === 'Wait for sibling checks')).toBe(false);
+  });
   it.each(workflows)('lets a successful sibling at minute 18 reach the %s workflow verdict', (_name, generate) => {
     const result = runWait(generate(), 18);
     expect(result.status, result.stderr).toBe(0);

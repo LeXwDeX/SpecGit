@@ -96,6 +96,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
+          $git = Get-Command git -ErrorAction SilentlyContinue
+          if ($git) {
+            $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
+            if (Test-Path (Join-Path $gitBash 'bash.exe')) {
+              $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              $env:Path = "$gitBash;$env:Path"
+            }
+          }
+          if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+            $pwshHome = Join-Path $env:RUNNER_TOOL_CACHE 'PowerShell\7.6.6\x64'
+            if (-not (Test-Path (Join-Path $pwshHome 'pwsh.exe'))) {
+              $archive = Join-Path $env:RUNNER_TEMP 'PowerShell-7.6.6-win-x64.zip'
+              Invoke-WebRequest 'https://github.com/PowerShell/PowerShell/releases/download/v7.6.6/PowerShell-7.6.6-win-x64.zip' -OutFile $archive
+              if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860') {
+                throw 'PowerShell archive checksum mismatch.'
+              }
+              Expand-Archive $archive -DestinationPath $pwshHome -Force
+            }
+            $pwshHome | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:Path = "$pwshHome;$env:Path"
+          }
           foreach ($tool in @('git', 'bash', 'pwsh')) {
             if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
               throw "Missing runner prerequisite: $tool. Install it and restart the runner service."
@@ -214,6 +235,12 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
+      - name: Setup Node.js for the flake update script
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+
       - name: Build with Nix
         run: nix build
 
@@ -291,7 +318,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # A fresh Windows VM may need the native compiler installed first.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -312,15 +340,38 @@ jobs:
         shell: powershell
         working-directory: .
         run: |
+          $git = Get-Command git -ErrorAction SilentlyContinue
+          if ($git) {
+            $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
+            if (Test-Path (Join-Path $gitBash 'bash.exe')) {
+              $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              $env:Path = "$gitBash;$env:Path"
+            }
+          }
           foreach ($tool in @('git', 'bash')) {
             if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
               throw "Missing runner prerequisite: $tool. Install it and restart the runner service."
             }
           }
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) { throw 'Install Visual Studio Build Tools with Desktop development with C++ and Windows SDK.' }
-          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $installation) { throw 'MSVC x64 build tools are required for native Rust tests.' }
+          $installation = if (Test-Path $vswhere) { & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
+          if (-not $installation) {
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+            if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+              throw 'MSVC build tools are missing. Install the C++ desktop workload and Windows SDK as administrator, then retry.'
+            }
+            $installer = Join-Path $env:RUNNER_TEMP 'vs-BuildTools-17.14.40.exe'
+            Invoke-WebRequest 'https://download.visualstudio.microsoft.com/download/pr/f8d58e41-102a-4347-a567-60d7235da3b5/aac092d0d839fd078e86b301d886130f1605891061242b36facf55ccbdd5a0a7/vs_BuildTools.exe' -OutFile $installer
+            if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne 'aac092d0d839fd078e86b301d886130f1605891061242b36facf55ccbdd5a0a7') {
+              throw 'MSVC installer checksum mismatch.'
+            }
+            $setup = Start-Process $installer -ArgumentList @('--quiet', '--wait', '--norestart', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended') -Wait -PassThru
+            if ($setup.ExitCode -eq 3010) { throw 'MSVC installation requires a Windows reboot before retrying native verification.' }
+            if ($setup.ExitCode -ne 0) { throw "MSVC installation failed with exit code $($setup.ExitCode)." }
+            $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $installation) { throw 'MSVC installation did not provide the required x64 build tools.' }
+          }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -334,6 +385,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
       - name: Rust public interface and real subprocess regressions
+        timeout-minutes: 15
         run: cargo test --locked --all-targets --features test-fixtures
       - name: Install native binary and smoke outside repository
         run: |
@@ -384,3 +436,270 @@ jobs:
           }
           console.log('All applicable verification passed; non-applicable product jobs were not executed.');
           NODE
+
+# specgit:ci-acceptance:start
+  specgit-acceptance:
+    needs: required_verification
+    if: always() && github.event_name == 'pull_request'
+    name: SpecGit Acceptance
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+      checks: read
+      statuses: read
+    # The repository owner requires self-hosted execution for all CI/CD.
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Pin execution to this event; a newer branch push must not change
+          # the code tested by an older run. Manual dispatch uses its own SHA.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore the event branch
+        if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+        env:
+          SPECGIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          git check-ref-format --branch "$SPECGIT_BRANCH" >/dev/null
+          git switch --create "$SPECGIT_BRANCH"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+          # No dependency cache here, by design (#66): this job checks out
+          # and executes untrusted PR code (install scripts, build, the CLI
+          # under verdict), so it must never write to or restore from the
+          # repository cache (CodeQL alerts 7-9). ci.yml keeps the warm,
+          # branch-scoped cache.
+
+      - name: Classify CI scope
+        id: scope
+        run: node scripts/ci-change-scope.mjs --verification-only
+
+      - name: Validate CI scope
+        env:
+          CI_BUILD: ${{ steps.scope.outputs.build }}
+        run: test "$CI_BUILD" = true || test "$CI_BUILD" = false
+
+      - name: Setup pnpm
+        if: steps.scope.outputs.build == 'true'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Install product dependencies
+        if: steps.scope.outputs.build == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build CLI
+        if: steps.scope.outputs.build == 'true'
+        run: pnpm run build
+
+      - name: Install trusted CLI for metadata validation
+        if: steps.scope.outputs.build == 'false'
+        run: npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --ignore-scripts --no-audit --no-fund "specgit@$(node -p "require('./package.json').version")"
+
+      - name: Prepare approved policy for acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPECGIT_WAIT_POLICY: ${{ runner.temp }}/specgit-policy.yaml
+          SPECGIT_POLICY_ENTRY: ${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli/node_modules/specgit/dist/automation/workflow-policy.js', runner.temp) || 'dist/automation/workflow-policy.js' }}
+        run: |
+          gh auth setup-git
+          node "$SPECGIT_POLICY_ENTRY"
+
+      - name: specgit finish
+        if: steps.scope.outputs.build == 'true'
+        run: |
+          node --input-type=module <<'SPECGIT_ACCEPTANCE'
+          // Managed by SpecGit: acceptance checkout adapter.
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { isAbsolute, join } from 'node:path';
+          import { pathToFileURL } from 'node:url';
+
+          /** Reproduce worktree identity at the event head; ordinary gates still own acceptance. */
+          export async function withAcceptanceCheckout(root, run, { readRecord, git, bindingContextMismatch }) {
+            const record = await readRecord(root);
+            if (!record.ok || record.value.context.kind !== 'worktree') return run(root);
+            const context = record.value.context;
+            const facts = await git.facts(root);
+            if (facts.branch !== context.branch || facts.dirty !== false || !facts.headSha ||
+                bindingContextMismatch(context, facts) === null) return run(root);
+            const label = context.label;
+            if (label === '.' || label === '..' || /[\\/:*?"<>|\p{Cc}]/u.test(label) || /[. ]$/.test(label) ||
+                /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(label)) throw new Error('Unsafe worktree label in delivery record.');
+            const parent = mkdtempSync(join(tmpdir(), 'specgit-acceptance-'));
+            const hooks = join(parent, 'hooks');
+            const checkout = join(parent, 'checkout', label);
+            mkdirSync(hooks); mkdirSync(join(parent, 'checkout'));
+            const gitCommand = (cwd, args) => execFileSync('git', ['-C', cwd, '-c', `core.hooksPath=${hooks}`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
+            }).trim();
+            let registered = false;
+            try {
+              gitCommand(root, ['worktree', 'add', '--detach', checkout, facts.headSha]);
+              registered = true;
+              // Only the new worktree's HEAD changes. The existing branch ref and original checkout stay intact.
+              gitCommand(checkout, ['symbolic-ref', 'HEAD', `refs/heads/${context.branch}`]);
+              if (gitCommand(checkout, ['rev-parse', 'HEAD']) !== facts.headSha) throw new Error('The event branch changed while preparing acceptance.');
+              return await run(checkout);
+            } finally {
+              if (registered) gitCommand(root, ['worktree', 'remove', '--force', checkout]);
+              rmSync(parent, { recursive: true, force: true });
+            }
+          }
+
+          /** Explicit CI preparation step; only a detached source-head checkout can create an event branch. */
+          export function prepareGitlabEventBranch(root = process.cwd(), env = process.env) {
+            const branch = env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME || env.CI_COMMIT_BRANCH;
+            const sha = env.CI_COMMIT_SHA;
+            if (!branch || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha ?? '') ||
+                (env.CI_MERGE_REQUEST_EVENT_TYPE && env.CI_MERGE_REQUEST_EVENT_TYPE !== 'detached')) {
+              throw new Error('A GitLab source-branch pipeline and exact event SHA are required.');
+            }
+            const hooks = mkdtempSync(join(tmpdir(), 'specgit-event-hooks-'));
+            const git = (args) => execFileSync('git', ['-C', root, '-c', `core.hooksPath=${hooks}`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,
+            }).trim();
+            try {
+              git(['check-ref-format', '--branch', branch]);
+              if (git(['rev-parse', 'HEAD']) !== sha) throw new Error('The checkout differs from the GitLab event SHA.');
+              const current = git(['branch', '--show-current']);
+              if (current === branch) return;
+              if (current !== '') throw new Error('The checkout belongs to a different branch.');
+              git(['switch', '--create', branch]);
+            } finally { rmSync(hooks, { recursive: true, force: true }); }
+          }
+
+          /** Run the installed public verdict with the same source and binding. */
+          export async function acceptanceMain() {
+            try {
+              const runtime = process.env.SPECGIT_ACCEPT_RUNTIME;
+              if (!runtime || !isAbsolute(runtime)) throw new Error('An absolute installed SpecGit runtime path is required.');
+              const load = (file) => import(pathToFileURL(join(runtime, file)).href);
+              const [{ readRecord }, { LocalGitAdapter }, { bindingContextMismatch }] = await Promise.all([
+                load('dist/record/io.js'), load('dist/gitfacts/local.js'), load('dist/record/context-match.js'),
+              ]);
+              process.exitCode = await withAcceptanceCheckout(process.cwd(), async (checkout) => {
+                const result = spawnSync(process.execPath, [join(runtime, 'bin/specgit.js'), 'finish', '--json'], {
+                  cwd: checkout, stdio: 'inherit',
+                });
+                if (result.error || result.signal || result.status === null) throw new Error('The verdict process did not complete.');
+                return result.status;
+              }, { readRecord, git: new LocalGitAdapter(), bindingContextMismatch });
+            } catch {
+              console.error('Acceptance checkout preparation failed; restore the declared context and retry.');
+              process.exitCode = 3;
+            }
+          }
+
+          if (process.argv[2] === '--prepare-gitlab-event') prepareGitlabEventBranch();
+          else await acceptanceMain();
+          SPECGIT_ACCEPTANCE
+        env:
+          SPECGIT_ACCEPT_RUNTIME: ${{ github.workspace }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: specgit finish with trusted CLI
+        if: steps.scope.outputs.build == 'false'
+        run: |
+          node --input-type=module <<'SPECGIT_ACCEPTANCE'
+          // Managed by SpecGit: acceptance checkout adapter.
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { isAbsolute, join } from 'node:path';
+          import { pathToFileURL } from 'node:url';
+
+          /** Reproduce worktree identity at the event head; ordinary gates still own acceptance. */
+          export async function withAcceptanceCheckout(root, run, { readRecord, git, bindingContextMismatch }) {
+            const record = await readRecord(root);
+            if (!record.ok || record.value.context.kind !== 'worktree') return run(root);
+            const context = record.value.context;
+            const facts = await git.facts(root);
+            if (facts.branch !== context.branch || facts.dirty !== false || !facts.headSha ||
+                bindingContextMismatch(context, facts) === null) return run(root);
+            const label = context.label;
+            if (label === '.' || label === '..' || /[\\/:*?"<>|\p{Cc}]/u.test(label) || /[. ]$/.test(label) ||
+                /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(label)) throw new Error('Unsafe worktree label in delivery record.');
+            const parent = mkdtempSync(join(tmpdir(), 'specgit-acceptance-'));
+            const hooks = join(parent, 'hooks');
+            const checkout = join(parent, 'checkout', label);
+            mkdirSync(hooks); mkdirSync(join(parent, 'checkout'));
+            const gitCommand = (cwd, args) => execFileSync('git', ['-C', cwd, '-c', `core.hooksPath=${hooks}`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
+            }).trim();
+            let registered = false;
+            try {
+              gitCommand(root, ['worktree', 'add', '--detach', checkout, facts.headSha]);
+              registered = true;
+              // Only the new worktree's HEAD changes. The existing branch ref and original checkout stay intact.
+              gitCommand(checkout, ['symbolic-ref', 'HEAD', `refs/heads/${context.branch}`]);
+              if (gitCommand(checkout, ['rev-parse', 'HEAD']) !== facts.headSha) throw new Error('The event branch changed while preparing acceptance.');
+              return await run(checkout);
+            } finally {
+              if (registered) gitCommand(root, ['worktree', 'remove', '--force', checkout]);
+              rmSync(parent, { recursive: true, force: true });
+            }
+          }
+
+          /** Explicit CI preparation step; only a detached source-head checkout can create an event branch. */
+          export function prepareGitlabEventBranch(root = process.cwd(), env = process.env) {
+            const branch = env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME || env.CI_COMMIT_BRANCH;
+            const sha = env.CI_COMMIT_SHA;
+            if (!branch || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha ?? '') ||
+                (env.CI_MERGE_REQUEST_EVENT_TYPE && env.CI_MERGE_REQUEST_EVENT_TYPE !== 'detached')) {
+              throw new Error('A GitLab source-branch pipeline and exact event SHA are required.');
+            }
+            const hooks = mkdtempSync(join(tmpdir(), 'specgit-event-hooks-'));
+            const git = (args) => execFileSync('git', ['-C', root, '-c', `core.hooksPath=${hooks}`, ...args], {
+              encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,
+            }).trim();
+            try {
+              git(['check-ref-format', '--branch', branch]);
+              if (git(['rev-parse', 'HEAD']) !== sha) throw new Error('The checkout differs from the GitLab event SHA.');
+              const current = git(['branch', '--show-current']);
+              if (current === branch) return;
+              if (current !== '') throw new Error('The checkout belongs to a different branch.');
+              git(['switch', '--create', branch]);
+            } finally { rmSync(hooks, { recursive: true, force: true }); }
+          }
+
+          /** Run the installed public verdict with the same source and binding. */
+          export async function acceptanceMain() {
+            try {
+              const runtime = process.env.SPECGIT_ACCEPT_RUNTIME;
+              if (!runtime || !isAbsolute(runtime)) throw new Error('An absolute installed SpecGit runtime path is required.');
+              const load = (file) => import(pathToFileURL(join(runtime, file)).href);
+              const [{ readRecord }, { LocalGitAdapter }, { bindingContextMismatch }] = await Promise.all([
+                load('dist/record/io.js'), load('dist/gitfacts/local.js'), load('dist/record/context-match.js'),
+              ]);
+              process.exitCode = await withAcceptanceCheckout(process.cwd(), async (checkout) => {
+                const result = spawnSync(process.execPath, [join(runtime, 'bin/specgit.js'), 'finish', '--json'], {
+                  cwd: checkout, stdio: 'inherit',
+                });
+                if (result.error || result.signal || result.status === null) throw new Error('The verdict process did not complete.');
+                return result.status;
+              }, { readRecord, git: new LocalGitAdapter(), bindingContextMismatch });
+            } catch {
+              console.error('Acceptance checkout preparation failed; restore the declared context and retry.');
+              process.exitCode = 3;
+            }
+          }
+
+          if (process.argv[2] === '--prepare-gitlab-event') prepareGitlabEventBranch();
+          else await acceptanceMain();
+          SPECGIT_ACCEPTANCE
+        env:
+          SPECGIT_ACCEPT_RUNTIME: ${{ runner.temp }}/specgit-cli/node_modules/specgit
+          GH_TOKEN: ${{ github.token }}
+# specgit:ci-acceptance:end
