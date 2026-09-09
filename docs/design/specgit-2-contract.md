@@ -333,6 +333,23 @@ metadata and nonempty assignees require explicit reconciliation. Native template
 body variables remain untouched; SpecGit substitutions apply to its builtin and
 inline templates and the explicitly declared title selector.
 
+The native request entry point is `specgit pr`, with `--request <id>` for exact
+adoption, `--title`, `--body-file` and `--tags` for creation, `--inspect` for
+preparation, `--update-body --body-file <path>` or `--update-references` for an
+explicit body change, and `--ready` for the native draft transition. Its normalized
+option schema is `runtime/schemas/pr-options.schema.json`. There is no automatic
+push or binding-only commit: native source HEAD must equal local HEAD and a
+native comparison must show an actual changed file before draft creation.
+
+Existing native content wins on resume. Every old and newly supplied deliberate
+reference is resolved to a same-project issue before writes. The worktree records
+request creation intent and the returned ID before fallible readback. A completed
+initial label step drops its pending intent, so later label edits are evaluated
+as current native facts. Body mutation uses a fresh prewrite read and postwrite
+readback; these checks detect intervening observed edits but do not claim an atomic
+server-side compare-and-swap. An edit in the final read/write window remains a
+native API concurrency limitation.
+
 Fork requests require verified source and target project identities; read-only
 observation may support them before write bootstrap does. Unsupported fork-write
 flows fail explicitly. Native branch cleanup may be unavailable for a fork or

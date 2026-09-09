@@ -29,6 +29,8 @@ struct Cli {
 enum Commands {
     /// Prepare, create or adopt complete specs using native issues and a local checkpoint.
     Issue(specgit::issue::Options),
+    /// Create or adopt a native request after real pushed changes, preserving issue references.
+    Pr(specgit::pr::Options),
     /// Inspect native flow and install the shared project declaration and guidance.
     Init {
         #[arg(long)]
@@ -159,6 +161,7 @@ async fn main() {
     let task = tokio::spawn(async move {
         match cli.command {
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
+            Commands::Pr(options) => Box::pin(specgit::pr::run(options, process, &cwd)).await,
             Commands::Init {
                 remote,
                 provider,

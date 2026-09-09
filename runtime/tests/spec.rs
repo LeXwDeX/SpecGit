@@ -2,6 +2,22 @@ use specgit::{
     config::{Declaration, Labels, Language, Tag},
     spec,
 };
+#[test]
+fn native_input_bounds_apply_even_when_optional_conventions_are_off() {
+    let d = Declaration::default();
+    for title in [String::new(), "x".repeat(256), "feat: first\nsecond".into()] {
+        assert!(!spec::check(&d, true, &title, "body", &[]).is_empty());
+    }
+    for name in ["has space", "BadUppercase", "x:::y", "-leading"] {
+        let mut d = d.clone();
+        d.tags.push(Tag {
+            name: name.into(),
+            color: "112233".into(),
+            description: String::new(),
+        });
+        assert!(d.validate().is_err());
+    }
+}
 
 #[test]
 fn language_rules_preserve_unicode_han_semantics_and_are_opt_in() {

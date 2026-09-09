@@ -1,6 +1,7 @@
 //! SpecGit's native runtime. Forge observation has no mutation interface.
 pub mod assets;
 pub mod config;
+pub mod delivery_context;
 pub mod diagnostic;
 pub mod guidance;
 pub mod hook;
@@ -10,6 +11,7 @@ pub mod input;
 pub mod issue;
 pub mod native_delivery;
 pub mod native_settings;
+pub mod pr;
 pub mod probe;
 pub mod process;
 pub mod project;

@@ -297,6 +297,102 @@ pub async fn pull_request(
     }
     Ok(result)
 }
+pub async fn request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<Vec<PullRequest>, Diagnostic> {
+    let route = if repo.provider == Provider::Github {
+        let owner = repo.path.split('/').next().ok_or_else(malformed)?;
+        format!(
+            "{}/pulls?state=all&head={}",
+            prefix(repo),
+            encode(&format!("{owner}:{source}"))
+        )
+    } else {
+        format!(
+            "{}/merge_requests?scope=all&source_branch={}",
+            prefix(repo),
+            encode(source)
+        )
+    };
+    let rows = reader.list(&route, None, 10).await?;
+    let mut results = vec![];
+    for row in rows {
+        let number = id(
+            &row,
+            if repo.provider == Provider::Github {
+                "number"
+            } else {
+                "iid"
+            },
+        )?;
+        results.push(pull_request(reader, repo, number).await?);
+    }
+    Ok(results)
+}
+pub async fn branch_head(
+    reader: &ForgeRead,
+    repo: &Repository,
+    branch: &str,
+) -> Result<String, Diagnostic> {
+    let route = if repo.provider == Provider::Github {
+        format!("{}/branches/{}", prefix(repo), encode(branch))
+    } else {
+        format!("{}/repository/branches/{}", prefix(repo), encode(branch))
+    };
+    let value = reader.get(&route).await?;
+    if text(&value, "name")? != branch {
+        return Err(malformed());
+    }
+    let sha = text(
+        value.get("commit").ok_or_else(malformed)?,
+        if repo.provider == Provider::Github {
+            "sha"
+        } else {
+            "id"
+        },
+    )?;
+    if !crate::project::valid_oid(&sha) {
+        return Err(malformed());
+    }
+    Ok(sha)
+}
+/// Only establishes that at least one real changed file exists; never an exhaustive diff inventory.
+pub async fn has_changes(
+    reader: &ForgeRead,
+    repo: &Repository,
+    base: &str,
+    head: &str,
+) -> Result<bool, Diagnostic> {
+    if !crate::project::valid_oid(base) || !crate::project::valid_oid(head) {
+        return Err(malformed());
+    }
+    let gh = repo.provider == Provider::Github;
+    let route = if gh {
+        format!("{}/compare/{base}...{head}", prefix(repo))
+    } else {
+        format!("{}/repository/compare?from={base}&to={head}", prefix(repo))
+    };
+    let value = reader.get(&route).await?;
+    if !gh && value.get("compare_timeout").and_then(Value::as_bool) != Some(false) {
+        return Err(malformed());
+    }
+    let files = value
+        .get(if gh { "files" } else { "diffs" })
+        .and_then(Value::as_array)
+        .ok_or_else(malformed)?;
+    if gh {
+        let ahead = value
+            .get("ahead_by")
+            .and_then(Value::as_u64)
+            .ok_or_else(malformed)?;
+        if ahead == 0 {
+            return Ok(false);
+        }
+    }
+    Ok(!files.is_empty())
+}
 
 /// Constructed only by an explicit issue/pr operation, never passed to a hook or watch.
 pub struct ForgeWrite {
@@ -306,6 +402,70 @@ pub struct ForgeWrite {
     repo: Repository,
 }
 impl ForgeWrite {
+    pub async fn update_request_body(&self, number: u64, body: &str) -> Result<(), Diagnostic> {
+        let gh = self.repo.provider == Provider::Github;
+        self.write(
+            if gh { "PATCH" } else { "PUT" },
+            &format!("{}/{number}", requests(self.repo.provider)),
+            if gh {
+                json!({"body":body})
+            } else {
+                json!({"description":body})
+            },
+        )
+        .await?;
+        Ok(())
+    }
+    pub async fn add_request_labels(
+        &self,
+        number: u64,
+        labels: &[String],
+    ) -> Result<(), Diagnostic> {
+        if self.repo.provider == Provider::Github {
+            self.write(
+                "POST",
+                &format!("issues/{number}/labels"),
+                json!({"labels":labels}),
+            )
+            .await?;
+        } else {
+            self.write(
+                "PUT",
+                &format!("merge_requests/{number}"),
+                json!({"add_labels":labels.join(",")}),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+    pub async fn ready(&self, number: u64) -> Result<(), Diagnostic> {
+        let number = number.to_string();
+        let (noun, verb, repo) = if self.repo.provider == Provider::Github {
+            (
+                "pr",
+                "ready",
+                format!("{}/{}", self.repo.host, self.repo.path),
+            )
+        } else {
+            (
+                "mr",
+                "update",
+                format!("https://{}/{}", self.repo.host, self.repo.path),
+            )
+        };
+        let mut args = vec![noun, verb, &number, "--repo", &repo];
+        if self.repo.provider == Provider::Gitlab {
+            args.push("--ready");
+        }
+        let out = self
+            .process
+            .run(Request::new(&self.executable, &self.cwd, "request_ready").args(args))
+            .await?;
+        if out.code != 0 {
+            return Err(classify_failure("request_ready", &out.stderr));
+        }
+        Ok(())
+    }
     pub fn new(process: Process, cwd: &Path, repo: &Repository) -> Result<Self, Diagnostic> {
         Ok(Self {
             process,
