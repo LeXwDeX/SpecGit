@@ -295,7 +295,7 @@ pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
         regex::Regex::new(r"(?i)^(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#([0-9]+)$").unwrap()
     });
     static CLOSING: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"(?i)(?:^(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving)\b|\b(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving)\s*:?\s+(?:#|https?://|[a-z0-9_.-]+/))").unwrap()
+        regex::Regex::new(r"(?i)\b(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving)\s*:?\s*(?:#|https?://|[^\s]+#)").unwrap()
     });
     let mut refs = BTreeSet::new();
     for line in prose(body, false).lines() {
