@@ -68,6 +68,17 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
     let w = Workspace::load(process, cwd).await?;
     let repo = &w.context.repository;
     let selected = selection::read(&w.context)?;
+    if selected
+        .as_ref()
+        .is_some_and(|s| s.project_id != w.facts.id || s.target != w.target)
+    {
+        return Err(Diagnostic::new(
+            Code::IdentityMismatch,
+            "finish",
+            "The local selection belongs to a different native project or target.",
+            "Reconcile the exact native request and current selection before acceptance.",
+        ));
+    }
     let number = if let Some(n) = options
         .request
         .or(selected.as_ref().and_then(|s| s.request))
@@ -148,6 +159,14 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
             ));
         }
     };
+    if selected.as_ref().is_some_and(|s| {
+        s.issues.iter().any(|id| !ids.contains(id)) || s.intents.iter().any(|i| i.issue.is_none())
+    }) {
+        return Ok(reject(
+            "Selected issue intent and native references differ; explicit reconciliation is required.",
+            json!({"request":r,"native_issues":ids,"selected_issues":selected.as_ref().map(|s|&s.issues)}),
+        ));
+    }
     let mut issues = vec![];
     let mut violations = spec::check(&rules, false, &r.title, &r.body, &r.labels);
     for id in ids {
