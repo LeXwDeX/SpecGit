@@ -313,6 +313,26 @@ identity before retrying. If evidence is ambiguous, stop without a duplicate.
 Do not delete created issues/branches as automatic rollback. A fresh clone can
 adopt known issue/request IDs even when the original local checkpoint is gone.
 
+The native issue entry point accepts `specgit issue <id-or-title>...`, optional
+`--body-file <path>` once per new title, `--tags <a,b>`, `--branch <new-name>` and
+`--inspect`. The normalized option schema is
+`runtime/schemas/issue-options.schema.json`; it describes CLI options and does not
+introduce a JSON-input transport. Inspect prepares specs and expands native
+duplicate candidates without creating a checkpoint or branch. New branches are
+explicit, must differ from source/target, and require a clean worktree. Adoption
+uses exact issue IDs and preserves current native titles, bodies and labels.
+
+The ignored worktree checkpoint is `specgit-v2/selection.json` inside the Git
+directory, bounded at 1 MiB and 100 issues. A held operation lock and atomic
+single-file replacement preserve pending write intent without a rollback that
+could erase evidence of an attempted remote write. An uncertain creation stops;
+inspect its native candidates and adopt the exact returned issue ID to reconcile.
+The checkpoint is a locator and recovery aid, never remote binding authority.
+Native Markdown front matter preserves a selected title and label list; unsupported
+metadata and nonempty assignees require explicit reconciliation. Native template
+body variables remain untouched; SpecGit substitutions apply to its builtin and
+inline templates and the explicitly declared title selector.
+
 Fork requests require verified source and target project identities; read-only
 observation may support them before write bootstrap does. Unsupported fork-write
 flows fail explicitly. Native branch cleanup may be unavailable for a fork or

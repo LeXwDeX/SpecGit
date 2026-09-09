@@ -24,6 +24,7 @@ sha2 = "0.10"
 url = "2"
 tempfile = "3"
 serde_yaml_ng = "0.10"
+regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

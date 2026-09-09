@@ -184,6 +184,24 @@ pub struct AssetStore {
     _lock: File,
 }
 impl AssetStore {
+    /// One-file runtime checkpoints use atomic replacement, without a rollback
+    /// journal that could erase evidence of an already attempted remote write.
+    pub(crate) fn checkpoint(
+        &self,
+        path: &Path,
+        expected: &Snapshot,
+        bytes: &[u8],
+    ) -> Result<(), Diagnostic> {
+        self.validate(path)?;
+        let actual = Snapshot::read(path)?;
+        if actual.bytes != expected.bytes {
+            return Err(error(
+                Code::ConcurrentEdit,
+                "The checkpoint changed outside the held operation lock.",
+            ));
+        }
+        atomic(path, bytes, actual.permissions.as_ref())
+    }
     pub fn lock(root: &Path, allowed: &[PathBuf], timeout: Duration) -> Result<Self, Diagnostic> {
         if timeout.is_zero() || timeout > Duration::from_secs(30) {
             return Err(Diagnostic::input(

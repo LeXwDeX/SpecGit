@@ -156,6 +156,9 @@ fn native_api(args: &[String], path: &std::path::Path) {
     }
     let project_endpoint =
         endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo";
+    if state.get("issues").is_some() && delivery_api(&mut state, path, method, endpoint, &input) {
+        return;
+    }
     if method == "GET" {
         if endpoint == "user" {
             println!("{}", json!({"id":1,"login":"fixture","username":"fixture"}));
@@ -184,4 +187,77 @@ fn native_api(args: &[String], path: &std::path::Path) {
     } else {
         std::process::exit(2);
     }
+}
+
+fn delivery_api(
+    state: &mut serde_json::Value,
+    path: &std::path::Path,
+    method: &str,
+    endpoint: &str,
+    input: &serde_json::Value,
+) -> bool {
+    use serde_json::{Value, json};
+    let gh = endpoint.starts_with("repos/") || endpoint.starts_with("search/");
+    let route = endpoint.split('?').next().unwrap();
+    let response = if method == "GET" && endpoint.starts_with("search/issues?") {
+        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":state["issues"]})
+    } else if method == "GET" && route.ends_with("/issues") {
+        state["issues"].clone()
+    } else if method == "GET" && route.contains("/issues/") {
+        let number: u64 = route.rsplit('/').next().unwrap().parse().unwrap();
+        let found = state["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v[if gh { "number" } else { "iid" }].as_u64() == Some(number));
+        match found {
+            Some(v) => v.clone(),
+            None => {
+                eprintln!("HTTP 404");
+                std::process::exit(1);
+            }
+        }
+    } else if method == "GET" && route.ends_with("/labels") {
+        state.get("labels").cloned().unwrap_or(json!([]))
+    } else if method == "POST" && route.ends_with("/labels") {
+        if state.get("labels").is_none() {
+            state["labels"] = json!([]);
+        }
+        state["labels"].as_array_mut().unwrap().push(input.clone());
+        input.clone()
+    } else if method == "POST" && route.ends_with("/issues") {
+        let number = state["issues"].as_array().unwrap().len() as u64 + 1;
+        let labels = if gh {
+            Value::Array(
+                input["labels"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| json!({"name":v}))
+                    .collect(),
+            )
+        } else {
+            json!(
+                input["labels"]
+                    .as_str()
+                    .unwrap()
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            )
+        };
+        let value = json!({"id":number+100,"number":number,"iid":number,"project_id":7,"title":input["title"],"body":input["body"],"description":input["description"],"labels":labels,"state":if gh {"open"} else {"opened"},"updated_at":"2026-09-09T00:00:00Z"});
+        state["issues"].as_array_mut().unwrap().push(value.clone());
+        std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+        if state["lose_issue_response"].as_bool() == Some(true) {
+            eprintln!("connection reset after server write");
+            std::process::exit(1);
+        }
+        value
+    } else {
+        return false;
+    };
+    std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+    println!("{response}");
+    true
 }

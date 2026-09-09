@@ -1,0 +1,379 @@
+//! Native delivery facts and explicit writes. The observer owns only ForgeRead.
+use crate::{
+    diagnostic::{Code, Diagnostic, classify_failure},
+    probe::{ForgeRead, encode},
+    process::{Process, Request, resolve_executable},
+    project::{Provider, Repository},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Issue {
+    pub id: u64,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub state: String,
+    pub updated_at: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullRequest {
+    pub id: u64,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub state: String,
+    pub draft: bool,
+    pub head: String,
+    pub source: String,
+    pub target: String,
+    pub source_project: u64,
+    pub target_project: u64,
+    pub updated_at: String,
+}
+fn malformed() -> Diagnostic {
+    Diagnostic::new(
+        Code::MalformedResponse,
+        "delivery",
+        "Native delivery evidence is missing or malformed.",
+        "Inspect the exact issue/request through the selected authenticated CLI; missing fields are not defaults.",
+    )
+}
+fn text(v: &Value, key: &str) -> Result<String, Diagnostic> {
+    v.get(key)
+        .and_then(Value::as_str)
+        .map(String::from)
+        .ok_or_else(malformed)
+}
+fn id(v: &Value, key: &str) -> Result<u64, Diagnostic> {
+    v.get(key)
+        .and_then(Value::as_u64)
+        .filter(|n| *n > 0)
+        .ok_or_else(malformed)
+}
+fn labels(v: &Value, provider: Provider) -> Result<Vec<String>, Diagnostic> {
+    v.get("labels")
+        .and_then(Value::as_array)
+        .ok_or_else(malformed)?
+        .iter()
+        .map(|v| {
+            if provider == Provider::Github {
+                text(v, "name")
+            } else {
+                v.as_str().map(String::from).ok_or_else(malformed)
+            }
+        })
+        .collect()
+}
+pub fn prefix(repo: &Repository) -> String {
+    match repo.provider {
+        Provider::Github => format!("repos/{}", repo.path),
+        Provider::Gitlab => format!("projects/{}", encode(&repo.path)),
+    }
+}
+fn requests(provider: Provider) -> &'static str {
+    if provider == Provider::Github {
+        "pulls"
+    } else {
+        "merge_requests"
+    }
+}
+fn issue_value(v: &Value, repo: &Repository, project_id: u64) -> Result<Issue, Diagnostic> {
+    if v.get("pull_request").is_some()
+        || (repo.provider == Provider::Gitlab && id(v, "project_id")? != project_id)
+    {
+        return Err(Diagnostic::new(
+            Code::IdentityMismatch,
+            "issue",
+            "The native object is not an issue in the selected project.",
+            "Select an exact same-project issue ID.",
+        ));
+    }
+    let state = text(v, "state")?;
+    if !["open", "opened", "closed"].contains(&state.as_str()) {
+        return Err(malformed());
+    }
+    Ok(Issue {
+        id: id(
+            v,
+            if repo.provider == Provider::Github {
+                "number"
+            } else {
+                "iid"
+            },
+        )?,
+        title: text(v, "title")?,
+        body: body(v, repo.provider)?,
+        labels: labels(v, repo.provider)?,
+        state,
+        updated_at: text(v, "updated_at")?,
+    })
+}
+fn body(v: &Value, provider: Provider) -> Result<String, Diagnostic> {
+    let field = if provider == Provider::Github {
+        "body"
+    } else {
+        "description"
+    };
+    match v.get(field) {
+        Some(Value::Null) => Ok(String::new()),
+        Some(Value::String(s)) => Ok(s.clone()),
+        _ => Err(malformed()),
+    }
+}
+pub async fn issue(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<Issue, Diagnostic> {
+    let v = reader
+        .get(&format!("{}/issues/{number}", prefix(repo)))
+        .await?;
+    let result = issue_value(&v, repo, project_id)?;
+    if result.id != number {
+        return Err(malformed());
+    }
+    Ok(result)
+}
+pub async fn candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    query: &str,
+) -> Result<Vec<Issue>, Diagnostic> {
+    // Search is bounded and every result is expanded before use.
+    let (route, key) = match repo.provider {
+        Provider::Github => (
+            format!(
+                "search/issues?q={}",
+                encode(&format!("repo:{} is:issue is:open {query}", repo.path))
+            ),
+            Some("items"),
+        ),
+        Provider::Gitlab => (
+            format!(
+                "{}/issues?state=opened&search={}&in=title",
+                prefix(repo),
+                encode(query)
+            ),
+            None,
+        ),
+    };
+    let rows = if key.is_some() {
+        let mut rows = vec![];
+        for page in 1..=10 {
+            let value = reader
+                .get(&format!("{route}&per_page=100&page={page}"))
+                .await?;
+            if value.get("incomplete_results").and_then(Value::as_bool) != Some(false) {
+                return Err(Diagnostic::new(
+                    Code::OutputLimit,
+                    "issue_search",
+                    "Native issue search is incomplete.",
+                    "Narrow the specification query or adopt exact issue IDs.",
+                ));
+            }
+            let items = value
+                .get("items")
+                .and_then(Value::as_array)
+                .ok_or_else(malformed)?;
+            if items.len() > 100 {
+                return Err(malformed());
+            }
+            rows.extend(items.iter().cloned());
+            if items.len() < 100 {
+                break;
+            }
+            if page == 10 {
+                return Err(Diagnostic::new(
+                    Code::OutputLimit,
+                    "issue_search",
+                    "Issue candidates exceed the complete search budget.",
+                    "Narrow the query or select exact IDs.",
+                ));
+            }
+        }
+        rows
+    } else {
+        reader.list(&route, None, 10).await?
+    };
+    let mut out = vec![];
+    for row in rows {
+        out.push(
+            issue(
+                reader,
+                repo,
+                project_id,
+                id(
+                    &row,
+                    if repo.provider == Provider::Github {
+                        "number"
+                    } else {
+                        "iid"
+                    },
+                )?,
+            )
+            .await?,
+        );
+    }
+    Ok(out)
+}
+pub async fn label_pool(reader: &ForgeRead, repo: &Repository) -> Result<Vec<String>, Diagnostic> {
+    reader
+        .list(&format!("{}/labels", prefix(repo)), None, 10)
+        .await?
+        .iter()
+        .map(|v| text(v, "name"))
+        .collect()
+}
+pub async fn pull_request(
+    reader: &ForgeRead,
+    repo: &Repository,
+    number: u64,
+) -> Result<PullRequest, Diagnostic> {
+    let v = reader
+        .get(&format!(
+            "{}/{}/{number}",
+            prefix(repo),
+            requests(repo.provider)
+        ))
+        .await?;
+    let gh = repo.provider == Provider::Github;
+    let (source, target, head, source_project, target_project) = if gh {
+        let source = v.get("head").ok_or_else(malformed)?;
+        let target = v.get("base").ok_or_else(malformed)?;
+        (
+            text(source, "ref")?,
+            text(target, "ref")?,
+            text(source, "sha")?,
+            id(source.get("repo").ok_or_else(malformed)?, "id")?,
+            id(target.get("repo").ok_or_else(malformed)?, "id")?,
+        )
+    } else {
+        (
+            text(&v, "source_branch")?,
+            text(&v, "target_branch")?,
+            text(&v, "sha")?,
+            id(&v, "source_project_id")?,
+            id(&v, "target_project_id")?,
+        )
+    };
+    if !crate::project::valid_oid(&head) {
+        return Err(malformed());
+    }
+    let mut state = text(&v, "state")?;
+    if gh
+        && v.get("merged")
+            .and_then(Value::as_bool)
+            .ok_or_else(malformed)?
+    {
+        state = "merged".into();
+    }
+    if !["open", "opened", "closed", "merged"].contains(&state.as_str()) {
+        return Err(malformed());
+    }
+    let result = PullRequest {
+        id: id(&v, if gh { "number" } else { "iid" })?,
+        title: text(&v, "title")?,
+        body: body(&v, repo.provider)?,
+        labels: labels(&v, repo.provider)?,
+        state,
+        draft: v
+            .get("draft")
+            .and_then(Value::as_bool)
+            .ok_or_else(malformed)?,
+        head,
+        source,
+        target,
+        source_project,
+        target_project,
+        updated_at: text(&v, "updated_at")?,
+    };
+    if result.id != number {
+        return Err(malformed());
+    }
+    Ok(result)
+}
+
+/// Constructed only by an explicit issue/pr operation, never passed to a hook or watch.
+pub struct ForgeWrite {
+    process: Process,
+    executable: PathBuf,
+    cwd: PathBuf,
+    repo: Repository,
+}
+impl ForgeWrite {
+    pub fn new(process: Process, cwd: &Path, repo: &Repository) -> Result<Self, Diagnostic> {
+        Ok(Self {
+            process,
+            executable: resolve_executable(repo.provider.executable())?,
+            cwd: cwd.into(),
+            repo: repo.clone(),
+        })
+    }
+    async fn write(&self, method: &str, suffix: &str, body: Value) -> Result<Value, Diagnostic> {
+        let endpoint = format!("{}/{}", prefix(&self.repo), suffix);
+        let mut request = Request::new(&self.executable, &self.cwd, "delivery_write").args([
+            "api",
+            "--hostname",
+            &self.repo.host,
+            "--method",
+            method,
+            "--input",
+            "-",
+            &endpoint,
+        ]);
+        request.input = serde_json::to_vec(&body).map_err(|_| malformed())?;
+        let output = self.process.run(request).await?;
+        if output.code != 0 {
+            return Err(classify_failure("delivery_write", &output.stderr));
+        }
+        crate::input::json(&output.stdout, self.process.limits.output_bytes, 32)
+    }
+    pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
+        self.write("POST", "labels", json!({"name":tag.name,"color":if self.repo.provider == Provider::Gitlab { format!("#{}",tag.color) } else { tag.color.clone() },"description":tag.description})).await?;
+        Ok(())
+    }
+    pub async fn create_issue(
+        &self,
+        title: &str,
+        body: &str,
+        labels: &[String],
+    ) -> Result<u64, Diagnostic> {
+        let payload = if self.repo.provider == Provider::Github {
+            json!({"title":title,"body":body,"labels":labels})
+        } else {
+            json!({"title":title,"description":body,"labels":labels.join(",")})
+        };
+        let v = self.write("POST", "issues", payload).await?;
+        id(
+            &v,
+            if self.repo.provider == Provider::Github {
+                "number"
+            } else {
+                "iid"
+            },
+        )
+    }
+    pub async fn create_request(
+        &self,
+        source: &str,
+        target: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<u64, Diagnostic> {
+        let gh = self.repo.provider == Provider::Github;
+        let payload = if gh {
+            json!({"head":source,"base":target,"title":title,"body":body,"draft":true})
+        } else {
+            json!({"source_branch":source,"target_branch":target,"title":format!("Draft: {title}"),"description":body})
+        };
+        let v = self
+            .write("POST", requests(self.repo.provider), payload)
+            .await?;
+        id(&v, if gh { "number" } else { "iid" })
+    }
+}
