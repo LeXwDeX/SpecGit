@@ -257,3 +257,37 @@ fn native_downstream_pipeline_failure_blocks_an_otherwise_successful_parent() {
             .contains(&json!("check_failed:downstream:7/72:pipeline"))
     );
 }
+
+#[test]
+fn removed_selected_associations_block_acceptance_and_completion() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        let path = f.root.join(".git/specgit-v2/selection.json");
+        let mut selected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        selected["issues"] = json!([1, 2]);
+        fs::write(path, selected.to_string()).unwrap();
+        let r = f.run(&["finish"]);
+        assert_eq!(r["exit"], 1, "{r}");
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+        });
+        let writes = f.writes();
+        let r = f.run(&["finish"]);
+        assert_eq!(r["exit"], 1, "{r}");
+        assert_ne!(r["status"], "completed");
+        assert_eq!(f.writes(), writes);
+    }
+}
+#[test]
+fn a_successful_trigger_with_hidden_downstream_evidence_is_unknown() {
+    let f = fixture("gitlab");
+    f.edit(|s|s["read_routes"]["projects/7/pipelines/71/trigger_jobs?per_page=100&page=1"]=json!([{"id":91,"name":"Hidden child","status":"success","allow_failure":false,"started_at":STAMP,"finished_at":STAMP,"downstream_pipeline":null}]));
+    let r = f.run(&["finish"]);
+    assert_eq!(r["exit"], 3, "{r}");
+}

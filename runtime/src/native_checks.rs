@@ -512,7 +512,8 @@ pub async fn gitlab(
                 );
                 if collection == "trigger_jobs" {
                     match row.get("downstream_pipeline") {
-                        Some(Value::Null) => {}
+                        Some(Value::Null) if text(&row, "status")? == "skipped" => {}
+                        Some(Value::Null) => return Err(malformed()),
                         Some(next) => {
                             let child_sha = text(next, "sha")?;
                             if !crate::project::valid_oid(child_sha) {
