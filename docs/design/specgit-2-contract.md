@@ -214,6 +214,10 @@ is discoverable by agents even without hooks and points to native platforms for
 writes. It does not grant permissions or install hidden Git merge guards.
 
 Generated text states the installed contract version and declaration source.
+Project-local guidance receipts retain the last generated block hashes and runtime
+version in the same asset transaction as the marked files. Refresh compares those
+preimages so manual declaration edits and runtime upgrades preserve ownership;
+rollback restores the receipt and guidance together.
 Preserve every byte outside owned markers, unknown host configuration fields and
 foreign entries. Marker damage or an edited owned block requires a diff and
 explicit adoption/replacement decision; do not overwrite it as if pristine.

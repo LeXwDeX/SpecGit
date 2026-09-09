@@ -46,3 +46,27 @@ fn refresh_preserves_exact_foreign_bytes_and_detects_damaged_or_edited_markers()
     .unwrap();
     assert!(guidance::change(&path, &en, &zh, None).is_err());
 }
+
+#[test]
+fn persisted_hash_allows_runtime_upgrade_without_allowing_an_edited_block() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let private = root.join("private");
+    std::fs::create_dir(&private).unwrap();
+    let d = Declaration::default();
+    let old = guidance::render(&d).replace(env!("CARGO_PKG_VERSION"), "1.99.0-old");
+    std::fs::write(root.join("AGENTS.md"), format!("User prose\n{old}\n")).unwrap();
+    std::fs::write(private.join("guidance.json"), serde_json::json!({"version":1,"generator":"1.99.0-old","blocks":{"AGENTS.md":specgit::assets::hash(old.as_bytes())}}).to_string()).unwrap();
+    let planned = guidance::changes(&root, &private, &d, &d, false).unwrap();
+    assert!(
+        String::from_utf8(planned[0].after.clone().unwrap())
+            .unwrap()
+            .contains(env!("CARGO_PKG_VERSION"))
+    );
+    std::fs::write(
+        root.join("AGENTS.md"),
+        old.replace("Hook notices", "Edited text"),
+    )
+    .unwrap();
+    assert!(guidance::changes(&root, &private, &d, &d, false).is_err());
+}

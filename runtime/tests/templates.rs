@@ -50,3 +50,34 @@ fn native_discovery_reports_ambiguity_and_forms_without_silent_selection() {
     assert!(templates::reject_quick_actions("Content\n/close").is_err());
     assert!(templates::reject_quick_actions("Ordinary /close mention").is_ok());
 }
+
+#[test]
+fn discovery_reports_exhaustion_even_when_entries_are_not_templates() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let dir = root.join(".github/ISSUE_TEMPLATE");
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..101 {
+        std::fs::write(dir.join(format!("{i}.txt")), "ignored").unwrap();
+    }
+    std::fs::write(dir.join("valid.md"), "real template").unwrap();
+    assert!(templates::discover(&root).is_err());
+}
+#[cfg(unix)]
+#[test]
+fn special_files_are_rejected_before_reading() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    for name in [".specgit.yaml", "body.md"] {
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(root.join(name))
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    assert!(specgit::config::read(&root).is_err());
+    assert!(templates::read_text(&root.join("body.md")).is_err());
+    assert!(specgit::assets::Snapshot::read(&root.join("body.md")).is_err());
+}

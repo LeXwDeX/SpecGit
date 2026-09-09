@@ -242,3 +242,75 @@ fn selected_language_translates_diagnostics_without_changing_codes() {
             .contains("权限")
     );
 }
+
+#[test]
+fn manual_declaration_edits_refresh_owned_blocks_and_rollback_receipt_together() {
+    let f = Fixture::new();
+    let first = f.run(&["init", "--provider", "github", "--mirror-claude"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    let receipt_path = f.root.join(".git/specgit-v2/guidance.json");
+    let before_receipt = fs::read(&receipt_path).unwrap();
+    let before_agents = fs::read(f.root.join("AGENTS.md")).unwrap();
+    let declaration = f.root.join(".specgit.yaml");
+    let text = fs::read_to_string(&declaration)
+        .unwrap()
+        .replace("language: en", "language: zh");
+    fs::write(&declaration, text).unwrap();
+    let result = f.run(&["init"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        assert!(
+            fs::read_to_string(f.root.join(name))
+                .unwrap()
+                .contains("原因、范围、方案")
+        );
+    }
+    let transaction = result["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap();
+    let rollback = f.run(&["init", "--rollback", transaction]);
+    assert_eq!(rollback["exit"], 0, "{rollback}");
+    assert_eq!(fs::read(&receipt_path).unwrap(), before_receipt);
+    assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), before_agents);
+    assert_eq!(f.run(&["init"])["exit"], 0);
+    let agents = f.root.join("AGENTS.md");
+    let edited = fs::read_to_string(&agents)
+        .unwrap()
+        .replace("原因、范围、方案", "用户编辑");
+    fs::write(&agents, &edited).unwrap();
+    assert_eq!(f.run(&["init"])["exit"], 3);
+    assert_eq!(fs::read_to_string(agents).unwrap(), edited);
+}
+
+#[test]
+fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration() {
+    let f = Fixture::new();
+    assert_eq!(
+        f.run(&["init", "--provider", "github", "--language", "zh"])["exit"],
+        0
+    );
+    let git = |args: &[&str]| {
+        assert!(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        )
+    };
+    git(&["add", ".specgit.yaml", "AGENTS.md"]);
+    git(&["commit", "-m", "Chinese branch"]);
+    git(&["checkout", "-b", "english"]);
+    assert_eq!(f.run(&["init", "--language", "en"])["exit"], 0);
+    git(&["add", ".specgit.yaml", "AGENTS.md"]);
+    git(&["commit", "-m", "English branch"]);
+    git(&["checkout", "feature"]);
+    assert_eq!(f.run(&["init"])["exit"], 0);
+    assert!(
+        fs::read_to_string(f.root.join("AGENTS.md"))
+            .unwrap()
+            .contains("原因、范围、方案")
+    );
+}

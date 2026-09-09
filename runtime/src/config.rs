@@ -5,10 +5,7 @@ use crate::{
     project::Provider,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 pub const MAX_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
@@ -316,7 +313,7 @@ pub fn snapshot(root: &Path) -> Result<crate::assets::Snapshot, Diagnostic> {
 fn bounded_snapshot(path: &Path, limit: usize) -> Result<crate::assets::Snapshot, Diagnostic> {
     use std::io::Read;
     safe_path(path)?;
-    let file = match fs::File::open(path) {
+    let file = match crate::assets::open_regular(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(crate::assets::Snapshot {
                 bytes: None,

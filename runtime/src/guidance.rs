@@ -4,7 +4,8 @@ use crate::{
     config::{Declaration, Language},
     diagnostic::{Code, Diagnostic},
 };
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, path::Path};
 const START: &str = "<!-- specgit:v2:start -->";
 const END: &str = "<!-- specgit:v2:end -->";
 fn conflict() -> Diagnostic {
@@ -58,6 +59,8 @@ pub fn change(
         ([(start, _)], [(end, _)]) if start < end => {
             let end = end + END.len();
             let current = &before[*start..end];
+            // A worktree-local receipt may describe another checked-out branch.
+            // Exact current-version generation is independently pristine evidence.
             if current != render(previous)
                 && recorded_hash != Some(hash(current.as_bytes()).as_str())
             {
@@ -76,4 +79,57 @@ pub fn has_block(path: &Path) -> Result<bool, Diagnostic> {
     let bytes = snapshot.bytes.unwrap_or_default();
     let text = std::str::from_utf8(&bytes).map_err(|_| conflict())?;
     Ok(text.contains(START) || text.contains(END))
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Receipt {
+    version: u8,
+    generator: String,
+    blocks: BTreeMap<String, String>,
+}
+/// Commit last-generated block hashes together with the corresponding guidance.
+pub fn changes(
+    root: &Path,
+    private: &Path,
+    previous: &Declaration,
+    next: &Declaration,
+    mirror: bool,
+) -> Result<Vec<Change>, Diagnostic> {
+    let mut receipt = Change::new(private.join("guidance.json"), None)?;
+    let mut state = match receipt.before.bytes.as_deref() {
+        Some(bytes) => {
+            let parsed: Receipt = serde_json::from_value(crate::input::json(bytes, 1_048_576, 16)?)
+                .map_err(|_| conflict())?;
+            if parsed.version != 1 {
+                return Err(conflict());
+            }
+            parsed
+        }
+        None => Receipt {
+            version: 1,
+            generator: env!("CARGO_PKG_VERSION").into(),
+            blocks: BTreeMap::new(),
+        },
+    };
+    let mut changes = vec![];
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let path = root.join(name);
+        if name == "CLAUDE.md" && !mirror && !has_block(&path)? {
+            continue;
+        }
+        changes.push(change(
+            &path,
+            previous,
+            next,
+            state.blocks.get(name).map(String::as_str),
+        )?);
+        state
+            .blocks
+            .insert(name.into(), hash(render(next).as_bytes()));
+    }
+    state.generator = env!("CARGO_PKG_VERSION").into();
+    receipt.after = Some(serde_json::to_vec_pretty(&state).map_err(|_| conflict())?);
+    changes.push(receipt);
+    Ok(changes)
 }
