@@ -1,9 +1,11 @@
-# Native runtime foundation
+# Native SpecGit 2 runtime
 
 This private development Cargo package builds the SpecGit 2 library and native
-executable. The foundation exposes `doctor` and offline `status`; the global
-integration additions provide `setup`, `hook`, `init`, native `issue`/`pr`, read-only
-`finish`, explicit `merge`, bounded `watch`, durable `inbox` and read-only `promotion`. Migration and distribution remain programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
+executable: `doctor`, offline `status`, `setup`, `hook`, `init`, native `issue`/`pr`,
+read-only `finish`, explicit `merge`, bounded `watch`, durable `inbox`, read-only
+`promotion` and explicit `migrate`. Native npm staging and installed-entrypoint
+checks are documented in [distribution](distribution/README.md). The TypeScript
+publication entrypoint remains authoritative during this staged rewrite.
 
 `merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
 and delegates through the authenticated native CLI with the assessed source SHA.
@@ -59,14 +61,16 @@ is designed for trusted native Git/forge CLIs, not arbitrary hostile executables
 JSON stdout is one object with `schema_version`, `version`, `operation`, `status`,
 `exit`, `evidence`, and `diagnostics`. Invalid input exits 2, unavailable evidence
 3, cancellation 130, successful observations 0. Observation success is not a
-delivery verdict. Assessment rejection/acceptance will be introduced with #512.
+delivery verdict. `finish` evaluates current native delivery evidence separately.
 Raw provider stderr is classified locally and never copied into diagnostics.
 Offline status only invokes Git and explicitly refuses to reinterpret existing
-legacy declarations before the version-aware migration is implemented.
+legacy declarations; use the explicit version-aware migration.
 
 The fixture binary is gated behind `test-fixtures` and is excluded from ordinary
-installation. CI installs and runs the native artifact outside the checkout on
-Linux, macOS and Windows; these tests do not establish npm distribution support.
+installation. CI builds release platform packages, installs them with npm outside the checkout,
+and repeats public journeys through their installed entrypoint on the available
+Linux, macOS and Windows runners. Local package installation does not establish
+public-registry availability or qualification for other architectures.
 
 ## Global integration stage (#510)
 
@@ -153,8 +157,8 @@ reported settings/eligibility observations, not a claim that a merge occurred.
 
 Selected repository Markdown, inline templates and final body files have explicit
 precedence. Native form candidates and inherited-template uncertainty remain
-visible. Issue creation and selected-template metadata reconciliation belong to
-the issue/PR integration stage. Real read-only GitHub/GitLab init probes passed;
+visible. Native issue creation and selected-template metadata reconciliation use these
+same declaration/template rules. Real read-only GitHub/GitLab init probes passed;
 actual setting writes and native closure lifecycle fixtures remain unverified.
 
 ## Promotion association inspection (#477)

@@ -6,6 +6,11 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    #[cfg(windows)]
+    if args.first().map(String::as_str) == Some("console-interrupt") {
+        console_interrupt(&args[1..]);
+        return;
+    }
     if let Some(real_git) = std::env::var_os("SPECGIT_FIXTURE_REAL_GIT")
         && std::env::current_exe()
             .unwrap()
@@ -48,6 +53,9 @@ fn main() {
         if args.first().map(String::as_str) == Some("rev-parse")
             && args.get(1).map(String::as_str) == Some("--show-toplevel")
         {
+            if let Some(path) = std::env::var_os("SPECGIT_FIXTURE_READY_PID") {
+                snapshot::write(path, &serde_json::json!(std::process::id()));
+            }
             std::thread::sleep(Duration::from_secs(120));
         }
         println!("fixture command help");
@@ -152,6 +160,55 @@ fn main() {
         }
         _ => std::process::exit(2),
     }
+}
+
+#[cfg(windows)]
+fn console_interrupt(args: &[String]) {
+    use std::{
+        process::{Command, Stdio},
+        time::Instant,
+    };
+    use windows_sys::Win32::System::Console::{
+        CTRL_C_EVENT, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+    };
+    unsafe extern "system" fn keep_fixture_alive(_event: u32) -> i32 {
+        1
+    }
+    assert_ne!(
+        // SAFETY: the static callback has the documented signature. Only this helper's
+        // dedicated console receives the later event; the runner has another console.
+        unsafe { SetConsoleCtrlHandler(Some(keep_fixture_alive), 1) },
+        0
+    );
+    let mut child = Command::new(&args[0])
+        .args(&args[1..])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let ready = std::path::PathBuf::from(std::env::var_os("SPECGIT_FIXTURE_READY_PID").unwrap());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !ready.exists() {
+        let _ = child.kill();
+        panic!("native child did not start");
+    }
+    // SAFETY: group zero targets only this helper's newly allocated console and
+    // its attached Node/native children, never the CI runner's console.
+    assert_ne!(unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) }, 0);
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if child.try_wait().unwrap().is_none() {
+        let _ = child.kill();
+        panic!("console cancellation timed out");
+    }
+    let out = child.wait_with_output().unwrap();
+    std::io::stdout().write_all(&out.stdout).unwrap();
+    std::io::stderr().write_all(&out.stderr).unwrap();
+    std::process::exit(out.status.code().unwrap_or(1));
 }
 
 fn native_api(args: &[String], path: &std::path::Path) {

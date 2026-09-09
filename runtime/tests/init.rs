@@ -1,4 +1,6 @@
 #![cfg(feature = "test-fixtures")]
+#[path = "support/executable.rs"]
+mod executable;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf, process::Command};
 struct Fixture {
@@ -62,7 +64,7 @@ impl Fixture {
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
-        let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        let out = executable::command()
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("SPECGIT_FIXTURE_API_FILE", &self.state)

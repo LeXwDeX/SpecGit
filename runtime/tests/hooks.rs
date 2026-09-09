@@ -1,3 +1,5 @@
+#[path = "support/executable.rs"]
+mod executable;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -37,7 +39,7 @@ fn fixture() -> tempfile::TempDir {
     t
 }
 fn run(event: &str, bytes: &[u8]) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+    let mut child = executable::command()
         .args(["hook", "--event", event])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -144,7 +146,7 @@ fn malformed_duplicate_and_oversized_hook_inputs_remain_nonblocking() {
 #[test]
 fn stalled_stdin_cannot_hold_runtime_shutdown() {
     let start = Instant::now();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+    let mut child = executable::command()
         .args(["hook", "--event", "SessionStart"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -165,7 +167,7 @@ fn setup_installs_native_adapter_even_when_readiness_is_unavailable() {
         .canonicalize()
         .unwrap()
         .join("installed 中文 $ literal");
-    let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
+    let out = executable::command()
         .current_dir(t.path())
         .env("PATH", t.path())
         .args([
