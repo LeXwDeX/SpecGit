@@ -13,6 +13,23 @@ pub struct Report {
     pub diagnostics: Vec<Diagnostic>,
 }
 impl Report {
+    pub fn assessment(operation: &str, a: crate::assessment::Assessment) -> Self {
+        let exit = a.exit();
+        Self {
+            schema_version: 2,
+            version: env!("CARGO_PKG_VERSION"),
+            operation: operation.into(),
+            status: a.status.as_str().into(),
+            exit,
+            evidence: if a.evidence.request.is_some() {
+                serde_json::to_value(a.evidence).expect("typed evidence serializes")
+            } else {
+                Value::Null
+            },
+            diagnostics: a.diagnostics,
+        }
+    }
+
     pub fn success(operation: &str, status: &str, evidence: impl Serialize) -> Self {
         Self {
             schema_version: 2,

@@ -28,60 +28,8 @@ pub struct Options {
     pub inspect_only: bool,
     pub rollback: Option<String>,
 }
-#[derive(Debug, serde::Serialize)]
-pub struct Flow {
-    pub target: String,
-    pub native_default: String,
-    pub targets_native_default: bool,
-    pub issue_closing: &'static str,
-    pub source_cleanup: &'static str,
-    pub warnings: Vec<&'static str>,
-}
-pub fn flow(facts: &ProjectFacts, target: Option<&str>) -> Flow {
-    let target = target.unwrap_or(&facts.default_branch).to_owned();
-    let default = target == facts.default_branch;
-    let mut warnings = vec![];
-    if !default {
-        warnings.push("non_default_target");
-    }
-    let issue_closing = if !default {
-        "unsupported_target"
-    } else {
-        match facts.native_issue_closing {
-            Some(true) => "enabled_rules_unverified",
-            Some(false) => {
-                warnings.push("native_issue_closing_disabled");
-                "disabled"
-            }
-            None => {
-                warnings.push("native_issue_closing_unknown");
-                "unknown"
-            }
-        }
-    };
-    let source_cleanup = match facts.native_source_cleanup {
-        Some(true) => "enabled_eligibility_unverified",
-        Some(false) => {
-            warnings.push("native_source_cleanup_disabled");
-            "disabled"
-        }
-        None => {
-            warnings.push("native_source_cleanup_unknown");
-            "unknown"
-        }
-    };
-    if facts.native_issue_closing == Some(true) {
-        warnings.push("native_closing_rules_unverified");
-    }
-    Flow {
-        target,
-        native_default: facts.default_branch.clone(),
-        targets_native_default: default,
-        issue_closing,
-        source_cleanup,
-        warnings,
-    }
-}
+pub use crate::delivery_model::Flow;
+pub use crate::delivery_model::flow;
 async fn request_target(
     reader: &ForgeRead,
     context: &project::Context,

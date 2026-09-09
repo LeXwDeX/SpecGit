@@ -1,4 +1,5 @@
 //! Native protection/approval reads remain distinct from declared additional checks.
+pub use crate::delivery_model::{RequiredCheck, Requirements};
 use crate::{
     diagnostic::Diagnostic,
     native_checks::{malformed, number, text},
@@ -6,22 +7,11 @@ use crate::{
     probe::{ForgeRead, encode},
     project::{Provider, Repository},
 };
-use serde::Serialize;
 use serde_json::{Value, json};
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct RequiredCheck {
-    pub name: String,
-    pub app: Option<u64>,
-}
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Requirements {
-    pub checks: Vec<RequiredCheck>,
-    pub pipeline_required: bool,
-    pub approvals_required: u64,
-    pub approvals_satisfied: bool,
-    pub mergeable: bool,
-    #[serde(skip)]
-    pub snapshot: Value,
+#[derive(Debug, PartialEq, Eq)]
+pub struct Observation {
+    pub facts: Requirements,
+    snapshot: Value,
 }
 fn add(checks: &mut Vec<RequiredCheck>, name: &str, app: Option<u64>) -> Result<(), Diagnostic> {
     if name.is_empty() || name.len() > 255 {
@@ -44,7 +34,7 @@ pub async fn read(
     repo: &Repository,
     request: &PullRequest,
     raw: &Value,
-) -> Result<Requirements, Diagnostic> {
+) -> Result<Observation, Diagnostic> {
     let base = prefix(repo);
     let mut checks = vec![];
     if repo.provider == Provider::Github {
@@ -192,12 +182,14 @@ pub async fn read(
         {
             return Err(malformed());
         }
-        Ok(Requirements {
-            checks,
-            pipeline_required: false,
-            approvals_required: required,
-            approvals_satisfied: !changes && approvals >= required,
-            mergeable: mergeable && state == "clean",
+        Ok(Observation {
+            facts: Requirements {
+                checks,
+                pipeline_required: false,
+                approvals_required: required,
+                approvals_satisfied: !changes && approvals >= required,
+                mergeable: mergeable && state == "clean",
+            },
             snapshot: json!({"branch":branch,"protection":protection,"rules":rules,"reviews":reviews,"mergeable":mergeable,"mergeable_state":state}),
         })
     } else {
@@ -232,12 +224,14 @@ pub async fn read(
         if ["unchecked", "checking", "preparing", "approvals_syncing"].contains(&state) {
             return Err(malformed());
         }
-        Ok(Requirements {
-            checks,
-            pipeline_required,
-            approvals_required: required,
-            approvals_satisfied: left == 0,
-            mergeable: state == "mergeable",
+        Ok(Observation {
+            facts: Requirements {
+                checks,
+                pipeline_required,
+                approvals_required: required,
+                approvals_satisfied: left == 0,
+                mergeable: state == "mergeable",
+            },
             snapshot: json!({"project":{"id":request.target_project,"pipeline_required":pipeline_required},"branch":branch,"protection":protections,"approvals":approvals,"detailed_merge_status":state}),
         })
     }

@@ -2,16 +2,16 @@
 use crate::{
     delivery_context::Workspace,
     diagnostic::{Code, Diagnostic},
+    forge,
     native_delivery::{self, PullRequest},
     native_file::object_id,
-    probe::encode,
     process::Process,
-    project::{self, Provider},
+    project::{self},
     report::Report,
     spec,
 };
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -30,7 +30,7 @@ pub struct Options {
 #[derive(Serialize)]
 struct Candidate {
     request: u64,
-    issues: Vec<Value>,
+    issues: Vec<IssueState>,
     anchor: Option<String>,
     inclusion: String,
     reason: String,
@@ -47,49 +47,20 @@ fn missing(message: &str) -> Diagnostic {
 fn malformed() -> Diagnostic {
     missing("Native association or Git evidence is malformed or incomplete.")
 }
-fn oid<'a>(v: &'a Value, key: &str) -> Result<&'a str, Diagnostic> {
-    v[key]
-        .as_str()
-        .filter(|s| object_id(s))
-        .ok_or_else(malformed)
+#[derive(Serialize)]
+struct IssueState {
+    id: u64,
+    state: String,
 }
 fn text(bytes: Vec<u8>) -> Result<String, Diagnostic> {
     String::from_utf8(bytes)
         .map_err(|_| missing("Non-UTF-8 Git paths require explicit native review."))
 }
-fn route(w: &Workspace, number: u64) -> String {
-    format!(
-        "{}/{}/{number}",
-        native_delivery::prefix(&w.context.repository),
-        if w.context.repository.provider == Provider::Github {
-            "pulls"
-        } else {
-            "merge_requests"
-        }
-    )
-}
 async fn git(w: &Workspace, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
     project::git(&w.process, &w.context.root, args).await
 }
 async fn target(w: &Workspace, name: &str) -> Result<String, Diagnostic> {
-    let gh = w.context.repository.provider == Provider::Github;
-    let value = w
-        .reader
-        .get(&format!(
-            "{}/{}/{}",
-            native_delivery::prefix(&w.context.repository),
-            if gh {
-                "branches"
-            } else {
-                "repository/branches"
-            },
-            encode(name)
-        ))
-        .await?;
-    if value["name"] != name {
-        return Err(malformed());
-    }
-    Ok(oid(&value["commit"], if gh { "sha" } else { "id" })?.into())
+    native_delivery::branch_head(&w.reader, &w.context.repository, name).await
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Change {
@@ -176,7 +147,7 @@ async fn image(w: &Workspace, head: &str, path: &str) -> Result<String, Diagnost
 async fn proof(
     w: &Workspace,
     r: &PullRequest,
-    raw: &Value,
+    native: &forge::RequestObservation,
     anchor: &str,
 ) -> Result<Vec<Change>, Diagnostic> {
     let parents = text(git(w, &["rev-list", "--parents", "-n", "1", anchor]).await?)?;
@@ -192,7 +163,7 @@ async fn proof(
                 "The native merge's source parent does not match the recorded source head.",
             ));
         }
-    } else if raw["squash_commit_sha"].as_str() != Some(anchor) {
+    } else if !native.is_squash_anchor(anchor) {
         // One-parent GitHub merge SHA may be squash OR the last rebased commit.
         // Require the complete source delta, never infer squash from topology.
         let base = text(git(w, &["merge-base", parents[1], &r.head]).await?)?;
@@ -216,9 +187,8 @@ async fn candidate(
     number: u64,
     commits: &BTreeSet<String>,
 ) -> Result<Candidate, Diagnostic> {
-    let path = route(w, number);
-    let raw = w.reader.get(&path).await?;
-    let r = native_delivery::request_value(&raw, &w.context.repository, number)?;
+    let native = forge::request(&w.reader, &w.context.repository, number).await?;
+    let r = &native.facts;
     let eligible = r.state == "merged"
         && r.source_project == w.facts.id
         && r.target_project == w.facts.id
@@ -233,13 +203,15 @@ async fn candidate(
     for id in refs {
         let issue =
             native_delivery::issue(&w.reader, &w.context.repository, w.facts.id, id).await?;
-        issues.push(json!({"id":id,"state":issue.state}));
+        issues.push(IssueState {
+            id,
+            state: issue.state.clone(),
+        });
         originals.push(issue);
     }
-    let anchor = ["squash_commit_sha", "merge_commit_sha"]
+    let anchor = native
+        .anchors()
         .into_iter()
-        .filter_map(|k| raw[k].as_str())
-        .filter(|s| object_id(s))
         .find(|s| commits.contains(*s))
         .map(String::from);
     let mut result = Candidate {request:number, issues, anchor:anchor.clone(), inclusion:"unverified".into(), reason:String::new(),next_action:"Inspect this source request and deliberately select its issues only after resolving the evidence limitation.".into()};
@@ -247,7 +219,7 @@ async fn candidate(
         result.inclusion = "excluded".into();
         result.reason = "Source request is not a merged same-project delivery into this promotion source branch.".into();
     } else if let Some(anchor) = &anchor {
-        match proof(w, &r, &raw, anchor).await {
+        match proof(w, r, &native, anchor).await {
             Ok(changes) if changes.is_empty() => {
                 result.inclusion = "excluded".into();
                 result.reason = "The native anchor has no net change.".into();
@@ -281,7 +253,7 @@ async fn candidate(
     } else {
         result.reason="No native merge/squash anchor is in this range. Unpromoted or cherry-picked histories require explicit review; patch similarity alone is not association proof.".into();
     }
-    if w.reader.get(&path).await? != raw {
+    if !forge::unchanged(&w.reader, &w.context.repository, &native).await? {
         return Err(changed());
     }
     for issue in originals {
@@ -324,8 +296,8 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
     }
     let w = Workspace::load(process, cwd).await?;
     let repo = &w.context.repository;
-    let raw = w.reader.get(&route(&w, o.request)).await?;
-    let promotion = native_delivery::request_value(&raw, repo, o.request)?;
+    let native = forge::request(&w.reader, repo, o.request).await?;
+    let promotion = &native.facts;
     if promotion.source_project != w.facts.id
         || promotion.target_project != w.facts.id
         || promotion.head != w.context.head
@@ -354,30 +326,15 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
     let mut source: BTreeSet<_> = o.source_request.into_iter().collect();
     let mut associations = BTreeMap::new();
     for commit in &commits {
-        let path = if repo.provider == Provider::Github {
-            format!("{}/commits/{commit}/pulls", native_delivery::prefix(repo))
-        } else {
-            format!(
-                "{}/repository/commits/{commit}/merge_requests",
-                native_delivery::prefix(repo)
-            )
-        };
-        let native = w.reader.list(&path, None, 2).await?;
-        for row in &native {
-            let id = row[if repo.provider == Provider::Github {
-                "number"
-            } else {
-                "iid"
-            }]
-            .as_u64()
-            .filter(|n| *n > 0)
-            .ok_or_else(malformed)?;
-            if id != o.request {
-                source.insert(id);
+        let association = forge::associations(&w.reader, repo, commit).await?;
+        for id in &association.requests {
+            if *id != o.request {
+                source.insert(*id);
             }
         }
-        associations.insert(path, native);
+        associations.insert(commit, association);
     }
+
     if source.len() > 100 || source.contains(&o.request) {
         return Err(missing(
             "Source candidates exceed the bound or include the promotion itself.",
@@ -385,19 +342,19 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
     }
     let mut candidates = vec![];
     for number in source {
-        candidates.push(candidate(&w, &promotion, number, &commits).await?);
+        candidates.push(candidate(&w, promotion, number, &commits).await?);
     }
     let issues: BTreeSet<_> = candidates
         .iter()
         .filter(|c| c.inclusion == "included")
-        .flat_map(|c| c.issues.iter().filter_map(|i| i["id"].as_u64()))
+        .flat_map(|c| c.issues.iter().map(|i| i.id))
         .collect();
-    for (path, rows) in associations {
-        if w.reader.list(&path, None, 2).await? != rows {
+    for (commit, observed) in associations {
+        if forge::associations(&w.reader, repo, commit).await? != observed {
             return Err(changed());
         }
     }
-    if w.reader.get(&route(&w, o.request)).await? != raw
+    if !forge::unchanged(&w.reader, repo, &native).await?
         || target(&w, &promotion.target).await? != base
     {
         return Err(changed());

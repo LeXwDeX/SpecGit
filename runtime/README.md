@@ -10,6 +10,14 @@ The [native command reference](REFERENCE.md) and `schemas/` are also included in
 the staged npm wrapper; installation smoke compares every command/option name
 against that installed artifact's actual help output.
 
+The native delivery path shares typed facts from `delivery_model`. `observation`
+collects and re-reads native/worktree facts; `assessment` evaluates those facts
+in memory, including missing or changed observations. `finish` renders the result,
+while `watch` and `merge` consume the typed outcome directly. Report JSON is an
+output protocol. Concrete `forge/github` and `forge/gitlab` adapters own merge
+capability and association protocols; opaque snapshots retain full native
+readback equality without exposing raw fields to those workflows.
+
 `merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
 and delegates through the authenticated native CLI with the assessed source SHA.
 The result distinguishes queued, completed and merged with open issues. An
