@@ -122,7 +122,11 @@ fn lock_is_bounded_and_released_by_the_owner() {
         std::slice::from_ref(&root),
         Duration::from_millis(50),
     );
-    assert!(matches!(second,Err(d) if d.code==Code::LockBusy));
+    assert!(
+        matches!(&second,Err(d) if d.code==Code::LockBusy),
+        "unexpected lock diagnostic: {:?}",
+        second.err()
+    );
     drop(first);
     assert!(AssetStore::lock(&root.join("state"), &[root], Duration::from_millis(50)).is_ok());
 }
@@ -182,4 +186,20 @@ fn another_process_recovers_a_crashed_transaction_from_durable_preimages() {
     assert_eq!(fs::read(root.join("a")).unwrap(), b"a0");
     assert_eq!(fs::read(root.join("b")).unwrap(), b"b0");
     assert!(locked.pending_transactions().unwrap().is_empty());
+}
+
+#[test]
+fn foreign_lock_content_is_preserved_and_rejected_after_acquisition() {
+    let (_temp, root) = fixture();
+    let state = root.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let path = state.join(".specgit-lock");
+    std::fs::write(&path, b"user-owned content").unwrap();
+    let result = AssetStore::lock(
+        &state,
+        std::slice::from_ref(&root),
+        Duration::from_millis(50),
+    );
+    assert!(matches!(result, Err(d) if d.code==Code::OwnershipConflict));
+    assert_eq!(std::fs::read(path).unwrap(), b"user-owned content");
 }

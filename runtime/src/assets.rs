@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions, Permissions, TryLockError},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -171,7 +171,7 @@ impl AssetStore {
         }
         let lock_path = root.join(".specgit-lock");
         safe_path(&lock_path)?;
-        let file = match OpenOptions::new()
+        let mut file = match OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
@@ -183,21 +183,11 @@ impl AssetStore {
                 file.sync_all().map_err(|_| io_error())?;
                 file
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if Snapshot::read(&lock_path)?.bytes.as_deref()
-                    != Some(b"specgit-owned-assets-v2\n")
-                {
-                    return Err(error(
-                        Code::OwnershipConflict,
-                        "The asset lock path belongs to another owner.",
-                    ));
-                }
-                OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&lock_path)
-                    .map_err(|_| io_error())?
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&lock_path)
+                .map_err(|_| io_error())?,
             Err(_) => return Err(io_error()),
         };
         let start = Instant::now();
@@ -217,6 +207,20 @@ impl AssetStore {
             }
         }
         safe_path(&lock_path)?;
+        // Windows byte-range locks are mandatory: inspect through the owning
+        // handle only after acquisition, never via a second unlocked reader.
+        file.seek(SeekFrom::Start(0)).map_err(|_| io_error())?;
+        let mut marker = Vec::new();
+        (&mut file)
+            .take(64)
+            .read_to_end(&mut marker)
+            .map_err(|_| io_error())?;
+        if marker != b"specgit-owned-assets-v2\n" {
+            return Err(error(
+                Code::OwnershipConflict,
+                "The asset lock path belongs to another owner.",
+            ));
+        }
         let mut allowed = allowed.to_vec();
         allowed.push(root.to_owned());
         Ok(Self {
