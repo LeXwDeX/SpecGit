@@ -74,6 +74,7 @@ struct Observation {
     next_action: String,
     terminal: bool,
     retryable: bool,
+    same_source_mismatch: bool,
 }
 fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
     let evidence = &report.evidence;
@@ -209,6 +210,11 @@ fn normalized(report: &Report, context: &Context, goal: Goal) -> Observation {
         next_action,
         terminal,
         retryable,
+        same_source_mismatch: evidence["project_id"].as_u64().is_some_and(|id| id > 0)
+            && request["source_project"] == evidence["project_id"]
+            && request["target_project"] == evidence["project_id"]
+            && request["target"] == evidence["target"]
+            && request["source"].as_str() == context.branch.as_deref(),
     }
 }
 async fn observe(
@@ -307,6 +313,7 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
                 next_action: "Resume this exact subscription for fresh native evidence.".into(),
                 terminal: true,
                 retryable: false,
+                same_source_mismatch: false,
             }
         } else {
             observe(
@@ -322,11 +329,25 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
                 tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), async {
                     let current = local(&process, cwd).await?;
                     let digest = config::snapshot(&current.root)?.digest();
-                    Ok::<_, Diagnostic>((current, digest))
+                    let local_ahead = observation.same_source_mismatch
+                        && observation.revision.head != current.head
+                        && project::git(
+                            &process,
+                            &current.root,
+                            &[
+                                "merge-base",
+                                "--is-ancestor",
+                                &observation.revision.head,
+                                &current.head,
+                            ],
+                        )
+                        .await
+                        .is_ok();
+                    Ok::<_, Diagnostic>((current, digest, local_ahead))
                 })
                 .await;
             match refreshed {
-                Ok(Ok((current, digest)))
+                Ok(Ok((current, digest, local_ahead)))
                     if Identity::new(&current, &o.session, o.request, o.goal)? == identity =>
                 {
                     if current.branch != context.branch || digest != declaration_before {
@@ -334,6 +355,13 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
                         observation.reason = "Local branch/declaration changed during observation; the previous assessment was superseded.".into();
                         observation.revision.local_head = current.head.clone();
                         observation.terminal = true;
+                    } else if local_ahead {
+                        observation.state = EventState::Pending;
+                        observation.reason = "Local commits are ahead of the selected native source head; previous success is superseded.".into();
+                        observation.next_action = "Push the reviewed commits through the ordinary native workflow; observation will continue for the selected request.".into();
+                        observation.revision.local_head = current.head.clone();
+                        observation.terminal = false;
+                        observation.retryable = false;
                     } else if current.head != context.head || current.dirty != context.dirty {
                         observation.state = EventState::Pending;
                         observation.reason = "Local changes superseded the assessment; the selected source branch will be observed again.".into();

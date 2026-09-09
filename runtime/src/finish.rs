@@ -114,7 +114,7 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
     {
         return Ok(reject(
             "Request project/source/head/target differs from the selected worktree.",
-            json!({"request":r,"local_head":w.context.head,"target":w.target}),
+            json!({"request":r,"local_head":w.context.head,"target":w.target,"project_id":w.facts.id}),
         ));
     }
     if r.source_project != w.facts.id {

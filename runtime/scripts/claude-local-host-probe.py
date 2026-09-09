@@ -29,6 +29,22 @@ if setup.returncode not in (0,3) or report.get('status')!='installed':
  raise RuntimeError('Isolated native installation failed')
 version=subprocess.run(['claude','--version'],capture_output=True,text=True,check=True).stdout.strip()
 observed=[]
+def strings(value):
+ if isinstance(value,str):yield value
+ elif isinstance(value,list):
+  for item in value:yield from strings(item)
+ elif isinstance(value,dict):
+  for item in value.values():yield from strings(item)
+def async_event_ids(body):
+ result=[]
+ prefix='SpecGit observation offered (not acknowledged): '
+ for text in strings(body):
+  if prefix not in text:continue
+  try:
+   payload,_=json.JSONDecoder().raw_decode(text.split(prefix,1)[1])
+   result.extend(event['id'] for event in payload['events'])
+  except (ValueError,KeyError,TypeError):pass
+ return result
 class Handler(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_CONNECT(self):self.send_error(403)
@@ -45,12 +61,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     state=json.loads(path.read_text())
     event_ids.extend(e['id'] for e in state['events'] if e['id'] in serialized)
    except (ValueError,OSError):pass
-  observed.append({'path':self.path,'context_ids':ids,'event_ids':event_ids,'stream':bool(body.get('stream'))})
+  async_ids=[event_id for event_id in async_event_ids(body) if event_id in event_ids]
+  observed.append({'path':self.path,'context_ids':ids,'event_ids':event_ids,'async_event_ids':async_ids,'stream':bool(body.get('stream'))})
   if 'count_tokens' in self.path:
    self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"input_tokens":100}');return
-  response=event_ids[-1] if observe and event_ids else (ids[-1] if ids else 'MISSING')
+  response=async_ids[-1] if observe and async_ids else (ids[-1] if ids else 'MISSING')
   rounds=len([r for r in observed if r['path'].split('?')[0]=='/v1/messages'])
-  tool=observe and not event_ids and rounds<=5
+  tool=observe and not async_ids and rounds<=5
   command='git add --dry-run .specgit.yaml' if rounds==1 else 'sleep 1'
   message={'id':'msg_local_fixture','type':'message','role':'assistant','model':'claude-sonnet-4-6','content':[],'stop_reason':None,'stop_sequence':None,'usage':{'input_tokens':100,'output_tokens':0}}
   self.send_response(200)
@@ -90,7 +107,7 @@ for name,data in [('claude-local-stream.jsonl',out),('claude-local-stderr.log',e
 requests=[r for r in observed if r['path'].split('?')[0]=='/v1/messages']
 result=summary.get('result',{})
 if observe:
- received=[event_id for r in requests for event_id in r['event_ids']]
+ received=[event_id for r in requests for event_id in r['async_event_ids']]
  summary['passed']=summary.get('skill_registered',False) and p.returncode==0 and bool(received) and result.get('result') in received and not result.get('is_error',True)
  summary['delivery']='real host next-turn context; no immediate idle wake claim'
 else:
