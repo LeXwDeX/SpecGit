@@ -164,11 +164,16 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
                 "The native request lacks selected closing references; explicitly use --update-references after reviewing its body.",
             ));
         }
-        let labels = selected
-            .request_intent
-            .as_ref()
-            .map(|i| i.labels.clone())
-            .unwrap_or_else(|| r.labels.clone());
+        // Resume adds only pending labels, so validate the complete resulting set
+        // before any remote write, including a requested body replacement.
+        let mut labels = r.labels.clone();
+        if let Some(intent) = &selected.request_intent {
+            for label in &intent.labels {
+                if !labels.contains(label) {
+                    labels.push(label.clone());
+                }
+            }
+        }
         RequestIntent {
             head: r.head.clone(),
             title: r.title.clone(),

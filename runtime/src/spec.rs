@@ -288,15 +288,24 @@ pub fn check(
     .flatten()
     .collect()
 }
-/// Deliberate canonical references, never incidental mentions or fenced examples.
+/// Standalone native closing forms; unsupported closing-like prose fails closed.
 pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
+    use std::sync::LazyLock;
+    static EXACT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)^(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#([0-9]+)$").unwrap()
+    });
+    static CLOSING: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(?:^(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving)\b|\b(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving)\s*:?\s+(?:#|https?://|[a-z0-9_.-]+/))").unwrap()
+    });
     let mut refs = BTreeSet::new();
     for line in prose(body, false).lines() {
         let line = line.trim();
-        if let Some(tail) = line.strip_prefix("Closes ") {
-            let id = tail.strip_prefix('#').and_then(|s| s.parse::<u64>().ok()).filter(|n| *n > 0)
-                .ok_or_else(|| Diagnostic::input("Use one exact same-repository 'Closes #n' association per line; reconcile unsupported references explicitly."))?;
+        if let Some(captures) = EXACT.captures(line) {
+            let id = captures[1].parse::<u64>().ok().filter(|n| *n > 0)
+                .ok_or_else(|| Diagnostic::input("Closing references require positive issue IDs within the supported range."))?;
             refs.insert(id);
+        } else if CLOSING.is_match(line) {
+            return Err(Diagnostic::input("Reconcile unsupported closing references explicitly; use one same-repository 'Closes #n' association per line."));
         }
     }
     if refs.len() > 100 {

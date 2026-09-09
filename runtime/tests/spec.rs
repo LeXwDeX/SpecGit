@@ -126,3 +126,14 @@ fn closing_references_preserve_foreign_prose_and_reject_hidden_or_cross_repo_bin
         assert!(spec::with_references(invalid, &[4]).is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn native_closing_keywords_are_case_insensitive_and_other_forms_fail_closed() {
+    for keyword in ["close", "Closes", "CLOSED", "fix", "FIXES", "Fixed", "resolve", "resolves", "Resolved"] {
+        assert_eq!(spec::references(&format!("{keyword} #2")).unwrap().into_iter().collect::<Vec<_>>(), [2]);
+    }
+    for body in ["fixes other/repo#2", "text closes #2", "- Fixes #2", "CLOSES #2 and #3", "Closes #0", "Resolves https://github.com/owner/repo/issues/2"] {
+        assert!(spec::references(body).is_err(), "{body}");
+    }
+    assert!(spec::references("```\nFixes other/repo#2\n```\n<!-- resolves #4 -->").unwrap().is_empty());
+}

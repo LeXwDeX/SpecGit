@@ -181,3 +181,69 @@ fn fork_identity_and_removed_associations_require_reconciliation() {
         "User removed reference\n\nCloses #1"
     );
 }
+
+#[test]
+fn pending_labels_conflicting_with_native_edits_stop_before_any_write() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        f.edit(|s| s["lose_request_response"] = json!(true));
+        assert_eq!(f.run(&["pr"])["exit"], 3);
+        f.edit(|s| {
+            s["requests"][0]["labels"] = if provider == "github" {
+                json!([{"name":"kind::fix"}])
+            } else {
+                json!(["kind::fix"])
+            };
+        });
+        fs::write(f.root.join("replacement.md"), "New body").unwrap();
+        let before = f.state()["requests"].clone();
+        let writes = f.writes();
+        let result = f.run(&["pr", "--request", "41", "--update-body", "--body-file", "replacement.md"]);
+        assert_eq!(result["exit"], 2, "{result}");
+        assert_eq!(f.writes(), writes);
+        assert_eq!(f.state()["requests"], before);
+    }
+}
+#[test]
+fn alternate_native_closing_keywords_survive_body_replacement() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 2);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        // Make #2 a deliberate native association outside the saved selection.
+        let selection = f.root.join(".git/specgit-v2/selection.json");
+        let mut saved: serde_json::Value = serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
+        saved["issues"] = json!([1]);
+        saved["intents"].as_array_mut().unwrap().retain(|intent| intent["issue"] == 1);
+        fs::write(selection, serde_json::to_vec(&saved).unwrap()).unwrap();
+        f.edit(|s| {
+            s["requests"][0][if provider == "github" { "body" } else { "description" }] =
+                json!("closes #1\nFixes #2\n```\nResolves other/repo#9\n```\n<!-- Fixes #10 -->");
+        });
+        fs::write(f.root.join("replacement.md"), "New body").unwrap();
+        let result = f.run(&["pr", "--update-body", "--body-file", "replacement.md"]);
+        assert_eq!(result["exit"], 0, "{result}");
+        let body = result["evidence"]["request"]["body"].as_str().unwrap();
+        assert!(body.contains("Closes #1") && body.contains("Closes #2"), "{body}");
+        assert!(!body.contains("#9") && !body.contains("#10"));
+    }
+}
+#[test]
+fn unsupported_native_closing_forms_cannot_be_erased_by_body_replacement() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        fs::write(f.root.join("replacement.md"), "New body").unwrap();
+        for reference in ["fixes other/repo#2", "Text resolves #2", "- Closes #2", "CLOSES #1, #2"] {
+            f.edit(|s| {
+                s["requests"][0][if provider == "github" { "body" } else { "description" }] =
+                    json!(format!("Closes #1\n{reference}"));
+            });
+            let before = f.state()["requests"].clone();
+            let writes = f.writes();
+            let result = f.run(&["pr", "--update-body", "--body-file", "replacement.md"]);
+            assert_eq!(result["exit"], 2, "{reference}: {result}");
+            assert_eq!(f.writes(), writes);
+            assert_eq!(f.state()["requests"], before);
+        }
+    }
+}
