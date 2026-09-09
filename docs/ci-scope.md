@@ -60,6 +60,23 @@ describe only released behavior as currently available.
 
 ## Verification by changed surface
 
+All CI/CD in this repository uses our self-hosted runners, including acceptance,
+completion, security, and release. GitHub-hosted runners and hosted fallback jobs
+are prohibited by the owner's #528 decision to preserve account minutes. Linux
+X64 handles shared jobs; both TypeScript and Rust require native Linux X64, macOS
+ARM64, and Windows X64 legs. This replaces the retired #105 shadow arrangement.
+Registration alone is not execution evidence: current-head job results are required.
+
+Windows requires Git for Windows (including Bash), PowerShell 7, and Visual Studio
+Build Tools with the C++ desktop workload and Windows SDK. CI checks prerequisites
+and installs pinned Node, pnpm, and Rust versions. An unavailable runner or missing
+tool leaves verification pending or failed; it never redirects to a hosted runner.
+
+For validation before an authorized merge, a draft branch can use a `[skip ci]`
+commit and a manual **CI** dispatch at that branch. Skipped automatic checks do not
+prove acceptance. The routing change reaches default-branch schedules and trusted
+completion only after merge; do not run their older hosted versions during migration.
+
 | Changed surface | Required verification | Build or publish consequence |
 | --- | --- | --- |
 | CLI/domain/provider source, shipped generators and hook scripts, schema, templates, distributed skills, tests, build scripts, package/build dependencies, executable workflows | Product build, both typechecks, lint, tests and applicable security checks on the supported platform matrix | Build and test the product under review; publish only with release intent |

@@ -17,7 +17,7 @@ function applies(job: Job, build: boolean) {
   return Boolean(new Function('needs', `return (${job.if});`)({ changes: { outputs: { build: String(build) } } }));
 }
 function runSummary(overrides: Record<string, string> = {}, build = false, nix = false) {
-  const step = ci.jobs.required_verification.steps![0];
+  const step = ci.jobs.required_verification.steps!.find((candidate) => candidate.name === 'Require every applicable verification result')!;
   const script = step.run!.replace(/^node --input-type=module <<'NODE'\n/, '').replace(/\nNODE\s*$/, '');
   const product = build ? 'success' : 'skipped';
   return spawnSync(process.execPath, ['--input-type=module', '-e', script], {

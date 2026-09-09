@@ -73,7 +73,7 @@ concurrency:
 jobs:
   closure-signal:
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - run: echo 'Merged request ready for trusted completion'
   specgit-acceptance:
@@ -81,7 +81,7 @@ jobs:
     name: \${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}
     # Hosted pool on purpose: a required check must not hinge on one
     # self-hosted container.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: ${ACCEPTANCE_JOB_MINUTES}
     steps:
       - name: Checkout code

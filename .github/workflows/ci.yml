@@ -25,7 +25,7 @@ jobs:
   # Classify the complete diff with Node and Git before installing dependencies.
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       build: ${{ steps.scope.outputs.build }}
       metadata: ${{ steps.scope.outputs.metadata }}
@@ -60,20 +60,19 @@ jobs:
     needs: changes
     if: needs.changes.outputs.build == 'true'
     # Headroom for the #67 install/external e2e on the slowest leg:
-    # hosted Windows runners execute npm/git fixtures 3-5x slower than
-    # linux, and the suite's test-time sum grew past the old budget.
+    # Windows executes the heavy npm/git fixtures serially; retain the
+    # existing full-suite budget on the registered self-hosted VM.
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Required checks stay on hosted runners (the acceptance gate and
-          # its siblings must not depend on one self-hosted container).
-          - os: ubuntu-latest
+          # #528: owner-authorized native runners, with no hosted fallback.
+          - os: [self-hosted, Linux, X64]
             shell: bash
             label: linux-bash
             vitest_workers: 4
-          - os: macos-latest
+          - os: [self-hosted, macOS, ARM64]
             shell: bash
             label: macos-bash
             vitest_workers: 4
@@ -83,7 +82,7 @@ jobs:
           # vitest 3.2.6) fail as unhandled errors and redden an otherwise
           # green run (36/36 files passed). One worker keeps the runner
           # responsive; wall-clock stays inside the job timeout.
-          - os: windows-latest
+          - os: [self-hosted, Windows, X64]
             shell: pwsh
             label: windows-pwsh
             vitest_workers: 1
@@ -93,6 +92,15 @@ jobs:
         shell: ${{ matrix.shell }}
 
     steps:
+      - name: Verify native Windows prerequisites
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          foreach ($tool in @('git', 'bash', 'pwsh')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "Missing runner prerequisite: $tool. Install it and restart the runner service."
+            }
+          }
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -129,7 +137,7 @@ jobs:
         run: pnpm test
 
       - name: Upload test coverage
-        if: needs.changes.outputs.build == 'true' && matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.build == 'true' && matrix.label == 'linux-bash'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-report-${{ github.event_name }}
@@ -138,7 +146,7 @@ jobs:
 
   lint:
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: changes
     if: needs.changes.outputs.build == 'true'
     steps:
@@ -193,7 +201,7 @@ jobs:
 
   nix-flake-validate:
     name: Nix Flake Validation
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.nix == 'true'
@@ -252,7 +260,7 @@ jobs:
 
   metadata:
     name: Metadata contracts
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: changes
     steps:
       - name: Checkout code
@@ -279,7 +287,7 @@ jobs:
     uses: ./.github/workflows/rc-verify.yml
 
   rust:
-    name: Rust (${{ matrix.os }})
+    name: Rust (${{ matrix.label }})
     needs: changes
     if: needs.changes.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
@@ -287,17 +295,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: [self-hosted, Linux, X64]
+            label: linux
+          - os: [self-hosted, macOS, ARM64]
+            label: macos
+          - os: [self-hosted, Windows, X64]
+            label: windows
     defaults:
       run:
         shell: bash
         working-directory: runtime
     steps:
+      - name: Verify native Windows build prerequisites
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: .
+        run: |
+          foreach ($tool in @('git', 'bash')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "Missing runner prerequisite: $tool. Install it and restart the runner service."
+            }
+          }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw 'Install Visual Studio Build Tools with Desktop development with C++ and Windows SDK.' }
+          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'MSVC x64 build tools are required for native Rust tests.' }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.97.0 --profile minimal --component clippy --component rustfmt
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.97.0
+          components: clippy, rustfmt
       - name: Rust formatting and lint
         run: |
           cargo fmt --check
@@ -313,10 +344,14 @@ jobs:
 
   required_verification:
     name: Required verification
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [changes, metadata, test_matrix, lint, nix-flake-validate, rc_verify, rust]
     if: always()
     steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
       - name: Require every applicable verification result
         env:
           CLASSIFIER_RESULT: ${{ needs.changes.result }}
