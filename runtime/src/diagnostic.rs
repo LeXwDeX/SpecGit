@@ -23,6 +23,11 @@ pub enum Code {
     UnsupportedProvider,
     MigrationRequired,
     IoFailed,
+    OwnershipConflict,
+    ConcurrentEdit,
+    UnsafePath,
+    LockBusy,
+    RollbackConflict,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

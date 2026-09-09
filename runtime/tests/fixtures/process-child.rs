@@ -20,6 +20,26 @@ fn main() {
         return;
     }
     match args.first().map(String::as_str).unwrap_or("") {
+        "asset-crash" => {
+            use specgit::assets::{AssetStore, Change};
+            let root = std::path::PathBuf::from(&args[1]);
+            let store = AssetStore::lock(
+                &root.join("state"),
+                std::slice::from_ref(&root),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            let changes = vec![
+                Change::new(root.join("a"), Some(b"a1".to_vec())).unwrap(),
+                Change::new(root.join("b"), Some(b"b1".to_vec())).unwrap(),
+            ];
+            let _ = store.apply_checked(changes, |i| {
+                if i == 1 {
+                    std::process::exit(99);
+                }
+                Ok(())
+            });
+        }
         "echo" => {
             let mut bytes = vec![];
             std::io::stdin().read_to_end(&mut bytes).unwrap();
