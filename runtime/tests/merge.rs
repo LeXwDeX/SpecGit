@@ -62,6 +62,9 @@ fn auto_merge_and_lost_response_recover_only_from_native_readback() {
             assert_eq!(f.run(&command("auto"))["status"], r["status"]);
             assert_eq!(f.writes(), writes + 1);
             let state = f.state();
+            if provider == "gitlab" {
+                assert_eq!(state["effective_merge"]["auto_merge"], true);
+            }
             let call = state["calls"]
                 .as_array()
                 .unwrap()
@@ -148,4 +151,121 @@ fn gitlab_unverified_train_routing_and_rebase_have_no_write_capability() {
         3
     );
     assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn explicit_gitlab_strategy_overrides_native_squash_default() {
+    for strategy in ["merge", "squash"] {
+        let f = fixture("gitlab");
+        f.edit(|s| {
+            s["requests"][0]["squash"] = json!(strategy == "merge");
+            s["project"]["squash_option"] = json!(if strategy == "merge" {
+                "never"
+            } else {
+                "default_off"
+            });
+            s["close_on_merge"] = json!(true);
+        });
+        let r = f.run(&[
+            "merge",
+            "--request",
+            "41",
+            "--mode",
+            "now",
+            "--strategy",
+            strategy,
+        ]);
+        assert_eq!(r["status"], "completed", "{r}");
+        let state = f.state();
+        assert_eq!(state["effective_merge"]["squash"], strategy == "squash");
+        let call = state["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|v| v["method"] == "NATIVE")
+            .unwrap();
+        assert!(
+            call["argv"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(if strategy == "merge" {
+                    "--squash=false"
+                } else {
+                    "--squash=true"
+                }))
+        );
+    }
+}
+
+#[test]
+fn glab_no_pipeline_auto_and_unenforceable_squash_are_rejected_before_intent() {
+    for fault in [
+        "no_pipeline",
+        "optional_squash",
+        "unknown_squash",
+        "required_squash",
+    ] {
+        let f = fixture("gitlab");
+        f.edit(|s| {
+            if fault == "no_pipeline" {
+                s["requests"][0]["head_pipeline"] = serde_json::Value::Null;
+                s["project"]["only_allow_merge_if_pipeline_succeeds"] = json!(false);
+            } else {
+                s["requests"][0]["squash"] = json!(true);
+                s["project"]["squash_option"] = match fault {
+                    "optional_squash" => json!("default_on"),
+                    "required_squash" => json!("always"),
+                    _ => serde_json::Value::Null,
+                };
+            }
+        });
+        let writes = f.writes();
+        let strategy = if fault == "no_pipeline" {
+            "squash"
+        } else {
+            "merge"
+        };
+        assert_eq!(
+            f.run(&[
+                "merge",
+                "--request",
+                "41",
+                "--mode",
+                "auto",
+                "--strategy",
+                strategy
+            ])["exit"],
+            3
+        );
+        assert_eq!(f.writes(), writes);
+        let state_dir = f.root.join(".git/specgit-v2");
+        assert!(!std::fs::read_dir(state_dir).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("merge-")
+        }));
+    }
+}
+
+#[test]
+fn glab_consumed_pipeline_must_match_the_current_head_pipeline() {
+    for fault in ["absent", "null", "wrong_head", "wrong_id"] {
+        let f = fixture("gitlab");
+        f.edit(|s| {
+            let request = &mut s["requests"][0];
+            match fault {
+                "absent" => {
+                    request.as_object_mut().unwrap().remove("pipeline");
+                }
+                "null" => request["pipeline"] = serde_json::Value::Null,
+                "wrong_head" => request["pipeline"]["sha"] = json!("f".repeat(40)),
+                _ => request["pipeline"]["id"] = json!(72),
+            }
+        });
+        let writes = f.writes();
+        assert_eq!(f.run(&command("auto"))["exit"], 3, "{fault}");
+        assert_eq!(f.writes(), writes);
+    }
 }

@@ -447,9 +447,11 @@ impl ForgeWrite {
                     "GitLab rebase must be an explicit separate operation.",
                 ));
             }
-            if strategy == Strategy::Squash {
-                args.push("--squash");
-            }
+            args.push(if strategy == Strategy::Squash {
+                "--squash=true"
+            } else {
+                "--squash=false"
+            });
             args.extend([
                 "--yes",
                 if mode == Mode::Auto {

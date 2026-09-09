@@ -406,6 +406,12 @@ GitHub delegates to `gh pr merge`, preserving its native queue behavior without
 `--admin`. A readable native `auto_merge` request is reported as `queued`; queue
 membership that cannot be proven through the current read adapter is `unknown`.
 GitLab delegates to `glab mr merge` with explicit auto-merge and SHA options.
+Because glab omits a false squash API parameter, strategy `merge` requires the
+native project to enforce `squash_option: never`; `squash` requires a known policy
+that permits it. Auto mode requires matching current-head `head_pipeline` and
+the separate legacy `pipeline` field consumed by glab, which otherwise omits
+the auto-merge API parameter. Both capabilities are read
+again before submission; unsupported choices fail before saving a write intent.
 GitLab rebase and enabled/unknown merge-train routing are currently unsupported:
 rebase changes the assessed head, and train routing requires separate capability
 qualification. Neither case falls back to a direct merge. CLI stdout is never
