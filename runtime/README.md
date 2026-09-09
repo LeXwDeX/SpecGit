@@ -72,6 +72,16 @@ and repeats public journeys through their installed entrypoint on the available
 Linux, macOS and Windows runners. Local package installation does not establish
 public-registry availability or qualification for other architectures.
 
+`node scripts/profile-tests.mjs --output <new-directory>` runs every Cargo test
+executable through the selected installed entrypoint and records each suite's
+wall time, exact test names/results and total build/test time. It requires
+`SPECGIT_TEST_BINARY`, `SPECGIT_TEST_LAUNCHER` and `SPECGIT_TEST_NODE` from the
+installation evidence. `--compare <baseline/profile.json>` rejects a failed or
+different platform, Node version or test workload. Child CLI/Git/fixture costs
+are included in their suite time but are not separately attributed. The same
+15-minute CI test budget applies; baseline measurements alone do not demonstrate
+a performance improvement.
+
 ## Global integration stage (#510)
 
 `setup --provider github` now installs versioned native assets and a hook manifest
