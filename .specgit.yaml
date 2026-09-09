@@ -7,5 +7,6 @@ context:
 issues:
   - 509
   - 518
+  - 520
 issueKinds: []
 pr: 517
