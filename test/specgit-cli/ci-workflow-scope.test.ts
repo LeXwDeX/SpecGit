@@ -23,7 +23,7 @@ function runSummary(overrides: Record<string, string> = {}, build = false, nix =
   return spawnSync(process.execPath, ['--input-type=module', '-e', script], {
     encoding: 'utf8', env: { ...process.env, CLASSIFIER_RESULT: 'success', METADATA_RESULT: 'success',
       BUILD_REQUIRED: String(build), NIX_REQUIRED: String(nix), MATRIX_RESULT: product, LINT_RESULT: product,
-      RC_RESULT: product, NIX_RESULT: nix ? 'success' : 'skipped', ...overrides },
+      RC_RESULT: product, RUST_RESULT: product, NIX_RESULT: nix ? 'success' : 'skipped', ...overrides },
   });
 }
 function assertNoProductBuild(steps: Step[]) {
@@ -59,11 +59,11 @@ describe('CI applicability and real verification', () => {
     expect(ci.on.pull_request?.['paths-ignore']).toBeUndefined();
     expect(ci.jobs.required_verification.name).toBe('Required verification');
     expect(ci.jobs.required_verification.if).toBe('always()');
-    expect(ci.jobs.required_verification.needs).toEqual(expect.arrayContaining(['changes', 'metadata', 'test_matrix', 'lint', 'rc_verify', 'nix-flake-validate']));
+    expect(ci.jobs.required_verification.needs).toEqual(expect.arrayContaining(['changes', 'metadata', 'test_matrix', 'lint', 'rc_verify', 'nix-flake-validate', 'rust']));
     expect(ci.jobs.required_verification.needs).not.toContain('specgit-acceptance');
   });
 
-  it.each(['test_matrix', 'lint', 'rc_verify'])('%s runs for product changes and is explicitly skipped for metadata', (id) => {
+  it.each(['test_matrix', 'lint', 'rc_verify', 'rust'])('%s runs for product changes and is explicitly skipped for metadata', (id) => {
     expect(applies(ci.jobs[id], false)).toBe(false);
     expect(applies(ci.jobs[id], true)).toBe(true);
   });
@@ -78,7 +78,7 @@ describe('CI applicability and real verification', () => {
     expect(commands(matrix)).toContain('pnpm test');
     expect(commands(matrix)).toContain('pnpm run build');
     expect(commands(ci.jobs.lint)).toEqual(expect.arrayContaining(['pnpm exec tsc --noEmit', 'pnpm run typecheck:test', 'pnpm lint']));
-    for (const job of [matrix, ci.jobs.lint, ci.jobs.changes, ci.jobs.metadata, rc.jobs['rc-verify']]) {
+    for (const job of [matrix, ci.jobs.lint, ci.jobs.changes, ci.jobs.metadata, ci.jobs.rust, rc.jobs['rc-verify']]) {
       expect(job['continue-on-error']).toBeUndefined();
       for (const step of job.steps ?? []) expect(step['continue-on-error']).toBeUndefined();
     }
@@ -111,7 +111,7 @@ describe('CI applicability and real verification', () => {
     for (const value of ['', 'failure', 'skipped', 'cancelled']) expect(runSummary({ [key]: value }).status).toBe(1);
   });
 
-  it.each(['MATRIX_RESULT', 'LINT_RESULT', 'RC_RESULT'])('rejects incomplete product evidence in %s', (key) => {
+  it.each(['MATRIX_RESULT', 'LINT_RESULT', 'RC_RESULT', 'RUST_RESULT'])('rejects incomplete product evidence in %s', (key) => {
     for (const value of ['', 'failure', 'skipped', 'cancelled']) expect(runSummary({ [key]: value }, true).status).toBe(1);
     expect(runSummary({ [key]: 'success' }, false).status).toBe(1);
   });

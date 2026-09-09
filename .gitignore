@@ -196,3 +196,6 @@ AUDIT-REPORT.md
 /.local/state/
 /.local/cache/
 # <<< specgit: local delivery assets (managed by specgit init) <<<
+
+# Rust build and isolated installed-runtime evidence
+/runtime/target/
