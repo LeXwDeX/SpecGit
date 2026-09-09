@@ -169,9 +169,19 @@ fn console_interrupt(args: &[String]) {
         time::Instant,
     };
     use windows_sys::Win32::System::Console::{
-        CTRL_C_EVENT, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+        CTRL_C_EVENT, GenerateConsoleCtrlEvent, GetConsoleProcessList, SetConsoleCtrlHandler,
     };
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, WAIT_OBJECT_0},
+        System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+    };
+    // A CI shell can inherit the separate ignore-Ctrl+C attribute into this
+    // helper. Registering a callback alone does not reset that inherited flag.
+    // SAFETY: null/FALSE restores normal event processing in this fixture only.
+    assert_ne!(unsafe { SetConsoleCtrlHandler(None, 0) }, 0);
+    static RECEIVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     unsafe extern "system" fn keep_fixture_alive(_event: u32) -> i32 {
+        RECEIVED.store(true, std::sync::atomic::Ordering::SeqCst);
         1
     }
     assert_ne!(
@@ -193,8 +203,22 @@ fn console_interrupt(args: &[String]) {
     }
     if !ready.exists() {
         let _ = child.kill();
+        let _ = child.wait();
         panic!("native child did not start");
     }
+    let git_pid: u32 = serde_json::from_slice(&std::fs::read(&ready).unwrap()).unwrap();
+    // SAFETY: the fixture's own readiness file identifies its live Git process.
+    // Retaining this handle makes the post-cancellation check immune to PID reuse.
+    let git_handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, git_pid) };
+    assert!(!git_handle.is_null());
+    let mut attached = [0_u32; 32];
+    // SAFETY: the array is writable for the supplied length and this query is local.
+    let count = unsafe { GetConsoleProcessList(attached.as_mut_ptr(), attached.len() as u32) };
+    assert!(count > 0 && count <= attached.len() as u32);
+    assert!(
+        attached[..count as usize].contains(&child.id()),
+        "entrypoint must share the fixture console"
+    );
     // SAFETY: group zero targets only this helper's newly allocated console and
     // its attached Node/native children, never the CI runner's console.
     assert_ne!(unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) }, 0);
@@ -203,9 +227,21 @@ fn console_interrupt(args: &[String]) {
     }
     if child.try_wait().unwrap().is_none() {
         let _ = child.kill();
-        panic!("console cancellation timed out");
+        let _ = child.wait();
+        panic!(
+            "console cancellation timed out; helper received event: {}",
+            RECEIVED.load(std::sync::atomic::Ordering::SeqCst)
+        );
     }
+    assert!(RECEIVED.load(std::sync::atomic::Ordering::SeqCst));
     let out = child.wait_with_output().unwrap();
+    // SAFETY: the handle remains valid until this single close after the wait.
+    let git_stopped = unsafe {
+        let status = WaitForSingleObject(git_handle, 1000);
+        CloseHandle(git_handle);
+        status
+    };
+    assert_eq!(git_stopped, WAIT_OBJECT_0, "owned Git child must be reaped");
     std::io::stdout().write_all(&out.stdout).unwrap();
     std::io::stderr().write_all(&out.stderr).unwrap();
     std::process::exit(out.status.code().unwrap_or(1));
