@@ -24,7 +24,7 @@ name: SpecGit Completion
 
 on:
   workflow_run:
-    workflows: [SpecGit Acceptance]
+    workflows: ${input.selfHosted ? '[CI, SpecGit Acceptance]' : '[SpecGit Acceptance]'}
     types: [completed]
 ${input.selfHosted ? `    # The source repository's version proposal is not a bound delivery.
     branches-ignore: [changeset-release/main]
@@ -44,7 +44,7 @@ permissions:
 
 jobs:
   identify:
-    if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'
+    if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'${input.selfHosted ? " && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.name == 'CI' && github.event.workflow_run.event == 'pull_request') || github.event.workflow_run.name == 'SpecGit Acceptance')" : ''}
     runs-on: ${input.selfHosted ? '[self-hosted, Linux, X64]' : 'ubuntu-latest'}
     permissions:
       contents: read
@@ -187,13 +187,17 @@ ${input.selfHosted ? `          const version = JSON.parse(readFileSync(process.
             execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', packageSpec], { stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
             if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('Incompatible completion runtime.');
-          } catch (error) {
+${input.selfHosted ? `            const entry = await import(pathToFileURL(directory + '/dist/automation/remote-entry.js').href);
+            if (entry.REMOTE_ENTRY_SINGLE_PASS !== true) throw new Error('Completion runtime lacks single-pass support.');
+` : ''}          } catch (error) {
 ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') throw new Error('runtime_upgrade_required: publish the compatible runtime before completing metadata changes.');
             directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime';
             execFileSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
             execFileSync('pnpm', ['run', 'build'], { cwd: directory, stdio: 'inherit' });
             const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
             if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('The approved source lacks completion protocol 2.');
+            const entry = await import(pathToFileURL(directory + '/dist/automation/remote-entry.js').href);
+            if (entry.REMOTE_ENTRY_SINGLE_PASS !== true) throw new Error('The approved source lacks single-pass completion.');
 ` : `            throw error;
 `}          }
           appendFileSync(process.env.GITHUB_OUTPUT, 'directory=' + directory + '\\n');
@@ -205,7 +209,7 @@ ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') thr
           SPECGIT_PR: \${{ needs.identify.outputs.pr }}
           SPECGIT_HEAD: \${{ needs.identify.outputs.head }}
           SPECGIT_RUNTIME: \${{ steps.runtime.outputs.directory }}
-        run: node "$SPECGIT_RUNTIME/dist/automation/remote-entry.js"
+        run: node "$SPECGIT_RUNTIME/dist/automation/remote-entry.js"${input.selfHosted ? ' --single-pass' : ''}
 `;
 }
 

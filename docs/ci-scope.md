@@ -72,6 +72,14 @@ Build Tools with the C++ desktop workload and Windows SDK. CI checks prerequisit
 and installs pinned Node, pnpm, and Rust versions. An unavailable runner or missing
 tool leaves verification pending or failed; it never redirects to a hosted runner.
 
+PR code changes and ready transitions run acceptance as the final CI job, after
+`Required verification`. Standalone acceptance handles body edits and merged
+request signals without polling for sibling jobs. This dependency order leaves
+the single Linux runner available for the work acceptance needs. After changing
+the source acceptance generator, run `pnpm run build` and
+`node scripts/refresh-self-acceptance.mjs` to refresh its CI block and standalone
+workflows; metadata validation checks that the shared job has not drifted.
+
 For validation before an authorized merge, a draft branch can use a `[skip ci]`
 commit and a manual **CI** dispatch at that branch. Skipped automatic checks do not
 prove acceptance. The routing change reaches default-branch schedules and trusted
@@ -224,11 +232,16 @@ cancelled run cannot provide the successor's required aggregate, even if its
 last job starts after readiness. Missing provenance fails closed. Each path
 then runs `finish --json`. Classification, installation, waiting, or verdict
 failure fails the job; an absent classification cannot select a success path.
-Generated acceptance waits up to 25 minutes for sibling checks within a
-30-minute job, covering this repository's 20-minute test window with setup and
-verdict headroom. Version automation waits up to 35 minutes within its 40-minute
-step so it cannot expire ahead of that acceptance window. These are bounded
-waits: incomplete evidence at the deadline still prevents completion.
+For adopting projects, generated acceptance waits up to 25 minutes for sibling
+checks within a 30-minute job. This repository instead orders acceptance after
+verification in CI; standalone acceptance evaluates once without waiting.
+During a workflow rerun, terminal jobs are usable before workflow completion only
+when the attempt job API proves their current attempt, head, and check identity.
+Checks without current-attempt proof remain pending until the workflow settles.
+GitHub may copy retained successful jobs into the current attempt with new check
+IDs and their original start times; the attempt API proves these current copies.
+Version automation waits up to 35 minutes within its 40-minute step. Incomplete
+evidence still prevents completion.
 Changing policy in the PR cannot grant that PR permission to weaken its own
 checks or enable automatic merging. First adoption can use candidate policy
 for read-only acceptance when no approved policy exists; automatic completion
@@ -242,7 +255,11 @@ Its generated runtime reference is an exact CLI version with a checked completio
 protocol, not a permanent 1.12.0 pin or `latest`. In this product repository,
 only a product change may use the approved source-build fallback when the
 published completion runtime is unavailable. Metadata changes instead report
-`runtime_upgrade_required` until a compatible runtime is published.
+`runtime_upgrade_required` until a compatible runtime is published. This
+repository also requires verified single-pass support in that runtime and invokes
+completion with `--single-pass`: pending CI returns immediately, freeing the
+single Linux runner for queued verification jobs. Later CI or acceptance completion
+events retry the evidence check; the normal adopter polling defaults remain unchanged.
 The completion runner classifies the original PR's complete file changes, even
 after that PR has merged. It verifies the PR identity and head/base revisions
 around paginated file reads; missing, truncated, or changing evidence fails

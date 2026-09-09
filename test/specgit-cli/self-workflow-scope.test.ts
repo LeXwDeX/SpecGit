@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
-import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
+import { harnessWorkflowYaml, selfAcceptanceJobYaml } from '../../src/cli/harness-content.js';
 
 interface Step {
   name: string;
@@ -77,14 +77,14 @@ describe('self acceptance CI scope', () => {
     }
   });
 
-  it('both paths wait on exact-head evidence with the matching YAML dependency source', () => {
-    const wait = steps().find((step) => step.name === 'Wait for sibling checks');
-    expect(wait?.if).toBeUndefined();
-    expect(wait?.env?.WAIT_SHA).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
-    expect(wait?.env?.SPECGIT_CLI_DIR).toBe("${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli', runner.temp) || '' }}");
-    expect(wait?.run).toContain("createRequire(process.env.SPECGIT_CLI_DIR + '/node_modules/specgit/package.json')('yaml')");
-    expect(wait?.run).toContain("await import('yaml')");
-    expect(wait?.run).toContain("'gh',");
-    expect(wait?.run).toContain('Waiting for a fresh run after ready for review: ');
+  it('orders both verdict paths after verification without waiting on the occupied runner', () => {
+    const job = parse(selfAcceptanceJobYaml(true))['specgit-acceptance'];
+    expect(job.needs).toBe('required_verification');
+    expect(steps().some((step) => step.name === 'Wait for sibling checks')).toBe(false);
+    const checkout = job.steps.find((step: Step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout.with.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
+    const policy = steps().find((step) => step.name === 'Prepare approved policy for acceptance');
+    expect(policy?.env?.SPECGIT_POLICY_ENTRY).toContain("steps.scope.outputs.build == 'false'");
+    expect(policy?.run).toContain('node "$SPECGIT_POLICY_ENTRY"');
   });
 });
