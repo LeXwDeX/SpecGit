@@ -1,11 +1,9 @@
 version: 1
-delivery: rust-global-hooks
+delivery: rust-project-init
 context:
   kind: worktree
-  label: specgit-rust-hooks-20260909
-  branch: feat/510-rust-global-hooks
+  label: specgit-rust-init-20260909
+  branch: feat/511-rust-project-init
 issues:
-  - 510
-  - 521
+  - 511
 issueKinds: []
-pr: 519
