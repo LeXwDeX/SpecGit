@@ -1,5 +1,5 @@
 use specgit::{
-    assessment::{self, DeclarationEvidence, Lifecycle, Snapshot, Status},
+    assessment::{self, Blocker, CheckOutcome, DeclarationEvidence, Lifecycle, Snapshot, Status},
     config::Declaration,
     delivery_model::{Check, Flow, Issue, PullRequest, RequiredCheck, Requirements, SourceCleanup},
     diagnostic::{Code, Diagnostic},
@@ -49,6 +49,7 @@ fn snapshot() -> Snapshot {
                 mergeable: true,
             },
             checks: vec![Check {
+                lineage: specgit::delivery_model::CheckLineage::CurrentHead,
                 name: "Build".into(),
                 source: "check_run".into(),
                 head: "a".repeat(40),
@@ -86,7 +87,7 @@ fn pure_acceptance_rejection_and_initial_adoption() {
         a.evidence
             .blockers
             .unwrap()
-            .contains(&"local_worktree_dirty".into())
+            .contains(&Blocker::LocalWorktreeDirty)
     );
     let mut s = snapshot();
     s.declaration.source = "initial_adoption";
@@ -132,7 +133,7 @@ fn native_required_app_and_optional_failures_remain_distinct() {
         a.evidence
             .blockers
             .unwrap()
-            .contains(&"check_missing:Build".into())
+            .contains(&Blocker::CheckMissing("Build".into()))
     );
     let mut s = snapshot();
     if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
@@ -198,4 +199,65 @@ fn pure_preflight_rejects_identity_authority_and_unresolved_selection() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn pure_core_rejects_stale_heads_wrong_projects_and_conflicting_attempts() {
+    let mut s = snapshot();
+    if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+        checks[0].head = "f".repeat(40);
+    }
+    assert_eq!(assessment::assess(Ok(s)).status, Status::Unknown);
+    let mut s = snapshot();
+    if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+        checks[0].project = Some(99);
+    }
+    assert_eq!(assessment::assess(Ok(s)).status, Status::Unknown);
+    let mut s = snapshot();
+    if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+        checks[0].workflow_attempt = Some(0);
+    }
+    assert_eq!(assessment::assess(Ok(s)).status, Status::Unknown);
+    let mut s = snapshot();
+    if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+        let mut old = checks[0].clone();
+        old.workflow_attempt = Some(2);
+        checks.push(old);
+    }
+    assert_eq!(assessment::assess(Ok(s)).status, Status::Unknown);
+}
+#[test]
+fn pure_check_outcomes_are_independent_of_cli_exit_and_blocker_text() {
+    assert_eq!(
+        assessment::assess(Ok(snapshot())).checks_outcome(),
+        CheckOutcome::Passed
+    );
+    let mut s = snapshot();
+    s.request.draft = true;
+    let a = assessment::assess(Ok(s));
+    assert_eq!(a.status, Status::Rejected);
+    assert_eq!(a.checks_outcome(), CheckOutcome::Passed);
+    let mut s = snapshot();
+    if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+        checks.clear();
+    }
+    assert_eq!(
+        assessment::assess(Ok(s)).checks_outcome(),
+        CheckOutcome::Pending
+    );
+    let mut s = snapshot();
+    if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+        checks[0].conclusion = Some("skipped".into());
+    }
+    assert_eq!(
+        assessment::assess(Ok(s)).checks_outcome(),
+        CheckOutcome::Failed
+    );
+    let a = assessment::assess(Err(Diagnostic::new(
+        Code::ConcurrentEdit,
+        "finish",
+        "changed",
+        "retry",
+    )));
+    assert_eq!(a.checks_outcome(), CheckOutcome::Unobserved);
 }

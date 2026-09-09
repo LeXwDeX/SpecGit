@@ -25,8 +25,65 @@ pub struct PullRequest {
     pub updated_at: String,
 }
 
+/// Only native acquisition can construct downstream lineage. The pure evaluator
+/// still checks every edge against the supplied current snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckLineage {
+    CurrentHead,
+    NativeDownstream(DownstreamIdentity),
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownstreamIdentity {
+    links: Vec<PipelineLink>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PipelineIdentity {
+    head: String,
+    project: u64,
+    pipeline: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PipelineLink {
+    parent: PipelineIdentity,
+    trigger: u64,
+    child: PipelineIdentity,
+}
+impl PipelineIdentity {
+    fn new(value: (&str, u64, u64)) -> Self {
+        Self {
+            head: value.0.into(),
+            project: value.1,
+            pipeline: value.2,
+        }
+    }
+    fn matches(&self, check: &Check) -> bool {
+        check.head == self.head
+            && check.project == Some(self.project)
+            && check.pipeline == Some(self.pipeline)
+    }
+}
+impl PipelineLink {
+    pub(crate) fn observed(
+        parent: (&str, u64, u64),
+        trigger: u64,
+        child: (&str, u64, u64),
+    ) -> Self {
+        Self {
+            parent: PipelineIdentity::new(parent),
+            trigger,
+            child: PipelineIdentity::new(child),
+        }
+    }
+}
+impl CheckLineage {
+    pub(crate) fn downstream(links: Vec<PipelineLink>) -> Self {
+        Self::NativeDownstream(DownstreamIdentity { links })
+    }
+}
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Check {
+    #[serde(skip)]
+    pub lineage: CheckLineage,
     pub name: String,
     pub source: String,
     pub head: String,
@@ -43,6 +100,82 @@ pub struct Check {
     pub allow_failure: bool,
 }
 impl Check {
+    /// Known check identities must agree even when assessment is called without a forge.
+    pub fn valid_for(&self, request: &PullRequest, checks: &[Check]) -> bool {
+        let positive = |n: Option<u64>| n.is_none_or(|n| n > 0);
+        let valid_ids = self.id > 0
+            && crate::project::valid_oid(&self.head)
+            && [
+                self.app,
+                self.workflow,
+                self.workflow_attempt,
+                self.pipeline,
+                self.project,
+            ]
+            .into_iter()
+            .all(positive)
+            && self.workflow.is_some() == self.workflow_attempt.is_some()
+            && !(self.workflow.is_some() && self.pipeline.is_some())
+            && (self.pipeline.is_none() || self.project.is_some())
+            && (self.source != "pipeline" || self.pipeline == Some(self.id));
+        if !valid_ids {
+            return false;
+        }
+        if let Some(workflow) = self.workflow
+            && checks.iter().any(|c| {
+                c.workflow == Some(workflow) && c.workflow_attempt != self.workflow_attempt
+            })
+        {
+            return false;
+        }
+        match &self.lineage {
+            CheckLineage::CurrentHead => {
+                self.head == request.head
+                    && self.project.is_none_or(|id| {
+                        id == request.source_project || id == request.target_project
+                    })
+            }
+            CheckLineage::NativeDownstream(proof) => {
+                let Some(first) = proof.links.first() else {
+                    return false;
+                };
+                let root = &first.parent;
+                if root.head != request.head
+                    || ![request.source_project, request.target_project].contains(&root.project)
+                    || !checks.iter().any(|c| {
+                        matches!(c.lineage, CheckLineage::CurrentHead)
+                            && c.source == "pipeline"
+                            && root.matches(c)
+                    })
+                {
+                    return false;
+                }
+                let mut expected = root;
+                let mut visited = std::collections::BTreeSet::from([(root.project, root.pipeline)]);
+                for link in &proof.links {
+                    if &link.parent != expected
+                        || link.trigger == 0
+                        || link.child.project == 0
+                        || link.child.pipeline == 0
+                        || !crate::project::valid_oid(&link.child.head)
+                        || !visited.insert((link.child.project, link.child.pipeline))
+                        || !checks.iter().any(|c| {
+                            c.source == "trigger_jobs"
+                                && c.id == link.trigger
+                                && link.parent.matches(c)
+                        })
+                        || !checks
+                            .iter()
+                            .any(|c| c.source == "pipeline" && link.child.matches(c))
+                    {
+                        return false;
+                    }
+                    expected = &link.child;
+                }
+                expected.matches(self)
+            }
+        }
+    }
     pub fn successful(&self) -> bool {
         self.status == "completed" && self.conclusion.as_deref() == Some("success")
     }

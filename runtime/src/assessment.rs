@@ -40,6 +40,61 @@ pub struct DeclarationEvidence {
     pub candidate_changed: bool,
     pub candidate_rules: Declaration,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Blocker {
+    LocalWorktreeDirty,
+    RequestDraft,
+    RequestClosed,
+    SpecInvalid,
+    ApprovalsUnsatisfied,
+    NativeMergeBlocked,
+    HeadPipelineMissing,
+    CheckMissing(String),
+    CheckNotSuccessful(String),
+    CheckPending(String),
+    CheckFailed(String),
+}
+impl Blocker {
+    fn blocks_checks(&self) -> bool {
+        matches!(
+            self,
+            Self::HeadPipelineMissing
+                | Self::CheckMissing(_)
+                | Self::CheckNotSuccessful(_)
+                | Self::CheckPending(_)
+                | Self::CheckFailed(_)
+        )
+    }
+}
+impl std::fmt::Display for Blocker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LocalWorktreeDirty => f.write_str("local_worktree_dirty"),
+            Self::RequestDraft => f.write_str("request_draft"),
+            Self::RequestClosed => f.write_str("request_closed"),
+            Self::SpecInvalid => f.write_str("spec_invalid"),
+            Self::ApprovalsUnsatisfied => f.write_str("approvals_unsatisfied"),
+            Self::NativeMergeBlocked => f.write_str("native_merge_blocked"),
+            Self::HeadPipelineMissing => f.write_str("head_pipeline_missing"),
+            Self::CheckMissing(name) => write!(f, "check_missing:{name}"),
+            Self::CheckNotSuccessful(name) => write!(f, "check_not_successful:{name}"),
+            Self::CheckPending(name) => write!(f, "check_pending:{name}"),
+            Self::CheckFailed(name) => write!(f, "check_failed:{name}"),
+        }
+    }
+}
+impl Serialize for Blocker {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckOutcome {
+    Unobserved,
+    Pending,
+    Passed,
+    Failed,
+}
 #[derive(Debug, Default, Serialize)]
 pub struct Evidence {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,7 +126,7 @@ pub struct Evidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checks: Option<Vec<Check>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub blockers: Option<Vec<String>>,
+    pub blockers: Option<Vec<Blocker>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<crate::delivery_model::Flow>,
 }
@@ -82,6 +137,32 @@ pub struct Assessment {
     pub diagnostics: Vec<Diagnostic>,
 }
 impl Assessment {
+    pub fn checks_outcome(&self) -> CheckOutcome {
+        let evidence = &self.evidence;
+        let blockers = evidence.blockers.as_deref().unwrap_or(&[]);
+        let required_failure = evidence.required_checks.iter().flatten().any(|required| {
+            evidence.checks.iter().flatten().any(|check| {
+                check.name == required.name
+                    && required.app.is_none_or(|app| check.app == Some(app))
+                    && check.status == "completed"
+                    && !check.successful()
+            })
+        });
+        if required_failure
+            || (self.status == Status::Rejected && evidence.checks.is_none())
+            || blockers
+                .iter()
+                .any(|b| matches!(b, Blocker::CheckFailed(_) | Blocker::SpecInvalid))
+        {
+            CheckOutcome::Failed
+        } else if evidence.checks.is_none() {
+            CheckOutcome::Unobserved
+        } else if blockers.iter().any(Blocker::blocks_checks) {
+            CheckOutcome::Pending
+        } else {
+            CheckOutcome::Passed
+        }
+    }
     pub fn accepted(&self) -> bool {
         matches!(self.status, Status::Accepted | Status::InitialAdoption)
     }
@@ -237,7 +318,12 @@ pub fn assess(snapshot: Result<Snapshot, Diagnostic>) -> Assessment {
         .is_some_and(|ids| !ids.is_empty() && ids == observed && observed.len() == s.issues.len())
         && match &s.lifecycle {
             Lifecycle::Merged(_) => s.request.state == "merged",
-            Lifecycle::Open { .. } => s.request.state != "merged",
+            Lifecycle::Open { checks, .. } => {
+                s.request.state != "merged"
+                    && checks
+                        .iter()
+                        .all(|check| check.valid_for(&s.request, checks))
+            }
         };
     if !complete {
         return Assessment::unavailable(Diagnostic::new(
@@ -301,25 +387,25 @@ pub fn assess(snapshot: Result<Snapshot, Diagnostic>) -> Assessment {
     }
     let mut blockers = vec![];
     if s.dirty {
-        blockers.push("local_worktree_dirty".into());
+        blockers.push(Blocker::LocalWorktreeDirty);
     }
     if s.request.draft {
-        blockers.push("request_draft".into());
+        blockers.push(Blocker::RequestDraft);
     }
     if !["open", "opened"].contains(&s.request.state.as_str()) {
-        blockers.push("request_closed".into());
+        blockers.push(Blocker::RequestClosed);
     }
     if !violations.is_empty() {
-        blockers.push("spec_invalid".into());
+        blockers.push(Blocker::SpecInvalid);
     }
     if !requirements.approvals_satisfied {
-        blockers.push("approvals_unsatisfied".into());
+        blockers.push(Blocker::ApprovalsUnsatisfied);
     }
     if !requirements.mergeable {
-        blockers.push("native_merge_blocked".into());
+        blockers.push(Blocker::NativeMergeBlocked);
     }
     if requirements.pipeline_required && !current_checks.iter().any(|c| c.source == "pipeline") {
-        blockers.push("head_pipeline_missing".into());
+        blockers.push(Blocker::HeadPipelineMissing);
     }
     for check in &required {
         let matches: Vec<_> = current_checks
@@ -327,9 +413,9 @@ pub fn assess(snapshot: Result<Snapshot, Diagnostic>) -> Assessment {
             .filter(|c| c.name == check.name && check.app.is_none_or(|app| c.app == Some(app)))
             .collect();
         if matches.is_empty() {
-            blockers.push(format!("check_missing:{}", check.name));
+            blockers.push(Blocker::CheckMissing(check.name.clone()));
         } else if matches.iter().any(|c| !c.successful()) {
-            blockers.push(format!("check_not_successful:{}", check.name));
+            blockers.push(Blocker::CheckNotSuccessful(check.name.clone()));
         }
     }
     for check in &current_checks {
@@ -337,9 +423,9 @@ pub fn assess(snapshot: Result<Snapshot, Diagnostic>) -> Assessment {
             continue;
         }
         if check.status != "completed" {
-            blockers.push(format!("check_pending:{}", check.name));
+            blockers.push(Blocker::CheckPending(check.name.clone()));
         } else if check.failed() {
-            blockers.push(format!("check_failed:{}", check.name));
+            blockers.push(Blocker::CheckFailed(check.name.clone()));
         }
     }
     let accepted = blockers.is_empty();
@@ -362,5 +448,145 @@ pub fn assess(snapshot: Result<Snapshot, Diagnostic>) -> Assessment {
             "Current native evidence contains delivery blockers.",
             evidence,
         )
+    }
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+    use crate::delivery_model::{CheckLineage, Flow, PipelineLink};
+
+    fn snapshot() -> Snapshot {
+        let head = "a".repeat(40);
+        let child_head = "f".repeat(40);
+        let check = |source: &str, id, project, pipeline, sha: &str, lineage| Check {
+            lineage,
+            name: format!("{source}:{project}/{id}"),
+            source: source.into(),
+            head: sha.into(),
+            id,
+            app: None,
+            workflow: None,
+            workflow_attempt: None,
+            pipeline: Some(pipeline),
+            project: Some(project),
+            status: "completed".into(),
+            conclusion: Some("success".into()),
+            started_at: None,
+            completed_at: None,
+            allow_failure: false,
+        };
+        let root = check("pipeline", 71, 7, 71, &head, CheckLineage::CurrentHead);
+        let trigger = check("trigger_jobs", 91, 7, 71, &head, CheckLineage::CurrentHead);
+        let child = check(
+            "pipeline",
+            72,
+            8,
+            72,
+            &child_head,
+            CheckLineage::downstream(vec![PipelineLink::observed(
+                (&head, 7, 71),
+                91,
+                (&child_head, 8, 72),
+            )]),
+        );
+        let rules = Declaration::parse(b"version: 2\n").unwrap();
+        Snapshot {
+            request: PullRequest {
+                id: 2,
+                title: "feat: source".into(),
+                body: "Closes #1".into(),
+                labels: vec![],
+                state: "open".into(),
+                draft: false,
+                head,
+                source: "feature".into(),
+                target: "main".into(),
+                source_project: 7,
+                target_project: 7,
+                updated_at: "2026-09-09T00:00:00Z".into(),
+            },
+            issues: vec![Issue {
+                id: 1,
+                title: "feat: source".into(),
+                body: "source".into(),
+                labels: vec![],
+                state: "open".into(),
+                updated_at: "2026-09-09T00:00:00Z".into(),
+            }],
+            declaration: DeclarationEvidence {
+                source: "target_revision",
+                target_commit: "b".repeat(40),
+                approved_digest: "c".repeat(64),
+                candidate_digest: "c".repeat(64),
+                candidate_changed: false,
+                candidate_rules: rules.clone(),
+            },
+            rules,
+            dirty: false,
+            lifecycle: Lifecycle::Open {
+                requirements: Requirements {
+                    checks: vec![],
+                    pipeline_required: true,
+                    approvals_required: 0,
+                    approvals_satisfied: true,
+                    mergeable: true,
+                },
+                checks: vec![root, trigger, child],
+            },
+            flow: Flow {
+                target: "main".into(),
+                native_default: "main".into(),
+                targets_native_default: true,
+                issue_closing: "unknown",
+                source_cleanup: "unknown",
+                warnings: vec![],
+            },
+        }
+    }
+    #[test]
+    fn verified_cross_project_different_head_descendants_keep_their_native_result() {
+        let accepted = assess(Ok(snapshot()));
+        assert_eq!(accepted.status, Status::Accepted);
+        let child = &accepted.evidence.checks.as_ref().unwrap()[2];
+        assert_eq!(child.head, "f".repeat(40));
+        assert_eq!(child.project, Some(8));
+        let mut s = snapshot();
+        if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+            checks[2].conclusion = Some("failure".into());
+        }
+        let rejected = assess(Ok(s));
+        assert_eq!(rejected.status, Status::Rejected);
+        assert_eq!(rejected.checks_outcome(), CheckOutcome::Failed);
+    }
+    #[test]
+    fn missing_or_contradictory_parent_links_are_unknown() {
+        for change in 0..5 {
+            let mut s = snapshot();
+            if let Lifecycle::Open { checks, .. } = &mut s.lifecycle {
+                match change {
+                    0 => {
+                        checks.remove(1);
+                    }
+                    1 => checks[2].lineage = CheckLineage::CurrentHead,
+                    2 => checks[2].lineage = CheckLineage::downstream(vec![]),
+                    3 => {
+                        checks[2].lineage = CheckLineage::downstream(vec![PipelineLink::observed(
+                            (&s.request.head, 7, 70),
+                            91,
+                            (&"f".repeat(40), 8, 72),
+                        )])
+                    }
+                    _ => {
+                        checks[2].lineage = CheckLineage::downstream(vec![PipelineLink::observed(
+                            (&s.request.head, 7, 71),
+                            92,
+                            (&"f".repeat(40), 8, 72),
+                        )])
+                    }
+                }
+            }
+            assert_eq!(assess(Ok(s)).status, Status::Unknown, "variant {change}");
+        }
     }
 }

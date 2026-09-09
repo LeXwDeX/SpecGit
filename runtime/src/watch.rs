@@ -1,6 +1,6 @@
 //! Bounded observation through read-only finish; durable transport is not acceptance.
 use crate::{
-    assessment::{Assessment, Status},
+    assessment::{Assessment, Blocker, CheckOutcome, Status},
     config,
     diagnostic::{Code, Diagnostic},
     observation,
@@ -100,7 +100,7 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
     struct Projection<'a> {
         checks: &'a Option<Vec<crate::delivery_model::Check>>,
         required: &'a Option<Vec<crate::delivery_model::RequiredCheck>>,
-        blockers: &'a Option<Vec<String>>,
+        blockers: &'a Option<Vec<Blocker>>,
         issues: Vec<IssueState<'a>>,
         request_state: Option<&'a str>,
         draft: Option<bool>,
@@ -138,14 +138,7 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
     };
     let blockers = evidence.blockers.as_deref().unwrap_or(&[]);
     let codes: Vec<_> = assessment.diagnostics.iter().map(|d| &d.code).collect();
-    let required_terminal_failure = evidence.required_checks.iter().flatten().any(|required| {
-        evidence.checks.iter().flatten().any(|check| {
-            check.name == required.name
-                && required.app.is_none_or(|app| check.app == Some(app))
-                && check.status == "completed"
-                && check.conclusion.as_deref() != Some("success")
-        })
-    });
+    let check_outcome = assessment.checks_outcome();
     let state = if revision.head != revision.local_head
         || request.is_some_and(|r| Some(r.source.as_str()) != context.branch.as_deref())
     {
@@ -160,18 +153,9 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
         EventState::Cancelled
     } else if matches!(assessment.status, Status::Unknown | Status::InvalidInput) {
         EventState::Unknown
-    } else if required_terminal_failure
-        || (assessment.exit() == 1 && evidence.checks.is_none())
-        || blockers
-            .iter()
-            .any(|b| b.starts_with("check_failed:") || b == "spec_invalid")
-    {
+    } else if check_outcome == CheckOutcome::Failed {
         EventState::Failed
-    } else if evidence.checks.is_some()
-        && !blockers
-            .iter()
-            .any(|b| b.starts_with("check_") || b == "head_pipeline_missing")
-    {
+    } else if check_outcome == CheckOutcome::Passed {
         EventState::ChecksPassed
     } else {
         EventState::Pending
@@ -203,7 +187,11 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
             serde_json::to_string(&codes).expect("codes serialize")
         }
     } else {
-        blockers.join(", ")
+        blockers
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let mut end = reason.len().min(4096);
     while !reason.is_char_boundary(end) {
