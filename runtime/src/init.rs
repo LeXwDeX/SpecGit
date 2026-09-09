@@ -235,6 +235,14 @@ async fn prepare_and_run(
         .as_ref()
         .map(|bytes| Declaration::parse(bytes))
         .transpose()?;
+    if existing.is_none() && crate::migration_assets::legacy_present(&root)? {
+        return Err(Diagnostic::new(
+            Code::MigrationRequired,
+            "init",
+            "Existing v1 integration must be retired before initializing v2.",
+            "Preview specgit migrate --config-file <v2.yaml>; preserve orphaned configuration and old work instead of enabling a competing integration.",
+        ));
+    }
     let previous = existing.clone().unwrap_or_default();
     let mut declaration = if let Some(path) = &options.config_file {
         Declaration::parse(templates::read_text(path)?.as_bytes())?

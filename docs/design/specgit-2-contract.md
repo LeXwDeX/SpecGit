@@ -581,3 +581,24 @@ exact commits/PRs, issue states, current-head CI, real installed-binary evidence
 provider/host acceptance results and remaining limitations. The original task
 then independently inspects those outputs; a child task's success summary alone
 is not 2.0 acceptance.
+
+### Implemented explicit migration protocol
+
+The native command is `migrate --config-file <complete-v2-declaration>`. Preview
+reports the local asset inventory, proposed hashes and current native retirement
+barrier. `--apply --expect <preview-sha256>` requires identical inputs and commits
+one expected-content transaction, with a complete bounded legacy archive first
+and the v2 declaration last. `--retire-only` stages local cleanup while preserving
+the v1 declaration; `--rollback <transaction>` restores preimages without replacing
+later user edits. Old issue/request associations are preserved, never auto-adopted.
+
+The native retirement barrier is read-only. It inspects GitHub workflow state,
+configuration at the current default commit and unfinished execution, or GitLab's
+bounded repository tree, selected configuration, static local includes and
+unfinished ordinary/child pipelines plus active schedule refs. Unknown/external
+include boundaries and shared/foreign old
+hooks remain explicit blockers. Native CI retirement must occur through the
+project's authorized change; this command cannot disable protection or stop a
+business pipeline to make its own barrier pass. Reported retirement describes the
+bounded known-v1 inventory at its observed commit, not arbitrary shell semantics
+or permanent exclusion of future external edits.

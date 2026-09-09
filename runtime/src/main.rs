@@ -27,6 +27,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Commands {
+    /// Preview, retire or explicitly migrate v1 integration with restorable local transactions.
+    Migrate(specgit::migrate::Options),
     /// Prepare, create or adopt complete specs using native issues and a local checkpoint.
     Issue(specgit::issue::Options),
     /// Create or adopt a native request after real pushed changes, preserving issue references.
@@ -111,6 +113,33 @@ enum Commands {
         provider: Option<Provider>,
     },
 }
+fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
+    const RETIRED: &[&str] = &[
+        "--automation",
+        "--merge-target",
+        "--close-issues",
+        "--close-target",
+        "--scope",
+        "--plan-checks",
+        "--no-protect",
+        "--no-ignore",
+        "--configure-rules",
+        "--force",
+    ];
+    if raw.iter().skip(1).filter_map(|v| v.to_str()).any(|value| {
+        RETIRED.contains(&value.split('=').next().unwrap_or(value))
+            || ["bind", "unbind", "accept"].contains(&value)
+            || value == "--merge"
+    }) {
+        return Diagnostic::new(
+            Code::InvalidInput,
+            "major_version",
+            "This v1 command or option is retired in SpecGit 2; its meaning is not reinterpreted.",
+            "Use the retained v1 executable for an unmigrated project. Preview explicit migration with specgit migrate --config-file <v2.yaml>; use issue/pr for native associations and the separately authorized merge command for native protected merge.",
+        );
+    }
+    Diagnostic::input("Invalid command arguments; run specgit --help.")
+}
 #[tokio::main]
 async fn main() {
     let raw: Vec<_> = std::env::args_os().collect();
@@ -119,13 +148,7 @@ async fn main() {
         Ok(cli) => cli,
         Err(error) => {
             if error.use_stderr() {
-                emit(
-                    Report::failure(
-                        "input",
-                        Diagnostic::input("Invalid command arguments; run specgit --help."),
-                    ),
-                    json,
-                );
+                emit(Report::failure("input", argument_diagnostic(&raw)), json);
             } else if json {
                 emit(
                     Report::success("help", "ok", serde_json::json!({"text":error.to_string()})),
@@ -178,6 +201,9 @@ async fn main() {
     let cancel = process.cancellation.clone();
     let task = tokio::spawn(async move {
         match cli.command {
+            Commands::Migrate(options) => {
+                Box::pin(specgit::migrate::run(options, process, &cwd)).await
+            }
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
             Commands::Promotion(options) => {
                 Box::pin(specgit::promotion::run(options, process, &cwd)).await
