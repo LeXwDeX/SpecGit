@@ -36,7 +36,7 @@ pub struct Validation {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tag {
-    #[serde(deserialize_with = "short_text::<_,50>")]
+    #[serde(deserialize_with = "short_text::<_,64>")]
     pub name: String,
     #[serde(deserialize_with = "short_text::<_,6>")]
     pub color: String,
@@ -251,8 +251,7 @@ impl Declaration {
         }
         if self.tags.len() > 100
             || self.tags.iter().enumerate().any(|(i, t)| {
-                !text(&t.name, 50)
-                    || t.name.starts_with('-')
+                !crate::spec::label_name(&t.name)
                     || t.color.len() != 6
                     || !t.color.bytes().all(|b| b.is_ascii_hexdigit())
                     || t.description.len() > 100

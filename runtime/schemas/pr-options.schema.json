@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecGit 2 native request options",
+  "description": "Normalized options for the pr CLI; no JSON-input transport is implied.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "request": { "type": ["integer", "null"], "minimum": 1 },
+    "title": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
+    "body_file": { "type": ["string", "null"], "minLength": 1 },
+    "tags": { "type": ["array", "null"], "maxItems": 100, "items": { "type": "string", "maxLength": 64 } },
+    "update_body": { "type": "boolean", "default": false },
+    "update_references": { "type": "boolean", "default": false },
+    "ready": { "type": "boolean", "default": false },
+    "inspect": { "type": "boolean", "default": false }
+  },
+  "allOf": [
+    { "if": { "properties": { "update_body": { "const": true } }, "required": ["update_body"] }, "then": { "required": ["body_file"], "properties": { "body_file": { "type": "string" }, "update_references": { "const": false }, "inspect": { "const": false } } } },
+    { "if": { "properties": { "update_references": { "const": true } }, "required": ["update_references"] }, "then": { "properties": { "body_file": { "type": "null" }, "inspect": { "const": false } } } },
+    { "if": { "properties": { "inspect": { "const": true } }, "required": ["inspect"] }, "then": { "properties": { "ready": { "const": false } } } }
+  ]
+}

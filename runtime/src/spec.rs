@@ -277,6 +277,9 @@ pub fn check(
     labels: &[String],
 ) -> Vec<Violation> {
     [
+        (title.trim().is_empty() || title.len() > 255 || title.chars().any(char::is_control))
+            .then(|| violation("title_invalid", "A native title must be nonempty, at most 255 UTF-8 bytes, without control characters.")),
+        (body.len() > crate::config::MAX_BYTES).then(|| violation("body_too_large", "Native spec content exceeds 1 MiB.")),
         check_title(d, title),
         check_body(d, issue, body),
         check_labels(d, labels),

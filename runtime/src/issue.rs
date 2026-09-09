@@ -38,7 +38,12 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
         Err(d) => Report::failure("issue", d),
     }
 }
-async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Report, Diagnostic> {
+async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<Report, Diagnostic> {
+    options.body_file = options
+        .body_file
+        .into_iter()
+        .map(|p| if p.is_absolute() { p } else { cwd.join(p) })
+        .collect();
     if options.specs.len() > 100 {
         return Err(Diagnostic::input("Select at most 100 specs."));
     }
@@ -90,6 +95,7 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
         intents: vec![],
         request: None,
         request_write_started: false,
+        request_intent: None,
     });
     if selection.project_id != project_facts.id || selection.target != target {
         return Err(Diagnostic::input(
@@ -190,41 +196,42 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
             native_delivery::issue(&reader, &context.repository, project_facts.id, *number).await?;
         validate(&d, &issue.title, &issue.body, &issue.labels)?;
     }
-    for (intent, candidates) in prepared.iter().zip(&candidate_reports) {
-        let resumed = selection.intents.iter().find(|i| {
-            i.title == intent.title && i.body == intent.body && i.labels == intent.labels
-        });
-        if let Some(existing) = resumed {
-            if existing.write_started && existing.issue.is_none() {
-                return Ok(uncertain(candidates.clone()));
-            }
-        } else if candidates["issues"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty())
-        {
-            let mut report =
-                Report::success("issue", "candidate_review_required", candidates.clone());
-            report.exit = 3;
-            report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the reported candidates and adopt the exact existing ID when it covers this work; refine an independent specification before creating another issue."));
-            return Ok(report);
+    // One exact adopted ID can replace one unresolved intent without requiring
+    // its mutable native prose to remain identical to the original submission.
+    let unresolved: Vec<_> = selection
+        .intents
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.issue.is_none())
+        .map(|(index, _)| index)
+        .collect();
+    if adopted.len() == 1 && unresolved.len() == 1 {
+        selection.intents[unresolved[0]].issue = Some(adopted[0].id);
+    } else {
+        let uncertain: Vec<_> = selection
+            .intents
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.write_started && i.issue.is_none())
+            .map(|(index, _)| index)
+            .collect();
+        if adopted.len() == 1 && uncertain.len() == 1 {
+            selection.intents[uncertain[0]].issue = Some(adopted[0].id);
         }
     }
     for issue in adopted {
         if !selection.issues.contains(&issue.id) {
             selection.issues.push(issue.id);
         }
-        for intent in &mut selection.intents {
-            if intent.write_started
-                && intent.issue.is_none()
-                && intent.title == issue.title
-                && intent.body == issue.body
-                && intent.labels.iter().all(|l| issue.labels.contains(l))
-            {
-                intent.issue = Some(issue.id);
-            }
-        }
     }
     for intent in prepared {
+        if selection.intents.iter().any(|i| {
+            i.title == intent.title && (i.body != intent.body || i.labels != intent.labels)
+        }) {
+            return Err(Diagnostic::input(
+                "The submitted content differs from an existing intent with this title. Adopt its native issue ID, or use a separate independent specification.",
+            ));
+        }
         if !selection
             .intents
             .iter()
@@ -242,6 +249,32 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
         > 100
     {
         return Err(Diagnostic::input("A delivery supports at most 100 issues."));
+    }
+    // Every persisted intent is subject to today's declaration and fresh native
+    // duplicate evidence, even when this invocation supplied only adopted IDs.
+    for intent in selection.intents.iter().filter(|i| i.issue.is_none()) {
+        validate(&d, &intent.title, &intent.body, &intent.labels)?;
+        spec::selected_labels(&d, &intent.title, Some(&intent.labels), &pool)?;
+        if context.repository.provider == project::Provider::Gitlab {
+            templates::reject_quick_actions(&intent.body)?;
+        }
+        let candidates = native_delivery::candidates(
+            &reader,
+            &context.repository,
+            project_facts.id,
+            &intent.title,
+        )
+        .await?;
+        let evidence = serde_json::json!({"title":intent.title,"issues":candidates});
+        if intent.write_started {
+            return Ok(uncertain(evidence));
+        }
+        if !candidates.is_empty() {
+            let mut report = Report::success("issue", "candidate_review_required", evidence);
+            report.exit = 3;
+            report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID when it covers this work; uncertain intent mappings require one explicit adoption at a time."));
+            return Ok(report);
+        }
     }
     if let Some(branch) = &options.branch {
         // Recheck dirty state at the actual checkout boundary.

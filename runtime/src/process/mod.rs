@@ -110,7 +110,16 @@ async fn bounded_read(
     }
 }
 impl Process {
-    pub async fn run(&self, request: Request) -> Result<Output, Diagnostic> {
+    /// Keep bounded pipe buffers and process cleanup state off callers' stacks.
+    /// Deep command preflight must not multiply the size of the exchange future.
+    pub fn run(
+        &self,
+        request: Request,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Output, Diagnostic>> + Send + '_>>
+    {
+        Box::pin(self.run_inner(request))
+    }
+    async fn run_inner(&self, request: Request) -> Result<Output, Diagnostic> {
         if request.input.len() > self.limits.input_bytes {
             return Err(Diagnostic::new(
                 Code::InputLimit,

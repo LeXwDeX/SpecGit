@@ -127,6 +127,33 @@ fn main() {
 
 fn native_api(args: &[String], path: &std::path::Path) {
     use serde_json::{Value, json};
+    if args.first().is_some_and(|a| a == "pr" || a == "mr") {
+        let mut state: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        if state["request_fixture"].as_bool() == Some(true) {
+            let number: u64 = args[2].parse().unwrap();
+            state["calls"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"method":"NATIVE","argv":args}));
+            let r = state["requests"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|r| r["number"] == number)
+                .unwrap();
+            r["draft"] = json!(false);
+            if let Some(title) = r["title"]
+                .as_str()
+                .and_then(|s| s.strip_prefix("Draft: "))
+                .map(String::from)
+            {
+                r["title"] = json!(title);
+            }
+            std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+            println!("ready");
+            return;
+        }
+    }
     if args.first().map(String::as_str) != Some("api") || args.iter().any(|a| a == "--help") {
         println!("fixture help and version");
         return;
@@ -156,6 +183,11 @@ fn native_api(args: &[String], path: &std::path::Path) {
     }
     let project_endpoint =
         endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo";
+    if state["request_fixture"].as_bool() == Some(true)
+        && request_api(&mut state, path, method, endpoint, &input)
+    {
+        return;
+    }
     if state.get("issues").is_some() && delivery_api(&mut state, path, method, endpoint, &input) {
         return;
     }
@@ -189,6 +221,120 @@ fn native_api(args: &[String], path: &std::path::Path) {
     }
 }
 
+fn request_api(
+    state: &mut serde_json::Value,
+    path: &std::path::Path,
+    method: &str,
+    endpoint: &str,
+    input: &serde_json::Value,
+) -> bool {
+    use serde_json::json;
+    let gh = endpoint.starts_with("repos/");
+    let route = endpoint.split('?').next().unwrap();
+    let list = route.ends_with("/pulls") || route.ends_with("/merge_requests");
+    let object = route.contains("/pulls/") || route.contains("/merge_requests/");
+    let label_write = method == "POST" && route.contains("/issues/") && route.ends_with("/labels");
+    let value = if method == "GET" && route.contains("/branches/") {
+        let name = route.rsplit('/').next().unwrap();
+        let sha = &state["branch_heads"][name];
+        if !sha.is_string() {
+            eprintln!("HTTP 404");
+            std::process::exit(1);
+        }
+        json!({"name":name,"commit":{"sha":sha,"id":sha}})
+    } else if method == "GET" && (route.contains("/compare/") || route.ends_with("/compare")) {
+        let files = if state["has_diff"] == true {
+            json!([{"filename":"real.rs","new_path":"real.rs"}])
+        } else {
+            json!([])
+        };
+        json!({"files":files,"diffs":files,"ahead_by":1,"compare_timeout":false})
+    } else if method == "GET" && list {
+        state["requests"].clone()
+    } else if method == "POST" && list {
+        let number = state["requests"].as_array().unwrap().len() as u64 + 41;
+        let source = input[if gh { "head" } else { "source_branch" }]
+            .as_str()
+            .unwrap();
+        let target = input[if gh { "base" } else { "target_branch" }]
+            .as_str()
+            .unwrap();
+        let head = &state["branch_heads"][source];
+        let r = json!({"id":number+100,"number":number,"iid":number,"title":input["title"],"body":input["body"],"description":input["description"],"labels":[],"draft":true,"state":if gh {"open"} else {"opened"},"merged":false,"head":{"ref":source,"sha":head,"repo":{"id":7}},"base":{"ref":target,"repo":{"id":7}},"source_branch":source,"target_branch":target,"sha":head,"source_project_id":7,"target_project_id":7,"updated_at":"2026-09-09T00:00:00Z"});
+        state["requests"].as_array_mut().unwrap().push(r.clone());
+        std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+        if state["lose_request_response"] == true {
+            eprintln!("connection reset after native request creation");
+            std::process::exit(1);
+        }
+        r
+    } else if object || label_write {
+        let parts: Vec<_> = route.split('/').collect();
+        let number: u64 = parts[if label_write {
+            parts.len() - 2
+        } else {
+            parts.len() - 1
+        }]
+        .parse()
+        .unwrap();
+        if method == "GET" {
+            state["request_reads"] = json!(state["request_reads"].as_u64().unwrap_or(0) + 1);
+        }
+        let edit = state["request_reads"].as_u64() == state["edit_request_on_read"].as_u64()
+            && state["edit_request_on_read"].is_number();
+        let r = state["requests"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|r| r["number"] == number)
+            .unwrap();
+        if edit {
+            r[if gh { "body" } else { "description" }] = json!("Concurrent user edit\n\nCloses #1");
+        }
+        if method == "GET" {
+            r.clone()
+        } else if method == "PATCH" || method == "PUT" || label_write {
+            if let Some(body) = input.get(if gh { "body" } else { "description" }) {
+                r[if gh { "body" } else { "description" }] = body.clone();
+            }
+            let labels: Vec<String> = if label_write {
+                input["labels"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.as_str().unwrap().into())
+                    .collect()
+            } else {
+                input["add_labels"]
+                    .as_str()
+                    .unwrap_or("")
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            };
+            for name in labels {
+                let label = if gh {
+                    json!({"name":name})
+                } else {
+                    json!(name)
+                };
+                if !r["labels"].as_array().unwrap().contains(&label) {
+                    r["labels"].as_array_mut().unwrap().push(label);
+                }
+            }
+            r.clone()
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    };
+    std::fs::write(path, serde_json::to_vec(state).unwrap()).unwrap();
+    println!("{value}");
+    true
+}
+
 fn delivery_api(
     state: &mut serde_json::Value,
     path: &std::path::Path,
@@ -220,6 +366,10 @@ fn delivery_api(
     } else if method == "GET" && route.ends_with("/labels") {
         state.get("labels").cloned().unwrap_or(json!([]))
     } else if method == "POST" && route.ends_with("/labels") {
+        if state["deny_label"].as_bool() == Some(true) {
+            eprintln!("HTTP 403");
+            std::process::exit(1);
+        }
         if state.get("labels").is_none() {
             state["labels"] = json!([]);
         }

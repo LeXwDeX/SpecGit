@@ -31,6 +31,16 @@ pub struct Selection {
     pub intents: Vec<IssueIntent>,
     pub request: Option<u64>,
     pub request_write_started: bool,
+    #[serde(default)]
+    pub request_intent: Option<RequestIntent>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestIntent {
+    pub head: String,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
 }
 fn invalid() -> Diagnostic {
     Diagnostic::new(
