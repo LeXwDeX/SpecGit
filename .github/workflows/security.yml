@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       dependencies: ${{ steps.changes.outputs.dependencies }}
     steps:
@@ -44,7 +44,7 @@ jobs:
     name: Dependency Review
     needs: scope
     if: github.event_name == 'pull_request' && needs.scope.outputs.dependencies == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,7 +62,7 @@ jobs:
     name: Audit
     needs: scope
     if: needs.scope.outputs.dependencies == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

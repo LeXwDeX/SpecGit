@@ -45,7 +45,7 @@ permissions:
 jobs:
   identify:
     if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'
-    runs-on: ubuntu-latest
+    runs-on: ${input.selfHosted ? '[self-hosted, Linux, X64]' : 'ubuntu-latest'}
     permissions:
       contents: read
       pull-requests: read
@@ -53,7 +53,11 @@ jobs:
       pr: \${{ steps.request.outputs.pr }}
       head: \${{ steps.request.outputs.head }}
     steps:
-      - name: Resolve one current request
+${input.selfHosted ? `      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+` : ''}      - name: Resolve one current request
         id: request
         env:
           GH_TOKEN: \${{ github.token }}
@@ -89,7 +93,7 @@ jobs:
       issues: write
       actions: read
     if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'
-    runs-on: ubuntu-latest
+    runs-on: ${input.selfHosted ? '[self-hosted, Linux, X64]' : 'ubuntu-latest'}
     timeout-minutes: 30
     concurrency:
       group: specgit-complete-\${{ github.repository }}-\${{ needs.identify.outputs.pr }}

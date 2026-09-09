@@ -37,7 +37,7 @@ concurrency:
 jobs:
   scope:
     if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     outputs:
@@ -68,7 +68,7 @@ jobs:
   release:
     needs: scope
     if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main' && needs.scope.outputs.eligible == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     env:
       SPECGIT_RELEASE_VERSION: ${{ needs.scope.outputs.version }}
     steps:

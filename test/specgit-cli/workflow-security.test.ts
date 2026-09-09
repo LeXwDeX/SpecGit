@@ -159,38 +159,34 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
 
 const REQUIRED_MATRIX_LABELS = ['linux-bash', 'macos-bash', 'windows-pwsh'];
 
-// #105: the self-hosted shadow leg is RETIRED (W2 retirement line,
-// 2026-08-21). It was never green — every execution since introduction
-// crashed at job initialization with zero steps run (the runner
-// container cannot create its tool-cache directory; infrastructure-side,
-// not repo-fixable per the W1 diagnosis on the issue), and the repair
-// window closed without a runner-owner fix. Self-hosted coverage is not
-// part of the release matrix; re-introducing self-hosted execution
-// requires repairing the runner infrastructure first and updating this
-// invariant with a recorded rationale on the tracker.
-const assertNoSelfHostedExecution = (text: string, label: string): void => {
+// #528: the owner replaced the retired #105 arrangement with three native
+// runners and prohibits hosted execution across every repository workflow.
+const assertSelfHostedRouting = (text: string, label: string): void => {
   const jobs = (parse(text) as Workflow).jobs ?? {};
-  const matrixJob = jobs.test_matrix;
-  if (!matrixJob) {
-    throw new Error(`${label}: test_matrix job missing`);
-  }
-  const entries = matrixJob.strategy?.matrix?.include ?? [];
-  const labels = entries.map((entry) => String(entry.label));
-  for (const entry of entries) {
-    const os = Array.isArray(entry.os) ? entry.os : [entry.os];
-    if (os.includes('self-hosted') || String(entry.label) === 'self-hosted-linux') {
-      throw new Error(`${label}: self-hosted entry must not ride the required test_matrix (retired; #105)`);
-    }
-  }
-  for (const required of REQUIRED_MATRIX_LABELS) {
-    if (!labels.includes(required)) {
-      throw new Error(`${label}: required matrix label missing: ${required}`);
-    }
-  }
+  const linux = ['self-hosted', 'Linux', 'X64'];
+  const expected: Record<string, string[]> = {
+    'linux-bash': linux, 'macos-bash': ['self-hosted', 'macOS', 'ARM64'],
+    'windows-pwsh': ['self-hosted', 'Windows', 'X64'],
+    linux, macos: ['self-hosted', 'macOS', 'ARM64'], windows: ['self-hosted', 'Windows', 'X64'],
+  };
   for (const [jobId, job] of Object.entries(jobs)) {
-    const runsOn = Array.isArray(job['runs-on']) ? job['runs-on'] : [job['runs-on']];
-    if (runsOn.includes('self-hosted')) {
-      throw new Error(`${label}: job "${jobId}" runs on the retired self-hosted pool (#105)`);
+    if (jobId === 'test_selfhosted' || job['continue-on-error']) {
+      throw new Error(`${label}: optional shadow execution is forbidden`);
+    }
+    if (jobId === 'test_matrix' || jobId === 'rust') {
+      const entries = job.strategy?.matrix?.include ?? [];
+      const required = jobId === 'test_matrix' ? REQUIRED_MATRIX_LABELS : ['linux', 'macos', 'windows'];
+      if (job['runs-on'] !== '${{ matrix.os }}' || entries.length !== required.length ||
+          required.some((name) => entries.filter((entry) => entry.label === name).length !== 1)) {
+        throw new Error(`${label}: native matrix must include each required platform exactly once`);
+      }
+      for (const entry of entries) {
+        if (JSON.stringify(entry.os) !== JSON.stringify(expected[String(entry.label)])) {
+          throw new Error(`${label}: native OS/architecture routing required`);
+        }
+      }
+    } else if (job['runs-on'] !== undefined && JSON.stringify(job['runs-on']) !== JSON.stringify(linux)) {
+      throw new Error(`${label}: static jobs require the self-hosted Linux runner`);
     }
   }
 };
@@ -417,8 +413,11 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     }
   });
 
-  it('ci.yml executes no self-hosted legs (retired shadow job; #105)', () => {
-    assertNoSelfHostedExecution(ciFile, 'ci.yml');
+  it('every repository workflow uses only the owner-authorized native runners (#528)', () => {
+    const jobs = (parse(ciFile) as Workflow).jobs ?? {};
+    expect(jobs.test_matrix).toBeDefined();
+    expect(jobs.rust).toBeDefined();
+    for (const [name, text] of workflowFiles) assertSelfHostedRouting(text, name);
   });
 
   it('every job-level if uses only job-level-legal contexts (github, needs, vars, inputs)', () => {
@@ -543,7 +542,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/GH_TOKEN/);
   });
 
-  it('re-merging the self-hosted leg into the required matrix is detected', () => {
+  it('adding an extra shadow leg to the required matrix is detected', () => {
     const mutant = ciFile.replace(
       [
         '    strategy:',
@@ -562,7 +561,19 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertNoSelfHostedExecution(mutant, 'mutant')).toThrow(/must not ride/);
+    expect(() => assertSelfHostedRouting(mutant, 'mutant')).toThrow(/exactly once/);
+  });
+
+  it('hosted fallback and wrong native architecture are detected', () => {
+    const hosted = ciFile.replace('- os: [self-hosted, macOS, ARM64]', '- os: macos-latest');
+    expect(hosted).not.toBe(ciFile);
+    expect(() => assertSelfHostedRouting(hosted, 'mutant')).toThrow(/routing required/);
+    const wrongArch = ciFile.replace('- os: [self-hosted, Windows, X64]', '- os: [self-hosted, Windows, ARM64]');
+    expect(wrongArch).not.toBe(ciFile);
+    expect(() => assertSelfHostedRouting(wrongArch, 'mutant')).toThrow(/routing required/);
+    const hostedPackage = rcVerifyFile.replace('runs-on: [self-hosted, Linux, X64]', 'runs-on: ubuntu-latest');
+    expect(hostedPackage).not.toBe(rcVerifyFile);
+    expect(() => assertSelfHostedRouting(hostedPackage, 'mutant')).toThrow(/static jobs/);
   });
 
   it('re-adding the retired self-hosted shadow job is detected (#105)', () => {
@@ -580,7 +591,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertNoSelfHostedExecution(mutant, 'mutant')).toThrow(/retired self-hosted pool/);
+    expect(() => assertSelfHostedRouting(mutant, 'mutant')).toThrow(/optional shadow/);
   });
 
   it('the rejected 50d9ea9 shape — matrix context in a job-level if — is detected', () => {
@@ -591,14 +602,14 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(matrixMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(matrixMutant, 'mutant')).toThrow(/matrix/);
     const envMutant = ciFile.replace(
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: env.LINT_SKIP != '1'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: env.LINT_SKIP != '1'",
     );
     expect(envMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(envMutant, 'mutant')).toThrow(/env/);
     const stepsMutant = ciFile.replace(
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: steps.setup.outputs.ok == 'true'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: steps.setup.outputs.ok == 'true'",
     );
     expect(stepsMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(stepsMutant, 'mutant')).toThrow(/steps/);
