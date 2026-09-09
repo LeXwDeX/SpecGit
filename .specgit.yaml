@@ -1,12 +1,9 @@
 version: 1
-delivery: v2-hooks-architecture
+delivery: rust-runtime-foundation
 context:
   kind: worktree
-  label: specgit-v2-20260909
-  branch: docs/507-v2-hooks-architecture
+  label: specgit
+  branch: feat/509-rust-runtime-foundation
 issues:
-  - 507
-issueKinds:
-  - issue: 507
-    kind: kind::docs
-pr: 508
+  - 509
+issueKinds: []
