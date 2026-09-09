@@ -202,3 +202,33 @@ fn setup_installs_native_adapter_even_when_readiness_is_unavailable() {
     assert!(out.status.success());
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn native_write_commands_trigger_observation_context_but_observer_commands_do_not_recurse() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\n",
+    )
+    .unwrap();
+    for (command, relevant) in [
+        ("specgit pr --ready", true),
+        (
+            "specgit merge --request 41 --mode now --strategy squash",
+            true,
+        ),
+        ("node bin/specgit.js issue 1", true),
+        ("specgit watch --request 41", false),
+        ("specgit inbox --request 41", false),
+        ("specgit finish", false),
+    ] {
+        let payload = json!({"session_id":"fixture-session","hook_event_name":"PostToolUse","cwd":t.path(),"tool_name":"Bash","tool_input":{"command":command}});
+        assert_eq!(
+            !run("PostToolUse", &serde_json::to_vec(&payload).unwrap())
+                .stdout
+                .is_empty(),
+            relevant,
+            "{command}"
+        );
+    }
+}

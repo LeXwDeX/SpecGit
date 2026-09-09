@@ -71,7 +71,7 @@ fn relevant(payload: &Value) -> bool {
         .and_then(Value::as_str)
         .unwrap_or("");
     let tokens: Vec<_> = command.split_whitespace().collect();
-    if tokens.iter().any(|token| {
+    if let Some(index) = tokens.iter().position(|token| {
         let executable = token
             .trim_matches(['\'', '"'])
             .rsplit(['/', '\\'])
@@ -79,7 +79,9 @@ fn relevant(payload: &Value) -> bool {
             .unwrap_or("");
         ["specgit", "specgit.exe", "specgit.js"].contains(&executable)
     }) {
-        return false;
+        return tokens
+            .get(index + 1)
+            .is_some_and(|command| ["issue", "pr", "merge"].contains(command));
     }
     tokens.windows(2).any(|pair| {
         ["git", "git.exe", "gh", "glab"].contains(&pair[0])
