@@ -9,3 +9,4 @@ issues:
 issueKinds:
   - issue: 528
     kind: kind::ci
+pr: 529
