@@ -10,6 +10,7 @@ pub mod i18n;
 pub mod init;
 pub mod input;
 pub mod issue;
+pub mod merge;
 pub mod native_checks;
 pub mod native_delivery;
 pub mod native_file;

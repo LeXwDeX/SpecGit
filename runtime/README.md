@@ -2,8 +2,16 @@
 
 This private development Cargo package builds the SpecGit 2 library and native
 executable. The foundation exposes `doctor` and offline `status`; the global
-integration additions below provide `setup`, `hook`, `init` and native `issue`. Delivery
-assessment and distribution remain subsequent programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
+integration additions provide `setup`, `hook`, `init`, native `issue`/`pr`, read-only
+`finish` and explicit `merge`. Observer delivery, migration and distribution remain
+programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
+
+`merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
+and delegates through the authenticated native CLI with the assessed source SHA.
+The result distinguishes queued, completed and merged with open issues. An
+uncertain response is read back without resubmission or closure/delete fallbacks.
+GitLab rebase and enabled/unknown merge-train routing remain unsupported; GitHub
+queue-only responses without readable native auto-merge evidence remain unknown.
 
 Use the pinned toolchain from this directory:
 

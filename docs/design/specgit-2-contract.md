@@ -391,6 +391,27 @@ queued versus merged state. Unsupported auto-merge is not a reason to direct
 merge. Platform protection remains authoritative even if `finish` is accepted.
 Do not grant self-approval, bypass a queue or enable merge on behalf of the user.
 
+The native Rust entry point is `merge --request <id> --mode now|auto
+--strategy merge|squash|rebase`; all three options are required. It performs a
+fresh accepted assessment before the first submission, saves a durable intent
+under the selected worktree's Git directory, and passes the assessed source SHA
+to the native CLI's server precondition. A changed request or failed assessment
+prevents submission. The platform remains responsible for protection changes
+after the final read; the API does not provide a transaction over every setting.
+Recovery reads native state and never automatically resubmits an uncertain write.
+After inspecting an unresolved submission, the user can reconcile it directly
+through the native forge; there is no implicit direct-merge fallback.
+
+GitHub delegates to `gh pr merge`, preserving its native queue behavior without
+`--admin`. A readable native `auto_merge` request is reported as `queued`; queue
+membership that cannot be proven through the current read adapter is `unknown`.
+GitLab delegates to `glab mr merge` with explicit auto-merge and SHA options.
+GitLab rebase and enabled/unknown merge-train routing are currently unsupported:
+rebase changes the assessed head, and train routing requires separate capability
+qualification. Neither case falls back to a direct merge. CLI stdout is never
+used as evidence of merge, queue membership, closure or cleanup.
+The normalized option schema is `runtime/schemas/merge-options.schema.json`.
+
 When targeting a non-default branch, surface native closure limitations at init,
 request creation and observation. If merge succeeds with open issues, emit
 `merged_issues_open` rather than retrying closure forever. Report which issue
