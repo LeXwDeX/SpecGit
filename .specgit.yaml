@@ -1,10 +1,9 @@
 version: 1
-delivery: rust-project-init
+delivery: rust-native-delivery
 context:
   kind: worktree
-  label: specgit-rust-init-20260909
-  branch: feat/511-rust-project-init
+  label: specgit-rust-delivery-20260909
+  branch: feat/512-rust-native-delivery
 issues:
-  - 511
+  - 512
 issueKinds: []
-pr: 522
