@@ -6,5 +6,6 @@ context:
   branch: feat/510-rust-global-hooks
 issues:
   - 510
+  - 521
 issueKinds: []
 pr: 519
