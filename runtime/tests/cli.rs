@@ -84,6 +84,8 @@ fn project_diagnostics_keep_missing_executable_distinct_from_missing_repository(
         let mut command = Command::new(env!("CARGO_BIN_EXE_specgit"));
         command
             .current_dir(root.path())
+            .env("LC_ALL", "zh_CN.UTF-8")
+            .env("LANG", "zh_CN.UTF-8")
             .args(["doctor", "--provider", "github", "--json"]);
         if missing_git {
             command.env("PATH", root.path());
