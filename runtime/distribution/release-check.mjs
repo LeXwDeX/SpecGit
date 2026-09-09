@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { run, targets, verifyArchitecture } from './stage.mjs';
 
-const requiredChecks = ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials'];
+const requiredChecks = ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'];
 function need(value, message) { if (!value) throw new Error(message); }
 function member(tarball, name) {
   return run('tar', ['-xOf', tarball, `package/${name}`], { encoding: null, maxBuffer: 64 * 1024 * 1024 });

@@ -30,7 +30,9 @@ or a guarantee of graceful JSON output.
 `verify-install.mjs` packs both packages and verifies tarball integrity and the
 asset allowlist, then installs them offline with scripts disabled. It exercises
 version, invalid input, missing-executable diagnostics and hook stdin/stdout with
-an empty PATH and empty credential variables. `installed.json` names the actual
+an empty PATH and empty credential variables. It also compares every installed
+command and option name with the shipped schemas and command reference.
+`installed.json` names the actual
 entrypoints and digests. This local artifact check does not prove public-registry
 availability. CI then runs the native public journeys against the installed npm
 entrypoint. Tests about the exact native lease PID explicitly launch the installed
@@ -38,8 +40,10 @@ native file; cancellation through the wrapper has separate signal/console cases.
 
 Release builds remap checkout/home paths, strip debug symbols, and reject known
 private build paths in executable bytes. Packages contain only the executable,
-launcher, manifest and license information, including selected dependencies'
-license texts. Cross-compilation alone is never installed-platform evidence.
+launcher, manifest, command reference, schemas and license information, including
+selected dependencies' license texts. Text files use LF line endings so the same
+wrapper has identical content across build platforms. Cross-compilation alone is
+never installed-platform evidence.
 
 ## Publication boundary and recovery requirements
 

@@ -90,7 +90,14 @@ export function stage(target, output, binary) {
   writeFileSync(path.join(wrapperDir, 'bin', 'specgit.cjs'), readFileSync(path.join(here, 'launcher.cjs'), 'utf8').replace(/\r\n/g, '\n'));
   chmodSync(path.join(wrapperDir, 'bin', 'specgit.cjs'), 0o755);
   writeFileSync(path.join(wrapperDir, 'LICENSE'), readFileSync(path.join(repo, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n'));
-  const wrapper = { ...base, name: 'specgit', description: 'Native GitHub and GitLab delivery harness', bin: { specgit: 'bin/specgit.cjs' }, files: ['bin', 'LICENSE'], optionalDependencies: Object.fromEntries(Object.values(targets).map(t => [`specgit-${t.key}`, version])) };
+  writeFileSync(path.join(wrapperDir, 'README.md'), readFileSync(path.join(runtime, 'REFERENCE.md'), 'utf8').replace(/\r\n/g, '\n'));
+  mkdirSync(path.join(wrapperDir, 'schemas'));
+  for (const name of readdirSync(path.join(runtime, 'schemas')).filter(name => name.endsWith('.schema.json'))) {
+    const contents = readFileSync(path.join(runtime, 'schemas', name), 'utf8');
+    JSON.parse(contents);
+    writeFileSync(path.join(wrapperDir, 'schemas', name), contents.replace(/\r\n/g, '\n'));
+  }
+  const wrapper = { ...base, name: 'specgit', description: 'Native GitHub and GitLab delivery harness', bin: { specgit: 'bin/specgit.cjs' }, files: ['bin', 'LICENSE', 'README.md', 'schemas'], optionalDependencies: Object.fromEntries(Object.values(targets).map(t => [`specgit-${t.key}`, version])) };
   writeFileSync(path.join(wrapperDir, 'package.json'), JSON.stringify(wrapper, null, 2) + '\n');
   const evidence = { version, target, platform: name, sha256: digest, packages: [platformDir, wrapperDir] };
   writeFileSync(path.join(output, 'staging.json'), JSON.stringify(evidence, null, 2) + '\n');
