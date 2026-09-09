@@ -70,6 +70,7 @@ impl Workspace {
         if current.repository != self.context.repository
             || current.branch != self.context.branch
             || current.head != self.context.head
+            || current.dirty != self.context.dirty
             || current.git_dir != self.context.git_dir
             || facts.id != self.facts.id
             || facts.default_branch != self.facts.default_branch

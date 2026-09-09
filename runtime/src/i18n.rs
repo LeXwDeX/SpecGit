@@ -13,6 +13,10 @@ pub fn diagnostic(d: &mut Diagnostic, language: Language) {
             "输入不符合命令或配置约束。",
             "检查字段、类型、重复键、模板选择和大小范围，然后重试。",
         ),
+        Code::EvidenceRejected => (
+            "当前原生证据尚未满足交付条件。",
+            "修复报告中的阻塞项后重新检查。",
+        ),
         Code::MigrationRequired => (
             "检测到旧版项目声明，需要明确迁移。",
             "使用旧版 CLI，或执行迁移操作；不要直接覆盖现有配置。",

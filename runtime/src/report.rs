@@ -30,10 +30,10 @@ impl Report {
             schema_version: 2,
             version: env!("CARGO_PKG_VERSION"),
             operation: operation.into(),
-            status: if exit == 2 {
-                "invalid_input"
-            } else {
-                "unknown"
+            status: match exit {
+                1 => "rejected",
+                2 => "invalid_input",
+                _ => "unknown",
             }
             .into(),
             exit,

@@ -301,11 +301,20 @@ pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
     for line in prose(body, false).lines() {
         let line = line.trim();
         if let Some(captures) = EXACT.captures(line) {
-            let id = captures[1].parse::<u64>().ok().filter(|n| *n > 0)
-                .ok_or_else(|| Diagnostic::input("Closing references require positive issue IDs within the supported range."))?;
+            let id = captures[1]
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| {
+                    Diagnostic::input(
+                        "Closing references require positive issue IDs within the supported range.",
+                    )
+                })?;
             refs.insert(id);
         } else if CLOSING.is_match(line) {
-            return Err(Diagnostic::input("Reconcile unsupported closing references explicitly; use one same-repository 'Closes #n' association per line."));
+            return Err(Diagnostic::input(
+                "Reconcile unsupported closing references explicitly; use one same-repository 'Closes #n' association per line.",
+            ));
         }
     }
     if refs.len() > 100 {
