@@ -79,9 +79,37 @@ fn relevant(payload: &Value) -> bool {
             .unwrap_or("");
         ["specgit", "specgit.exe", "specgit.js"].contains(&executable)
     }) {
-        return tokens
-            .get(index + 1)
-            .is_some_and(|command| ["issue", "pr", "merge"].contains(command));
+        let mut remaining = &tokens[index + 1..];
+        loop {
+            let Some(option) = remaining.first().copied() else {
+                return false;
+            };
+            if option == "--json" {
+                remaining = &remaining[1..];
+                continue;
+            }
+            let value = if option == "--cwd" {
+                remaining = &remaining[1..];
+                let Some(value) = remaining.first().copied() else {
+                    return false;
+                };
+                value
+            } else if let Some(value) = option.strip_prefix("--cwd=") {
+                value
+            } else {
+                return ["issue", "pr", "merge"].contains(&option);
+            };
+            let quote = value.chars().next().filter(|c| ['\'', '"'].contains(c));
+            let mut ends_here = quote.is_none_or(|q| value.len() > 1 && value.ends_with(q));
+            remaining = &remaining[1..];
+            while !ends_here {
+                let Some(part) = remaining.first().copied() else {
+                    return false;
+                };
+                ends_here = part.ends_with(quote.expect("an open quote exists"));
+                remaining = &remaining[1..];
+            }
+        }
     }
     tokens.windows(2).any(|pair| {
         ["git", "git.exe", "gh", "glab"].contains(&pair[0])

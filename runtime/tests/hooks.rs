@@ -213,6 +213,10 @@ fn native_write_commands_trigger_observation_context_but_observer_commands_do_no
     .unwrap();
     for (command, relevant) in [
         ("specgit pr --ready", true),
+        ("specgit --json pr --ready", true),
+        ("specgit --cwd '/tmp/project space' --json pr --ready", true),
+        ("specgit --cwd=\"/tmp/project space\" --json issue 1", true),
+        ("specgit --json --cwd /tmp/project finish", false),
         (
             "specgit merge --request 41 --mode now --strategy squash",
             true,

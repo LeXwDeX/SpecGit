@@ -458,7 +458,8 @@ bounded platform view. Neither mode claims exhaustive historical discovery.
 The output preserves source request IDs and observed issue states, including
 already closed issues. It never writes a request body, closes or reopens issues.
 
-The native merge/squash anchor must appear in `target..head`. A two-parent merge
+Evidence Git calls disable local replacement objects and both default/external
+graft files. The native merge/squash anchor must appear in `target..head`. A two-parent merge
 requires the recorded source head as its second parent. An explicit GitLab squash
 anchor is supported; a one-parent GitHub anchor additionally requires equality
 with the complete original source delta, so the last rebased commit cannot stand

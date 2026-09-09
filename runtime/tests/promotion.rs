@@ -261,3 +261,48 @@ fn fresh_clone_recovers_merge_associations_after_source_branches_are_deleted() {
     let r = f.run(&["promotion", "--request", "41"]);
     assert_eq!(r["evidence"]["suggested_issue_ids"], json!([1, 2]), "{r}");
 }
+
+#[test]
+fn local_replacement_objects_cannot_fake_retained_native_postimages() {
+    let (f, base, associations) = fixture("github", "dev");
+    let retained = git(&f, &["rev-parse", "HEAD"]);
+    git(&f, &["rm", "one.txt"]);
+    git(&f, &["commit", "-m", "actual native revert"]);
+    let actual = git(&f, &["rev-parse", "HEAD"]);
+    routes(&f, "github", &base, &associations);
+    git(&f, &["replace", &actual, &retained]);
+    // Make Git's replacement view clean without changing the recorded HEAD SHA.
+    git(&f, &["read-tree", "--reset", "-u", "HEAD"]);
+    assert!(git(&f, &["status", "--porcelain"]).is_empty());
+    let r = f.run(&["promotion", "--request", "41"]);
+    assert_eq!(r["exit"], 3, "{r}");
+    assert!(
+        r["evidence"].get("suggested_issue_ids").is_none(),
+        "A replacement view cannot qualify as the pushed clean source"
+    );
+    git(&f, &["replace", "-d", &actual]);
+    git(&f, &["read-tree", "--reset", "-u", "HEAD"]);
+    let r = f.run(&["promotion", "--request", "41"]);
+    assert_eq!(r["evidence"]["suggested_issue_ids"], json!([2]), "{r}");
+}
+
+#[test]
+fn default_and_external_grafts_cannot_hide_source_merges_from_the_native_range() {
+    let (f, base, _) = fixture("github", "dev");
+    let head = git(&f, &["rev-parse", "HEAD"]);
+    let default = f.root.join(".git/info/grafts");
+    fs::create_dir_all(default.parent().unwrap()).unwrap();
+    fs::write(&default, format!("{head} {base}\n")).unwrap();
+    let r = f.run(&["promotion", "--request", "41"]);
+    assert_eq!(r["evidence"]["suggested_issue_ids"], json!([1, 2]), "{r}");
+    let external = f.root.parent().unwrap().join("external-grafts");
+    fs::write(&external, format!("{head}\n")).unwrap();
+    let out = f
+        .command(&["promotion", "--request", "41"])
+        .env("GIT_GRAFT_FILE", external)
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["evidence"]["suggested_issue_ids"], json!([1, 2]), "{r}");
+    assert!(out.status.success());
+}
