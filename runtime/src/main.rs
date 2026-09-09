@@ -33,6 +33,8 @@ enum Commands {
     Pr(specgit::pr::Options),
     /// Assess current native specs, checks and lifecycle without remote writes.
     Finish(specgit::finish::Options),
+    /// Explicitly delegate a freshly accepted request to native protected merge.
+    Merge(specgit::merge::Options),
     /// Inspect native flow and install the shared project declaration and guidance.
     Init {
         #[arg(long)]
@@ -164,6 +166,7 @@ async fn main() {
         match cli.command {
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
             Commands::Pr(options) => Box::pin(specgit::pr::run(options, process, &cwd)).await,
+            Commands::Merge(options) => Box::pin(specgit::merge::run(options, process, &cwd)).await,
             Commands::Finish(options) => {
                 Box::pin(specgit::finish::run(options, process, &cwd)).await
             }

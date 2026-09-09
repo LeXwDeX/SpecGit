@@ -405,6 +405,69 @@ pub struct ForgeWrite {
     repo: Repository,
 }
 impl ForgeWrite {
+    pub async fn merge(
+        &self,
+        number: u64,
+        head: &str,
+        mode: crate::merge::Mode,
+        strategy: crate::merge::Strategy,
+    ) -> Result<(), Diagnostic> {
+        use crate::merge::{Mode, Strategy};
+        if number == 0 || !crate::project::valid_oid(head) {
+            return Err(malformed());
+        }
+        let number = number.to_string();
+        let gh = self.repo.provider == Provider::Github;
+        let repo = if gh {
+            format!("{}/{}", self.repo.host, self.repo.path)
+        } else {
+            format!("https://{}/{}", self.repo.host, self.repo.path)
+        };
+        let mut args = vec![
+            if gh { "pr" } else { "mr" },
+            "merge",
+            &number,
+            "--repo",
+            &repo,
+            if gh { "--match-head-commit" } else { "--sha" },
+            head,
+        ];
+        if gh {
+            args.push(match strategy {
+                Strategy::Merge => "--merge",
+                Strategy::Squash => "--squash",
+                Strategy::Rebase => "--rebase",
+            });
+            if mode == Mode::Auto {
+                args.push("--auto");
+            }
+        } else {
+            if strategy == Strategy::Rebase {
+                return Err(Diagnostic::input(
+                    "GitLab rebase must be an explicit separate operation.",
+                ));
+            }
+            if strategy == Strategy::Squash {
+                args.push("--squash");
+            }
+            args.extend([
+                "--yes",
+                if mode == Mode::Auto {
+                    "--auto-merge=true"
+                } else {
+                    "--auto-merge=false"
+                },
+            ]);
+        }
+        let output = self
+            .process
+            .run(Request::new(&self.executable, &self.cwd, "native_merge").args(args))
+            .await?;
+        if output.code != 0 {
+            return Err(classify_failure("native_merge", &output.stderr));
+        }
+        Ok(())
+    }
     pub async fn update_request_body(&self, number: u64, body: &str) -> Result<(), Diagnostic> {
         let gh = self.repo.provider == Provider::Github;
         self.write(

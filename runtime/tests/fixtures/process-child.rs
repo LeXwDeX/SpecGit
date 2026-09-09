@@ -135,6 +135,54 @@ fn native_api(args: &[String], path: &std::path::Path) {
                 .as_array_mut()
                 .unwrap()
                 .push(json!({"method":"NATIVE","argv":args}));
+            if args[1] == "merge" {
+                let response = state["merge_response"]
+                    .as_str()
+                    .unwrap_or("merged")
+                    .to_owned();
+                let gh = args[0] == "pr";
+                let r = &mut state["requests"][0];
+                let expected_head = args
+                    .windows(2)
+                    .find(|a| a[0] == "--match-head-commit" || a[0] == "--sha")
+                    .map(|a| a[1].as_str())
+                    .unwrap();
+                assert_eq!(
+                    if gh {
+                        r["head"]["sha"].as_str().unwrap()
+                    } else {
+                        r["sha"].as_str().unwrap()
+                    },
+                    expected_head
+                );
+                assert!(!args.iter().any(|a| {
+                    ["--admin", "--delete-branch", "--remove-source-branch"].contains(&a.as_str())
+                }));
+                if ["merged", "lost_merged"].contains(&response.as_str()) {
+                    r["merged"] = json!(true);
+                    r["state"] = json!(if gh { "closed" } else { "merged" });
+                } else if ["queued", "lost_queued"].contains(&response.as_str()) {
+                    if gh {
+                        r["auto_merge"] = json!({"merge_method":"squash","enabled_by":{"id":99}});
+                    } else {
+                        r["merge_when_pipeline_succeeds"] = json!(true);
+                    }
+                }
+                if state["close_on_merge"] == true
+                    && ["merged", "lost_merged"].contains(&response.as_str())
+                {
+                    for issue in state["issues"].as_array_mut().unwrap() {
+                        issue["state"] = json!("closed");
+                    }
+                }
+                std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+                if response.starts_with("lost_") || response == "denied" {
+                    eprintln!("HTTP 403 native operation denied or response lost");
+                    std::process::exit(1);
+                }
+                println!("native success");
+                return;
+            }
             let r = state["requests"]
                 .as_array_mut()
                 .unwrap()
