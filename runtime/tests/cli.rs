@@ -75,6 +75,17 @@ fn offline_status_does_not_discard_an_existing_declaration() {
         std::fs::read(root.path().join(".specgit.yaml")).unwrap(),
         declaration
     );
+    std::fs::write(
+        root.path().join(".specgit.yaml"),
+        b"version: 2\nremote: origin\nlanguage: zh\n",
+    )
+    .unwrap();
+    let initialized = run();
+    assert!(initialized.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&initialized.stdout).unwrap();
+    assert_eq!(report["status"], "initialized");
+    assert_eq!(report["evidence"]["remote_state"], "not_checked");
+    assert_eq!(report["evidence"]["declaration"]["language"], "zh");
 }
 
 #[test]

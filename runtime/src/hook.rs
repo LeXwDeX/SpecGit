@@ -1,11 +1,11 @@
 //! Native host framing. Errors are informational and never become permission grants.
 use crate::{
-    assets::Snapshot,
+    config::{self, Language},
+    diagnostic::Code,
     input,
     process::{Limits, Process},
-    project::{self, Provider},
+    project,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
@@ -17,14 +17,6 @@ const INPUT_LIMIT: usize = 1_048_576;
 pub struct Output {
     pub json: Option<Value>,
     pub diagnostic: Option<String>,
-}
-#[derive(Deserialize)]
-struct Marker {
-    version: u32,
-    remote: Option<String>,
-    provider: Option<Provider>,
-    #[serde(default)]
-    language: String,
 }
 fn info(message: &str) -> Output {
     Output {
@@ -138,25 +130,13 @@ pub async fn handle(event: &str, bytes: &[u8], _state_root: Option<&Path>) -> Ou
         },
         Err(_) => return Output::default(),
     };
-    let snapshot = match Snapshot::read(&root.join(".specgit.yaml")) {
-        Ok(s) => s,
-        Err(_) => return info("SpecGit project context is unavailable; run doctor explicitly."),
+    let marker = match config::read(&root) {
+        Ok(Some(d)) => d,
+        Ok(None) => return Output::default(),
+        Err(d) if d.code == Code::MigrationRequired => return Output::default(),
+        Err(_) => return info("SpecGit project declaration is invalid; use explicit diagnostics."),
     };
-    let bytes = match snapshot.bytes {
-        Some(b) if b.len() <= INPUT_LIMIT => b,
-        None => return Output::default(),
-        _ => return info("SpecGit project declaration exceeds its read allowance."),
-    };
-    let marker: Marker = match serde_yaml_ng::from_slice(&bytes) {
-        Ok(m) => m,
-        Err(_) => {
-            return info("SpecGit project declaration is malformed; use explicit diagnostics.");
-        }
-    };
-    if marker.version != 2 {
-        return Output::default();
-    }
-    let context = match project::resolve(
+    let context = match config::resolve(
         &process,
         &root,
         marker.remote.as_deref(),
@@ -179,7 +159,7 @@ pub async fn handle(event: &str, bytes: &[u8], _state_root: Option<&Path>) -> Ou
         .as_bytes(),
     );
     let context_id = &context_id[..16];
-    let text = if marker.language == "zh" {
+    let text = if marker.language == Language::Zh {
         format!(
             "SpecGit 2 [{context_id}]：当前分支 {branch}，本地{}。远端状态尚未检查；开始受跟踪的修改前先选择原生 issue，完成以原生合并和 issue 状态为准。",
             if context.dirty { "有改动" } else { "干净" }

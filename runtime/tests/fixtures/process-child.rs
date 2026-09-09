@@ -4,6 +4,11 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(path) = std::env::var_os("SPECGIT_FIXTURE_API_FILE") {
+        native_api(&args, &std::path::PathBuf::from(path));
+        return;
+    }
+
     if std::env::var_os("SPECGIT_FIXTURE_PROBE_MODE").is_some()
         && args.first().map(String::as_str) != Some("api")
     {
@@ -117,5 +122,66 @@ fn main() {
             }
         }
         _ => std::process::exit(2),
+    }
+}
+
+fn native_api(args: &[String], path: &std::path::Path) {
+    use serde_json::{Value, json};
+    if args.first().map(String::as_str) != Some("api") || args.iter().any(|a| a == "--help") {
+        println!("fixture help and version");
+        return;
+    }
+    let mut state: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let method = args
+        .windows(2)
+        .find(|a| a[0] == "--method")
+        .map(|a| a[1].as_str())
+        .unwrap_or("");
+    let endpoint = args.last().unwrap();
+    let input = if method != "GET" {
+        let mut b = vec![];
+        std::io::stdin().read_to_end(&mut b).unwrap();
+        serde_json::from_slice::<Value>(&b).unwrap()
+    } else {
+        Value::Null
+    };
+    state["calls"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"method":method,"endpoint":endpoint,"body":input}));
+    std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    if state["deny"].as_bool() == Some(true) {
+        eprintln!("HTTP 403");
+        std::process::exit(1);
+    }
+    let project_endpoint =
+        endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo";
+    if method == "GET" {
+        if endpoint == "user" {
+            println!("{}", json!({"id":1,"login":"fixture","username":"fixture"}));
+        } else if endpoint.starts_with("repos/fixture/repo/pulls?")
+            || endpoint.starts_with("projects/7/merge_requests?")
+        {
+            println!("{}", state.get("requests").cloned().unwrap_or(json!([])));
+        } else if project_endpoint {
+            println!("{}", state["project"]);
+        } else {
+            eprintln!("HTTP 404");
+            std::process::exit(1);
+        }
+    } else if ["PUT", "PATCH"].contains(&method) && project_endpoint {
+        let key = if method == "PATCH" {
+            "delete_branch_on_merge"
+        } else {
+            "remove_source_branch_after_merge"
+        };
+        if input.as_object().is_none_or(|o| o.len() != 1) || !input[key].is_boolean() {
+            std::process::exit(2);
+        }
+        state["project"][key] = input[key].clone();
+        std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+        println!("{}", state["project"]);
+    } else {
+        std::process::exit(2);
     }
 }

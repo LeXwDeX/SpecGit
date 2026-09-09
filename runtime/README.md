@@ -2,8 +2,8 @@
 
 This private development Cargo package builds the SpecGit 2 library and native
 executable. The foundation exposes `doctor` and offline `status`; the global
-integration additions below provide `setup` and `hook`. Project configuration,
-delivery assessment and distribution remain subsequent programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
+integration additions below provide `setup`, `hook` and `init`. Delivery
+assessment and distribution remain subsequent programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
 
 Use the pinned toolchain from this directory:
 
@@ -99,3 +99,30 @@ placeholder key and a loopback API, and leaves private evidence in its reported
 temporary directory. It exits nonzero if the registered skill is absent, the
 context identifier is missing, the host fails, or more than one model request
 occurs. No external model response is involved.
+
+## Project initialization stage (#511)
+
+`init --provider github` inspects the selected project through native CLI/API
+reads, resolves its current request target or intended native default, and writes
+a strict v2 declaration plus an owned AGENTS block. `--inspect` performs the same
+reads without writes. `--config-file` selects complete new declaration content;
+otherwise refresh preserves existing conventions and template choices. Explicit
+CLI choices override only their corresponding fields.
+
+`--mirror-claude` also creates the marked CLAUDE block; refresh retains an existing
+owned mirror. User content outside markers survives byte-for-byte. Damaged or
+edited blocks are conflicts. `init --rollback <transaction>` restores a recorded
+local transaction and preserves subsequent content/permission edits.
+
+`--api-host` selects private per-worktree routing without putting that endpoint
+in shared files. An explicit `--native-delete-source true|false` sends only the
+provider's native cleanup boolean and reads it back. It never modifies default
+branches or protection. An applied native setting is not silently compensated if
+later local work fails. Native issue closing and branch cleanup remain separately
+reported settings/eligibility observations, not a claim that a merge occurred.
+
+Selected repository Markdown, inline templates and final body files have explicit
+precedence. Native form candidates and inherited-template uncertainty remain
+visible. Issue creation and selected-template metadata reconciliation belong to
+the issue/PR integration stage. Real read-only GitHub/GitLab init probes passed;
+actual setting writes and native closure lifecycle fixtures remain unverified.

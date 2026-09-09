@@ -24,6 +24,7 @@ impl Provider {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Repository {
     pub provider: Provider,
     pub host: String,

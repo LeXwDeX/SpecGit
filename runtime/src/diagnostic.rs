@@ -20,6 +20,7 @@ pub enum Code {
     IdentityMismatch,
     MissingProject,
     AmbiguousRemote,
+    AmbiguousRequest,
     UnsupportedProvider,
     MigrationRequired,
     IoFailed,
