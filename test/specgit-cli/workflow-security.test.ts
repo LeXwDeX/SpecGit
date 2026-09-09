@@ -32,6 +32,7 @@ interface Step {
 }
 
 interface Job {
+  permissions?: Record<string, string>;
   name?: string;
   'runs-on'?: string | string[];
   'continue-on-error'?: boolean | string;
@@ -80,6 +81,21 @@ const assertPermissionsReadOnly = (text: string, label: string): void => {
   const nonRead = Object.entries(permissions).filter(([, scope]) => scope !== 'read');
   if (Object.keys(permissions).length === 0 || nonRead.length > 0) {
     throw new Error(`${label}: permissions must exist and be read-only, got ${JSON.stringify(permissions)}`);
+  }
+};
+
+// Explicit job permissions replace workflow permissions; private repositories
+// cannot rely on public check visibility to hide a missing checks scope (#515).
+const assertAcceptanceReadCapabilities = (text: string): void => {
+  const doc = parse(text) as Workflow;
+  const job = doc.jobs?.['specgit-acceptance'];
+  if (!job) throw new Error('acceptance job missing');
+  const effective = job.permissions ?? doc.permissions ?? {};
+  for (const scope of ['contents', 'issues', 'pull-requests', 'actions', 'checks', 'statuses']) {
+    if (effective[scope] !== 'read') throw new Error(`acceptance requires ${scope}: read`);
+  }
+  if (Object.values(effective).some((scope) => scope !== 'read')) {
+    throw new Error('acceptance permissions must remain read-only');
   }
 };
 
@@ -318,6 +334,17 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     ];
     for (const [label, text] of surfaces) {
       assertPermissionsReadOnly(text, label);
+    }
+  });
+
+  it('all acceptance surfaces have effective private-repository read capabilities', () => {
+    for (const text of [acceptFile, acceptTemplate, externalTemplate]) {
+      assertAcceptanceReadCapabilities(text);
+      for (const scope of ['checks', 'statuses']) {
+        expect(() => assertAcceptanceReadCapabilities(text.replace(`  ${scope}: read\n`, ''))).toThrow(`${scope}: read`);
+      }
+      expect(() => assertAcceptanceReadCapabilities(text.replace('  specgit-acceptance:\n', '  specgit-acceptance:\n    permissions:\n      contents: read\n'))).toThrow(/issues: read/);
+      expect(() => assertAcceptanceReadCapabilities(text.replace('  checks: read', '  checks: write'))).toThrow(/checks: read/);
     }
   });
 
