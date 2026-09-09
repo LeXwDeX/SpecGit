@@ -3,7 +3,8 @@
 This private development Cargo package builds the SpecGit 2 library and native
 executable. The foundation exposes `doctor` and offline `status`; the global
 integration additions provide `setup`, `hook`, `init`, native `issue`/`pr`, read-only
-`finish` and explicit `merge`. Observer delivery, migration and distribution remain
+`finish`, explicit `merge`, bounded `watch` and durable `inbox`. Host integration,
+migration and distribution remain
 programme work. The TypeScript entrypoint remains authoritative during this staged rewrite.
 
 `merge --request 41 --mode auto --strategy squash` requires fresh accepted evidence
@@ -13,6 +14,14 @@ uncertain response is read back without resubmission or closure/delete fallbacks
 GitLab plain merge requires project-enforced no-squash, and auto mode requires a
 current-head pipeline. GitLab rebase and enabled/unknown merge-train routing remain unsupported; GitHub
 queue-only responses without readable native auto-merge evidence remain unknown.
+
+`watch --request 41 --session task-id --goal lifecycle` observes for at most 30
+minutes by default. `--goal checks` ends at current check results without claiming
+merge or closure; `--once` performs one fresh read. `inbox` with the same identity
+refreshes before offering pending events. `--no-refresh` shows unverified receipt
+IDs only, while `--ack <id>` records explicit transport receipt. Events remain
+session/worktree scoped, carry stable IDs and are superseded by new evidence.
+No immediate host wake-up is claimed by these foreground CLI commands.
 
 Use the pinned toolchain from this directory:
 

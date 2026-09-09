@@ -462,6 +462,28 @@ and unacknowledged expiry produces a visible retention diagnostic on next resume
 Never erase a pending result while claiming it was delivered. PID alone is not
 lease identity; verify process generation/owner and recover stale locks safely.
 
+The native CLI exposes `watch --request <id> --session <id> --goal
+checks|lifecycle`, with `--once` for one fresh observation. Polling defaults to
+15 seconds (validated range 1–300); total observation defaults to 1,800 seconds
+(range 1–3,600). Retryable errors use bounded exponential backoff and jitter.
+`inbox` takes the same request/session/goal identity and refreshes native facts
+before offering current events. `inbox --no-refresh` returns only receipt IDs
+marked unverified; `inbox --ack <event-id>` explicitly records transport receipt,
+never human reading or acceptance. Neither operation mutates the forge.
+
+Each default state root is under the selected worktree's Git directory; an
+explicit absolute `--state-root` still keys subscriptions by canonical project,
+worktree, session, request and goal. There are at most 128 subscription entries,
+64 retained events per subscription and 1 MiB per state document. An unacknowledged
+full outbox rejects further writes with an explicit capacity diagnostic. Expiry
+after seven days increments an unacknowledged-expiry count instead of claiming
+delivery. The persistent lock inode is protected by an OS file lock, which is
+released on process death; recorded owner generation/PID/deadline never authorize
+stealing a live lock. A normal timeout releases the lease and retains intent.
+New native attempts, head/target changes and relevant local changes invalidate
+the previous offered event. These mechanisms do not by themselves prove a host
+imported or presented asynchronous output.
+
 Events carry stable ID, repository/request, head/target, goal, state, reason,
 observation time and actionable next step. Deliver at least once; acknowledge
 only the strongest transport event the host proves and deduplicate by event ID.

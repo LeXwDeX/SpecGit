@@ -35,6 +35,10 @@ enum Commands {
     Finish(specgit::finish::Options),
     /// Explicitly delegate a freshly accepted request to native protected merge.
     Merge(specgit::merge::Options),
+    /// Observe current checks or lifecycle with a bounded, resumable subscription.
+    Watch(specgit::watch::Options),
+    /// Refresh pending events or explicitly acknowledge transport receipt.
+    Inbox(specgit::watch::InboxOptions),
     /// Inspect native flow and install the shared project declaration and guidance.
     Init {
         #[arg(long)]
@@ -167,6 +171,10 @@ async fn main() {
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
             Commands::Pr(options) => Box::pin(specgit::pr::run(options, process, &cwd)).await,
             Commands::Merge(options) => Box::pin(specgit::merge::run(options, process, &cwd)).await,
+            Commands::Watch(options) => Box::pin(specgit::watch::run(options, process, &cwd)).await,
+            Commands::Inbox(options) => {
+                Box::pin(specgit::watch::inbox(options, process, &cwd)).await
+            }
             Commands::Finish(options) => {
                 Box::pin(specgit::finish::run(options, process, &cwd)).await
             }
