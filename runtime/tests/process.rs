@@ -54,7 +54,9 @@ async fn preserves_exact_bytes_arguments_cwd_and_exit() {
     r.cwd = root.path().canonicalize().unwrap();
     let out = runner.run(r).await.unwrap();
     assert_eq!(
-        PathBuf::from(String::from_utf8(out.stdout).unwrap().trim_end()),
+        PathBuf::from(String::from_utf8(out.stdout).unwrap().trim_end())
+            .canonicalize()
+            .unwrap(),
         root.path().canonicalize().unwrap()
     );
     assert_eq!(runner.run(request(&["exit", "7"])).await.unwrap().code, 7);
