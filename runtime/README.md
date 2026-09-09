@@ -10,7 +10,8 @@ programme work. The TypeScript entrypoint remains authoritative during this stag
 and delegates through the authenticated native CLI with the assessed source SHA.
 The result distinguishes queued, completed and merged with open issues. An
 uncertain response is read back without resubmission or closure/delete fallbacks.
-GitLab rebase and enabled/unknown merge-train routing remain unsupported; GitHub
+GitLab plain merge requires project-enforced no-squash, and auto mode requires a
+current-head pipeline. GitLab rebase and enabled/unknown merge-train routing remain unsupported; GitHub
 queue-only responses without readable native auto-merge evidence remain unknown.
 
 Use the pinned toolchain from this directory:

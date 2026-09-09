@@ -141,6 +141,21 @@ fn native_api(args: &[String], path: &std::path::Path) {
                     .unwrap_or("merged")
                     .to_owned();
                 let gh = args[0] == "pr";
+                if !gh {
+                    // glab sends squash only when true, and auto-merge only with
+                    // a head pipeline. Model its API semantics, not just argv.
+                    let squash = match state["project"]["squash_option"].as_str() {
+                        Some("never") => false,
+                        Some("always") => true,
+                        _ => {
+                            args.iter().any(|a| a == "--squash=true" || a == "--squash")
+                                || state["requests"][0]["squash"] == true
+                        }
+                    };
+                    let auto = args.iter().any(|a| a == "--auto-merge=true")
+                        && state["requests"][0]["pipeline"].is_object();
+                    state["effective_merge"] = json!({"squash":squash,"auto_merge":auto});
+                }
                 let r = &mut state["requests"][0];
                 let expected_head = args
                     .windows(2)

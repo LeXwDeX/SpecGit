@@ -86,6 +86,65 @@ fn queued(raw: &Value, provider: Provider) -> bool {
             == Some(true)
     }
 }
+async fn gitlab_capability(
+    w: &Workspace,
+    r: &PullRequest,
+    o: &Options,
+) -> Result<Value, Diagnostic> {
+    if o.strategy == Strategy::Rebase {
+        return Err(unknown(
+            "GitLab rebase changes the assessed head and is not delegated by merge.",
+        ));
+    }
+    let project = w
+        .reader
+        .get(&native_delivery::prefix(&w.context.repository))
+        .await?;
+    let raw = w.reader.get(&route(w, r.id)).await?;
+    if project.get("id").and_then(Value::as_u64) != Some(w.facts.id)
+        || project.get("merge_trains_enabled").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(unknown(
+            "GitLab merge-train routing is enabled or cannot be proven disabled.",
+        ));
+    }
+    // glab omits API Squash when its bool flag is false, even if explicitly set.
+    // A project-enforced 'never' policy is the only qualified no-squash path.
+    let squash = project.get("squash_option").and_then(Value::as_str);
+    if (o.strategy == Strategy::Merge && squash != Some("never"))
+        || (o.strategy == Strategy::Squash
+            && !matches!(squash, Some("always" | "default_on" | "default_off")))
+    {
+        return Err(unknown(
+            "The native GitLab squash policy cannot enforce the requested strategy through glab.",
+        ));
+    }
+    // glab consumes legacy `pipeline` separately from `head_pipeline`; it
+    // silently omits AutoMerge when that legacy field is absent.
+    if o.mode == Mode::Auto
+        && (["head_pipeline", "pipeline"].iter().any(|field| {
+            let pipeline = &raw[field];
+            !pipeline.is_object()
+                || pipeline
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .is_none_or(|id| id == 0)
+                || pipeline.get("sha").and_then(Value::as_str) != Some(&r.head)
+        }) || raw["head_pipeline"]["id"] != raw["pipeline"]["id"])
+    {
+        return Err(unknown(
+            "GitLab auto-merge requires a confirmed current-head pipeline; glab otherwise submits an immediate merge.",
+        ));
+    }
+    if native_delivery::request_value(&raw, &w.context.repository, r.id)? != *r {
+        return Err(unknown(
+            "The native request changed during merge capability qualification.",
+        ));
+    }
+    Ok(
+        json!({"squash_option":squash,"merge_trains_enabled":false,"head_pipeline":raw.get("head_pipeline"),"pipeline":raw.get("pipeline")}),
+    )
+}
 async fn readback(w: &Workspace, expected: &PullRequest) -> Result<Option<Report>, Diagnostic> {
     let raw = w.reader.get(&route(w, expected.id)).await?;
     let r = native_delivery::request_value(&raw, &w.context.repository, expected.id)?;
@@ -174,23 +233,11 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
         };
         return Err(unknown(detail));
     }
-    if repo.provider == Provider::Gitlab {
-        if o.strategy == Strategy::Rebase {
-            return Err(unknown(
-                "GitLab rebase is a separate head-changing operation and is not delegated by merge.",
-            ));
-        }
-        // Older GitLab APIs can bypass trains. Require explicit native evidence
-        // that trains are disabled until the train API is separately qualified.
-        let project = w.reader.get(&native_delivery::prefix(repo)).await?;
-        if project.get("id").and_then(Value::as_u64) != Some(w.facts.id)
-            || project.get("merge_trains_enabled").and_then(Value::as_bool) != Some(false)
-        {
-            return Err(unknown(
-                "GitLab merge-train routing is enabled or cannot be proven disabled.",
-            ));
-        }
-    }
+    let capability = if repo.provider == Provider::Gitlab {
+        Some(gitlab_capability(&w, &r, &o).await?)
+    } else {
+        None
+    };
     let mut assessment = finish::run(
         finish::Options {
             request: Some(r.id),
@@ -216,6 +263,13 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
         ));
     }
     w.unchanged().await?;
+    if let Some(previous) = capability
+        && gitlab_capability(&w, &r, &o).await? != previous
+    {
+        return Err(unknown(
+            "Native GitLab merge capabilities changed before submission.",
+        ));
+    }
     let writer = ForgeWrite::new(w.process.clone(), &w.context.root, repo)?;
     let intent = Intent {
         version: 2,

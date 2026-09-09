@@ -33,6 +33,7 @@ pub fn fixture(provider: &str) -> Fixture {
         let mut routes=json!({});
         s["project"]["only_allow_merge_if_pipeline_succeeds"]=json!(true);
         s["project"]["merge_trains_enabled"]=json!(false);
+        s["project"]["squash_option"]=json!("default_off");
         if provider=="github" {
             s["requests"][0]["mergeable"]=json!(true);
             s["requests"][0]["mergeable_state"]=json!("clean");
@@ -54,6 +55,7 @@ pub fn fixture(provider: &str) -> Fixture {
             let base="projects/fixture%2Frepo";
             s["requests"][0]["detailed_merge_status"]=json!("mergeable");
             s["requests"][0]["head_pipeline"]=json!({"id":71,"project_id":7,"sha":head,"status":"success"});
+            s["requests"][0]["pipeline"]=s["requests"][0]["head_pipeline"].clone();
             for (commit,blob_id) in [(&head,"c".repeat(40)),(&"a".repeat(40),"e".repeat(40))] {
                 routes[format!("{base}/repository/commits/{commit}")]=json!({"id":commit});
                 routes[format!("{base}/repository/tree?ref={commit}&recursive=false&per_page=100&page=1")]=json!([{"path":".specgit.yaml","type":"blob","mode":"100644","id":blob_id}]);
