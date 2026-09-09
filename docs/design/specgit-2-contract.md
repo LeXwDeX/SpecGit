@@ -342,7 +342,13 @@ push or binding-only commit: native source HEAD must equal local HEAD and a
 native comparison must show an actual changed file before draft creation.
 
 Existing native content wins on resume. Every old and newly supplied deliberate
-reference is resolved to a same-project issue before writes. The worktree records
+reference is resolved to a same-project issue before writes. Standalone close,
+fix and resolve keywords (including their closed/fixes/resolved variants) are
+recognized without case sensitivity; cross-project, inline and other unsupported
+closing-like forms require explicit reconciliation before body replacement.
+Pending label additions are validated together with current native labels before
+any remote write, so a conflicting native edit stops recovery without alteration.
+The worktree records
 request creation intent and the returned ID before fallible readback. A completed
 initial label step drops its pending intent, so later label edits are evaluated
 as current native facts. Body mutation uses a fresh prewrite read and postwrite
