@@ -27,6 +27,29 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Commands {
+    /// Inspect native flow and install the shared project declaration and guidance.
+    Init {
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, value_enum)]
+        provider: Option<Provider>,
+        #[arg(long)]
+        api_host: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long, value_enum)]
+        language: Option<specgit::config::Language>,
+        #[arg(long)]
+        config_file: Option<PathBuf>,
+        #[arg(long)]
+        mirror_claude: bool,
+        #[arg(long, action=clap::ArgAction::Set, conflicts_with="inspect")]
+        native_delete_source: Option<bool>,
+        #[arg(long)]
+        inspect: bool,
+        #[arg(long)]
+        rollback: Option<String>,
+    },
     /// Install global owned assets; explicit registration is separate from host verification.
     Setup {
         #[arg(long)]
@@ -133,6 +156,37 @@ async fn main() {
     let cancel = process.cancellation.clone();
     let task = tokio::spawn(async move {
         match cli.command {
+            Commands::Init {
+                remote,
+                provider,
+                api_host,
+                target,
+                language,
+                config_file,
+                mirror_claude,
+                native_delete_source,
+                inspect,
+                rollback,
+            } => {
+                specgit::init::run(
+                    specgit::init::Options {
+                        remote,
+                        provider,
+                        api_host,
+                        target,
+                        language,
+                        config_file,
+                        mirror_claude,
+                        native_delete_source,
+                        inspect_only: inspect,
+                        rollback,
+                    },
+                    process,
+                    &cwd,
+                )
+                .await
+            }
+
             Commands::Hook { .. } => unreachable!("hook has its own framing"),
             Commands::Setup {
                 root,
@@ -231,30 +285,47 @@ async fn main() {
                 report
             }
             Commands::Status { remote, provider } => {
-                match specgit::project::resolve(&process, &cwd, remote.as_deref(), provider, None)
-                    .await
-                {
-                    Ok(context)
-                        if context
-                            .root
-                            .join(".specgit.yaml")
-                            .symlink_metadata()
-                            .is_ok() =>
+                let root =
+                    match specgit::project::git(&process, &cwd, &["rev-parse", "--show-toplevel"])
+                        .await
                     {
-                        Report::failure(
-                            "status",
-                            Diagnostic::new(
-                                Code::MigrationRequired,
-                                "configuration",
-                                "An existing SpecGit declaration requires version-aware inspection.",
-                                "Use the existing CLI until the native configuration migration is available; no declaration was modified.",
-                            ),
-                        )
-                    }
+                        Ok(bytes) => match String::from_utf8(bytes) {
+                            Ok(s) => PathBuf::from(s.trim_end_matches(['\r', '\n'])),
+                            Err(_) => {
+                                return Report::failure(
+                                    "status",
+                                    Diagnostic::input("Invalid Git root."),
+                                );
+                            }
+                        },
+                        Err(d) => return Report::failure("status", d),
+                    };
+                let declaration = match specgit::config::read(&root) {
+                    Ok(d) => d,
+                    Err(d) => return Report::failure("status", d),
+                };
+                let selected_remote = remote
+                    .as_deref()
+                    .or_else(|| declaration.as_ref().and_then(|d| d.remote.as_deref()));
+                let selected_provider =
+                    provider.or_else(|| declaration.as_ref().and_then(|d| d.provider));
+                match specgit::config::resolve(
+                    &process,
+                    &root,
+                    selected_remote,
+                    selected_provider,
+                    None,
+                )
+                .await
+                {
                     Ok(context) => Report::success(
                         "status",
-                        "uninitialized",
-                        serde_json::json!({"context":context,"remote_state":"not_checked","integration":"not_initialized"}),
+                        if declaration.is_some() {
+                            "initialized"
+                        } else {
+                            "uninitialized"
+                        },
+                        serde_json::json!({"context":context,"declaration":declaration,"remote_state":"not_checked"}),
                     ),
                     Err(d) => Report::failure("status", d),
                 }

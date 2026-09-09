@@ -13,8 +13,8 @@
     "sha256": "2266e282918aaa8e6166b228af0a1689fd50f9c7e3488053fd0a252ccffbf6d8",
     "install": "cargo install --offline --locked --path runtime --root <isolated-prefix> --debug"
   },
-  "verdict": "not_run",
-  "reason": "Foundation candidate; current-head native CI and merge/closure still pending. This is not a complete feature/programme verdict.",
+  "verdict": "pass",
+  "reason": "Delivery 509 passed fresh finish, all current-head CI, and confirmed merge/issue closure. Partial feature rows below still require subsequent programme deliveries.",
   "evidence": [
     {
       "method": "Regression",
@@ -194,11 +194,19 @@
       "method": "Code",
       "actual": "Standards 0 findings; one Spec diagnostic-loss finding fixed and re-reviewed at cd7a686a",
       "status": "pass"
+    },
+    {
+      "method": "CI",
+      "run_url": "https://github.com/LeXwDeX/SpecGit/actions/runs/34304107473",
+      "revision": "71ca25671ace3de6cf2e516a73ad64dca9d4f5b8",
+      "attempt": 2,
+      "actual": "Rust Linux/macOS/Windows all passed; Required verification passed after a single unchanged-head Windows TypeScript retry. Fresh remote Acceptance run 34304122245 attempt2 passed.",
+      "status": "pass"
     }
   ],
   "feature_portions": {
     "F01": "Cargo native entrypoint implemented; npm launcher #514 not_run",
-    "F02": "local regressions pass; repaired Windows current-head CI pending",
+    "F02": "Actual Linux/macOS/Windows native regressions passed at accepted revision",
     "F03": "observation JSON and exit2/3/130; assessment1/0 #512 not_run",
     "F04": "selected executable/help fresh each invocation; native probes pass",
     "F05": "real account/project GET identity reads both providers pass; init #511 not_run",
@@ -214,5 +222,19 @@
     "The TypeScript runtime is intentionally retained until #513 migration",
     "Historical rows remain subject to the programme ledger; 1.x outcomes are not Rust acceptance evidence",
     "Raw native reports stay local; private hosts, paths and account names are omitted"
-  ]
+  ],
+  "repairs": [
+    518,
+    520
+  ],
+  "accepted_revision": "71ca25671ace3de6cf2e516a73ad64dca9d4f5b8",
+  "completion": {
+    "merge_commit": "2bee54b635a6ef87f04d0b7a927bad527003310f",
+    "merged_at": "2026-09-09T03:23:46Z",
+    "closed_issues": [
+      509,
+      518,
+      520
+    ]
+  }
 }

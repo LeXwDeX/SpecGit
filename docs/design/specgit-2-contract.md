@@ -68,6 +68,28 @@ and invalid paths before writing. Validate maximum input sizes and meaningful
 bounds. The examples are a design target; changing a field during implementation
 requires updating this contract and the migration mapping in the same delivery.
 
+The native implementation bounds the declaration and each selected body/template
+at 1 MiB, tags/check names/required-section lists at 100 entries, poll intervals
+at 1–3600 seconds, and total observation wait at one poll interval through 86400
+seconds. Template selectors require exactly the content fields appropriate to
+their source; repository paths are relative, without traversal or symlink
+ancestors. The supported language values are `en` and `zh`.
+
+`init --inspect` reads configuration, CLI/API identity, current request targets
+and native settings without project or native writes. Ordinary `init` writes
+the owned declaration and AGENTS block after these reads. `--mirror-claude`
+selects the CLAUDE block; an existing owned mirror remains selected on refresh.
+`--native-delete-source true|false` explicitly selects only the native source
+cleanup setting and requires readback. `init --rollback <transaction>` restores
+local owned assets without calling a forge; native settings are not compensated.
+
+A selected `--api-host` is saved under the current worktree's Git directory at
+`specgit-v2/local-routing.json`, never in the shared declaration. Routing is
+bound to the original remote identity and has a 4 KiB input bound. Explicit CLI
+routing wins over matching local routing, then the remote-derived API host.
+A mismatching stored identity is rejected until an explicit selection reconciles
+it. Tokens are never part of this file.
+
 `remote` identifies a Git remote; it is not a hardcoded organization/host.
 Canonical forge identity comes from that remote and an authenticated API response.
 If multiple remotes are plausible, require selection without touching them.
