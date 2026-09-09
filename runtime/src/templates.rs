@@ -23,7 +23,7 @@ fn invalid(message: &str) -> Diagnostic {
 pub fn read_text(path: &Path) -> Result<String, Diagnostic> {
     safe_path(path)?;
     let mut bytes = vec![];
-    fs::File::open(path)
+    crate::assets::open_regular(path)
         .map_err(|_| invalid("Selected template/body file is unavailable."))?
         .take(MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -142,6 +142,7 @@ pub fn prepare(
 }
 pub fn discover(root: &Path) -> Result<Vec<Candidate>, Diagnostic> {
     let mut out = vec![];
+    let mut examined = 0usize;
     for relative in [
         ".github/ISSUE_TEMPLATE",
         ".github/PULL_REQUEST_TEMPLATE",
@@ -154,9 +155,12 @@ pub fn discover(root: &Path) -> Result<Vec<Candidate>, Diagnostic> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(invalid("Cannot inspect native template directory.")),
             Ok(entries) => {
-                for entry in entries.take(101) {
-                    if out.len() >= 100 {
-                        return Err(invalid("Native template discovery exceeds 100 candidates."));
+                for entry in entries {
+                    examined += 1;
+                    if examined > 100 {
+                        return Err(invalid(
+                            "Native template discovery exceeds 100 examined entries; discovery is incomplete.",
+                        ));
                     }
                     let entry = entry.map_err(|_| invalid("Cannot read native template entry."))?;
                     let p = entry.path();

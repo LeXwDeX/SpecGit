@@ -342,18 +342,14 @@ async fn prepare_and_run(
     }
     let mut declaration_change = declaration_change;
     declaration_change.after = Some(declaration.bytes()?);
-    let mut changes = vec![
-        declaration_change,
-        guidance::change(&root.join("AGENTS.md"), &previous, &declaration, None)?,
-    ];
-    if options.mirror_claude || guidance::has_block(&root.join("CLAUDE.md"))? {
-        changes.push(guidance::change(
-            &root.join("CLAUDE.md"),
-            &previous,
-            &declaration,
-            None,
-        )?);
-    }
+    let mut changes = vec![declaration_change];
+    changes.extend(guidance::changes(
+        &root,
+        &private_root,
+        &previous,
+        &declaration,
+        options.mirror_claude,
+    )?);
     // All local inputs validate before a requested native write is representable.
     if let Some(host) = &options.api_host {
         let base = project::resolve(

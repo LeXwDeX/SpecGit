@@ -64,6 +64,31 @@ pub fn safe_path(path: &Path) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
+/// Open only ordinary files; nonblocking/no-follow also covers a Unix leaf swap.
+pub fn open_regular(path: &Path) -> std::io::Result<File> {
+    if !fs::symlink_metadata(path)?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Not a regular file",
+        ));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 fn ensure_directory(path: &Path) -> Result<(), Diagnostic> {
     safe_path(path)?;
     fs::create_dir_all(path).map_err(|_| io_error())?;
@@ -101,7 +126,7 @@ impl Snapshot {
             ));
         }
         let mut bytes = vec![];
-        File::open(path)
+        open_regular(path)
             .map_err(|_| io_error())?
             .take(FILE_LIMIT + 1)
             .read_to_end(&mut bytes)
