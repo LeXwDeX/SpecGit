@@ -1,12 +1,11 @@
 version: 1
-delivery: private-deployment-redaction
+delivery: v2-hooks-architecture
 context:
   kind: worktree
-  label: specgit-private-cleanup-20260909
-  branch: fix/503-private-deployment-redaction
+  label: specgit-v2-20260909
+  branch: docs/507-v2-hooks-architecture
 issues:
-  - 503
+  - 507
 issueKinds:
-  - issue: 503
-    kind: kind::fix
-pr: 504
+  - issue: 507
+    kind: kind::docs
