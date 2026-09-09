@@ -1,12 +1,11 @@
 version: 1
-delivery: rust-runtime-foundation
+delivery: selfhosted-ci-validation
 context:
   kind: worktree
-  label: specgit
-  branch: feat/509-rust-runtime-foundation
+  label: specgit-selfhost-ci-20260909
+  branch: ci/528-selfhosted-ci-validation
 issues:
-  - 509
-  - 518
-  - 520
-issueKinds: []
-pr: 517
+  - 528
+issueKinds:
+  - issue: 528
+    kind: kind::ci
