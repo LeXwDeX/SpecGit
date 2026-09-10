@@ -3,11 +3,21 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 const script = path.resolve('scripts/windows-install-probe.mjs');
 const marker = 'FAKE-SENSITIVE-DIAGNOSTIC-MARKER';
 
 describe('Windows diagnostic output boundary', () => {
+  it('bootstraps cached pwsh using the built-in Windows shell', () => {
+    const workflow = parse(readFileSync('.github/workflows/rc-verify.yml', 'utf8'));
+    const job = workflow.jobs['windows-diagnostics'];
+    expect(job.defaults.run.shell).toBe('pwsh');
+    expect(job.steps[0].shell).toBe('powershell');
+    expect(job.steps[0].run).toContain("'PowerShell\\7.6.6\\x64'");
+    expect(job.steps[0].run).toContain('$env:GITHUB_PATH');
+    expect(job.steps[0].run).not.toContain('Invoke-WebRequest');
+  });
   it('withholds npm metadata and Vitest failures, stacks, names, and console output', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'specgit-diag-redaction-'));
     try {
