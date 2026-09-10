@@ -32,11 +32,41 @@ fn main() {
             snapshot::write(&path, &state);
             std::thread::sleep(Duration::from_secs(120));
         }
-        let status = std::process::Command::new(real_git)
+        // This proxy is used by the final-revalidation deadline test only. Its
+        // Git snapshot is immutable. Warm each real query during initial local
+        // discovery, before the observer clock starts, then replay those bytes
+        // so the one-second fault budget reaches the hanging final query.
+        let key = serde_json::to_string(&args).unwrap();
+        if let Some(cached) = state["git_proxy_cache"].get(&key).cloned() {
+            state["git_proxy_hits"] =
+                serde_json::json!(state["git_proxy_hits"].as_u64().unwrap_or(0) + 1);
+            snapshot::write(&path, &state);
+            let stdout: Vec<u8> = serde_json::from_value(cached["stdout"].clone()).unwrap();
+            let stderr: Vec<u8> = serde_json::from_value(cached["stderr"].clone()).unwrap();
+            std::io::stdout().write_all(&stdout).unwrap();
+            std::io::stderr().write_all(&stderr).unwrap();
+            std::process::exit(cached["code"].as_i64().unwrap() as i32);
+        }
+        if let Some(delay) = state["git_proxy_delay_ms"].as_u64() {
+            std::thread::sleep(Duration::from_millis(delay));
+        }
+        let output = std::process::Command::new(real_git)
             .args(&args)
-            .status()
+            .output()
             .unwrap();
-        std::process::exit(status.code().unwrap_or(1));
+        if !state["git_proxy_cache"].is_object() {
+            state["git_proxy_cache"] = serde_json::json!({});
+        }
+        let code = output.status.code().unwrap_or(1);
+        state["git_proxy_cache"][key] = serde_json::json!({
+            "stdout": &output.stdout,
+            "stderr": &output.stderr,
+            "code": code,
+        });
+        snapshot::write(&path, &state);
+        std::io::stdout().write_all(&output.stdout).unwrap();
+        std::io::stderr().write_all(&output.stderr).unwrap();
+        std::process::exit(code);
     }
     if let Some(path) = std::env::var_os("SPECGIT_FIXTURE_API_FILE") {
         native_api(&args, &std::path::PathBuf::from(path));

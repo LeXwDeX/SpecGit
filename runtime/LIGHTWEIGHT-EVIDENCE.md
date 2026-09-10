@@ -144,6 +144,28 @@ correctness or proof that every dependency seam is defect-free.
 
 ## Release blockers
 
+### Follow-up after the recorded snapshot
+
+The dedicated Windows diagnostic run `34467433884` subsequently passed both
+isolated cases and its complete watch suite (17 passed, one host-specific test
+ignored). The earlier I/O fault did not recur; this is not a causal-fix claim.
+
+Evidence-only head `8dde0264` then passed all TypeScript platforms, including
+Windows (134 files, 2,706 passed and 18 skipped), and Linux/macOS Rust. Its Windows
+Rust run instead failed the final-revalidation fixture: the CLI timed out within
+the required bound before reaching the intended hanging Git fault.
+
+A controlled 100 ms real-Git proxy delay reproduced that exact missing-marker
+failure locally. The fixture now warms its immutable Git query responses during
+initial discovery, before the observer clock starts, then replays the same bytes.
+The actual final query still hangs after the native GET. The one-second observer
+deadline, ten-second outer bound, hanging-child assertion and resumable receipt
+checks are unchanged. The controlled case passes after this fixture repair.
+An isolated mutation extending the production final-check timeout to 12 seconds
+still fails the outer bound, demonstrating that the repaired test detects the
+deadline regression. No production timeout or Git behavior changed. Fresh
+current-head Windows qualification remains required.
+
 1. Resolve and verify the Windows owned-asset filesystem failure on the unchanged
    observer deadlines, then obtain final-head complete CI and installed
    profiles. A standalone passing diagnostic run cannot replace full CI.

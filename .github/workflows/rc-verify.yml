@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       windows_observer_diagnostics:
-        description: 'Diagnose the two Windows observer regressions (not acceptance)'
+        description: 'Diagnose Windows observer regressions (not acceptance)'
         type: boolean
         default: false
 
