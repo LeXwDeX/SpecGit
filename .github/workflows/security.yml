@@ -69,15 +69,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-
       # No dependency cache: `pnpm audit` reads the lockfile, nothing is installed,
       # so a cache-save step would fail on the missing store path.
+      # Install user-facing Node/npm before pnpm; the runner's action runtime
+      # does not necessarily include a complete npm installation.
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
+          package-manager-cache: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       # Advisory on pull requests: a newly published advisory should not stop an
       # unrelated change, and the step depends on registry availability.

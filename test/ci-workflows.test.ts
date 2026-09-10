@@ -27,6 +27,23 @@ describe('CI workflow consistency (#85: deprecated Nix cache path)', () => {
 
 
 describe('fresh self-hosted runner prerequisites', () => {
+  it('bootstraps Security audit Node/npm before pnpm without enabling an unused store cache', () => {
+    const workflow = parse(fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/security.yml'), 'utf8'));
+    const steps = workflow.jobs.audit.steps as { uses?: string; run?: string; with?: Record<string, unknown> }[];
+    const node = steps.findIndex((step) => step.uses?.startsWith('actions/setup-node@'));
+    const pnpm = steps.findIndex((step) => step.uses?.startsWith('pnpm/action-setup@'));
+    const audits = steps.map((step, index) => ({ step, index })).filter(({ step }) => step.run?.startsWith('pnpm audit'));
+    expect(node).toBeGreaterThanOrEqual(0);
+    expect(pnpm).toBeGreaterThan(node);
+    expect(steps[node].with?.['package-manager-cache']).toBe(false);
+    expect(steps[node].with?.cache).toBeUndefined();
+    expect(steps[pnpm].with?.cache).not.toBe(true);
+    expect(audits.map(({ step }) => step.run)).toEqual(['pnpm audit --prod --audit-level high', 'pnpm audit --audit-level high']);
+    expect(audits.every(({ index }) => index > pnpm)).toBe(true);
+    const review = workflow.jobs['dependency-review'].steps.find((step: { uses?: string }) => step.uses?.startsWith('actions/dependency-review-action@'));
+    expect(review.with['fail-on-severity']).toBe('high');
+  });
+
   it('provides Node and npm before installing pnpm in both product verification jobs', () => {
     const workflow = parse(fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8'));
     for (const name of ['test_matrix', 'lint']) {
