@@ -31,6 +31,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The runner's action runtime is not a complete user-facing npm install.
+      # Bootstrap Node before pnpm; restore the pnpm cache after pnpm exists.
+      - name: Initialize Node and npm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
