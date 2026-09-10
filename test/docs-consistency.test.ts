@@ -332,8 +332,8 @@ describe('docs consistency (env contract, schema guide, provider codes)', () => 
     }
   });
 
-  it('README names the guard budget, the glab merge guard, and the actual setup destinations', () => {
-    const text = read('README.md');
+  it('the retained v1 guide names its guard budget, glab merge guard and setup destinations', () => {
+    const text = read('docs/legacy/v1-readme.md');
     expect(text).toContain('SPECGIT_GUARD_BUDGET_S');
     expect(text).toMatch(/glab mr merge/);
     expect(text).toContain('.agents/skills');

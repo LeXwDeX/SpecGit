@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Updates pnpm dependency hash in flake.nix after pnpm-lock.yaml changes.
-# Version is read dynamically from package.json.
+# The explicitly named legacy-engineering package retains the TypeScript toolchain.
 # Usage: ./scripts/update-flake.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,13 +33,6 @@ echo ""
 VERSION=$(node -p "require('$PACKAGE_JSON').version")
 echo -e "${BLUE}📦 Detected package version:${NC} $VERSION"
 
-# Verify flake.nix uses dynamic version
-if ! grep -q "(builtins.fromJSON (builtins.readFile ./package.json)).version" "$FLAKE_FILE"; then
-  echo -e "${YELLOW}⚠️  Warning: flake.nix doesn't use dynamic version from package.json${NC}"
-  echo -e "   Expected pattern: version = (builtins.fromJSON (builtins.readFile ./package.json)).version;"
-  echo ""
-fi
-
 # Check if pnpm-lock.yaml exists
 if [ ! -f "$PROJECT_ROOT/pnpm-lock.yaml" ]; then
   echo -e "${RED}❌ Error: pnpm-lock.yaml not found${NC}"
@@ -61,7 +54,7 @@ sed "${SED_INPLACE[@]}" "s|hash = \"sha256-[^\"]*\"|hash = \"$PLACEHOLDER\"|" "$
 
 # Try to build and capture the correct hash
 echo -e "${BLUE}🔨 Building to determine correct hash (expected to fail)...${NC}"
-BUILD_OUTPUT=$(nix build --no-link 2>&1 || true)
+BUILD_OUTPUT=$(nix build .#legacy-engineering --no-link 2>&1 || true)
 
 # Extract the correct hash from error output
 # Try multiple patterns for compatibility with different Nix versions
@@ -98,7 +91,7 @@ sed "${SED_INPLACE[@]}" "s|hash = \"$PLACEHOLDER\"|hash = \"$CORRECT_HASH\"|" "$
 
 # Verify the build works
 echo -e "${BLUE}🔍 Verifying build with new hash...${NC}"
-BUILD_OUTPUT=$(nix build --no-link 2>&1) && BUILD_SUCCESS=true || BUILD_SUCCESS=false
+BUILD_OUTPUT=$(nix build .#legacy-engineering --no-link 2>&1) && BUILD_SUCCESS=true || BUILD_SUCCESS=false
 if [ "$BUILD_SUCCESS" = false ]; then
   echo -e "${RED}❌ Build verification failed!${NC}"
   echo ""
@@ -122,7 +115,7 @@ echo -e "   Old hash:   $CURRENT_HASH"
 echo -e "   New hash:   $CORRECT_HASH"
 echo ""
 echo -e "${BLUE}📝 Next steps:${NC}"
-echo -e "   1. Test:   ${GREEN}nix run . -- --version${NC}"
+echo -e "   1. Test:   ${GREEN}nix run .#legacy-engineering -- --version${NC}"
 echo -e "   2. Verify: ${GREEN}nix flake check${NC}"
 echo -e "   3. Commit: ${GREEN}git add flake.nix${NC}"
 echo ""

@@ -386,8 +386,8 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)', 
     expect(reference).toContain('issue_out_of_order');
   });
 
-  it('README.md and AGENTS.md replace the "two committed files" claim with the three-tier taxonomy', () => {
-    for (const doc of ['README.md', 'AGENTS.md']) {
+  it('the retained v1 README and engineering AGENTS describe the three-tier taxonomy', () => {
+    for (const doc of ['docs/legacy/v1-readme.md', 'AGENTS.md']) {
       const text = readRepoFile(doc);
       expect(text, `${doc} must not claim "two committed files"`).not.toMatch(/two committed files/);
       expect(text, `${doc} must state the three tiers`).toMatch(/three\s+tiers/i);
@@ -396,11 +396,11 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)', 
     }
   });
 
-  it('README.md documents the status pre-binding exception like docs/cli.md (#217)', () => {
+  it('the retained v1 README documents the status pre-binding exception like docs/cli.md (#217)', () => {
     const cli = readRepoFile('docs', 'cli.md');
     // The normative #175 statement the README must stay consistent with.
     expect(cli).toContain('exit `0` with state `unbound` (#175)');
-    const readme = readRepoFile('README.md');
+    const readme = readRepoFile('docs', 'legacy', 'v1-readme.md');
     expect(readme, 'README must name the status exception').toMatch(/specgit status/);
     expect(readme, 'README must state the exit-0 unbound exception').toMatch(
       /missing record.*exit\s*`?0`?[^.]*unbound|exit\s*`?0`?[^.]*unbound[^.]*missing record/is

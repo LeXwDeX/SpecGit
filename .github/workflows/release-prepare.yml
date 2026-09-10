@@ -1,225 +1,130 @@
+# Explicit coordinator dispatch. This read-only workflow builds and qualifies three platforms; final publication uses the coordinator native npm/gh session.
 name: Release
-
-# Release on merge to main, through version pull requests (main is
-# PR-only for every actor, including this workflow's GITHUB_TOKEN):
-#
-# 1. push to main with pending changesets -> open (or force-update) the
-#    branch changeset-release/main carrying the consumed bump commit
-#    "chore(release): v<version>" as a PR. Configured automation (#382)
-#    merges its exact head only after all CI succeeds; default is disabled.
-# 2. that PR merges -> a version-changing push to main with no pending
-#    changesets and a version not yet on npm -> publish, tag, GitHub Release.
-#
-# The publish gate is registry evidence, never the head commit message
-# (#227): a merge-commit merge leaves "Merge pull request #N..." as the
-# head. Ordinary metadata pushes never start release work; a nonempty
-# changeset is explicit release intent. Manual dispatch remains an explicit
-# release entry point, with an optional package version guard.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Optional exact package.json version guard for this explicit release run'
-        required: false
+        description: Exact stable Cargo/workspace/package version
         type: string
-
+        default: 2.0.0
+        required: true
 permissions:
-  contents: write # tag push + GitHub Release + version branch
-  pull-requests: write # create/merge the version pull request
-  id-token: write # npm OIDC trusted publishing
-
+  contents: read
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
-  scope:
-    if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64]
-    permissions:
-      contents: read
-    outputs:
-      eligible: ${{ steps.plan.outputs.eligible }}
-      version: ${{ steps.plan.outputs.version }}
-      pending: ${{ steps.plan.outputs.pending }}
+  build:
+    name: Build native release (${{ matrix.label }})
+    if: github.repository == 'LeXwDeX/SpecGit'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os:
+              - self-hosted
+              - Linux
+              - X64
+            label: linux
+            target: x86_64-unknown-linux-gnu
+          - os:
+              - self-hosted
+              - macOS
+              - ARM64
+            label: macos
+            target: aarch64-apple-darwin
+          - os:
+              - self-hosted
+              - Windows
+              - X64
+            label: windows
+            target: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+        working-directory: runtime
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Locate the existing Git Bash installation
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: .
+        run: |-
+          $git = Get-Command git -ErrorAction Stop
+          $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) "bin"
+          if (-not (Test-Path (Join-Path $gitBash "bash.exe"))) { throw "Install Git Bash and the MSVC C++ workload before retrying." }
+          $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '24'
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - name: Install verification dependencies without lifecycle scripts
-        run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Classify the complete change
-        id: changes
-        run: node scripts/ci-change-scope.mjs
-      - name: Resolve explicit release intent
-        id: plan
+          node-version: 20.19.0
+          package-manager-cache: false
+      - name: Check exact stable version
         env:
-          SPECGIT_RELEASE_INTENT: ${{ steps.changes.outputs.release_intent }}
-          SPECGIT_RELEASE_VERSION: ${{ inputs.release_version }}
-        run: node scripts/release-state.mjs --plan
-
-  release:
-    needs: scope
-    if: github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main' && needs.scope.outputs.eligible == 'true'
-    runs-on: [self-hosted, Linux, X64]
-    env:
-      SPECGIT_RELEASE_VERSION: ${{ needs.scope.outputs.version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node distribution/release-version.mjs --version "$RELEASE_VERSION"
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.97.0
+          components: clippy, rustfmt
+      - name: Rust formatting and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
+      - name: Rust public interface and real subprocess regressions
+        timeout-minutes: 15
+        run: cargo test --locked --all-targets --features test-fixtures
+      - name: Build remapped release packages and install with scripts disabled
+        run: |
+          node --test distribution/*.test.mjs
+          node distribution/stage.mjs --target '${{ matrix.target }}' --output "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}"
+          node distribution/verify-install.mjs --stage "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Repeat public journeys through the installed npm entrypoint
+        timeout-minutes: 15
+        run: |-
+          node scripts/profile-tests.mjs --output "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}"
+          cp "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}/profile.json" "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/profile.json"
+      - name: Retain installed artifacts and complete test accounting
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-platform-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/*.tgz
+            ${{ runner.temp }}/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/installed.json
+            ${{ runner.temp }}/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/profile.json
+          retention-days: 14
+          if-no-files-found: error
+  assemble:
+    needs: build
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
-          # Git pushes must use the same actor as gh; checkout's persisted
-          # Authorization header takes precedence over credentials in a URL.
-          token: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
-
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '24' # Node 24 ships npm 11.5.1+ required for OIDC trusted publishing
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Count pending changesets
-        id: pending
+          node-version: 20.19.0
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: release-platform-*
+          path: ${{ runner.temp }}/specgit-release-input-${{ github.run_id }}-${{ github.run_attempt }}
+          digest-mismatch: error
+      - name: Verify three platforms and generate checksums
         env:
-          PENDING_CHANGESETS: ${{ needs.scope.outputs.pending }}
-        run: echo "count=$PENDING_CHANGESETS" >> "$GITHUB_OUTPUT"
-
-      # No pending changesets: publish iff this version is not on npm yet.
-      - name: Check publication and release metadata
-        id: unpublished
-        if: steps.pending.outputs.count == '0'
-        run: node scripts/release-state.mjs
-
-      # Push with pending changesets: propose the version PR.
-      - name: Open version pull request
-        if: steps.pending.outputs.count != '0'
-        env:
-          # PR #61 root cause, proven: a version branch pushed with the bare
-          # repository GITHUB_TOKEN lands as github-actions[bot], and every
-          # pull_request workflow on the version PR then completes as
-          # action_required with zero jobs — the required checks can never
-          # finish and the PR blocks forever. RELEASE_BOT_TOKEN (a PAT or
-          # GitHub App installation token with contents + pull-requests
-          # write) pushes as an actor whose events run without approval.
-          # Without it the workflow still runs, and the watchdog step below
-          # fails loudly instead of letting the PR stall silently.
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
-          # @changesets/changelog-github needs a token to link PRs in the
-          # generated changelog entries (separate from gh's GH_TOKEN).
-          GITHUB_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
-        run: |
-          git config user.name "specgit-release-bot"
-          git config user.email "noreply@users.noreply.github.com"
-          git checkout -B changeset-release/main
-          pnpm exec changeset version
-          VERSION=$(node -p "require('./package.json').version")
-          git commit -am "chore(release): v${VERSION}"
-          git push --force origin changeset-release/main
-          BODY="Automated version bump. Merging publishes specgit@${VERSION} to npm and tags v${VERSION}."
-          # create may fail on permissions; the branch may also still carry
-          # the PREVIOUS (merged) version PR — that only means this version
-          # shipped if its tag exists. Decide by tag, never by PR state.
-          if ! gh pr create --base main --head changeset-release/main \
-            --title "chore(release): v${VERSION}" --body "$BODY"; then
-            if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-              echo "Tag v${VERSION} already exists; v${VERSION} already shipped. Nothing to do."
-              exit 0
-            fi
-            STATE=$(gh pr view changeset-release/main --json state --jq .state 2>/dev/null || echo MISSING)
-            if [ "$STATE" = "OPEN" ]; then
-              # Explicit supersession (#71): record the rationale on the
-              # superseded proposal before retitling — never silently
-              # repurpose an open version PR.
-              gh pr comment changeset-release/main --body "Superseded: this version PR now carries v${VERSION} via the release-candidate gates (#71). Nothing was published for the earlier proposal." || true
-              gh pr edit changeset-release/main --title "chore(release): v${VERSION}" --body "$BODY"
-            else
-              # MERGED/CLOSED for an older version (tag absent): recreate.
-              gh pr create --base main --head changeset-release/main \
-                --title "chore(release): v${VERSION}" --body "$BODY" || {
-                echo "::error::version PR for v${VERSION} could not be created (state: $STATE)"
-                exit 1
-              }
-            fi
-          fi
-
-      - name: Verify version PR workflows started (not awaiting approval)
-        if: steps.pending.outputs.count != '0'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
-        run: |
-          # #71/#265: no required workflow may end up needing undisclosed
-          # manual approval. The evidence source is workflow RUNS, never
-          # the per-commit check-run list: an approval-waiting run
-          # completes as action_required with ZERO jobs, so it never
-          # creates any check-run entries at all — a check-run poll sees
-          # only the independently triggered runs and reports started
-          # while the version PR blocks silently (observed live during
-          # the v1.4.0 cut). Runs cover exactly this failure mode.
-          for i in $(seq 1 12); do
-            sleep 10
-            SHA=$(git rev-parse changeset-release/main)
-            JSON=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" 2>/dev/null || echo '{"workflow_runs":[]}')
-            STATE=$(printf '%s' "$JSON" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const runs=j.workflow_runs||[];if(runs.length===0){console.log('empty');return;}if(runs.some(r=>r.conclusion==='action_required')){console.log('action_required');return;}console.log('started')}catch{console.log('empty')}})")
-            echo "workflow-runs poll ${i}/12: ${STATE}"
-            case "$STATE" in
-              started) exit 0 ;;
-              action_required)
-                echo "::error::Required workflows on the version PR are action_required (zero jobs): the head was pushed by an actor whose events need approval (the bare github.token / github-actions[bot]). Provide RELEASE_BOT_TOKEN (a PAT or GitHub App token with contents + pull-requests write) and re-run, or approve each run (POST /repos/${GITHUB_REPOSITORY}/actions/runs/<run_id>/approve)."
-                exit 1 ;;
-            esac
-          done
-          echo "::error::No workflow runs appeared for the version PR head within 120s; investigate the PR checks manually."
-          exit 1
-
-      # #382: automation.merge must be true with target_branch: main.
-      # Disabled policy leaves the proposal open. The script waits at most
-      # 35 minutes for all checks, classic statuses and workflow runs, then
-      # requests a server-side SHA-conditional merge and verifies its state.
-      - name: Merge version pull request when configured
-        if: steps.pending.outputs.count != '0'
-        timeout-minutes: 40
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}
-        run: |
-          pnpm run build
-          node scripts/merge-version-pr.mjs
-
-      # This version is not on npm and carries no tag: publish it.
-      - name: Build
-        if: "steps.unpublished.outputs.needs_publish == 'true'"
-        run: pnpm run build
-
-      - name: Publish to npm
-        if: "steps.unpublished.outputs.needs_publish == 'true'"
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if npm view "specgit@${VERSION}" version >/dev/null 2>&1; then
-            echo "specgit@${VERSION} is already on npm; skipping publish."
-            exit 0
-          fi
-          pnpm run check:pack-version
-          # Dist tag: while in prerelease mode (.changeset/pre.json) publish
-          # under its tag (rc) so `latest` stays on the stable line — the
-          # same rule `changeset publish` applies. Outside pre mode: latest.
-          DIST_TAG=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('.changeset/pre.json','utf8')).tag||'latest')}catch{console.log('latest')}")
-          # npm authentication via OIDC trusted publishing (id-token: write
-          # + registry-url): no environment binding, no token. Provenance is
-          # explicit so the attestation cannot be silently dropped.
-          npm publish --access public --provenance --tag "$DIST_TAG"
-
-      - name: Tag and create GitHub Release
-        if: "steps.unpublished.outputs.needs_finalize == 'true'"
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release-state.mjs --finalize
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node runtime/distribution/release-artifacts.mjs --input "$RUNNER_TEMP/specgit-release-input-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}" --version "$RELEASE_VERSION" --source "$GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: specgit-release-${{ github.sha }}
+          path: ${{ runner.temp }}/specgit-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14

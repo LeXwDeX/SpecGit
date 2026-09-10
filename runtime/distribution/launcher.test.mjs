@@ -28,9 +28,11 @@ function fixture({ platform = 'darwin', arch = 'arm64', version = '2.0.0-dev.0',
 }
 test('unsupported architecture, unknown libc and insufficient glibc fail precisely before spawning', () => {
   for (const [options, expected] of [
+    [{ platform: 'darwin', arch: 'x64' }, /Unsupported platform darwin-x64/],
+    [{ platform: 'linux', arch: 'arm64' }, /Unsupported platform linux-arm64/],
     [{ platform: 'linux', arch: 'riscv64' }, /Unsupported platform linux-riscv64/],
-    [{ platform: 'linux' }, /musl and unknown libc/],
-    [{ platform: 'linux', glibc: '2.31' }, /requires glibc >= 2.34/],
+    [{ platform: 'linux', arch: 'x64' }, /musl and unknown libc/],
+    [{ platform: 'linux', arch: 'x64', glibc: '2.31' }, /requires glibc >= 2.34/],
   ]) {
     const result = fixture(options);
     assert.equal(result.status, 2);
