@@ -1,5 +1,9 @@
 # CI scope and release intent
 
+This page describes the repository's retained TypeScript engineering gates.
+Public SpecGit v2 is the native CLI described in [README](../README.md); its
+release artifacts follow the [native release procedure](../runtime/distribution/README.md).
+
 This is the binding classification for work in the SpecGit product repository.
 Classify the intended tracked change before choosing a delivery, verification,
 or release action. Running a command, detecting generated-file drift, or merging
@@ -218,11 +222,12 @@ This repository's generated **SpecGit Acceptance** workflow checks out full
 history and classifies the change with Node and Git before installing a project
 toolchain. Product changes install locked dependencies with `--ignore-scripts`,
 then build and run the current CLI.
-Metadata-only changes install the exact version declared in `package.json` into
-`$RUNNER_TEMP/specgit-cli`, with lifecycle scripts disabled, and run that
-published CLI without compiling the product. Policy/schema implementation
-changes take the product path. A missing published version or incompatible
-runtime fails closed; metadata verification does not fall back to compilation.
+Metadata-only changes check out the repository's trusted default branch into
+an isolated directory, install locked dependencies with lifecycle scripts disabled,
+and compile the retained TypeScript engineering verifier there. They do not build
+or test the native product. Public v2 packages contain no TypeScript `dist/` modules
+and are not used as engineering runtimes. Policy/schema implementation changes
+take the product path; source installation or compilation failure fails the job.
 
 Both paths resolve the approved target-branch policy and wait through authenticated
 `gh` for its required checks
@@ -251,12 +256,12 @@ requires approved policy.
 requires a confirmed merge and every bound issue closed; a merged delivery with
 open issues is `closure_pending`. When configured, the separate completion
 workflow runs from trusted default-branch code and rechecks live evidence.
-Its generated runtime reference is an exact CLI version with a checked completion
-protocol, not a permanent 1.12.0 pin or `latest`. In this product repository,
-only a product change may use the approved source-build fallback when the
-published completion runtime is unavailable. Metadata changes instead report
-`runtime_upgrade_required` until a compatible runtime is published. This
-repository also requires verified single-pass support in that runtime and invokes
+Legacy adopter workflows use an exact CLI version with a checked completion
+protocol. This repository instead compiles the retained engineering runtime from
+its separate checkout pinned to the trusted default-branch event SHA, for both
+product and metadata deliveries. It never executes PR source as its write-capable
+completion runtime or installs the public v2 launcher for this purpose. This
+repository requires verified single-pass support in that runtime and invokes
 completion with `--single-pass`: pending CI returns immediately, freeing the
 single Linux runner for queued verification jobs. Later CI or acceptance completion
 events retry the evidence check; the normal adopter polling defaults remain unchanged.
@@ -264,7 +269,7 @@ The completion runner classifies the original PR's complete file changes, even
 after that PR has merged. It verifies the PR identity and head/base revisions
 around paginated file reads; missing, truncated, or changing evidence fails
 closed. A merge must not collapse a product delivery into an empty metadata
-change, and metadata-only deliveries remain ineligible for source compilation.
+change; native product checks remain determined by the original changed inputs.
 The SpecGit repository's reserved `changeset-release/main` proposal still runs
 Acceptance and every version/release gate, but its successful Acceptance run
 does not start bound-delivery completion: that generated proposal deliberately

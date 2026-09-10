@@ -43,16 +43,19 @@ describe('self acceptance CI scope', () => {
     expect(all[install].run).toContain('--ignore-scripts');
   });
 
-  it('metadata-only changes verify their scope and use only the isolated published CLI', () => {
+  it('metadata-only changes use isolated trusted engineering source independently of public v2', () => {
     const selected = selectedSteps('false');
     const commands = selected.map((step) => step.run ?? '').join('\n');
-    expect(commands).toContain('npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --ignore-scripts');
-    expect(commands).toContain('require(\'./package.json\').version');
+    expect(commands).toContain('node build.js');
+    const trusted = selected.find((step) => step.name === 'Checkout trusted engineering source for metadata validation');
+    expect(trusted?.with?.ref).toBe('${{ github.event.repository.default_branch }}');
+    expect(trusted?.with?.['persist-credentials']).toBe(false);
+    expect(commands).not.toMatch(/(?:^|\n)\s*npm install/);
     expect(commands).toContain('await acceptanceMain()');
     expect(commands).not.toMatch(/pnpm run build|node bin\/specgit\.js/);
-    expect(selected.find((step) => step.name === 'specgit finish with trusted CLI')?.env?.SPECGIT_ACCEPT_RUNTIME).toBe('${{ runner.temp }}/specgit-cli/node_modules/specgit');
-    expect(commands).not.toContain('pnpm install');
-    expect(selected.some((step) => step.uses?.startsWith('pnpm/action-setup@'))).toBe(false);
+    expect(selected.find((step) => step.name === 'specgit finish with trusted CLI')?.env?.SPECGIT_ACCEPT_RUNTIME).toBe('${{ runner.temp }}/specgit-cli');
+    expect(commands).toContain('pnpm install --frozen-lockfile --ignore-scripts');
+    expect(selected.some((step) => step.uses?.startsWith('pnpm/action-setup@'))).toBe(true);
     expect(commands).toContain('node "$SPECGIT_POLICY_ENTRY"');
   });
 
