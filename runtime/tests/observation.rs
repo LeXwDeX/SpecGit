@@ -29,7 +29,8 @@ fn evidence() -> Evidence {
             state: "open".into(),
             updated_at: "2026-09-09T00:00:00Z".into(),
         }]),
-        association_source: Some("closing_references"),
+        associations: Some(vec![]),
+        native_closing_available: true,
         checks: Some(vec![Check {
             name: "Build".into(),
             source: "check_run".into(),
@@ -218,4 +219,15 @@ fn native_check_identity_rejects_stale_heads_projects_and_attempts() {
             .iter()
             .all(|c| !c.valid_for(request, &conflicting))
     );
+}
+
+#[test]
+fn missing_native_associations_preserve_merge_without_claiming_completion() {
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "merged".into();
+    e.issues.as_mut().unwrap()[0].state = "closed".into();
+    e.native_closing_available = false;
+    let observed = observation::describe(e);
+    assert_eq!(observed.status, Status::Merged);
+    assert_eq!(observed.evidence.request.as_ref().unwrap().state, "merged");
 }

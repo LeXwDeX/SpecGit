@@ -361,7 +361,10 @@ fn native_api(args: &[String], path: &std::path::Path) {
         .as_array_mut()
         .unwrap()
         .push(json!({"method":method,"endpoint":endpoint,"body":input}));
-    if method == "GET" && state["read_failure"].is_string() {
+    let fixed_closing_query = method == "POST"
+        && endpoint == "graphql"
+        && input["query"] == specgit::forge::github::CLOSING_ISSUES_QUERY;
+    if (method == "GET" || fixed_closing_query) && state["read_failure"].is_string() {
         state["hanging_reader_pid"] = json!(std::process::id());
         snapshot::write(path, &state);
         if state["read_failure"] == "hang" {
@@ -386,6 +389,9 @@ fn native_api(args: &[String], path: &std::path::Path) {
             eprintln!("HTTP 404");
             std::process::exit(1);
         }
+    }
+    if closing_api(&mut state, path, method, endpoint, &input) {
+        return;
     }
     let project_endpoint =
         endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo";
@@ -425,6 +431,125 @@ fn native_api(args: &[String], path: &std::path::Path) {
     } else {
         std::process::exit(2);
     }
+}
+
+fn closing_api(
+    state: &mut serde_json::Value,
+    path: &std::path::Path,
+    method: &str,
+    endpoint: &str,
+    input: &serde_json::Value,
+) -> bool {
+    use serde_json::{Value, json};
+    let gh = endpoint == "graphql";
+    let route = endpoint.split('?').next().unwrap();
+    if !gh && !route.ends_with("/closes_issues") {
+        return false;
+    }
+    let (number, offset) = if gh {
+        if method != "POST"
+            || input["query"] != specgit::forge::github::CLOSING_ISSUES_QUERY
+            || input.as_object().is_none_or(|o| o.len() != 2)
+            || input["variables"].as_object().is_none_or(|o| o.len() != 4)
+        {
+            eprintln!("HTTP 400 fixture only supports the fixed read query");
+            std::process::exit(1);
+        }
+        let variables = &input["variables"];
+        let offset = match variables["after"].as_str() {
+            Some(cursor) => cursor
+                .strip_prefix("closing:")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap(),
+            None => 0,
+        };
+        (variables["number"].as_u64().unwrap(), offset)
+    } else {
+        assert_eq!(method, "GET");
+        let parts: Vec<_> = route.split('/').collect();
+        let number = parts[parts.len() - 2].parse::<u64>().unwrap();
+        let query = endpoint.split_once('?').unwrap().1;
+        let page = url::form_urlencoded::parse(query.as_bytes())
+            .find(|(name, _)| name == "page")
+            .unwrap()
+            .1
+            .parse::<usize>()
+            .unwrap();
+        (number, (page - 1) * 100)
+    };
+    state["native_closing_reads"] = json!(state["native_closing_reads"].as_u64().unwrap_or(0) + 1);
+    if state["native_closing_on_read"].is_number()
+        && state["native_closing_on_read"] == state["native_closing_reads"]
+    {
+        let changed = state["native_closing_changed"].clone();
+        if state["native_closing_by_request"]
+            .get(number.to_string())
+            .is_some()
+        {
+            state["native_closing_by_request"][number.to_string()] = changed;
+        } else {
+            state["native_closing"] = changed;
+        }
+    }
+    snapshot::write(path, state);
+    if let Some(failure) = state["native_closing_failure"].as_str() {
+        match failure {
+            "forbidden" => {
+                eprintln!("HTTP 403");
+                std::process::exit(1);
+            }
+            "notfound" => {
+                eprintln!("HTTP 404");
+                std::process::exit(1);
+            }
+            "unsupported" if gh => {
+                println!(
+                    "{}",
+                    json!({"errors":[{"type":"undefinedField","message":"The selected GraphQL schema does not expose closingIssuesReferences."}]})
+                );
+                return true;
+            }
+            "unsupported" => {
+                eprintln!("HTTP 404");
+                std::process::exit(1);
+            }
+            "malformed" => {
+                println!("null");
+                return true;
+            }
+            _ => panic!("unknown closing fixture failure"),
+        }
+    }
+    let page_key = if gh {
+        "native_closing_graphql_pages"
+    } else {
+        "native_closing_gitlab_pages"
+    };
+    if let Some(pages) = state.get(page_key).and_then(Value::as_array) {
+        println!("{}", pages[offset / 100]);
+        return true;
+    }
+    let values = state["native_closing_by_request"]
+        .get(number.to_string())
+        .or_else(|| state.get("native_closing"))
+        .cloned()
+        .unwrap_or(json!([]));
+    let values = values.as_array().unwrap();
+    let nodes: Vec<_> = values.iter().skip(offset).take(100).map(|value| {
+        if value.is_object() { return value.clone(); }
+        if gh { json!({"number":value,"repository":{"databaseId":state["project"]["id"],"nameWithOwner":state["project"]["full_name"]}}) }
+        else { json!({"iid":value,"project_id":state["project"]["id"]}) }
+    }).collect();
+    let response = if gh {
+        let more = offset + 100 < values.len();
+        let connection = json!({"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":if more {json!(format!("closing:{}",offset+100))} else {Value::Null}}});
+        json!({"data":{"repository":{"databaseId":state["project"]["id"],"nameWithOwner":state["project"]["full_name"],"pullRequest":{"number":number,"closingIssuesReferences":connection}}}})
+    } else {
+        json!(nodes)
+    };
+    println!("{response}");
+    true
 }
 
 fn request_api(

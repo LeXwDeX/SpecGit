@@ -138,3 +138,29 @@ not infer purity or extensibility from filenames or test totals.
 Next ledger revision must identify the actual implementation commit, final
 artifact digests, runner/run links, native test objects and host evidence. It must
 preserve failed/unknown/not-run entries until their particular conditions change.
+
+## Resume qualification and association repairs
+
+The `736564db1ef77d760033d3bc563fad5f3c44ec15` three-platform Rust CI
+artifacts were independently checked against their installed profiles: Linux and
+macOS each passed 155 tests, Windows passed 151, with one separately qualified
+host test ignored in each profile. Every profile enumerated 25 processes; tarball
+integrity and packaged binary/launcher digests matched. Windows included the
+installed console-interrupt journey. Evidence is retained at
+`/private/tmp/specgit-ci-736564db-evidence/SUMMARY.md`. The Windows TypeScript job
+hit its existing 20-minute budget; its inputs were unchanged from the same-runner
+passing baseline. This is not an all-green current-head CI claim.
+
+The next repair revision isolates explicit request observation from unrelated
+local selection state; preserves native closing/body/local provenance per Issue;
+rechecks native association sets; and prevents unavailable associations from
+producing completed status or watch notifications. Issue and request write
+capabilities are separate. Workspace declaration access is private and a narrow
+specification view preserves full-snapshot concurrent-edit checks. CLI reference
+choices remain optional under design `1a1ca102` §3.1.1.
+
+Before this repair is committed, the complete local Rust suite passes 173 tests
+with one host-specific test ignored; Clippy with warnings denied and metadata
+checks pass. These local results do not qualify the previous installed binary as
+the new repair. Rebuild/installation, actual-host replay, and current-head owned
+runner CI must use the repair's actual source and artifact identities.

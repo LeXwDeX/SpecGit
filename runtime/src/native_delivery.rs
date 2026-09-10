@@ -90,12 +90,12 @@ pub async fn has_changes(
         Provider::Gitlab => gitlab::has_changes(reader, repo, base, head).await,
     }
 }
-/// Created only for explicit issue/PR operations, never passed into observation or hooks.
-pub struct ForgeWrite {
+/// Request writes are available only to explicit PR/MR operations.
+pub struct RequestWrite {
     transport: WriteTransport,
     provider: Provider,
 }
-impl ForgeWrite {
+impl RequestWrite {
     pub fn new(process: Process, cwd: &Path, repo: &Repository) -> Result<Self, Diagnostic> {
         Ok(Self {
             transport: WriteTransport::new(process, cwd, repo)?,
@@ -125,21 +125,7 @@ impl ForgeWrite {
         }
     }
     pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
-        match self.provider {
-            Provider::Github => github::create_label(&self.transport, tag).await,
-            Provider::Gitlab => gitlab::create_label(&self.transport, tag).await,
-        }
-    }
-    pub async fn create_issue(
-        &self,
-        title: &str,
-        body: &str,
-        labels: &[String],
-    ) -> Result<u64, Diagnostic> {
-        match self.provider {
-            Provider::Github => github::create_issue(&self.transport, title, body, labels).await,
-            Provider::Gitlab => gitlab::create_issue(&self.transport, title, body, labels).await,
-        }
+        create_label(&self.transport, self.provider, tag).await
     }
     pub async fn create_request(
         &self,
@@ -156,5 +142,43 @@ impl ForgeWrite {
                 gitlab::create_request(&self.transport, source, target, title, body).await
             }
         }
+    }
+}
+
+/// Issue writes cannot create, ready or update a request.
+pub struct IssueWrite {
+    transport: WriteTransport,
+    provider: Provider,
+}
+impl IssueWrite {
+    pub fn new(process: Process, cwd: &Path, repo: &Repository) -> Result<Self, Diagnostic> {
+        Ok(Self {
+            transport: WriteTransport::new(process, cwd, repo)?,
+            provider: repo.provider,
+        })
+    }
+    pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
+        create_label(&self.transport, self.provider, tag).await
+    }
+    pub async fn create_issue(
+        &self,
+        title: &str,
+        body: &str,
+        labels: &[String],
+    ) -> Result<u64, Diagnostic> {
+        match self.provider {
+            Provider::Github => github::create_issue(&self.transport, title, body, labels).await,
+            Provider::Gitlab => gitlab::create_issue(&self.transport, title, body, labels).await,
+        }
+    }
+}
+async fn create_label(
+    transport: &WriteTransport,
+    provider: Provider,
+    tag: &crate::config::Tag,
+) -> Result<(), Diagnostic> {
+    match provider {
+        Provider::Github => github::create_label(transport, tag).await,
+        Provider::Gitlab => gitlab::create_label(transport, tag).await,
     }
 }

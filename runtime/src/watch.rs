@@ -95,6 +95,8 @@ fn normalized(assessment: &NativeObservation, context: &Context, goal: Goal) -> 
     struct Projection<'a> {
         checks: &'a Option<Vec<crate::delivery_model::Check>>,
         issues: Vec<IssueState<'a>>,
+        associations: &'a Option<Vec<crate::observation::IssueAssociation>>,
+        native_closing_available: bool,
         request_state: Option<&'a str>,
         draft: Option<bool>,
         auto_merge: &'a Option<crate::observation::AutoMerge>,
@@ -103,6 +105,8 @@ fn normalized(assessment: &NativeObservation, context: &Context, goal: Goal) -> 
     // Only the bounded typed projection enters durable transport; never private descriptions.
     let projection = Projection {
         checks: &evidence.checks,
+        associations: &evidence.associations,
+        native_closing_available: evidence.native_closing_available,
         issues: evidence
             .issues
             .iter()
@@ -133,18 +137,18 @@ fn normalized(assessment: &NativeObservation, context: &Context, goal: Goal) -> 
         || request.is_some_and(|r| Some(r.source.as_str()) != context.branch.as_deref())
     {
         EventState::IdentityChanged
-    } else if assessment.status == Status::Completed {
-        EventState::Completed
-    } else if assessment.status == Status::MergedIssuesOpen {
-        EventState::MergedIssuesOpen
-    } else if request.is_some_and(|r| r.state == "closed") {
-        EventState::ClosedUnmerged
     } else if codes.contains(&&Code::Cancelled) {
         EventState::Cancelled
     } else if !codes.is_empty()
         || matches!(assessment.status, Status::Unknown | Status::InvalidInput)
     {
         EventState::Unknown
+    } else if assessment.status == Status::Completed {
+        EventState::Completed
+    } else if assessment.status == Status::MergedIssuesOpen {
+        EventState::MergedIssuesOpen
+    } else if request.is_some_and(|r| r.state == "closed") {
+        EventState::ClosedUnmerged
     } else if check_outcome == CheckOutcome::Failed {
         EventState::Failed
     } else if check_outcome == CheckOutcome::Passed {

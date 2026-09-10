@@ -6,6 +6,37 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A specification consumer can inspect rules and templates, never unrelated project or Agent settings.
+#[derive(Clone, Copy)]
+pub struct Specification<'a> {
+    declaration: &'a Declaration,
+}
+impl<'a> Specification<'a> {
+    pub(crate) fn new(declaration: &'a Declaration) -> Self {
+        Self { declaration }
+    }
+    pub fn check(self, issue: bool, title: &str, body: &str, labels: &[String]) -> Vec<Violation> {
+        check(self.declaration, issue, title, body, labels)
+    }
+    pub fn catalog(self) -> BTreeMap<String, Tag> {
+        catalog(self.declaration)
+    }
+    pub fn selected_labels(
+        self,
+        title: &str,
+        explicit: Option<&[String]>,
+        pool: &[String],
+    ) -> Result<Vec<String>, Diagnostic> {
+        selected_labels(self.declaration, title, explicit, pool)
+    }
+    pub fn request_template(self) -> &'a crate::config::Template {
+        &self.declaration.templates.pr
+    }
+    pub fn language(self) -> Language {
+        self.declaration.language
+    }
+}
+
 pub const KINDS: [(&str, &str); 14] = [
     ("feat", "0E8A16"),
     ("fix", "D93F0B"),
