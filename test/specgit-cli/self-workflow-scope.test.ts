@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { harnessWorkflowYaml, selfAcceptanceJobYaml } from '../../src/cli/harness-content.js';
 
@@ -28,6 +32,48 @@ const selectedSteps = (build: 'true' | 'false' | ''): Step[] => steps().filter((
 });
 
 describe('self acceptance CI scope', () => {
+  it('refuses existing engineering destinations before any subsequent build can execute', () => {
+    const root = mkdtempSync(join(tmpdir(), 'specgit-engineering-isolation-'));
+    try {
+      const script = steps().find((step) => step.name === 'Isolate trusted engineering source')?.run;
+      expect(script).toBeDefined();
+      for (const kind of ['directory', 'dangling-symlink', 'fresh']) {
+        const checkout = join(root, kind, 'checkout');
+        const runner = join(root, kind, 'runner');
+        const source = join(checkout, '.specgit-engineering');
+        const destination = join(runner, 'specgit-cli');
+        mkdirSync(source, { recursive: true });
+        mkdirSync(runner, { recursive: true });
+        writeFileSync(join(source, 'source-marker'), 'new');
+        if (kind === 'directory') {
+          mkdirSync(destination);
+          writeFileSync(join(destination, 'source-marker'), 'old');
+        } else if (kind === 'dangling-symlink') {
+          symlinkSync(join(runner, 'missing'), destination, 'junction');
+        }
+        const result = spawnSync('bash', ['-e', '-c', `${script}\nprintf executed > "$RUNNER_TEMP/executed"`], {
+          cwd: checkout, env: { ...process.env, RUNNER_TEMP: runner.replace(/\\/g, '/') }, encoding: 'utf8',
+        });
+        expect(result.error).toBeUndefined();
+        if (kind === 'fresh') {
+          expect(result.status).toBe(0);
+          expect(readFileSync(join(destination, 'source-marker'), 'utf8')).toBe('new');
+          expect(existsSync(source)).toBe(false);
+          expect(existsSync(join(runner, 'executed'))).toBe(true);
+        } else {
+          expect(result.status).toBe(1);
+          expect(result.stderr).toContain('destination already exists');
+          expect(readFileSync(join(source, 'source-marker'), 'utf8')).toBe('new');
+          expect(existsSync(join(runner, 'executed'))).toBe(false);
+          expect(existsSync(join(destination, '.specgit-engineering'))).toBe(false);
+          if (kind === 'directory') expect(readFileSync(join(destination, 'source-marker'), 'utf8')).toBe('old');
+        }
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('classifies the complete checkout before installing the product toolchain', () => {
     const all = steps();
     const checkout = all.find((step) => step.uses?.startsWith('actions/checkout@'));

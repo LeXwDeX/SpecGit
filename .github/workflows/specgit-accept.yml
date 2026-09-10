@@ -104,7 +104,12 @@ jobs:
 
       - name: Isolate trusted engineering source
         if: steps.scope.outputs.build == 'false'
-        run: mv .specgit-engineering "$RUNNER_TEMP/specgit-cli"
+        run: |
+          if [ -e "$RUNNER_TEMP/specgit-cli" ] || [ -L "$RUNNER_TEMP/specgit-cli" ]; then
+            echo 'Engineering runtime destination already exists; refusing to reuse it.' >&2
+            exit 1
+          fi
+          mv .specgit-engineering "$RUNNER_TEMP/specgit-cli"
 
       - name: Setup engineering pnpm
         if: steps.scope.outputs.build == 'false'
