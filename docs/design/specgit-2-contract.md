@@ -1,5 +1,13 @@
 # SpecGit 2.0 harness contract
 
+> Historical contract, superseded on 2026-09-10 by
+> [the lightweight Agent-native CLI design](specgit-2-rust-design.md).
+> Preserve the original text as evidence, not current implementation authority.
+> In particular, SpecGit no longer owns finish/merge/protection orchestration;
+> hooks notify an Agent about residual open issues, and authorized Agent closure
+> is optional. See the [feature dispositions](specgit-2-rust-history.md) and
+> [handoff](specgit-2-rust-handoff.md) before continuing product work.
+
 Status: proposed implementation contract for the Rust rewrite. Read with the
 [architecture and implementation sequence](specgit-2.md) and
 [historical requirements ledger](specgit-2-history.md). None of these documents

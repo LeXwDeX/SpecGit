@@ -1,5 +1,12 @@
 # SpecGit 2.0 feature acceptance matrix
 
+> Historical F01–F48 baseline. The 2026-09-10 user simplification supersedes this
+> matrix as an implementation target. Read each of the
+> [48 explicit dispositions](specgit-2-rust-history.md) and the new
+> [L01–L18 / C01–C12 acceptance requirements](specgit-2-rust-design.md).
+> Preserve required behavior and evidence, but do not build the retired local
+> finish/merge/promotion/programme engines merely to satisfy an old row.
+
 Status: required acceptance plan, not executed results. This matrix covers the
 [architecture](specgit-2.md), [harness contract](specgit-2-contract.md) and the
 296 entries in the [history ledger](specgit-2-history.md). Each implementation
