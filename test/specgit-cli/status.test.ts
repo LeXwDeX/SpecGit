@@ -407,6 +407,25 @@ describe('specgit status (local evidence only, G1-G5)', () => {
       rmDir(root);
     });
 
+    it.skipIf(process.platform === 'win32')('escapes controls from an unowned retired filename in human status', async () => {
+      const directory = path.join(root, '.opencode', 'command');
+      fs.mkdirSync(directory, { recursive: true });
+      const filename = 'specgit-\u001b[2Jretired\r\nforged\u001b]52;c;payload\u0007.md';
+      fs.writeFileSync(path.join(directory, filename), 'unowned content');
+      const t = makeCtx({ record: sampleBinding(), policy: samplePolicy(),
+        root: { ok: true, value: root }, cwd: root });
+      const code = await runCliWith(['node', 'specgit', 'status'], t.ctx);
+      expect(code).toBe(EXIT_SUCCESS);
+      expect(t.io.stdout.join('\n')).toContain(
+        'conflict .opencode/command/specgit-retired\\u000d\\u000aforged]52;c;payload.md'
+      );
+      for (const line of t.io.stdout) {
+        expect(line).not.toMatch(/[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/u);
+      }
+      expect(fs.readdirSync(directory)).toEqual([filename]);
+      expect(t.ghProvider.calls).toEqual([]);
+    });
+
     it.each([
       { owned: false, surfaceState: 'conflict', workflowState: 'conflict', code: 'asset_conflict' },
       { owned: true, surfaceState: 'missing', workflowState: 'stale', code: 'asset_stale' },

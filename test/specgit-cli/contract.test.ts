@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
-import { sanitize } from '../../src/cli/output.js';
+import { finishOutcome, sanitize } from '../../src/cli/output.js';
 import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
 import { makeCtx, makeEvaluate, makeVerdict, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
 describe('CLI contract: exit codes', () => {
@@ -106,6 +106,16 @@ describe('CLI contract: JSON envelope', () => {
 });
 
 describe('CLI contract: sanitization', () => {
+  it('guards every human outcome line while preserving Unicode and indentation', () => {
+    const lines: string[] = [];
+    finishOutcome({ stdout: (line) => lines.push(line), stderr: () => {} }, 'status', 'test', {
+      exit: EXIT_SUCCESS,
+      human: ['  中文 café', '\u001b[2Jhidden\u001b]52;c;payload\u0007\r\nforged\u009b2J'],
+    }, false);
+    expect(lines).toEqual(['  中文 café', 'hidden]52;c;payload\\u000d\\u000aforged\\u009b2J']);
+    expect(lines.join('')).not.toMatch(/[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/u);
+  });
+
   it('strips ANSI escapes and control characters', () => {
     const dirty = '\u001b[31mred\u0007bell\u0000null ok';
     expect(sanitize(dirty)).toBe('redbellnull ok');
