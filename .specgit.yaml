@@ -9,3 +9,4 @@ issues:
 issueKinds:
   - issue: 537
     kind: kind::docs
+pr: 538
