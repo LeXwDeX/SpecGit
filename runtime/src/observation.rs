@@ -280,7 +280,7 @@ async fn execute(
             .issues
             .iter()
             .copied()
-            .filter(|id| !body_ids.contains(id))
+            .filter(|id| !associations.contains_key(id))
             .collect();
         for id in &selected.issues {
             associations

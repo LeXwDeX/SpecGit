@@ -452,3 +452,32 @@ fn unavailable_native_associations_cannot_report_complete_from_body_issues() {
         assert_ne!(r["status"], "completed", "{r}");
     }
 }
+
+#[test]
+fn native_association_confirms_selected_issue_without_body_closing_syntax() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["native_closing"] = json!([1]);
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["requests"][0]["body"] = json!("Native commit association without body syntax");
+            s["requests"][0]["description"] = s["requests"][0]["body"].clone();
+            s["issues"][0]["state"] = json!("closed");
+        });
+        let writes = f.writes();
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 0, "{provider}: {r}");
+        assert_eq!(
+            r["evidence"]["associations"],
+            json!([{"issue":1,"sources":["native_closing","local_selection"]}])
+        );
+        assert_eq!(r["evidence"]["association_discrepancies"], json!([]));
+        assert_eq!(r["status"], "completed", "{r}");
+        assert_eq!(f.writes(), writes);
+    }
+}
