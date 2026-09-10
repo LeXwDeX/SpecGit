@@ -344,7 +344,7 @@ async fn execute(
     );
     lock.save(&selection)?;
     effects.applied(local_effect);
-    let writer = native_delivery::ForgeWrite::new(process, &root, &context.repository)?;
+    let writer = native_delivery::IssueWrite::new(process, &root, &context.repository)?;
     let catalog = spec::catalog(&d);
     for index in 0..selection.intents.len() {
         let intent = selection.intents[index].clone();

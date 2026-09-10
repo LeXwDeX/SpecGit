@@ -59,6 +59,16 @@ complete target rules. Default branches come from the native project, not a gues
 remain on the platform. Unknown/duplicate fields, unsafe paths and invalid values
 fail before writes; a retired declaration field requires explicit migration.
 
+## Business boundaries
+
+Issue and PR operations use separate `IssueWrite` and `RequestWrite` capabilities;
+raw transport remains private to the forge adapters. Specification rules live in
+`spec`, whose read-only view exposes rule operations and selected template/language
+values. Workspace configuration stays private and observations receive only their
+closure preference. Full declaration bytes are still checked for concurrent edits.
+New specification rules belong in `spec`, request write operations in the request
+capability and adapter, and host framing in the host adapter.
+
 ## Machine and host interfaces
 
 Ordinary non-TTY output defaults to one JSON report. `--json` selects it explicitly;

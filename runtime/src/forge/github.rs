@@ -343,3 +343,150 @@ pub(crate) async fn create_request(
 fn branches_route(repo: &Repository) -> String {
     format!("{}/branches", prefix(repo))
 }
+
+/// Fixed query shared with the read transport and protocol fixtures. Callers can
+/// provide only typed variables; no arbitrary GraphQL document is executable.
+/// https://docs.github.com/en/graphql/reference/pulls#pullrequest
+pub const CLOSING_ISSUES_QUERY: &str = r#"query SpecGitClosingIssues($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    databaseId
+    nameWithOwner
+    pullRequest(number: $number) {
+      number
+      closingIssuesReferences(first: 100, after: $after) {
+        nodes { number repository { databaseId nameWithOwner } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"#;
+
+pub(super) async fn closing_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    request_id: u64,
+) -> Result<Vec<u64>, Diagnostic> {
+    use std::collections::BTreeSet;
+    let (owner, name) = repo
+        .path
+        .split_once('/')
+        .ok_or_else(super::closing_identity)?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') || request_id > i32::MAX as u64 {
+        return Err(Diagnostic::input(
+            "A GitHub owner/repository and bounded request number are required.",
+        ));
+    }
+    let mut after: Option<String> = None;
+    let mut cursors = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    for _ in 0..10 {
+        let value = reader
+            .github_closing_issues_page(owner, name, request_id, after.as_deref())
+            .await?;
+        if let Some(errors) = value.get("errors") {
+            let errors = errors.as_array().ok_or_else(super::closing_malformed)?;
+            if !errors.is_empty() {
+                let code = if errors.iter().any(|e| e["type"] == "FORBIDDEN") {
+                    Code::PermissionDenied
+                } else if errors.iter().any(|e| e["type"] == "NOT_FOUND") {
+                    Code::AmbiguousNotFound
+                } else if errors.iter().any(|e| e["type"] == "RATE_LIMITED") {
+                    Code::RateLimited
+                } else if errors.iter().any(|e| {
+                    e["type"] == "undefinedField" || e["extensions"]["code"] == "undefinedField"
+                }) {
+                    Code::UnsupportedOperation
+                } else {
+                    Code::MalformedResponse
+                };
+                return Err(Diagnostic::new(
+                    code,
+                    "closing_issues",
+                    "GitHub did not return a complete closing-reference query result.",
+                    "Inspect GraphQL field support and repository permissions; partial data is not complete native association evidence.",
+                ));
+            }
+        }
+        let repository = value
+            .pointer("/data/repository")
+            .ok_or_else(super::closing_malformed)?;
+        closing_repository(repository, repo, project_id)?;
+        let request = repository
+            .get("pullRequest")
+            .ok_or_else(super::closing_malformed)?;
+        let number = request
+            .get("number")
+            .and_then(Value::as_u64)
+            .filter(|id| *id > 0)
+            .ok_or_else(super::closing_malformed)?;
+        if number != request_id {
+            return Err(super::closing_identity());
+        }
+        let connection = request
+            .get("closingIssuesReferences")
+            .ok_or_else(super::closing_malformed)?;
+        let nodes = connection
+            .get("nodes")
+            .and_then(Value::as_array)
+            .ok_or_else(super::closing_malformed)?;
+        if nodes.len() > 100 {
+            return Err(super::closing_malformed());
+        }
+        for node in nodes {
+            let issue = node
+                .get("number")
+                .and_then(Value::as_u64)
+                .filter(|id| *id > 0)
+                .ok_or_else(super::closing_malformed)?;
+            let project = node
+                .get("repository")
+                .ok_or_else(super::closing_malformed)?;
+            closing_repository(project, repo, project_id)?;
+            if !ids.insert(issue) {
+                return Err(super::closing_malformed());
+            }
+        }
+        let page = connection
+            .get("pageInfo")
+            .ok_or_else(super::closing_malformed)?;
+        let more = page
+            .get("hasNextPage")
+            .and_then(Value::as_bool)
+            .ok_or_else(super::closing_malformed)?;
+        if !more {
+            return Ok(ids.into_iter().collect());
+        }
+        let cursor = page
+            .get("endCursor")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control))
+            .ok_or_else(super::closing_malformed)?;
+        if nodes.is_empty() || !cursors.insert(cursor.to_owned()) {
+            return Err(super::closing_malformed());
+        }
+        after = Some(cursor.to_owned());
+    }
+    Err(super::closing_limit())
+}
+
+fn closing_repository(
+    value: &Value,
+    repo: &Repository,
+    expected_id: u64,
+) -> Result<(), Diagnostic> {
+    let id = value
+        .get("databaseId")
+        .and_then(Value::as_u64)
+        .filter(|id| *id > 0)
+        .ok_or_else(super::closing_malformed)?;
+    let name = value
+        .get("nameWithOwner")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(super::closing_malformed)?;
+    if id != expected_id || !name.eq_ignore_ascii_case(&repo.path) {
+        return Err(super::closing_identity());
+    }
+    Ok(())
+}

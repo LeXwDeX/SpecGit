@@ -185,6 +185,14 @@ request with open linked Issues produces attention. Agent supplementary closure
 is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
 
+Issue associations retain per-Issue sources: `native_closing`, `body_reference`
+and `local_selection`. The native source comes from the platform's closing-Issue
+query; unavailable queries remain diagnostic evidence, never an empty successful
+result. Local selections apply only to their exact request ID. Explicitly observing
+a different request does not inherit the previous request's selected Issues.
+Association changes participate in watch event revisions, including source changes
+that leave the set of Issue IDs unchanged.
+
 Watch subscriptions and stable event IDs are session/worktree scoped. Pending
 notices are refreshed before delivery and superseded by changed evidence.
 `--goal checks` observes checks without claiming lifecycle completion. `--once`

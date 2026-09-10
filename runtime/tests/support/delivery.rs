@@ -120,7 +120,12 @@ impl Fixture {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|v| v["method"] != "GET")
+            .filter(|v| {
+                v["method"] != "GET"
+                    && !(v["method"] == "POST"
+                        && v["endpoint"] == "graphql"
+                        && v["body"]["query"] == specgit::forge::github::CLOSING_ISSUES_QUERY)
+            })
             .count()
     }
 }

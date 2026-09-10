@@ -330,3 +330,125 @@ fn native_commit_status_context_uses_latest_id_and_rejects_duplicate_objects() {
         }
     }
 }
+
+#[test]
+fn explicit_request_change_does_not_inherit_previous_request_selected_issues() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            let mut newer = s["requests"][0].clone();
+            newer["number"] = json!(42);
+            newer["iid"] = json!(42);
+            newer["id"] = json!(42);
+            newer["body"] = json!("New independent request without closing references");
+            newer["description"] = newer["body"].clone();
+            s["requests"].as_array_mut().unwrap().push(newer);
+        });
+        let writes = f.writes();
+        let r = f.run(&["pr", "--status", "--request", "42"]);
+        assert_eq!(r["exit"], 0, "{provider}: {r}");
+        assert_eq!(r["evidence"]["request"]["id"], 42);
+        assert_eq!(r["evidence"]["issues"], json!([]), "{provider}: {r}");
+        assert_eq!(r["evidence"]["association_discrepancies"], json!([]));
+        assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn associations_preserve_each_source_and_native_unavailability() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            for id in [2, 3] {
+                let mut issue = s["issues"][0].clone();
+                issue["number"] = json!(id);
+                issue["iid"] = json!(id);
+                issue["id"] = json!(100 + id);
+                s["issues"].as_array_mut().unwrap().push(issue);
+            }
+            s["native_closing"] = json!([1, 2]);
+        });
+        let path = f.root.join(".git/specgit-v2/selection.json");
+        let mut selected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        selected["issues"] = json!([1, 3]);
+        fs::write(&path, selected.to_string()).unwrap();
+        let writes = f.writes();
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 0, "{provider}: {r}");
+        assert_eq!(r["evidence"]["native_closing_available"], true);
+        assert_eq!(
+            r["evidence"]["associations"],
+            json!([
+                {"issue":1,"sources":["native_closing","body_reference","local_selection"]},
+                {"issue":2,"sources":["native_closing"]},
+                {"issue":3,"sources":["local_selection"]}
+            ])
+        );
+        assert!(r["evidence"].get("association_source").is_none());
+        f.edit(|s| s["native_closing_failure"] = json!("forbidden"));
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {r}");
+        assert_eq!(r["evidence"]["native_closing_available"], false);
+        assert_eq!(
+            r["evidence"]["associations"],
+            json!([
+                {"issue":1,"sources":["body_reference","local_selection"]},
+                {"issue":3,"sources":["local_selection"]}
+            ])
+        );
+        assert_eq!(f.writes(), writes);
+    }
+}
+#[test]
+fn native_association_changes_during_observation_are_not_a_stable_snapshot() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["native_closing"] = json!([1]);
+            s["native_closing_on_read"] = json!(2);
+            s["native_closing_changed"] = json!([]);
+        });
+        let writes = f.writes();
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {r}");
+        assert_eq!(r["diagnostics"][0]["code"], "concurrent_edit", "{r}");
+        assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn explicit_request_ignores_unrelated_old_selection_target() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        let path = f.root.join(".git/specgit-v2/selection.json");
+        let mut selected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        selected["request"] = json!(40);
+        selected["target"] = json!("release");
+        fs::write(&path, selected.to_string()).unwrap();
+        let r = f.run(&["pr", "--status", "--request", "41"]);
+        assert_eq!(r["exit"], 0, "{provider}: {r}");
+        assert_eq!(
+            r["evidence"]["associations"],
+            json!([{"issue":1,"sources":["body_reference"]}])
+        );
+    }
+}
+#[test]
+fn unavailable_native_associations_cannot_report_complete_from_body_issues() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing_failure"] = json!("forbidden");
+        });
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {r}");
+        assert_ne!(r["status"], "completed", "{r}");
+    }
+}

@@ -290,3 +290,41 @@ pub(crate) async fn create_request(
 fn branches_route(repo: &Repository) -> String {
     format!("{}/repository/branches", prefix(repo))
 }
+
+/// Native GET closes_issues, including server-recognized references from commits.
+/// External trackers and cross-project rows cannot establish same-project IDs.
+/// https://docs.gitlab.com/api/merge_requests/#list-issues-that-close-on-merge
+pub(super) async fn closing_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    request_id: u64,
+) -> Result<Vec<u64>, Diagnostic> {
+    let rows = reader
+        .list(
+            &format!("{}/closes_issues", request_route(repo, request_id)),
+            None,
+            10,
+        )
+        .await?;
+    let mut ids = std::collections::BTreeSet::new();
+    for row in rows {
+        let project = row
+            .get("project_id")
+            .and_then(Value::as_u64)
+            .filter(|id| *id > 0)
+            .ok_or_else(super::closing_malformed)?;
+        let issue = row
+            .get("iid")
+            .and_then(Value::as_u64)
+            .filter(|id| *id > 0)
+            .ok_or_else(super::closing_malformed)?;
+        if project != project_id {
+            return Err(super::closing_identity());
+        }
+        if !ids.insert(issue) {
+            return Err(super::closing_malformed());
+        }
+    }
+    Ok(ids.into_iter().collect())
+}

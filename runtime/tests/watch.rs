@@ -782,3 +782,46 @@ fn native_auto_merge_removal_is_a_fresh_read_only_event() {
         assert_eq!(f.writes(), writes);
     }
 }
+
+#[test]
+fn association_source_change_with_same_issue_ids_refreshes_the_event() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| s["native_closing"] = json!([1]));
+        let before = f.run(&watch("checks"));
+        let writes = f.writes();
+        f.edit(|s| s["native_closing"] = json!([]));
+        let after = f.run(&inbox());
+        assert_ne!(
+            after["evidence"]["events"][0]["id"], before["evidence"]["events"][0]["id"],
+            "{after}"
+        );
+        assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn unavailable_native_closing_never_emits_a_completed_watch_event() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing_failure"] = json!("forbidden");
+        });
+        let r = f.run(&watch("lifecycle"));
+        assert_eq!(r["status"], "unknown", "{provider}: {r}");
+        assert!(
+            r["evidence"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["state"] != "completed")
+        );
+    }
+}

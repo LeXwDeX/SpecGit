@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct Workspace {
     pub process: Process,
     pub context: Context,
-    pub declaration: Declaration,
+    declaration: Declaration,
     pub reader: ForgeRead,
     pub facts: ProjectFacts,
     pub target: String,
@@ -84,6 +84,12 @@ impl Workspace {
             ));
         }
         Ok(())
+    }
+    pub fn specification(&self) -> crate::spec::Specification<'_> {
+        crate::spec::Specification::new(&self.declaration)
+    }
+    pub fn close_issues_after_merge(&self) -> bool {
+        self.declaration.agent.close_issues_after_merge
     }
     pub fn branch(&self) -> Result<&str, Diagnostic> {
         self.context

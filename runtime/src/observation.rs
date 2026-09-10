@@ -9,7 +9,7 @@ use crate::{
     selection, spec,
 };
 use serde::Serialize;
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +47,18 @@ pub enum CheckOutcome {
     Failed,
 }
 pub use crate::delivery_model::AutoMerge;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssociationSource {
+    NativeClosing,
+    BodyReference,
+    LocalSelection,
+}
+#[derive(Debug, Serialize)]
+pub struct IssueAssociation {
+    pub issue: u64,
+    pub sources: Vec<AssociationSource>,
+}
 #[derive(Debug, Default, Serialize)]
 pub struct Evidence {
     pub repository: Option<Repository>,
@@ -55,7 +67,8 @@ pub struct Evidence {
     pub local_head: Option<String>,
     pub target: Option<String>,
     pub issues: Option<Vec<Issue>>,
-    pub association_source: Option<&'static str>,
+    pub associations: Option<Vec<IssueAssociation>>,
+    pub native_closing_available: bool,
     pub association_discrepancies: Vec<u64>,
     pub checks: Option<Vec<Check>>,
     pub auto_merge: Option<AutoMerge>,
@@ -140,7 +153,11 @@ pub fn describe(evidence: Evidence) -> Observation {
         Some("closed") => Status::ClosedUnmerged,
         Some("merged") => match evidence.issues.as_deref() {
             Some(issues) if issues.iter().any(|i| i.state != "closed") => Status::MergedIssuesOpen,
-            Some(issues) if !issues.is_empty() && evidence.association_discrepancies.is_empty() => {
+            Some(issues)
+                if !issues.is_empty()
+                    && evidence.native_closing_available
+                    && evidence.association_discrepancies.is_empty() =>
+            {
                 Status::Completed
             }
             _ => Status::Merged,
@@ -177,7 +194,15 @@ async fn execute(
     }
     let w = Workspace::load(process, cwd).await?;
     let repo = &w.context.repository;
-    let selected = selection::read(&w.context)?;
+    // An explicit native identity does not depend on an unrelated local locator.
+    // A usable matching checkpoint contributes provenance; it never gets repaired here.
+    let selected = if let Some(number) = request {
+        selection::read(&w.context).ok().flatten().filter(|s| {
+            s.request == Some(number) && s.project_id == w.facts.id && s.target == w.target
+        })
+    } else {
+        selection::read(&w.context)?
+    };
     if selected
         .as_ref()
         .is_some_and(|s| s.project_id != w.facts.id || s.target != w.target)
@@ -224,21 +249,47 @@ async fn execute(
         local_head: Some(w.context.head.clone()),
         target: Some(w.target.clone()),
         auto_merge: Some(observed.auto_merge()),
-        close_issues_after_merge: w.declaration.agent.close_issues_after_merge,
+        close_issues_after_merge: w.close_issues_after_merge(),
         ..Evidence::default()
     };
-    // Body references are a declared association source, never proof of native auto-closing eligibility.
-    let mut ids = spec::references(&r.body)?;
-    if let Some(selected) = &selected {
+    let mut diagnostics = Vec::new();
+    let body_ids = spec::references(&r.body)?;
+    let mut associations = BTreeMap::<u64, Vec<AssociationSource>>::new();
+    let mut native_ids = None;
+    match forge::closing_issues(&w.reader, repo, w.facts.id, number).await {
+        Ok(ids) => {
+            native_ids = Some(ids.clone());
+            evidence.native_closing_available = true;
+            for id in ids {
+                associations
+                    .entry(id)
+                    .or_default()
+                    .push(AssociationSource::NativeClosing);
+            }
+        }
+        Err(d) => diagnostics.push(d),
+    }
+    for id in &body_ids {
+        associations
+            .entry(*id)
+            .or_default()
+            .push(AssociationSource::BodyReference);
+    }
+    if let Some(selected) = selected.as_ref().filter(|s| s.request == Some(number)) {
         evidence.association_discrepancies = selected
             .issues
             .iter()
             .copied()
-            .filter(|id| !ids.contains(id))
+            .filter(|id| !body_ids.contains(id))
             .collect();
-        ids.extend(selected.issues.iter().copied());
+        for id in &selected.issues {
+            associations
+                .entry(*id)
+                .or_default()
+                .push(AssociationSource::LocalSelection);
+        }
     }
-    if ids.len() > 100 {
+    if associations.len() > 100 {
         return Err(Diagnostic::new(
             Code::OutputLimit,
             "observe",
@@ -247,12 +298,16 @@ async fn execute(
         ));
     }
     let mut issues = Vec::new();
-    for id in ids {
-        issues.push(native_delivery::issue(&w.reader, repo, w.facts.id, id).await?);
+    for id in associations.keys() {
+        issues.push(native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?);
     }
-    evidence.association_source = Some("closing_references");
+    evidence.associations = Some(
+        associations
+            .into_iter()
+            .map(|(issue, sources)| IssueAssociation { issue, sources })
+            .collect(),
+    );
     evidence.issues = Some(issues);
-    let mut diagnostics = Vec::new();
     if r.state != "merged" && r.state != "closed" {
         match forge::checks(&w.reader, repo, &observed).await {
             Ok(checks) => {
@@ -268,6 +323,11 @@ async fn execute(
         if native_delivery::issue(&w.reader, repo, w.facts.id, issue.id).await? != *issue {
             return Err(changed());
         }
+    }
+    if let Some(ids) = native_ids
+        && forge::closing_issues(&w.reader, repo, w.facts.id, number).await? != ids
+    {
+        return Err(changed());
     }
     if !forge::unchanged(&w.reader, repo, &observed).await? {
         return Err(changed());

@@ -1,9 +1,8 @@
 //! Explicit native request creation/adoption; no implicit push, commit, issue closure or branch deletion.
 use crate::{
-    config,
     delivery_context::Workspace,
     diagnostic::{Code, Diagnostic},
-    native_delivery::{self, ForgeWrite, PullRequest},
+    native_delivery::{self, PullRequest, RequestWrite},
     process::Process,
     project::Provider,
     report::{Effects, Report},
@@ -136,7 +135,7 @@ async fn execute(
     for id in &selected.issues {
         let issue = native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?;
         validate(
-            &w.declaration,
+            w.specification(),
             true,
             &issue.title,
             &issue.body,
@@ -158,7 +157,7 @@ async fn execute(
             if !selected.issues.contains(id) {
                 let issue = native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?;
                 validate(
-                    &w.declaration,
+                    w.specification(),
                     true,
                     &issue.title,
                     &issue.body,
@@ -233,15 +232,14 @@ async fn execute(
         ]);
         let p = templates::prepare(
             &w.context.root,
-            &w.declaration.templates.pr,
-            w.declaration.language,
+            w.specification().request_template(),
+            w.specification().language(),
             false,
             o.body_file.as_deref(),
             &vars,
         )?;
         let title = p.title.unwrap_or(title);
-        let labels = spec::selected_labels(
-            &w.declaration,
+        let labels = w.specification().selected_labels(
             &title,
             o.tags
                 .as_deref()
@@ -259,7 +257,7 @@ async fn execute(
         if !selected.issues.contains(&id) {
             let issue = native_delivery::issue(&w.reader, repo, w.facts.id, id).await?;
             validate(
-                &w.declaration,
+                w.specification(),
                 true,
                 &issue.title,
                 &issue.body,
@@ -270,7 +268,7 @@ async fn execute(
         }
     }
     validate(
-        &w.declaration,
+        w.specification(),
         false,
         &intended.title,
         &intended.body,
@@ -341,7 +339,7 @@ async fn execute(
         return Err(changed());
     }
     w.unchanged().await?;
-    let writer = ForgeWrite::new(w.process.clone(), &w.context.root, repo)?;
+    let writer = RequestWrite::new(w.process.clone(), &w.context.root, repo)?;
     if request.is_none() {
         selected.request_intent = Some(intended.clone());
         selected.request_write_started = true;
@@ -411,7 +409,7 @@ async fn execute(
         .cloned()
         .collect();
     if !missing.is_empty() {
-        let catalog = spec::catalog(&w.declaration);
+        let catalog = w.specification().catalog();
         for label in &missing {
             if !native_delivery::label_pool(&w.reader, repo)
                 .await?
@@ -462,7 +460,7 @@ async fn execute(
         effects.applied(request_effect);
         r = after;
     }
-    validate(&w.declaration, false, &r.title, &r.body, &r.labels)?;
+    validate(w.specification(), false, &r.title, &r.body, &r.labels)?;
     if o.ready && r.draft {
         if native_delivery::pull_request(&w.reader, repo, r.id).await? != r {
             return Err(changed());
@@ -513,13 +511,13 @@ fn identity(w: &Workspace, r: &PullRequest) -> Result<(), Diagnostic> {
     Ok(())
 }
 fn validate(
-    d: &config::Declaration,
+    d: spec::Specification<'_>,
     issue: bool,
     title: &str,
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let violations = spec::check(d, issue, title, body, labels);
+    let violations = d.check(issue, title, body, labels);
     if let Some(v) = violations.first() {
         Err(Diagnostic::input(&v.message))
     } else {
