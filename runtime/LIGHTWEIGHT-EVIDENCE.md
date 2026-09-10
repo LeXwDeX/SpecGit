@@ -1,78 +1,111 @@
 # Lightweight Rust implementation evidence
 
-2026-09-10 snapshot. **Implementation is in progress; this is not a product
-completion, merge or release certificate.** `pass` below applies only to the named
-run/scenario. Missing real-platform evidence stays `not_run` or `blocked`.
+2026-09-10 qualification snapshot. **The product is not yet merged or published.**
+A passing scenario below qualifies its named source, artifact and environment.
+The user has authorized completion through stable `2.0.0` publication; missing
+platform capability and failed current-head checks remain release blockers.
 
-## Identity and evidence boundaries
+## Source and installed artifact identities
 
-| Item | Recorded identity |
+| Item | Evidence |
 | --- | --- |
-| Delivery | Existing draft [PR #525](https://github.com/LeXwDeX/SpecGit/pull/525), `feat/512-rust-native-delivery`; existing Issue history and closing references retained. |
-| Source baseline | `3eb47278459db71a5d29ddd1b25ee1bfa15ca23c`. Implementation commit: `b552ece095eefb457d44fca1e2d2bbf35b01c76c`. Later evidence-only commits do not change runtime source. |
-| Initial design anchor | `a0d9191575dfcf0c941186d6efcb6b9e45bc6b34`, [PR #538](https://github.com/LeXwDeX/SpecGit/pull/538). |
-| Reviewed design revision | `1a1ca102952ca6537340555b302e20ac34f4c3d3`: [design](https://github.com/LeXwDeX/SpecGit/blob/1a1ca102952ca6537340555b302e20ac34f4c3d3/docs/design/specgit-2-rust-design.md), [handoff](https://github.com/LeXwDeX/SpecGit/blob/1a1ca102952ca6537340555b302e20ac34f4c3d3/docs/design/specgit-2-rust-handoff.md). CLI suggestions are optional references; implemented choices are tested on their actual surface. |
-| Local environment | macOS 27.0 / Darwin arm64; rustc 1.97.0, Cargo 1.97.0; Node v26.8.1. This is not Windows or Linux execution evidence. |
-| Installation baseline A | `specgit-darwin-arm64`, `2.0.0-dev.0`; binary SHA-256 `263957825f66ac0af06d5723a296dfeec19527c75c0e6c6edae7be7f4108d45d`. |
+| Delivery | Ready [PR #525](https://github.com/LeXwDeX/SpecGit/pull/525), `feat/512-rust-native-delivery`, with all 19 closing references retained. Superseded PRs #496, #519, #522, #529 and #538 were closed without merging or deleting their branches. |
+| Qualified runtime source | `4af05321aad54b2651e20a3a6ce8a820fb1c8cbc`. Earlier baseline `b552ece0` is historical, not the final source. Later evidence-only commits are not silently assigned these artifact identities. |
+| Design | Approved lightweight [design revision](https://github.com/LeXwDeX/SpecGit/blob/1a1ca102952ca6537340555b302e20ac34f4c3d3/docs/design/specgit-2-rust-design.md). Native platforms own checks, protection, merge and automatic closure. |
+| macOS installed binary | `specgit-darwin-arm64@2.0.0`, SHA-256 `a59f9909013c5b2ad8d0e26f9590a53101b69127804ef9a298097f3167da7783`; staged from the source above with private path remapping. Offline installation, package integrity, discovery/input and launcher checks passed. |
+| Installed regression profile | 26 executables, 179 passed, 0 failed, 1 host-specific test ignored; 74.460 seconds. `/private/tmp/specgit-v2-4af05321-profile-cjs/profile.json`. The first profile selected a nonexistent `.mjs` launcher and failed; it is retained separately and is not counted as product evidence. The passing profile uses the packaged `bin/specgit.cjs`. |
+| Real host | The ignored test was separately run through actual Claude Code 2.1.241 and the installed binary above: 1 passed, 3.81 seconds. An isolated loopback model verified next-turn delivery. This does not establish idle wake or that a human read the event. |
+| Recorded candidate CI | [CI 34467382351](https://github.com/LeXwDeX/SpecGit/actions/runs/34467382351). All three Rust platforms, Linux/macOS TypeScript, lint/types, metadata, Nix and RC checks passed at this snapshot; Windows TypeScript is still running. No all-green claim. |
 
-The early runs below are retained as baselines. E07 records the final installed
-source qualification separately; no earlier binary is silently assigned to the
-implementation commit.
+The downloaded CI Linux/macOS artifacts record GitHub's synthetic merge commit
+`61c9d1a63bafbaa3350c6779fe19310fe87a4b4a`, whose native parents are
+`2bee54b635a6ef87f04d0b7a927bad527003310f` and current head `4af05321`.
+Both installed profiles passed 179 tests in 26 executables, with one separately
+qualified host test ignored. Tarball SHA-512 integrity, package source/version,
+and binary/launcher SHA-256 were independently recomputed and matched their
+installation/profile records. These merge-test artifacts are not the local
+head artifact above or a final `main` release build.
 
-## Recorded runs
+Windows installed qualification from the same CI merge commit subsequently
+passed 175 tests in 26 executables, with one host-specific test ignored, in
+529.361 seconds. Its binary SHA-256 is
+`e62ceee8179703038e7fbdf48a3ef8a8ee7fe7064b1b0194a71a210e44b2bd3c`.
+The downloaded tarballs, source/version, installed profile and binary/launcher
+digests were independently matched. The Windows console-interrupt test passed
+through the actual installed npm entrypoint. The earlier intermittent observer
+I/O failure did not recur in either source or installed full suites; its dedicated
+diagnostic is still pending and no causal fix is claimed.
 
-| ID | Result and exact scope | Evidence / limitation |
-| --- | --- | --- |
-| E01 | `pass`: `cargo test --manifest-path runtime/Cargo.toml --locked --features test-fixtures`, 152 passed, 1 ignored. | Parent task's completed local command output. Suite counts: assets 8, cli 7, cli_contract 11, config 4, fixture_snapshots 2, guidance 4, hooks 6, init 11, issue 6, migrate 16, native_file 2, native_status 12, observation 6, pr 9, probe 4, process 6, project 3, retired_commands 1, setup 8, spec 7, templates 5, watch 14. This is an earlier uncommitted snapshot, not a final current-head claim. |
-| E02 | `pass`: targeted config/guidance/init 4+4+11 and setup 8. | `cargo test --manifest-path runtime/Cargo.toml --features test-fixtures --test config --test guidance --test init`; then `--test setup`. These overlap E01; do not add them to a unique-test total. |
-| E03 | `pass`, earlier installed baseline A. | Local `installed.json` at `/private/tmp/specgit-c12-install-20260910-a/installed.json`, independently read and binary digest checked. Records offline npm install with scripts disabled, integrity/allowlist, npm shim, help/version, explicit JSON file/stdin, malformed/duplicate/unknown input, byte/deadline bounds, hook framing, no Git/Rust/credentials, and launcher SIGTERM exit 130. |
-| E04 | `pass` for the bounded fixture boundary. | [retired_commands](tests/retired_commands.rs), [native_status](tests/native_status.rs), [observation](tests/observation.rs), [watch](tests/watch.rs); E01 executed them. Retired commands fail before remote access; native failed/pending/merged states are observations, not merge permission. |
-| E05 | `pass`: documentation metadata. | `node scripts/ci-metadata-check.mjs`: 6 files, 132 passed / 44 scope skips. This validates documentation/metadata only. Source diff whitespace checks also passed at review time. |
-| E06 | `pass`: final `cargo clippy --manifest-path runtime/Cargo.toml --locked --all-targets --features test-fixtures -- -D warnings`. | Current implementation source, no warnings. Also passes `cargo fmt --check` and diff whitespace checks. |
-| E07 | Final committed-source artifact: `afbe7cc5c0050a2573fcb59e97efd3b1ff2f080ee031e730b5f1c4dacfbe3e2b`. | Built from implementation commit above with path remapping. Offline installation D and machine/effects checks passed at `/private/tmp/specgit-c12-install-20260910-d/installed.json` and `effects-preflight.json`. The complete installed profile is recorded at the sibling `profile/profile.json`; its final result is reported separately. C had 155 passed, 1 ignored in 25 processes (89.254s), but its pre-format digest differed, so C is not relabeled as D. |
-| E08 | `pass`: installed C read-only GitHub PR #525 observation. | 13 Issues, 18 native checks, `open`, `auto_merge=not_registered`, exit 0 with `inspect_native_failure` advice. This is readback of the existing older remote head, not current-head CI or live write qualification. |
+## Live native journeys
 
-E03's packaged discovery contract predates the final side-effect metadata.
-Its successful schema/help checks establish only that artifact's consistency.
-It does not qualify current source, other targets, a real forge lifecycle, actual
-host notification, public npm availability or publication authentication.
-The one ignored E01 test is
-`real_claude_host_consumes_async_observer_event_on_the_next_model_turn`;
-it requires explicit real-host qualification and a loopback model fixture.
+All mutations below concern isolated qualification branches and test objects.
+They contain a nine-line `RESULT.md` change and no product code or workflows.
+They do not merge the product delivery into `main`.
+
+| Journey | Observed result and artifact |
+| --- | --- |
+| GitHub create and associate | Binary from `cee4e05b`, SHA-256 `e1574163d0bdbabacd34f7d3348aa0788ce264dacfc00ca3ad083a2ef815e005`, created Issues #539/#540 and [PR #541](https://github.com/LeXwDeX/SpecGit/pull/541). Similar Issues #493/#514 were reviewed as different WHYs; exact review digests allowed the new specs. |
+| GitHub pending / recovery | Missing remote branch returned unknown with no effects; pushed branch without a diff returned `pending_request` with no effects. A fresh clone adopted both Issues and PR #541 using only local writes. Original body and user-authored line were preserved. |
+| GitHub completion / receipts | Native merge into `codex/v2-native-gh-target-20260910` was read back. Two open Issues, then one open Issue, both remained `merged_issues_open`. Both sessions returned `completed` only after actual closure of both Issues. Acknowledging session A did not consume session B's event. |
+| GitHub deleted-source recovery | Native source deletion was verified with `git ls-remote`. A new clone fetched `refs/pull/541/head` and recovered Issue/PR identities without recreating the remote branch or objects. |
+| GitLab create and associate | Binary from `7a28df2da21111ca5c1ca18b55dd7c39a4ed1c08`, SHA-256 `a16554a9ebda5ace5198ce57f3ada0e3d0d383b08d44fee02beebb7f007db253`. Actual project `git.ycgame.com/suntao/specgit` (1309), Issues #6/#7/#8 and [MR !6](https://git.ycgame.com/suntao/specgit/-/merge_requests/6). Issue #8 and MR !6 were created successfully through the fixed installed binary. |
+| GitLab pending / recovery | Pushed source without changes returned `pending_request` with no effects. New clone adopted Issues 6/7/8 and MR 6 using only local writes. Independent native readback confirmed the exact normalized body and all three closing references. |
+| GitLab completion / receipts | MR !6 merged only into `codex/v2-native-gl-target-20260910` at head `5ba79514c2bcfd179a9937558b789464815a5f26`. Three open Issues and then two open Issues remained incomplete. Both sessions returned `completed` after all three Issues were closed. Session A acknowledgement left B's distinct receipt pending. |
+| GitLab deleted-source recovery | Native source deletion was confirmed. A new clone fetched `refs/merge-requests/6/head`; Issue and MR adoption succeeded with only local writes. |
+
+Raw native reports and command results are retained under
+`/private/tmp/specgit-v2-live-gh-*` and `/private/tmp/specgit-v2-live-gl-*`.
+The two live binaries predate only the later safe filesystem-error diagnostic
+change. They are not relabeled as the current artifact or final release build.
+Both isolated targets deliberately used explicit manual observation because they
+were non-default branches. Native auto-merge registration/revocation was not
+exercised by these journeys and is not claimed.
+
+The current `4af05321` installed artifact subsequently reread both completed
+native requests and refreshed each session B subscription. Both stayed
+`completed` with the same pending event ID, confirming upgrade readback without
+duplicate completion events. This replay made no native writes.
+
+## Defects found by qualification
+
+- GitHub duplicate discovery initially blocked every similar candidate without
+  a way to proceed after comparing distinct WHYs. `cee4e05b` adds review digests
+  bound to fresh full candidate/spec facts, with stale/new candidate and uncertain
+  write recovery rejection tests. Review is not permission to duplicate an issue.
+- GitLab rejected native raw-body writes with HTTP 415. `0ea01d73` declares
+  `Content-Type: application/json` at the shared write transport. A fixture first
+  reproduced the failure, then the installed binary reached the actual API.
+- GitLab strips trailing ASCII whitespace and normalizes CRLF in descriptions.
+  `7a28df2d` accepts only this observed submitted-to-native normalization.
+  Native-to-native concurrent-edit checks remain exact; leading whitespace,
+  Unicode whitespace and interior edits are not silently trimmed.
+- Windows CI `34463500666` failed before the first observer poll with exit 3 and
+  `owned_assets/io_failed`, not a slow poll. `4af05321` preserves operation,
+  error kind and raw OS code without exposing paths or error strings. The root
+  filesystem fault still needs the new Windows run; no timeout was raised.
 
 ## L01–L18 disposition
 
-Every row remains open for the listed missing evidence. Local fixture success and
-external qualification are deliberately separate columns.
-
-| ID | Current implementation / local evidence | Missing evidence and status |
-| --- | --- | --- |
-| L01 | One Rust library/binary with thin npm launcher; E03 exercises its installed argv, I/O and cancellation. | `pass`: committed-source macOS arm64 offline installation D (E07). `not_run`: Linux/Windows and other proposed architectures. |
-| L02 | E01 process 6, project 3, native_file 2; E03 input deadline and installed launcher SIGTERM. Existing owned-process, path and permission mechanisms retained. | `not_run`: current Windows console, descendant recovery and full path/locale journeys; final three-OS runtime evidence. |
-| L03 | E02 init 11/config 4: supported/unsupported/unknown reports, explicit manual choice, no native settings writes, no guessed default, dry-run without local state, language and target identity. | `not_run`: final installed GitHub/GitLab live capability readback. GitLab auto-merge remains `unknown` by design when metadata cannot prove support; manual fallback is explicit. |
-| L04 | E01 assets 8, E02 guidance 4/setup 8/init 11: foreign content, later chmod, rollback, lock ownership, CRLF, symlink rejection and no-write previews. | `not_run`: final Windows execution and final installed/shared-worktree preservation matrix. No inference from cross-compilation. |
-| L05 | E01 issue 6/spec 7/templates 5: independent labels/specs, duplicate preflight, exact adoption, template limits and explicit missing-label creation. | `not_run`: actual two-forge Issue creation/readback and different-WHY duplicate decisions on authorized test objects. |
-| L06 | E01 pr 9: multiple references, no-diff/unpushed pending state, actual fixture Git push, body preservation, conflicting edits and project identity. | `not_run`: final installed two-Issue-to-one-request native journey on both forges. |
-| L07 | E01 Issue/PR response-loss recovery and migration/selection scenarios retain exact intent and native identity. | `not_run`: complete live restart/new-clone/source-deleted adoption matrix; do not infer every L07 scenario from a suite count. |
-| L08 | E04: current native check/status/MR pipeline facts, failed reads, partial/duplicate pages, stale head, missing-versus-null, merged-open and association discrepancies. | `not_run`: final live auth/rate/permission and lifecycle checks. GitHub latest check results and GitLab MR head pipeline are not a complete workflow/child-DAG assessment. |
-| L09 | Core merge endpoints and control modules removed; E04 rejects retired commands before native access. Skill/guidance assign native registration to an already authorized Agent. | `not_run`: actual GitHub/GitLab native auto-merge registration, revocation and repair/re-observation journey. No authorization to merge SpecGit's draft is inferred. |
-| L10 | E04 separates merge from known closed associated Issues; optional Agent closure defaults off. Subsequent next-action/watch wording implements the preference boundary. | Final focused watch regression passed (15 plus one ignored); `not_run`: actual multi-Issue closing and explicitly authorized supplementary closure/readback. Unknown association is not closure permission. |
-| L11 | E01 watch 14: stable IDs, session receipts, supersession, timeout, cancellation, crash/restart, bounded retention, local edits and zero remote writes. | `not_run`: final installed cross-worktree/session live journey after the last changes; platform/host end-to-end recovery. |
-| L12 | E01 hooks 6 and setup 8; E03 hook stdin/stdout. Registration remains `written_not_verified`. | `not_run`: current real-host import/event/context/message delivery. The real-Claude test was ignored. Immediate idle wake is `not_supported`; next-turn delivery and human reading are separate. |
-| L13 | E01 cli 7/cli_contract 11; E02 bilingual guidance; E03 baseline discovery/input; E05 packaged-reference content review. | `pass`: final rebuilt installed schema/effects/REFERENCE comparison in D. Other target installations remain unqualified. |
-| L14 | E01 migration 16/assets 8; local source removal inventory below. Old drafts, foreign assets, shared hooks and unknown writers are preserved/refused. | `not_run`: real project cutover; old remote writer quiescence must be proven before activation. No cleanup of retained worktrees is authorized. |
-| L15 | Retained-behavior suite and retired-test disposition are explicit. Fixture timing is a local baseline, not a speed claim. | `not_run`: final SHA on user-owned Linux/macOS/Windows CI, installed journeys and Windows equal-workload/process profile. Dependency Review and binding blockers below remain. |
-| L16 | E03 proves one offline macOS arm64 npm tarball installation, integrity and asset allowlist without credentials/toolchain. | E07 qualifies the final macOS arm64 binary and privacy/allowlist checks. `not_run`: every other proposed target's actual install and public registry availability. |
-| L17 | Distribution documents separate staging/installation from publication and preserve exact artifact identity. | `blocked`: publication not authorized; self-hosted npm authentication path must be explicitly configured/verified at authorized release time. No source-visibility or hosted-runner fallback. |
-| L18 | 318 unique history rows and 48 unique F rows verified; disposition counts and current engine/test removal are recorded below. Typed observation and concrete adapters are reviewable in this diff. | `not_run`: independent final four-layer review, retained-row-to-final-regression completion, final artifact/source linkage. Inventory completeness is not product correctness. |
-
-Implemented CLI references are traceable without a separate conformity score:
-C01–C05 use the common clap schema/JSON/input/error surface; C06 previews local
-assets and Issue/PR mutations; C07 retains uncertain-write recovery; C08 retains
-native IDs and bounded pagination; C09 uses existing process/watch bounds;
-C10 shares typed use cases; C11 preserves existing authorization; C12 is installed
-qualification. Final behavior/effects checks remain outstanding where noted.
-No extra MCP server or general workflow framework was added for these choices.
+| ID | Evidence and remaining boundary |
+| --- | --- |
+| L01 | One Rust binary/library and thin npm launcher; current macOS installed full profile passes. Final main-source three-target release artifacts are pending. |
+| L02 | Bounded process/input/cancellation fixtures and installed I/O checks pass. Windows source and installed suites pass; the earlier intermittent filesystem failure is still being diagnosed. |
+| L03 | Both actual forges report native capabilities and accept explicit manual observation. Unsupported/non-default or unknown capability is not silently enabled. |
+| L04 | Asset ownership, conflicts, rollback, permissions, CRLF and link fixtures pass locally; Windows installed asset fixtures now pass; the earlier intermittent observer failure remains under diagnosis. |
+| L05 | Both real forges exercised new Issue creation, exact recovery and multiple specs. GitHub distinct-WHY review and GitLab JSON/normalization defects were repaired and replayed. |
+| L06 | Actual two/three-Issue aggregation, no-diff pending, body preservation, native ready and MR/PR identities passed on both forges. |
+| L07 | Both forges passed new-clone and deleted-source recovery. Lost-response uncertainty is covered by deterministic fixtures; an arbitrary network outage during a real write was not induced. |
+| L08 | Actual open/merged/partially closed/completed states and native associations were read back. Auth/rate/malformed/page failures remain deterministic-fixture evidence. No workflow/DAG eligibility reconstruction is claimed. |
+| L09 | Removed runtime merge controllers and retired-command rejection are tested. Native merge was exercised on both isolated targets. Auto-merge registration/revocation was not exercised. |
+| L10 | Both forges verified partial Issue closure remains incomplete and actual full closure yields completion. Native Agent closure was confined to test Issues. |
+| L11 | Both forges verified independent session/worktree events, receipt isolation and restart. Timing, process death and outbox limits are fixture evidence. Windows observer regression is still open. |
+| L12 | Current installed binary passed actual Claude Code next-turn event delivery. Idle wake is unsupported; other host configuration is not claimed as verified runtime delivery. |
+| L13 | Current installed schemas, JSON/input/effects and packaged reference checks pass. Final target packaging remains subject to release qualification. |
+| L14 | Migration and preservation fixtures pass. Actual product-project cutover has not occurred; old Completion workflow stays disabled until `main` contains its self-hosted replacement. Existing worktrees are retained. |
+| L15 | Current three-platform Rust CI passes; Windows TypeScript and final all-check acceptance remain outstanding. Test totals are not architecture or platform acceptance. |
+| L16 | Current macOS package installation passes without lifecycle scripts. Final three-target release build and public registry download/install remain outstanding. |
+| L17 | Stable publication is explicitly authorized. Required Dependency Review capability is unavailable; no product merge, tag, package publication or release has occurred. |
+| L18 | Complete history/F-row disposition remains below. Typed read/write separation and protocol normalization are source reviewed; final release qualification cannot be declared while the Windows defect and native security check remain unresolved. |
 
 ## History and retired-test mapping
 
@@ -92,7 +125,8 @@ inventory, not 318 implemented regressions.
 | `promotion.rs` and old promotion tests | Dedicated range/postimage/promotion inference retired. Ordinary selected/native Issue associations remain under Issue/PR and observation tests. No substitute stage-closing engine; F38/F48 remain retired runtime responsibilities. |
 | Actions job/suite ownership reconstruction and GitLab child/DAG expansion | Removed from [native_checks](src/native_checks.rs). Native latest pending result is not replaced by old Actions green; incomplete pages/duplicate objects remain unknown; MR head pipeline failure is shown without expanding child jobs. Missing pipeline identity differs from explicit null. This is a narrower observation contract, not equivalent DAG coverage. |
 
-The removal inventory is the current `git diff` against the source baseline:
+The removal inventory is the `git diff` against source baseline
+`3eb47278459db71a5d29ddd1b25ee1bfa15ca23c`:
 `src/lib.rs` no longer exports the six retired modules above; those six source
 files and four controller test suites are deleted. The public rejection test,
 new observation/status tests and generated installed schema replace their active
@@ -101,66 +135,24 @@ surface where applicable. The development mapping in
 merge and promotion scenario; no claim is made that deleted engine assertions
 remain one-for-one product obligations.
 
-Four-layer review state: architectural authority and protocol boundaries are
-represented by the removal/adaptor diff; framework evidence is the bounded
-process/assets/CLI tests; business-code evidence is the scoped init/Issue/PR/status
-suites; product-business evidence still needs real two-forge, three-OS and host
-journeys. The final independent review must inspect remaining dependency seams,
-not infer purity or extensibility from filenames or test totals.
+The four review areas have separate evidence: architecture uses typed native
+read/write capabilities and removed controllers; framework uses bounded
+process/assets/CLI tests; business code uses init/Issue/PR/status suites; product
+behavior uses the actual two-forge and host journeys above. Windows and native
+security capability remain explicit gaps. No test total is a claim of universal
+correctness or proof that every dependency seam is defect-free.
 
-## External blockers and minimum next conditions
+## Release blockers
 
-- **Dependency Review: blocked capability.** The parent task read the failing
-  native job and identified missing repository capability. Historical failed job:
-  [Dependency Review](https://github.com/LeXwDeX/SpecGit/actions/runs/34353247996/job/102471597948).
-  Restore/prove the required native capability through an authorized owner action;
-  do not remove or weaken the check. The old job is not a current-candidate result.
-- **Existing binding conflict: blocked.** #473 remains associated with another
-  open [PR #496](https://github.com/LeXwDeX/SpecGit/pull/496), so bootstrap for the
-  candidate reported duplicate ownership. Preserve both histories and resolve
-  the existing native/SpecGit association explicitly; do not create a duplicate
-  WHY, force-push, close old work or silently drop its closing reference.
-- **Final CI: pending separate run evidence.** All candidate CI runner routes are
-  self-hosted. The observed default-branch Completion workflow listens only to
-  `SpecGit Acceptance`, so dispatching `CI` directly does not enter that hosted
-  chain. Commits carry `[skip ci]`; do not dispatch Acceptance or edit the PR body
-  (its edited event would start Acceptance). The draft remains unmerged. Report
-  exact final-head run/job results separately; do not infer them from routing.
-- **Live product/host qualification: not_run.** Use explicitly authorized test
-  objects for native creation/registration/closure, then collect request/Issue
-  readback and the correct host session's actual delivery. Fixture output and
-  an installed manifest do not satisfy this condition.
-- **Publication: blocked by scope and capability.** No publication authorization
-  is present. Retain user-owned runners and private source. Establish a supported,
-  approved npm authentication path only when release is authorized; local staging
-  and earlier publication history do not establish one.
-
-Next ledger revision must identify the actual implementation commit, final
-artifact digests, runner/run links, native test objects and host evidence. It must
-preserve failed/unknown/not-run entries until their particular conditions change.
-
-## Resume qualification and association repairs
-
-The `736564db1ef77d760033d3bc563fad5f3c44ec15` three-platform Rust CI
-artifacts were independently checked against their installed profiles: Linux and
-macOS each passed 155 tests, Windows passed 151, with one separately qualified
-host test ignored in each profile. Every profile enumerated 25 processes; tarball
-integrity and packaged binary/launcher digests matched. Windows included the
-installed console-interrupt journey. Evidence is retained at
-`/private/tmp/specgit-ci-736564db-evidence/SUMMARY.md`. The Windows TypeScript job
-hit its existing 20-minute budget; its inputs were unchanged from the same-runner
-passing baseline. This is not an all-green current-head CI claim.
-
-The next repair revision isolates explicit request observation from unrelated
-local selection state; preserves native closing/body/local provenance per Issue;
-rechecks native association sets; and prevents unavailable associations from
-producing completed status or watch notifications. Issue and request write
-capabilities are separate. Workspace declaration access is private and a narrow
-specification view preserves full-snapshot concurrent-edit checks. CLI reference
-choices remain optional under design `1a1ca102` §3.1.1.
-
-Before this repair is committed, the complete local Rust suite passes 173 tests
-with one host-specific test ignored; Clippy with warnings denied and metadata
-checks pass. These local results do not qualify the previous installed binary as
-the new repair. Rebuild/installation, actual-host replay, and current-head owned
-runner CI must use the repair's actual source and artifact identities.
+1. Resolve and verify the Windows owned-asset filesystem failure on the unchanged
+   observer deadlines, then obtain final-head complete CI and installed
+   profiles. A standalone passing diagnostic run cannot replace full CI.
+2. Restore native Dependency Review capability. The private personal GitHub
+   repository's check reports that Dependency Review is unsupported; native
+   Audit passes. No required check is removed, bypassed or replaced by local tests.
+   Available organization/subscription capability requires owner clarification.
+3. Only after final acceptance: confirm the product merge and every bound Issue
+   closure, restore the migrated self-hosted Completion workflow, run the
+   three-target Release build on actual `main`, verify artifact digests and
+   installed profiles, then publish and independently read back registry and
+   GitHub Release results.
