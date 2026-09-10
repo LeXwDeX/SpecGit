@@ -457,7 +457,11 @@ async fn execute(
         let observed =
             native_delivery::issue(&reader, &context.repository, project_facts.id, number).await?;
         if observed.title != intent.title
-            || observed.body != intent.body
+            || !native_delivery::written_body_matches(
+                context.repository.provider,
+                &intent.body,
+                &observed.body,
+            )
             || !intent.labels.iter().all(|l| observed.labels.contains(l))
         {
             return Err(Diagnostic::new(

@@ -365,7 +365,10 @@ async fn execute(
         effects.applied(local_effect);
         let created = native_delivery::pull_request(&w.reader, repo, number).await?;
         identity(&w, &created)?;
-        if created.head != intended.head || created.body != intended.body || !created.draft {
+        if created.head != intended.head
+            || !native_delivery::written_body_matches(repo.provider, &intended.body, &created.body)
+            || !created.draft
+        {
             return Err(changed());
         }
         effects.applied(create_effect);
@@ -384,14 +387,16 @@ async fn execute(
     if native_delivery::pull_request(&w.reader, repo, r.id).await? != r {
         return Err(changed());
     }
-    if let Some(body) = replacement.filter(|body| body != &r.body) {
+    if let Some(body) = replacement
+        .filter(|body| !native_delivery::written_body_matches(repo.provider, body, &r.body))
+    {
         w.unchanged().await?;
         let request_effect = effects.begin("native", "update_request_body", serde_json::json!({"repository":repo,"request":r.id,"next_action":"read_native_request_before_retry"}));
         writer.update_request_body(r.id, &body).await?;
         let after = native_delivery::pull_request(&w.reader, repo, r.id).await?;
         identity(&w, &after)?;
         if after.head != r.head
-            || after.body != body
+            || !native_delivery::written_body_matches(repo.provider, &body, &after.body)
             || after.title != r.title
             || after.labels != r.labels
             || after.state != r.state

@@ -156,6 +156,11 @@ the proposed content, project, source/target and current native candidate conten
 changed evidence requires another review. It does not override uncertain prior
 writes, which still require exact native adoption.
 
+GitLab description readback permits its CRLF-to-LF conversion and removal of
+trailing ASCII spaces, tabs and line endings after a write. Leading indentation,
+Unicode whitespace and other content changes are not treated as equivalent.
+Comparisons between two native snapshots remain exact.
+
 ```sh
 specgit init --provider github --manual-observe --json
 specgit issue 21 22 --dry-run --json

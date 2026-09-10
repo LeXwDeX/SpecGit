@@ -9,6 +9,12 @@ use crate::{
 };
 use serde_json::Value;
 use std::path::Path;
+pub(crate) fn written_body_matches(provider: Provider, submitted: &str, observed: &str) -> bool {
+    match provider {
+        Provider::Github => submitted == observed,
+        Provider::Gitlab => gitlab::written_body_matches(submitted, observed),
+    }
+}
 pub fn prefix(repo: &Repository) -> String {
     match repo.provider {
         Provider::Github => github::prefix(repo),
@@ -180,5 +186,30 @@ async fn create_label(
     match provider {
         Provider::Github => github::create_label(transport, tag).await,
         Provider::Gitlab => gitlab::create_label(transport, tag).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Provider, written_body_matches};
+
+    #[test]
+    fn only_gitlab_write_normalization_is_allowed() {
+        for (submitted, observed, matches) in [
+            ("first\r\nsecond\r\n", "first\nsecond", true),
+            (" \t\r\nbody \t\r\n", " \t\nbody", true),
+            ("  body\n", "body", false),
+            ("\u{a0}body\u{a0}", "body", false),
+            ("first\nsecond\n", "firstsecond", false),
+            ("first\nsecond\n", "first\nchanged", false),
+        ] {
+            assert_eq!(
+                written_body_matches(Provider::Gitlab, submitted, observed),
+                matches
+            );
+            assert!(!written_body_matches(Provider::Github, submitted, observed));
+            assert!(written_body_matches(Provider::Github, submitted, submitted));
+            assert!(written_body_matches(Provider::Gitlab, submitted, submitted));
+        }
     }
 }

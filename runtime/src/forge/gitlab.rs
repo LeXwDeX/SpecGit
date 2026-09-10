@@ -32,6 +32,15 @@ fn labels(v: &Value) -> Result<Vec<String>, Diagnostic> {
         .map(|v| v.as_str().map(String::from).ok_or_else(malformed))
         .collect()
 }
+pub(crate) fn written_body_matches(submitted: &str, observed: &str) -> bool {
+    // GitLab normalizes CRLF and trailing ASCII whitespace on description writes.
+    // Keep leading/Unicode whitespace and all native-to-native snapshots exact.
+    observed == submitted
+        || observed
+            == submitted
+                .replace("\r\n", "\n")
+                .trim_end_matches([' ', '\t', '\r', '\n'])
+}
 fn body(v: &Value) -> Result<String, Diagnostic> {
     match v.get("description") {
         Some(Value::Null) => Ok(String::new()),
