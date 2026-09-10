@@ -185,9 +185,10 @@ const assertSelfHostedRouting = (text: string, label: string): void => {
           throw new Error(`${label}: native OS/architecture routing required`);
         }
       }
-    } else if (jobId === 'windows-diagnostics') {
+    } else if (jobId === 'windows-diagnostics' || jobId === 'windows-observer-diagnostics') {
+      const input = jobId === 'windows-diagnostics' ? 'windows_diagnostics' : 'windows_observer_diagnostics';
       if (JSON.stringify(job['runs-on']) !== JSON.stringify(expected.windows) ||
-          job.if !== "${{ github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics }}" ||
+          job.if !== `\${{ github.event_name == 'workflow_dispatch' && inputs.${input} }}` ||
           JSON.stringify(job.permissions) !== JSON.stringify({ contents: 'read' })) {
         throw new Error(`${label}: diagnostics require explicit manual dispatch and read-only native Windows routing`);
       }
@@ -581,14 +582,11 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(() => assertSelfHostedRouting(hostedPackage, 'mutant')).toThrow(/static jobs/);
   });
 
-  it('Windows diagnostics cannot become automatic, hosted, or privileged', () => {
-    for (const mutant of [
-      rcVerifyFile.replace("github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics", 'true'),
-      rcVerifyFile.replace('runs-on: [self-hosted, Windows, X64]', 'runs-on: windows-latest'),
-      rcVerifyFile.replace('    permissions:\n      contents: read', '    permissions:\n      contents: write'),
-    ]) {
-      expect(mutant).not.toBe(rcVerifyFile);
-      expect(() => assertSelfHostedRouting(mutant, 'mutant')).toThrow(/diagnostics require/);
+  it.each(['windows-diagnostics', 'windows-observer-diagnostics'])('%s cannot become automatic, hosted, or privileged', (jobId) => {
+    for (const change of [{ if: 'true' }, { 'runs-on': 'windows-latest' }, { permissions: { contents: 'write' } }]) {
+      const mutant = parse(rcVerifyFile) as Workflow;
+      Object.assign(mutant.jobs![jobId], change);
+      expect(() => assertSelfHostedRouting(stringify(mutant), 'mutant')).toThrow(/diagnostics require/);
     }
   });
 

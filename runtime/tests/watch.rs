@@ -7,6 +7,88 @@ use acceptance::fixture;
 use delivery::executable;
 use serde_json::{Value, json};
 use specgit::watch_store::{self, EventState, Identity, Revision, Store};
+
+/// Preserve the observer's result on assertion failures and reap the exact child.
+struct WatchProcess {
+    child: std::process::Child,
+    stdout: std::fs::File,
+    stderr: std::fs::File,
+    identity: Identity,
+    scenario: &'static str,
+    started: std::time::Instant,
+}
+impl WatchProcess {
+    fn spawn(
+        mut command: std::process::Command,
+        identity: &Identity,
+        scenario: &'static str,
+    ) -> Self {
+        let stdout = tempfile::tempfile().unwrap();
+        let stderr = tempfile::tempfile().unwrap();
+        let child = command
+            .stdout(stdout.try_clone().unwrap())
+            .stderr(stderr.try_clone().unwrap())
+            .spawn()
+            .unwrap();
+        Self {
+            child,
+            stdout,
+            stderr,
+            identity: identity.clone(),
+            scenario,
+            started: std::time::Instant::now(),
+        }
+    }
+    fn output(&mut self) -> (String, String) {
+        use std::io::{Read, Seek, SeekFrom};
+        let read = |file: &mut std::fs::File| {
+            file.seek(SeekFrom::Start(0)).unwrap();
+            let mut text = String::new();
+            file.read_to_string(&mut text).unwrap();
+            text
+        };
+        (read(&mut self.stdout), read(&mut self.stderr))
+    }
+    fn diagnostic(&mut self) -> Value {
+        let (stdout, stderr) = self.output();
+        json!({
+            "scenario": self.scenario,
+            "elapsed_ms": self.started.elapsed().as_millis(),
+            "child_status": self.child.try_wait().unwrap().map(|s| s.to_string()),
+            "state": watch_store::read(&self.identity, None).unwrap(),
+            "stdout": stdout,
+            "stderr": stderr,
+        })
+    }
+}
+impl std::ops::Deref for WatchProcess {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+impl std::ops::DerefMut for WatchProcess {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+impl Drop for WatchProcess {
+    fn drop(&mut self) {
+        if let Some(directory) = std::env::var_os("SPECGIT_WATCH_DIAGNOSTICS") {
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join(format!("{}.json", self.scenario)),
+                serde_json::to_vec_pretty(&self.diagnostic()).unwrap(),
+            )
+            .unwrap();
+        }
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
 fn watch(goal: &str) -> [&str; 8] {
     [
         "watch",
@@ -590,15 +672,14 @@ fn real_claude_host_consumes_async_observer_event_on_the_next_model_turn() {
 fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscription() {
     use std::{
         fs,
-        process::Stdio,
         time::{Duration, Instant},
     };
     let f = fixture("github");
     let first = f.run(&watch("lifecycle"));
     let identity: Identity =
         serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
-    let mut child = f
-        .native_command(&[
+    let mut child = WatchProcess::spawn(
+        f.native_command(&[
             "watch",
             "--request",
             "41",
@@ -610,10 +691,10 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
             "1",
             "--timeout-seconds",
             "30",
-        ])
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
+        ]),
+        &identity,
+        "ordinary-local-edits",
+    );
     let started = Instant::now();
     loop {
         let state = watch_store::read(&identity, None).unwrap().unwrap();
@@ -623,7 +704,11 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
         {
             break;
         }
-        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{}",
+            child.diagnostic()
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     fs::write(f.root.join("new-file"), "ordinary local edit").unwrap();
@@ -637,9 +722,14 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
         }
         assert!(
             child.try_wait().unwrap().is_none(),
-            "Observer exited after an ordinary edit"
+            "Observer exited after an ordinary edit: {}",
+            child.diagnostic()
         );
-        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{}",
+            child.diagnostic()
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(child.try_wait().unwrap().is_none());
@@ -651,7 +741,7 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
 #[test]
 fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes() {
     use std::{
-        process::{Command, Stdio},
+        process::Command,
         time::{Duration, Instant},
     };
     let f = fixture("github");
@@ -661,8 +751,8 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
     let old_head = first["evidence"]["events"][0]["revision"]["local_head"]
         .as_str()
         .unwrap();
-    let mut child = f
-        .native_command(&[
+    let mut child = WatchProcess::spawn(
+        f.native_command(&[
             "watch",
             "--request",
             "41",
@@ -674,10 +764,10 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             "1",
             "--timeout-seconds",
             "30",
-        ])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        ]),
+        &identity,
+        "unpushed-commits",
+    );
     let started = Instant::now();
     loop {
         let state = watch_store::read(&identity, None).unwrap().unwrap();
@@ -687,7 +777,11 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         {
             break;
         }
-        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{}",
+            child.diagnostic()
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(
@@ -724,11 +818,13 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         }
         assert!(
             child.try_wait().unwrap().is_none(),
-            "Observer exited while local commits awaited push"
+            "Observer exited while local commits awaited push: {}",
+            child.diagnostic()
         );
         assert!(
             started.elapsed() < Duration::from_secs(15),
-            "No multi-poll pending state"
+            "No multi-poll pending state: {}",
+            child.diagnostic()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -739,10 +835,11 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
     });
-    let out = child.wait_with_output().unwrap();
-    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let status = child.wait().unwrap();
+    let (stdout, _) = child.output();
+    let result: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(result["status"], "completed", "{result}");
-    assert!(out.status.success());
+    assert!(status.success());
     assert_eq!(
         result["evidence"]["events"][0]["revision"]["head"],
         new_head
