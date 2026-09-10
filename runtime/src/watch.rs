@@ -1,9 +1,9 @@
-//! Bounded observation through read-only finish; durable transport is not acceptance.
+//! Bounded native observation; durable transport never authorizes mutations.
 use crate::{
-    assessment::{Assessment, Blocker, CheckOutcome, Status},
     config,
     diagnostic::{Code, Diagnostic},
     observation,
+    observation::{CheckOutcome, Observation as NativeObservation, Status},
     process::Process,
     project::{self, Context},
     report::Report,
@@ -77,19 +77,14 @@ struct Observation {
     retryable: bool,
     same_source_mismatch: bool,
 }
-fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observation {
+fn normalized(assessment: &NativeObservation, context: &Context, goal: Goal) -> Observation {
     let evidence = &assessment.evidence;
     let request = evidence.request.as_ref();
-    let declaration = evidence.declaration.as_ref();
     let head = request.map_or_else(|| context.head.clone(), |r| r.head.clone());
     let target = request.map_or_else(String::new, |r| r.target.clone());
-    let declaration_digest = declaration
-        .map(|d| d.approved_digest.clone())
-        .or_else(|| {
-            config::snapshot(&context.root)
-                .ok()
-                .and_then(|s| s.digest())
-        })
+    let declaration_digest = config::snapshot(&context.root)
+        .ok()
+        .and_then(|s| s.digest())
         .unwrap_or_default();
     #[derive(serde::Serialize)]
     struct IssueState<'a> {
@@ -99,19 +94,15 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
     #[derive(serde::Serialize)]
     struct Projection<'a> {
         checks: &'a Option<Vec<crate::delivery_model::Check>>,
-        required: &'a Option<Vec<crate::delivery_model::RequiredCheck>>,
-        blockers: &'a Option<Vec<Blocker>>,
         issues: Vec<IssueState<'a>>,
         request_state: Option<&'a str>,
         draft: Option<bool>,
-        target_commit: Option<&'a str>,
+        auto_merge: &'a Option<crate::observation::AutoMerge>,
         diagnostics: Vec<&'a Code>,
     }
     // Only the bounded typed projection enters durable transport; never private descriptions.
     let projection = Projection {
         checks: &evidence.checks,
-        required: &evidence.required_checks,
-        blockers: &evidence.blockers,
         issues: evidence
             .issues
             .iter()
@@ -123,7 +114,7 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
             .collect(),
         request_state: request.map(|r| r.state.as_str()),
         draft: request.map(|r| r.draft),
-        target_commit: declaration.map(|d| d.target_commit.as_str()),
+        auto_merge: &evidence.auto_merge,
         diagnostics: assessment.diagnostics.iter().map(|d| &d.code).collect(),
     };
     let revision = Revision {
@@ -136,7 +127,6 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
                 .expect("canonical projection serializes"),
         ),
     };
-    let blockers = evidence.blockers.as_deref().unwrap_or(&[]);
     let codes: Vec<_> = assessment.diagnostics.iter().map(|d| &d.code).collect();
     let check_outcome = assessment.checks_outcome();
     let state = if revision.head != revision.local_head
@@ -151,12 +141,16 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
         EventState::ClosedUnmerged
     } else if codes.contains(&&Code::Cancelled) {
         EventState::Cancelled
-    } else if matches!(assessment.status, Status::Unknown | Status::InvalidInput) {
+    } else if !codes.is_empty()
+        || matches!(assessment.status, Status::Unknown | Status::InvalidInput)
+    {
         EventState::Unknown
     } else if check_outcome == CheckOutcome::Failed {
         EventState::Failed
     } else if check_outcome == CheckOutcome::Passed {
         EventState::ChecksPassed
+    } else if check_outcome == CheckOutcome::Completed {
+        EventState::ChecksCompleted
     } else {
         EventState::Pending
     };
@@ -178,31 +172,50 @@ fn normalized(assessment: &Assessment, context: &Context, goal: Goal) -> Observa
             | EventState::Failed
             | EventState::Cancelled
             | EventState::IdentityChanged
-    ) || (state == EventState::ChecksPassed && goal == Goal::Checks)
+    ) || (matches!(
+        state,
+        EventState::ChecksPassed | EventState::ChecksCompleted
+    ) && goal == Goal::Checks)
         || (state == EventState::Unknown && !retryable);
-    let mut reason = if blockers.is_empty() {
-        if codes.is_empty() {
+    let mut reason = if codes.is_empty() {
+        let failed: Vec<_> = evidence
+            .checks
+            .iter()
+            .flatten()
+            .filter(|c| c.failed())
+            .map(|c| c.name.as_str())
+            .collect();
+        if failed.is_empty() {
             assessment.status.as_str().to_owned()
         } else {
-            serde_json::to_string(&codes).expect("codes serialize")
+            format!("native_checks_failed: {}", failed.join(", "))
         }
     } else {
-        blockers
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
+        serde_json::to_string(&codes).expect("codes serialize")
     };
+    if assessment.status == Status::Open {
+        match evidence.auto_merge {
+            Some(crate::observation::AutoMerge::Registered) => {
+                reason.push_str("; native_auto_merge_registered")
+            }
+            Some(crate::observation::AutoMerge::NotRegistered) => {
+                reason.push_str("; native_auto_merge_not_registered")
+            }
+            _ => reason.push_str("; native_auto_merge_unknown"),
+        }
+    }
     let mut end = reason.len().min(4096);
     while !reason.is_char_boundary(end) {
         end -= 1;
     }
     reason.truncate(end);
     let next_action = match state {
-        EventState::Completed => "The selected native request and associated issues are complete; programme completion is separate.",
+        EventState::Completed => "The selected native request and associated issues are complete; No further action is inferred.",
+        EventState::ChecksCompleted => "Native checks completed with neutral or skipped results. Consult the platform for their meaning; no merge eligibility is inferred.",
         EventState::ChecksPassed if goal == Goal::Checks => "Current checks passed. Review, merge and issue closure remain separate native facts.",
         EventState::ChecksPassed => "Current checks passed; continue observing the explicitly selected native lifecycle.",
-        EventState::MergedIssuesOpen => "Inspect native issue-closing eligibility; the observer will not close issues itself.",
+        EventState::MergedIssuesOpen if evidence.close_issues_after_merge => "Agent closure preference is enabled. Verify same-project native merge and each issue, require explicit session authorization, then read back any native closure; the observer does not write.",
+        EventState::MergedIssuesOpen => "Inspect native issue-closing eligibility and notify the user; optional Agent closure is off.",
         EventState::ClosedUnmerged => "The native request closed without merge; select subsequent work explicitly.",
         EventState::IdentityChanged => "Reconcile the current source/head/target and resume this exact subscription.",
         EventState::Failed => "Inspect the native failure and perform an ordinary reviewed repair.",
@@ -241,7 +254,7 @@ async fn observe(
     .await
     {
         Ok(a) => a,
-        Err(_) => Assessment::unavailable(Diagnostic::new(
+        Err(_) => NativeObservation::unavailable(Diagnostic::new(
             Code::Timeout,
             "watch",
             "The native observation deadline expired.",
@@ -251,6 +264,19 @@ async fn observe(
     normalized(&assessment, context, identity.goal)
 }
 
+pub struct ObservedEvents {
+    pub state: State,
+    pub event_state: EventState,
+}
+impl ObservedEvents {
+    pub fn pending(&self) -> Vec<&watch_store::Event> {
+        self.state
+            .events
+            .iter()
+            .filter(|e| !e.superseded && e.acknowledged_at.is_none())
+            .collect()
+    }
+}
 fn report(state: &State, event_state: &EventState) -> Report {
     let events: Vec<_> = state
         .events
@@ -265,24 +291,26 @@ fn report(state: &State, event_state: &EventState) -> Report {
     let mut result = Report::success(
         "watch",
         &status,
-        json!({"subscription":state.identity,"events":events,"expired_unacknowledged":state.expired_unacknowledged,"transport":"offered_not_acknowledged","programme_completed":false}),
+        json!({"subscription":state.identity,"events":events,"expired_unacknowledged":state.expired_unacknowledged,"transport":"offered_not_acknowledged","native_observation":true}),
     );
     result.exit = match event_state {
-        EventState::Completed => 0,
-        EventState::ChecksPassed if state.identity.goal == Goal::Checks => 0,
-        EventState::Failed | EventState::MergedIssuesOpen | EventState::ClosedUnmerged => 1,
         EventState::Cancelled => 130,
-        _ => 3,
+        EventState::Unknown | EventState::TimedOut | EventState::IdentityChanged => 3,
+        _ => 0,
     };
     result
 }
 pub async fn run(o: Options, process: Process, cwd: &Path) -> Report {
-    match Box::pin(execute(o, process, cwd)).await {
-        Ok(r) => r,
+    match Box::pin(observe_subscription(o, process, cwd)).await {
+        Ok(r) => report(&r.state, &r.event_state),
         Err(d) => Report::failure("watch", d),
     }
 }
-async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Diagnostic> {
+pub async fn observe_subscription(
+    o: Options,
+    process: Process,
+    cwd: &Path,
+) -> Result<ObservedEvents, Diagnostic> {
     if !(1..=3600).contains(&o.timeout_seconds) || !(1..=300).contains(&o.poll_seconds) {
         return Err(Diagnostic::input(
             "Invalid observer polling or deadline bound.",
@@ -407,7 +435,10 @@ async fn execute(o: Options, process: Process, cwd: &Path) -> Result<Report, Dia
             watch_store::now(),
         )?;
         if o.once || observation.terminal {
-            break report(&state, &observation.state);
+            break ObservedEvents {
+                state,
+                event_state: observation.state,
+            };
         }
         failures = if observation.retryable {
             failures.saturating_add(1).min(4)

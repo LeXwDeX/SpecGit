@@ -106,10 +106,10 @@ fn native_rerun_and_auth_recovery_are_material_events_not_replayed_success() {
     f.edit(|s| {
         s["read_failure"] = Value::Null;
         for (route, value) in s["read_routes"].as_object_mut().unwrap() {
-            if route.contains("/actions/runs?") {
-                value["workflow_runs"][0]["run_attempt"] = json!(2);
-                value["workflow_runs"][0]["status"] = json!("in_progress");
-                value["workflow_runs"][0]["conclusion"] = Value::Null;
+            if route.contains("/check-runs?") {
+                value["check_runs"][0]["id"] = json!(82);
+                value["check_runs"][0]["status"] = json!("in_progress");
+                value["check_runs"][0]["conclusion"] = Value::Null;
             }
         }
     });
@@ -328,11 +328,20 @@ fn cancellation_records_intent_and_reaps_the_owned_native_child() {
 fn unicode_failure_reasons_remain_readable_and_invalid_writes_preserve_the_checkpoint() {
     let f = fixture("github");
     f.edit(|s| {
-        let rules = (0..32).map(|i| json!({"context":format!("{}-{i}", "检查".repeat(40)),"integration_id":null})).collect::<Vec<_>>();
-        s["read_routes"]["repos/fixture/repo/rules/branches/main?per_page=100&page=1"] = json!([{"type":"required_status_checks","parameters":{"required_status_checks":rules}}]);
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/check-runs?") || route.contains("/actions/runs/71/jobs?") {
+                let key = if route.contains("check-runs?") {
+                    "check_runs"
+                } else {
+                    "jobs"
+                };
+                value[key][0]["name"] = json!("检查".repeat(40));
+                value[key][0]["conclusion"] = json!("failure");
+            }
+        }
     });
     let first = f.run(&watch("checks"));
-    assert_eq!(first["status"], "pending", "{first}");
+    assert_eq!(first["status"], "failed", "{first}");
     let event = &first["evidence"]["events"][0];
     assert!(event["reason"].as_str().unwrap().len() <= 4096);
     assert!(event["reason"].as_str().unwrap().contains("检查"));
@@ -365,8 +374,7 @@ fn unicode_failure_reasons_remain_readable_and_invalid_writes_preserve_the_check
     assert_eq!(f.run(&args)["status"], "acknowledged");
 }
 #[test]
-fn required_terminal_nonsuccess_is_failed_while_running_checks_remain_pending() {
-    use base64::{Engine, engine::general_purpose::STANDARD};
+fn native_neutral_failure_and_running_results_remain_distinct() {
     for (provider, conclusion) in [
         ("github", "skipped"),
         ("github", "neutral"),
@@ -376,18 +384,25 @@ fn required_terminal_nonsuccess_is_failed_while_running_checks_remain_pending() 
     ] {
         let f = fixture(provider);
         f.edit(|s| {
-            let id = "e".repeat(40);
-            let route = if provider == "github" {format!("repos/fixture/repo/git/blobs/{id}")} else {format!("projects/fixture%2Frepo/repository/blobs/{id}")};
-            let bytes = b"version: 2\nverification:\n  required_checks: [Test]\n";
-            s["read_routes"][route] = json!({"sha":id,"content":STANDARD.encode(bytes),"encoding":"base64","size":bytes.len()});
             for (route, value) in s["read_routes"].as_object_mut().unwrap() {
                 if route.contains("/check-runs?") || route.contains("/actions/runs/71/jobs?") {
-                    let key = if route.contains("check-runs?") {"check_runs"} else {"jobs"};
-                    value[key][0]["status"] = json!(if conclusion == "pending" {"in_progress"} else {"completed"});
-                    value[key][0]["conclusion"] = if conclusion == "pending" {Value::Null} else {json!(conclusion)};
-                } else if route.starts_with("projects/7/pipelines/71/jobs?") {
-                    value[0]["status"] = json!(conclusion);
-                    value[0]["allow_failure"] = json!(true);
+                    let key = if route.contains("check-runs?") {
+                        "check_runs"
+                    } else {
+                        "jobs"
+                    };
+                    value[key][0]["status"] = json!(if conclusion == "pending" {
+                        "in_progress"
+                    } else {
+                        "completed"
+                    });
+                    value[key][0]["conclusion"] = if conclusion == "pending" {
+                        Value::Null
+                    } else {
+                        json!(conclusion)
+                    };
+                } else if route == "projects/7/pipelines/71" {
+                    value["status"] = json!(conclusion);
                 }
             }
         });
@@ -396,6 +411,8 @@ fn required_terminal_nonsuccess_is_failed_while_running_checks_remain_pending() 
             result["status"],
             if ["pending", "running"].contains(&conclusion) {
                 "pending"
+            } else if ["skipped", "neutral"].contains(&conclusion) {
+                "checks_completed"
             } else {
                 "failed"
             },
@@ -730,4 +747,38 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         result["evidence"]["events"][0]["revision"]["head"],
         new_head
     );
+}
+
+#[test]
+fn native_auto_merge_removal_is_a_fresh_read_only_event() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            if provider == "github" {
+                s["requests"][0]["auto_merge"] = json!({"merge_method":"squash"});
+            } else {
+                s["requests"][0]["merge_when_pipeline_succeeds"] = json!(true);
+            }
+        });
+        let before = f.run(&watch("checks"));
+        let writes = f.writes();
+        f.edit(|s| {
+            if provider == "github" {
+                s["requests"][0]["auto_merge"] = Value::Null;
+            } else {
+                s["requests"][0]["merge_when_pipeline_succeeds"] = json!(false);
+            }
+        });
+        let after = f.run(&inbox());
+        let event = &after["evidence"]["events"][0];
+        assert_ne!(event["id"], before["evidence"]["events"][0]["id"]);
+        assert!(
+            event["reason"]
+                .as_str()
+                .unwrap()
+                .contains("native_auto_merge_not_registered"),
+            "{after}"
+        );
+        assert_eq!(f.writes(), writes);
+    }
 }

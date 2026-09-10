@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { writeSchemas } from './check-surfaces.mjs';
 
 export const targets = {
   'x86_64-unknown-linux-gnu': { key: 'linux-x64-gnu', os: 'linux', cpu: 'x64', libc: ['glibc'] },
@@ -91,12 +92,7 @@ export function stage(target, output, binary) {
   chmodSync(path.join(wrapperDir, 'bin', 'specgit.cjs'), 0o755);
   writeFileSync(path.join(wrapperDir, 'LICENSE'), readFileSync(path.join(repo, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n'));
   writeFileSync(path.join(wrapperDir, 'README.md'), readFileSync(path.join(runtime, 'REFERENCE.md'), 'utf8').replace(/\r\n/g, '\n'));
-  mkdirSync(path.join(wrapperDir, 'schemas'));
-  for (const name of readdirSync(path.join(runtime, 'schemas')).filter(name => name.endsWith('.schema.json'))) {
-    const contents = readFileSync(path.join(runtime, 'schemas', name), 'utf8');
-    JSON.parse(contents);
-    writeFileSync(path.join(wrapperDir, 'schemas', name), contents.replace(/\r\n/g, '\n'));
-  }
+  writeSchemas(binary, path.join(wrapperDir, 'schemas'), path.join(runtime, 'schemas'));
   const wrapper = { ...base, name: 'specgit', description: 'Native GitHub and GitLab delivery harness', bin: { specgit: 'bin/specgit.cjs' }, files: ['bin', 'LICENSE', 'README.md', 'schemas'], optionalDependencies: Object.fromEntries(Object.values(targets).map(t => [`specgit-${t.key}`, version])) };
   writeFileSync(path.join(wrapperDir, 'package.json'), JSON.stringify(wrapper, null, 2) + '\n');
   const evidence = { version, target, platform: name, sha256: digest, packages: [platformDir, wrapperDir] };

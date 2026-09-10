@@ -45,9 +45,11 @@ pub struct Tag {
 }
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Verification {
-    #[serde(default, deserialize_with = "check_list")]
-    pub required_checks: Vec<String>,
+pub struct Agent {
+    #[serde(default)]
+    pub native_auto_merge: bool,
+    #[serde(default)]
+    pub close_issues_after_merge: bool,
 }
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -145,7 +147,7 @@ pub struct Declaration {
     #[serde(default)]
     pub templates: Templates,
     #[serde(default)]
-    pub verification: Verification,
+    pub agent: Agent,
     #[serde(default)]
     pub observation: Observation,
 }
@@ -160,7 +162,7 @@ impl Default for Declaration {
             validation: Validation::default(),
             tags: vec![],
             templates: Templates::default(),
-            verification: Verification::default(),
+            agent: Agent::default(),
             observation: Observation::default(),
         }
     }
@@ -218,7 +220,13 @@ impl Declaration {
                 "Keep using the v1 executable or preview specgit migrate --config-file <v2.yaml>; no files were modified.",
             ));
         }
-        let result: Self = serde_yaml_ng::from_slice(bytes).map_err(|_| invalid())?;
+        let result: Self = serde_yaml_ng::from_slice(bytes).map_err(|error| {
+            if error.to_string().contains("unknown field `verification`") {
+                Diagnostic::new(Code::MigrationRequired, "configuration",
+                    "The retired verification declaration cannot be used by the lightweight runtime.",
+                    "Preserve the original file, remove verification.required_checks from a reviewed v2 declaration, and configure required checks on the native forge; SpecGit does not copy platform protection rules.")
+            } else { invalid() }
+        })?;
         result.validate()?;
         Ok(result)
     }
@@ -232,9 +240,6 @@ impl Declaration {
             return Err(invalid());
         }
         if self.target.as_ref().is_some_and(|s| !valid_branch(s)) {
-            return Err(invalid());
-        }
-        if !unique_text(&self.verification.required_checks, 255) {
             return Err(invalid());
         }
         let o = &self.observation;
@@ -466,9 +471,7 @@ fn bounded_list<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
 fn tag_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Tag>, D::Error> {
     bounded_list(d, |_| true)
 }
-fn check_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
-    bounded_list(d, |s: &String| s.len() <= 255)
-}
+
 fn section_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
     bounded_list(d, |s: &String| s.len() <= 120)
 }

@@ -107,3 +107,16 @@ fn crlf_owned_block_refresh_preserves_line_endings_and_exact_foreign_bytes() {
     .unwrap();
     assert!(guidance::change(&path, &d, &next, Some(&hash)).is_err());
 }
+
+#[test]
+fn generated_guidance_uses_native_observation_and_preferences_are_not_authority() {
+    let d = Declaration::default();
+    let prose = guidance::render(&d);
+    assert!(!prose.contains("specgit finish"));
+    assert!(prose.contains("specgit watch"));
+    assert!(prose.contains("existing user authorization"));
+    assert!(prose.contains("disabled by default"));
+    assert!(prose.contains("native readback"));
+    assert!(prose.contains("\"native_auto_merge\":false"));
+    assert!(prose.contains("\"close_issues_after_merge\":false"));
+}

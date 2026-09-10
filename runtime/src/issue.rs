@@ -6,7 +6,7 @@ use crate::{
     probe::ForgeRead,
     process::Process,
     project,
-    report::Report,
+    report::{Effects, Report},
     selection::{self, IssueIntent, Locked, Selection},
     spec, templates,
 };
@@ -31,14 +31,28 @@ pub struct Options {
     /// Prepare content and report duplicate candidates without writes.
     #[arg(long)]
     pub inspect: bool,
+    /// Preview exact proposed objects without changing local or native state.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Explicitly create selected catalog labels that are missing on the forge.
+    #[arg(long)]
+    pub create_labels: bool,
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
-    match execute(options, process, cwd).await {
+    let mut effects = Effects::default();
+    let mut report = match execute(options, process, cwd, &mut effects).await {
         Ok(report) => report,
         Err(d) => Report::failure("issue", d),
-    }
+    };
+    report.effects = Some(effects);
+    report
 }
-async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<Report, Diagnostic> {
+async fn execute(
+    mut options: Options,
+    process: Process,
+    cwd: &Path,
+    effects: &mut Effects,
+) -> Result<Report, Diagnostic> {
     options.body_file = options
         .body_file
         .into_iter()
@@ -171,26 +185,6 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
             write_started: false,
         });
     }
-    if options.inspect {
-        return Ok(Report::success(
-            "issue",
-            "prepared",
-            serde_json::json!({"prepared":prepared,"adopted":adopted,"candidates":candidate_reports,"writes":false}),
-        ));
-    }
-    let mut lock = Locked::acquire(&context)?;
-    if serde_json::to_value(selection::read(&context)?)
-        .map_err(|_| Diagnostic::input("Cannot compare selection."))?
-        != serde_json::to_value(&previous)
-            .map_err(|_| Diagnostic::input("Cannot compare selection."))?
-    {
-        return Err(Diagnostic::new(
-            Code::ConcurrentEdit,
-            "selection",
-            "The selection changed during preflight.",
-            "Read the current selection and retry.",
-        ));
-    }
     for number in &selection.issues {
         let issue =
             native_delivery::issue(&reader, &context.repository, project_facts.id, *number).await?;
@@ -205,8 +199,15 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
         .filter(|(_, i)| i.issue.is_none())
         .map(|(index, _)| index)
         .collect();
-    if adopted.len() == 1 && unresolved.len() == 1 {
-        selection.intents[unresolved[0]].issue = Some(adopted[0].id);
+    let adoptable: Vec<_> = adopted
+        .iter()
+        .filter(|issue| {
+            !selection.issues.contains(&issue.id)
+                && !selection.intents.iter().any(|i| i.issue == Some(issue.id))
+        })
+        .collect();
+    if adoptable.len() == 1 && unresolved.len() == 1 {
+        selection.intents[unresolved[0]].issue = Some(adoptable[0].id);
     } else {
         let uncertain: Vec<_> = selection
             .intents
@@ -215,8 +216,8 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
             .filter(|(_, i)| i.write_started && i.issue.is_none())
             .map(|(index, _)| index)
             .collect();
-        if adopted.len() == 1 && uncertain.len() == 1 {
-            selection.intents[uncertain[0]].issue = Some(adopted[0].id);
+        if adoptable.len() == 1 && uncertain.len() == 1 {
+            selection.intents[uncertain[0]].issue = Some(adoptable[0].id);
         }
     }
     for issue in adopted {
@@ -266,6 +267,10 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
         )
         .await?;
         let evidence = serde_json::json!({"title":intent.title,"issues":candidates});
+        if options.inspect || options.dry_run {
+            candidate_reports.push(evidence);
+            continue;
+        }
         if intent.write_started {
             return Ok(uncertain(evidence));
         }
@@ -275,6 +280,42 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
             report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID when it covers this work; uncertain intent mappings require one explicit adoption at a time."));
             return Ok(report);
         }
+    }
+    let missing_labels: std::collections::BTreeSet<_> = selection
+        .intents
+        .iter()
+        .filter(|i| i.issue.is_none())
+        .flat_map(|i| &i.labels)
+        .filter(|label| !pool.contains(label))
+        .cloned()
+        .collect();
+    if options.inspect || options.dry_run {
+        return Ok(Report::success(
+            "issue",
+            "prepared",
+            serde_json::json!({"prepared":selection.intents,"adopted":selection.issues,"selection":selection,"candidates":candidate_reports,"writes":false,"repository":context.repository,"project_id":project_facts.id,"target":target,"new_branch":options.branch,"missing_labels":missing_labels,"label_creation_requested":options.create_labels}),
+        ));
+    }
+    if !options.create_labels && !missing_labels.is_empty() {
+        return Err(Diagnostic::new(
+            Code::ConfirmationRequired,
+            "issue",
+            "Selected labels are missing from the native project.",
+            "Inspect --dry-run and explicitly request --create-labels, or choose existing labels.",
+        ));
+    }
+    let mut lock = Locked::acquire(&context)?;
+    if serde_json::to_value(selection::read(&context)?)
+        .map_err(|_| Diagnostic::input("Cannot compare selection."))?
+        != serde_json::to_value(&previous)
+            .map_err(|_| Diagnostic::input("Cannot compare selection."))?
+    {
+        return Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "selection",
+            "The selection changed during preflight.",
+            "Read the current selection and retry.",
+        ));
     }
     if let Some(branch) = &options.branch {
         // Recheck dirty state at the actual checkout boundary.
@@ -286,11 +327,23 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
                 "The worktree changed before branch creation.",
             ));
         }
+        let branch_effect = effects.begin(
+            "local",
+            "create_branch",
+            serde_json::json!({"branch":branch,"repository":context.repository}),
+        );
         project::git(&process, &root, &["switch", "-c", branch]).await?;
+        effects.applied(branch_effect);
         context.branch = Some(branch.clone());
         selection.branch = branch.clone();
     }
+    let local_effect = effects.begin(
+        "local",
+        "save_selection",
+        serde_json::json!({"branch":selection.branch,"repository":selection.repository}),
+    );
     lock.save(&selection)?;
+    effects.applied(local_effect);
     let writer = native_delivery::ForgeWrite::new(process, &root, &context.repository)?;
     let catalog = spec::catalog(&d);
     for index in 0..selection.intents.len() {
@@ -304,11 +357,24 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
         for label in &intent.labels {
             let pool = native_delivery::label_pool(&reader, &context.repository).await?;
             if !pool.contains(label) {
+                if !options.create_labels {
+                    return Err(Diagnostic::new(
+                        Code::ConfirmationRequired,
+                        "label",
+                        "A label disappeared after preflight.",
+                        "Inspect the native pool before explicitly requesting label creation.",
+                    ));
+                }
                 let tag = catalog.get(label).ok_or_else(|| {
                     Diagnostic::input(
                         "A selected existing label disappeared; arbitrary labels cannot be seeded.",
                     )
                 })?;
+                let label_effect = effects.begin(
+                    "native",
+                    "create_label",
+                    serde_json::json!({"label":label,"repository":context.repository}),
+                );
                 writer.create_label(tag).await?;
                 if !native_delivery::label_pool(&reader, &context.repository)
                     .await?
@@ -321,19 +387,34 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
                         "Inspect the native label before resuming.",
                     ));
                 }
+                effects.applied(label_effect);
             }
         }
         selection.intents[index].write_started = true;
+        let local_effect = effects.begin(
+            "local",
+            "save_selection",
+            serde_json::json!({"branch":selection.branch,"repository":selection.repository}),
+        );
         lock.save(&selection)?;
+        effects.applied(local_effect);
+        let issue_effect = effects.begin("native", "create_issue", serde_json::json!({"title":intent.title,"repository":context.repository,"branch":selection.branch,"next_action":"inspect_candidates_then_adopt_exact_id"}));
         let number = writer
             .create_issue(&intent.title, &intent.body, &intent.labels)
             .await?;
+        effects.locator(issue_effect, "issue", number);
         // Save the returned locator before any fallible readback.
         selection.intents[index].issue = Some(number);
         if !selection.issues.contains(&number) {
             selection.issues.push(number);
         }
+        let local_effect = effects.begin(
+            "local",
+            "save_selection",
+            serde_json::json!({"branch":selection.branch,"repository":selection.repository}),
+        );
         lock.save(&selection)?;
+        effects.applied(local_effect);
         let observed =
             native_delivery::issue(&reader, &context.repository, project_facts.id, number).await?;
         if observed.title != intent.title
@@ -347,6 +428,7 @@ async fn execute(mut options: Options, process: Process, cwd: &Path) -> Result<R
                 "Inspect the returned issue ID; resume preserves native edits.",
             ));
         }
+        effects.applied(issue_effect);
     }
     // Resume always validates remote facts, including preserved user edits.
     let mut issues = vec![];

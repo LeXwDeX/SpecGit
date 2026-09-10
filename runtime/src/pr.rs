@@ -6,7 +6,7 @@ use crate::{
     native_delivery::{self, ForgeWrite, PullRequest},
     process::Process,
     project::Provider,
-    report::Report,
+    report::{Effects, Report},
     selection::{self, Locked, RequestIntent, Selection},
     spec, templates,
 };
@@ -35,14 +35,37 @@ pub struct Options {
     pub ready: bool,
     #[arg(long, conflicts_with_all = ["ready", "update_body", "update_references"])]
     pub inspect: bool,
+    /// Read native lifecycle facts without creating or modifying a request.
+    #[arg(long, conflicts_with_all = ["title", "body_file", "tags", "ready", "update_body", "update_references", "inspect"])]
+    pub status: bool,
+    /// Preview request creation or changes without writing local or remote state.
+    #[arg(long, conflicts_with = "status")]
+    pub dry_run: bool,
+    /// Explicitly create selected catalog labels missing from the native project.
+    #[arg(long, conflicts_with = "status")]
+    pub create_labels: bool,
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
-    match Box::pin(execute(options, process, cwd)).await {
+    if options.status {
+        return Report::observation(
+            "pr.status",
+            crate::observation::observe(options.request, process, cwd).await,
+        );
+    }
+    let mut effects = Effects::default();
+    let mut report = match execute(options, process, cwd, &mut effects).await {
         Ok(r) => r,
         Err(d) => Report::failure("pr", d),
-    }
+    };
+    report.effects = Some(effects);
+    report
 }
-async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report, Diagnostic> {
+async fn execute(
+    mut o: Options,
+    process: Process,
+    cwd: &Path,
+    effects: &mut Effects,
+) -> Result<Report, Diagnostic> {
     o.body_file = o
         .body_file
         .map(|p| if p.is_absolute() { p } else { cwd.join(p) });
@@ -290,11 +313,25 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
             return Err(changed());
         }
     }
-    if o.inspect {
+    let missing_labels: Vec<_> = intended
+        .labels
+        .iter()
+        .filter(|label| !pool.contains(label))
+        .cloned()
+        .collect();
+    if o.inspect || o.dry_run {
         return Ok(Report::success(
             "pr",
             "prepared",
-            serde_json::json!({"request":request,"intent":intended,"issues":issues,"flow":crate::init::flow(&w.facts,Some(&w.target))}),
+            serde_json::json!({"request":request,"intent":intended,"issues":issues,"flow":crate::init::flow(&w.facts,Some(&w.target)),"repository":repo,"project_id":w.facts.id,"source":branch,"target":w.target,"writes":false,"missing_labels":missing_labels,"label_creation_requested":o.create_labels,"ready_requested":o.ready,"body_update_requested":replacement.is_some(),"create_request":request.is_none()}),
+        ));
+    }
+    if !o.create_labels && !missing_labels.is_empty() {
+        return Err(Diagnostic::new(
+            Code::ConfirmationRequired,
+            "pr",
+            "Selected request labels are missing from the native project.",
+            "Inspect --dry-run and explicitly request --create-labels, or use existing labels.",
         ));
     }
     let mut lock = Locked::acquire(&w.context)?;
@@ -308,28 +345,50 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
     if request.is_none() {
         selected.request_intent = Some(intended.clone());
         selected.request_write_started = true;
+        let local_effect = effects.begin(
+            "local",
+            "save_selection",
+            serde_json::json!({"branch":selected.branch,"repository":selected.repository}),
+        );
         lock.save(&selected)?;
+        effects.applied(local_effect);
+        let create_effect = effects.begin("native", "create_request", serde_json::json!({"repository":repo,"source":branch,"target":w.target,"next_action":"inspect_source_requests_then_adopt_exact_id"}));
         let number = writer
             .create_request(branch, &w.target, &intended.title, &intended.body)
             .await?;
+        effects.locator(create_effect, "request", number);
         selected.request = Some(number);
+        let local_effect = effects.begin(
+            "local",
+            "save_selection",
+            serde_json::json!({"branch":selected.branch,"repository":selected.repository}),
+        );
         lock.save(&selected)?;
+        effects.applied(local_effect);
         let created = native_delivery::pull_request(&w.reader, repo, number).await?;
         identity(&w, &created)?;
         if created.head != intended.head || created.body != intended.body || !created.draft {
             return Err(changed());
         }
+        effects.applied(create_effect);
         request = Some(created);
     }
     let mut r = request.ok_or_else(changed)?;
     selected.request = Some(r.id);
+    let local_effect = effects.begin(
+        "local",
+        "save_selection",
+        serde_json::json!({"branch":selected.branch,"repository":selected.repository}),
+    );
     lock.save(&selected)?;
+    effects.applied(local_effect);
     // A native edit after the prepared read stops before any body/label/ready write.
     if native_delivery::pull_request(&w.reader, repo, r.id).await? != r {
         return Err(changed());
     }
     if let Some(body) = replacement.filter(|body| body != &r.body) {
         w.unchanged().await?;
+        let request_effect = effects.begin("native", "update_request_body", serde_json::json!({"repository":repo,"request":r.id,"next_action":"read_native_request_before_retry"}));
         writer.update_request_body(r.id, &body).await?;
         let after = native_delivery::pull_request(&w.reader, repo, r.id).await?;
         identity(&w, &after)?;
@@ -342,6 +401,7 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
         {
             return Err(changed());
         }
+        effects.applied(request_effect);
         r = after;
     }
     let missing: Vec<_> = intended
@@ -357,18 +417,35 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
                 .await?
                 .contains(label)
             {
+                if !o.create_labels {
+                    return Err(Diagnostic::new(
+                        Code::ConfirmationRequired,
+                        "label",
+                        "A selected label disappeared after preflight.",
+                        "Inspect the native pool before explicitly requesting label creation.",
+                    ));
+                }
                 w.unchanged().await?;
+                let label_effect = effects.begin("native", "create_label", serde_json::json!({"repository":repo,"label":label,"next_action":"read_native_label_pool_before_retry"}));
                 writer
                     .create_label(catalog.get(label).ok_or_else(|| {
                         Diagnostic::input("A required existing label disappeared from its pool.")
                     })?)
                     .await?;
+                if !native_delivery::label_pool(&w.reader, repo)
+                    .await?
+                    .contains(label)
+                {
+                    return Err(changed());
+                }
+                effects.applied(label_effect);
             }
         }
         if native_delivery::pull_request(&w.reader, repo, r.id).await? != r {
             return Err(changed());
         }
         w.unchanged().await?;
+        let request_effect = effects.begin("native", "add_request_labels", serde_json::json!({"repository":repo,"request":r.id,"next_action":"read_native_request_before_retry"}));
         writer.add_request_labels(r.id, &missing).await?;
         let after = native_delivery::pull_request(&w.reader, repo, r.id).await?;
         identity(&w, &after)?;
@@ -382,6 +459,7 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
         {
             return Err(changed());
         }
+        effects.applied(request_effect);
         r = after;
     }
     validate(&w.declaration, false, &r.title, &r.body, &r.labels)?;
@@ -390,6 +468,7 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
             return Err(changed());
         }
         w.unchanged().await?;
+        let request_effect = effects.begin("native", "ready_request", serde_json::json!({"repository":repo,"request":r.id,"next_action":"read_native_request_before_retry"}));
         writer.ready(r.id).await?;
         let after = native_delivery::pull_request(&w.reader, repo, r.id).await?;
         identity(&w, &after)?;
@@ -401,10 +480,17 @@ async fn execute(mut o: Options, process: Process, cwd: &Path) -> Result<Report,
         {
             return Err(changed());
         }
+        effects.applied(request_effect);
         r = after;
     }
     selected.request_intent = None;
+    let local_effect = effects.begin(
+        "local",
+        "save_selection",
+        serde_json::json!({"branch":selected.branch,"repository":selected.repository}),
+    );
     lock.save(&selected)?;
+    effects.applied(local_effect);
     Ok(Report::success(
         "pr",
         if r.draft { "draft" } else { "bound" },

@@ -1,148 +1,229 @@
 # SpecGit 2 native command reference
 
-This reference describes the Rust 2 development artifact. The repository's root
-TypeScript package, `skills/` and older documentation describe the retained 1.x
-distribution until an explicitly approved major-version cutover. Installing or
-testing a 2.0 development artifact does not publish it or migrate any project.
+This reference describes the lightweight Rust development artifact. Installing
+it does not publish a release, migrate a project or authorize native mutations.
+The repository's root TypeScript package remains the retained 1.x distribution
+until an explicitly approved cutover.
 
-## Install and authority
+## Responsibility and configuration
 
-The npm wrapper selects an exact-version precompiled platform package, verifies
-its binary digest and invokes Rust with unchanged arguments and inherited I/O.
-Supported package targets are Linux x64/arm64 with glibc, macOS x64/arm64 and
-Windows x64 MSVC. Node.js 20.19 or newer is required; Rust and private source
-access are not installation requirements. Linux requires at least the glibc
-version recorded in the selected platform manifest. Other targets report an
-explicit unsupported-platform error. Public registry installation is a separate
-qualification gate; development tarball installation does not establish it.
+SpecGit manages specification Issues, aggregates multiple Issues into one native
+PR/MR, and observes native changes. The Agent supervises development and fixes.
+GitHub/GitLab decides CI, reviews, protection, actual merge and ordinary closure.
+The core, watch and hooks have no merge, Issue-close, branch-delete or settings
+administration capability. An authorized Agent uses gh/glab outside SpecGit for
+native auto-merge registration or optional supplementary Issue closure.
 
-`setup` installs owned global assets; `init` writes the shared project declaration
-and owned guidance. Neither creates a CI workflow. The selected project's native
-CI owns scheduling, caches and path applicability. Required checks must produce
-current, readable native evidence. Readiness and body edits require a fresh
-assessment but do not themselves require another business-test execution.
-
-The project declaration is `.specgit.yaml` with `version: 2`. It is the only shared
-configuration. The ignored Git-directory checkpoint contains local selection,
-submission recovery and subscriptions; it does not establish remote completion.
-Unknown/duplicate keys, invalid paths and out-of-bounds values are rejected.
+`.specgit.yaml` is the only shared declaration. Local selection, uncertain-write
+intents and subscriptions live under the Git directory; they are not remote
+completion evidence. A minimal declaration is:
 
 ```yaml
 version: 2
 remote: origin
-provider: github
 language: en
-validation:
-  titles: true
-  labels: kind
-  bodies: true
-verification:
-  required_checks: [Native verification]
+agent:
+  native_auto_merge: false
+  close_issues_after_merge: false
 ```
 
-`target` is optional and defaults to the native project default branch. `labels`
-defaults to `off`; `project` mode requires a declared `tags` catalog. Template
-selectors are `builtin`, `repository` with a safe relative `path`, or `inline`
-with a nonempty `body`. Both issue and request templates can define a `title`
-and `required_sections`. Omitted validation booleans default to false.
-Observation defaults are 15 seconds between polls, 1,800 seconds maximum, and
-attention/completed notifications. The declaration schema records all fields;
-runtime parsing additionally enforces YAML duplicate keys, UTF-8 byte bounds,
-Git-ref syntax, unique tag names and relational timing bounds.
+Both Agent preferences default to false. Setting them records a preference, not
+new authorization. `provider: github|gitlab` is optional where the host is
+unambiguous. `target` defaults to the successfully read native default branch.
+`language` accepts `en` or `zh`.
+
+Optional `validation` contains `titles`, `bodies` and `labels: off|kind|project`.
+Booleans default to false; labels default to `off`. Project labels require a
+`tags` catalog of name, six-digit color and optional description. The `templates`
+object selects `issue` and `pr` templates: `source: builtin`, `repository` with a
+safe relative `path`, or `inline` with nonempty `body`. Optional `title` and
+`required_sections` describe selected content. Final body files override template
+body selection. Unselected repository templates are only discovery candidates.
+
+Observation defaults are a 15-second poll, a 1,800-second maximum and
+attention/completed notices. Configuration fields are `observation.poll_seconds`,
+`max_wait_seconds` and `notify`. Runtime validation enforces relational timing
+bounds, unique lists, Git branch syntax, UTF-8 limits and safe paths. Unknown or
+duplicate YAML keys fail. Retired rule-engine configuration must be removed in an
+explicitly reviewed migration; platform protection rules remain on the forge.
+
+## Discovery, input and output
+
+`specgit --help`, `specgit --version` and `specgit --schema` work offline, without
+Git, forge executables or credentials. `specgit <command> --schema` narrows the
+contract. `-h` and `-V` are short help/version forms. The schema comes from the
+same command definitions as argv and includes types, choices, bounds, defaults,
+conflicts and side-effect classification. Packaged `schemas/` are generated from
+the staged executable's contract and checked against the installed launcher.
+
+Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
+`--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
+`--human` forces text. `--json` and `--human` conflict. `hook` uses host-specific
+framing regardless of ordinary output selection.
+
+Explicit JSON input is one object with `command`, `options` and optional `args`:
+
+```json
+{
+  "command": "issue",
+  "options": {"dry-run": true, "json": true},
+  "args": ["21", "22"]
+}
+```
+
+Save this as a local file and run `specgit --input-file /absolute/request.json`.
+`--input-file -` explicitly reads stdin. Ordinary argv never consumes implicit
+stdin. `command` can also be an array of command names; option keys are long
+names without `--`, booleans are JSON booleans, and positional values belong in
+`args`. Input is capped at 1 MiB with a five-second read deadline. Duplicate or
+unknown keys, incompatible types and conflicting selectors are errors. Business
+argv cannot accompany JSON input; only the explicit global `--cwd`, `--json` or
+`--human` selectors can accompany it. Duplicate selectors are rejected.
+
+Ordinary reports contain `schema_version`, `version`, `operation`, `ok`, `status`,
+`exit`, `evidence`, `diagnostics` and `next_actions`. `ok` describes operation
+success; it is not merge authorization. Diagnostics provide stable `code`,
+operation, message and remedy. Raw provider stderr is classified locally rather
+than copied into the report. Business code consumes typed library values, not
+its own serialized reports.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | The operation or observation succeeded. Inspect native state separately. |
+| 1 | The operation failed; use the diagnostic and current evidence. |
+| 2 | Invalid input/configuration, or an explicit operating choice is required. |
+| 3 | External result or required facts remain unknown/unavailable. |
+| 130 | Cancelled; inspect any pending intent before explicitly resuming. |
+
+Collections are bounded. Pagination exhaustion, missing fields and ambiguous
+responses do not prove absence. Use object IDs and reported source/identity;
+inspect partial or unavailable results before a further action. A preview is not
+a reservation or authorization, so real application rechecks current state.
 
 ## Commands
 
-All commands accept `--cwd <path>` and `--json`. Run `specgit <command> --help`
-for the complete CLI syntax. Files in `schemas/` describe normalized options;
-they do not add a JSON input transport. `hook` has separate host stdin/output.
+Run `specgit <command> --help` for complete argument combinations. All ordinary
+commands use the global input/output contract above.
 
-| Command | Purpose and principal options |
+| Command | Purpose and options |
 | --- | --- |
-| `doctor` | Read command/account/project capability. Requires `--provider github\|gitlab`; optional `--remote`, `--api-host`, `--account-only`. Successful help does not prove API access or mutation permission. |
-| `setup` | Install/update global native assets. Optional `--root`, `--provider`, `--api-host`; explicit `--register-claude` and optional `--claude-settings` select host registration. `--uninstall` or `--rollback <transaction>` preserves foreign assets and refuses ownership drift. |
-| `init` | Inspect native flow and generate project assets. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language en\|zh`, `--config-file`, or `--mirror-claude`. `--inspect` is read-only. Explicit `--native-delete-source true\|false` changes that native setting with readback; `--rollback` restores owned local assets only. |
-| `issue` | Select positive issue IDs or create complete specs from titles. Repeat `--body-file` in new-title order; optional `--tags`, `--branch`, `--inspect`. Duplicate candidates require inspection and deliberate adoption. No binding-only commit or push is created. |
-| `pr` | Create after a real pushed diff, resume, or adopt `--request <id>`. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body`, or `--update-references` preserves every existing deliberate association. `--inspect` performs no mutation. |
-| `status` | Offline Git identity, local selection and pending subscription state. Optional `--remote` and `--provider`; no forge child is invoked. |
-| `finish` | Read-only fresh acceptance; optional exact `--request`. Re-reads native request/issue/head/target/rules/check attempts. Candidate configuration cannot exempt itself from target-approved requirements. |
-| `merge` | Explicit native delegation with required `--request`, `--mode now\|auto`, and `--strategy merge\|squash\|rebase`. Fresh acceptance and supported native capabilities are required. Queue acceptance is reported as queued. |
-| `promotion` | Inspect issue association evidence for `--request`, optionally selecting repeated `--source-request`. Uses exact native associations and Git postimages; ambiguous partial/reverted/cherry-picked changes remain unproven. |
-| `watch` | Bounded current checks/lifecycle observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`. Optional `--once`, `--state-root`, `--timeout-seconds` (1–3,600), `--poll-seconds` (1–300). |
-| `inbox` | Refresh one request/session/goal subscription. `--no-refresh` lists unverified IDs only; explicit `--ack <event-id>` records transport receipt. It does not prove human reading or acceptance. |
-| `hook` | Host adapter with required `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. Synchronous framing is bounded and informational. |
-| `migrate` | Preview explicit 1.x retirement using `--config-file <v2.yaml>`. Apply the exact preview with `--apply --expect <digest>`; `--retire-only` leaves v1 authority for an intermediate retirement commit. `--rollback <transaction>` restores proven local assets. |
+| `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` explicitly register a host. `--dry-run` previews install/update or `--uninstall` without writes or a lock. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall. |
+| `init` | Inspect native capabilities and write the shared declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
+| `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. `--create-labels` explicitly permits missing selected catalog labels to be created. |
+| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options. |
+| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–3,600; default 1,800), `--poll-seconds` (1–300; default 15). |
+| `hook` | Host event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. Bounded informational framing; no write permission is granted. |
+| `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`, optional `--state-root`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. |
+| `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
+| `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
+| `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
 
-GitHub/GitLab writes use the selected authenticated `gh`/`glab` session. SpecGit
-does not store credentials. API-host selection is local routing, not a credential
-field in the shared declaration. A forbidden or ambiguous 404 never proves that
-a project, protection rule or CI result is absent.
+`inbox`, `status`, `doctor` and `migrate` remain auxiliary entrypoints in this
+development artifact. Core project operations are setup, init, issue, pr, watch
+and hook. No separate server is required for ordinary Agent use.
 
-## Ordinary delivery
+## Initialization choices and native limits
 
-Initialize the project once. Before a tracked edit, select the native issues:
+`init` reads the actual project/default branch and current request target. Custom
+hosts can require an explicit provider. `--api-host` is private worktree routing,
+not a shared credential field; SSH and API ports are distinct.
+
+Capability records use `supported`, `unsupported` or `unknown` with source and
+reason. Unsupported/unknown native flow returns `confirmation_required` before
+project writes unless an explicit manual fallback was selected. The report remains
+available with `--check` or dry-run. Configure the platform using an authorized
+native administrator action, recheck, or choose `--manual-observe`. That manual
+choice persists for subsequent refreshes. No default branch is guessed, and init
+never changes native settings, protection or CI.
+
+GitHub `allow_auto_merge` reports a repository setting, not a request guarantee.
+Readable branch protection is not an exhaustive ruleset/queue/approval assessment.
+GitLab project metadata currently does not prove native auto-merge support; its
+status remains unknown without a guessed version threshold. A non-default target,
+disabled closing or unknown instance rules can leave Issues open after merge.
+The actual native request and Issue states must be read back.
+
+## Ordinary work and uncertain writes
+
+Search for duplicate Issues and read their WHY before creating new ones. Select
+complete specifications, then preserve their closing references in one request:
 
 ```sh
-specgit init --provider github --config-file /absolute/path/project-v2.yaml --json
+specgit init --provider github --manual-observe --json
+specgit issue 21 22 --dry-run --json
 specgit issue 21 22 --json
 ```
 
-Commit and push the real work through Git, then create or resume the request:
+After committing and pushing actual implementation through Git:
 
 ```sh
-specgit pr --title 'feat: implement the selected specs' --body-file /absolute/path/request.md --json
+specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --dry-run --json
+specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --json
 specgit pr --ready --json
-specgit finish --json
-```
-
-Use `Closes #21` and `Closes #22` for same-project associations. Native closing
-rules depend on the target/default branch and project settings. A merge into an
-intermediate branch can legitimately leave issues open. SpecGit reports that
-state and never compensates through an issue-close or branch-delete endpoint.
-Only an already authorized merge may be requested:
-
-```sh
-specgit merge --request 42 --mode auto --strategy squash --json
+specgit pr --status --json
 specgit watch --request 42 --session task-42 --goal lifecycle --json
-specgit inbox --request 42 --session task-42 --goal lifecycle --json
 ```
 
-GitLab rebase and enabled/unknown merge-train routing are currently unsupported.
-GitLab plain merge requires project-enforced no-squash. Fork writes and unproven
-native queue capabilities are refused. Recover from an uncertain write by
-resuming the exact request; inspect ambiguity instead of resubmitting blindly.
+SpecGit does not create binding-only commits or silently push source changes.
+Native auto-merge registration belongs to an already authorized Agent gh/glab
+action outside these commands. The preference does not authorize a new session.
 
-## Results and host delivery
+Issue/request writes retain intent before submission. On an uncertain response,
+resume the same selection/request to reconcile native state; inspect ambiguous
+matches rather than submitting again. Request body updates preserve user content
+and deliberately associated Issues. Cross-project or conflicting identities are
+rejected rather than guessed. A read-only probe never establishes write permission.
+The user's authenticated gh/glab session provides forge access; SpecGit does not
+store credentials. Forbidden or ambiguous 404 responses do not establish absence.
 
-Ordinary JSON stdout is one report with `schema_version`, `version`, `operation`,
-`status`, `exit`, `evidence`, and `diagnostics`. Exit values are 0 for successful
-observation, 1 for rejected evidence, 2 for invalid input, 3 for unavailable
-evidence, and 130 for cancellation. An exit 0 from a probe is not acceptance;
-`finish` must report `accepted`. `completed` also requires the observed native
-merge and closed associated issues. Source cleanup is independently reported.
+## Observation and host delivery
+
+`pr --status` reports lifecycle facts such as `open`, `closed_unmerged`, `merged`,
+`completed`, `merged_issues_open` or `unknown`. Check outcomes describe observed
+checks only; the runtime does not reconstruct native merge eligibility. A merged
+request with open linked Issues produces attention. Agent supplementary closure
+is optional, defaults off, and requires existing authorization plus native
+readback of merge, intended associations and resulting Issue closure.
+
+Watch subscriptions and stable event IDs are session/worktree scoped. Pending
+notices are refreshed before delivery and superseded by changed evidence.
+`--goal checks` observes checks without claiming lifecycle completion. `--once`
+performs one read and retains pending intent. Explicit inbox acknowledgment is a
+transport receipt, not human reading, approval or permission to mutate.
 
 Claude registration includes SessionStart, PreToolUse, PostToolUse and Stop.
-Relevant PostToolUse can start a bounded asynchronous read-only observer.
-Registration reports `written_not_verified`; configuration alone never proves
-notification. The demonstrated host fallback delivers pending events on a later
-model turn. Immediate idle wake and external model interpretation are not
-claimed. Stop does not request another turn, and no hook acknowledges itself.
+Relevant PostToolUse may launch a bounded asynchronous observer. Registration is
+`written_not_verified`; import, context injection, visible messages and later-turn
+delivery require separate host evidence. Immediate idle wake is not supported.
+Stop does not request another model turn, and hooks never acknowledge themselves.
+Use explicit watch/inbox when automatic delivery is unavailable.
 
-## Migration and release boundaries
+## Assets, migration and installation
 
-Retain the 1.x executable while inspecting an unmigrated project. Preview first;
-only exact owned assets and proven remote writers can be retired. Shared hooks,
-edited assets, unknown workflows/includes and old in-flight executions can block
-migration. Apply preserves private backups and foreign content; rollback refuses
-later conflicting edits. Existing draft requests remain preserved.
+Setup uses exact asset hashes and recorded host groups. Foreign content, hook
+ordering and file permissions survive refresh/uninstall. Dry-run performs no
+mkdir, asset lock or write. Real apply rechecks content/permissions after locking,
+uses atomic replacement and saves restorable private preimages. Edited ownership
+or interrupted transactions require explicit recovery. Rollback refuses later
+conflicting edits; uninstall retains backups and unrelated directories.
+Installation can succeed while account readiness is unknown: inspect `readiness`
+and exit 3 separately from written assets and unverified host registration.
 
-Retired 1.x commands `bind`, `unbind`, `accept` and orchestration options such as
-`--automation`, `--close-issues`, `--scope`, `--plan-checks` and `pr --merge` return
-actionable major-version diagnostics. Native issue/request association, explicit
-`merge`, and project-native CI replace their applicable behavior.
+Migration defaults to a preview. Supply the complete new declaration explicitly;
+no old automation or orchestration policy is silently reinterpreted. Exact owned
+local assets and native retirement evidence bound activation. Unknown writers,
+dynamic includes, shared hooks or unfinished native runs can prevent activation.
+Native workflow retirement is a separately authorized repository operation.
+Private backups, foreign content and old drafts remain recoverable.
 
-Local staging, qualification, programme merge/issue closure, and public publication
-are separate outcomes. All five native packages and the exact pinned wrapper
-must be independently qualified before publication. Partial publication recovery
-reads registry identity/integrity and never silently advances a tag. The current
-owned-runner-only policy does not satisfy npm's hosted-only OIDC requirement;
-no source visibility change or publishing credential is inferred.
+The npm wrapper selects an exact-version precompiled platform package, verifies
+its binary digest and forwards argv/I/O to Rust. Declared package targets are
+Linux glibc x64/arm64, macOS x64/arm64 and Windows x64 MSVC. Node.js 20.19 or newer
+is required; end-user installation needs no Rust toolchain or private source.
+Linux requires the glibc floor recorded in its manifest. Unsupported targets fail
+explicitly. Every target needs its own installed/runtime qualification.
+
+Staging, local installation and public registry publication are separate outcomes.
+See [distribution](distribution/README.md) for qualification and publishing paths.
+Neither this reference nor installation authorizes publication, source visibility
+changes, native administration or a new credential flow.

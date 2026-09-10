@@ -8,7 +8,12 @@ use std::{fs, process::Command};
 fn both_forges_create_many_specs_then_resume_preserving_native_edits_without_new_writes() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new(provider);
-        let r = f.run(&["issue", "feat: first delivery", "fix: second delivery"]);
+        let r = f.run(&[
+            "issue",
+            "--create-labels",
+            "feat: first delivery",
+            "fix: second delivery",
+        ]);
         assert_eq!(r["exit"], 0, "{r}");
         assert_eq!(r["evidence"]["selection"]["issues"], json!([1, 2]));
         assert_eq!(f.writes(), 4);
@@ -20,7 +25,7 @@ fn both_forges_create_many_specs_then_resume_preserving_native_edits_without_new
                 "description"
             }] = json!("User changes remain");
         });
-        let r = f.run(&["issue", "1", "2"]);
+        let r = f.run(&["issue", "--create-labels", "1", "2"]);
         assert_eq!(r["exit"], 0, "{r}");
         assert_eq!(r["evidence"]["issues"][0]["body"], "User changes remain");
         assert_eq!(f.writes(), 4);
@@ -35,11 +40,16 @@ fn both_forges_create_many_specs_then_resume_preserving_native_edits_without_new
 #[test]
 fn preflight_invalid_later_spec_or_incomplete_search_writes_nothing() {
     let f = Fixture::new("github");
-    let r = f.run(&["issue", "feat: valid first", "unknown: bad second"]);
+    let r = f.run(&[
+        "issue",
+        "--create-labels",
+        "feat: valid first",
+        "unknown: bad second",
+    ]);
     assert_eq!(r["exit"], 2, "{r}");
     assert_eq!(f.writes(), 0);
     f.edit(|s| s["search_incomplete"] = json!(true));
-    let r = f.run(&["issue", "feat: valid first"]);
+    let r = f.run(&["issue", "--create-labels", "feat: valid first"]);
     assert_eq!(r["exit"], 3, "{r}");
     assert_eq!(f.writes(), 0);
 }
@@ -48,11 +58,23 @@ fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new(provider);
         f.edit(|s| s["lose_issue_response"] = json!(true));
-        let r = f.run(&["issue", "fix: lost response"]);
+        let r = f.run(&["issue", "--create-labels", "fix: lost response"]);
         assert_eq!(r["exit"], 3, "{r}");
+        assert_eq!(r["effects"]["outcome"], "unknown", "{r}");
+        let effect = r["effects"]["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["action"] == "create_issue")
+            .unwrap();
+        assert_eq!(effect["outcome"], "unknown");
+        assert_eq!(
+            effect["recovery"]["next_action"],
+            "inspect_candidates_then_adopt_exact_id"
+        );
         assert_eq!(f.state()["issues"].as_array().unwrap().len(), 1);
         let writes = f.writes();
-        let r = f.run(&["issue", "fix: lost response"]);
+        let r = f.run(&["issue", "--create-labels", "fix: lost response"]);
         assert_eq!(r["exit"], 3, "{r}");
         assert_eq!(f.writes(), writes);
         f.edit(|s| {
@@ -63,7 +85,7 @@ fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
                 "description"
             }] = json!("User edited after creation");
         });
-        let r = f.run(&["issue", "1"]);
+        let r = f.run(&["issue", "--create-labels", "1"]);
         assert_eq!(r["exit"], 0, "{r}");
         assert_eq!(f.writes(), writes);
         assert_eq!(r["evidence"]["selection"]["intents"][0]["issue"], 1);
@@ -77,22 +99,28 @@ fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
 fn resumed_unwritten_intents_recheck_new_duplicates_and_current_policy_before_any_write() {
     let f = Fixture::new("github");
     f.edit(|s| s["deny_label"] = json!(true));
-    assert_eq!(f.run(&["issue", "fix: resumed work"])["exit"], 3);
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "fix: resumed work"])["exit"],
+        3
+    );
     f.edit(|s| {
         s["deny_label"] = json!(false);
         s["issues"] = json!([{"number":1,"title":"fix: resumed work","body":"Created by another author","labels":[{"name":"kind::fix"}],"state":"open","updated_at":"2026-09-09T00:00:00Z"}]);
     });
     let writes = f.writes();
-    let r = f.run(&["issue", "fix: resumed work"]);
+    let r = f.run(&["issue", "--create-labels", "fix: resumed work"]);
     assert_eq!(r["status"], "candidate_review_required", "{r}");
     assert_eq!(f.writes(), writes);
 
     let f = Fixture::new("github");
     f.edit(|s| s["lose_issue_response"] = json!(true));
-    assert_eq!(f.run(&["issue", "fix: first", "feat: pending"])["exit"], 3);
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "fix: first", "feat: pending"])["exit"],
+        3
+    );
     fs::write(f.root.join(".specgit.yaml"), "version: 2\nremote: origin\nprovider: github\nvalidation:\n  labels: project\ntags:\n  - name: kind::fix\n    color: D93F0B\n").unwrap();
     let writes = f.writes();
-    let r = f.run(&["issue", "1"]);
+    let r = f.run(&["issue", "--create-labels", "1"]);
     assert_eq!(r["exit"], 2, "{r}");
     assert_eq!(f.writes(), writes);
     assert_eq!(f.state()["issues"].as_array().unwrap().len(), 1);
@@ -110,14 +138,116 @@ fn inspect_does_not_create_checkpoint_and_branch_selection_preserves_git_state()
     assert_eq!(r["exit"], 0, "{r}");
     assert_eq!(f.writes(), 0);
     assert!(!f.root.join(".git/specgit-v2").exists());
-    let r = f.run(&["issue", "feat: inspect", "--branch", "new-delivery"]);
+    let r = f.run(&[
+        "issue",
+        "--create-labels",
+        "feat: inspect",
+        "--branch",
+        "new-delivery",
+    ]);
     assert_eq!(r["exit"], 0, "{r}");
     assert_eq!(r["evidence"]["selection"]["branch"], "new-delivery");
     fs::write(f.root.join("user.txt"), "uncommitted").unwrap();
-    let r = f.run(&["issue", "feat: another", "--branch", "another"]);
+    let r = f.run(&[
+        "issue",
+        "--create-labels",
+        "feat: another",
+        "--branch",
+        "another",
+    ]);
     assert_eq!(r["exit"], 2, "{r}");
     assert_eq!(
         fs::read_to_string(f.root.join("user.txt")).unwrap(),
         "uncommitted"
     );
+}
+
+#[test]
+fn missing_labels_need_explicit_choice_and_dry_run_leaves_no_local_state() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let r = f.run(&["issue", "feat: preview"]);
+        assert_eq!(r["exit"], 2, "{r}");
+        assert_eq!(r["effects"]["outcome"], "not_applied");
+        assert_eq!(f.writes(), 0);
+        assert!(!f.root.join(".git/specgit-v2").exists());
+        let r = f.run(&["issue", "feat: preview", "--dry-run", "--create-labels"]);
+        assert_eq!(r["exit"], 0, "{r}");
+        assert_eq!(r["effects"]["outcome"], "not_applied");
+        assert_eq!(f.writes(), 0);
+        assert!(!f.root.join(".git/specgit-v2").exists());
+    }
+}
+
+#[test]
+fn resuming_an_already_selected_issue_does_not_consume_another_pending_spec() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|s| {
+            s["labels"] = json!([{"name":"kind::feat","color":"a2eeef"}]);
+            s["deny_label"] = json!(true);
+        });
+        let partial = f.run(&["issue", "--create-labels", "feat: first", "fix: second"]);
+        assert_eq!(partial["exit"], 3, "{partial}");
+        assert_eq!(f.state()["issues"].as_array().unwrap().len(), 1);
+        f.edit(|s| s["deny_label"] = json!(false));
+        let selection_path = f.root.join(".git/specgit-v2/selection.json");
+        let before = fs::read(&selection_path).unwrap();
+        let preview = f.run(&["issue", "1", "--dry-run", "--create-labels"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        let intents = &preview["evidence"]["selection"]["intents"];
+        assert_eq!(intents[0]["issue"], 1);
+        assert!(intents[1]["issue"].is_null(), "{preview}");
+        assert_eq!(preview["evidence"]["missing_labels"], json!(["kind::fix"]));
+        let writes = f.writes();
+        // The deliberately broad fixture search returns the first spec as a
+        // candidate. Review must remain required; adopting its already-bound
+        // ID must not silently resolve the second independent spec.
+        let resumed = f.run(&["issue", "1", "--create-labels"]);
+        assert_eq!(resumed["exit"], 3, "{resumed}");
+        assert_eq!(resumed["status"], "candidate_review_required");
+        assert_eq!(resumed["effects"]["outcome"], "not_applied");
+        assert_eq!(fs::read(&selection_path).unwrap(), before);
+        assert_eq!(f.writes(), writes);
+        assert_eq!(f.state()["issues"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn resumed_dry_run_previews_all_pending_specs_and_labels_without_saving() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|s| {
+            s["labels"] = json!([{"name":"kind::feat","color":"a2eeef"}]);
+            s["deny_label"] = json!(true);
+        });
+        let partial = f.run(&[
+            "issue",
+            "--create-labels",
+            "feat: first",
+            "fix: pending fix",
+            "docs: pending docs",
+        ]);
+        assert_eq!(partial["exit"], 3, "{partial}");
+        let selection_path = f.root.join(".git/specgit-v2/selection.json");
+        let before = fs::read(&selection_path).unwrap();
+        let writes = f.writes();
+        let preview = f.run(&["issue", "1", "--dry-run", "--create-labels"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        assert_eq!(preview["effects"]["outcome"], "not_applied");
+        let pending: Vec<_> = preview["evidence"]["prepared"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["issue"].is_null())
+            .map(|i| i["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(pending, ["fix: pending fix", "docs: pending docs"]);
+        assert_eq!(
+            preview["evidence"]["missing_labels"],
+            json!(["kind::docs", "kind::fix"])
+        );
+        assert_eq!(fs::read(&selection_path).unwrap(), before);
+        assert_eq!(f.writes(), writes);
+    }
 }

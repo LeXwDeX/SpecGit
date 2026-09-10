@@ -60,6 +60,13 @@ impl Fixture {
         }
     }
     fn run(&self, args: &[&str]) -> Value {
+        let mut selected = args.to_vec();
+        if args.first() == Some(&"init") && !args.contains(&"--rollback") {
+            selected.push("--manual-observe");
+        }
+        self.run_raw(&selected)
+    }
+    fn run_raw(&self, args: &[&str]) -> Value {
         let mut paths = vec![self.bin.clone()];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
@@ -82,7 +89,7 @@ impl Fixture {
     }
 }
 #[test]
-fn both_forges_init_refresh_and_explicit_cleanup_use_live_default_and_preserve_user_content() {
+fn both_forges_init_refresh_reject_settings_writes_and_preserve_user_content() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new();
         fs::write(f.root.join("AGENTS.md"), b"User instructions\r\n").unwrap();
@@ -104,12 +111,13 @@ fn both_forges_init_refresh_and_explicit_cleanup_use_live_default_and_preserve_u
                 .starts_with(b"User instructions\r\n")
         );
         let r = f.run(&["init", "--language", "en", "--native-delete-source", "true"]);
+        assert_eq!(r["exit"], 2, "{r}");
+        let r = f.run(&["init", "--language", "en"]);
         assert_eq!(r["exit"], 0, "{r}");
-        assert_eq!(r["evidence"]["native_setting_change"]["observed"], true);
         assert!(
             fs::read_to_string(f.root.join("CLAUDE.md"))
                 .unwrap()
-                .contains("issue-based delivery harness")
+                .contains("specification Issues")
         );
         let state = f.state();
         assert_eq!(state["project"]["unrelated"], "keep");
@@ -121,7 +129,7 @@ fn both_forges_init_refresh_and_explicit_cleanup_use_live_default_and_preserve_u
                 .iter()
                 .filter(|c| c["method"] != "GET")
                 .count(),
-            1
+            0
         );
         let r = f.run(&["init", "--target", "main", "--inspect"]);
         assert_eq!(r["evidence"]["flow"]["issue_closing"], "unsupported_target");
@@ -315,5 +323,133 @@ fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration()
         fs::read_to_string(f.root.join("AGENTS.md"))
             .unwrap()
             .contains("原因、范围、方案")
+    );
+}
+
+#[test]
+fn unknown_capabilities_require_choice_and_inspection_has_no_local_writes() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new();
+        for mode in ["--check", "--dry-run"] {
+            let result = f.run_raw(&["init", "--provider", provider, mode]);
+            assert_eq!(result["status"], "confirmation_required", "{result}");
+            assert_eq!(result["diagnostics"][0]["code"], "confirmation_required");
+            assert_eq!(
+                result["evidence"]["capabilities"]["auto_merge"]["status"],
+                "unknown"
+            );
+            assert_eq!(result["evidence"]["written"], false);
+            assert!(!f.root.join(".specgit.yaml").exists());
+            assert!(!f.root.join(".git/specgit-v2").exists());
+            let preview = f.run_raw(&["init", "--provider", provider, mode, "--manual-observe"]);
+            assert_eq!(preview["exit"], 0, "{preview}");
+            assert!(!f.root.join(".git/specgit-v2").exists());
+        }
+        assert_eq!(
+            f.run_raw(&["init", "--provider", provider, "--manual-observe"])["exit"],
+            0
+        );
+        assert_eq!(
+            f.run_raw(&["init"])["exit"],
+            0,
+            "persisted manual choice refreshes"
+        );
+        assert!(
+            f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|call| call["method"] == "GET")
+        );
+    }
+}
+#[test]
+fn project_auto_merge_setting_is_a_fact_and_not_request_authority() {
+    for (enabled, expected) in [(true, "supported"), (false, "unsupported")] {
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["project"]["allow_auto_merge"] = json!(enabled);
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&[
+            "init",
+            "--provider",
+            "github",
+            "--check",
+            "--native-auto-merge",
+            "true",
+        ]);
+        assert_eq!(
+            report["evidence"]["capabilities"]["auto_merge"]["status"], expected,
+            "{report}"
+        );
+        assert_eq!(
+            report["evidence"]["capabilities"]["request_eligibility"]["status"],
+            "unknown"
+        );
+        assert_eq!(report["status"], "confirmation_required");
+        assert!(!f.root.join(".specgit.yaml").exists());
+    }
+}
+#[test]
+fn persisted_language_drives_diagnostics_without_reading_report_json() {
+    let f = Fixture::new();
+    assert_eq!(
+        f.run(&["init", "--provider", "github", "--language", "zh"])["exit"],
+        0
+    );
+    let mut state = f.state();
+    state["deny"] = json!(true);
+    fs::write(&f.state, state.to_string()).unwrap();
+    let report = f.run_raw(&["init", "--check"]);
+    assert!(
+        report["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("权限")
+    );
+}
+
+#[test]
+fn supported_native_settings_allow_explicit_preference_and_refresh_detects_drift() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["project"]["allow_auto_merge"] = json!(true);
+    state["read_routes"] = json!({
+        "user":{"id":1,"login":"fixture"},
+        "repos/fixture/repo":state["project"],
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1":[],
+        "repos/fixture/repo/branches/preview/protection":{
+            "required_status_checks":null,"enforce_admins":{"enabled":true}
+        }
+    });
+    fs::write(&f.state, state.to_string()).unwrap();
+    let result = f.run_raw(&[
+        "init",
+        "--provider",
+        "github",
+        "--native-auto-merge",
+        "true",
+    ]);
+    assert_eq!(result["exit"], 0, "{result}");
+    assert!(
+        specgit::config::read(&f.root)
+            .unwrap()
+            .unwrap()
+            .agent
+            .native_auto_merge
+    );
+    let original = fs::read(f.root.join(".specgit.yaml")).unwrap();
+    let mut state = f.state();
+    state["read_routes"]["repos/fixture/repo"]["allow_auto_merge"] = json!(false);
+    fs::write(&f.state, state.to_string()).unwrap();
+    let result = f.run_raw(&["init", "--check"]);
+    assert_eq!(result["status"], "confirmation_required", "{result}");
+    assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), original);
+    assert!(
+        f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|call| call["method"] == "GET")
     );
 }
