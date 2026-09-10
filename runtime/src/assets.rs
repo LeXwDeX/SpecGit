@@ -30,6 +30,19 @@ fn io_error() -> Diagnostic {
     )
 }
 
+fn filesystem_error(operation: &str, cause: &std::io::Error) -> Diagnostic {
+    // Error strings can contain user paths or file contents. Keep only the
+    // operation and structured OS classification in machine-readable reports.
+    error(
+        Code::IoFailed,
+        &format!(
+            "The owned-asset filesystem operation {operation} failed (kind={:?}, os_code={:?}).",
+            cause.kind(),
+            cause.raw_os_error()
+        ),
+    )
+}
+
 /// Reject symbolic links at every existing component, including a dangling leaf.
 pub fn safe_path(path: &Path) -> Result<(), Diagnostic> {
     if !path.is_absolute()
@@ -59,7 +72,7 @@ pub fn safe_path(path: &Path) -> Result<(), Diagnostic> {
             }
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(io_error()),
+            Err(e) => return Err(filesystem_error("path_metadata", &e)),
         }
     }
     Ok(())
@@ -91,7 +104,7 @@ pub fn open_regular(path: &Path) -> std::io::Result<File> {
 
 fn ensure_directory(path: &Path) -> Result<(), Diagnostic> {
     safe_path(path)?;
-    fs::create_dir_all(path).map_err(|_| io_error())?;
+    fs::create_dir_all(path).map_err(|e| filesystem_error("create_directory", &e))?;
     safe_path(path)
 }
 
@@ -111,7 +124,7 @@ impl Snapshot {
                     permissions: None,
                 });
             }
-            Err(_) => return Err(io_error()),
+            Err(e) => return Err(filesystem_error("snapshot_metadata", &e)),
         };
         if !meta.is_file() {
             return Err(error(
@@ -127,10 +140,10 @@ impl Snapshot {
         }
         let mut bytes = vec![];
         open_regular(path)
-            .map_err(|_| io_error())?
+            .map_err(|e| filesystem_error("snapshot_open", &e))?
             .take(FILE_LIMIT + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| io_error())?;
+            .map_err(|e| filesystem_error("snapshot_read", &e))?;
         if bytes.len() as u64 > FILE_LIMIT {
             return Err(error(
                 Code::InputLimit,
@@ -222,16 +235,17 @@ impl AssetStore {
         {
             Ok(mut file) => {
                 file.write_all(b"specgit-owned-assets-v2\n")
-                    .map_err(|_| io_error())?;
-                file.sync_all().map_err(|_| io_error())?;
+                    .map_err(|e| filesystem_error("lock_marker_write", &e))?;
+                file.sync_all()
+                    .map_err(|e| filesystem_error("lock_marker_sync", &e))?;
                 file
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => OpenOptions::new()
                 .read(true)
                 .write(true)
                 .open(&lock_path)
-                .map_err(|_| io_error())?,
-            Err(_) => return Err(io_error()),
+                .map_err(|e| filesystem_error("lock_open", &e))?,
+            Err(e) => return Err(filesystem_error("lock_create", &e)),
         };
         let start = Instant::now();
         loop {
@@ -246,18 +260,19 @@ impl AssetStore {
                         "Another owned-asset transaction holds the lock.",
                     ));
                 }
-                Err(TryLockError::Error(_)) => return Err(io_error()),
+                Err(TryLockError::Error(e)) => return Err(filesystem_error("lock_acquire", &e)),
             }
         }
         safe_path(&lock_path)?;
         // Windows byte-range locks are mandatory: inspect through the owning
         // handle only after acquisition, never via a second unlocked reader.
-        file.seek(SeekFrom::Start(0)).map_err(|_| io_error())?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|e| filesystem_error("lock_seek", &e))?;
         let mut marker = Vec::new();
         (&mut file)
             .take(64)
             .read_to_end(&mut marker)
-            .map_err(|_| io_error())?;
+            .map_err(|e| filesystem_error("lock_marker_read", &e))?;
         if marker != b"specgit-owned-assets-v2\n" {
             return Err(error(
                 Code::OwnershipConflict,
@@ -659,26 +674,31 @@ fn atomic(path: &Path, bytes: &[u8], permissions: Option<&Permissions>) -> Resul
     let parent = path.parent().ok_or_else(io_error)?;
     ensure_directory(parent)?;
     safe_path(path)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|_| io_error())?;
-    temp.write_all(bytes).map_err(|_| io_error())?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| filesystem_error("temporary_create", &e))?;
+    temp.write_all(bytes)
+        .map_err(|e| filesystem_error("temporary_write", &e))?;
     #[cfg(unix)]
     if permissions.is_none() {
         use std::os::unix::fs::PermissionsExt;
         temp.as_file()
             .set_permissions(Permissions::from_mode(0o600))
-            .map_err(|_| io_error())?;
+            .map_err(|e| filesystem_error("temporary_private_permissions", &e))?;
     }
     if let Some(permissions) = permissions {
         temp.as_file()
             .set_permissions(permissions.clone())
-            .map_err(|_| io_error())?;
+            .map_err(|e| filesystem_error("temporary_permissions", &e))?;
     }
-    temp.as_file().sync_all().map_err(|_| io_error())?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| filesystem_error("temporary_sync", &e))?;
     safe_path(path)?;
-    temp.persist(path).map_err(|_| io_error())?;
+    temp.persist(path)
+        .map_err(|e| filesystem_error("atomic_replace", &e.error))?;
     #[cfg(unix)]
     File::open(parent)
         .and_then(|f| f.sync_all())
-        .map_err(|_| io_error())?;
+        .map_err(|e| filesystem_error("directory_sync", &e))?;
     Ok(())
 }
