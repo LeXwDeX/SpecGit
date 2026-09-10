@@ -209,7 +209,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - name: Locate the existing pinned PowerShell
+      - name: Locate the existing Windows shells
         shell: powershell
         run: |
           if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
@@ -219,6 +219,12 @@ jobs:
             }
             $pwshHome | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           }
+          $git = Get-Command git -ErrorAction Stop
+          $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
+          if (-not (Test-Path (Join-Path $gitBash 'bash.exe'))) {
+            throw 'The existing Git installation does not provide Git Bash.'
+          }
+          $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
