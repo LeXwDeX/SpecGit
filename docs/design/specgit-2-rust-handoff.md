@@ -9,7 +9,8 @@
 - Issue 管理、多 Issue 汇聚到一个 PR/MR 是核心；Agent 监督实现、观察问题并修复。
 - GitHub/GitLab 负责原生 CI、保护、自动合并和自动关闭 Issue。SpecGit 只在 init 检查项目能力；不支持或未知让用户选择。
 - 合并后仍有未关闭 Issue，hook 通知 Agent。Agent 补关可选；默认只通知，并且必须符合现有授权。
-- Agent CLI 是统一公共机器入口。按主设计 C01–C12 落实 schema、结构化输入输出、非交互、dry-run、副作用与恢复契约。
+- CLI 只作参考方向：按真实收益择用，C01–C12 不是必须全套实现的规范。优先用好已有参数、JSON、错误与恢复；schema 自省、通用 stdin/dry-run 等有具体需要再加。
+- 每项功能和业务线按职责解耦。初始化、Issue 管理、PR/MR 聚合、观察、宿主通知各自拥有规则/状态和小接口；按主设计 §3.1.1 验证独立演进与典型扩展的修改范围。
 - Rust 核心移除 finish/acceptance、merge、promotion、scope、repair/closure worker 和跨 head receipt 引擎；保留必要的原生观察与可靠性。
 
 已有类型化 Assessment 修复和 adapter 拆分不是白做：保留正确分层和类型经验，把边界收窄到 observation。不得再为满足旧 F25/F29/F38/F48 而继续扩充已被用户移出的职责。
@@ -42,15 +43,15 @@
 | --- | --- | --- |
 | `runtime/src/process/`、`project.rs`、`native_file.rs` | 进程与系统边界、路径/Git 身份 | 保留 Windows/Unix 与取消回收回归，按新调用面减冗余 |
 | `config.rs`、`init.rs`、`probe.rs`、`native_settings.rs` | 配置解析和原生能力事实 | init 收窄为检查/确认；删平台设置写操作和自有验收配置 |
-| `spec.rs`、`templates.rs`、`issue.rs`、`pr.rs`、`selection.rs` | 规格、模板、显式创建/采用、原生关联 | 保留无假提交、多 Issue、正文并发及不确定写入恢复；补 CLI 通信契约 |
+| `spec.rs`、`templates.rs`、`issue.rs`、`pr.rs`、`selection.rs` | 规格、模板、显式创建/采用、原生关联 | 分清规格、Issue 和请求聚合的规则/状态；保留无假提交、正文并发及恢复，按需要改善调用 |
 | `forge/`、`native_delivery.rs` | GitHub/GitLab 协议读取与 Issue/PR 操作 | 具体 adapter 自持协议；缩小写接口，不导入命令层类型 |
 | `assessment.rs`、`delivery_model.rs`、`observation.rs` | 已做的类型化事实与输出分离 | 仅保留事实、来源、未知与纯展示归一化；删除准入判定和 merge 消费方 |
 | `native_checks.rs`、`native_requirements.rs` | 旧 attempt/来源诊断经验 | 按当前消息读取所需保留；不继续实现完整 CI DAG/保护要求解析 |
 | `finish.rs`、`merge.rs`、`promotion.rs` | 旧目标实现与回归来源 | 从新 CLI 与运行时执行链退役；逐条标注测试去向 |
 | `watch.rs`、`watch_store.rs`、`hook.rs`、`setup.rs` | 有界观察、事件去重/交付、用户级集成 | 只读；补 merged-open 可选 Agent 补关提示；实际宿主收信验证 |
 | `assets.rs`、`migrate.rs`、`migration_assets.rs`、`migration_remote.rs` | 归属清点、备份、条件恢复 | 保留用户保护；移除隐藏远端管理员控制，由 Agent 执行获授权原生迁移操作 |
-| `report.rs`、`diagnostic.rs`、`i18n.rs`、`main.rs` | 统一输出与入口 | 新版机器退出语义、schema/输入/dry-run；内部不得解析 Report JSON 作决策 |
-| `runtime/tests/` 与 npm 包装资产 | 进程、资产、Issue/PR、hook、安装候选回归 | 依据 L01–L18/C01–C12 逐项保留或调整，不按旧数量机械决定通过 |
+| `report.rs`、`diagnostic.rs`、`i18n.rs`、`main.rs` | 统一输出与入口 | 入口负责解析/组合/渲染，业务留在各模块；额外 CLI 能力按收益选用 |
+| `runtime/tests/` 与 npm 包装资产 | 进程、资产、Issue/PR、hook、安装候选回归 | 依据 L01–L18 和实际采用能力验证，业务模块可独立测，不强制 C01–C12 全选 |
 
 图谱限制：本次主仓库图谱 generation 为 `2026-09-08T22:31:58Z`，对应旧 #496 分支；对 runtime 的检索无结果，覆盖查询显示路径 missing。已用确切 Git 对象的直接源码/文件清单作上述有限核对，未将“图谱无结果”解释成源码不存在。新任务先确认自身项目/generation，再对实际修改和证据路径查覆盖；过时/缺失范围直接读取。
 
@@ -60,11 +61,11 @@
 
 | 现有 Issue | 本次后的有效工作 |
 | --- | --- |
-| [#493](https://github.com/LeXwDeX/SpecGit/issues/493) | 总工程协调改为 L01–L18 + C01–C12 + 318 条历史；不开发 programme runtime。 |
+| [#493](https://github.com/LeXwDeX/SpecGit/issues/493) | 总工程协调按 L01–L18 和 318 条历史，加入功能/业务线解耦；C01–C12 仅为可选参考，不开发 programme runtime。 |
 | [#535](https://github.com/LeXwDeX/SpecGit/issues/535) | 优先完成 typed observation 与输出分离，移除本地 acceptance/merge 消费者；不能继续按旧纯验收器范围扩张。 |
 | [#536](https://github.com/LeXwDeX/SpecGit/issues/536) | 保留具体 forge adapter 的协议隔离；Issue/PR 写与观察读分离，移出 merge/promotion/settings write。 |
 | [#511](https://github.com/LeXwDeX/SpecGit/issues/511) | 最小 init 配置、真实只读能力、用户确认；配置不能自动升级会话授权。 |
-| [#512](https://github.com/LeXwDeX/SpecGit/issues/512) | 规格 Issue、多对一聚合、正文/身份/恢复；补完整 Agent CLI 输入输出与能力发现。 |
+| [#512](https://github.com/LeXwDeX/SpecGit/issues/512) | 规格 Issue、多对一聚合、正文/身份/恢复；解耦规格与请求业务，CLI 改善按实际调用需要选择。 |
 | [#510](https://github.com/LeXwDeX/SpecGit/issues/510)、[#492](https://github.com/LeXwDeX/SpecGit/issues/492) | Hook/宿主交付、有界观察、Agent 修复与可选补关通知；hook 不执行写入。 |
 | [#513](https://github.com/LeXwDeX/SpecGit/issues/513) | 安全迁移和新旧执行链清点，保留所有用户资产及旧未合并 PR。 |
 | [#473](https://github.com/LeXwDeX/SpecGit/issues/473) | 原生 CI 调度效率与真实调用成本，取消自有跨 head receipt/reuse 控制。 |
@@ -93,9 +94,9 @@ PR #529 head `ca7ecf96` 的本次 `statusCheckRollup` 是空列表；不能把�
 ## 6. 实施顺序与交付边界
 
 1. 恢复隔离工作位置，刷新 Git/PR/Issue；确认旧任务不并发编辑，读取设计和本交接，准备已有 Issue 的范围修订。
-2. 在保留原关联和同 WHY PR 的前提下收敛架构；先解决 #535/#536 的新边界与 CLI schema/输出模型，再改 init 和 Issue/PR。
+2. 在保留原关联和同 WHY PR 的前提下收敛架构；先明确功能/业务线的规则与状态归属，解决 #535/#536 的新边界，再改 init 和 Issue/PR。CLI 建议择用，不能为实现整套范式拖延业务。
 3. 接上 hook/Agent 的修复、原生自动合并与可选补关流程；验证 Rust 核心只读观察、没有 merge/close/delete 路径。
-4. 完成迁移、安装和真实平台验证；按 L01–L18、C01–C12 与历史去向补具体缺口，父任务独立按架构/框架/业务代码/产品业务复核。
+4. 完成迁移、安装和真实平台验证；按 L01–L18、已采用的具体能力与历史去向补缺口，父任务独立按架构/框架/业务代码/产品业务复核；未采用的 CLI 参考不算缺陷。
 
 用户授权实现、必要提交推送和自有 runner CI。当前仓库交付 PR 保持草稿，不自动合并、不公开发布、不改变源库可见性、不购买额度、不削弱检查。产品设计中的“原生自动合并能力”不等于授权现在合并 SpecGit 自身尚未验收的 PR。已有授权的测试 fixture 可验证原生合并；新增真实外部写入仍需明确对象与相应授权。
 

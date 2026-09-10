@@ -3,7 +3,8 @@
 > Historical F01–F48 baseline. The 2026-09-10 user simplification supersedes this
 > matrix as an implementation target. Read each of the
 > [48 explicit dispositions](specgit-2-rust-history.md) and the new
-> [L01–L18 / C01–C12 acceptance requirements](specgit-2-rust-design.md).
+> [L01–L18 acceptance requirements](specgit-2-rust-design.md). C01–C12 are
+> optional CLI ideas, not a mandatory conformance checklist.
 > Preserve required behavior and evidence, but do not build the retired local
 > finish/merge/promotion/programme engines merely to satisfy an old row.
 
