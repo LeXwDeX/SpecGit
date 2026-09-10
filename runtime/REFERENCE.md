@@ -109,7 +109,7 @@ commands use the global input/output contract above.
 | --- | --- |
 | `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` explicitly register a host. `--dry-run` previews install/update or `--uninstall` without writes or a lock. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall. |
 | `init` | Inspect native capabilities and write the shared declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
-| `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. `--create-labels` explicitly permits missing selected catalog labels to be created. |
+| `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–3,600; default 1,800), `--poll-seconds` (1–300; default 15). |
 | `hook` | Host event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. Bounded informational framing; no write permission is granted. |
@@ -147,6 +147,14 @@ The actual native request and Issue states must be read back.
 
 Search for duplicate Issues and read their WHY before creating new ones. Select
 complete specifications, then preserve their closing references in one request:
+
+For the same WHY, adopt the native Issue ID. If similar candidates cover different
+work, `issue --inspect` supplies a `review_digest` for each proposed specification.
+After comparing their contents, repeat the creation command with
+`--reviewed-candidates <review_digest>` for each reviewed set. The digest binds
+the proposed content, project, source/target and current native candidate contents;
+changed evidence requires another review. It does not override uncertain prior
+writes, which still require exact native adoption.
 
 ```sh
 specgit init --provider github --manual-observe --json

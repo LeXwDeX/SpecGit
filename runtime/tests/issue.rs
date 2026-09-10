@@ -77,6 +77,19 @@ fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
         let r = f.run(&["issue", "--create-labels", "fix: lost response"]);
         assert_eq!(r["exit"], 3, "{r}");
         assert_eq!(f.writes(), writes);
+        let preview = f.run(&["issue", "fix: lost response", "--inspect"]);
+        let review = preview["evidence"]["candidates"][0]["review_digest"]
+            .as_str()
+            .unwrap();
+        let retried = f.run(&[
+            "issue",
+            "fix: lost response",
+            "--create-labels",
+            "--reviewed-candidates",
+            review,
+        ]);
+        assert_eq!(retried["exit"], 3, "{retried}");
+        assert_eq!(f.writes(), writes);
         f.edit(|s| {
             s["issues"][0]["title"] = json!("fix: clarified by user");
             s["issues"][0][if provider == "github" {
@@ -93,6 +106,154 @@ fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
             r["evidence"]["issues"][0]["body"],
             "User edited after creation"
         );
+    }
+}
+
+#[test]
+fn reviewed_distinct_specs_can_be_created_without_adopting_similar_issues() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        assert_eq!(
+            f.run(&["issue", "feat: original", "--create-labels"])["exit"],
+            0
+        );
+        let before = f.state()["issues"][0].clone();
+        let writes = f.writes();
+        let blocked = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "docs: separate work",
+            "--create-labels",
+        ]);
+        assert_eq!(blocked["status"], "candidate_review_required", "{blocked}");
+        assert_eq!(f.writes(), writes);
+        let preview = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "docs: separate work",
+            "--inspect",
+        ]);
+        let reviews = preview["evidence"]["candidates"].as_array().unwrap();
+        assert_eq!(reviews.len(), 2);
+        let first = reviews[0]["review_digest"].as_str().unwrap();
+        let second = reviews[1]["review_digest"].as_str().unwrap();
+        assert_ne!(first, second);
+        let incomplete = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "docs: separate work",
+            "--create-labels",
+            "--reviewed-candidates",
+            first,
+        ]);
+        assert_eq!(
+            incomplete["status"], "candidate_review_required",
+            "{incomplete}"
+        );
+        assert_eq!(f.writes(), writes);
+        let created = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "docs: separate work",
+            "--create-labels",
+            "--reviewed-candidates",
+            first,
+            "--reviewed-candidates",
+            second,
+        ]);
+        assert_eq!(created["exit"], 0, "{created}");
+        assert_eq!(created["evidence"]["selection"]["issues"], json!([1, 2, 3]));
+        assert_eq!(f.state()["issues"][0], before);
+        assert_eq!(f.state()["issues"][1]["title"], "fix: distinct work");
+        assert_eq!(f.state()["issues"][2]["title"], "docs: separate work");
+    }
+}
+
+#[test]
+fn candidate_review_is_invalidated_by_native_or_proposed_content_changes() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        assert_eq!(
+            f.run(&["issue", "feat: original", "--create-labels"])["exit"],
+            0
+        );
+        // A new local selection sees the pre-existing native issue as a candidate.
+        fs::remove_file(f.root.join(".git/specgit-v2/selection.json")).unwrap();
+        let preview = f.run(&["issue", "fix: distinct work", "--inspect"]);
+        let review = preview["evidence"]["candidates"][0]["review_digest"]
+            .as_str()
+            .unwrap();
+        let writes = f.writes();
+        let body = f.root.join("distinct.md");
+        fs::write(&body, "A different specification body").unwrap();
+        let changed_spec = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "--body-file",
+            body.to_str().unwrap(),
+            "--create-labels",
+            "--reviewed-candidates",
+            review,
+        ]);
+        assert_eq!(
+            changed_spec["status"], "candidate_review_required",
+            "{changed_spec}"
+        );
+        assert_eq!(f.writes(), writes);
+        f.edit(|s| {
+            s["issues"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!("Changed WHY");
+        });
+        let changed_native = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "--create-labels",
+            "--reviewed-candidates",
+            review,
+        ]);
+        assert_eq!(
+            changed_native["status"], "candidate_review_required",
+            "{changed_native}"
+        );
+        assert_ne!(changed_native["evidence"]["review_digest"], review);
+        assert_eq!(f.writes(), writes);
+        let current_review = changed_native["evidence"]["review_digest"]
+            .as_str()
+            .unwrap();
+        f.edit(|s| {
+            let mut new_candidate = s["issues"][0].clone();
+            new_candidate[if provider == "github" {
+                "number"
+            } else {
+                "iid"
+            }] = json!(2);
+            new_candidate["title"] = json!("fix: another author's recent issue");
+            s["issues"].as_array_mut().unwrap().push(new_candidate);
+        });
+        let added = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "--create-labels",
+            "--reviewed-candidates",
+            current_review,
+        ]);
+        assert_eq!(added["status"], "candidate_review_required", "{added}");
+        assert_eq!(f.writes(), writes);
+        f.edit(|s| s["issues"] = json!([]));
+        // Even an empty search cannot silently consume a stale supplied review.
+        let removed = f.run(&[
+            "issue",
+            "fix: distinct work",
+            "--create-labels",
+            "--reviewed-candidates",
+            review,
+        ]);
+        assert_ne!(removed["exit"], 0, "{removed}");
+        assert_eq!(removed["diagnostics"][0]["operation"], "issue_candidates");
+        assert_eq!(f.writes(), writes);
     }
 }
 #[test]
