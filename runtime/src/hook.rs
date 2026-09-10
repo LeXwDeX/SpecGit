@@ -340,7 +340,7 @@ pub async fn observe_handle(
             );
         }
     };
-    let report = crate::watch::run(
+    let observation = crate::watch::observe_subscription(
         crate::watch::Options {
             request,
             session: prepared.session,
@@ -354,22 +354,22 @@ pub async fn observe_handle(
         &prepared.context.root,
     )
     .await;
-    if report.diagnostics.iter().any(|d| d.code == Code::LockBusy) {
+    let observation = match observation {
+        Ok(value) => value,
+        Err(d) if d.code == Code::LockBusy => return Output::default(),
+        Err(_) => {
+            return info(
+                "SpecGit observation could not finish; inspect retained intent with specgit inbox.",
+            );
+        }
+    };
+    let events = observation.pending();
+    if events.is_empty() {
         return Output::default();
     }
-    let events = report.evidence["events"].as_array();
-    if events.is_none_or(|events| events.is_empty()) {
-        return if report.diagnostics.is_empty() {
-            Output::default()
-        } else {
-            info(
-                "SpecGit observation could not finish; retained intent can be inspected with specgit inbox.",
-            )
-        };
-    }
     let text = format!(
-        "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Acknowledge each exact event ID only after receiving it. Programme completion is separate.",
-        json!({"subscription":report.evidence["subscription"],"events":report.evidence["events"]})
+        "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
+        json!({"subscription":observation.state.identity,"events":events})
     );
     Output {
         json: Some(

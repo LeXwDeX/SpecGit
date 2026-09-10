@@ -8,7 +8,10 @@ fn blob(bytes: &[u8], id: &str) -> Value {
 }
 pub fn fixture(provider: &str) -> Fixture {
     let f = Fixture::new(provider);
-    assert_eq!(f.run(&["issue", "feat: first spec"])["exit"], 0);
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "feat: first spec"])["exit"],
+        0
+    );
     let head = String::from_utf8(
         Command::new("git")
             .current_dir(&f.root)
@@ -47,7 +50,7 @@ pub fn fixture(provider: &str) -> Fixture {
             routes[format!("{base}/rules/branches/main?per_page=100&page=1")]=json!([]);
             routes[format!("{base}/pulls/41/reviews?per_page=100&page=1")]=json!([]);
             routes[format!("{base}/actions/runs?head_sha={head}&per_page=100&page=1")]=json!({"total_count":1,"workflow_runs":[{"id":71,"workflow_id":1,"event":"pull_request","head_sha":head,"run_attempt":1,"check_suite_id":101,"name":"CI","status":"completed","conclusion":"success","run_started_at":STAMP}]});
-            routes[format!("{base}/commits/{head}/check-runs?filter=all&per_page=100&page=1")]=json!({"total_count":1,"check_runs":[{"id":81,"head_sha":head,"app":{"id":15368,"slug":"github-actions"},"check_suite":{"id":101},"name":"Test","status":"completed","conclusion":"success","started_at":STAMP,"completed_at":STAMP}]});
+            routes[format!("{base}/commits/{head}/check-runs?filter=latest&per_page=100&page=1")]=json!({"total_count":1,"check_runs":[{"id":81,"head_sha":head,"app":{"id":15368,"slug":"github-actions"},"check_suite":{"id":101},"name":"Test","status":"completed","conclusion":"success","started_at":STAMP,"completed_at":STAMP}]});
             routes[format!("{base}/actions/runs/71/jobs?filter=all&per_page=100&page=1")]=json!({"total_count":1,"jobs":[{"id":81,"run_id":71,"head_sha":head,"check_run_url":"https://forge.example/api/v3/repos/fixture/repo/check-runs/81","name":"Test","status":"completed","conclusion":"success","started_at":STAMP,"completed_at":STAMP}]});
             routes[format!("{base}/commits/{head}/statuses?per_page=100&page=1")]=json!([]);
             routes[format!("{base}/branches?per_page=100&page=1")]=json!([{"name":"main"}]);

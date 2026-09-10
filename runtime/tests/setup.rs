@@ -22,6 +22,7 @@ fn fixture() -> (tempfile::TempDir, Options, PathBuf) {
             api_host: None,
             claude_settings: Some(root.join("claude/settings.json")),
             uninstall: false,
+            dry_run: false,
             rollback: None,
         },
         binary,
@@ -153,4 +154,101 @@ fn registered_choice_survives_refresh_and_empty_foreign_keys_survive_uninstall()
     o.uninstall = true;
     setup::install(&o, &binary).unwrap();
     assert!(!settings.exists());
+}
+
+#[test]
+fn dry_run_install_plans_nonexistent_roots_without_creating_them() {
+    let (_t, mut options, source) = fixture();
+    options.dry_run = true;
+    let result = setup::install(&options, &source).unwrap();
+    assert_eq!(result["operation"], "install");
+    assert_eq!(result["written"], false);
+    assert_eq!(result["registration"], "write_planned");
+    assert!(
+        result["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|asset| asset["state"] == "created")
+    );
+    assert!(!options.root.exists());
+    assert!(
+        !options
+            .claude_settings
+            .as_ref()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .exists()
+    );
+    options.rollback = Some("uninspected".into());
+    assert_eq!(
+        setup::install(&options, &source).unwrap_err().code,
+        Code::InvalidInput
+    );
+    assert!(!options.root.exists());
+}
+
+fn files(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(files(&path));
+        } else {
+            found.insert(path.clone(), fs::read(path).unwrap());
+        }
+    }
+    found
+}
+#[test]
+fn dry_run_update_and_uninstall_preserve_every_installed_file_and_journal() {
+    let (temp, mut options, source) = fixture();
+    setup::install(&options, &source).unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    options.dry_run = true;
+    let before = files(&root);
+    let result = setup::install(&options, &source).unwrap();
+    assert_eq!(result["operation"], "update");
+    assert_eq!(result["written"], false);
+    assert_eq!(files(&root), before);
+    options.uninstall = true;
+    let result = setup::install(&options, &source).unwrap();
+    assert_eq!(result["operation"], "uninstall");
+    assert_eq!(result["registration"], "removal_planned");
+    assert!(
+        result["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|asset| asset["state"] == "removed")
+    );
+    assert_eq!(files(&root), before);
+}
+#[test]
+fn dry_run_reports_ownership_conflicts_without_writes_or_a_lock() {
+    let (temp, mut options, source) = fixture();
+    setup::install(&options, &source).unwrap();
+    fs::write(options.root.join("manifest.json"), "user edit").unwrap();
+    options.dry_run = true;
+    let before = files(temp.path());
+    assert_eq!(
+        setup::install(&options, &source).unwrap_err().code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(temp.path()), before);
+}
+
+#[test]
+fn dry_run_can_preview_while_another_operation_holds_the_asset_lock() {
+    let (_temp, mut options, source) = fixture();
+    setup::install(&options, &source).unwrap();
+    let _lock = specgit::assets::AssetStore::lock(
+        &options.root,
+        std::slice::from_ref(&options.root),
+        std::time::Duration::from_secs(1),
+    )
+    .unwrap();
+    options.dry_run = true;
+    assert_eq!(setup::install(&options, &source).unwrap()["written"], false);
 }

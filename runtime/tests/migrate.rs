@@ -424,16 +424,7 @@ fn legacy_arguments_have_an_actionable_major_version_diagnostic() {
 fn shared_worktree_hook_is_reported_and_never_removed_for_another_v1_worktree() {
     let (f, path) = fixture("github");
     let sibling = f.root.parent().unwrap().join("sibling");
-    git(
-        &f.root,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "sibling",
-            sibling.to_str().unwrap(),
-        ],
-    );
+    git(&f.root, &["worktree", "add", "-b", "sibling", "../sibling"]);
     fs::write(
         sibling.join(".specgit.yaml"),
         "version: 1\ndelivery: sibling\nissues: [3]\npr: 42\n",
@@ -515,13 +506,7 @@ fn main_checkout_cannot_retire_a_guard_shared_with_a_linked_v1_worktree() {
     let sibling = f.root.parent().unwrap().join("sibling-v1");
     git(
         &f.root,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "sibling-v1",
-            sibling.to_str().unwrap(),
-        ],
+        &["worktree", "add", "-b", "sibling-v1", "../sibling-v1"],
     );
     fs::write(
         sibling.join(".specgit.yaml"),
@@ -566,6 +551,11 @@ fn main_checkout_cannot_retire_a_guard_shared_with_a_linked_v1_worktree() {
 }
 #[test]
 fn a_user_include_inside_the_marked_gitlab_router_is_preserved() {
+    for newline in ["\n", "\r\n"] {
+        assert_user_include_is_preserved(newline);
+    }
+}
+fn assert_user_include_is_preserved(newline: &str) {
     let (f, path) = fixture("gitlab");
     fs::create_dir_all(f.root.join(".gitlab")).unwrap();
     fs::write(
@@ -574,7 +564,10 @@ fn a_user_include_inside_the_marked_gitlab_router_is_preserved() {
     )
     .unwrap();
     let original = include_str!("fixtures/v1-gitlab-router.yml")
-        .replace("include:\n", "include:\n  - local: /ci/user-extra.yml\n");
+        .replace("\r\n", "\n")
+        .replace("include:\n", "include:\n  - local: /ci/user-extra.yml\n")
+        .replace('\n', newline);
+    assert!(original.contains("  - local: /ci/user-extra.yml"));
     fs::write(f.root.join(".gitlab-ci.yml"), &original).unwrap();
     let p = preview(&f, &path, &[]);
     assert_eq!(p["exit"], 3, "{p}");

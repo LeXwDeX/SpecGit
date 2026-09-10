@@ -2,8 +2,8 @@ use crate::{
     assets::{AssetStore, Change},
     config::{self, Declaration, Language},
     diagnostic::{Code, Diagnostic},
-    guidance, native_settings,
-    probe::{self, Capability, ForgeRead, ProjectFacts},
+    guidance,
+    probe::{self, Capability, ForgeRead},
     process::Process,
     project::{self, Provider},
     report::Report,
@@ -26,101 +26,19 @@ pub struct Options {
     pub mirror_claude: bool,
     pub native_delete_source: Option<bool>,
     pub inspect_only: bool,
+    pub dry_run: bool,
+    pub native_auto_merge: Option<bool>,
+    pub manual_observe: bool,
     pub rollback: Option<String>,
 }
 pub use crate::delivery_model::Flow;
 pub use crate::delivery_model::flow;
-async fn request_target(
-    reader: &ForgeRead,
-    context: &project::Context,
-    facts: &ProjectFacts,
-) -> Result<Option<(u64, String)>, Diagnostic> {
-    let Some(branch) = &context.branch else {
-        return Ok(None);
-    };
-    let endpoint = match context.repository.provider {
-        Provider::Github => format!(
-            "repos/{}/pulls?state=open&head={}",
-            context.repository.path,
-            probe::encode(&format!(
-                "{}:{branch}",
-                context.repository.path.split('/').next().unwrap_or("")
-            ))
-        ),
-        Provider::Gitlab => format!(
-            "projects/{}/merge_requests?state=opened&scope=all&source_branch={}",
-            facts.id,
-            probe::encode(branch)
-        ),
-    };
-    let rows = reader.list(&endpoint, None, 10).await?;
-    let mut matches = vec![];
-    for row in rows {
-        let (source_id, source_branch, target_id, target, number) =
-            match context.repository.provider {
-                Provider::Github => (
-                    row.pointer("/head/repo/id").and_then(Value::as_u64),
-                    row.pointer("/head/ref").and_then(Value::as_str),
-                    row.pointer("/base/repo/id").and_then(Value::as_u64),
-                    row.pointer("/base/ref").and_then(Value::as_str),
-                    row.get("number").and_then(Value::as_u64),
-                ),
-                Provider::Gitlab => (
-                    row.get("source_project_id").and_then(Value::as_u64),
-                    row.get("source_branch").and_then(Value::as_str),
-                    row.get("target_project_id").and_then(Value::as_u64),
-                    row.get("target_branch").and_then(Value::as_str),
-                    row.get("iid").and_then(Value::as_u64),
-                ),
-            };
-        if source_id.is_none() || source_branch.is_none() {
-            return Err(Diagnostic::new(
-                Code::MalformedResponse,
-                "init_request",
-                "Request source identity is unavailable.",
-                "Inspect the current native requests before initialization.",
-            ));
-        }
-        if source_id != Some(facts.id) || source_branch != Some(branch.as_str()) {
-            continue;
-        }
-        if target_id != Some(facts.id)
-            || target.is_none_or(|s| !config::valid_branch(s))
-            || number.is_none_or(|n| n == 0)
-        {
-            return Err(Diagnostic::new(
-                Code::IdentityMismatch,
-                "init_request",
-                "Request target identity is unavailable or different.",
-                "Select the intended repository and inspect its native requests.",
-            ));
-        }
-        matches.push((number.unwrap(), target.unwrap().to_owned()));
-    }
-    if matches.len() > 1 {
-        return Err(Diagnostic::new(
-            Code::AmbiguousRequest,
-            "init_request",
-            "Several native requests match this source branch.",
-            "Resolve the ambiguous request association before initialization.",
-        ));
-    }
-    Ok(matches.pop())
-}
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
-    let explicit = options.language;
-    let mut report = match prepare_and_run(options, process, cwd).await {
+    let mut language = options.language.unwrap_or_default();
+    let mut report = match prepare_and_run(options, process, cwd, &mut language).await {
         Ok(r) => r,
         Err(d) => Report::failure("init", d),
     };
-    let language = explicit
-        .or_else(|| {
-            report
-                .evidence
-                .pointer("/declaration/language")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-        })
-        .unwrap_or_default();
     crate::i18n::report(&mut report, language);
     report
 }
@@ -129,6 +47,7 @@ async fn prepare_and_run(
     options: Options,
     process: Process,
     cwd: &Path,
+    language: &mut Language,
 ) -> Result<Report, Diagnostic> {
     let bytes = project::git(&process, cwd, &["rev-parse", "--show-toplevel"]).await?;
     let root = PathBuf::from(
@@ -145,15 +64,25 @@ async fn prepare_and_run(
         .map_err(|_| Diagnostic::input("Invalid Git directory."))?
         .trim_end_matches(['\r', '\n']),
     );
+    if options.native_delete_source.is_some() {
+        return Err(Diagnostic::input(
+            "Native settings are managed outside SpecGit; inspect and configure them with an authorized native tool.",
+        ));
+    }
     let private_root = git_dir.join("specgit-v2");
     if let Some(id) = &options.rollback {
         if options.inspect_only
+            || options.remote.is_some()
+            || options.provider.is_some()
             || options.native_delete_source.is_some()
             || options.config_file.is_some()
             || options.language.is_some()
             || options.target.is_some()
             || options.mirror_claude
             || options.api_host.is_some()
+            || options.native_auto_merge.is_some()
+            || options.manual_observe
+            || options.dry_run
         {
             return Err(Diagnostic::input(
                 "Rollback cannot be combined with initialization changes.",
@@ -209,6 +138,18 @@ async fn prepare_and_run(
     if let Some(language) = options.language {
         declaration.language = language;
     }
+    if options.manual_observe && options.native_auto_merge == Some(true) {
+        return Err(Diagnostic::input(
+            "Manual observation conflicts with native auto-merge=true.",
+        ));
+    }
+    if let Some(enabled) = options.native_auto_merge {
+        declaration.agent.native_auto_merge = enabled;
+    }
+    if options.manual_observe {
+        declaration.agent.native_auto_merge = false;
+    }
+    *language = declaration.language;
     declaration.validate()?;
     let context = config::resolve(
         &process,
@@ -270,7 +211,7 @@ async fn prepare_and_run(
             "Inspect the project through the authenticated CLI.",
         ));
     }
-    let request = request_target(&reader, &context, &facts).await?;
+    let request = crate::forge::capabilities::request_target(&reader, &context, &facts).await?;
     let effective_target = request
         .as_ref()
         .map(|(_, target)| target.as_str())
@@ -286,11 +227,33 @@ async fn prepare_and_run(
             .warnings
             .push("configured_request_target_mismatch");
     }
+    let capabilities =
+        crate::forge::capabilities::inspect(&reader, &facts, &native_flow.target).await;
+    let manual_choice = options.manual_observe
+        || options.native_auto_merge == Some(false)
+        || (existing.is_some()
+            && !previous.agent.native_auto_merge
+            && !declaration.agent.native_auto_merge);
+    let confirmation = capabilities.needs_choice() && !manual_choice;
     let failed = probes.iter().any(|p| p.status != Capability::Available);
-    let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"request":request,"templates":{"issue":{"source":issue.source,"required_sections":issue.required_sections},"pr":{"source":pr.source,"required_sections":pr.required_sections},"local_candidates":candidates,"inherited_native_templates":"not_checked"},"declaration":declaration,"written":false,"initial_adoption":existing.is_none()});
+    let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"capabilities":capabilities,"request":request,"templates":{"issue":{"source":issue.source,"required_sections":issue.required_sections},"pr":{"source":pr.source,"required_sections":pr.required_sections},"local_candidates":candidates,"inherited_native_templates":"not_checked"},"declaration":declaration,"written":false,"initial_adoption":existing.is_none()});
     if failed {
         let mut report = Report::success("init", "unknown", evidence);
         report.exit = 3;
+        return Ok(report);
+    }
+    if confirmation {
+        let mut report = Report::failure(
+            "init",
+            Diagnostic::new(
+                Code::ConfirmationRequired,
+                "native_capabilities",
+                "Native capabilities are unsupported or unknown; an explicit operating choice is required.",
+                "Choose --manual-observe, or have an authorized administrator configure/verify native support and rerun init --check. No project files were written.",
+            ),
+        );
+        report.status = "confirmation_required".into();
+        report.evidence = evidence;
         return Ok(report);
     }
     if options.inspect_only {
@@ -306,7 +269,7 @@ async fn prepare_and_run(
         &declaration,
         options.mirror_claude,
     )?);
-    // All local inputs validate before a requested native write is representable.
+    // Routing is a local asset; no native write capability is available.
     if let Some(host) = &options.api_host {
         let base = project::resolve(
             &process,
@@ -317,6 +280,15 @@ async fn prepare_and_run(
         )
         .await?;
         changes.push(config::routing_change(&base, host)?);
+    }
+    if options.dry_run {
+        evidence["planned_paths"] = json!(
+            changes
+                .iter()
+                .map(|change| &change.path)
+                .collect::<Vec<_>>()
+        );
+        return Ok(Report::success("init", "dry_run", evidence));
     }
     let store = AssetStore::lock(
         &context.git_dir.join("specgit-v2/assets"),
@@ -360,35 +332,13 @@ async fn prepare_and_run(
             "Inspect the updated native flow before retrying.",
         ));
     }
-    if request_target(&reader, &current, &fresh).await? != request {
+    if crate::forge::capabilities::request_target(&reader, &current, &fresh).await? != request {
         return Err(Diagnostic::new(
             Code::ConcurrentEdit,
             "init_request",
             "The native request target changed during initialization.",
             "Inspect the current request and retry.",
         ));
-    }
-    if let Some(requested) = options.native_delete_source {
-        match native_settings::configure_cleanup(
-            &process, &root, &context, &reader, &fresh, requested,
-        )
-        .await
-        {
-            Ok(change) => {
-                evidence["native_setting_change"] = json!(change);
-                let mut after = fresh.clone();
-                after.native_source_cleanup = change.observed;
-                evidence["project"] = json!(after);
-                evidence["flow"] = json!(flow(&after, effective_target));
-            }
-            Err(d) => {
-                let mut report = Report::failure("init", d);
-                evidence["native_setting_change"] =
-                    json!({"requested":requested,"outcome":"unknown_inspect_native_setting"});
-                report.evidence = evidence;
-                return Ok(report);
-            }
-        }
     }
     let applied = match store.apply(changes) {
         Ok(a) => a,

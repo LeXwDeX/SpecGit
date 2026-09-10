@@ -22,6 +22,7 @@ pub struct Options {
     pub api_host: Option<String>,
     pub claude_settings: Option<PathBuf>,
     pub uninstall: bool,
+    pub dry_run: bool,
     pub rollback: Option<String>,
 }
 #[derive(Serialize, Deserialize, Default)]
@@ -255,6 +256,11 @@ fn registration_change(
     })
 }
 pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
+    if options.dry_run && options.rollback.is_some() {
+        return Err(Diagnostic::input(
+            "--dry-run cannot be combined with --rollback; inspect the recorded transaction before explicitly restoring it.",
+        ));
+    }
     assets::safe_path(&options.root)?;
     let (planned_snapshot, planned_receipt) = read_receipt(&options.root)?;
     let selected_settings = options.claude_settings.clone().or_else(|| {
@@ -271,19 +277,12 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
                 .to_owned(),
         );
     }
-    let store = AssetStore::lock(&options.root, &allowed, Duration::from_secs(2))?;
     if let Some(id) = &options.rollback {
+        let store = AssetStore::lock(&options.root, &allowed, Duration::from_secs(2))?;
         return Ok(json!({"rolled_back":store.rollback(id)?}));
     }
-    let (receipt_snapshot, previous) = read_receipt(&options.root)?;
-    if receipt_snapshot.digest() != planned_snapshot.digest() {
-        return Err(Diagnostic::new(
-            Code::ConcurrentEdit,
-            "setup",
-            "Ownership changed while acquiring the lock.",
-            "Refresh setup after the other operation completes.",
-        ));
-    }
+    let receipt_snapshot = planned_snapshot.clone();
+    let previous = planned_receipt;
     let mut changes = vec![];
     for (relative, digest) in &previous.files {
         let change = Change::new(options.root.join(relative), None)?;
@@ -437,6 +436,40 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         after,
     });
     let summary:Vec<_>=changes.iter().map(|c|json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
+    if options.dry_run {
+        return Ok(
+            json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"written":false,"operation":if options.uninstall {"uninstall"} else if planned_snapshot.bytes.is_some() {"update"} else {"install"},"manifest_exported":false,"registration":if selected_settings.is_some(){if options.uninstall {"removal_planned"} else {"write_planned"}}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
+        );
+    }
+    // Planning is read-only. Recheck ownership after acquiring the lock; apply
+    // independently checks every planned file and permission before any write.
+    let store = AssetStore::lock(&options.root, &allowed, Duration::from_secs(2))?;
+    let (current_snapshot, _) = read_receipt(&options.root)?;
+    if current_snapshot.digest() != planned_snapshot.digest() {
+        return Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "setup",
+            "Ownership changed while acquiring the lock.",
+            "Refresh setup after the other operation completes.",
+        ));
+    }
+    for change in &changes {
+        let current = Snapshot::read(&change.path)?;
+        let freshness = Change {
+            path: change.path.clone(),
+            before: change.before.clone(),
+            after: current.bytes,
+            permissions: current.permissions,
+        };
+        if !freshness.unchanged() {
+            return Err(Diagnostic::new(
+                Code::ConcurrentEdit,
+                "setup",
+                "An asset or its permissions changed while acquiring the lock.",
+                "Preserve the current files and preview setup again.",
+            ));
+        }
+    }
     let applied = store.apply(changes)?;
     Ok(
         json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"transaction":applied,"manifest_exported":!options.uninstall,"registration":if selected_settings.is_some()&&!options.uninstall{"written_not_verified"}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
@@ -488,7 +521,9 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
             evidence["readiness"] = json!(if ready { "available" } else { "unknown" });
             let mut report = Report::success(
                 "setup",
-                if options.rollback.is_some() {
+                if options.dry_run {
+                    "dry_run"
+                } else if options.rollback.is_some() {
                     "rolled_back"
                 } else if options.uninstall {
                     "uninstalled"

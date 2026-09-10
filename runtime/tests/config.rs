@@ -9,6 +9,8 @@ fn defaults_and_full_roundtrip_preserve_shared_choices() {
     assert_eq!(d.validation.labels, Labels::Off);
     assert_eq!(d.observation.poll_seconds, 15);
     assert!(d.remote.is_none());
+    assert!(!d.agent.native_auto_merge);
+    assert!(!d.agent.close_issues_after_merge);
     let full = br#"version: 2
 remote: upstream
 provider: gitlab
@@ -19,7 +21,7 @@ tags: [{name: 'area::cli', color: '336699', description: CLI}]
 templates:
   issue: {source: inline, body: 'Why {{title}}', required_sections: [Why]}
   pr: {source: repository, path: .gitlab/merge_request_templates/release.md}
-verification: {required_checks: [build, tests]}
+agent: {native_auto_merge: true, close_issues_after_merge: false}
 observation: {poll_seconds: 30, max_wait_seconds: 900, notify: [completed]}
 "#;
     let d = Declaration::parse(full).unwrap();
@@ -79,4 +81,25 @@ fn off_is_a_string_enum_and_invalid_files_are_unchanged() {
     std::fs::write(root.join(".specgit.yaml"), original).unwrap();
     assert!(specgit::config::read(&root).is_err());
     assert_eq!(std::fs::read(root.join(".specgit.yaml")).unwrap(), original);
+}
+
+#[test]
+fn retired_checks_require_an_actionable_migration_and_agent_preferences_are_strict() {
+    let error =
+        Declaration::parse(b"version: 2\nverification: {required_checks: [test]}\n").unwrap_err();
+    assert_eq!(error.code, Code::MigrationRequired);
+    assert!(error.remedy.contains("native forge"));
+    for yaml in [
+        "agent: {native_auto_merge: true, native_auto_merge: false}",
+        "agent: {close_issues_after_merge: yes}",
+        "agent: {merge: true}",
+    ] {
+        assert!(Declaration::parse(format!("version: 2\n{yaml}\n").as_bytes()).is_err());
+    }
+    let d = Declaration::parse(
+        b"version: 2\nagent: {native_auto_merge: true, close_issues_after_merge: true}\n",
+    )
+    .unwrap();
+    let roundtrip = Declaration::parse(&d.bytes().unwrap()).unwrap();
+    assert!(roundtrip.agent.native_auto_merge && roundtrip.agent.close_issues_after_merge);
 }

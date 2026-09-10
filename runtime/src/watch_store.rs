@@ -64,6 +64,7 @@ pub fn valid_session(s: &str) -> bool {
 pub enum EventState {
     Pending,
     ChecksPassed,
+    ChecksCompleted,
     Completed,
     MergedIssuesOpen,
     ClosedUnmerged,

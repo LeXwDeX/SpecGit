@@ -3,22 +3,18 @@ pub mod assets;
 pub mod config;
 pub mod delivery_context;
 pub mod diagnostic;
-pub mod finish;
 pub mod guidance;
 pub mod hook;
 pub mod i18n;
 pub mod init;
 pub mod input;
 pub mod issue;
-pub mod merge;
 pub mod migrate;
 mod migration_assets;
 mod migration_remote;
 pub mod native_checks;
 pub mod native_delivery;
 pub mod native_file;
-pub mod native_requirements;
-pub mod native_settings;
 pub mod pr;
 pub mod probe;
 pub mod process;
@@ -31,9 +27,8 @@ pub mod templates;
 pub mod watch;
 pub mod watch_store;
 
-pub mod promotion;
-
-pub mod assessment;
 pub mod delivery_model;
 pub mod forge;
 pub mod observation;
+
+pub mod cli_contract;

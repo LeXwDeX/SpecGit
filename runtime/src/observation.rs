@@ -1,37 +1,177 @@
-//! Read-only acquisition and freshness verification, independent of CLI presentation.
+//! Native facts and presentation normalization. No policy evaluation or write capability.
 use crate::{
-    assessment::{self, Assessment, DeclarationEvidence, Lifecycle, Snapshot},
-    config::Declaration,
     delivery_context::Workspace,
+    delivery_model::{Check, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
-    forge, native_delivery, native_file,
+    forge, native_delivery,
     process::Process,
-    selection,
+    project::Repository,
+    selection, spec,
 };
-use sha2::{Digest, Sha256};
+use serde::Serialize;
 use std::path::Path;
-fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Open,
+    ClosedUnmerged,
+    Merged,
+    Completed,
+    MergedIssuesOpen,
+    Unknown,
+    InvalidInput,
+    Cancelled,
 }
-pub async fn observe(request: Option<u64>, process: Process, cwd: &Path) -> Assessment {
-    match Box::pin(execute(request, process, cwd)).await {
-        Ok(a) => a,
-        Err(d) => assessment::assess(Err(d)),
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::ClosedUnmerged => "closed_unmerged",
+            Self::Merged => "merged",
+            Self::Completed => "completed",
+            Self::MergedIssuesOpen => "merged_issues_open",
+            Self::Unknown => "unknown",
+            Self::InvalidInput => "invalid_input",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckOutcome {
+    Unobserved,
+    Pending,
+    Passed,
+    Completed,
+    Failed,
+}
+pub use crate::delivery_model::AutoMerge;
+#[derive(Debug, Default, Serialize)]
+pub struct Evidence {
+    pub repository: Option<Repository>,
+    pub project_id: Option<u64>,
+    pub request: Option<PullRequest>,
+    pub local_head: Option<String>,
+    pub target: Option<String>,
+    pub issues: Option<Vec<Issue>>,
+    pub association_source: Option<&'static str>,
+    pub association_discrepancies: Vec<u64>,
+    pub checks: Option<Vec<Check>>,
+    pub auto_merge: Option<AutoMerge>,
+    pub close_issues_after_merge: bool,
+}
+#[derive(Debug)]
+pub struct Observation {
+    pub status: Status,
+    pub evidence: Box<Evidence>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+impl Observation {
+    pub fn unavailable(d: Diagnostic) -> Self {
+        let status = match d.exit() {
+            2 => Status::InvalidInput,
+            130 => Status::Cancelled,
+            _ => Status::Unknown,
+        };
+        Self {
+            status,
+            evidence: Box::default(),
+            diagnostics: vec![d],
+        }
+    }
+    pub fn exit(&self) -> u8 {
+        self.diagnostics.first().map_or(0, Diagnostic::exit)
+    }
+    pub fn checks_outcome(&self) -> CheckOutcome {
+        let Some(checks) = self.evidence.checks.as_ref() else {
+            return CheckOutcome::Unobserved;
+        };
+        if checks.is_empty() {
+            return CheckOutcome::Unobserved;
+        }
+        if checks.iter().any(Check::failed) {
+            return CheckOutcome::Failed;
+        }
+        if checks.iter().all(Check::successful) {
+            CheckOutcome::Passed
+        } else if checks.iter().all(|c| c.status == "completed") {
+            CheckOutcome::Completed
+        } else {
+            CheckOutcome::Pending
+        }
+    }
+}
+/// Describe only supplied native lifecycle facts; this cannot authorize merging.
+pub fn describe(evidence: Evidence) -> Observation {
+    let invalid = || {
+        Diagnostic::new(
+            Code::MalformedResponse,
+            "observe",
+            "The native snapshot contains unknown or contradictory identities or states.",
+            "Read the exact native objects again; unknown facts are not successful observations.",
+        )
+    };
+    let Some(request) = evidence.request.as_ref() else {
+        return Observation::unavailable(invalid());
+    };
+    if request.id == 0
+        || request.source_project == 0
+        || request.target_project == 0
+        || !crate::project::valid_oid(&request.head)
+        || !["open", "opened", "closed", "merged"].contains(&request.state.as_str())
+        || evidence.issues.as_ref().is_some_and(|issues| {
+            let mut ids = std::collections::BTreeSet::new();
+            issues.iter().any(|i| {
+                i.id == 0
+                    || !ids.insert(i.id)
+                    || !["open", "opened", "closed"].contains(&i.state.as_str())
+            })
+        })
+        || evidence
+            .checks
+            .as_ref()
+            .is_some_and(|checks| checks.iter().any(|c| !c.valid_for(request, checks)))
+    {
+        return Observation::unavailable(invalid());
+    }
+    let status = match evidence.request.as_ref().map(|r| r.state.as_str()) {
+        Some("open" | "opened") => Status::Open,
+        Some("closed") => Status::ClosedUnmerged,
+        Some("merged") => match evidence.issues.as_deref() {
+            Some(issues) if issues.iter().any(|i| i.state != "closed") => Status::MergedIssuesOpen,
+            Some(issues) if !issues.is_empty() && evidence.association_discrepancies.is_empty() => {
+                Status::Completed
+            }
+            _ => Status::Merged,
+        },
+        _ => Status::Unknown,
+    };
+    Observation {
+        status,
+        evidence: Box::new(evidence),
+        diagnostics: vec![],
     }
 }
 fn changed() -> Diagnostic {
     Diagnostic::new(
         Code::ConcurrentEdit,
-        "finish",
-        "Native head, target, rules or check attempts changed during observation.",
-        "Read a fresh complete snapshot before acceptance.",
+        "observe",
+        "Native request or related facts changed during observation.",
+        "Read a fresh snapshot of the exact request.",
     )
+}
+pub async fn observe(request: Option<u64>, process: Process, cwd: &Path) -> Observation {
+    match Box::pin(execute(request, process, cwd)).await {
+        Ok(o) => o,
+        Err(d) => Observation::unavailable(d),
+    }
 }
 async fn execute(
     request: Option<u64>,
     process: Process,
     cwd: &Path,
-) -> Result<Assessment, Diagnostic> {
+) -> Result<Observation, Diagnostic> {
     if request == Some(0) {
         return Err(Diagnostic::input("Request IDs must be positive."));
     }
@@ -44,9 +184,9 @@ async fn execute(
     {
         return Err(Diagnostic::new(
             Code::IdentityMismatch,
-            "finish",
-            "The local selection belongs to a different native project or target.",
-            "Reconcile the exact native request and current selection before acceptance.",
+            "observe",
+            "The selection belongs to another project or target.",
+            "Select the exact native request.",
         ));
     }
     let number = if let Some(n) = request.or(selected.as_ref().and_then(|s| s.request)) {
@@ -56,97 +196,84 @@ async fn execute(
         if rows.len() != 1 {
             return Err(Diagnostic::new(
                 Code::AmbiguousRequest,
-                "finish",
+                "observe",
                 "Observation requires one exact native request.",
-                "Select its exact --request ID after inspecting native candidates.",
+                "Supply its --request ID after inspecting the candidates.",
             ));
         }
         rows[0].id
     };
     let observed = forge::request(&w.reader, repo, number).await?;
-    let r = observed.facts.clone();
-    if let Err(a) = assessment::identity(&r, w.facts.id, &w.context.head, w.branch()?, &w.target) {
-        return Ok(a);
+    let r = &observed.facts;
+    if r.target_project != w.facts.id
+        || r.source_project != w.facts.id
+        || r.source != w.branch()?
+        || r.target != w.target
+    {
+        return Err(Diagnostic::new(
+            Code::IdentityMismatch,
+            "observe",
+            "The request does not belong to the selected project/source/target.",
+            "Reconcile the exact native identity before observing.",
+        ));
     }
-    let target = native_delivery::branch_head(&w.reader, repo, &r.target).await?;
-    let approved = native_file::root_file(&w.reader, repo, &target, ".specgit.yaml").await?;
-    let candidate = native_file::root_file(&w.reader, repo, &r.head, ".specgit.yaml").await?;
-    let source = candidate.bytes.as_deref().ok_or_else(|| {
-        Diagnostic::new(
-            Code::MalformedResponse,
-            "finish",
-            "The current pushed head has no shared v2 declaration.",
-            "Commit the shared project declaration before native acceptance.",
-        )
-    })?;
-    let candidate_rules = Declaration::parse(source)?;
-    let initial_adoption = approved.bytes.is_none();
-    let approved_bytes = approved.bytes.as_deref().unwrap_or(source);
-    let rules = Declaration::parse(approved_bytes)?;
-    let selected_intent = selected.as_ref().map(|s| assessment::SelectionIntent {
-        issues: &s.issues,
-        unresolved: s.intents.iter().any(|i| i.issue.is_none()),
-    });
-    let ids = match assessment::associations(
-        &r,
-        &rules,
-        &candidate_rules,
-        repo.provider,
-        &w.facts.default_branch,
-        selected_intent,
-    ) {
-        Ok(ids) => ids,
-        Err(a) => return Ok(a),
+    let mut evidence = Evidence {
+        repository: Some(repo.clone()),
+        project_id: Some(w.facts.id),
+        request: Some(r.clone()),
+        local_head: Some(w.context.head.clone()),
+        target: Some(w.target.clone()),
+        auto_merge: Some(observed.auto_merge()),
+        close_issues_after_merge: w.declaration.agent.close_issues_after_merge,
+        ..Evidence::default()
     };
-    let mut issues = vec![];
+    // Body references are a declared association source, never proof of native auto-closing eligibility.
+    let mut ids = spec::references(&r.body)?;
+    if let Some(selected) = &selected {
+        evidence.association_discrepancies = selected
+            .issues
+            .iter()
+            .copied()
+            .filter(|id| !ids.contains(id))
+            .collect();
+        ids.extend(selected.issues.iter().copied());
+    }
+    if ids.len() > 100 {
+        return Err(Diagnostic::new(
+            Code::OutputLimit,
+            "observe",
+            "Too many issue associations for one bounded observation.",
+            "Inspect native associations in bounded groups.",
+        ));
+    }
+    let mut issues = Vec::new();
     for id in ids {
         issues.push(native_delivery::issue(&w.reader, repo, w.facts.id, id).await?);
     }
-    let declaration = DeclarationEvidence {
-        source: if initial_adoption {
-            "initial_adoption"
-        } else {
-            "target_revision"
-        },
-        target_commit: target.clone(),
-        approved_digest: digest(approved_bytes),
-        candidate_digest: digest(source),
-        candidate_changed: source != approved_bytes,
-        candidate_rules,
-    };
-    let lifecycle = if r.state == "merged" {
-        Lifecycle::Merged(forge::source_cleanup(&w.reader, repo, &r.source).await?)
-    } else {
-        let requirements = forge::requirements(&w.reader, repo, &observed).await?;
-        let checks = forge::checks(&w.reader, repo, &observed).await?;
-        if forge::checks(&w.reader, repo, &observed).await? != checks
-            || forge::requirements(&w.reader, repo, &observed).await? != requirements
-        {
-            return Err(changed());
+    evidence.association_source = Some("closing_references");
+    evidence.issues = Some(issues);
+    let mut diagnostics = Vec::new();
+    if r.state != "merged" && r.state != "closed" {
+        match forge::checks(&w.reader, repo, &observed).await {
+            Ok(checks) => {
+                if !checks.iter().all(|c| c.valid_for(r, &checks)) {
+                    return Err(changed());
+                }
+                evidence.checks = Some(checks);
+            }
+            Err(d) => diagnostics.push(d),
         }
-        Lifecycle::Open {
-            requirements: requirements.facts,
-            checks,
-        }
-    };
-    for issue in &issues {
+    }
+    for issue in evidence.issues.iter().flatten() {
         if native_delivery::issue(&w.reader, repo, w.facts.id, issue.id).await? != *issue {
             return Err(changed());
         }
     }
-    if !forge::unchanged(&w.reader, repo, &observed).await?
-        || native_delivery::branch_head(&w.reader, repo, &r.target).await? != target
-    {
+    if !forge::unchanged(&w.reader, repo, &observed).await? {
         return Err(changed());
     }
     w.unchanged().await?;
-    Ok(assessment::assess(Ok(Snapshot {
-        request: r,
-        issues,
-        rules,
-        declaration,
-        dirty: w.context.dirty,
-        lifecycle,
-        flow: crate::delivery_model::flow(&w.facts, Some(&w.target)),
-    })))
+    let mut result = describe(evidence);
+    result.diagnostics = diagnostics;
+    Ok(result)
 }

@@ -6,7 +6,7 @@ use serde_json::json;
 use std::{fs, process::Command};
 fn fixture(provider: &str, count: usize) -> Fixture {
     let f = Fixture::new(provider);
-    let mut args = vec!["issue", "feat: first spec"];
+    let mut args = vec!["issue", "--create-labels", "feat: first spec"];
     if count == 2 {
         args.push("fix: second spec");
     }
@@ -111,6 +111,14 @@ fn uncertain_creation_recovers_exact_native_request_without_duplicate_and_preser
         f.edit(|s| s["lose_request_response"] = json!(true));
         let r = f.run(&["pr"]);
         assert_eq!(r["exit"], 3, "{r}");
+        assert_eq!(r["effects"]["outcome"], "unknown", "{r}");
+        assert!(
+            r["effects"]["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["action"] == "create_request" && e["outcome"] == "unknown")
+        );
         assert_eq!(f.state()["requests"].as_array().unwrap().len(), 1);
         f.edit(|s| {
             s["requests"][0][if provider == "github" {

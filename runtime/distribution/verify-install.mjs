@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -37,30 +37,91 @@ writeFileSync(path.join(output, 'package.json'), JSON.stringify({ name: 'specgit
 // private repository access, network fetch or lifecycle download to execute.
 npm(['install', '--ignore-scripts', '--offline', '--no-audit', '--no-fund', ...packed.map(p => p.tarball)], output);
 const shim = npm(['exec', '--offline', '--', 'specgit', '--version'], output);
-assert(shim.includes(staging.version), 'npm bin shim must execute the installed version.');
+assert.equal(JSON.parse(shim).version, staging.version, 'npm bin shim must execute the installed version.');
 const launcher = path.join(output, 'node_modules', 'specgit', 'bin', 'specgit.cjs');
 const binary = path.join(output, 'node_modules', staging.platform, 'bin', process.platform === 'win32' ? 'specgit.exe' : 'specgit');
 const emptyPath = path.join(output, 'empty-path');
 mkdirSync(emptyPath);
+const isolatedEnv = { ...process.env, PATH: emptyPath, GITHUB_TOKEN: '', GH_TOKEN: '', GITLAB_TOKEN: '', GLAB_TOKEN: '' };
 function invoke(args, input) {
-  return spawnSync(process.execPath, [launcher, ...args], { cwd: output, encoding: 'utf8', input, timeout: 10_000, env: { ...process.env, PATH: emptyPath, GITHUB_TOKEN: '', GH_TOKEN: '', GITLAB_TOKEN: '', GLAB_TOKEN: '' } });
+  return spawnSync(process.execPath, [launcher, ...args], { cwd: output, encoding: 'utf8', input, maxBuffer: 4 * 1024 * 1024, timeout: 10_000, env: isolatedEnv });
 }
-const version = invoke(['--version']);
-assert.equal(version.status, 0, version.stderr);
-assert(version.stdout.includes(staging.version));
-const invalid = invoke(['doctor', '--json']);
-assert.equal(invalid.status, 2, invalid.stderr);
-assert.equal(JSON.parse(invalid.stdout).exit, 2);
-assert.equal(invalid.stderr, '');
-const missing = invoke(['status', '--json']);
-assert.equal(missing.status, 3, missing.stderr);
-assert.equal(JSON.parse(missing.stdout).diagnostics[0].code, 'missing_executable');
+function report(result, exit) {
+  assert.ifError(result.error);
+  assert.equal(result.status, exit, result.stderr);
+  assert.equal(result.stderr, '');
+  const value = JSON.parse(result.stdout);
+  assert.equal(value.schema_version, 2);
+  assert.equal(value.exit, exit);
+  assert.equal(value.ok, exit === 0);
+  assert.equal(value.version, staging.version);
+  assert(Array.isArray(value.diagnostics));
+  assert(Array.isArray(value.next_actions));
+  if (value.effects !== undefined) {
+    assert.equal(typeof value.effects, 'object');
+    assert(value.effects !== null && !Array.isArray(value.effects));
+    assert(['not_applied', 'applied', 'unknown'].includes(value.effects.outcome));
+    assert(Array.isArray(value.effects.operations));
+    for (const effect of value.effects.operations) {
+      assert(['local', 'native'].includes(effect.scope));
+      assert(['unknown', 'applied'].includes(effect.outcome));
+      assert.equal(typeof effect.action, 'string');
+      assert(effect.action.length > 0);
+      assert(effect.recovery !== null && typeof effect.recovery === 'object' && !Array.isArray(effect.recovery));
+    }
+  }
+  return value;
+}
+const version = report(invoke(['--version']), 0);
+assert.equal(version.version, staging.version);
+const humanVersion = invoke(['--human', '--version']);
+assert.equal(humanVersion.status, 0, humanVersion.stderr);
+assert(humanVersion.stdout.includes(staging.version));
+report(invoke(['--help']), 0);
+report(invoke(['doctor', '--json']), 2);
+const missing = report(invoke(['status', '--json']), 3);
+assert.equal(missing.diagnostics[0].code, 'missing_executable');
+const inputRequest = JSON.stringify({ command: 'status', options: { json: true } });
+const fromStdin = report(invoke(['--input-file', '-'], inputRequest), 3);
+assert.equal(fromStdin.diagnostics[0].code, 'missing_executable');
+const inputFile = path.join(output, 'request.json');
+writeFileSync(inputFile, inputRequest);
+assert.equal(report(invoke(['--input-file', inputFile]), 3).diagnostics[0].code, 'missing_executable');
+for (const input of ['{', '{"command":"status","command":"issue"}', '{"command":"status","options":{"json":true,"json":false}}', '{"command":"status","options":{"unknown":true}}']) {
+  assert.equal(report(invoke(['--input-file', '-'], input), 2).diagnostics[0].code, 'invalid_input');
+}
+report(invoke(['--input-file', '-', 'status'], inputRequest), 2);
+report(invoke(['--input-file', inputFile, '--input-file', inputFile]), 2);
+const oversize = report(invoke(['--input-file', '-'], ' '.repeat(1024 * 1024 + 1)), 2);
+assert.equal(oversize.diagnostics[0].code, 'input_limit');
 const hook = invoke(['hook', '--event', 'PostToolUse'], JSON.stringify({ session_id: 'installed-check', hook_event_name: 'PostToolUse', tool_name: 'Read', cwd: output }));
 assert.equal(hook.status, 0, hook.stderr);
 assert.equal(hook.stdout, '');
 assert.equal(hook.stderr, '');
-const surfaces = checkSurfaces(launcher, path.join(output, 'node_modules', 'specgit'));
-const evidence = { version: staging.version, platform: staging.platform, binary, launcher, node: process.execPath, surfaces, packages: packed.map(p => ({ ...p, tarball: path.basename(p.tarball) })), checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'] };
+
+// Keep stdin open deliberately: a bounded explicit input read must not depend on
+// EOF or an external timeout killing the application. This executes on every OS.
+async function stalledInput(cancelSignal) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [launcher, '--input-file', '-'], { cwd: output, env: isolatedEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    let signalTimer;
+    const deadline = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Installed input read failed to terminate within 9 seconds.')); }, 9_000);
+    child.stdout.on('data', chunk => { stdout += chunk; if (stdout.length > 1024 * 1024) { child.kill('SIGKILL'); reject(new Error('Installed output exceeded bound.')); } });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', error => { clearTimeout(deadline); clearTimeout(signalTimer); reject(error); });
+    child.once('close', (status, signal) => { clearTimeout(deadline); clearTimeout(signalTimer); resolve({ status, signal, stdout, stderr }); });
+    if (cancelSignal) signalTimer = setTimeout(() => child.kill(cancelSignal), 1_000);
+  });
+}
+assert.equal(report(await stalledInput(), 3).diagnostics[0].code, 'timeout');
+const cancellation = { stdin_deadline: 'verified', console_signal: 'requires_windows_console_journey' };
+if (process.platform !== 'win32') {
+  assert.equal(report(await stalledInput('SIGTERM'), 130).diagnostics[0].code, 'cancelled');
+  cancellation.console_signal = 'installed_launcher_sigterm_verified';
+}
+const surfaces = checkSurfaces(launcher, path.join(output, 'node_modules', 'specgit'), { cwd: output, env: isolatedEnv });
+const evidence = { version: staging.version, platform: staging.platform, binary, launcher, node: process.execPath, surfaces, cancellation, packages: packed.map(p => ({ ...p, tarball: path.basename(p.tarball) })), checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'machine_version_help', 'explicit_human_version', 'json_exit_2', 'json_exit_3', 'explicit_json_file_stdin', 'invalid_duplicate_unknown_json', 'input_byte_bound', 'input_deadline', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces', ...(process.platform === 'win32' ? [] : ['installed_signal_exit_130'])] };
 writeFileSync(path.join(output, 'installed.json'), JSON.stringify(evidence, null, 2) + '\n');
 if (process.env.GITHUB_ENV) {
   const { appendFileSync } = await import('node:fs');

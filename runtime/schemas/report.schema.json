@@ -59,6 +59,80 @@
           "remedy"
         ]
       }
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "Exactly exit == 0; successful observation does not grant merge permission."
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": true
+      },
+      "description": "Diagnostic guidance, never additional authorization or an automatically executed action."
+    },
+    "effects": {
+      "type": "object",
+      "description": "Typed side-effect outcomes when available. Unknown results require readback before retry.",
+      "additionalProperties": false,
+      "required": [
+        "operations",
+        "outcome"
+      ],
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "action",
+              "outcome",
+              "recovery"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "local",
+                  "native"
+                ]
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outcome": {
+                "enum": [
+                  "unknown",
+                  "applied"
+                ]
+              },
+              "recovery": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "outcome": {
+          "enum": [
+            "not_applied",
+            "applied",
+            "unknown"
+          ]
+        }
+      }
     }
   },
   "required": [
@@ -68,7 +142,37 @@
     "status",
     "exit",
     "evidence",
-    "diagnostics"
+    "diagnostics",
+    "ok",
+    "next_actions"
   ],
-  "description": "One ordinary command stdout document. Exit 0 indicates a successful observation; only finish status accepted proves acceptance. Hook output follows its host protocol separately."
+  "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "exit": {
+            "const": 0
+          }
+        },
+        "required": [
+          "exit"
+        ]
+      },
+      "then": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "ok": {
+            "const": false
+          }
+        }
+      }
+    }
+  ]
 }

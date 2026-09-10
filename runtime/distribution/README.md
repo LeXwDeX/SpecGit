@@ -12,8 +12,9 @@ node runtime/distribution/verify-install.mjs --stage /tmp/new-stage --output /tm
 ```
 
 Output directories must be new. `--binary` can stage an already remapped release
-artifact; architecture and checksum inspection do not prove its version or runtime
-compatibility. The target's actual installed verification remains mandatory.
+artifact. Staging executes that binary with offline `--schema`, so the staging
+host must run the selected target. Architecture and checksum inspection alone do
+not prove runtime compatibility. The target's actual installed verification remains mandatory.
 The scripts never publish. The repository's TypeScript package remains its 1.x
 publication surface during this staged rewrite.
 
@@ -29,9 +30,21 @@ or a guarantee of graceful JSON output.
 
 `verify-install.mjs` packs both packages and verifies tarball integrity and the
 asset allowlist, then installs them offline with scripts disabled. It exercises
-version, invalid input, missing-executable diagnostics and hook stdin/stdout with
-an empty PATH and empty credential variables. It also compares every installed
-command and option name with the shipped schemas and command reference.
+machine help/version, explicit JSON file/stdin input, malformed and duplicate
+JSON, byte limits, input deadlines, missing-executable diagnostics and hook
+stdin/stdout with an empty PATH and empty credential variables. POSIX installed
+launcher cancellation must report exit 130; Windows console cancellation is
+verified by the separate Windows native/launcher journey, not Node's forceful
+process termination API. Installation evidence records that distinction.
+
+During staging, `writeSchemas` reads the target executable's clap-derived
+`--schema` report and generates every option schema plus the complete discovery
+contract. Only the shared declaration and report-envelope schemas are maintained
+as source assets. Installed verification queries the real npm launcher again and
+compares the complete command, option, type, choice, default, conflict and effects
+metadata with the packaged schemas. Scoped discovery and machine help must agree.
+This avoids a second manually maintained command registry; retired execution
+commands have no option-schema assets.
 `installed.json` names the actual
 entrypoints and digests. This local artifact check does not prove public-registry
 availability. CI then runs the native public journeys against the installed npm
