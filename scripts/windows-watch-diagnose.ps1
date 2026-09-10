@@ -40,6 +40,13 @@ try {
     $results += @{ test = $test; exit = $exitCode; elapsed_ms = $started.ElapsedMilliseconds; git_processes = @($events | Where-Object { $_.event -eq 'start' }).Count }
   }
   $results | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $public 'results.json')
+  # Reproduce the normal suite's concurrent execution after the isolated controls.
+  $env:SPECGIT_WATCH_DIAGNOSTICS = Join-Path $public 'full-suite'
+  $env:GIT_TRACE2_EVENT = (Join-Path $raw 'full-suite.jsonl').Replace('\', '/')
+  & cargo test --locked --features test-fixtures --test watch -- --nocapture *> (Join-Path $public 'full-suite.log')
+  $suiteExit = $LASTEXITCODE
+  @{ exit = $suiteExit } | ConvertTo-Json | Set-Content (Join-Path $public 'full-suite-result.json')
+  if ($suiteExit -ne 0) { exit $suiteExit }
   if (@($results | Where-Object { $_.exit -ne 0 }).Count -gt 0) { exit 1 }
 } finally {
   Remove-Item Env:SPECGIT_WATCH_DIAGNOSTICS -ErrorAction SilentlyContinue
