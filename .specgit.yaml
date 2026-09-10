@@ -1,13 +1,11 @@
 version: 1
-delivery: selfhosted-ci-validation
+delivery: rust-2-design-and-lessons
 context:
   kind: worktree
-  label: specgit-selfhost-ci-20260909
-  branch: ci/528-selfhosted-ci-validation
+  label: specgit-rust-design-20260910
+  branch: docs/537-rust-2-design-and-lessons
 issues:
-  - 528
-  - 530
+  - 537
 issueKinds:
-  - issue: 528
-    kind: kind::ci
-pr: 529
+  - issue: 537
+    kind: kind::docs
