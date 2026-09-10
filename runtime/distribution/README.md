@@ -1,100 +1,99 @@
-# Native npm distribution
+# SpecGit 2.0 distribution and release recovery
 
-`stage.mjs` builds the locked release executable and prepares `specgit` plus one
-exact-version platform package. Linux glibc x64/arm64, macOS x64/arm64 and Windows
-x64 have explicit package identities. Unknown architectures/libc fail before
-execution. Linux packages record the actual linked glibc requirement from ELF
-version metadata. Mach-O, ELF and PE machine headers must match the selected target.
+Public `specgit@2.0.0` is a thin native launcher with three exact-version optional
+dependencies: `specgit-darwin-arm64`, `specgit-linux-x64-gnu`, and `specgit-win32-x64`.
+The repository root is a private development workspace; it retains TypeScript
+engineering gates and old regressions but cannot publish the old runtime.
+
+## Build and independently install
+
+The [Release Action](../../.github/workflows/release-prepare.yml) is dispatched
+explicitly with `release_version=2.0.0`. It runs the three targets on self-hosted
+macOS arm64, Linux x64 and Windows x64 runners. It has read-only repository
+permissions and performs no npm, tag, PR or GitHub Release writes. Ordinary pushes
+do not start publication or create version PRs. Final dispatch is coordinated.
+
+Each build runs source checks, builds a remapped release binary, stages its native
+package plus the common wrapper, installs the packed bytes offline with lifecycle
+scripts disabled, then repeats every enumerated native test executable through the
+installed entrypoint. The Windows profile includes console cancellation. Source
+and installation timeouts remain unchanged. The aggregate job requires all three
+successful jobs and verifies actual native/launcher hashes, exact source/version,
+complete profile accounting, identical wrapper bytes, and tarball integrity.
+
+Local qualification uses the same scripts, from a clean committed source tree:
 
 ```sh
 node runtime/distribution/stage.mjs --target aarch64-apple-darwin --output /tmp/new-stage
 node runtime/distribution/verify-install.mjs --stage /tmp/new-stage --output /tmp/new-install
 ```
 
-Output directories must be new. `--binary` can stage an already remapped release
-artifact. Staging executes that binary with offline `--schema`, so the staging
-host must run the selected target. Architecture and checksum inspection alone do
-not prove runtime compatibility. The target's actual installed verification remains mandatory.
-The scripts never publish. The repository's TypeScript package remains its 1.x
-publication surface during this staged rewrite.
+Output directories must be fresh. `--binary` accepts an already remapped binary;
+the staging host still executes its offline schema, so cross-compilation alone is
+not qualification. `stage.mjs` also checks ELF/Mach-O/PE architecture, known private
+build paths, dependency licenses, and Linux's actual minimum glibc requirement.
+The wrapper contains no lifecycle scripts and never downloads or compiles code.
+It checks exact platform versions and binary digests before forwarding argv/I/O.
+Unix signals reach the native child; Windows Ctrl-C is delivered by the attached
+console rather than Node's forceful process-termination API.
 
-The wrapper has no lifecycle scripts and never downloads binaries or compiles
-source. npm's platform-specific optional dependencies carry precompiled bytes.
-The wrapper checks its platform package's exact version and binary digest, then
-spawns the native executable with inherited stdin/stdout/stderr and exact arguments.
-Unix signals are forwarded; native INT/TERM/HUP cancellation reports JSON exit 130
-after process cleanup. Windows console Ctrl-C reaches both attached processes,
-so the wrapper lets the native handler finish instead of calling Node's forceful
-Windows `kill(SIGINT)`. Windows process termination is not a POSIX signal emulation
-or a guarantee of graceful JSON output.
+The bundle artifact is `specgit-release-<source SHA>`. It contains four npm `.tgz`
+files (three binaries plus one wrapper), `release.json`, `SHASUMS256.txt`, and
+portable installation/profile evidence. Platform `.tgz` assets also contain the
+standalone executable under `package/bin/`; direct execution does not require
+Node.js. All necessary license texts are bundled. Evidence exported into the
+bundle omits runner/home/Node paths. Package contents exclude Rust source and debug
+sidecars. Paths are remapped and text uses LF to keep wrapper bytes identical.
 
-`verify-install.mjs` packs both packages and verifies tarball integrity and the
-asset allowlist, then installs them offline with scripts disabled. It exercises
-machine help/version, explicit JSON file/stdin input, malformed and duplicate
-JSON, byte limits, input deadlines, missing-executable diagnostics and hook
-stdin/stdout with an empty PATH and empty credential variables. POSIX installed
-launcher cancellation must report exit 130; Windows console cancellation is
-verified by the separate Windows native/launcher journey, not Node's forceful
-process termination API. Installation evidence records that distinction.
+## Publish the exact verified bytes
 
-During staging, `writeSchemas` reads the target executable's clap-derived
-`--schema` report and generates every option schema plus the complete discovery
-contract. Only the shared declaration and report-envelope schemas are maintained
-as source assets. Installed verification queries the real npm launcher again and
-compares the complete command, option, type, choice, default, conflict and effects
-metadata with the packaged schemas. Scoped discovery and machine help must agree.
-This avoids a second manually maintained command registry; retired execution
-commands have no option-schema assets.
-`installed.json` names the actual
-entrypoints and digests. This local artifact check does not prove public-registry
-availability. CI then runs the native public journeys against the installed npm
-entrypoint. Tests about the exact native lease PID explicitly launch the installed
-native file; cancellation through the wrapper has separate signal/console cases.
+The user has authorized this stable v2.0.0 release. The coordinating task performs
+the final writes after applicable acceptance. Actions does not receive an npm
+token. The coordinator uses its existing authenticated npm and `gh` sessions;
+`npm whoami` and package permissions are checks, not proof that new package creation
+will succeed. Never read/copy tokens or mistake an OIDC dry run for publication.
 
-Release builds remap checkout/home paths, strip debug symbols, and reject known
-private build paths in executable bytes. Packages contain only the executable,
-launcher, manifest, command reference, schemas and license information, including
-selected dependencies' license texts. Text files use LF line endings so the same
-wrapper has identical content across build platforms. Cross-compilation alone is
-never installed-platform evidence.
+1. Merge the accepted delivery into `main`, then dispatch the three-platform build
+   for that exact main commit. Download its successful bundle without modifying it.
+2. Re-read the run's repository, workflow, branch, commit and successful conclusion.
+3. Publish with the native release script from this checkout:
 
-## Publication boundary and recovery requirements
+```sh
+node runtime/distribution/publish.mjs \
+  --directory /absolute/downloaded-bundle \
+  --version 2.0.0 --source <main-commit-sha> --build-run <actions-run-id> \
+  --npm --github
+```
 
-`release-check.mjs --evidence <installed.json>` accepts five repeated evidence
-arguments. It rereads each immutable tarball's manifest, native machine header,
-binary digest and package integrity, requires one exact version and identical
-wrapper bytes across builds, and refuses incomplete qualification. Add `--registry`
-to read exact versions from the public npm registry with bounded response size and
-timeouts. Its resumable state names missing platforms before the wrapper; missing,
-unauthorized, malformed and changed-integrity observations are never success.
-`can_promote_latest` requires all six registry artifacts to agree and a stable
-version. This is a read-only packaging check, not forge acceptance or publication
-authorization. It performs no publication, dist-tag mutation or Git tag mutation.
+The script verifies the run and current main identity, rereads every tarball and
+its installed profile, and uses the existing npm session. Native packages publish
+first under `v2-staging`. Each exact version/integrity must be visible before the
+wrapper is published. Only a complete matching set can advance `latest`; the
+wrapper's tag advances last and is read back. Private-source publication uses no
+provenance claim. These operations never change source visibility.
 
-No 2.0 publication is authorized by this implementation. Before publication,
-collect installed-bin evidence for all five declared platform packages, then verify
-that every tarball's immutable version and integrity agree with the same wrapper.
-Publish platform packages first under a staging tag. Read each exact version and
-integrity back from the registry, retrying bounded propagation delays. A matching
-already-published platform is reusable; a different integrity at the same version
-requires a new version. Do not overwrite versions, publish a wrapper with missing
-platforms, or move `latest` to a partial release. Wrapper publication and its final
-registry readback precede release tags/metadata reconciliation; native merge method
-or commit-message wording does not substitute for those observations.
+GitHub tag/Release creation follows verified npm versions and latest tags. An
+existing tag must resolve to the selected source. Existing Release assets are
+read back and compared byte-for-byte; conflicting bytes are not overwritten.
+The four package tarballs, source manifest and SHA-256 file are attached to the
+stable `v2.0.0` Release. A successful local build is not a published version.
 
-The current owned-runner matrix contains Linux x64, macOS arm64 and Windows x64.
-Linux arm64 and macOS x64 installed execution still require qualification. The
-macOS runner currently has no working x64 execution translation. These targets
-remain advertised design targets, not accepted release artifacts.
+Without `--npm` or `--github`, the same command performs read-only bundle/registry
+verification and reports missing versions. With only `--npm`, the coordinator can
+finish and inspect npm publication before separately using `--github` on the same
+bundle and build run.
 
-As verified on 2026-09-09, npm trusted publishing supports hosted providers and
-explicitly excludes self-hosted runners. The configured owned-runner-only policy
-therefore cannot establish the requested OIDC publishing path. Private source
-must remain private, and private-repository publication must not claim provenance
-that npm does not support. Resolving the actual publisher configuration requires
-an authorized publishing arrangement; local packing is independent of it.
+## Recovery
 
-Sources: [npm platform metadata](https://docs.npmjs.com/files/package.json/),
-[npm trusted publishing](https://docs.npmjs.com/trusted-publishers/),
-[Node subprocess signals](https://nodejs.org/api/child_process.html#subprocesskillsignal),
-[Windows console events](https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent).
+A matching already-published package is reused. Different bytes at the same
+immutable version stop the operation and require a new version. Lost write
+responses stop; the next explicit run reads native state before issuing further
+writes. Registry propagation waits are bounded. An incomplete set never advances
+the wrapper's `latest`. Missing GitHub assets can be attached during recovery;
+existing conflicting assets are never clobbered. Keep the same bundle and source
+for recovery and keep `main` stable during this coordinated release.
+
+The previous five-architecture staging plan is superseded by this release's three
+actually tested targets. Linux arm64, Intel macOS and musl are not advertised as
+supported v2.0.0 targets. The [v1 migration guide](../../docs/migration-v2.md) describes
+project cutover separately from installation and publication.

@@ -12,14 +12,14 @@ function fail(message) {
 }
 function platformKey() {
   const key = `${process.platform}-${process.arch}`;
-  if (key === 'linux-x64' || key === 'linux-arm64') {
+  if (key === 'linux-x64') {
     if (!process.report?.getReport().header.glibcVersionRuntime) {
       throw new Error('Linux requires glibc; musl and unknown libc are unsupported.');
     }
     return `${key}-gnu`;
   }
-  if (['darwin-x64', 'darwin-arm64', 'win32-x64'].includes(key)) return key;
-  throw new Error(`Unsupported platform ${key}. Supported: Linux glibc x64/arm64, macOS x64/arm64, Windows x64.`);
+  if (['darwin-arm64', 'win32-x64'].includes(key)) return key;
+  throw new Error(`Unsupported platform ${key}. Supported: Linux glibc x64, macOS arm64, Windows x64.`);
 }
 function main() {
   const wrapper = require('../package.json');

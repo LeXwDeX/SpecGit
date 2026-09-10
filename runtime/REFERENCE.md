@@ -1,9 +1,9 @@
 # SpecGit 2 native command reference
 
-This reference describes the lightweight Rust development artifact. Installing
-it does not publish a release, migrate a project or authorize native mutations.
-The repository's root TypeScript package remains the retained 1.x distribution
-until an explicitly approved cutover.
+This reference describes the SpecGit 2.0 native CLI. Installing it does not
+migrate a project or authorize native mutations. Public npm packages contain the
+native launcher and exact-version platform packages; the private root TypeScript
+workspace is retained only for engineering gates and historical regressions.
 
 ## Responsibility and configuration
 
@@ -119,7 +119,7 @@ commands use the global input/output contract above.
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
 
 `inbox`, `status`, `doctor` and `migrate` remain auxiliary entrypoints in this
-development artifact. Core project operations are setup, init, issue, pr, watch
+native CLI. Core project operations are setup, init, issue, pr, watch
 and hook. No separate server is required for ordinary Agent use.
 
 ## Initialization choices and native limits

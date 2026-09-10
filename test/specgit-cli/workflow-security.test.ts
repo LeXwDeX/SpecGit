@@ -173,7 +173,7 @@ const assertSelfHostedRouting = (text: string, label: string): void => {
     if (jobId === 'test_selfhosted' || job['continue-on-error']) {
       throw new Error(`${label}: optional shadow execution is forbidden`);
     }
-    if (jobId === 'test_matrix' || jobId === 'rust') {
+    if (jobId === 'test_matrix' || jobId === 'rust' || (label === 'release-prepare.yml' && jobId === 'build')) {
       const entries = job.strategy?.matrix?.include ?? [];
       const required = jobId === 'test_matrix' ? REQUIRED_MATRIX_LABELS : ['linux', 'macos', 'windows'];
       if (job['runs-on'] !== '${{ matrix.os }}' || entries.length !== required.length ||
@@ -282,29 +282,18 @@ const assertOidcTokenNeverLogged = (text: string, label: string): void => {
   }
 };
 
-// #446: checkout's persisted Authorization header wins over URL credentials.
-// Git and gh must select the same release actor before the version branch push.
+// The v2 Release Action builds only. Publishing uses the coordinator's native
+// session after independent qualification; no write actor belongs in this job.
 const assertReleaseActorCredentials = (text: string, label: string): void => {
   const doc = parse(text) as Workflow;
-  const steps = doc.jobs?.release?.steps ?? [];
-  const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-  const proposal = steps.find((step) => step.name === 'Open version pull request');
-  const selectedActor = '${{ secrets.RELEASE_BOT_TOKEN || github.token }}';
-  if (checkout?.with?.token !== selectedActor ||
-      proposal?.env?.GH_TOKEN !== selectedActor || proposal.env.GITHUB_TOKEN !== selectedActor) {
-    throw new Error(`${label}: checkout and version PR creation must use the selected release actor`);
-  }
-  if (checkout.with['persist-credentials'] === false || checkout.with['persist-credentials'] === 'false') {
-    throw new Error(`${label}: version and tag pushes need the selected checkout credentials`);
-  }
-  if (proposal.env.PUSH_TOKEN !== undefined ||
-      steps.some((step) => /git\s+remote\s+set-url\s+origin\s+[^\n]*https:\/\/[^\n]*@/.test(step.run ?? ''))) {
-    throw new Error(`${label}: release must not override credentials through an origin URL`);
-  }
-  const finalize = steps.find((step) => step.name === 'Tag and create GitHub Release');
-  if (finalize?.env?.GH_TOKEN !== '${{ github.token }}' ||
-      finalize.run !== 'node scripts/release-state.mjs --finalize') {
-    throw new Error(`${label}: tag finalization must retain its authenticated release entry point`);
+  for (const job of Object.values(doc.jobs ?? {})) {
+    const permissions = job.permissions ?? doc.permissions;
+    if (JSON.stringify(permissions) !== JSON.stringify({ contents: 'read' })) throw new Error(`${label}: release build must retain read-only permissions`);
+    for (const step of job.steps ?? []) {
+      if (step.uses?.startsWith('actions/checkout@') && step.with?.['persist-credentials'] !== false) throw new Error(`${label}: release build must not persist checkout credentials`);
+      if (step.with?.token !== undefined || step.env?.GH_TOKEN !== undefined || step.env?.NODE_AUTH_TOKEN !== undefined) throw new Error(`${label}: release build must not select a publishing actor`);
+      if (/npm publish|changeset publish|gh release|git push|git remote set-url|--npm|--github/.test(step.run ?? '')) throw new Error(`${label}: release build must not contain publishing or origin URL mutations`);
+    }
   }
 };
 
@@ -457,7 +446,7 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     assertOidcTokenNeverLogged(rcVerifyFile, 'rc-verify.yml');
   });
 
-  it('release git pushes and PR creation use the selected actor while tag finalization stays authenticated', () => {
+  it('release builds have no publishing actor, persisted credential or mutation path', () => {
     assertReleaseActorCredentials(readWorkflow('release-prepare.yml'), 'release-prepare.yml');
   });
 });
@@ -468,26 +457,18 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   const ciFile = readWorkflow('ci.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
 
-  it('losing the selected checkout actor or its persisted credentials is detected', () => {
+  it('adding release write permissions or persisted checkout credentials is detected', () => {
     const releaseFile = readWorkflow('release-prepare.yml');
-    const tokenLine = '          token: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}';
-    expect(releaseFile).toContain(tokenLine);
     assertReleaseActorCredentials(releaseFile, 'baseline');
-    const wrongActor = releaseFile.replace(tokenLine, '          token: ${{ github.token }}');
-    expect(() => assertReleaseActorCredentials(wrongActor, 'mutant')).toThrow(/selected release actor/);
-    const implicitActor = releaseFile.replace(`${tokenLine}\n`, '');
-    expect(() => assertReleaseActorCredentials(implicitActor, 'mutant')).toThrow(/selected release actor/);
-    const missingPushAuth = releaseFile.replace(tokenLine, `${tokenLine}\n          persist-credentials: false`);
-    expect(() => assertReleaseActorCredentials(missingPushAuth, 'mutant')).toThrow(/pushes need/);
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('contents: read', 'contents: write'), 'mutant')).toThrow(/read-only/);
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('persist-credentials: false', 'persist-credentials: true'), 'mutant')).toThrow(/persist checkout/);
   });
 
-  it('reintroducing release credentials in the origin URL is detected', () => {
+  it('reintroducing native publication into the build-only action is detected', () => {
     const releaseFile = readWorkflow('release-prepare.yml');
-    const push = '          git push --force origin changeset-release/main';
-    expect(releaseFile).toContain(push);
-    const mutant = releaseFile.replace(push,
-      '          git remote set-url origin "https://x-access-token:dummy@github.com/acme/repo.git"\n' + push);
-    expect(() => assertReleaseActorCredentials(mutant, 'mutant')).toThrow(/origin URL/);
+    const workflow = parse(releaseFile);
+    workflow.jobs.assemble.steps.push({ name: 'unsafe publication', run: 'gh release create v2.0.0' });
+    expect(() => assertReleaseActorCredentials(JSON.stringify(workflow), 'mutant')).toThrow(/publishing or origin URL mutations/);
   });
 
   it('re-adding cache to the gate is detected (file and generated template)', () => {

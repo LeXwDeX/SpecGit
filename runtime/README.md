@@ -1,6 +1,6 @@
 # Lightweight SpecGit 2 runtime
 
-This development Cargo package builds the SpecGit 2 typed library and native CLI.
+This Cargo package builds the SpecGit 2 typed library and native CLI.
 SpecGit manages specification Issues, aggregates them into a native PR/MR, and
 observes changes for the Agent. The Agent supervises implementation and repairs.
 GitHub/GitLab owns CI, reviews, protection, actual merge and ordinary Issue closure.
@@ -11,12 +11,12 @@ user's authenticated gh/glab session when existing authorization permits it.
 Project preferences and hook messages grant no additional authority. Optional
 Agent closure defaults off and requires authorization plus native readback.
 
-The [command reference](REFERENCE.md) ships with the staged npm wrapper. The
+The [command reference](REFERENCE.md) ships with the native npm wrapper. The
 installed executable's offline `--schema` is the command/input/output discovery
-source. [Distribution](distribution/README.md) describes platform staging and
-installed-entrypoint checks. The root TypeScript package remains the retained
-1.x publication surface until an explicitly approved cutover. Local installation
-does not publish a release or migrate a project.
+source. [Distribution](distribution/README.md) describes the three-platform build and
+installed-entrypoint checks. The root TypeScript workspace is private and retained
+for engineering gates and historical regressions. Public v2 packages are generated
+only by native distribution staging. Installation does not migrate a project.
 
 ## Using the runtime
 

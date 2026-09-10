@@ -49,7 +49,9 @@ describe('explicit release intent (#423)', () => {
   it('preserves the explicit package release entry point and its tarball guard', () => {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'));
     expect(pkg.scripts.release).toBe('pnpm run release:ci');
-    expect(pkg.scripts['release:ci']).toBe('pnpm run check:pack-version && pnpm exec changeset publish');
+    expect(pkg.private).toBe(true);
+    expect(pkg.scripts['release:ci']).toBe('node runtime/distribution/publish.mjs');
+    expect(pkg.scripts.prepublishOnly).toBe('node runtime/distribution/forbid-root-publish.mjs');
   });
 
   it('counts only unconsumed changesets and refuses malformed prerelease state', () => {

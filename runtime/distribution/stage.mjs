@@ -10,8 +10,6 @@ import { writeSchemas } from './check-surfaces.mjs';
 
 export const targets = {
   'x86_64-unknown-linux-gnu': { key: 'linux-x64-gnu', os: 'linux', cpu: 'x64', libc: ['glibc'] },
-  'aarch64-unknown-linux-gnu': { key: 'linux-arm64-gnu', os: 'linux', cpu: 'arm64', libc: ['glibc'] },
-  'x86_64-apple-darwin': { key: 'darwin-x64', os: 'darwin', cpu: 'x64' },
   'aarch64-apple-darwin': { key: 'darwin-arm64', os: 'darwin', cpu: 'arm64' },
   'x86_64-pc-windows-msvc': { key: 'win32-x64', os: 'win32', cpu: 'x64' },
 };
@@ -42,7 +40,12 @@ export function verifyArchitecture(bytes, target) {
 export function stage(target, output, binary) {
   const platform = targets[target];
   if (!platform) throw new Error(`Unsupported Rust target: ${target}`);
+  if (run('git', ['status', '--porcelain', '--untracked-files=normal']).trim()) throw new Error('Release staging requires a clean committed source tree. Commit the reviewed changes before qualifying artifacts.');
+  const source = run('git', ['rev-parse', 'HEAD']).trim();
+  if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Cannot establish the release source commit.');
   const version = readFileSync(path.join(runtime, 'Cargo.toml'), 'utf8').match(/^version = "([^"]+)"/m)[1];
+  const workspace = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8'));
+  if (workspace.version !== version || workspace.private !== true) throw new Error('Rust and private development workspace versions must match.');
   if (existsSync(output)) throw new Error('Output directory already exists; select a fresh staging directory.');
   const executable = platform.os === 'win32' ? 'specgit.exe' : 'specgit';
   if (!binary) {
@@ -64,7 +67,7 @@ export function stage(target, output, binary) {
     minimumGlibc = versions[0].join('.');
   }
   const name = `specgit-${platform.key}`;
-  const base = { version, license: 'MIT', engines: { node: '>=20.19' }, publishConfig: { access: 'public' } };
+  const base = { version, specgitSource: source, license: 'MIT', engines: { node: '>=20.19' }, publishConfig: { access: 'public' } };
   const metadata = JSON.parse(run('cargo', ['metadata', '--locked', '--format-version', '1', '--filter-platform', target]));
   const resolved = new Set(metadata.resolve.nodes.map(n => n.id));
   metadata.packages = metadata.packages.filter(p => resolved.has(p.id));
@@ -95,7 +98,7 @@ export function stage(target, output, binary) {
   writeSchemas(binary, path.join(wrapperDir, 'schemas'), path.join(runtime, 'schemas'));
   const wrapper = { ...base, name: 'specgit', description: 'Native GitHub and GitLab delivery harness', bin: { specgit: 'bin/specgit.cjs' }, files: ['bin', 'LICENSE', 'README.md', 'schemas'], optionalDependencies: Object.fromEntries(Object.values(targets).map(t => [`specgit-${t.key}`, version])) };
   writeFileSync(path.join(wrapperDir, 'package.json'), JSON.stringify(wrapper, null, 2) + '\n');
-  const evidence = { version, target, platform: name, sha256: digest, packages: [platformDir, wrapperDir] };
+  const evidence = { version, source, target, platform: name, sha256: digest, packages: [platformDir, wrapperDir] };
   writeFileSync(path.join(output, 'staging.json'), JSON.stringify(evidence, null, 2) + '\n');
   return evidence;
 }

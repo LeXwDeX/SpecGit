@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { run, targets, verifyArchitecture } from './stage.mjs';
 
-const requiredChecks = ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'];
+const requiredChecks = ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'machine_version_help', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'];
 function need(value, message) { if (!value) throw new Error(message); }
 function member(tarball, name) {
   const archive = path.resolve(tarball);
@@ -15,14 +15,17 @@ function member(tarball, name) {
   return run('tar', ['-xOf', `./${path.basename(archive)}`, `package/${name}`], { cwd: path.dirname(archive), encoding: null, maxBuffer: 64 * 1024 * 1024 });
 }
 export function localRelease(files) {
-  need(files.length === 5, 'Five independently installed platform evidence files are required.');
+  need(files.length === Object.keys(targets).length, 'Three independently installed platform evidence files are required.');
   const expected = new Set(Object.values(targets).map(p => `specgit-${p.key}`));
   const seen = new Set();
   const artifacts = new Map();
   let version;
+  let source;
   for (const file of files) {
     const evidence = JSON.parse(readFileSync(file, 'utf8'));
     version ??= evidence.version;
+    source ??= evidence.source;
+    need(/^[a-f0-9]{40}$/.test(source ?? '') && evidence.source === source, 'Installed source commits differ or are missing.');
     need(evidence.version === version, 'Installed platform versions differ.');
     need(expected.has(evidence.platform) && !seen.has(evidence.platform), 'Platform evidence is unknown or duplicated.');
     seen.add(evidence.platform);
@@ -37,26 +40,30 @@ export function localRelease(files) {
       const integrity = 'sha512-' + createHash('sha512').update(readFileSync(tarball)).digest('base64');
       need(integrity === artifact.integrity, 'Tarball bytes changed after installation.');
       const manifest = JSON.parse(member(tarball, 'package.json').toString('utf8'));
-      need(manifest.name === artifact.name && manifest.version === version, 'Tarball identity differs from installed evidence.');
+      need(manifest.name === artifact.name && manifest.version === version && manifest.specgitSource === source, 'Tarball identity differs from installed evidence.');
       need(!manifest.scripts && manifest.license === 'MIT', 'Unexpected lifecycle scripts or package license.');
+      let executable_sha256;
       if (artifact.name === 'specgit') {
+        need(manifest.bin?.specgit === 'bin/specgit.cjs' && !manifest.exports && !manifest.dependencies, 'The public wrapper must contain only the native launcher.');
+        executable_sha256 = createHash('sha256').update(member(tarball, 'bin/specgit.cjs')).digest('hex');
         const entries = Object.entries(manifest.optionalDependencies ?? {});
-        need(entries.length === 5 && entries.every(([name, pinned]) => expected.has(name) && pinned === version), 'Wrapper platform pins are incomplete or inexact.');
+        need(entries.length === expected.size && entries.every(([name, pinned]) => expected.has(name) && pinned === version), 'Wrapper platform pins are incomplete or inexact.');
       } else {
         const target = manifest.specgitNative?.target;
         const platform = targets[target];
         need(platform && `specgit-${platform.key}` === artifact.name, 'Native target and package identity differ.');
         const bytes = member(tarball, `bin/${platform.os === 'win32' ? 'specgit.exe' : 'specgit'}`);
         verifyArchitecture(bytes, target);
-        need(createHash('sha256').update(bytes).digest('hex') === manifest.specgitNative.sha256, 'Packaged binary digest mismatch.');
+        executable_sha256 = createHash('sha256').update(bytes).digest('hex');
+        need(executable_sha256 === manifest.specgitNative.sha256, 'Packaged binary digest mismatch.');
       }
       const existing = artifacts.get(artifact.name);
       need(!existing || existing.integrity === integrity, 'The same wrapper version has different tarball bytes across target builds.');
-      artifacts.set(artifact.name, { name: artifact.name, version, integrity });
+      artifacts.set(artifact.name, { name: artifact.name, version, integrity, tarball, executable_sha256, sha256: createHash('sha256').update(readFileSync(tarball)).digest('hex') });
     }
   }
-  need(seen.size === expected.size && artifacts.size === 6, 'Complete platform publication set is missing.');
-  return { version, packages: [...artifacts.values()].sort((a, b) => a.name.localeCompare(b.name)) };
+  need(seen.size === expected.size && artifacts.size === expected.size + 1, 'Complete platform publication set is missing.');
+  return { version, source, packages: [...artifacts.values()].sort((a, b) => a.name.localeCompare(b.name)) };
 }
 export async function registryRelease(release, fetcher = fetch) {
   const observations = [];

@@ -246,7 +246,7 @@ jobs:
           package-manager-cache: false
 
       - name: Build with Nix
-        run: nix build
+        run: nix build .#legacy-engineering
 
       - name: Verify build output
         run: |
@@ -262,7 +262,7 @@ jobs:
 
       - name: Test binary execution
         run: |
-          VERSION=$(nix run . -- --version)
+          VERSION=$(nix run .#legacy-engineering -- --version)
           echo "SpecGit version: $VERSION"
           if [ -z "$VERSION" ]; then
             echo "Error: Version command returned empty output"

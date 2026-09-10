@@ -1,5 +1,5 @@
 {
-  description = "SpecGit - delivery binding and acceptance harness";
+  description = "SpecGit legacy TypeScript engineering environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -25,9 +25,9 @@
           inherit (pkgs) lib;
         in
         {
-          default = pkgs.stdenv.mkDerivation (finalAttrs: {
-            pname = "specgit";
-            version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
+          legacy-engineering = pkgs.stdenv.mkDerivation (finalAttrs: {
+            pname = "specgit-legacy-engineering";
+            version = "1.15.1"; # Retained engineering CLI, not the public native v2 package.
 
             src = lib.fileset.toSource {
               root = ./.;
@@ -65,6 +65,7 @@
             buildPhase = ''
               runHook preBuild
 
+              node -e 'const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json")); p.version = "${finalAttrs.version}"; fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
               pnpm run build
 
               runHook postBuild
@@ -73,7 +74,7 @@
             dontNpmPrune = true;
 
             meta = with pkgs.lib; {
-              description = "Delivery binding and acceptance harness";
+              description = "Legacy TypeScript delivery engineering CLI (not SpecGit v2)";
               homepage = "https://github.com/LeXwDeX/SpecGit";
               license = licenses.mit;
               maintainers = [ ];
@@ -84,9 +85,9 @@
       );
 
       apps = forAllSystems (system: {
-        default = {
+        legacy-engineering = {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/specgit";
+          program = "${self.packages.${system}.legacy-engineering}/bin/specgit";
         };
       });
 
