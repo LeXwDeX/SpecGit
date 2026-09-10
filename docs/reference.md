@@ -278,6 +278,8 @@ running `specgit pr <number>`; start a new WHY only after that repair.
 
 ## Exit codes and JSON
 
+The retained TypeScript CLI sanitizes every human outcome line before stdout: ANSI escape sequences and unsafe C0 controls are stripped, embedded line breaks and C1 controls are visibly escaped, and long lines are bounded. This also covers repository-controlled filenames in generated-asset reports. The IO layer supplies line separators; ordinary Unicode text and indentation are preserved.
+
 Stable contract: `0` success/accepted · `1` rejected with complete evidence · `2` usage error · `3` fail-closed unknown · `130` the Ctrl-C interruption exception (stderr `Interrupted.`, no envelope — see the [CLI reference](cli.md)). `--json` output is a single JSON envelope on stdout — shape documented in the [CLI reference](cli.md). Telemetry does not exist; the CLI's only environment inputs are `SPECGIT_GH`, `SPECGIT_GH_TIMEOUT_MS`, `SPECGIT_GLAB`, `SPECGIT_GLAB_TIMEOUT_MS` (plus hook-only `SPECGIT_GUARD_BUDGET_S`, read by the generated merge-guard hook to size its verdict budget) and standard `NO_COLOR`/`CI` detection.
 
 

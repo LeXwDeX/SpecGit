@@ -42,6 +42,12 @@ export function sanitize(value: string): string {
   return `${cleaned.slice(0, MAX_STRING_LENGTH)}…`;
 }
 
+/** Outcome entries are individual lines; only the IO layer adds line breaks. */
+function sanitizeHumanLine(value: string): string {
+  return sanitize(value.replace(/[\r\n\u0080-\u009F\u2028\u2029]/gu, (control) =>
+    `\\u${control.charCodeAt(0).toString(16).padStart(4, '0')}`));
+}
+
 function sanitizeValue(value: unknown): unknown {
   if (typeof value === 'string') {
     return sanitize(value);
@@ -404,7 +410,7 @@ export function finishOutcome(
     emitJson(io, buildEnvelope(command, version, outcome));
   } else {
     for (const line of outcome.human ?? []) {
-      io.stdout(line);
+      io.stdout(sanitizeHumanLine(line));
     }
     for (const diagnostic of outcome.errors ?? []) {
       io.stderr(`Error: ${sanitize(diagnostic.message)}`);
