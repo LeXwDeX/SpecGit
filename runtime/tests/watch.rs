@@ -825,3 +825,53 @@ fn unavailable_native_closing_never_emits_a_completed_watch_event() {
         );
     }
 }
+
+#[test]
+fn native_association_without_body_syntax_emits_completed_after_actual_closure() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["native_closing"] = json!([1]);
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["requests"][0]["body"] = json!("Native commit association without body syntax");
+            s["requests"][0]["description"] = s["requests"][0]["body"].clone();
+            s["issues"][0]["state"] = json!("closed");
+        });
+        let writes = f.writes();
+        let r = f.run(&watch("lifecycle"));
+        assert_eq!(r["status"], "completed", "{provider}: {r}");
+        assert_eq!(r["exit"], 0);
+        assert_eq!(r["evidence"]["events"][0]["state"], "completed");
+        assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn incomplete_native_association_evidence_never_becomes_cli_or_watch_completion() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["native_closing"] = json!([0]);
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+        });
+        let writes = f.writes();
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {r}");
+        assert_eq!(r["evidence"]["native_closing_available"], false);
+        assert_ne!(r["status"], "completed");
+        let r = f.run(&watch("lifecycle"));
+        assert_eq!(r["status"], "unknown", "{provider}: {r}");
+        assert_eq!(f.writes(), writes);
+    }
+}
