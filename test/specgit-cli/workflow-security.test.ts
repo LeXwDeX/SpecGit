@@ -185,6 +185,12 @@ const assertSelfHostedRouting = (text: string, label: string): void => {
           throw new Error(`${label}: native OS/architecture routing required`);
         }
       }
+    } else if (jobId === 'windows-diagnostics') {
+      if (JSON.stringify(job['runs-on']) !== JSON.stringify(expected.windows) ||
+          job.if !== "${{ github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics }}" ||
+          JSON.stringify(job.permissions) !== JSON.stringify({ contents: 'read' })) {
+        throw new Error(`${label}: diagnostics require explicit manual dispatch and read-only native Windows routing`);
+      }
     } else if (job['runs-on'] !== undefined && JSON.stringify(job['runs-on']) !== JSON.stringify(linux)) {
       throw new Error(`${label}: static jobs require the self-hosted Linux runner`);
     }
@@ -592,6 +598,17 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     const hostedPackage = rcVerifyFile.replace('runs-on: [self-hosted, Linux, X64]', 'runs-on: ubuntu-latest');
     expect(hostedPackage).not.toBe(rcVerifyFile);
     expect(() => assertSelfHostedRouting(hostedPackage, 'mutant')).toThrow(/static jobs/);
+  });
+
+  it('Windows diagnostics cannot become automatic, hosted, or privileged', () => {
+    for (const mutant of [
+      rcVerifyFile.replace("github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics", 'true'),
+      rcVerifyFile.replace('runs-on: [self-hosted, Windows, X64]', 'runs-on: windows-latest'),
+      rcVerifyFile.replace('    permissions:\n      contents: read', '    permissions:\n      contents: write'),
+    ]) {
+      expect(mutant).not.toBe(rcVerifyFile);
+      expect(() => assertSelfHostedRouting(mutant, 'mutant')).toThrow(/diagnostics require/);
+    }
   });
 
   it('re-adding the retired self-hosted shadow job is detected (#105)', () => {
