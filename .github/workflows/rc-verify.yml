@@ -1,11 +1,11 @@
 name: RC Verify
 
-# Safe release-candidate verification (#71): prove everything a real
-# publish needs — build, tarball shape, registry reachability, and the
-# npm OIDC provenance chain — WITHOUT publishing. The only registry
+# Retained TypeScript engineering package verification (#71): build,
+# tarball shape, registry reachability, and the npm OIDC dry-run chain.
+# This is not qualification of the public native v2 release. The only registry
 # interactions are read-only (npm view) and `npm publish --dry-run`,
-# which never uploads. The final publish stays in release-prepare.yml:
-# PR-gated (a merged version PR) and OIDC-based (id-token + --provenance).
+# which never uploads. Native v2 qualification uses the three-platform
+# Release build; the coordinator publishes its independently verified bundle.
 
 on:
   workflow_call:
@@ -73,8 +73,11 @@ jobs:
       # never committed, never published.
       - name: Stage a release-candidate version
         run: |
-          RC_VERSION="$(node -p "require('./package.json').version + '-rc.' + process.env.GITHUB_RUN_ID")"
-          npm pkg set "version=${RC_VERSION}"
+          RC_VERSION="1.15.1-rc.${GITHUB_RUN_ID}"
+          npm pkg set "name=specgit-legacy-engineering-rc" "version=${RC_VERSION}"
+          # This throwaway checkout is a named dry-run fixture. The real root
+          # stays private and public native packages are built separately.
+          npm pkg delete private
           echo "RC_VERSION=${RC_VERSION}" >> "$GITHUB_ENV"
 
       - name: Pack and verify the tarball shape
