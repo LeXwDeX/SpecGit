@@ -54,6 +54,8 @@ impl WriteTransport {
             &self.repo.host,
             "--method",
             method,
+            "--header",
+            "Content-Type: application/json",
             "--input",
             "-",
             endpoint,

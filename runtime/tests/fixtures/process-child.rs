@@ -361,6 +361,18 @@ fn native_api(args: &[String], path: &std::path::Path) {
         .as_array_mut()
         .unwrap()
         .push(json!({"method":method,"endpoint":endpoint,"body":input}));
+    // glab --input forwards raw bytes without adding a JSON media type.
+    // The real GitLab API rejects these writes with HTTP 415 before parsing.
+    if method != "GET"
+        && endpoint.starts_with("projects/")
+        && !args.windows(2).any(|pair| {
+            pair[0] == "--header" && pair[1].eq_ignore_ascii_case("Content-Type: application/json")
+        })
+    {
+        snapshot::write(path, &state);
+        eprintln!("HTTP 415: JSON content type required");
+        std::process::exit(1);
+    }
     let fixed_closing_query = method == "POST"
         && endpoint == "graphql"
         && input["query"] == specgit::forge::github::CLOSING_ISSUES_QUERY;
