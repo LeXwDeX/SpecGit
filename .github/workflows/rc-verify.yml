@@ -10,6 +10,11 @@ name: RC Verify
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      windows_diagnostics:
+        description: 'Run bounded Windows installation diagnostics (not acceptance)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ concurrency:
 
 jobs:
   rc-verify:
+    if: ${{ !inputs.windows_diagnostics }}
     name: RC Verify
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
@@ -135,3 +141,42 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
         run: |
           echo "::warning::Provenance dry-run skipped: fork pull requests cannot be granted id-token: write. Provenance is proven on same-repo PRs and in the release job."
+
+  windows-diagnostics:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics }}
+    name: Windows installation diagnostics
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Verify Windows shell prerequisites
+        run: |
+          $git = Get-Command git -ErrorAction Stop
+          $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
+          if (Test-Path (Join-Path $gitBash 'bash.exe')) {
+            $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm run build
+      - name: Measure installation tests and isolated cache controls
+        timeout-minutes: 14
+        run: ./scripts/windows-install-diagnose.ps1
+      - name: Upload sanitized diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-install-diagnostics
+          path: ${{ runner.temp }}/specgit-install-diagnostics/public/
+          if-no-files-found: warn
