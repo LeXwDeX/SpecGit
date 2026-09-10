@@ -13,6 +13,10 @@ complete specifications containing Why, Scope, Approach and Acceptance, then
 aggregate them into one PR/MR. Preserve user bodies and every closing reference.
 Preview Issue/PR mutations with `issue --dry-run` or `pr --dry-run`. Missing labels
 require an explicit `--create-labels` choice; names alone are not ownership.
+Adopt the exact native Issue ID for the same WHY. For different work, compare
+the candidates returned by `issue --inspect`, then supply each exact
+`review_digest` with `--reviewed-candidates`. Changed candidate or specification
+content requires a fresh comparison. Uncertain writes still require exact adoption.
 
 Use `pr --status` and bounded `watch` for native state. The Agent supervises
 implementation and fixes. When the declared preference and existing user

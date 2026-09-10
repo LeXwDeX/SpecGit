@@ -11,7 +11,7 @@ use crate::{
     spec, templates,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -37,6 +37,9 @@ pub struct Options {
     /// Explicitly create selected catalog labels that are missing on the forge.
     #[arg(long)]
     pub create_labels: bool,
+    /// Exact review digests from --inspect after comparing candidates and confirming a distinct WHY.
+    #[arg(long)]
+    pub reviewed_candidates: Vec<String>,
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     let mut effects = Effects::default();
@@ -60,6 +63,18 @@ async fn execute(
         .collect();
     if options.specs.len() > 100 {
         return Err(Diagnostic::input("Select at most 100 specs."));
+    }
+    if options.reviewed_candidates.len() > 100
+        || options.reviewed_candidates.iter().any(|digest| {
+            digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        })
+    {
+        return Err(Diagnostic::input(
+            "Supply exact candidate review digests from --inspect.",
+        ));
     }
     let root_bytes = project::git(&process, cwd, &["rev-parse", "--show-toplevel"]).await?;
     let root = PathBuf::from(
@@ -173,10 +188,6 @@ async fn execute(
         if context.repository.provider == project::Provider::Gitlab {
             templates::reject_quick_actions(&p.body)?;
         }
-        let found =
-            native_delivery::candidates(&reader, &context.repository, project_facts.id, &title)
-                .await?;
-        candidate_reports.push(serde_json::json!({"title":title,"issues":found}));
         prepared.push(IssueIntent {
             title,
             body: p.body,
@@ -253,20 +264,34 @@ async fn execute(
     }
     // Every persisted intent is subject to today's declaration and fresh native
     // duplicate evidence, even when this invocation supplied only adopted IDs.
+    let mut matched_reviews = BTreeSet::new();
     for intent in selection.intents.iter().filter(|i| i.issue.is_none()) {
         validate(&d, &intent.title, &intent.body, &intent.labels)?;
         spec::selected_labels(&d, &intent.title, Some(&intent.labels), &pool)?;
         if context.repository.provider == project::Provider::Gitlab {
             templates::reject_quick_actions(&intent.body)?;
         }
-        let candidates = native_delivery::candidates(
+        let mut candidates = native_delivery::candidates(
             &reader,
             &context.repository,
             project_facts.id,
             &intent.title,
         )
         .await?;
-        let evidence = serde_json::json!({"title":intent.title,"issues":candidates});
+        candidates.sort_by_key(|issue| issue.id);
+        let review_digest = candidate_review_digest(
+            &context.repository,
+            project_facts.id,
+            options.branch.as_deref().unwrap_or(&selection.branch),
+            &target,
+            intent,
+            &candidates,
+        );
+        let reviewed = options.reviewed_candidates.contains(&review_digest);
+        if reviewed {
+            matched_reviews.insert(review_digest.clone());
+        }
+        let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"review_digest":review_digest});
         if options.inspect || options.dry_run {
             candidate_reports.push(evidence);
             continue;
@@ -274,12 +299,26 @@ async fn execute(
         if intent.write_started {
             return Ok(uncertain(evidence));
         }
-        if !candidates.is_empty() {
+        if !candidates.is_empty() && !reviewed {
             let mut report = Report::success("issue", "candidate_review_required", evidence);
             report.exit = 3;
-            report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID when it covers this work; uncertain intent mappings require one explicit adoption at a time."));
+            report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID for the same WHY. For a distinct WHY, pass --reviewed-candidates with this exact review_digest; changed evidence requires a new review. Uncertain writes still require exact adoption."));
             return Ok(report);
         }
+    }
+    if !options.inspect
+        && !options.dry_run
+        && options
+            .reviewed_candidates
+            .iter()
+            .any(|digest| !matched_reviews.contains(digest))
+    {
+        return Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "issue_candidates",
+            "A candidate review no longer matches the proposed spec or current native candidates.",
+            "Run --inspect, compare the current WHYs and use its current review_digest only for distinct work.",
+        ));
     }
     let missing_labels: std::collections::BTreeSet<_> = selection
         .intents
@@ -443,6 +482,28 @@ async fn execute(
         "selected",
         serde_json::json!({"selection":selection,"issues":issues,"request":"pending_request"}),
     ))
+}
+fn candidate_review_digest(
+    repository: &project::Repository,
+    project_id: u64,
+    branch: &str,
+    target: &str,
+    intent: &IssueIntent,
+    candidates: &[crate::delivery_model::Issue],
+) -> String {
+    use sha2::{Digest, Sha256};
+    let review = serde_json::json!({
+        "version": 1,
+        "repository": repository,
+        "project_id": project_id,
+        "branch": branch,
+        "target": target,
+        "title": intent.title,
+        "body": intent.body,
+        "labels": intent.labels,
+        "candidates": candidates,
+    });
+    format!("{:x}", Sha256::digest(review.to_string().as_bytes()))
 }
 fn validate(
     d: &config::Declaration,
