@@ -2,7 +2,10 @@ $ErrorActionPreference = 'Stop'
 $diagnosticRoot = Join-Path $env:RUNNER_TEMP 'specgit-install-diagnostics'
 $public = Join-Path $diagnosticRoot 'public'
 $raw = Join-Path $diagnosticRoot 'npm-raw'
-New-Item -ItemType Directory -Force $public, $raw | Out-Null
+$testRaw = Join-Path $diagnosticRoot 'raw'
+# The upload directory contains only this invocation's allowlisted exports.
+if (Test-Path $public) { Remove-Item -Recurse -Force $public }
+New-Item -ItemType Directory -Force $public, $raw, $testRaw | Out-Null
 $stopFile = Join-Path $diagnosticRoot 'stop'
 if (Test-Path $stopFile) { Remove-Item $stopFile }
 $env:npm_config_timing = 'true'
@@ -30,15 +33,17 @@ $monitor = Start-Job -ArgumentList $public, $stopFile -ScriptBlock {
   ConvertTo-Json | Set-Content (Join-Path $public 'driver.json')
 $testExit = 1
 try {
-  & node ./node_modules/vitest/vitest.mjs run test/specgit-e2e/install-smoke.e2e.test.ts test/specgit-e2e/external-matrix.e2e.test.ts --reporter=default --reporter=json --outputFile.json="$public/vitest.json"
+  # Failed assertions can embed npm stderr. Keep every reporter stream private.
+  & node ./node_modules/vitest/vitest.mjs run test/specgit-e2e/install-smoke.e2e.test.ts test/specgit-e2e/external-matrix.e2e.test.ts --reporter=json --outputFile.json="$testRaw/vitest.json" *> "$testRaw/vitest-console.log"
   $testExit = $LASTEXITCODE
-  & node ./scripts/windows-install-probe.mjs $diagnosticRoot
+  & node ./scripts/windows-install-probe.mjs $diagnosticRoot *> "$testRaw/control-console.log"
   if ($LASTEXITCODE -ne 0) { throw 'Installation control probe failed.' }
 } finally {
   New-Item -ItemType File -Force $stopFile | Out-Null
   Stop-Job $monitor
   Remove-Job $monitor
   # npm debug logs can contain registry configuration. Export numeric timers only.
-  & node ./scripts/windows-install-probe.mjs $diagnosticRoot --sanitize-only
+  & node ./scripts/windows-install-probe.mjs $diagnosticRoot --sanitize-only *> "$testRaw/sanitize-console.log"
+  if ($LASTEXITCODE -ne 0) { throw 'Diagnostic sanitization failed; inspect runner-local raw files.' }
 }
 exit $testExit

@@ -5,17 +5,40 @@ import path from 'node:path';
 const root = path.resolve(process.argv[2]);
 const output = path.join(root, 'public');
 mkdirSync(output, { recursive: true });
+function readJson(file) {
+  try { return JSON.parse(readFileSync(file, 'utf8')); }
+  catch { throw new Error('Diagnostic JSON could not be parsed; raw content withheld.'); }
+}
+function numeric(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
 function sanitize() {
   const raw = path.join(root, 'npm-raw');
   const timings = [];
   if (existsSync(raw)) for (const file of readdirSync(raw)) {
     if (!file.endsWith('-timing.json')) continue;
-    const value = JSON.parse(readFileSync(path.join(raw, file), 'utf8'));
+    const value = readJson(path.join(raw, file));
     const timers = Object.fromEntries(Object.entries(value.timers ?? {})
       .filter(([key, ms]) => /^(npm|command:(pack|install)|idealTree(:[A-Za-z]+)?|reify(:[A-Za-z]+)?|arborist:[A-Za-z]+|load:[A-Za-z]+)$/.test(key) && typeof ms === 'number'));
-    timings.push({ file, timers });
+    timings.push({ id: timings.length, timers });
   }
   writeFileSync(path.join(output, 'npm-timers.json'), JSON.stringify(timings, null, 2));
+  const vitest = path.join(root, 'raw', 'vitest.json');
+  if (existsSync(vitest)) {
+    const value = readJson(vitest);
+    const counts = Object.fromEntries(['numTotalTests', 'numPassedTests', 'numFailedTests',
+      'numPendingTests', 'numTotalTestSuites', 'numPassedTestSuites', 'numFailedTestSuites']
+      .map(key => [key, numeric(value[key])]));
+    // Never copy test names, failureMessages, stacks, console, or unknown fields.
+    const suites = (Array.isArray(value.testResults) ? value.testResults : []).map((suite, id) => ({
+      id, startTime: numeric(suite.startTime), endTime: numeric(suite.endTime),
+      tests: (Array.isArray(suite.assertionResults) ? suite.assertionResults : []).map((test, testId) => ({
+        id: testId, duration: numeric(test.duration),
+        status: ['passed', 'failed', 'pending', 'skipped', 'todo'].includes(test.status) ? test.status : 'unknown',
+      })),
+    }));
+    writeFileSync(path.join(output, 'vitest-summary.json'), JSON.stringify({ counts, suites }, null, 2));
+  }
 }
 if (process.argv.includes('--sanitize-only')) {
   sanitize();
