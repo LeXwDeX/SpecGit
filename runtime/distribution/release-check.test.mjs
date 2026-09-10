@@ -32,8 +32,11 @@ test('unknown metadata, auth failures and changed immutable integrity stop recov
   await assert.rejects(registryRelease(release, async () => new Response('not json')), /JSON/);
   assert.throws(() => localRelease([]), /Five independently installed/);
 });
-test('synthetic archive qualification remains valid after cross-runner artifact relocation', t => {
-  const root = mkdtempSync(path.join(tmpdir(), 'specgit-release-relocation-'));
+test('synthetic archives remain valid after relocation through colon-containing host paths', t => {
+  // Windows already contributes the drive colon; POSIX can exercise a colon in
+  // the directory itself. Both use real tar and portable archive basenames.
+  const prefix = process.platform === 'win32' ? 'specgit-release-relocation-' : 'specgit-release:relocation-';
+  const root = mkdtempSync(path.join(tmpdir(), prefix));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const source = path.join(root, 'runner-artifacts');
   const destination = path.join(root, 'downloaded-artifacts');
@@ -45,7 +48,7 @@ test('synthetic archive qualification remains valid after cross-runner artifact 
     writeFileSync(path.join(work, 'package', 'package.json'), JSON.stringify(manifest));
     if (bytes) writeFileSync(path.join(work, 'package', 'bin', basename), bytes);
     const tarball = `${manifest.name}.tgz`;
-    run('tar', ['-czf', path.join(source, tarball), '-C', work, 'package']);
+    run('tar', ['-czf', `./${tarball}`, '-C', work, 'package'], { cwd: source });
     return { name: manifest.name, tarball, integrity: 'sha512-' + createHash('sha512').update(readFileSync(path.join(source, tarball))).digest('base64') };
   }
   const wrapperArtifact = archive(wrapper);
@@ -74,6 +77,7 @@ test('synthetic archive qualification remains valid after cross-runner artifact 
   rmSync(source, { recursive: true });
   const files = evidenceNames.map(name => path.join(destination, name));
   assert.equal(localRelease(files).packages.length, 6);
+  assert.equal(localRelease(files.map(file => path.relative(process.cwd(), file))).packages.length, 6);
   writeFileSync(path.join(destination, 'specgit.tgz'), 'changed after qualification');
   assert.throws(() => localRelease(files), /Tarball bytes changed/);
 });

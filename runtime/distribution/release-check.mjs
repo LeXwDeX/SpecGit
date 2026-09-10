@@ -9,7 +9,10 @@ import { run, targets, verifyArchitecture } from './stage.mjs';
 const requiredChecks = ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'version', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'];
 function need(value, message) { if (!value) throw new Error(message); }
 function member(tarball, name) {
-  return run('tar', ['-xOf', tarball, `package/${name}`], { encoding: null, maxBuffer: 64 * 1024 * 1024 });
+  const archive = path.resolve(tarball);
+  // GNU tar treats a drive-letter archive path as a remote host. Keep directory
+  // selection in cwd; ./ also prevents a filename from becoming a tar option.
+  return run('tar', ['-xOf', `./${path.basename(archive)}`, `package/${name}`], { cwd: path.dirname(archive), encoding: null, maxBuffer: 64 * 1024 * 1024 });
 }
 export function localRelease(files) {
   need(files.length === 5, 'Five independently installed platform evidence files are required.');
