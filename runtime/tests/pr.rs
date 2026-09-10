@@ -146,8 +146,16 @@ fn explicit_body_update_preserves_all_refs_and_conflicting_native_edit_stops_bef
         let r = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
         assert_eq!(r["exit"], 0, "{r}");
         let b = r["evidence"]["request"]["body"].as_str().unwrap();
-        assert!(b.starts_with("Prepared replacement\r\n"));
+        assert!(b.starts_with(if provider == "github" {
+            "Prepared replacement\r\n"
+        } else {
+            "Prepared replacement\n"
+        }));
         assert!(b.contains("Closes #1") && b.contains("Closes #2"));
+        let writes = f.writes();
+        let repeated = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
+        assert_eq!(repeated["exit"], 0, "{repeated}");
+        assert_eq!(f.writes(), writes);
         f.edit(|s| {
             s["request_reads"] = json!(0);
             s["edit_request_on_read"] = json!(2);

@@ -603,7 +603,10 @@ fn request_api(
             .as_str()
             .unwrap();
         let head = &state["branch_heads"][source];
-        let r = json!({"id":number+100,"number":number,"iid":number,"title":input["title"],"body":input["body"],"description":input["description"],"labels":[],"draft":true,"state":if gh {"open"} else {"opened"},"merged":false,"head":{"ref":source,"sha":head,"repo":{"id":7}},"base":{"ref":target,"repo":{"id":7}},"source_branch":source,"target_branch":target,"sha":head,"source_project_id":7,"target_project_id":7,"updated_at":"2026-09-09T00:00:00Z"});
+        let mut r = json!({"id":number+100,"number":number,"iid":number,"title":input["title"],"body":input["body"],"description":input["description"],"labels":[],"draft":true,"state":if gh {"open"} else {"opened"},"merged":false,"head":{"ref":source,"sha":head,"repo":{"id":7}},"base":{"ref":target,"repo":{"id":7}},"source_branch":source,"target_branch":target,"sha":head,"source_project_id":7,"target_project_id":7,"updated_at":"2026-09-09T00:00:00Z"});
+        if !gh {
+            r["description"] = gitlab_stored_description(&input["description"]);
+        }
         state["requests"].as_array_mut().unwrap().push(r.clone());
         snapshot::write(path, state);
         if state["lose_request_response"] == true {
@@ -638,7 +641,11 @@ fn request_api(
             r.clone()
         } else if method == "PATCH" || method == "PUT" || label_write {
             if let Some(body) = input.get(if gh { "body" } else { "description" }) {
-                r[if gh { "body" } else { "description" }] = body.clone();
+                r[if gh { "body" } else { "description" }] = if gh {
+                    body.clone()
+                } else {
+                    gitlab_stored_description(body)
+                };
             }
             let labels: Vec<String> = if label_write {
                 input["labels"]
@@ -676,6 +683,17 @@ fn request_api(
     snapshot::write(path, state);
     println!("{value}");
     true
+}
+
+fn gitlab_stored_description(value: &serde_json::Value) -> serde_json::Value {
+    // Captured on the real GitLab instance: leading/Unicode whitespace remains.
+    serde_json::json!(
+        value
+            .as_str()
+            .unwrap()
+            .replace("\r\n", "\n")
+            .trim_end_matches([' ', '\t', '\r', '\n'])
+    )
 }
 
 fn delivery_api(
@@ -739,7 +757,10 @@ fn delivery_api(
                     .collect::<Vec<_>>()
             )
         };
-        let value = json!({"id":number+100,"number":number,"iid":number,"project_id":7,"title":input["title"],"body":input["body"],"description":input["description"],"labels":labels,"state":if gh {"open"} else {"opened"},"updated_at":"2026-09-09T00:00:00Z"});
+        let mut value = json!({"id":number+100,"number":number,"iid":number,"project_id":7,"title":input["title"],"body":input["body"],"description":input["description"],"labels":labels,"state":if gh {"open"} else {"opened"},"updated_at":"2026-09-09T00:00:00Z"});
+        if !gh {
+            value["description"] = gitlab_stored_description(&input["description"]);
+        }
         state["issues"].as_array_mut().unwrap().push(value.clone());
         snapshot::write(path, state);
         if state["lose_issue_response"].as_bool() == Some(true) {
