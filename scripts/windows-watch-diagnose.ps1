@@ -10,7 +10,8 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Observer test build failed.' }
   $tests = @(
     'ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscription',
-    'unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes'
+    'unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes',
+    'final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt'
   )
   $results = @()
   foreach ($test in $tests) {

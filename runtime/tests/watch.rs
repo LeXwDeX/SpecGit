@@ -513,6 +513,7 @@ fn final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt() {
     f.edit(|s| {
         s["calls"] = json!([]);
         s["read_failure"] = json!("auth");
+        s["git_proxy_delay_ms"] = json!(100);
     });
     let proxy = tempfile::tempdir().unwrap();
     let name = if cfg!(windows) { "git.exe" } else { "git" };
@@ -559,8 +560,11 @@ fn final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt() {
     );
     assert!(
         f.state()["hanging_git_pid"].is_number(),
-        "Regression must reach the hanging final Git check"
+        "Regression must reach the hanging final Git check: result={result}, state={}, elapsed={:?}",
+        f.state(),
+        start.elapsed()
     );
+    assert!(f.state()["git_proxy_hits"].as_u64().unwrap() > 0);
     let identity: Identity =
         serde_json::from_value(result["evidence"]["subscription"].clone()).unwrap();
     assert!(
