@@ -6,5 +6,6 @@ context:
   branch: codex/github-release-installers
 issues:
   - 555
+  - 557
 issueKinds: []
 pr: 556
