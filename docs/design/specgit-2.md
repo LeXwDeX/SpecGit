@@ -1,5 +1,13 @@
 # SpecGit 2.0: Rust rewrite, native delivery and asynchronous hooks
 
+> Historical baseline, superseded on 2026-09-10. The operative Rust target is now
+> [the lightweight Agent-native CLI design](specgit-2-rust-design.md), with
+> [explicit history/feature dispositions](specgit-2-rust-history.md) and
+> [implementation handoff](specgit-2-rust-handoff.md). The text below preserves
+> the earlier proposal. Its local acceptance/merge/promotion engines and absolute
+> ban on optional Agent issue closure no longer define the new implementation.
+> This supersession does not change the currently shipped 1.x runtime.
+
 Status: design proposal under issue #507 and PR #508. This document defines the
 2.0 target; it does not describe the currently shipped 1.x implementation.
 The user approved native-only issue closure and source-branch deletion. Details

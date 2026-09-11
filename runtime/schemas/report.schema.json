@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecGit 2 JSON report",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exit": {
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        130
+      ]
+    },
+    "evidence": {},
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remedy": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "code",
+          "operation",
+          "message",
+          "remedy"
+        ]
+      }
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "Exactly exit == 0; successful observation does not grant merge permission."
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": true
+      },
+      "description": "Diagnostic guidance, never additional authorization or an automatically executed action."
+    },
+    "effects": {
+      "type": "object",
+      "description": "Typed side-effect outcomes when available. Unknown results require readback before retry.",
+      "additionalProperties": false,
+      "required": [
+        "operations",
+        "outcome"
+      ],
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "action",
+              "outcome",
+              "recovery"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "local",
+                  "native"
+                ]
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outcome": {
+                "enum": [
+                  "unknown",
+                  "applied"
+                ]
+              },
+              "recovery": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "outcome": {
+          "enum": [
+            "not_applied",
+            "applied",
+            "unknown"
+          ]
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "version",
+    "operation",
+    "status",
+    "exit",
+    "evidence",
+    "diagnostics",
+    "ok",
+    "next_actions"
+  ],
+  "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "exit": {
+            "const": 0
+          }
+        },
+        "required": [
+          "exit"
+        ]
+      },
+      "then": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "ok": {
+            "const": false
+          }
+        }
+      }
+    }
+  ]
+}

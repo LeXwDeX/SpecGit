@@ -1,12 +1,30 @@
 version: 1
-delivery: rust-runtime-foundation
+delivery: rust-native-delivery
 context:
   kind: worktree
-  label: specgit
-  branch: feat/509-rust-runtime-foundation
+  label: specgit-rust-delivery-20260909
+  branch: feat/512-rust-native-delivery
 issues:
-  - 509
-  - 518
-  - 520
+  - 512
+  - 492
+  - 477
+  - 531
+  - 513
+  - 514
+  - 532
+  - 473
+  - 474
+  - 533
+  - 535
+  - 536
+  - 534
+  - 510
+  - 511
+  - 526
+  - 528
+  - 530
+  - 537
+  - 542
+  - 543
 issueKinds: []
-pr: 517
+pr: 525

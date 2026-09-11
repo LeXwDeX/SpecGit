@@ -1,5 +1,13 @@
 # SpecGit 2.0 harness contract
 
+> Historical contract, superseded on 2026-09-10 by
+> [the lightweight Agent-native CLI design](specgit-2-rust-design.md).
+> Preserve the original text as evidence, not current implementation authority.
+> In particular, SpecGit no longer owns finish/merge/protection orchestration;
+> hooks notify an Agent about residual open issues, and authorized Agent closure
+> is optional. See the [feature dispositions](specgit-2-rust-history.md) and
+> [handoff](specgit-2-rust-handoff.md) before continuing product work.
+
 Status: proposed implementation contract for the Rust rewrite. Read with the
 [architecture and implementation sequence](specgit-2.md) and
 [historical requirements ledger](specgit-2-history.md). None of these documents
@@ -67,6 +75,28 @@ duplicate YAML keys, unsafe values, unsupported versions, conflicting selectors
 and invalid paths before writing. Validate maximum input sizes and meaningful
 bounds. The examples are a design target; changing a field during implementation
 requires updating this contract and the migration mapping in the same delivery.
+
+The native implementation bounds the declaration and each selected body/template
+at 1 MiB, tags/check names/required-section lists at 100 entries, poll intervals
+at 1–3600 seconds, and total observation wait at one poll interval through 86400
+seconds. Template selectors require exactly the content fields appropriate to
+their source; repository paths are relative, without traversal or symlink
+ancestors. The supported language values are `en` and `zh`.
+
+`init --inspect` reads configuration, CLI/API identity, current request targets
+and native settings without project or native writes. Ordinary `init` writes
+the owned declaration and AGENTS block after these reads. `--mirror-claude`
+selects the CLAUDE block; an existing owned mirror remains selected on refresh.
+`--native-delete-source true|false` explicitly selects only the native source
+cleanup setting and requires readback. `init --rollback <transaction>` restores
+local owned assets without calling a forge; native settings are not compensated.
+
+A selected `--api-host` is saved under the current worktree's Git directory at
+`specgit-v2/local-routing.json`, never in the shared declaration. Routing is
+bound to the original remote identity and has a 4 KiB input bound. Explicit CLI
+routing wins over matching local routing, then the remote-derived API host.
+A mismatching stored identity is rejected until an explicit selection reconciles
+it. Tokens are never part of this file.
 
 `remote` identifies a Git remote; it is not a hardcoded organization/host.
 Canonical forge identity comes from that remote and an authenticated API response.
@@ -192,6 +222,10 @@ is discoverable by agents even without hooks and points to native platforms for
 writes. It does not grant permissions or install hidden Git merge guards.
 
 Generated text states the installed contract version and declaration source.
+Project-local guidance receipts retain the last generated block hashes and runtime
+version in the same asset transaction as the marked files. Refresh compares those
+preimages so manual declaration edits and runtime upgrades preserve ownership;
+rollback restores the receipt and guidance together.
 Preserve every byte outside owned markers, unknown host configuration fields and
 foreign entries. Marker damage or an edited owned block requires a diff and
 explicit adoption/replacement decision; do not overwrite it as if pristine.
@@ -223,6 +257,9 @@ return migration diagnostics instead of new meanings.
 | pr | Selected issues, exact source/target/request and native references | Explicit create/bind/reference update/ready/native merge request; no closure/delete fallback |
 | status | Local declaration/checkpoint/outbox | None; no hidden network call |
 | finish | Fresh shared rules, complete issue/request/check/review evidence | None |
+| merge | Exact current request, native capabilities and accepted checks | Explicit native SHA-guarded merge delegation and ignored intent; no closure/delete fallback |
+| promotion | Native commit/request/issue associations and exact Git range/postimages | None; candidates require deliberate association |
+| inbox | Exact subscription and optionally fresh native facts | Local explicit event receipt only |
 | watch | Live delivery snapshots and local subscriptions | Local lease/outbox only; bounded background child |
 | hook | Event payload and local project/subscriber context | Local context/inbox plus read-only watch handoff |
 
@@ -287,6 +324,49 @@ identity before retrying. If evidence is ambiguous, stop without a duplicate.
 Do not delete created issues/branches as automatic rollback. A fresh clone can
 adopt known issue/request IDs even when the original local checkpoint is gone.
 
+The native issue entry point accepts `specgit issue <id-or-title>...`, optional
+`--body-file <path>` once per new title, `--tags <a,b>`, `--branch <new-name>` and
+`--inspect`. The normalized option schema is
+`runtime/schemas/issue-options.schema.json`; it describes CLI options and does not
+introduce a JSON-input transport. Inspect prepares specs and expands native
+duplicate candidates without creating a checkpoint or branch. New branches are
+explicit, must differ from source/target, and require a clean worktree. Adoption
+uses exact issue IDs and preserves current native titles, bodies and labels.
+
+The ignored worktree checkpoint is `specgit-v2/selection.json` inside the Git
+directory, bounded at 1 MiB and 100 issues. A held operation lock and atomic
+single-file replacement preserve pending write intent without a rollback that
+could erase evidence of an attempted remote write. An uncertain creation stops;
+inspect its native candidates and adopt the exact returned issue ID to reconcile.
+The checkpoint is a locator and recovery aid, never remote binding authority.
+Native Markdown front matter preserves a selected title and label list; unsupported
+metadata and nonempty assignees require explicit reconciliation. Native template
+body variables remain untouched; SpecGit substitutions apply to its builtin and
+inline templates and the explicitly declared title selector.
+
+The native request entry point is `specgit pr`, with `--request <id>` for exact
+adoption, `--title`, `--body-file` and `--tags` for creation, `--inspect` for
+preparation, `--update-body --body-file <path>` or `--update-references` for an
+explicit body change, and `--ready` for the native draft transition. Its normalized
+option schema is `runtime/schemas/pr-options.schema.json`. There is no automatic
+push or binding-only commit: native source HEAD must equal local HEAD and a
+native comparison must show an actual changed file before draft creation.
+
+Existing native content wins on resume. Every old and newly supplied deliberate
+reference is resolved to a same-project issue before writes. Standalone close,
+fix and resolve keywords (including their closed/fixes/resolved variants) are
+recognized without case sensitivity; cross-project, inline and other unsupported
+closing-like forms require explicit reconciliation before body replacement.
+Pending label additions are validated together with current native labels before
+any remote write, so a conflicting native edit stops recovery without alteration.
+The worktree records
+request creation intent and the returned ID before fallible readback. A completed
+initial label step drops its pending intent, so later label edits are evaluated
+as current native facts. Body mutation uses a fresh prewrite read and postwrite
+readback; these checks detect intervening observed edits but do not claim an atomic
+server-side compare-and-swap. An edit in the final read/write window remains a
+native API concurrency limitation.
+
 Fork requests require verified source and target project identities; read-only
 observation may support them before write bootstrap does. Unsupported fork-write
 flows fail explicitly. Native branch cleanup may be unavailable for a fork or
@@ -322,11 +402,89 @@ queued versus merged state. Unsupported auto-merge is not a reason to direct
 merge. Platform protection remains authoritative even if `finish` is accepted.
 Do not grant self-approval, bypass a queue or enable merge on behalf of the user.
 
+The native Rust entry point is `merge --request <id> --mode now|auto
+--strategy merge|squash|rebase`; all three options are required. It performs a
+fresh accepted assessment before the first submission, saves a durable intent
+under the selected worktree's Git directory, and passes the assessed source SHA
+to the native CLI's server precondition. A changed request or failed assessment
+prevents submission. The platform remains responsible for protection changes
+after the final read; the API does not provide a transaction over every setting.
+Recovery reads native state and never automatically resubmits an uncertain write.
+After inspecting an unresolved submission, the user can reconcile it directly
+through the native forge; there is no implicit direct-merge fallback.
+
+GitHub delegates to `gh pr merge`, preserving its native queue behavior without
+`--admin`. A readable native `auto_merge` request is reported as `queued`; queue
+membership that cannot be proven through the current read adapter is `unknown`.
+GitLab delegates to `glab mr merge` with explicit auto-merge and SHA options.
+Because glab omits a false squash API parameter, strategy `merge` requires the
+native project to enforce `squash_option: never`; `squash` requires a known policy
+that permits it. Auto mode requires matching current-head `head_pipeline` and
+the separate legacy `pipeline` field consumed by glab, which otherwise omits
+the auto-merge API parameter. Both capabilities are read
+again before submission; unsupported choices fail before saving a write intent.
+GitLab rebase and enabled/unknown merge-train routing are currently unsupported:
+rebase changes the assessed head, and train routing requires separate capability
+qualification. Neither case falls back to a direct merge. CLI stdout is never
+used as evidence of merge, queue membership, closure or cleanup.
+The normalized option schema is `runtime/schemas/merge-options.schema.json`.
+
 When targeting a non-default branch, surface native closure limitations at init,
 request creation and observation. If merge succeeds with open issues, emit
 `merged_issues_open` rather than retrying closure forever. Report which issue
 states are observed and why native behavior may not close them. No custom close
 or delete endpoint is available to any observer/hook/merge-recovery path.
+
+The native Rust `finish [--request <id>]` command reads the declaration at the
+current immutable target commit and compares the pushed candidate declaration
+separately. Complete native root trees prove first adoption; a failed file read
+never proves absence. Its normalized option schema is
+`runtime/schemas/finish-options.schema.json`. An open delivery also requires a
+clean selected worktree whose HEAD matches the observed native request.
+
+GitHub check reads retain workflow identity, event, current attempt, current job
+IDs and owning check suites, with full bounded lists and matching job/check
+results. GitLab starts at the request's `head_pipeline`, follows bounded native
+child pipelines, and keeps project/pipeline/job identity and allowed failures.
+Current checks and protection inputs are read again before acceptance. Explicit
+required names still require success even when a job otherwise allows failure.
+
+Unavailable protection or approval APIs, incomplete pagination, fork source
+identity and unsupported merged-result pipeline identities remain unknown. The
+current GitHub observer requires a readable classic protection response whenever
+the branch reports protected, including branches protected only by rulesets;
+ambiguous 404s are not converted into an unprotected branch. Cleanup is reported
+independently and requires a complete branch list to establish deletion. The
+observer exposes no close-issue, delete-branch or merge fallback.
+
+## Promotion association discovery
+
+`promotion --request <id> [--source-request <id,...>]` inspects an exact clean,
+pushed same-project source worktree and its selected native target. Native commit
+association endpoints discover candidates; explicit source IDs supplement that
+bounded platform view. Neither mode claims exhaustive historical discovery.
+The output preserves source request IDs and observed issue states, including
+already closed issues. It never writes a request body, closes or reopens issues.
+
+Evidence Git calls disable local replacement objects and both default/external
+graft files. The native merge/squash anchor must appear in `target..head`. A two-parent merge
+requires the recorded source head as its second parent. An explicit GitLab squash
+anchor is supported; a one-parent GitHub anchor additionally requires equality
+with the complete original source delta, so the last rebased commit cannot stand
+in for a whole request. All changed paths must retain exact final modes/blob IDs
+at the promotion head. Complete reverts are excluded; later/partial modifications
+remain unverified. Branch names carry no stage authority. Deleted source branches
+do not remove platform associations; unavailable source objects retain those
+associations with a precise missing-proof result. Unanchored cherry-picks and
+unsupported partial rebase/squash require explicit review, never title or patch
+similarity inference.
+
+Limits are 200 range commits, 100 source requests, 100 paths per source delta,
+two pages per native association query and a 180-second overall deadline. Shallow
+history is rejected. Requests, issues, target, association lists and local facts
+are re-read before returning candidates. `suggested_issue_ids` includes only
+proven full deltas; unresolved candidates make the result `partial` with exit 3.
+The normalized option schema is `runtime/schemas/promotion-options.schema.json`.
 
 ## Observation, storage and host protocol
 
@@ -343,6 +501,39 @@ is bounded (proposed default seven days); terminal acknowledged items can expire
 and unacknowledged expiry produces a visible retention diagnostic on next resume.
 Never erase a pending result while claiming it was delivered. PID alone is not
 lease identity; verify process generation/owner and recover stale locks safely.
+
+The native CLI exposes `watch --request <id> --session <id> --goal
+checks|lifecycle`, with `--once` for one fresh observation. Polling defaults to
+15 seconds (validated range 1–300); total observation defaults to 1,800 seconds
+(range 1–3,600). Retryable errors use bounded exponential backoff and jitter.
+`inbox` takes the same request/session/goal identity and refreshes native facts
+before offering current events. `inbox --no-refresh` returns only receipt IDs
+marked unverified; `inbox --ack <event-id>` explicitly records transport receipt,
+never human reading or acceptance. Neither operation mutates the forge.
+
+Each default state root is under the selected worktree's Git directory; an
+explicit absolute `--state-root` still keys subscriptions by canonical project,
+worktree, session, request and goal. There are at most 128 subscription entries,
+64 retained events per subscription and 1 MiB per state document. An unacknowledged
+full outbox rejects further writes with an explicit capacity diagnostic. Expiry
+after seven days increments an unacknowledged-expiry count instead of claiming
+delivery. The persistent lock inode is protected by an OS file lock, which is
+released on process death; recorded owner generation/PID/deadline never authorize
+stealing a live lock. A normal timeout releases the lease and retains intent.
+New native attempts, head/target changes and relevant local changes invalidate
+the previous offered event. These mechanisms do not by themselves prove a host
+imported or presented asynchronous output.
+
+Claude registration places a separate `hook --observe` command in PostToolUse
+with `async: true` and a 1,830-second host timeout. It resumes the selected native
+request for the payload session/worktree and uses the same durable lifecycle
+subscription as explicit watch/inbox. Ordinary edits invalidate the assessment
+and continue that subscription; branch/declaration changes require explicit
+reconciliation. Synchronous SessionStart/relevant PostToolUse can surface pending
+IDs without native reads. Async output offers fresh timestamped events without
+acknowledging them. Real Claude 2.1.241 qualification with an isolated loopback API
+proved a durable ID in a later actual model request; immediate idle wake and
+external model/human receipt remain unverified.
 
 Events carry stable ID, repository/request, head/target, goal, state, reason,
 observation time and actionable next step. Deliver at least once; acknowledge
@@ -398,3 +589,24 @@ exact commits/PRs, issue states, current-head CI, real installed-binary evidence
 provider/host acceptance results and remaining limitations. The original task
 then independently inspects those outputs; a child task's success summary alone
 is not 2.0 acceptance.
+
+### Implemented explicit migration protocol
+
+The native command is `migrate --config-file <complete-v2-declaration>`. Preview
+reports the local asset inventory, proposed hashes and current native retirement
+barrier. `--apply --expect <preview-sha256>` requires identical inputs and commits
+one expected-content transaction, with a complete bounded legacy archive first
+and the v2 declaration last. `--retire-only` stages local cleanup while preserving
+the v1 declaration; `--rollback <transaction>` restores preimages without replacing
+later user edits. Old issue/request associations are preserved, never auto-adopted.
+
+The native retirement barrier is read-only. It inspects GitHub workflow state,
+configuration at the current default commit and unfinished execution, or GitLab's
+bounded repository tree, selected configuration, static local includes and
+unfinished ordinary/child pipelines plus active schedule refs. Unknown/external
+include boundaries and shared/foreign old
+hooks remain explicit blockers. Native CI retirement must occur through the
+project's authorized change; this command cannot disable protection or stop a
+business pipeline to make its own barrier pass. Reported retirement describes the
+bounded known-v1 inventory at its observed commit, not arbitrary shell semantics
+or permanent exclusion of future external edits.

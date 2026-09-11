@@ -507,13 +507,23 @@ export class GhCliGitHubProvider implements ForgeProvider {
     if (hasActions) {
       try {
         const ownership = createActionsOwnership(workflows.value);
+        const currentJobs = new Map<number, Map<number, CheckRunInfo>>();
+        for (const owner of ownership.latest) {
+          if (owner.runAttempt === 1 || owner.check.status === 'completed') continue;
+          const jobs = await this.readAttemptJobs(repo, workflowSha, owner);
+          if (!jobs.ok) return jobs;
+          currentJobs.set(owner.check.id, jobs.value);
+        }
         const checks = runs.value.flatMap((run) => {
           if (!run.actions) return [run.check];
           const owner = ownership.currentFor(run.checkSuiteId);
           if (owner === null) return [];
-          // A partial rerun retains successful jobs from earlier attempts.
-          // Only a pending rerun masks their terminal state for acceptance.
-          return [owner.runAttempt !== 1 && owner.check.status !== 'completed' && run.check.status === 'completed'
+          // Retained jobs from older attempts cannot prove a pending rerun.
+          // A job proven terminal in this exact attempt can unblock inline acceptance.
+          const job = currentJobs.get(owner.check.id)?.get(run.check.id);
+          const currentTerminal = job?.name === run.check.name && job.status === 'completed' &&
+            job.conclusion === run.check.conclusion;
+          return [owner.runAttempt !== 1 && owner.check.status !== 'completed' && run.check.status === 'completed' && !currentTerminal
             ? { ...run.check, status: 'in_progress', conclusion: null } : run.check];
         });
         return ok({ checks, workflows: ownership.latest.map((owner) => owner.check) });
@@ -527,6 +537,56 @@ export class GhCliGitHubProvider implements ForgeProvider {
       if (!selected.ok) return selected;
     }
     return ok({ checks: runs.value.map((run) => run.check), workflows: [...latest.values()] });
+  }
+
+  private async readAttemptJobs(repo: RepoRef, sha: string, owner: WorkflowRunSnapshot): Promise<Evidence<Map<number, CheckRunInfo>>> {
+    const endpoint = `repos/${repo.owner}/${repo.repo}/actions/runs/${owner.check.id}`;
+    let total: number | undefined;
+    const rows = await paginateToExhaustion<unknown>({ pageSize: 100, maxPages: 10, what: 'Workflow-attempt job' }, async (page) => {
+      const response = await this.runApi(`${endpoint}/attempts/${owner.runAttempt}/jobs?per_page=100&page=${page}`, 'checks');
+      if (!response.ok) return response;
+      const payload = response.value as { total_count?: unknown; jobs?: unknown } | null;
+      const count = payload?.total_count;
+      if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0 || !Array.isArray(payload?.jobs)) {
+        return fail('gh_transport', 'GitHub omitted complete workflow-attempt job evidence.');
+      }
+      if (count > 1000 || (total !== undefined && total !== count)) return evidenceTruncated('The workflow-attempt job count changed or exceeds the limit.');
+      total = count;
+      return ok(payload.jobs);
+    });
+    if (!rows.ok) return rows;
+    if (rows.value.length !== total) return evidenceTruncated('The workflow-attempt job list is incomplete.');
+    const jobs = new Map<number, CheckRunInfo>();
+    const ids = new Set<number>();
+    const checks = new Set<number>();
+    for (const row of rows.value) {
+      if (row === null || typeof row !== 'object') return fail('gh_transport', 'GitHub returned a malformed workflow-attempt job.');
+      const job = row as Record<string, unknown>;
+      const checkPrefix = `https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/`.toLowerCase();
+      const checkUrl = typeof job.check_run_url === 'string' ? job.check_run_url.toLowerCase() : '';
+      const checkId = checkUrl.startsWith(checkPrefix) ? Number(checkUrl.slice(checkPrefix.length)) : NaN;
+      if (typeof job.id !== 'number' || !Number.isSafeInteger(job.id) || job.id <= 0 || ids.has(job.id) ||
+          !Number.isSafeInteger(checkId) || checkId <= 0 || checkUrl !== `${checkPrefix}${checkId}` || checks.has(checkId) ||
+          job.run_id !== owner.check.id || job.head_sha !== sha ||
+          typeof job.run_attempt !== 'number' || !Number.isSafeInteger(job.run_attempt) || job.run_attempt < 1 ||
+          job.run_attempt > Number(owner.runAttempt) || typeof job.name !== 'string' || typeof job.status !== 'string' ||
+          (job.status === 'completed' && typeof job.conclusion !== 'string')) {
+        return fail('gh_transport', 'GitHub returned incomplete or stale workflow-attempt job identity.');
+      }
+      ids.add(job.id);
+      checks.add(checkId);
+      if (job.run_attempt === owner.runAttempt) jobs.set(checkId, { id: checkId, name: job.name, status: job.status, startedAt: null,
+        conclusion: typeof job.conclusion === 'string' ? job.conclusion : null });
+    }
+    const observed = await this.runApi(endpoint, 'checks');
+    if (!observed.ok) return observed;
+    const run = observed.value as Record<string, unknown> | null;
+    if (run?.id !== owner.check.id || run.head_sha !== sha || run.check_suite_id !== owner.checkSuiteId ||
+        run.run_attempt !== owner.runAttempt || `workflow:${run.workflow_id}:${run.event}` !== owner.key ||
+        run.run_started_at !== owner.check.startedAt) {
+      return fail('gh_transport', 'The workflow attempt changed while reading its jobs.');
+    }
+    return ok(jobs);
   }
 
   private async readWorkflowRuns(repo: RepoRef, sha: string, requireOwnership: boolean): Promise<Evidence<WorkflowRunSnapshot[]>> {

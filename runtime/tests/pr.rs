@@ -1,0 +1,290 @@
+#![cfg(feature = "test-fixtures")]
+#[path = "support/delivery.rs"]
+mod delivery;
+use delivery::Fixture;
+use serde_json::json;
+use std::{fs, process::Command};
+fn fixture(provider: &str, count: usize) -> Fixture {
+    let f = Fixture::new(provider);
+    let mut args = vec!["issue", "--create-labels", "feat: first spec"];
+    if count == 2 {
+        args.push("fix: second spec");
+    }
+    let r = f.run(&args);
+    assert_eq!(r["exit"], 0, "{r}");
+    let head = String::from_utf8(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    f.edit(|s| {
+        s["request_fixture"] = json!(true);
+        s["requests"] = json!([]);
+        s["has_diff"] = json!(true);
+        s["branch_heads"] = json!({"feature":head,"main":"a".repeat(40)});
+    });
+    f
+}
+#[test]
+fn both_forges_create_draft_with_all_references_then_ready_without_push_or_dummy_commit() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 2);
+        let before = Command::new("git")
+            .current_dir(&f.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout;
+        let r = f.run(&["pr"]);
+        assert_eq!(r["exit"], 0, "{r}");
+        assert_eq!(r["status"], "draft");
+        let body = r["evidence"]["request"]["body"].as_str().unwrap();
+        assert!(body.contains("Closes #1") && body.contains("Closes #2"));
+        assert_eq!(r["evidence"]["request"]["labels"], json!(["kind::feat"]));
+        let writes = f.writes();
+        let r = f.run(&["pr"]);
+        assert_eq!(r["exit"], 0, "{r}");
+        assert_eq!(f.writes(), writes);
+        let r = f.run(&["pr", "--ready"]);
+        assert_eq!(r["exit"], 0, "{r}");
+        assert_eq!(r["evidence"]["request"]["draft"], false);
+        assert_eq!(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+            before
+        );
+        assert!(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args(["status", "--porcelain"])
+                .output()
+                .unwrap()
+                .stdout
+                .is_empty()
+        );
+    }
+}
+#[test]
+fn no_diff_or_unpushed_head_leaves_request_pending_without_remote_writes() {
+    let f = fixture("github", 1);
+    let writes = f.writes();
+    f.edit(|s| s["has_diff"] = json!(false));
+    let r = f.run(&["pr"]);
+    assert_eq!(r["status"], "pending_request", "{r}");
+    assert_eq!(f.writes(), writes);
+    f.edit(|s| {
+        s["has_diff"] = json!(true);
+        s["branch_heads"]["feature"] = json!("b".repeat(40));
+    });
+    let r = f.run(&["pr"]);
+    assert_eq!(r["evidence"]["reason"], "source_head_not_pushed", "{r}");
+    assert_eq!(f.writes(), writes);
+}
+#[test]
+fn newly_supplied_association_is_resolved_before_creation_or_body_update() {
+    let f = fixture("github", 1);
+    fs::write(f.root.join("body.md"), "Complete user body\n\nCloses #999").unwrap();
+    let writes = f.writes();
+    let r = f.run(&["pr", "--body-file", "body.md"]);
+    assert_eq!(r["exit"], 3, "{r}");
+    assert_eq!(f.writes(), writes);
+    assert_eq!(f.run(&["pr"])["exit"], 0);
+    let writes = f.writes();
+    let r = f.run(&["pr", "--update-body", "--body-file", "body.md"]);
+    assert_eq!(r["exit"], 3, "{r}");
+    assert_eq!(f.writes(), writes);
+}
+#[test]
+fn uncertain_creation_recovers_exact_native_request_without_duplicate_and_preserves_edits() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        f.edit(|s| s["lose_request_response"] = json!(true));
+        let r = f.run(&["pr"]);
+        assert_eq!(r["exit"], 3, "{r}");
+        assert_eq!(r["effects"]["outcome"], "unknown", "{r}");
+        assert!(
+            r["effects"]["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["action"] == "create_request" && e["outcome"] == "unknown")
+        );
+        assert_eq!(f.state()["requests"].as_array().unwrap().len(), 1);
+        f.edit(|s| {
+            s["requests"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!("Native user edits\n\nCloses #1")
+        });
+        let r = f.run(&["pr", "--request", "41"]);
+        assert_eq!(r["exit"], 0, "{r}");
+        assert_eq!(
+            r["evidence"]["request"]["body"],
+            "Native user edits\n\nCloses #1"
+        );
+        assert_eq!(f.state()["requests"].as_array().unwrap().len(), 1);
+    }
+}
+#[test]
+fn explicit_body_update_preserves_all_refs_and_conflicting_native_edit_stops_before_write() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 2);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        let body = f.root.join("prepared.md");
+        fs::write(&body, "Prepared replacement\r\n").unwrap();
+        let r = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
+        assert_eq!(r["exit"], 0, "{r}");
+        let b = r["evidence"]["request"]["body"].as_str().unwrap();
+        assert!(b.starts_with(if provider == "github" {
+            "Prepared replacement\r\n"
+        } else {
+            "Prepared replacement\n"
+        }));
+        assert!(b.contains("Closes #1") && b.contains("Closes #2"));
+        let writes = f.writes();
+        let repeated = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
+        assert_eq!(repeated["exit"], 0, "{repeated}");
+        assert_eq!(f.writes(), writes);
+        f.edit(|s| {
+            s["request_reads"] = json!(0);
+            s["edit_request_on_read"] = json!(2);
+        });
+        let writes = f.writes();
+        let r = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
+        assert_eq!(r["exit"], 3, "{r}");
+        assert_eq!(f.writes(), writes);
+        assert_eq!(
+            f.state()["requests"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }],
+            "Concurrent user edit\n\nCloses #1"
+        );
+    }
+}
+#[test]
+fn fork_identity_and_removed_associations_require_reconciliation() {
+    let f = fixture("github", 1);
+    assert_eq!(f.run(&["pr"])["exit"], 0);
+    f.edit(|s| s["requests"][0]["head"]["repo"]["id"] = json!(9));
+    let writes = f.writes();
+    let r = f.run(&["pr"]);
+    assert_eq!(r["exit"], 3, "{r}");
+    assert_eq!(f.writes(), writes);
+    f.edit(|s| {
+        s["requests"][0]["head"]["repo"]["id"] = json!(7);
+        s["requests"][0]["body"] = json!("User removed reference");
+    });
+    let r = f.run(&["pr"]);
+    assert_eq!(r["exit"], 2, "{r}");
+    assert_eq!(f.writes(), writes);
+    let r = f.run(&["pr", "--update-references"]);
+    assert_eq!(r["exit"], 0, "{r}");
+    assert_eq!(
+        r["evidence"]["request"]["body"],
+        "User removed reference\n\nCloses #1"
+    );
+}
+
+#[test]
+fn pending_labels_conflicting_with_native_edits_stop_before_any_write() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        f.edit(|s| s["lose_request_response"] = json!(true));
+        assert_eq!(f.run(&["pr"])["exit"], 3);
+        f.edit(|s| {
+            s["requests"][0]["labels"] = if provider == "github" {
+                json!([{"name":"kind::fix"}])
+            } else {
+                json!(["kind::fix"])
+            };
+        });
+        fs::write(f.root.join("replacement.md"), "New body").unwrap();
+        let before = f.state()["requests"].clone();
+        let writes = f.writes();
+        let result = f.run(&[
+            "pr",
+            "--request",
+            "41",
+            "--update-body",
+            "--body-file",
+            "replacement.md",
+        ]);
+        assert_eq!(result["exit"], 2, "{result}");
+        assert_eq!(f.writes(), writes);
+        assert_eq!(f.state()["requests"], before);
+    }
+}
+#[test]
+fn alternate_native_closing_keywords_survive_body_replacement() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 2);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        // Make #2 a deliberate native association outside the saved selection.
+        let selection = f.root.join(".git/specgit-v2/selection.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
+        saved["issues"] = json!([1]);
+        saved["intents"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|intent| intent["issue"] == 1);
+        fs::write(selection, serde_json::to_vec(&saved).unwrap()).unwrap();
+        f.edit(|s| {
+            s["requests"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!("closes #1\nFixes #2\n```\nResolves other/repo#9\n```\n<!-- Fixes #10 -->");
+        });
+        fs::write(f.root.join("replacement.md"), "New body").unwrap();
+        let result = f.run(&["pr", "--update-body", "--body-file", "replacement.md"]);
+        assert_eq!(result["exit"], 0, "{result}");
+        let body = result["evidence"]["request"]["body"].as_str().unwrap();
+        assert!(
+            body.contains("Closes #1") && body.contains("Closes #2"),
+            "{body}"
+        );
+        assert!(!body.contains("#9") && !body.contains("#10"));
+    }
+}
+#[test]
+fn unsupported_native_closing_forms_cannot_be_erased_by_body_replacement() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        fs::write(f.root.join("replacement.md"), "New body").unwrap();
+        for reference in [
+            "fixes other/repo#2",
+            "Text resolves #2",
+            "- Closes #2",
+            "CLOSES #1, #2",
+        ] {
+            f.edit(|s| {
+                s["requests"][0][if provider == "github" {
+                    "body"
+                } else {
+                    "description"
+                }] = json!(format!("Closes #1\n{reference}"));
+            });
+            let before = f.state()["requests"].clone();
+            let writes = f.writes();
+            let result = f.run(&["pr", "--update-body", "--body-file", "replacement.md"]);
+            assert_eq!(result["exit"], 2, "{reference}: {result}");
+            assert_eq!(f.writes(), writes);
+            assert_eq!(f.state()["requests"], before);
+        }
+    }
+}

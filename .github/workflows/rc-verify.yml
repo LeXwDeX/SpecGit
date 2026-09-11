@@ -1,15 +1,24 @@
 name: RC Verify
 
-# Safe release-candidate verification (#71): prove everything a real
-# publish needs — build, tarball shape, registry reachability, and the
-# npm OIDC provenance chain — WITHOUT publishing. The only registry
+# Retained TypeScript engineering package verification (#71): build,
+# tarball shape, registry reachability, and the npm OIDC dry-run chain.
+# This is not qualification of the public native v2 release. The only registry
 # interactions are read-only (npm view) and `npm publish --dry-run`,
-# which never uploads. The final publish stays in release-prepare.yml:
-# PR-gated (a merged version PR) and OIDC-based (id-token + --provenance).
+# which never uploads. Native v2 qualification uses the three-platform
+# Release build; the coordinator publishes its independently verified bundle.
 
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      windows_diagnostics:
+        description: 'Run bounded Windows installation diagnostics (not acceptance)'
+        type: boolean
+        default: false
+      windows_observer_diagnostics:
+        description: 'Diagnose Windows observer regressions (not acceptance)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,8 +30,9 @@ concurrency:
 
 jobs:
   rc-verify:
+    if: ${{ !inputs.windows_diagnostics && !inputs.windows_observer_diagnostics }}
     name: RC Verify
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -30,6 +40,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # The runner's action runtime is not a complete user-facing npm install.
+      # Bootstrap Node before pnpm; restore the pnpm cache after pnpm exists.
+      - name: Initialize Node and npm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
@@ -59,8 +77,11 @@ jobs:
       # never committed, never published.
       - name: Stage a release-candidate version
         run: |
-          RC_VERSION="$(node -p "require('./package.json').version + '-rc.' + process.env.GITHUB_RUN_ID")"
-          npm pkg set "version=${RC_VERSION}"
+          RC_VERSION="1.15.1-rc.${GITHUB_RUN_ID}"
+          npm pkg set "name=specgit-legacy-engineering-rc" "version=${RC_VERSION}"
+          # This throwaway checkout is a named dry-run fixture. The real root
+          # stays private and public native packages are built separately.
+          npm pkg delete private
           echo "RC_VERSION=${RC_VERSION}" >> "$GITHUB_ENV"
 
       - name: Pack and verify the tarball shape
@@ -127,3 +148,97 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
         run: |
           echo "::warning::Provenance dry-run skipped: fork pull requests cannot be granted id-token: write. Provenance is proven on same-repo PRs and in the release job."
+
+  windows-diagnostics:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics }}
+    name: Windows installation diagnostics
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Verify Windows shell prerequisites
+        shell: powershell
+        run: |
+          # This runner exposes the cached PowerShell only after adding GITHUB_PATH.
+          # Bootstrap with built-in Windows PowerShell, as the normal CI job does.
+          if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+            $pwshHome = Join-Path $env:RUNNER_TOOL_CACHE 'PowerShell\7.6.6\x64'
+            if (-not (Test-Path (Join-Path $pwshHome 'pwsh.exe'))) {
+              throw 'Pinned PowerShell 7.6.6 is missing from the existing runner tool cache.'
+            }
+            $pwshHome | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          $git = Get-Command git -ErrorAction Stop
+          $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
+          if (Test-Path (Join-Path $gitBash 'bash.exe')) {
+            $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm run build
+      - name: Measure installation tests and isolated cache controls
+        timeout-minutes: 14
+        run: ./scripts/windows-install-diagnose.ps1
+      - name: Upload sanitized diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-install-diagnostics
+          path: ${{ runner.temp }}/specgit-install-diagnostics/public/
+          if-no-files-found: warn
+
+  windows-observer-diagnostics:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_observer_diagnostics }}
+    name: Windows observer diagnostics
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Locate the existing Windows shells
+        shell: powershell
+        run: |
+          if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+            $pwshHome = Join-Path $env:RUNNER_TOOL_CACHE 'PowerShell\7.6.6\x64'
+            if (-not (Test-Path (Join-Path $pwshHome 'pwsh.exe'))) {
+              throw 'Pinned PowerShell 7.6.6 is missing from the existing runner tool cache.'
+            }
+            $pwshHome | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          $git = Get-Command git -ErrorAction Stop
+          $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
+          if (-not (Test-Path (Join-Path $gitBash 'bash.exe'))) {
+            throw 'The existing Git installation does not provide Git Bash.'
+          }
+          $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.97.0
+      - name: Diagnose observer lifecycle with unchanged deadlines
+        timeout-minutes: 15
+        run: ./scripts/windows-watch-diagnose.ps1
+      - name: Upload observer diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-observer-diagnostics
+          path: ${{ runner.temp }}/specgit-watch-${{ github.run_id }}-${{ github.run_attempt }}/public/
+          if-no-files-found: error
+          retention-days: 7

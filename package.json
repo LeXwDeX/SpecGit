@@ -1,7 +1,7 @@
 {
   "name": "specgit",
-  "version": "1.15.1",
-  "description": "Delivery binding and acceptance harness: bind a branch or worktree to forge issues and one pull or merge request, then derive acceptance from real git, request, and CI evidence",
+  "version": "2.0.0",
+  "description": "SpecGit development workspace; public v2 packages are built from runtime/distribution",
   "keywords": [
     "specgit",
     "delivery-binding",
@@ -54,10 +54,10 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "prepare": "pnpm run build",
-    "prepublishOnly": "pnpm run build",
+    "prepublishOnly": "node runtime/distribution/forbid-root-publish.mjs",
     "check:pack-version": "node scripts/pack-version-check.mjs",
     "release": "pnpm run release:ci",
-    "release:ci": "pnpm run check:pack-version && pnpm exec changeset publish",
+    "release:ci": "node runtime/distribution/publish.mjs",
     "changeset": "changeset"
   },
   "engines": {
@@ -84,5 +84,6 @@
     "ora": "^9.4.1",
     "yaml": "^2.8.3",
     "zod": "^4.4.3"
-  }
+  },
+  "private": true
 }

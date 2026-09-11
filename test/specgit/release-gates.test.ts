@@ -21,118 +21,54 @@ function readWorkflow(name: string): string {
   return fs.readFileSync(path.join(ROOT, '.github', 'workflows', name), 'utf8');
 }
 
-describe('release-prepare gates (#71)', () => {
+describe('native release build gates (#514)', () => {
   const raw = readWorkflow('release-prepare.yml');
-  const parsed = parse(raw) as {
-    on?: Record<string, unknown>;
-    jobs?: Record<
-      string,
-      {
-        if?: string;
-        steps?: Array<{
-          name?: string;
-          id?: string;
-          if?: string;
-          run?: string;
-          env?: Record<string, string>;
-        }>;
-      }
-    >;
-  };
+  const workflow = parse(raw);
+  const jobs = Object.values(workflow.jobs) as Array<{ permissions?: Record<string, string>; steps: Array<{ uses?: string; run?: string; with?: Record<string, unknown> }> }>;
 
-  it('publishes only on push to main or a manual retry, with explicit provenance', () => {
-    expect(Object.keys(parsed.on ?? {}).sort()).toEqual(['push', 'workflow_dispatch']);
-    const publish = raw.match(/^.*npm publish.*$/gm) ?? [];
-    expect(publish.length).toBeGreaterThan(0);
-    for (const line of publish) {
-      expect(line).toContain('--provenance');
-      expect(line).not.toContain('--dry-run');
-    }
-  });
-
-  it('refuses release dispatches from unmerged branches or tags (#411)', () => {
-    expect(parsed.jobs?.scope?.if).toBe("github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'");
-    expect(parsed.jobs?.release?.if).toBe("github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main' && needs.scope.outputs.eligible == 'true'");
-  });
-
-  it('gates publish on an unpublished version, never on the head commit message (#227)', () => {
-    // A merge-commit merge strategy makes the head commit message "Merge
-    // pull request #N...", so a publish gated on startsWith(...,
-    // 'chore(release): v') can never fire — and workflow_dispatch has no
-    // head_commit at all. The gate is the registry/tag evidence instead.
+  it('requires an explicit stable-version dispatch and performs no publication on pushes', () => {
+    expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch']);
+    expect(workflow.on.workflow_dispatch.inputs.release_version).toMatchObject({ required: true, default: '2.0.0' });
     expect(raw).not.toContain('head_commit');
-    const steps = parsed.jobs?.release?.steps ?? [];
-    const probe = steps.find((step) => step.id === 'unpublished');
-    expect(probe).toBeDefined();
-    expect(probe?.if).toBe("steps.pending.outputs.count == '0'");
-    expect(probe?.run).toBe('node scripts/release-state.mjs');
-    for (const name of ['Build', 'Publish to npm']) {
-      const step = steps.find((candidate) => candidate.name === name);
-      expect(step, name).toBeDefined();
-      expect(step?.if, name).toBe("steps.unpublished.outputs.needs_publish == 'true'");
+    expect(raw).not.toMatch(/npm publish|changeset publish|gh release (create|edit|upload)|git push|--npm|--github/);
+  });
+
+  it('keeps all jobs read-only and checkouts free of persisted credentials', () => {
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    for (const job of jobs) {
+      expect(job.permissions ?? workflow.permissions).toEqual({ contents: 'read' });
+      for (const step of job.steps.filter(step => step.uses?.startsWith('actions/checkout@'))) expect(step.with?.['persist-credentials']).toBe(false);
     }
-    const finalize = steps.find((step) => step.name === 'Tag and create GitHub Release');
-    expect(finalize?.if).toBe("steps.unpublished.outputs.needs_finalize == 'true'");
-    expect(finalize?.run).toBe('node scripts/release-state.mjs --finalize');
+    expect(raw).not.toContain('RELEASE_BOT_TOKEN');
+    expect(raw).not.toContain('NODE_AUTH_TOKEN');
   });
 
-  it('pushes the version branch with a write-access token when configured', () => {
-    // PR #61 root cause: a head pushed by github-actions[bot] leaves the
-    // pull_request runs action_required with zero jobs. The workflow must
-    // be able to push as an actor whose events run without approval.
-    expect(raw).toContain('RELEASE_BOT_TOKEN');
+  it('builds exactly the three actually supported targets on owned runners', () => {
+    const entries = workflow.jobs.build.strategy.matrix.include;
+    expect(entries.map((entry: { target: string }) => entry.target).sort()).toEqual(['aarch64-apple-darwin', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu']);
+    expect(entries.every((entry: { os: string[] }) => entry.os.includes('self-hosted'))).toBe(true);
+    expect(workflow.jobs.build.strategy['fail-fast']).toBe(false);
+    expect(workflow.jobs.assemble['runs-on']).toEqual(['self-hosted', 'Linux', 'X64']);
   });
 
-  it('fails loudly when version-PR workflows are action_required', () => {
-    const watchdog = (parsed.jobs?.release?.steps ?? []).find((step) =>
-      (step.run ?? '').includes('action_required')
-    );
-    expect(watchdog).toBeDefined();
-    expect(watchdog?.run).toContain('::error');
+  it('installs real staged packages and accounts for all installed test executables', () => {
+    const steps = workflow.jobs.build.steps as Array<{ name?: string; run?: string; 'timeout-minutes'?: number }>;
+    const install = steps.findIndex(step => step.run?.includes('node distribution/verify-install.mjs'));
+    const profile = steps.findIndex(step => step.run?.includes('node scripts/profile-tests.mjs'));
+    expect(install).toBeGreaterThan(-1);
+    expect(profile).toBeGreaterThan(install);
+    expect(steps[profile]['timeout-minutes']).toBe(15);
+    expect(steps[profile].run).toContain('/profile.json');
+    expect(steps.some(step => step.run?.includes('node distribution/release-version.mjs'))).toBe(true);
   });
 
-  it('the watchdog decides from workflow runs, never check-runs (#265)', () => {
-    // Approval-waiting runs complete as action_required with ZERO jobs:
-    // they never create check-runs, so a check-runs poll sees only the
-    // independently triggered runs and reports started while the version
-    // PR blocks silently (observed live during the v1.4.0 cut). The
-    // evidence source must cover exactly the failure mode it names.
-    const watchdog = (parsed.jobs?.release?.steps ?? []).find((step) =>
-      (step.run ?? '').includes('action_required')
-    );
-    expect(watchdog).toBeDefined();
-    expect(watchdog?.run).toContain('actions/runs');
-    expect(watchdog?.run).not.toContain('check-runs');
-    // The error text names the recovery: the approve API.
-    expect(watchdog?.run).toMatch(/runs\/\$\{?[A-Za-z_]+\}?\/approve|approve/);
-  });
-
-  it('supersedes an existing version PR explicitly, with a recorded rationale', () => {
-    const openPrStep = (parsed.jobs?.release?.steps ?? []).find((step) =>
-      (step.run ?? '').includes('changeset-release/main')
-    );
-    expect(openPrStep).toBeDefined();
-    expect(openPrStep?.run).toContain('gh pr comment');
-    expect(openPrStep?.run).toMatch(/[Ss]uperseded/);
-  });
-
-  it('runs the configured version merge gate after preparation with the release actor (#382)', () => {
-    const steps = parsed.jobs?.release?.steps ?? [];
-    const mergeStep = steps.find((step) => (step.run ?? '').includes('node scripts/merge-version-pr.mjs'));
-    expect(mergeStep).toBeDefined();
-    expect(mergeStep?.if).toBe("steps.pending.outputs.count != '0'");
-    expect(mergeStep?.run).toContain('pnpm run build');
-    expect(mergeStep?.env?.GH_TOKEN).toBe('${{ secrets.RELEASE_BOT_TOKEN || github.token }}');
-    expect(steps.indexOf(mergeStep!)).toBeGreaterThan(steps.findIndex((step) => step.name === 'Open version pull request'));
-    expect(raw).not.toContain('--admin');
-    expect(raw).not.toMatch(/gh pr merge .*--auto/);
-  });
-
-  it('documents the opt-in gate replacing the historical batch hold', () => {
-    expect(raw).toContain('#382');
-    expect(raw).toContain('automation.merge');
-    expect(raw).toContain('target_branch: main');
-    expect(raw).not.toContain('manual batch-decision point');
+  it('aggregates only successful platform jobs and refuses missing or mismatched artifacts', () => {
+    expect(workflow.jobs.assemble.needs).toBe('build');
+    expect(workflow.jobs.assemble.if).toBeUndefined();
+    const steps = workflow.jobs.assemble.steps as Array<{ uses?: string; run?: string; with?: Record<string, unknown> }>;
+    expect(steps.find(step => step.uses?.startsWith('actions/download-artifact@'))?.with).toMatchObject({ pattern: 'release-platform-*', 'digest-mismatch': 'error' });
+    expect(steps.find(step => step.run?.includes('release-artifacts.mjs'))?.run).toContain('--source "$GITHUB_SHA"');
+    expect(steps.find(step => step.uses?.startsWith('actions/upload-artifact@'))?.with).toMatchObject({ name: 'specgit-release-${{ github.sha }}', 'if-no-files-found': 'error' });
   });
 });
 

@@ -40,6 +40,8 @@ Use Conventional Commit prefixes found in history: `feat:`, `fix:`, `refactor:`,
 
 ## Agent Guidance
 
+All CI/CD in this repository must run on our self-hosted runners. GitHub-hosted runners and hosted fallbacks are prohibited to preserve account minutes. Keep this routing in generated acceptance/completion workflows as well as CI, security, and release workflows; see [CI scope](docs/ci-scope.md).
+
 Prefer MCP graph discovery, check coverage for evidence paths, and verify stale or missing results in source. Keep manual guidance outside generated markers.
 
 <details>

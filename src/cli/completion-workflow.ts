@@ -24,7 +24,7 @@ name: SpecGit Completion
 
 on:
   workflow_run:
-    workflows: [SpecGit Acceptance]
+    workflows: ${input.selfHosted ? '[CI, SpecGit Acceptance]' : '[SpecGit Acceptance]'}
     types: [completed]
 ${input.selfHosted ? `    # The source repository's version proposal is not a bound delivery.
     branches-ignore: [changeset-release/main]
@@ -44,8 +44,8 @@ permissions:
 
 jobs:
   identify:
-    if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'${input.selfHosted ? " && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.name == 'CI' && github.event.workflow_run.event == 'pull_request') || github.event.workflow_run.name == 'SpecGit Acceptance')" : ''}
+    runs-on: ${input.selfHosted ? '[self-hosted, Linux, X64]' : 'ubuntu-latest'}
     permissions:
       contents: read
       pull-requests: read
@@ -53,7 +53,11 @@ jobs:
       pr: \${{ steps.request.outputs.pr }}
       head: \${{ steps.request.outputs.head }}
     steps:
-      - name: Resolve one current request
+${input.selfHosted ? `      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
+` : ''}      - name: Resolve one current request
         id: request
         env:
           GH_TOKEN: \${{ github.token }}
@@ -89,7 +93,7 @@ jobs:
       issues: write
       actions: read
     if: github.ref == 'refs/heads/${input.defaultBranch.replace(/'/g, "''")}'
-    runs-on: ubuntu-latest
+    runs-on: ${input.selfHosted ? '[self-hosted, Linux, X64]' : 'ubuntu-latest'}
     timeout-minutes: 30
     concurrency:
       group: specgit-complete-\${{ github.repository }}-\${{ needs.identify.outputs.pr }}
@@ -172,27 +176,21 @@ ${input.selfHosted ? `      - name: Classify the request using approved source
         run: |
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
-          import { appendFileSync${input.selfHosted ? ', readFileSync' : ''} } from 'node:fs';
+          import { appendFileSync } from 'node:fs';
           import { pathToFileURL } from 'node:url';
-          const prefix = process.env.RUNNER_TEMP + '/specgit-runtime';
-          let directory = prefix + '/node_modules/specgit';
-${input.selfHosted ? `          const version = JSON.parse(readFileSync(process.env.GITHUB_WORKSPACE + '/specgit-runtime/package.json', 'utf8')).version;
-          if (typeof version !== 'string' || !/^\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?(?:\\+[\\w.-]+)?$/.test(version)) throw new Error('The approved source has no exact runtime version.');
-` : ''}          const packageSpec = ${input.selfHosted ? "'specgit@' + version" : JSON.stringify(`specgit@${input.version}`)};
-          try {
-            execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', packageSpec], { stdio: 'inherit' });
-            const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
-            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('Incompatible completion runtime.');
-          } catch (error) {
-${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') throw new Error('runtime_upgrade_required: publish the compatible runtime before completing metadata changes.');
-            directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime';
-            execFileSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
-            execFileSync('pnpm', ['run', 'build'], { cwd: directory, stdio: 'inherit' });
-            const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
-            if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('The approved source lacks completion protocol 2.');
-` : `            throw error;
-`}          }
-          appendFileSync(process.env.GITHUB_OUTPUT, 'directory=' + directory + '\\n');
+${input.selfHosted ? `          // The public v2 package has no engineering completion modules.
+          // Execute only the separate checkout pinned to the approved default-branch SHA.
+          const directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime';
+          execFileSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
+          execFileSync(process.execPath, ['build.js'], { cwd: directory, stdio: 'inherit' });
+` : `          const prefix = process.env.RUNNER_TEMP + '/specgit-runtime';
+          const directory = prefix + '/node_modules/specgit';
+          execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', ${JSON.stringify(`specgit@${input.version}`)}], { stdio: 'inherit' });
+`}          const runtime = await import(pathToFileURL(directory + '/dist/automation/remote-delivery.js').href);
+          if (runtime.REMOTE_DELIVERY_PROTOCOL !== 2) throw new Error('Incompatible completion runtime.');
+${input.selfHosted ? `          const entry = await import(pathToFileURL(directory + '/dist/automation/remote-entry.js').href);
+          if (entry.REMOTE_ENTRY_SINGLE_PASS !== true) throw new Error('The approved source lacks single-pass completion.');
+` : ''}          appendFileSync(process.env.GITHUB_OUTPUT, 'directory=' + directory + '\\n');
           NODE
       - name: Complete the bound delivery
         env:
@@ -201,7 +199,7 @@ ${input.selfHosted ? `            if (process.env.PRODUCT_CHANGE !== 'true') thr
           SPECGIT_PR: \${{ needs.identify.outputs.pr }}
           SPECGIT_HEAD: \${{ needs.identify.outputs.head }}
           SPECGIT_RUNTIME: \${{ steps.runtime.outputs.directory }}
-        run: node "$SPECGIT_RUNTIME/dist/automation/remote-entry.js"
+        run: node "$SPECGIT_RUNTIME/dist/automation/remote-entry.js"${input.selfHosted ? ' --single-pass' : ''}
 `;
 }
 
