@@ -6,5 +6,6 @@ context:
   branch: codex/549-release-test-inventory
 issues:
   - 549
+  - 551
 issueKinds: []
 pr: 550
