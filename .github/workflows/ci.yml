@@ -390,34 +390,40 @@ jobs:
         with:
           toolchain: 1.97.0
           components: clippy, rustfmt
-      - name: Rust formatting and lint
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
-      - name: Rust public interface and real subprocess regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
-        run: cargo test --locked --all-targets --features test-fixtures
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '20.19.0'
           package-manager-cache: false
-      - name: Build remapped release packages and install with scripts disabled
-        run: |
-          node --test distribution/*.test.mjs
-          node distribution/stage.mjs --target '${{ matrix.target }}' --output "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}"
-          node distribution/verify-install.mjs --stage "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Rust formatting and lint
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        run: node scripts/native-resume.mjs --phase lint --target '${{ matrix.target }}'
+      - name: Compile native test executables
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        run: node scripts/native-resume.mjs --phase compile-tests --target '${{ matrix.target }}'
+      - name: Rust public interface and real subprocess regressions
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        run: node scripts/native-resume.mjs --phase source-tests --target '${{ matrix.target }}'
+      - name: Native distribution regressions
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        run: node scripts/native-resume.mjs --phase distribution-tests --target '${{ matrix.target }}'
+      - name: Compile remapped release executable
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        run: node scripts/native-resume.mjs --phase compile-release --target '${{ matrix.target }}'
+      - name: Install packages with scripts disabled
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        run: node scripts/native-resume.mjs --phase install --target '${{ matrix.target }}'
       - name: Repeat public journeys through the installed npm entrypoint
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
-        run: node scripts/profile-tests.mjs --output "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}"
+        run: node scripts/native-resume.mjs --phase profile --target '${{ matrix.target }}'
       - name: Retain installed artifacts and complete test accounting
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-qualification-${{ matrix.target }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}/
-            ${{ runner.temp }}/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/*.tgz
-            ${{ runner.temp }}/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/installed.json
+            ${{ env.SPECGIT_NATIVE_PROFILE }}/
+            ${{ env.SPECGIT_NATIVE_INSTALLED }}/*.tgz
+            ${{ env.SPECGIT_NATIVE_INSTALLED }}/installed.json
           retention-days: 7
 
   required_verification:

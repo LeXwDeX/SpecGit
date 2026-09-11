@@ -138,3 +138,11 @@ exact reviewed preview digest. It changes owned local integration only; native
 workflow retirement needs a separately authorized repository change. Unknown
 writers, dynamic includes or unfinished native execution prevent activation.
 See the packaged reference for recovery and release boundaries.
+
+Native CI and formal release preparation retain verified compilation and phase
+outputs in the owned runner tool cache. Retrying a later failure reuses successful
+phases only when the exact source, platform, toolchain and output hashes still
+match. Tests execute the retained Cargo binaries directly; upload retries reuse
+the qualified packages. Missing or changed outputs invalidate their dependent
+phases. Failed phase logs remain available in the cache. Windows profiling keeps
+the same 60-minute budget as its workflow step.
