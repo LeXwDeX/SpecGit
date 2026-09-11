@@ -52,12 +52,12 @@ describe('native release build gates (#514)', () => {
   });
 
   it('installs real staged packages and accounts for all installed test executables', () => {
-    const steps = workflow.jobs.build.steps as Array<{ name?: string; run?: string; 'timeout-minutes'?: number }>;
+    const steps = workflow.jobs.build.steps as Array<{ name?: string; run?: string; 'timeout-minutes'?: number | string }>;
     const install = steps.findIndex(step => step.run?.includes('node distribution/verify-install.mjs'));
     const profile = steps.findIndex(step => step.run?.includes('node scripts/profile-tests.mjs'));
     expect(install).toBeGreaterThan(-1);
     expect(profile).toBeGreaterThan(install);
-    expect(steps[profile]['timeout-minutes']).toBe(15);
+    expect(steps[profile]['timeout-minutes']).toBe("${{ matrix.label == 'windows' && 60 || 15 }}");
     expect(steps[profile].run).toContain('/profile.json');
     expect(steps.some(step => step.run?.includes('node distribution/release-version.mjs'))).toBe(true);
   });
