@@ -28,6 +28,9 @@ const packed = staging.packages.map(directory => {
   assert.equal(packed.version, staging.version);
   assert(packed.files.every(file => /^(package\.json$|LICENSE$|README\.md$|THIRD_PARTY_LICENSES\.json$|bin\/|licenses\/|schemas\/[a-z-]+\.schema\.json$)/.test(file.path)), 'Only explicit distribution assets may enter a package.');
   assert(!packed.files.some(file => /\.(rs|pdb|dSYM|map)$/.test(file.path)), 'No source or debug sidecars.');
+  if (packed.name === 'specgit') {
+    assert.equal(packed.files.find(file => file.path === 'bin/specgit.cjs')?.mode, 0o644, 'Wrapper archive permissions must be identical across platforms before npm bin installation.');
+  }
   const tarball = path.join(output, packed.filename);
   assert.equal(packed.integrity, 'sha512-' + createHash('sha512').update(readFileSync(tarball)).digest('base64'));
   return { name: packed.name, integrity: packed.integrity, tarball };
