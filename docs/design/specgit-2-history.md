@@ -1,5 +1,12 @@
 # SpecGit 2.0 historical requirement dispositions
 
+> Frozen historical ledger. On 2026-09-10, all 296 rows were carried into the
+> [expanded 318-issue ledger](specgit-2-rust-history.md), with explicit new
+> dispositions under [the lightweight Rust design](specgit-2-rust-design.md).
+> The original requirements below remain traceable but do not reinstate retired
+> local acceptance/merge/promotion or custom closure machinery. The latest user
+> decision permits optional authorized Agent closure after a hook notification.
+
 Snapshot: 2026-09-09, 296 issues (290 closed, six open before new implementation
 issues #509–#514). All 296 complete issue bodies were reviewed. The paginated
 comment inventory contained 138 issue comments: 104 standard branch-association

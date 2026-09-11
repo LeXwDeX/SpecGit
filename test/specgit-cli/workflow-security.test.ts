@@ -3,9 +3,9 @@ import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 
-import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
+import { harnessWorkflowYaml, selfAcceptanceJobYaml } from '../../src/cli/harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 
 // #66: security invariants for the workflows that execute untrusted code.
@@ -115,7 +115,7 @@ const assertPersistCredentialsFalse = (text: string, label: string): void => {
 // pull requests against main, still supports manual dispatch, still
 // checks out the PR head branch (the execution-context gate reads live
 // git), and still runs the verdict with the run token.
-const assertAcceptanceGateSemantics = (text: string, label: string): void => {
+const assertAcceptanceGateSemantics = (text: string, label: string, sourceRepository = true): void => {
   const doc = parse(text) as Workflow;
   const on = doc.on ?? {};
   const pullRequest = on.pull_request as { branches?: string[]; types?: string[] } | undefined;
@@ -125,7 +125,7 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
   // #122: a draft PR fails the verdict (pr_draft), so the draft→ready
   // transition must re-verdict. `types` replaces the defaults, so the
   // default activity types must be listed alongside ready_for_review.
-  const requiredTypes = ['opened', 'synchronize', 'reopened', 'ready_for_review', 'edited'];
+  const requiredTypes = sourceRepository ? ['edited', 'closed'] : ['opened', 'synchronize', 'reopened', 'ready_for_review', 'edited'];
   if (
     !Array.isArray(pullRequest.types) ||
     !requiredTypes.every((t) => pullRequest.types!.includes(t))
@@ -159,38 +159,41 @@ const assertAcceptanceGateSemantics = (text: string, label: string): void => {
 
 const REQUIRED_MATRIX_LABELS = ['linux-bash', 'macos-bash', 'windows-pwsh'];
 
-// #105: the self-hosted shadow leg is RETIRED (W2 retirement line,
-// 2026-08-21). It was never green — every execution since introduction
-// crashed at job initialization with zero steps run (the runner
-// container cannot create its tool-cache directory; infrastructure-side,
-// not repo-fixable per the W1 diagnosis on the issue), and the repair
-// window closed without a runner-owner fix. Self-hosted coverage is not
-// part of the release matrix; re-introducing self-hosted execution
-// requires repairing the runner infrastructure first and updating this
-// invariant with a recorded rationale on the tracker.
-const assertNoSelfHostedExecution = (text: string, label: string): void => {
+// #528: the owner replaced the retired #105 arrangement with three native
+// runners and prohibits hosted execution across every repository workflow.
+const assertSelfHostedRouting = (text: string, label: string): void => {
   const jobs = (parse(text) as Workflow).jobs ?? {};
-  const matrixJob = jobs.test_matrix;
-  if (!matrixJob) {
-    throw new Error(`${label}: test_matrix job missing`);
-  }
-  const entries = matrixJob.strategy?.matrix?.include ?? [];
-  const labels = entries.map((entry) => String(entry.label));
-  for (const entry of entries) {
-    const os = Array.isArray(entry.os) ? entry.os : [entry.os];
-    if (os.includes('self-hosted') || String(entry.label) === 'self-hosted-linux') {
-      throw new Error(`${label}: self-hosted entry must not ride the required test_matrix (retired; #105)`);
-    }
-  }
-  for (const required of REQUIRED_MATRIX_LABELS) {
-    if (!labels.includes(required)) {
-      throw new Error(`${label}: required matrix label missing: ${required}`);
-    }
-  }
+  const linux = ['self-hosted', 'Linux', 'X64'];
+  const expected: Record<string, string[]> = {
+    'linux-bash': linux, 'macos-bash': ['self-hosted', 'macOS', 'ARM64'],
+    'windows-pwsh': ['self-hosted', 'Windows', 'X64'],
+    linux, macos: ['self-hosted', 'macOS', 'ARM64'], windows: ['self-hosted', 'Windows', 'X64'],
+  };
   for (const [jobId, job] of Object.entries(jobs)) {
-    const runsOn = Array.isArray(job['runs-on']) ? job['runs-on'] : [job['runs-on']];
-    if (runsOn.includes('self-hosted')) {
-      throw new Error(`${label}: job "${jobId}" runs on the retired self-hosted pool (#105)`);
+    if (jobId === 'test_selfhosted' || job['continue-on-error']) {
+      throw new Error(`${label}: optional shadow execution is forbidden`);
+    }
+    if (jobId === 'test_matrix' || jobId === 'rust' || (label === 'release-prepare.yml' && jobId === 'build')) {
+      const entries = job.strategy?.matrix?.include ?? [];
+      const required = jobId === 'test_matrix' ? REQUIRED_MATRIX_LABELS : ['linux', 'macos', 'windows'];
+      if (job['runs-on'] !== '${{ matrix.os }}' || entries.length !== required.length ||
+          required.some((name) => entries.filter((entry) => entry.label === name).length !== 1)) {
+        throw new Error(`${label}: native matrix must include each required platform exactly once`);
+      }
+      for (const entry of entries) {
+        if (JSON.stringify(entry.os) !== JSON.stringify(expected[String(entry.label)])) {
+          throw new Error(`${label}: native OS/architecture routing required`);
+        }
+      }
+    } else if (jobId === 'windows-diagnostics' || jobId === 'windows-observer-diagnostics') {
+      const input = jobId === 'windows-diagnostics' ? 'windows_diagnostics' : 'windows_observer_diagnostics';
+      if (JSON.stringify(job['runs-on']) !== JSON.stringify(expected.windows) ||
+          job.if !== `\${{ github.event_name == 'workflow_dispatch' && inputs.${input} }}` ||
+          JSON.stringify(job.permissions) !== JSON.stringify({ contents: 'read' })) {
+        throw new Error(`${label}: diagnostics require explicit manual dispatch and read-only native Windows routing`);
+      }
+    } else if (job['runs-on'] !== undefined && JSON.stringify(job['runs-on']) !== JSON.stringify(linux)) {
+      throw new Error(`${label}: static jobs require the self-hosted Linux runner`);
     }
   }
 };
@@ -280,29 +283,18 @@ const assertOidcTokenNeverLogged = (text: string, label: string): void => {
   }
 };
 
-// #446: checkout's persisted Authorization header wins over URL credentials.
-// Git and gh must select the same release actor before the version branch push.
+// The v2 Release Action builds only. Publishing uses the coordinator's native
+// session after independent qualification; no write actor belongs in this job.
 const assertReleaseActorCredentials = (text: string, label: string): void => {
   const doc = parse(text) as Workflow;
-  const steps = doc.jobs?.release?.steps ?? [];
-  const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-  const proposal = steps.find((step) => step.name === 'Open version pull request');
-  const selectedActor = '${{ secrets.RELEASE_BOT_TOKEN || github.token }}';
-  if (checkout?.with?.token !== selectedActor ||
-      proposal?.env?.GH_TOKEN !== selectedActor || proposal.env.GITHUB_TOKEN !== selectedActor) {
-    throw new Error(`${label}: checkout and version PR creation must use the selected release actor`);
-  }
-  if (checkout.with['persist-credentials'] === false || checkout.with['persist-credentials'] === 'false') {
-    throw new Error(`${label}: version and tag pushes need the selected checkout credentials`);
-  }
-  if (proposal.env.PUSH_TOKEN !== undefined ||
-      steps.some((step) => /git\s+remote\s+set-url\s+origin\s+[^\n]*https:\/\/[^\n]*@/.test(step.run ?? ''))) {
-    throw new Error(`${label}: release must not override credentials through an origin URL`);
-  }
-  const finalize = steps.find((step) => step.name === 'Tag and create GitHub Release');
-  if (finalize?.env?.GH_TOKEN !== '${{ github.token }}' ||
-      finalize.run !== 'node scripts/release-state.mjs --finalize') {
-    throw new Error(`${label}: tag finalization must retain its authenticated release entry point`);
+  for (const job of Object.values(doc.jobs ?? {})) {
+    const permissions = job.permissions ?? doc.permissions;
+    if (JSON.stringify(permissions) !== JSON.stringify({ contents: 'read' })) throw new Error(`${label}: release build must retain read-only permissions`);
+    for (const step of job.steps ?? []) {
+      if (step.uses?.startsWith('actions/checkout@') && step.with?.['persist-credentials'] !== false) throw new Error(`${label}: release build must not persist checkout credentials`);
+      if (step.with?.token !== undefined || step.env?.GH_TOKEN !== undefined || step.env?.NODE_AUTH_TOKEN !== undefined) throw new Error(`${label}: release build must not select a publishing actor`);
+      if (/npm publish|changeset publish|gh release|git push|git remote set-url|--npm|--github/.test(step.run ?? '')) throw new Error(`${label}: release build must not contain publishing or origin URL mutations`);
+    }
   }
 };
 
@@ -341,10 +333,16 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     for (const text of [acceptFile, acceptTemplate, externalTemplate]) {
       assertAcceptanceReadCapabilities(text);
       for (const scope of ['checks', 'statuses']) {
-        expect(() => assertAcceptanceReadCapabilities(text.replace(`  ${scope}: read\n`, ''))).toThrow(`${scope}: read`);
+        const mutant = parse(text) as Workflow;
+        delete (mutant.jobs!['specgit-acceptance'].permissions ?? mutant.permissions)![scope];
+        expect(() => assertAcceptanceReadCapabilities(stringify(mutant))).toThrow(`${scope}: read`);
       }
-      expect(() => assertAcceptanceReadCapabilities(text.replace('  specgit-acceptance:\n', '  specgit-acceptance:\n    permissions:\n      contents: read\n'))).toThrow(/issues: read/);
-      expect(() => assertAcceptanceReadCapabilities(text.replace('  checks: read', '  checks: write'))).toThrow(/checks: read/);
+      const override = parse(text) as Workflow;
+      override.jobs!['specgit-acceptance'].permissions = { contents: 'read' };
+      expect(() => assertAcceptanceReadCapabilities(stringify(override))).toThrow(/issues: read/);
+      const write = parse(text) as Workflow;
+      (write.jobs!['specgit-acceptance'].permissions ?? write.permissions)!.checks = 'write';
+      expect(() => assertAcceptanceReadCapabilities(stringify(write))).toThrow(/checks: read/);
     }
   });
 
@@ -364,7 +362,7 @@ describe('workflow security invariants (#66, #69, #71)', () => {
   it('acceptance gate semantics survive the hardening (triggers, head-ref checkout, finish, token)', () => {
     assertAcceptanceGateSemantics(acceptFile, 'specgit-accept.yml');
     assertAcceptanceGateSemantics(acceptTemplate, 'harnessWorkflowYaml()');
-    assertAcceptanceGateSemantics(externalTemplate, 'externalAcceptanceWorkflowYaml()');
+    assertAcceptanceGateSemantics(externalTemplate, 'externalAcceptanceWorkflowYaml()', false);
   });
 
   it.skipIf(process.platform === 'win32').each([
@@ -417,8 +415,22 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     }
   });
 
-  it('ci.yml executes no self-hosted legs (retired shadow job; #105)', () => {
-    assertNoSelfHostedExecution(ciFile, 'ci.yml');
+  it('every repository workflow uses only the owner-authorized native runners (#528)', () => {
+    const jobs = (parse(ciFile) as Workflow).jobs ?? {};
+    expect(jobs.test_matrix).toBeDefined();
+    expect(jobs.rust).toBeDefined();
+    for (const [name, text] of workflowFiles) assertSelfHostedRouting(text, name);
+  });
+
+  it('workflow security keeps source acceptance behind CI without occupying its only runner while waiting', () => {
+    const ci = parse(ciFile) as Workflow;
+    const generated = parse(selfAcceptanceJobYaml(true)) as Record<string, Job>;
+    expect(ci.jobs?.['specgit-acceptance']).toEqual(generated['specgit-acceptance']);
+    expect(generated['specgit-acceptance'].needs).toBe('required_verification');
+    expect(generated['specgit-acceptance'].if).toBe("always() && github.event_name == 'pull_request'");
+    expect(allSteps(ci).some((step) => step.name === 'Wait for sibling checks')).toBe(false);
+    expect(allSteps(parse(acceptFile) as Workflow).some((step) => step.name === 'Wait for sibling checks')).toBe(false);
+    expect((parse(acceptFile) as Workflow).on?.pull_request).toEqual({ branches: ['main'], types: ['edited', 'closed'] });
   });
 
   it('every job-level if uses only job-level-legal contexts (github, needs, vars, inputs)', () => {
@@ -435,7 +447,7 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     assertOidcTokenNeverLogged(rcVerifyFile, 'rc-verify.yml');
   });
 
-  it('release git pushes and PR creation use the selected actor while tag finalization stays authenticated', () => {
+  it('release builds have no publishing actor, persisted credential or mutation path', () => {
     assertReleaseActorCredentials(readWorkflow('release-prepare.yml'), 'release-prepare.yml');
   });
 });
@@ -446,26 +458,18 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   const ciFile = readWorkflow('ci.yml');
   const rcVerifyFile = readWorkflow('rc-verify.yml');
 
-  it('losing the selected checkout actor or its persisted credentials is detected', () => {
+  it('adding release write permissions or persisted checkout credentials is detected', () => {
     const releaseFile = readWorkflow('release-prepare.yml');
-    const tokenLine = '          token: ${{ secrets.RELEASE_BOT_TOKEN || github.token }}';
-    expect(releaseFile).toContain(tokenLine);
     assertReleaseActorCredentials(releaseFile, 'baseline');
-    const wrongActor = releaseFile.replace(tokenLine, '          token: ${{ github.token }}');
-    expect(() => assertReleaseActorCredentials(wrongActor, 'mutant')).toThrow(/selected release actor/);
-    const implicitActor = releaseFile.replace(`${tokenLine}\n`, '');
-    expect(() => assertReleaseActorCredentials(implicitActor, 'mutant')).toThrow(/selected release actor/);
-    const missingPushAuth = releaseFile.replace(tokenLine, `${tokenLine}\n          persist-credentials: false`);
-    expect(() => assertReleaseActorCredentials(missingPushAuth, 'mutant')).toThrow(/pushes need/);
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('contents: read', 'contents: write'), 'mutant')).toThrow(/read-only/);
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('persist-credentials: false', 'persist-credentials: true'), 'mutant')).toThrow(/persist checkout/);
   });
 
-  it('reintroducing release credentials in the origin URL is detected', () => {
+  it('reintroducing native publication into the build-only action is detected', () => {
     const releaseFile = readWorkflow('release-prepare.yml');
-    const push = '          git push --force origin changeset-release/main';
-    expect(releaseFile).toContain(push);
-    const mutant = releaseFile.replace(push,
-      '          git remote set-url origin "https://x-access-token:dummy@github.com/acme/repo.git"\n' + push);
-    expect(() => assertReleaseActorCredentials(mutant, 'mutant')).toThrow(/origin URL/);
+    const workflow = parse(releaseFile);
+    workflow.jobs.assemble.steps.push({ name: 'unsafe publication', run: 'gh release create v2.0.0' });
+    expect(() => assertReleaseActorCredentials(JSON.stringify(workflow), 'mutant')).toThrow(/publishing or origin URL mutations/);
   });
 
   it('re-adding cache to the gate is detected (file and generated template)', () => {
@@ -520,16 +524,17 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
   });
 
   it('dropping ready_for_review from the accept trigger (breaking draft re-verdict) is detected', () => {
-    const mutant = acceptFile.replace(
+    const external = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.15.1' });
+    const mutant = external.replace(
       /    types: \[[^\n]+\]\n/,
       ''
     );
-    expect(mutant).not.toBe(acceptFile);
-    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/ready_for_review/);
+    expect(mutant).not.toBe(external);
+    expect(() => assertAcceptanceGateSemantics(mutant, 'mutant', false)).toThrow(/ready_for_review/);
   });
 
   it('dropping edited from the acceptance trigger is detected', () => {
-    const mutant = acceptTemplate.replace(', edited,', ',');
+    const mutant = acceptTemplate.replace('[edited, closed]', '[closed]');
     expect(mutant).not.toBe(acceptTemplate);
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/edited/);
   });
@@ -543,7 +548,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(() => assertAcceptanceGateSemantics(mutant, 'mutant')).toThrow(/GH_TOKEN/);
   });
 
-  it('re-merging the self-hosted leg into the required matrix is detected', () => {
+  it('adding an extra shadow leg to the required matrix is detected', () => {
     const mutant = ciFile.replace(
       [
         '    strategy:',
@@ -562,7 +567,27 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertNoSelfHostedExecution(mutant, 'mutant')).toThrow(/must not ride/);
+    expect(() => assertSelfHostedRouting(mutant, 'mutant')).toThrow(/exactly once/);
+  });
+
+  it('hosted fallback and wrong native architecture are detected', () => {
+    const hosted = ciFile.replace('- os: [self-hosted, macOS, ARM64]', '- os: macos-latest');
+    expect(hosted).not.toBe(ciFile);
+    expect(() => assertSelfHostedRouting(hosted, 'mutant')).toThrow(/routing required/);
+    const wrongArch = ciFile.replace('- os: [self-hosted, Windows, X64]', '- os: [self-hosted, Windows, ARM64]');
+    expect(wrongArch).not.toBe(ciFile);
+    expect(() => assertSelfHostedRouting(wrongArch, 'mutant')).toThrow(/routing required/);
+    const hostedPackage = rcVerifyFile.replace('runs-on: [self-hosted, Linux, X64]', 'runs-on: ubuntu-latest');
+    expect(hostedPackage).not.toBe(rcVerifyFile);
+    expect(() => assertSelfHostedRouting(hostedPackage, 'mutant')).toThrow(/static jobs/);
+  });
+
+  it.each(['windows-diagnostics', 'windows-observer-diagnostics'])('%s cannot become automatic, hosted, or privileged', (jobId) => {
+    for (const change of [{ if: 'true' }, { 'runs-on': 'windows-latest' }, { permissions: { contents: 'write' } }]) {
+      const mutant = parse(rcVerifyFile) as Workflow;
+      Object.assign(mutant.jobs![jobId], change);
+      expect(() => assertSelfHostedRouting(stringify(mutant), 'mutant')).toThrow(/diagnostics require/);
+    }
   });
 
   it('re-adding the retired self-hosted shadow job is detected (#105)', () => {
@@ -580,7 +605,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
       ].join('\n'),
     );
     expect(mutant).not.toBe(ciFile);
-    expect(() => assertNoSelfHostedExecution(mutant, 'mutant')).toThrow(/retired self-hosted pool/);
+    expect(() => assertSelfHostedRouting(mutant, 'mutant')).toThrow(/optional shadow/);
   });
 
   it('the rejected 50d9ea9 shape — matrix context in a job-level if — is detected', () => {
@@ -591,14 +616,14 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(matrixMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(matrixMutant, 'mutant')).toThrow(/matrix/);
     const envMutant = ciFile.replace(
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: env.LINT_SKIP != '1'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: env.LINT_SKIP != '1'",
     );
     expect(envMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(envMutant, 'mutant')).toThrow(/env/);
     const stepsMutant = ciFile.replace(
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
-      "    name: Lint & Type Check\n    runs-on: ubuntu-latest\n    needs: changes\n    if: steps.setup.outputs.ok == 'true'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: needs.changes.outputs.build == 'true'",
+      "    name: Lint & Type Check\n    runs-on: [self-hosted, Linux, X64]\n    needs: changes\n    if: steps.setup.outputs.ok == 'true'",
     );
     expect(stepsMutant).not.toBe(ciFile);
     expect(() => assertJobIfUsesLegalContexts(stepsMutant, 'mutant')).toThrow(/steps/);

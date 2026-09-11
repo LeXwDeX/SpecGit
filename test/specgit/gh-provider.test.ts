@@ -592,11 +592,13 @@ describe('GhCliGitHubProvider', () => {
       id, name, check_suite: { id: suite }, app: { id: 15368, slug: 'github-actions' },
       status: 'completed', conclusion: 'success', started_at: '2026-09-04T16:19:04Z', ...extra,
     });
-    function generationProvider(checks: unknown[], workflows: unknown[], extra: Record<string, unknown> = {}) {
+    function generationProvider(checks: unknown[], workflows: unknown[], extra: Record<string, unknown> = {}, jobs: unknown[] = [], jobExtra: Record<string, unknown> = {}, observed?: unknown) {
       return setup([
         { match: 'pulls/436$', stdout: JSON.stringify({ number: 436, state: 'open', draft: false,
           head: { ref: 'fix/generation', sha: SHA }, base: { ref: 'main' } }) },
         { match: 'check-runs', stdout: JSON.stringify({ check_runs: checks }) },
+        { match: 'actions/runs/[0-9]+/attempts/', stdout: JSON.stringify({ total_count: jobs.length, jobs, ...jobExtra }) },
+        { match: 'actions/runs/[0-9]+$', stdout: JSON.stringify(observed ?? workflows[0]) },
         { match: 'actions/runs', stdout: JSON.stringify({ total_count: workflows.length, workflow_runs: workflows, ...extra }) },
         { match: '/statuses', stdout: '[]' },
       ]);
@@ -659,6 +661,76 @@ describe('GhCliGitHubProvider', () => {
       expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
         { id: 1, status: 'in_progress', conclusion: null },
       ] });
+    });
+
+    const attemptJob = (extra: Record<string, unknown> = {}) => ({
+      id: 101, run_id: 4, run_attempt: 2, head_sha: SHA, name: 'Required verification',
+      status: 'completed', conclusion: 'success',
+      check_run_url: 'https://api.github.com/repos/LeXwDeX/SpecGit/check-runs/1', ...extra,
+    });
+    const pendingRerun = () => workflow(4, 41, { run_attempt: 2, status: 'in_progress', conclusion: null });
+
+    it('retains terminal evidence proven in the current pending attempt', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)], [pendingRerun()], {}, [attemptJob()]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
+        { id: 1, status: 'completed', conclusion: 'success' },
+      ] });
+      const allCi = await provider.getPrChecks(REPO, 436);
+      expect(allCi.ok && allCi.value.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 4, status: 'in_progress', conclusion: null }),
+      ]));
+    });
+
+    it('accepts GitHub copies of retained successful jobs without requiring a new start timestamp', async () => {
+      // Observed in run 34319156020 attempt 3: copied check IDs belong to the
+      // current attempt but keep timestamps from before that attempt started.
+      const retained = check(102366714239, 'Required verification', 41, { started_at: '2026-09-09T06:32:04Z' });
+      const current = workflow(4, 41, { run_attempt: 3, status: 'in_progress', conclusion: null,
+        run_started_at: '2026-09-09T06:48:53Z' });
+      const job = attemptJob({ id: 102366714239, run_attempt: 3, started_at: '2026-09-09T06:32:04Z',
+        check_run_url: 'https://api.github.com/repos/LeXwDeX/SpecGit/check-runs/102366714239' });
+      const { provider } = generationProvider([retained], [current], {}, [job]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
+        { id: 102366714239, status: 'completed', conclusion: 'success' },
+      ] });
+      const allCi = await provider.getPrChecks(REPO, 436);
+      expect(allCi.ok && allCi.value.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 4, status: 'in_progress', conclusion: null }),
+      ]));
+    });
+
+    it.each([
+      { run_attempt: 1 }, { name: 'Other job' }, { status: 'in_progress', conclusion: null }, { conclusion: 'failure' },
+    ])('masks inherited or inconsistent terminal jobs: %j', async (extra) => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)], [pendingRerun()], {}, [attemptJob(extra)]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: true, value: [
+        { id: 1, status: 'in_progress', conclusion: null },
+      ] });
+    });
+
+    it.each([
+      { run_id: 5 }, { run_attempt: 3 }, { run_attempt: undefined }, { head_sha: 'b'.repeat(40) },
+      { check_run_url: 'https://api.github.com/repos/other/repo/check-runs/1' },
+      { check_run_url: 'https://api.github.com/repos/LeXwDeX/SpecGit/check-runs/01' }, { id: 0 },
+    ])('rejects malformed attempt-job identity: %j', async (extra) => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)], [pendingRerun()], {}, [attemptJob(extra)]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false, code: 'gh_transport' });
+    });
+
+    it.each([{ total_count: 2 }, { total_count: undefined }, { total_count: 1001 }, { jobs: null }])('rejects incomplete attempt-job evidence: %j', async (extra) => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)], [pendingRerun()], {}, [attemptJob()], extra);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false });
+    });
+
+    it('rejects a repeated job identity', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)], [pendingRerun()], {}, [attemptJob(), attemptJob()]);
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false });
+    });
+
+    it('rejects an attempt that changes during job observation', async () => {
+      const { provider } = generationProvider([check(1, 'Required verification', 41)], [pendingRerun()], {}, [attemptJob()], {},
+        workflow(4, 41, { run_attempt: 3, status: 'in_progress', conclusion: null }));
+      expect(await provider.getCheckRuns(REPO, SHA)).toMatchObject({ ok: false, code: 'gh_transport' });
     });
 
     it('retains previously successful jobs after a partial workflow rerun settles', async () => {

@@ -39,7 +39,7 @@ impl Probe {
             evidence,
         }
     }
-    fn failed(operation: &str, diagnostic: Diagnostic) -> Self {
+    pub(crate) fn failed(operation: &str, diagnostic: Diagnostic) -> Self {
         let status = match diagnostic.code {
             Code::PermissionDenied => Capability::Forbidden,
             Code::MissingExecutable | Code::UnsupportedOperation => Capability::Unavailable,
@@ -144,6 +144,70 @@ impl ForgeRead {
         }
         serde_json::from_slice(&output.stdout).map_err(|_| Diagnostic::new(Code::MalformedResponse, operation, "The native API returned malformed JSON.", "Inspect the selected CLI/API version; partial or malformed evidence cannot be accepted."))
     }
+    /// GitHub queries use POST on the wire, but this method accepts no operation,
+    /// query document or endpoint from its caller. It can only read closing refs.
+    pub(crate) async fn github_closing_issues_page(
+        &self,
+        owner: &str,
+        name: &str,
+        number: u64,
+        after: Option<&str>,
+    ) -> Result<Value, Diagnostic> {
+        if self.provider != Provider::Github {
+            return Err(Diagnostic::input(
+                "GitHub closing-reference queries require a GitHub reader.",
+            ));
+        }
+        if owner.is_empty()
+            || name.is_empty()
+            || owner.len() > 255
+            || name.len() > 255
+            || owner.chars().chain(name.chars()).any(char::is_control)
+            || number == 0
+            || number > i32::MAX as u64
+            || after.is_some_and(|value| value.len() > 1024 || value.chars().any(char::is_control))
+        {
+            return Err(Diagnostic::input(
+                "Invalid bounded closing-reference query variables.",
+            ));
+        }
+        let mut request = Request::new(&self.executable, &self.cwd, "github_closing_issues_read")
+            .args([
+                "api",
+                "--hostname",
+                &self.host,
+                "--method",
+                "POST",
+                "--input",
+                "-",
+                "graphql",
+            ]);
+        request.input = serde_json::to_vec(&serde_json::json!({
+            "query": crate::forge::github::CLOSING_ISSUES_QUERY,
+            "variables": {"owner":owner,"name":name,"number":number,"after":after},
+        }))
+        .map_err(|_| malformed())?;
+        let output = self.process.run(request).await?;
+        let value = crate::input::json(&output.stdout, self.process.limits.output_bytes, 32);
+        if output.code != 0 {
+            // gh can emit typed GraphQL errors and partial data with nonzero exit.
+            // Preserve those errors for protocol decoding, never the partial IDs.
+            if let Ok(value) = value
+                && value
+                    .get("errors")
+                    .and_then(Value::as_array)
+                    .is_some_and(|errors| !errors.is_empty())
+            {
+                return Ok(value);
+            }
+            return Err(classify_failure(
+                "github_closing_issues_read",
+                &output.stderr,
+            ));
+        }
+        value
+    }
+
     pub async fn list(
         &self,
         endpoint: &str,
@@ -253,14 +317,7 @@ fn identity_error() -> Diagnostic {
         "Check for transfer/rename or wrong host routing before adopting the returned project.",
     )
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectFacts {
-    pub id: u64,
-    pub repository: Repository,
-    pub default_branch: String,
-    pub native_source_cleanup: Option<bool>,
-    pub native_issue_closing: Option<bool>,
-}
+pub use crate::delivery_model::ProjectFacts;
 
 pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<Probe> {
     let mut results = vec![];

@@ -1,0 +1,51 @@
+# Managed by SpecGit: isolated GitLab routing.
+include:
+  - local: /.gitlab/specgit-business.yml
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "pipeline" && $SPECGIT_SOURCE_PROJECT == $CI_PROJECT_ID && $SPECGIT_SOURCE_PIPELINE && (($SPECGIT_PR && $SPECGIT_HEAD) || ($SPECGIT_MERGE_SHA && $SPECGIT_TARGET_BRANCH))'
+        when: never
+      - when: always
+  - local: /.gitlab/specgit-complete.yml
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "pipeline" && $SPECGIT_SOURCE_PROJECT == $CI_PROJECT_ID && $SPECGIT_SOURCE_PIPELINE && (($SPECGIT_PR && $SPECGIT_HEAD) || ($SPECGIT_MERGE_SHA && $SPECGIT_TARGET_BRANCH))'
+
+specgit-request-completion:
+  stage: .post
+  inherit:
+    default: false
+    variables: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - when: never
+  variables:
+    SPECGIT_PR: '$CI_MERGE_REQUEST_IID'
+    SPECGIT_HEAD: '$CI_COMMIT_SHA'
+    SPECGIT_SOURCE_PROJECT: '$CI_PROJECT_ID'
+    SPECGIT_SOURCE_PIPELINE: '$CI_PIPELINE_ID'
+  trigger:
+    project: '$CI_PROJECT_PATH'
+    branch: "main"
+    forward:
+      yaml_variables: true
+      pipeline_variables: false
+
+specgit-request-closure:
+  stage: .post
+  inherit:
+    default: false
+    variables: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+    - when: never
+  variables:
+    SPECGIT_MERGE_SHA: '$CI_COMMIT_SHA'
+    SPECGIT_TARGET_BRANCH: '$CI_COMMIT_BRANCH'
+    SPECGIT_SOURCE_PROJECT: '$CI_PROJECT_ID'
+    SPECGIT_SOURCE_PIPELINE: '$CI_PIPELINE_ID'
+  trigger:
+    project: '$CI_PROJECT_PATH'
+    branch: "main"
+    forward:
+      yaml_variables: true
+      pipeline_variables: false

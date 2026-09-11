@@ -1,0 +1,215 @@
+//! Delivery operations dispatch to concrete native protocols; observers receive only ForgeRead.
+pub use crate::delivery_model::{Issue, PullRequest};
+use crate::{
+    diagnostic::Diagnostic,
+    forge::{github, gitlab, protocol::WriteTransport},
+    probe::ForgeRead,
+    process::Process,
+    project::{Provider, Repository},
+};
+use serde_json::Value;
+use std::path::Path;
+pub(crate) fn written_body_matches(provider: Provider, submitted: &str, observed: &str) -> bool {
+    match provider {
+        Provider::Github => submitted == observed,
+        Provider::Gitlab => gitlab::written_body_matches(submitted, observed),
+    }
+}
+pub fn prefix(repo: &Repository) -> String {
+    match repo.provider {
+        Provider::Github => github::prefix(repo),
+        Provider::Gitlab => gitlab::prefix(repo),
+    }
+}
+pub async fn issue(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<Issue, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::issue(reader, repo, project_id, number).await,
+        Provider::Gitlab => gitlab::issue(reader, repo, project_id, number).await,
+    }
+}
+pub async fn candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    query: &str,
+) -> Result<Vec<Issue>, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::candidates(reader, repo, project_id, query).await,
+        Provider::Gitlab => gitlab::candidates(reader, repo, project_id, query).await,
+    }
+}
+pub async fn label_pool(reader: &ForgeRead, repo: &Repository) -> Result<Vec<String>, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::label_pool(reader, repo).await,
+        Provider::Gitlab => gitlab::label_pool(reader, repo).await,
+    }
+}
+pub async fn pull_request(
+    reader: &ForgeRead,
+    repo: &Repository,
+    number: u64,
+) -> Result<PullRequest, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::pull_request(reader, repo, number).await,
+        Provider::Gitlab => gitlab::pull_request(reader, repo, number).await,
+    }
+}
+pub fn request_value(v: &Value, repo: &Repository, number: u64) -> Result<PullRequest, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::request_value(v, number),
+        Provider::Gitlab => gitlab::request_value(v, number),
+    }
+}
+pub async fn request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<Vec<PullRequest>, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::request_candidates(reader, repo, source).await,
+        Provider::Gitlab => gitlab::request_candidates(reader, repo, source).await,
+    }
+}
+pub async fn branch_head(
+    reader: &ForgeRead,
+    repo: &Repository,
+    branch: &str,
+) -> Result<String, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::branch_head(reader, repo, branch).await,
+        Provider::Gitlab => gitlab::branch_head(reader, repo, branch).await,
+    }
+}
+pub async fn has_changes(
+    reader: &ForgeRead,
+    repo: &Repository,
+    base: &str,
+    head: &str,
+) -> Result<bool, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::has_changes(reader, repo, base, head).await,
+        Provider::Gitlab => gitlab::has_changes(reader, repo, base, head).await,
+    }
+}
+/// Request writes are available only to explicit PR/MR operations.
+pub struct RequestWrite {
+    transport: WriteTransport,
+    provider: Provider,
+}
+impl RequestWrite {
+    pub fn new(process: Process, cwd: &Path, repo: &Repository) -> Result<Self, Diagnostic> {
+        Ok(Self {
+            transport: WriteTransport::new(process, cwd, repo)?,
+            provider: repo.provider,
+        })
+    }
+    pub async fn update_request_body(&self, number: u64, body: &str) -> Result<(), Diagnostic> {
+        match self.provider {
+            Provider::Github => github::update_request_body(&self.transport, number, body).await,
+            Provider::Gitlab => gitlab::update_request_body(&self.transport, number, body).await,
+        }
+    }
+    pub async fn add_request_labels(
+        &self,
+        number: u64,
+        labels: &[String],
+    ) -> Result<(), Diagnostic> {
+        match self.provider {
+            Provider::Github => github::add_request_labels(&self.transport, number, labels).await,
+            Provider::Gitlab => gitlab::add_request_labels(&self.transport, number, labels).await,
+        }
+    }
+    pub async fn ready(&self, number: u64) -> Result<(), Diagnostic> {
+        match self.provider {
+            Provider::Github => github::ready(&self.transport, number).await,
+            Provider::Gitlab => gitlab::ready(&self.transport, number).await,
+        }
+    }
+    pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
+        create_label(&self.transport, self.provider, tag).await
+    }
+    pub async fn create_request(
+        &self,
+        source: &str,
+        target: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<u64, Diagnostic> {
+        match self.provider {
+            Provider::Github => {
+                github::create_request(&self.transport, source, target, title, body).await
+            }
+            Provider::Gitlab => {
+                gitlab::create_request(&self.transport, source, target, title, body).await
+            }
+        }
+    }
+}
+
+/// Issue writes cannot create, ready or update a request.
+pub struct IssueWrite {
+    transport: WriteTransport,
+    provider: Provider,
+}
+impl IssueWrite {
+    pub fn new(process: Process, cwd: &Path, repo: &Repository) -> Result<Self, Diagnostic> {
+        Ok(Self {
+            transport: WriteTransport::new(process, cwd, repo)?,
+            provider: repo.provider,
+        })
+    }
+    pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
+        create_label(&self.transport, self.provider, tag).await
+    }
+    pub async fn create_issue(
+        &self,
+        title: &str,
+        body: &str,
+        labels: &[String],
+    ) -> Result<u64, Diagnostic> {
+        match self.provider {
+            Provider::Github => github::create_issue(&self.transport, title, body, labels).await,
+            Provider::Gitlab => gitlab::create_issue(&self.transport, title, body, labels).await,
+        }
+    }
+}
+async fn create_label(
+    transport: &WriteTransport,
+    provider: Provider,
+    tag: &crate::config::Tag,
+) -> Result<(), Diagnostic> {
+    match provider {
+        Provider::Github => github::create_label(transport, tag).await,
+        Provider::Gitlab => gitlab::create_label(transport, tag).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Provider, written_body_matches};
+
+    #[test]
+    fn only_gitlab_write_normalization_is_allowed() {
+        for (submitted, observed, matches) in [
+            ("first\r\nsecond\r\n", "first\nsecond", true),
+            (" \t\r\nbody \t\r\n", " \t\nbody", true),
+            ("  body\n", "body", false),
+            ("\u{a0}body\u{a0}", "body", false),
+            ("first\nsecond\n", "firstsecond", false),
+            ("first\nsecond\n", "first\nchanged", false),
+        ] {
+            assert_eq!(
+                written_body_matches(Provider::Gitlab, submitted, observed),
+                matches
+            );
+            assert!(!written_body_matches(Provider::Github, submitted, observed));
+            assert!(written_body_matches(Provider::Github, submitted, submitted));
+            assert!(written_body_matches(Provider::Gitlab, submitted, submitted));
+        }
+    }
+}

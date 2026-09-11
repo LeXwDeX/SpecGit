@@ -11,6 +11,24 @@ import { parseRepoRef } from '../../src/gitfacts/origin.js';
 import { makeCtx, makeGitFacts } from './helpers.js';
 import { commitFile, git, initRepo, makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
+describe('source completion scheduling', () => {
+  it('only admits PR CI and explicit acceptance signals before assigning a runner', () => {
+    const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.15.1', selfHosted: true }));
+    const allows = new Function('github', `return (${workflow.jobs.identify.if});`);
+    const signal = (name: string, event: string) => ({ ref: 'refs/heads/main', event_name: 'workflow_run', event: { workflow_run: { name, event } } });
+    expect(allows(signal('CI', 'pull_request'))).toBe(true);
+    for (const event of ['workflow_dispatch', 'push', 'merge_group']) expect(allows(signal('CI', event))).toBe(false);
+    expect(allows(signal('SpecGit Acceptance', 'pull_request'))).toBe(true);
+    expect(allows(signal('Unrelated', 'pull_request'))).toBe(false);
+    expect(allows({ ref: 'refs/heads/other', event_name: 'workflow_dispatch' })).toBe(false);
+    expect(allows({ ref: 'refs/heads/main', event_name: 'workflow_dispatch' })).toBe(true);
+    expect(workflow.jobs.complete.needs).toBe('identify');
+    const external = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.15.1', selfHosted: false }));
+    expect(external.jobs.complete.permissions.actions).toBe('read');
+    expect(external.jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').run).not.toContain('--single-pass');
+  });
+});
+
 describe('completion scope preserves the original request', () => {
   let root: string;
   beforeEach(() => { root = makeTempDir('specgit-completion-scope-'); });
@@ -126,18 +144,17 @@ describe('completion runtime dependency installation', () => {
   beforeEach(() => { root = makeTempDir('specgit-runtime-install-'); });
   afterEach(() => { rmDir(root); });
 
-  it.each([
-    ['false', true, 0, []],
-    ['true', true, 0, []],
-    ['false', false, 1, []],
-    ['true', false, 0, ['install', 'run']],
-  ])('selects product=%s compatible=%s without unnecessary source installation', (product, compatible, status, expected) => {
+  function selectRuntime(options: {
+    selfHosted: boolean; product: boolean; failure?: 'install' | 'build';
+    protocol?: number; singlePass?: boolean | 'missing';
+  }) {
     const source = path.join(root, 'specgit-runtime');
     fs.mkdirSync(source);
-    fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ version: '1.14.0', type: 'module' }));
-    const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.14.0', selfHosted: true }));
+    fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ version: '2.0.0', type: 'module', private: true }));
+    const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.15.1', selfHosted: options.selfHosted }));
     const step = workflow.jobs.complete.steps.find((item: { id?: string }) => item.id === 'runtime');
     const commands = path.join(root, 'commands.jsonl');
+    const output = path.join(root, 'output');
     const script = step.run.replace(/^node --input-type=module <<'NODE'\n/, '').replace(/\nNODE\s*$/, '')
       .replace("import { execFileSync } from 'node:child_process';", `
         import * as fixtureFs from 'node:fs';
@@ -145,27 +162,67 @@ describe('completion runtime dependency installation', () => {
         const writeRuntime = (directory) => {
           fixtureFs.mkdirSync(fixturePath.join(directory, 'dist/automation'), { recursive: true });
           fixtureFs.writeFileSync(fixturePath.join(directory, 'package.json'), '{"type":"module"}');
-          fixtureFs.writeFileSync(fixturePath.join(directory, 'dist/automation/remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 2;');
+          fixtureFs.writeFileSync(fixturePath.join(directory, 'dist/automation/remote-delivery.js'),
+            'export const REMOTE_DELIVERY_PROTOCOL = ' + process.env.FIXTURE_PROTOCOL + ';');
+          if (process.env.FIXTURE_SINGLE_PASS !== 'missing') fixtureFs.writeFileSync(
+            fixturePath.join(directory, 'dist/automation/remote-entry.js'),
+            'export const REMOTE_ENTRY_SINGLE_PASS = ' + process.env.FIXTURE_SINGLE_PASS + ';');
         };
         const execFileSync = (command, args, options) => {
           fixtureFs.appendFileSync(process.env.FIXTURE_COMMANDS, JSON.stringify({ command, args, cwd: options.cwd }) + '\\n');
-          if (command === 'npm') {
-            if (process.env.FIXTURE_COMPATIBLE !== 'true') throw new Error('Unavailable runtime');
-            writeRuntime(fixturePath.join(args[args.indexOf('--prefix') + 1], 'node_modules/specgit'));
-          } else if (command === 'pnpm' && args[0] === 'run') writeRuntime(options.cwd);
-          else if (command !== 'pnpm' || args[0] !== 'install') throw new Error('Unexpected command');
+          if (command === 'npm' || (command === 'pnpm' && args[0] === 'install')) {
+            if (process.env.FIXTURE_FAILURE === 'install') throw new Error('Fixture install failed');
+            if (command === 'npm') writeRuntime(fixturePath.join(args[args.indexOf('--prefix') + 1], 'node_modules/specgit'));
+          } else if (command === process.execPath && args.length === 1 && args[0] === 'build.js') {
+            if (process.env.FIXTURE_FAILURE === 'build') throw new Error('Fixture build failed');
+            writeRuntime(options.cwd);
+          } else throw new Error('Unexpected command');
         };
       `);
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: {
-      ...process.env, PRODUCT_CHANGE: product, FIXTURE_COMPATIBLE: String(compatible), FIXTURE_COMMANDS: commands,
-      GITHUB_WORKSPACE: root, RUNNER_TEMP: path.join(root, 'runner'), GITHUB_OUTPUT: path.join(root, 'output'),
+      ...process.env, PRODUCT_CHANGE: String(options.product), FIXTURE_FAILURE: options.failure ?? '',
+      FIXTURE_PROTOCOL: String(options.protocol ?? 2), FIXTURE_SINGLE_PASS: String(options.singlePass ?? true), FIXTURE_COMMANDS: commands,
+      GITHUB_WORKSPACE: root, RUNNER_TEMP: path.join(root, 'runner'), GITHUB_OUTPUT: output,
     } });
-    expect(result.status, result.stderr).toBe(status);
     const calls = fs.readFileSync(commands, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { command: string; args: string[]; cwd?: string });
-    const pnpm = calls.filter((call) => call.command === 'pnpm');
-    expect(pnpm.map((call) => call.args[0])).toEqual(expected);
-    for (const call of pnpm) expect(path.normalize(call.cwd ?? '')).toBe(source);
-    if (pnpm.length) expect(pnpm[0].args).toEqual(['install', '--frozen-lockfile', '--ignore-scripts']);
+    return { ...result, source, calls, output: fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '' };
+  }
+
+  describe.each([false, true])('product change = %s', (product) => {
+    it.each([
+      ['compatible registry runtime', undefined, 2, true],
+      ['registry unavailable', 'install', 2, false],
+      ['incompatible registry protocol', undefined, 1, false],
+    ] as const)('legacy adopter: %s never compiles adopter source', (_name, failure, protocol, success) => {
+      const result = selectRuntime({ selfHosted: false, product, failure, protocol, singlePass: 'missing' });
+      expect(result.status, result.stderr).toBe(success ? 0 : 1);
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0]).toEqual({ command: 'npm', args: [
+        'install', '--prefix', path.join(root, 'runner') + '/specgit-runtime', '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', 'specgit@1.15.1',
+      ] });
+      if (success) expect(result.output).toBe('directory=' + path.join(root, 'runner') + '/specgit-runtime/node_modules/specgit\n');
+      else expect(result.output).toBe('');
+    });
+
+    it.each([
+      ['compatible source', undefined, 2, true, true],
+      ['dependency install failure', 'install', 2, true, false],
+      ['source build failure', 'build', 2, true, false],
+      ['incompatible source protocol', undefined, 1, true, false],
+      ['missing single-pass support', undefined, 2, false, false],
+      ['missing entry module', undefined, 2, 'missing', false],
+    ] as const)('selfHosted: %s cannot fall back to a public package', (_name, failure, protocol, singlePass, success) => {
+      const result = selectRuntime({ selfHosted: true, product, failure, protocol, singlePass });
+      expect(result.status, result.stderr).toBe(success ? 0 : 1);
+      expect(result.calls[0].command).toBe('pnpm');
+      expect(result.calls[0].args).toEqual(['install', '--frozen-lockfile', '--ignore-scripts']);
+      expect(result.calls).toHaveLength(failure === 'install' ? 1 : 2);
+      for (const call of result.calls) expect(path.normalize(call.cwd ?? '')).toBe(result.source);
+      if (failure !== 'install') expect(result.calls[1]).toMatchObject({ command: process.execPath, args: ['build.js'] });
+      expect(result.calls.some((call) => call.command === 'npm')).toBe(false);
+      if (success) expect(result.output).toBe('directory=' + root + '/specgit-runtime\n');
+      else expect(result.output).toBe('');
+    });
   });
 });
 

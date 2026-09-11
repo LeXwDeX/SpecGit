@@ -1105,9 +1105,9 @@ describe('specgit init', () => {
     expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
   });
 
-  it('self-template wait step diagnoses an absent policy instead of crashing (#297)', () => {
-    expect(harnessWorkflowYaml()).toContain('policy.yaml is absent at this head');
-    expect(harnessWorkflowYaml()).toContain('existsSync');
+  it('self-template resolves approved policy without occupying the runner to wait', () => {
+    expect(harnessWorkflowYaml()).toContain('Prepare approved policy for acceptance');
+    expect(harnessWorkflowYaml()).not.toContain('Wait for sibling checks');
   });
 
   it('does not overwrite an existing policy', async () => {
@@ -1338,7 +1338,7 @@ describe('specgit init harness generation', () => {
   });
 
   it('wait-for-siblings script retries transient API failures', async () => {
-    const workflow = harnessWorkflowYaml();
+    const workflow = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.15.1' });
     // Retry markers: bounded attempts with exponential backoff on 5xx/429.
     expect(workflow).toContain('MAX_ATTEMPTS');
     expect(workflow).toContain('backoff');
@@ -1346,11 +1346,10 @@ describe('specgit init harness generation', () => {
     expect(workflow).not.toContain('retryAfter');
     // The dispatch trigger and the SHA fallback are part of the synced evolution.
     expect(workflow).toContain('workflow_dispatch');
-    expect(workflow).toContain('github.event.pull_request.head.sha || github.sha');
   });
 
   it('wait-for-siblings script pages the check-runs listing to exhaustion (#300)', async () => {
-    const workflow = harnessWorkflowYaml();
+    const workflow = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.15.1' });
     expect(workflow).toContain('fetchAllCheckRuns');
     expect(workflow).toContain('page += 1');
     expect(workflow).toContain('PER_PAGE');
@@ -1360,7 +1359,7 @@ describe('specgit init harness generation', () => {
   });
 
   it('wait-for-siblings script anchors freshness at the ready-for-review transition (#315)', async () => {
-    const workflow = harnessWorkflowYaml();
+    const workflow = externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.15.1' });
     // The anchor rides the issue-timeline endpoint through the same REST
     // seam; the PR number arrives via workflow context and stays empty on
     // non-PR events (no anchor, no freshness bound).

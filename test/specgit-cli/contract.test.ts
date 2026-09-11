@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { runCliWith } from '../../src/cli/index.js';
-import { sanitize } from '../../src/cli/output.js';
+import { finishOutcome, sanitize } from '../../src/cli/output.js';
 import { EXIT_REJECTED, EXIT_SUCCESS, EXIT_UNKNOWN, EXIT_USAGE } from '../../src/cli/exit-codes.js';
 import { makeCtx, makeEvaluate, makeVerdict, parseStdoutJson, sampleBinding, samplePolicy, stdoutText } from './helpers.js';
 describe('CLI contract: exit codes', () => {
@@ -106,6 +106,16 @@ describe('CLI contract: JSON envelope', () => {
 });
 
 describe('CLI contract: sanitization', () => {
+  it('guards every human outcome line while preserving Unicode and indentation', () => {
+    const lines: string[] = [];
+    finishOutcome({ stdout: (line) => lines.push(line), stderr: () => {} }, 'status', 'test', {
+      exit: EXIT_SUCCESS,
+      human: ['  中文 café', '\u001b[2Jhidden\u001b]52;c;payload\u0007\r\nforged\u009b2J'],
+    }, false);
+    expect(lines).toEqual(['  中文 café', 'hidden]52;c;payload\\u000d\\u000aforged\\u009b2J']);
+    expect(lines.join('')).not.toMatch(/[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/u);
+  });
+
   it('strips ANSI escapes and control characters', () => {
     const dirty = '\u001b[31mred\u0007bell\u0000null ok';
     expect(sanitize(dirty)).toBe('redbellnull ok');
@@ -386,8 +396,8 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)', 
     expect(reference).toContain('issue_out_of_order');
   });
 
-  it('README.md and AGENTS.md replace the "two committed files" claim with the three-tier taxonomy', () => {
-    for (const doc of ['README.md', 'AGENTS.md']) {
+  it('the retained v1 README and engineering AGENTS describe the three-tier taxonomy', () => {
+    for (const doc of ['docs/legacy/v1-readme.md', 'AGENTS.md']) {
       const text = readRepoFile(doc);
       expect(text, `${doc} must not claim "two committed files"`).not.toMatch(/two committed files/);
       expect(text, `${doc} must state the three tiers`).toMatch(/three\s+tiers/i);
@@ -396,11 +406,11 @@ describe('CLI contract: cross-slice documentation locks (reserved write sets)', 
     }
   });
 
-  it('README.md documents the status pre-binding exception like docs/cli.md (#217)', () => {
+  it('the retained v1 README documents the status pre-binding exception like docs/cli.md (#217)', () => {
     const cli = readRepoFile('docs', 'cli.md');
     // The normative #175 statement the README must stay consistent with.
     expect(cli).toContain('exit `0` with state `unbound` (#175)');
-    const readme = readRepoFile('README.md');
+    const readme = readRepoFile('docs', 'legacy', 'v1-readme.md');
     expect(readme, 'README must name the status exception').toMatch(/specgit status/);
     expect(readme, 'README must state the exit-0 unbound exception').toMatch(
       /missing record.*exit\s*`?0`?[^.]*unbound|exit\s*`?0`?[^.]*unbound[^.]*missing record/is

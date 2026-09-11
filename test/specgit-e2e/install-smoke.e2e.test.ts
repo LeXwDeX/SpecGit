@@ -35,7 +35,9 @@ import {
   runInstalledSpecgitFrom,
 } from './external-repo-fixture.js';
 
-const cleanup: string[] = [];
+// One isolated cache per file; every scenario still installs into a fresh prefix.
+const cache = externalNpmCache('specgit-smoke-cache-');
+const cleanup: string[] = [cache];
 
 afterAll(() => {
   for (const dir of cleanup) rmDir(dir);
@@ -99,9 +101,8 @@ describe('install smoke (#67): npx resolves the local install', () => {
     { timeout: 240_000 },
     async () => {
       const { tarballPath, version } = await packSpecgit();
-      const cache = externalNpmCache('specgit-smoke-cache-');
       const fixture = makeExternalRepo('specgit-smoke-npx-', { ci: 'none' });
-      cleanup.push(fixture.dir, cache);
+      cleanup.push(fixture.dir);
       await npmInstallPacked(tarballPath, fixture.dir, cache);
 
       const res = spawnSync('npx --no-install specgit --version', {
@@ -122,9 +123,8 @@ describe('install smoke (#67): global install', () => {
     { timeout: 240_000 },
     async () => {
       const { tarballPath, version } = await packSpecgit();
-      const cache = externalNpmCache('specgit-smoke-cache-');
       const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-smoke-global-'));
-      cleanup.push(prefix, cache);
+      cleanup.push(prefix);
       await npmInstallGlobal(tarballPath, prefix, cache);
 
       // npm places global shims in <prefix>/bin on POSIX and in the
@@ -184,9 +184,8 @@ describe('exit contract from the installed bin (#67): 2 and 3', () => {
     { timeout: 240_000 },
     async () => {
       const { tarballPath } = await packSpecgit();
-      const cache = externalNpmCache('specgit-smoke-cache-');
       const fixture = makeExternalRepo('specgit-smoke-exit-', { ci: 'none' });
-      cleanup.push(fixture.dir, cache);
+      cleanup.push(fixture.dir);
       await npmInstallPacked(tarballPath, fixture.dir, cache);
 
       const usage = runInstalledSpecgit(fixture.dir, ['definitely-not-a-command', '--json']);
@@ -202,10 +201,9 @@ describe('exit contract from the installed bin (#67): 2 and 3', () => {
     { timeout: 60_000 },
     async () => {
       const { tarballPath } = await packSpecgit();
-      const cache = externalNpmCache('specgit-smoke-cache-');
       const fixture = makeExternalRepo('specgit-smoke-exit2-', { ci: 'none' });
       const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'specgit-smoke-nogit-'));
-      cleanup.push(fixture.dir, outside, cache);
+      cleanup.push(fixture.dir, outside);
       await npmInstallPacked(tarballPath, fixture.dir, cache);
 
       const result = runInstalledSpecgitFrom(outside, fixture.dir, ['status', '--json']);
@@ -224,9 +222,8 @@ describe('exit contract from the installed bin (#67): 2 and 3', () => {
     { timeout: 240_000 },
     async () => {
       const { tarballPath } = await packSpecgit();
-      const cache = externalNpmCache('specgit-smoke-cache-');
       const fixture = makeExternalRepo('specgit-smoke-exit3-', { ci: 'none' });
-      cleanup.push(fixture.dir, cache);
+      cleanup.push(fixture.dir);
       await npmInstallPacked(tarballPath, fixture.dir, cache);
 
       const init = runInstalledSpecgit(fixture.dir, ['init', '--no-protect', '--json']);

@@ -1,5 +1,9 @@
 # CI scope and release intent
 
+This page describes the repository's retained TypeScript engineering gates.
+Public SpecGit v2 is the native CLI described in [README](../README.md); its
+release artifacts follow the [native release procedure](../runtime/distribution/README.md).
+
 This is the binding classification for work in the SpecGit product repository.
 Classify the intended tracked change before choosing a delivery, verification,
 or release action. Running a command, detecting generated-file drift, or merging
@@ -59,6 +63,31 @@ Publish Wiki pages from the reviewed document set and verify the remote commit;
 describe only released behavior as currently available.
 
 ## Verification by changed surface
+
+All CI/CD in this repository uses our self-hosted runners, including acceptance,
+completion, security, and release. GitHub-hosted runners and hosted fallback jobs
+are prohibited by the owner's #528 decision to preserve account minutes. Linux
+X64 handles shared jobs; both TypeScript and Rust require native Linux X64, macOS
+ARM64, and Windows X64 legs. This replaces the retired #105 shadow arrangement.
+Registration alone is not execution evidence: current-head job results are required.
+
+Windows requires Git for Windows (including Bash), PowerShell 7, and Visual Studio
+Build Tools with the C++ desktop workload and Windows SDK. CI checks prerequisites
+and installs pinned Node, pnpm, and Rust versions. An unavailable runner or missing
+tool leaves verification pending or failed; it never redirects to a hosted runner.
+
+PR code changes and ready transitions run acceptance as the final CI job, after
+`Required verification`. Standalone acceptance handles body edits and merged
+request signals without polling for sibling jobs. This dependency order leaves
+the single Linux runner available for the work acceptance needs. After changing
+the source acceptance generator, run `pnpm run build` and
+`node scripts/refresh-self-acceptance.mjs` to refresh its CI block and standalone
+workflows; metadata validation checks that the shared job has not drifted.
+
+For validation before an authorized merge, a draft branch can use a `[skip ci]`
+commit and a manual **CI** dispatch at that branch. Skipped automatic checks do not
+prove acceptance. The routing change reaches default-branch schedules and trusted
+completion only after merge; do not run their older hosted versions during migration.
 
 | Changed surface | Required verification | Build or publish consequence |
 | --- | --- | --- |
@@ -193,11 +222,12 @@ This repository's generated **SpecGit Acceptance** workflow checks out full
 history and classifies the change with Node and Git before installing a project
 toolchain. Product changes install locked dependencies with `--ignore-scripts`,
 then build and run the current CLI.
-Metadata-only changes install the exact version declared in `package.json` into
-`$RUNNER_TEMP/specgit-cli`, with lifecycle scripts disabled, and run that
-published CLI without compiling the product. Policy/schema implementation
-changes take the product path. A missing published version or incompatible
-runtime fails closed; metadata verification does not fall back to compilation.
+Metadata-only changes check out the repository's trusted default branch into
+an isolated directory, install locked dependencies with lifecycle scripts disabled,
+and compile the retained TypeScript engineering verifier there. They do not build
+or test the native product. Public v2 packages contain no TypeScript `dist/` modules
+and are not used as engineering runtimes. Policy/schema implementation changes
+take the product path; source installation or compilation failure fails the job.
 
 Both paths resolve the approved target-branch policy and wait through authenticated
 `gh` for its required checks
@@ -207,11 +237,16 @@ cancelled run cannot provide the successor's required aggregate, even if its
 last job starts after readiness. Missing provenance fails closed. Each path
 then runs `finish --json`. Classification, installation, waiting, or verdict
 failure fails the job; an absent classification cannot select a success path.
-Generated acceptance waits up to 25 minutes for sibling checks within a
-30-minute job, covering this repository's 20-minute test window with setup and
-verdict headroom. Version automation waits up to 35 minutes within its 40-minute
-step so it cannot expire ahead of that acceptance window. These are bounded
-waits: incomplete evidence at the deadline still prevents completion.
+For adopting projects, generated acceptance waits up to 25 minutes for sibling
+checks within a 30-minute job. This repository instead orders acceptance after
+verification in CI; standalone acceptance evaluates once without waiting.
+During a workflow rerun, terminal jobs are usable before workflow completion only
+when the attempt job API proves their current attempt, head, and check identity.
+Checks without current-attempt proof remain pending until the workflow settles.
+GitHub may copy retained successful jobs into the current attempt with new check
+IDs and their original start times; the attempt API proves these current copies.
+Version automation waits up to 35 minutes within its 40-minute step. Incomplete
+evidence still prevents completion.
 Changing policy in the PR cannot grant that PR permission to weaken its own
 checks or enable automatic merging. First adoption can use candidate policy
 for read-only acceptance when no approved policy exists; automatic completion
@@ -221,16 +256,20 @@ requires approved policy.
 requires a confirmed merge and every bound issue closed; a merged delivery with
 open issues is `closure_pending`. When configured, the separate completion
 workflow runs from trusted default-branch code and rechecks live evidence.
-Its generated runtime reference is an exact CLI version with a checked completion
-protocol, not a permanent 1.12.0 pin or `latest`. In this product repository,
-only a product change may use the approved source-build fallback when the
-published completion runtime is unavailable. Metadata changes instead report
-`runtime_upgrade_required` until a compatible runtime is published.
+Legacy adopter workflows use an exact CLI version with a checked completion
+protocol. This repository instead compiles the retained engineering runtime from
+its separate checkout pinned to the trusted default-branch event SHA, for both
+product and metadata deliveries. It never executes PR source as its write-capable
+completion runtime or installs the public v2 launcher for this purpose. This
+repository requires verified single-pass support in that runtime and invokes
+completion with `--single-pass`: pending CI returns immediately, freeing the
+single Linux runner for queued verification jobs. Later CI or acceptance completion
+events retry the evidence check; the normal adopter polling defaults remain unchanged.
 The completion runner classifies the original PR's complete file changes, even
 after that PR has merged. It verifies the PR identity and head/base revisions
 around paginated file reads; missing, truncated, or changing evidence fails
 closed. A merge must not collapse a product delivery into an empty metadata
-change, and metadata-only deliveries remain ineligible for source compilation.
+change; native product checks remain determined by the original changed inputs.
 The SpecGit repository's reserved `changeset-release/main` proposal still runs
 Acceptance and every version/release gate, but its successful Acceptance run
 does not start bound-delivery completion: that generated proposal deliberately

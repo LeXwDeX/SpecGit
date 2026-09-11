@@ -20,25 +20,16 @@ const workflow = (name: string): Workflow => parse(readFileSync(
 )) as Workflow;
 
 describe('release and dependency workflow scope (#423)', () => {
-  it('resolves release intent before lifecycle builds or registry writes', () => {
+  it('requires explicit native build intent and leaves publication to the coordinator', () => {
     const release = workflow('release-prepare');
-    const scope = release.jobs.scope;
-    expect(scope).toBeDefined();
-    expect(scope.permissions).toEqual({ contents: 'read' });
-    expect(scope.steps.some((step) => step.run === 'node scripts/ci-change-scope.mjs')).toBe(true);
-    expect(scope.steps.some((step) => step.run === 'node scripts/release-state.mjs --plan')).toBe(true);
-    expect(scope.steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.['fetch-depth']).toBe(0);
-    for (const step of scope.steps) {
-      if (step.run?.includes('pnpm install')) expect(step.run).toContain('--ignore-scripts');
-      expect(step.run ?? '').not.toMatch(/npm publish|run build/);
+    expect(Object.keys(release.on)).toEqual(['workflow_dispatch']);
+    expect(release.on.workflow_dispatch?.inputs?.release_version?.required).toBe(true);
+    expect(release.jobs.build.if).toContain("github.repository == 'LeXwDeX/SpecGit'");
+    expect(release.jobs.assemble.needs).toBe('build');
+    expect(release.jobs.release).toBeUndefined();
+    for (const job of Object.values(release.jobs)) {
+      for (const step of job.steps) expect(step.run ?? '').not.toMatch(/npm publish|changeset publish|gh release|git push/);
     }
-    expect(release.jobs.release.needs).toBe('scope');
-    expect(release.jobs.release.if).toContain("needs.scope.outputs.eligible == 'true'");
-    expect(release.jobs.release.if).toContain("github.ref == 'refs/heads/main'");
-    expect(release.on.workflow_dispatch?.inputs?.release_version?.required).toBe(false);
-    const plan = scope.steps.find((step) => step.run === 'node scripts/release-state.mjs --plan');
-    expect(plan?.env?.SPECGIT_RELEASE_VERSION).toBe('${{ inputs.release_version }}');
-    expect(plan?.env?.SPECGIT_RELEASE_INTENT).toBe('${{ steps.changes.outputs.release_intent }}');
   });
 
   it('audits dependencies only for dependency changes or explicit scheduled/manual checks', () => {

@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecGit 2 shared declaration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "remote": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^(?!-)[^\\s\\x00-\\x1f\\x7f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provider": {
+      "enum": [
+        "github",
+        "gitlab",
+        null
+      ]
+    },
+    "target": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^(?!\\s*$)[^\\x00-\\x1f\\x7f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Git branch name; runtime rejects invalid ref components and syntax."
+    },
+    "language": {
+      "enum": [
+        "en",
+        "zh"
+      ],
+      "default": "en"
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "titles": {
+          "type": "boolean",
+          "default": false
+        },
+        "labels": {
+          "enum": [
+            "off",
+            "kind",
+            "project"
+          ],
+          "default": "off"
+        },
+        "bodies": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:::[a-z0-9]+(?:-[a-z0-9]+)*)?$"
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{6}$"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+            "default": ""
+          }
+        },
+        "required": [
+          "name",
+          "color"
+        ]
+      },
+      "default": []
+    },
+    "templates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issue": {
+          "$ref": "#/$defs/template"
+        },
+        "pr": {
+          "$ref": "#/$defs/template"
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "poll_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 15
+        },
+        "max_wait_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "default": 1800,
+          "description": "Must also be at least poll_seconds."
+        },
+        "notify": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "attention",
+              "completed"
+            ]
+          },
+          "default": [
+            "attention",
+            "completed"
+          ]
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent preferences only; these values grant no session authorization and do not make the Rust CLI merge or close objects.",
+      "properties": {
+        "native_auto_merge": {
+          "type": "boolean",
+          "default": false
+        },
+        "close_issues_after_merge": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "$defs": {
+    "template": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "builtin",
+            "repository",
+            "inline"
+          ]
+        },
+        "path": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[^\\\\:\\x00-\\x1f\\x7f]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 1048576
+        },
+        "title": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^(?!\\s*$)[^\\x00-\\x1f\\x7f]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_sections": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "^(?!\\s*$)[^\\x00-\\x1f\\x7f]+$"
+          }
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "builtin"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "path": {
+                "type": "null"
+              },
+              "body": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "repository"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[^\\\\:\\x00-\\x1f\\x7f]+$"
+              },
+              "body": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "inline"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "body"
+            ],
+            "properties": {
+              "path": {
+                "type": "null"
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1048576,
+                "pattern": "\\S"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "description": "The shared .specgit.yaml v2 declaration. Runtime validation additionally rejects duplicate YAML keys, duplicate tag names, invalid Git refs, Unicode control characters, excessive UTF-8 byte lengths and max_wait_seconds below poll_seconds. The complete file is limited to 1 MiB. JSON Schema maxLength counts Unicode characters; runtime byte limits remain authoritative.",
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "validation"
+        ],
+        "properties": {
+          "validation": {
+            "required": [
+              "labels"
+            ],
+            "properties": {
+              "labels": {
+                "const": "project"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "tags"
+        ],
+        "properties": {
+          "tags": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

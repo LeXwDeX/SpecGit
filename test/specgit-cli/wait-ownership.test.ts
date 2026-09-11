@@ -3,7 +3,6 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { harnessWorkflowYaml } from '../../src/cli/harness-content.js';
 import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.js';
 import { makeTempDir, rmDir } from '../specgit/helpers/temp-repo.js';
 
@@ -56,7 +55,6 @@ function executeWait(generate: () => string, frames: Frame[]) {
 }
 
 const workflows = [
-  ['self', harnessWorkflowYaml],
   ['external', () => externalAcceptanceWorkflowYaml({ defaultBranch: 'main', version: '1.13.0' })],
 ] as const;
 
@@ -92,7 +90,7 @@ describe('required Actions checks belong to the current workflow execution', () 
   });
 
   it('waits for the current failed aggregate, then leaves its rejection to the verdict', () => {
-    const result = executeWait(harnessWorkflowYaml, [
+    const result = executeWait(workflows[0][1], [
       { checks: [oldCheck, { ...newCheck, conclusion: 'failure' }], workflows: [oldWorkflow, newWorkflow] },
       { checks: [oldCheck, { ...newCheck, conclusion: 'failure' }], workflows: [oldWorkflow, { ...newWorkflow, status: 'completed' }] },
     ]);
@@ -102,7 +100,7 @@ describe('required Actions checks belong to the current workflow execution', () 
   });
 
   it('keeps its finite deadline when only an obsolete aggregate exists', () => {
-    const result = executeWait(harnessWorkflowYaml, [{ checks: [oldCheck], workflows: [oldWorkflow, newWorkflow] }]);
+    const result = executeWait(workflows[0][1], [{ checks: [oldCheck], workflows: [oldWorkflow, newWorkflow] }]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Timed out waiting for sibling checks.');
     expect(result.stdout).toContain('"elapsed":1500000');
@@ -110,7 +108,7 @@ describe('required Actions checks belong to the current workflow execution', () 
 
   it('does not wait for its own or unrelated workflow once the required owner is terminal', () => {
     const ownRun = { ...newWorkflow, id: 50, check_suite_id: 60, workflow_id: 70 };
-    const result = executeWait(harnessWorkflowYaml, [{
+    const result = executeWait(workflows[0][1], [{
       checks: [newCheck, { ...newCheck, id: 90, name: 'SpecGit Acceptance', check_suite: { id: 60 } }],
       workflows: [{ ...newWorkflow, status: 'completed' }, ownRun],
     }]);
@@ -119,7 +117,7 @@ describe('required Actions checks belong to the current workflow execution', () 
   });
 
   it('keeps workflow events separate when choosing the current owner', () => {
-    const result = executeWait(harnessWorkflowYaml, [{ checks: [oldCheck],
+    const result = executeWait(workflows[0][1], [{ checks: [oldCheck],
       workflows: [oldWorkflow, { ...newWorkflow, event: 'push' }],
     }]);
     expect(result.status, result.stderr).toBe(0);
@@ -127,7 +125,7 @@ describe('required Actions checks belong to the current workflow execution', () 
   });
 
   it('preserves an external app check without requiring any Actions API calls', () => {
-    const result = executeWait(harnessWorkflowYaml, [{
+    const result = executeWait(workflows[0][1], [{
       checks: [{ ...newCheck, app: { id: 42, slug: 'external-ci' }, check_suite: undefined }], workflows: [],
     }]);
     expect(result.status, result.stderr).toBe(0);
@@ -135,7 +133,7 @@ describe('required Actions checks belong to the current workflow execution', () 
   });
 
   it('uses the Actions app ID when its slug is absent', () => {
-    const result = executeWait(harnessWorkflowYaml, [{
+    const result = executeWait(workflows[0][1], [{
       checks: [{ ...oldCheck, app: { id: 15368 }, check_suite: undefined }], workflows: [oldWorkflow],
     }]);
     expect(result.status).toBe(1);
@@ -145,7 +143,7 @@ describe('required Actions checks belong to the current workflow execution', () 
   const unrelated = (i: number) => ({ ...oldWorkflow, id: i + 1000, check_suite_id: i + 2000, workflow_id: i + 3000 });
   it('finds a successor owner on the second page before releasing the required check', () => {
     const first = [oldWorkflow, ...Array.from({ length: 99 }, (_, i) => unrelated(i))];
-    const result = executeWait(harnessWorkflowYaml, [
+    const result = executeWait(workflows[0][1], [
       { checks: [oldCheck], workflows: [], total: 101, pages: [first, [newWorkflow]] },
       { checks: [oldCheck, newCheck], workflows: [], total: 101, pages: [first, [{ ...newWorkflow, status: 'completed' }]] },
     ]);
@@ -169,7 +167,7 @@ describe('required Actions checks belong to the current workflow execution', () 
     ['full final page at cap', { checks: [oldCheck], workflows: [], total: 1000,
       pages: Array.from({ length: 10 }, (_, page) => Array.from({ length: 100 }, (_, i) => unrelated(page * 100 + i))) }],
   ] satisfies Array<[string, Frame]>)('fails closed for %s', (_name, frame) => {
-    const result = executeWait(harnessWorkflowYaml, [frame]);
+    const result = executeWait(workflows[0][1], [frame]);
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/workflow|pagination|API limit/);
     expect(result.stdout).not.toContain('All required checks are in a terminal state.');

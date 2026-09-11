@@ -346,7 +346,7 @@ describe('trusted remote delivery continuation', () => {
       expect(f.forge.closeIssue).not.toHaveBeenCalled();
     }
   });
-  it('keeps pending CI bounded by the deadline without merging or filing a premature repair', async () => {
+  it.each([0, 10])('keeps pending CI bounded by a %i ms deadline without merging or filing a premature repair', async (deadlineMs) => {
     const f = fixture();
     const checks = [makeCheckRun('All checks passed'), makeCheckRun('CodeQL', { conclusion: 'neutral' }),
       makeCheckRun('Workflow CI', { status: 'in_progress', conclusion: null })];
@@ -354,9 +354,9 @@ describe('trusted remote delivery continuation', () => {
     let time = 0;
     const sleep = vi.fn(async (milliseconds: number) => { time += milliseconds; });
     const result = await runRemoteDelivery({ repo, pr: 42, headSha: HEAD, record: f.record }, f.ctx,
-      { now: () => time, sleep, deadlineMs: 10, pollMs: 5 });
-    expect(time).toBe(10);
-    expect(sleep).toHaveBeenCalledTimes(2);
+      { now: () => time, sleep, deadlineMs, pollMs: 5 });
+    expect(time).toBe(deadlineMs);
+    expect(sleep).toHaveBeenCalledTimes(deadlineMs / 5);
     expect(result.classification).toBe('rejected');
     expect(result.progress?.status).toBe('pending');
     expect(f.forge.createIssue).not.toHaveBeenCalled();
@@ -532,7 +532,7 @@ describe('completion workflow trust boundary', () => {
     expect(workflow.jobs.complete.permissions).toEqual({ contents: 'write', 'pull-requests': 'write', issues: 'write', actions: 'read' });
     expect(workflow.on.pull_request).toBeUndefined();
     expect(workflow.on.workflow_run).toEqual({
-      workflows: ['SpecGit Acceptance'],
+      workflows: ['CI', 'SpecGit Acceptance'],
       types: ['completed'],
       'branches-ignore': ['changeset-release/main'],
     });
@@ -545,21 +545,25 @@ describe('completion workflow trust boundary', () => {
     expect(workflow.jobs.complete.concurrency.group).toContain('needs.identify.outputs.pr');
     const checkouts = workflow.jobs.complete.steps.filter((step: { uses?: string }) => step.uses?.startsWith('actions/checkout@'));
     expect(checkouts.every((step: { with: { ref: string; 'persist-credentials': boolean } }) => step.with.ref === '${{ github.sha }}' && step.with['persist-credentials'] === false)).toBe(true);
-    expect(text).toContain('PRODUCT_CHANGE !== \'true\'');
-    expect(text).toContain('runtime_upgrade_required');
+    expect(text).toContain("const directory = process.env.GITHUB_WORKSPACE + '/specgit-runtime'");
+    expect(text).toContain('The approved source lacks single-pass completion.');
+    expect(text).not.toContain("execFileSync('npm'");
+    expect(workflow.jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').run)
+      .toBe('node "$SPECGIT_RUNTIME/dist/automation/remote-entry.js" --single-pass');
     expect(text).not.toContain('pull_request_target');
     expect(workflow.jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').env.GH_TOKEN)
       .toBe('${{ secrets.RELEASE_BOT_TOKEN || github.token }}');
   });
-  it('selects the published runtime from approved source after a self-hosted version bump', async () => {
+  it('uses approved engineering source for metadata completion after the public v2 package changes layout', async () => {
     const root = mkdtempSync(join(tmpdir(), 'specgit-runtime-selection-'));
     try {
-      const directory = join(root, 'specgit-runtime/node_modules/specgit/dist/automation');
+      const directory = join(root, 'approved/specgit-runtime/dist/automation');
       mkdirSync(directory, { recursive: true });
-      writeFileSync(join(root, 'specgit-runtime/node_modules/specgit/package.json'), '{"type":"module"}');
+      writeFileSync(join(root, 'approved/specgit-runtime/package.json'), '{"type":"module"}');
       writeFileSync(join(directory, 'remote-delivery.js'), 'export const REMOTE_DELIVERY_PROTOCOL = 2;');
+      writeFileSync(join(directory, 'remote-entry.js'), 'export const REMOTE_ENTRY_SINGLE_PASS = true;');
       mkdirSync(join(root, 'approved/specgit-runtime'), { recursive: true });
-      writeFileSync(join(root, 'approved/specgit-runtime/package.json'), JSON.stringify({ version: '9.8.7' }));
+      writeFileSync(join(root, 'approved/specgit-runtime/package.json'), JSON.stringify({ version: '2.0.0', type: 'module', private: true }));
       const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '1.12.0', selfHosted: true }));
       const step = workflow.jobs.complete.steps.find((item: { name?: string }) => item.name === 'Select a compatible trusted runtime');
       const script = step.run.split("<<'NODE'\n")[1].replace(/\nNODE\s*$/, '')
@@ -568,10 +572,10 @@ describe('completion workflow trust boundary', () => {
         encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: root, GITHUB_WORKSPACE: join(root, 'approved'), GITHUB_OUTPUT: join(root, 'output'), PRODUCT_CHANGE: 'false' },
       });
       const commands = output.trim().split('\n').map((line) => JSON.parse(line));
-      expect(commands).toHaveLength(1);
-      expect(commands[0].command).toBe('npm');
-      expect(commands[0].args).toContain('specgit@9.8.7');
-      expect(commands[0].args).not.toContain('specgit@1.12.0');
+      expect(commands).toHaveLength(2);
+      expect(commands[0]).toEqual({ command: 'pnpm', args: ['install', '--frozen-lockfile', '--ignore-scripts'] });
+      expect(commands[1]).toEqual({ command: process.execPath, args: ['build.js'] });
+      expect(commands.some((command) => command.command === 'npm')).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -1,5 +1,9 @@
 # Release Gates — the authoritative definition of done for 1.0.0
 
+Historical v1 contract, retained for engineering regression context. Public v2
+installation and release qualification use the [native release procedure](../runtime/distribution/README.md).
+The repository's current engineering workflow is documented in [CI scope](ci-scope.md).
+
 This document is the committed definition of what "done" means for SpecGit
 1.0.0. It **supersedes the session-local release-order plan** (the gitignored
 `.opencode/workflow-reports/` checklists); the vocabulary in §3 is from here on

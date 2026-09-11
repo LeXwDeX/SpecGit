@@ -23,7 +23,7 @@ import { acceptanceRunYaml } from './acceptance-step.js';
 
 import { literalBranchPattern } from './workflow-branches.js';
 import type { PolicyLanguage } from '../record/policy.js';
-import { ACCEPTANCE_JOB_MINUTES, waitStepYaml } from './wait-step.js';
+import { ACCEPTANCE_JOB_MINUTES } from './wait-step.js';
 
 const HARNESS_WORKFLOW_SEGMENTS = ['.github', 'workflows', 'specgit-accept.yml'];
 
@@ -47,11 +47,10 @@ export function harnessWorkflowYaml(defaultBranch = 'main', targets: string[] = 
 on:
   pull_request:
     branches: [${branchLiteral}]
-    # A draft PR fails the verdict (pr_draft), so the draft→ready
-    # transition must re-verdict. Listing types replaces the defaults,
-    # so the default activity types are listed alongside. Title and body
-    # edits change live acceptance evidence even when the head is unchanged.
-    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
+    # Code changes and ready transitions are assessed after required CI.
+    # Body edits reassess once without restarting product jobs or waiting
+    # while occupying the sole Linux worker. Closed requests signal completion.
+    types: [edited, closed]
   workflow_dispatch:
 
 permissions:
@@ -73,15 +72,28 @@ concurrency:
 jobs:
   closure-signal:
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - run: echo 'Merged request ready for trusted completion'
-  specgit-acceptance:
-    if: github.event.action != 'closed'
-    name: \${{ github.event.action == 'closed' && 'SpecGit Post-merge' || 'SpecGit Acceptance' }}
-    # Hosted pool on purpose: a required check must not hinge on one
-    # self-hosted container.
-    runs-on: ubuntu-latest
+${selfAcceptanceJobYaml()}`;
+}
+
+/** The source repository shares one verdict job between CI and body-only reassessment. */
+export function selfAcceptanceJobYaml(afterVerification = false): string {
+  return `  specgit-acceptance:
+${afterVerification ? `    needs: required_verification
+    if: always() && github.event_name == 'pull_request'
+` : `    if: github.event.action != 'closed'
+`}    name: SpecGit Acceptance
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+      checks: read
+      statuses: read
+    # The repository owner requires self-hosted execution for all CI/CD.
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: ${ACCEPTANCE_JOB_MINUTES}
     steps:
       - name: Checkout code
@@ -133,20 +145,44 @@ jobs:
         if: steps.scope.outputs.build == 'true'
         run: pnpm run build
 
-      - name: Install trusted CLI for metadata validation
+      - name: Checkout trusted engineering source for metadata validation
         if: steps.scope.outputs.build == 'false'
-        run: npm install --prefix "$RUNNER_TEMP/specgit-cli" --no-save --ignore-scripts --no-audit --no-fund "specgit@$(node -p \"require('./package.json').version\")"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          path: .specgit-engineering
+
+      - name: Isolate trusted engineering source
+        if: steps.scope.outputs.build == 'false'
+        run: |
+          if [ -e "$RUNNER_TEMP/specgit-cli" ] || [ -L "$RUNNER_TEMP/specgit-cli" ]; then
+            echo 'Engineering runtime destination already exists; refusing to reuse it.' >&2
+            exit 1
+          fi
+          mv .specgit-engineering "$RUNNER_TEMP/specgit-cli"
+
+      - name: Setup engineering pnpm
+        if: steps.scope.outputs.build == 'false'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          package_json_file: \${{ runner.temp }}/specgit-cli/package.json
+
+      - name: Build trusted engineering CLI for metadata validation
+        if: steps.scope.outputs.build == 'false'
+        working-directory: \${{ runner.temp }}/specgit-cli
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node build.js
 
       - name: Prepare approved policy for acceptance
         env:
           GH_TOKEN: \${{ github.token }}
           SPECGIT_WAIT_POLICY: \${{ runner.temp }}/specgit-policy.yaml
-          SPECGIT_POLICY_ENTRY: \${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli/node_modules/specgit/dist/automation/workflow-policy.js', runner.temp) || 'dist/automation/workflow-policy.js' }}
+          SPECGIT_POLICY_ENTRY: \${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli/dist/automation/workflow-policy.js', runner.temp) || 'dist/automation/workflow-policy.js' }}
         run: |
           gh auth setup-git
           node "$SPECGIT_POLICY_ENTRY"
-
-${waitStepYaml('gh', "\${{ steps.scope.outputs.build == 'false' && format('{0}/specgit-cli', runner.temp) || '' }}")}
 
       - name: specgit finish
         if: steps.scope.outputs.build == 'true'
@@ -159,7 +195,7 @@ ${acceptanceRunYaml()}
         if: steps.scope.outputs.build == 'false'
 ${acceptanceRunYaml()}
         env:
-          SPECGIT_ACCEPT_RUNTIME: \${{ runner.temp }}/specgit-cli/node_modules/specgit
+          SPECGIT_ACCEPT_RUNTIME: \${{ runner.temp }}/specgit-cli
           GH_TOKEN: \${{ github.token }}
 `;
 }

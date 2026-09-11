@@ -24,6 +24,7 @@ impl Provider {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Repository {
     pub provider: Provider,
     pub host: String,
@@ -58,9 +59,16 @@ fn trim_line(bytes: Vec<u8>) -> Result<String, Diagnostic> {
     Ok(s)
 }
 pub async fn git(process: &Process, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
-    let output = process
-        .run(Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied()))
-        .await?;
+    let mut request =
+        Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied());
+    // Native error classification is a machine protocol, independent of the caller's UI locale.
+    request.env.insert("LC_ALL".into(), "C".into());
+    // Native SHA evidence must describe the actual objects, not local replacement views.
+    request
+        .env
+        .insert("GIT_NO_REPLACE_OBJECTS".into(), "1".into());
+    request.env.insert("GIT_GRAFT_FILE".into(), "".into());
+    let output = process.run(request).await?;
     if output.code != 0 {
         return Err(classify_failure("git", &output.stderr));
     }

@@ -489,12 +489,13 @@ export function externalNpmCache(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+// Prefer cached metadata only for explicitly isolated caches; cache misses still fetch normally.
 /** file:// adoption install of the packed CLI; `--no-save` keeps the adopting tree clean. */
 export async function npmInstallPacked(tarballPath: string, cwd: string, cacheDir?: string): Promise<void> {
   await runNpm(
     ['install', tarballPath, '--no-save', '--no-audit', '--no-fund', '--loglevel=error'],
     cwd,
-    cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
+    cacheDir === undefined ? undefined : { npm_config_cache: cacheDir, npm_config_prefer_offline: 'true' }
   );
 }
 
@@ -507,7 +508,7 @@ export async function npmInstallGlobal(
   await runNpm(
     ['install', '-g', `--prefix=${prefix}`, tarballPath, '--no-audit', '--no-fund', '--loglevel=error'],
     prefix,
-    cacheDir === undefined ? undefined : { npm_config_cache: cacheDir }
+    cacheDir === undefined ? undefined : { npm_config_cache: cacheDir, npm_config_prefer_offline: 'true' }
   );
 }
 

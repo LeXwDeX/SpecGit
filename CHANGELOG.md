@@ -1,3 +1,10 @@
+# 2.0.0
+
+- Replace the public TypeScript runtime with the lightweight Rust CLI and thin npm launcher.
+- Support macOS arm64, Linux x64 glibc and Windows x64 with independently installed native artifacts.
+- Manage Issue specifications and many-Issue PR/MR aggregation while leaving merge and ordinary closure to the native forge and authorized Agent.
+- Add explicit project migration, truthful observation, bounded watch/host delivery, and immutable multi-package release recovery.
+
 # specgit
 
 ## 1.15.1
