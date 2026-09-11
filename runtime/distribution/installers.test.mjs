@@ -34,6 +34,10 @@ function fixture(t) {
   const shim = path.join(root, 'shim');
   mkdirSync(shim);
   const env = { ...process.env, SPECGIT_TEST_DOWNLOADS: root, PATH: `${shim}${path.delimiter}${process.env.PATH}` };
+  if (!windows) {
+    env.TMPDIR = path.join(root, 'scratch: with spaces');
+    mkdirSync(env.TMPDIR);
+  }
   // Replace only the transport in subprocess tests. The shipped installers have
   // fixed GitHub URLs and no configurable download origin or checksum bypass.
   if (!windows) {
