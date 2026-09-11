@@ -1,9 +1,10 @@
 # SpecGit 2.0 distribution and release recovery
 
-Public `specgit@2.0.0` is a thin native launcher with three exact-version optional
-dependencies: `specgit-darwin-arm64`, `specgit-linux-x64-gnu`, and `specgit-win32-x64`.
-The repository root is a private development workspace; it retains TypeScript
-engineering gates and old regressions but cannot publish the old runtime.
+GitHub Releases is the only publication channel. The shell and PowerShell
+installers download verified standalone native executables; Node.js and npm are
+not needed on the installation host. The qualified `.tgz` format and thin launcher
+remain in the build for offline regression compatibility. Existing npm versions
+are historical and are not updated by this workflow.
 
 ## Build and independently install
 
@@ -43,8 +44,8 @@ Unix signals reach the native child; Windows Ctrl-C is delivered by the attached
 console rather than Node's forceful process-termination API.
 
 The bundle artifact is `specgit-release-<source SHA>`. It contains four npm `.tgz`
-files (three binaries plus one wrapper), `release.json`, `SHASUMS256.txt`, and
-portable installation/profile evidence. Platform `.tgz` assets also contain the
+files (three binaries plus one wrapper), `install.sh`, `install.ps1`, `release.json`,
+`SHASUMS256.txt`, and portable installation/profile evidence. Platform `.tgz` assets also contain the
 standalone executable under `package/bin/`; direct execution does not require
 Node.js. All necessary license texts are bundled. Evidence exported into the
 bundle omits runner/home/Node paths. Package contents exclude Rust source and debug
@@ -56,11 +57,9 @@ checks both identical wrapper archives and the installed command.
 
 ## Publish the exact verified bytes
 
-The user has authorized this stable v2.0.0 release. The coordinating task performs
-the final writes after applicable acceptance. Actions does not receive an npm
-token. The coordinator uses its existing authenticated npm and `gh` sessions;
-`npm whoami` and package permissions are checks, not proof that new package creation
-will succeed. Never read/copy tokens or mistake an OIDC dry run for publication.
+The coordinator performs final writes through its existing authenticated `gh`
+session after applicable acceptance. Actions builds and verifies; it does not
+publish. Never read or copy credentials.
 
 1. Merge the accepted delivery into `main`, then dispatch the three-platform build
    for that exact main commit. Download its successful bundle without modifying it.
@@ -71,36 +70,30 @@ will succeed. Never read/copy tokens or mistake an OIDC dry run for publication.
 node runtime/distribution/publish.mjs \
   --directory /absolute/downloaded-bundle \
   --version 2.0.0 --source <main-commit-sha> --build-run <actions-run-id> \
-  --npm --github
+  --github
 ```
 
-The script verifies the run and current main identity, rereads every tarball and
-its installed profile, and uses the existing npm session. Native packages publish
-first under `v2-staging`. Each exact version/integrity must be visible before the
-wrapper is published. Only a complete matching set can advance `latest`; the
-wrapper's tag advances last and is read back. Private-source publication uses no
-provenance claim. These operations never change source visibility.
+The script verifies current main and the successful build, all installed profiles,
+all tarballs, both installer scripts and SHA-256 checksums. It creates a draft,
+uploads the four tarballs, `install.sh`, `install.ps1`, `release.json` and
+`SHASUMS256.txt`, downloads and verifies every asset, then publishes a stable latest
+Release and reads it back. No npm lookup, publication or dist-tag promotion is
+required. The retired `--npm` option fails before publication.
 
-GitHub tag/Release creation follows verified npm versions and latest tags. An
-existing tag must resolve to the selected source. Existing Release assets are
-read back and compared byte-for-byte; conflicting bytes are not overwritten.
-The four package tarballs, source manifest and SHA-256 file are attached to the
-stable `v2.0.0` Release. A successful local build is not a published version.
-
-Without `--npm` or `--github`, the same command performs read-only bundle/registry
-verification and reports missing versions. With only `--npm`, the coordinator can
-finish and inspect npm publication before separately using `--github` on the same
-bundle and build run.
+Without `--github`, the command verifies only the local bundle and performs no
+network access. The [installation instructions](../../README.md#install) describe
+script downloads, version pinning, custom directories and manual extraction.
 
 ## Recovery
 
-A matching already-published package is reused. Different bytes at the same
-immutable version stop the operation and require a new version. Lost write
-responses stop; the next explicit run reads native state before issuing further
-writes. Registry propagation waits are bounded. An incomplete set never advances
-the wrapper's `latest`. Missing GitHub assets can be attached during recovery;
-existing conflicting assets are never clobbered. Keep the same bundle and source
-for recovery and keep `main` stable during this coordinated release.
+An existing tag must resolve to the selected source. Matching assets are reused;
+conflicting bytes are never overwritten. A lost write response stops the command;
+the next explicit run reads native state before continuing. Incomplete drafts
+remain recoverable and cannot be reported as a completed release. Keep the exact
+bundle/source for recovery and keep `main` stable during coordinated publication.
+
+Do not delete or republish historical npm versions as part of release recovery.
+Deprecation or removal is a separate owner-selected maintenance action.
 
 The previous five-architecture staging plan is superseded by this release's three
 actually tested targets. Linux arm64, Intel macOS and musl are not advertised as

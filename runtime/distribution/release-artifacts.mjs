@@ -88,9 +88,11 @@ export function prepare(directory, output, version, source) {
     const cleanProfile = { platform: profile.platform, arch: profile.arch, passed: true, artifact_sha256: profile.artifact_sha256, launcher_sha256: profile.launcher_sha256, test_processes: profile.test_processes, suites: profile.suites.map(({ name, source, counts, tests, passed, exit }) => ({ name, source, counts, tests, passed, exit })) };
     writeFileSync(path.join(output, `profile-${evidence.platform}.json`), JSON.stringify(cleanProfile, null, 2) + '\n');
   }
-  const result = { version, source, packages };
+  const installers = ['install.sh', 'install.ps1'];
+  for (const file of installers) cpSync(fileURLToPath(new URL(file, import.meta.url)), path.join(output, file));
+  const result = { version, source, packages, installers };
   writeFileSync(path.join(output, 'release.json'), JSON.stringify(result, null, 2) + '\n');
-  const sums = [...packages.map(item => item.tarball), 'release.json'].sort().map(file => `${sha256(path.join(output, file))}  ${file}`).join('\n') + '\n';
+  const sums = [...packages.map(item => item.tarball), ...installers, 'release.json'].sort().map(file => `${sha256(path.join(output, file))}  ${file}`).join('\n') + '\n';
   writeFileSync(path.join(output, 'SHASUMS256.txt'), sums);
   verifyPrepared(output, version, source);
   return result;
@@ -101,10 +103,13 @@ export function verifyPrepared(directory, version, source) {
   need(manifest.version === version && manifest.source === source, 'Prepared release identity differs.');
   const normalize = items => items.map(({ name, version, integrity, sha256, tarball }) => ({ name, version, integrity, sha256, tarball: path.basename(tarball) })).sort((a, b) => a.name.localeCompare(b.name));
   need(JSON.stringify(normalize(actual.packages)) === JSON.stringify(normalize(manifest.packages)), 'Prepared release manifest differs from qualified package bytes.');
-  const sums = [...actual.packages.map(item => path.basename(item.tarball)), 'release.json'].sort().map(file => `${sha256(path.join(directory, file))}  ${file}`).join('\n') + '\n';
+  const installers = ['install.sh', 'install.ps1'];
+  need(JSON.stringify(manifest.installers) === JSON.stringify(installers), 'Release installer inventory differs.');
+  for (const file of installers) need(sha256(path.join(directory, file)) === sha256(fileURLToPath(new URL(file, import.meta.url))), 'Release installer differs from this qualified source.');
+  const sums = [...actual.packages.map(item => path.basename(item.tarball)), ...installers, 'release.json'].sort().map(file => `${sha256(path.join(directory, file))}  ${file}`).join('\n') + '\n';
   need(readFileSync(path.join(directory, 'SHASUMS256.txt'), 'utf8') === sums, 'Release checksums differ.');
   need(actual.packages.length === platforms.length + 1, 'A release package is missing.');
-  return actual;
+  return { ...actual, installers };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

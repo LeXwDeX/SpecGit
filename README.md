@@ -11,26 +11,39 @@ messages do not grant new permission.
 
 ## Install
 
-The stable v2.0.0 distribution has three supported targets:
+GitHub Releases is the distribution channel. Node.js, npm and a Rust compiler
+are not required. Supported targets are macOS Apple Silicon, Linux x64 with glibc,
+and Windows x64.
 
-| System | Architecture | Native npm package |
-| --- | --- | --- |
-| macOS | Apple Silicon / arm64 | `specgit-darwin-arm64` |
-| Linux | x64, glibc | `specgit-linux-x64-gnu` |
-| Windows | x64 | `specgit-win32-x64` |
+macOS / Linux:
 
 ```sh
-npm install -g specgit@2.0.0 --ignore-scripts
+curl -fsSL https://github.com/LeXwDeX/SpecGit/releases/latest/download/install.sh -o install-specgit.sh
+sh install-specgit.sh
+export PATH="$HOME/.local/bin:$PATH"
 specgit --human --version
-specgit --schema
 ```
 
-The npm launcher requires Node.js 20.19 or newer. It selects the exact-version
-native package, verifies its checksum and forwards arguments, I/O and signals.
-No Rust compiler, source checkout, private GitHub download or install script is
-needed. Keep npm optional dependencies enabled. Unsupported architectures and
-Linux musl fail with an explicit diagnostic; Linux packages record and check the
-actual binary's minimum glibc version.
+Windows, from 64-bit PowerShell:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://github.com/LeXwDeX/SpecGit/releases/latest/download/install.ps1 -OutFile install-specgit.ps1
+./install-specgit.ps1
+$env:PATH = "$env:LOCALAPPDATA\SpecGit\bin;$env:PATH"
+specgit --human --version
+```
+
+The scripts select a stable release, verify the platform archive against
+`SHASUMS256.txt`, and check the native version before replacing an existing
+installation. They install into `~/.local/bin` or `%LOCALAPPDATA%\SpecGit\bin`;
+add that directory to your persistent user PATH for future terminals. They do not
+change shell profiles or require admin rights. PowerShell uses your existing
+script execution policy; manual archive installation is also available below.
+
+To pin a release or choose a directory, use `sh install-specgit.sh 2.0.0 /my/bin`
+or `./install-specgit.ps1 -Version 2.0.0 -InstallDir C:\Tools\SpecGit`.
+Run the installer again to upgrade. If an old npm command appears first in PATH,
+remove that old CLI with `npm uninstall -g specgit` or put the native directory first.
 
 The matching platform `.tgz` asset in the GitHub Release also contains a standalone
 executable under `package/bin/specgit` (`specgit.exe` on Windows). Verify the asset
@@ -130,8 +143,9 @@ The [Release Action](.github/workflows/release-prepare.yml) compiles and indepen
 installs macOS arm64, Linux x64 and Windows x64 on self-hosted runners, repeats the
 native journeys through each installed entrypoint, then assembles the package set
 and checksums. It does not publish. The coordinator publishes those exact bytes
-through the existing authenticated npm/gh session and reads back registry and
-Release state. See [distribution and recovery](runtime/distribution/README.md) and the retained
+through the existing authenticated `gh` session and reads back the stable tag
+and every Release asset. npm is no longer a publication target.
+See [distribution and recovery](runtime/distribution/README.md) and the retained
 [engineering release gates](docs/release-gates.md).
 
 The [lightweight design](docs/design/specgit-2-rust-design.md) and
@@ -139,4 +153,4 @@ The [lightweight design](docs/design/specgit-2-rust-design.md) and
 retained requirements. CLI reference suggestions are optional; implemented features
 are verified on their real interfaces.
 
-The retained Nix target is explicitly named `legacy-engineering` (`nix run .#legacy-engineering`). It builds the old TypeScript engineering CLI. Nix has no default v2 package; install native v2 through the npm wrapper or the platform archives above.
+The retained Nix target is explicitly named `legacy-engineering` (`nix run .#legacy-engineering`). It builds the old TypeScript engineering CLI. Nix has no default v2 package; install native v2 through the GitHub Release scripts or platform archives above.

@@ -4,7 +4,7 @@ Installing the native executable does not migrate a repository. Keep the known
 working v1 package and an explicit backup until the project cutover is verified.
 Old drafts, Issues, branches, foreign hooks and unrelated user files are retained.
 The private TypeScript workspace in this repository remains available for its
-current engineering gates; public npm installation uses only the Rust launcher.
+current engineering gates; GitHub Release installation uses the standalone Rust executable.
 
 ## Changed responsibilities
 
@@ -14,7 +14,7 @@ current engineering gates; public npm installation uses only the Rust launcher.
 | `finish` / `accept`, merge and promotion controllers | Native observation with truthful unknowns; no SpecGit-owned eligibility engine |
 | Core/controller merges and closes Issues | Authorized Agent registers native auto-merge; platform merges and normally closes Issues |
 | Residual Issue closure policy | Default notification; optional authorized Agent closure after fresh native readback |
-| Root TypeScript npm package | Native launcher plus one of three exact-version platform packages |
+| Root TypeScript npm package | GitHub Release installer and standalone native binary |
 
 The new `--schema` and [command reference](../runtime/REFERENCE.md) describe actual
 flags. Machine exit zero means the requested operation/read succeeded, including
