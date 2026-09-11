@@ -44,6 +44,10 @@ standalone executable under `package/bin/`; direct execution does not require
 Node.js. All necessary license texts are bundled. Evidence exported into the
 bundle omits runner/home/Node paths. Package contents exclude Rust source and debug
 sidecars. Paths are remapped and text uses LF to keep wrapper bytes identical.
+The JavaScript launcher is archived with mode `0644` on every platform; npm's
+bin installation makes the installed command executable. Native binaries retain
+their platform executable permissions. A real pack/offline-install regression
+checks both identical wrapper archives and the installed command.
 
 ## Publish the exact verified bytes
 

@@ -37,6 +37,12 @@ export function verifyArchitecture(bytes, target) {
   }
   if (!matches) throw new Error(`Native artifact architecture does not match ${target}.`);
 }
+export function writeWrapperLauncher(file, text) {
+  writeFileSync(file, text.replace(/\r\n/g, '\n'));
+  // Windows cannot store Unix executable bits. npm bin installation supplies
+  // the executable entrypoint; keep the JavaScript archive portable beforehand.
+  chmodSync(file, 0o644);
+}
 export function stage(target, output, binary) {
   const platform = targets[target];
   if (!platform) throw new Error(`Unsupported Rust target: ${target}`);
@@ -91,8 +97,7 @@ export function stage(target, output, binary) {
   cpSync(path.join(repo, 'LICENSE'), path.join(platformDir, 'LICENSE'));
   const wrapperDir = path.join(output, 'specgit');
   mkdirSync(path.join(wrapperDir, 'bin'), { recursive: true });
-  writeFileSync(path.join(wrapperDir, 'bin', 'specgit.cjs'), readFileSync(path.join(here, 'launcher.cjs'), 'utf8').replace(/\r\n/g, '\n'));
-  chmodSync(path.join(wrapperDir, 'bin', 'specgit.cjs'), 0o755);
+  writeWrapperLauncher(path.join(wrapperDir, 'bin', 'specgit.cjs'), readFileSync(path.join(here, 'launcher.cjs'), 'utf8'));
   writeFileSync(path.join(wrapperDir, 'LICENSE'), readFileSync(path.join(repo, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n'));
   writeFileSync(path.join(wrapperDir, 'README.md'), readFileSync(path.join(runtime, 'REFERENCE.md'), 'utf8').replace(/\r\n/g, '\n'));
   writeSchemas(binary, path.join(wrapperDir, 'schemas'), path.join(runtime, 'schemas'));
