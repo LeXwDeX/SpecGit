@@ -43,6 +43,14 @@ export function writeWrapperLauncher(file, text) {
   // the executable entrypoint; keep the JavaScript archive portable beforehand.
   chmodSync(file, 0o644);
 }
+export function buildNative(target) {
+  const platform = targets[target];
+  if (!platform) throw new Error(`Unsupported Rust target: ${target}`);
+  const flags = [process.env.RUSTFLAGS ?? '', `--remap-path-prefix=${repo}=/specgit`, `--remap-path-prefix=${homedir()}=/build-user`].join(' ');
+  run('cargo', ['build', '--locked', '--release', '--bin', 'specgit', '--target', target], { env: { ...process.env, RUSTFLAGS: flags }, stdio: 'inherit' });
+  const targetDirectory = process.env.CARGO_TARGET_DIR ? path.resolve(runtime, process.env.CARGO_TARGET_DIR) : path.join(runtime, 'target');
+  return path.join(targetDirectory, target, 'release', platform.os === 'win32' ? 'specgit.exe' : 'specgit');
+}
 export function stage(target, output, binary) {
   const platform = targets[target];
   if (!platform) throw new Error(`Unsupported Rust target: ${target}`);
@@ -55,9 +63,7 @@ export function stage(target, output, binary) {
   if (existsSync(output)) throw new Error('Output directory already exists; select a fresh staging directory.');
   const executable = platform.os === 'win32' ? 'specgit.exe' : 'specgit';
   if (!binary) {
-    const flags = [process.env.RUSTFLAGS ?? '', `--remap-path-prefix=${repo}=/specgit`, `--remap-path-prefix=${homedir()}=/build-user`].join(' ');
-    run('cargo', ['build', '--locked', '--release', '--bin', 'specgit', '--target', target], { env: { ...process.env, RUSTFLAGS: flags }, stdio: 'inherit' });
-    binary = path.join(runtime, 'target', target, 'release', executable);
+    binary = buildNative(target);
   }
   const bytes = readFileSync(binary);
   verifyArchitecture(bytes, target);
