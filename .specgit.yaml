@@ -1,11 +1,11 @@
 version: 1
-delivery: release-test-inventory
+delivery: windows-atomic-replace
 context:
   kind: worktree
-  label: specgit-release-inventory-fix-20260911
-  branch: codex/549-release-test-inventory
+  label: specgit-windows-atomic-fix-20260911
+  branch: codex/552-windows-atomic-replace
 issues:
-  - 549
-  - 551
+  - 552
+  - 554
 issueKinds: []
-pr: 550
+pr: 553

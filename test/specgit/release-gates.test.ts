@@ -53,12 +53,18 @@ describe('native release build gates (#514)', () => {
 
   it('installs real staged packages and accounts for all installed test executables', () => {
     const steps = workflow.jobs.build.steps as Array<{ name?: string; run?: string; 'timeout-minutes'?: number | string }>;
-    const install = steps.findIndex(step => step.run?.includes('node distribution/verify-install.mjs'));
-    const profile = steps.findIndex(step => step.run?.includes('node scripts/profile-tests.mjs'));
+    const compile = steps.findIndex(step => step.run?.includes('native-resume.mjs --phase compile-tests'));
+    const install = steps.findIndex(step => step.run?.includes('native-resume.mjs --phase install'));
+    const profile = steps.findIndex(step => step.run?.includes('native-resume.mjs --phase profile'));
+    expect(compile).toBeGreaterThan(-1);
     expect(install).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(compile);
     expect(profile).toBeGreaterThan(install);
     expect(steps[profile]['timeout-minutes']).toBe("${{ matrix.label == 'windows' && 60 || 15 }}");
-    expect(steps[profile].run).toContain('/profile.json');
+    const coordinator = fs.readFileSync(path.join(ROOT, 'runtime/scripts/native-resume.mjs'), 'utf8');
+    expect(coordinator).toContain("['distribution/verify-install.mjs', '--stage', staging, '--output', installed]");
+    expect(coordinator).toContain("['scripts/profile-tests.mjs', '--artifacts', compiled.value.manifest, '--output', directory]");
+    expect(coordinator).toContain("cpSync(path.join(directory, 'profile.json'), path.join(installed.value.directory, 'profile.json'))");
     expect(steps.some(step => step.run?.includes('node distribution/release-version.mjs'))).toBe(true);
   });
 

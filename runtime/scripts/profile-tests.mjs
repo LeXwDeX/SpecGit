@@ -8,8 +8,9 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
 import { assertProfileInventory } from '../distribution/release-artifacts.mjs';
+import { readCompiledTests } from './native-cache.mjs';
 
-const { values } = parseArgs({ options: { output: { type: 'string' }, compare: { type: 'string' } } });
+const { values } = parseArgs({ options: { output: { type: 'string' }, compare: { type: 'string' }, artifacts: { type: 'string' } } });
 if (!values.output) throw new Error('Use --output <new profile directory> [--compare <baseline profile.json>].');
 assert(process.env.SPECGIT_TEST_BINARY && process.env.SPECGIT_TEST_LAUNCHER && process.env.SPECGIT_TEST_NODE,
   'Performance qualification requires a separately installed npm entrypoint.');
@@ -17,8 +18,7 @@ const output = path.resolve(values.output);
 assert(!existsSync(output), 'Select a fresh evidence directory.');
 mkdirSync(output, { recursive: true });
 const started = performance.now();
-// The existing CI test step budget is unchanged, including discovery/build.
-const deadline = started + 15 * 60 * 1000;
+const deadline = started + (process.platform === 'win32' ? 60 : 15) * 60 * 1000;
 function run(executable, args) {
   const start = performance.now();
   const result = spawnSync(executable, args, { encoding: 'utf8', timeout: Math.max(1, Math.floor(deadline - start)), maxBuffer: 32 * 1024 * 1024 });
@@ -27,10 +27,20 @@ function run(executable, args) {
 const installedNode = run(process.env.SPECGIT_TEST_NODE, ['--version']);
 assert.equal(installedNode.status, 0, 'The selected installed Node must be executable.');
 assert(/^v\d+\.\d+\.\d+\s*$/.test(installedNode.stdout), 'Unrecognized installed Node version.');
-const build = run('cargo', ['test', '--locked', '--all-targets', '--features', 'test-fixtures', '--no-run', '--message-format=json']);
-writeFileSync(path.join(output, 'build.log'), (build.stdout ?? '') + (build.stderr ?? ''));
-assert.equal(build.status, 0, 'Cargo test discovery/build must succeed.');
-const artifacts = build.stdout.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.reason === 'compiler-artifact' && row.profile.test && row.executable);
+let buildMilliseconds = 0;
+let artifacts;
+if (values.artifacts) {
+  const source = run('git', ['rev-parse', 'HEAD']);
+  assert.equal(source.status, 0, 'The compiled source identity is required.');
+  artifacts = readCompiledTests(path.resolve(values.artifacts), source.stdout.trim()).artifacts;
+  writeFileSync(path.join(output, 'build.log'), 'Reused verified compiled Cargo test executables; no compiler was invoked.\n');
+} else {
+  const build = run('cargo', ['test', '--locked', '--all-targets', '--features', 'test-fixtures', '--no-run', '--message-format=json']);
+  writeFileSync(path.join(output, 'build.log'), (build.stdout ?? '') + (build.stderr ?? ''));
+  assert.equal(build.status, 0, 'Cargo test discovery/build must succeed.');
+  buildMilliseconds = build.milliseconds;
+  artifacts = build.stdout.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.reason === 'compiler-artifact' && row.profile.test && row.executable);
+}
 assert(artifacts.length > 0, 'Cargo must enumerate test executables.');
 assert.equal(new Set(artifacts.map(row => row.executable)).size, artifacts.length, 'Duplicate test executable.');
 const suites = [];
@@ -57,7 +67,8 @@ const profile = {
   schema_version: 1, platform: process.platform, arch: process.arch,
   artifact_sha256: createHash('sha256').update(readFileSync(process.env.SPECGIT_TEST_BINARY)).digest('hex'),
   launcher_sha256: createHash('sha256').update(readFileSync(process.env.SPECGIT_TEST_LAUNCHER)).digest('hex'),
-  node_version: process.version, installed_node_version: installedNode.stdout.trim(), build_milliseconds: build.milliseconds,
+  node_version: process.version, installed_node_version: installedNode.stdout.trim(), build_milliseconds: buildMilliseconds,
+  compilation_reused: Boolean(values.artifacts),
   total_milliseconds: performance.now() - started,
   test_processes: suites.length, suites, passed: suites.every(suite => suite.passed),
   timing_scope: 'Each complete test executable, including its real CLI/Git/fixture subprocess work; child timings are not separately attributed.',
