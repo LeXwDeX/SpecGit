@@ -243,3 +243,85 @@ fn rollback_preserves_later_chmod_and_restores_permission_only_transactions() {
         0o644
     );
 }
+
+#[cfg(windows)]
+fn windows_atomic_blocker(path: &std::path::Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    // Allow concurrent readers/writers but deliberately withhold delete sharing.
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0x1 | 0x2)
+        .open(path)
+        .unwrap()
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_atomic_replace_waits_for_a_released_destination_handle() {
+    let (_temp, root) = fixture();
+    let path = root.join("checkpoint.json");
+    fs::write(&path, b"before").unwrap();
+    let locked = store(&root);
+    let change = Change::new(path.clone(), Some(b"after".to_vec())).unwrap();
+    let blocker = windows_atomic_blocker(&path);
+    let (send, receive) = std::sync::mpsc::channel();
+    let release = std::thread::spawn(move || {
+        receive.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        drop(blocker);
+    });
+    let result = locked.apply_checked(vec![change], |_| {
+        send.send(()).unwrap();
+        Ok(())
+    });
+    release.join().unwrap();
+    result.unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"after");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_atomic_replace_preserves_a_permanently_blocked_destination() {
+    let (_temp, root) = fixture();
+    let path = root.join("checkpoint.json");
+    fs::write(&path, b"before").unwrap();
+    let locked = store(&root);
+    let change = Change::new(path.clone(), Some(b"after".to_vec())).unwrap();
+    let blocker = windows_atomic_blocker(&path);
+    let started = std::time::Instant::now();
+    let result = locked.apply(vec![change]);
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(result.unwrap_err().code, Code::IoFailed);
+    assert_eq!(fs::read(&path).unwrap(), b"before");
+    drop(blocker);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_atomic_replace_preserves_an_edit_during_the_sharing_conflict() {
+    use std::io::{Seek, SeekFrom, Write};
+    let (_temp, root) = fixture();
+    let path = root.join("checkpoint.json");
+    fs::write(&path, b"before").unwrap();
+    let locked = store(&root);
+    let change = Change::new(path.clone(), Some(b"after".to_vec())).unwrap();
+    let mut blocker = windows_atomic_blocker(&path);
+    let (send, receive) = std::sync::mpsc::channel();
+    let edit = std::thread::spawn(move || {
+        receive.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        blocker.seek(SeekFrom::Start(0)).unwrap();
+        blocker.write_all(b"user edit").unwrap();
+        blocker.set_len(9).unwrap();
+        blocker.sync_all().unwrap();
+        drop(blocker);
+    });
+    let result = locked.apply_checked(vec![change], |_| {
+        send.send(()).unwrap();
+        Ok(())
+    });
+    edit.join().unwrap();
+    assert_eq!(result.unwrap_err().code, Code::ConcurrentEdit);
+    assert_eq!(fs::read(&path).unwrap(), b"user edit");
+}
