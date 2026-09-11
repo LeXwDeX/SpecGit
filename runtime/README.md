@@ -92,6 +92,9 @@ directories or taking the asset lock. Real apply rechecks file content and
 permissions after locking. Exact ownership receipts, atomic replacements and
 restorable preimages preserve foreign content. An interrupted transaction or
 edited owned file needs explicit recovery. Uninstall retains recovery backups.
+On Windows, a blocked atomic replacement retries the same staged file for up to
+one second. Content or permission changes stop the retry; a persistent failure
+keeps the destination intact and returns an error.
 
 Claude registration exports SessionStart, PreToolUse, PostToolUse and Stop;
 relevant PostToolUse can start a bounded asynchronous observer. The host adapter
