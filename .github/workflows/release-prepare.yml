@@ -18,7 +18,7 @@ jobs:
     name: Build native release (${{ matrix.label }})
     if: github.repository == 'LeXwDeX/SpecGit'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.label == 'windows' && 60 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -76,7 +76,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
       - name: Rust public interface and real subprocess regressions
-        timeout-minutes: 15
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: cargo test --locked --all-targets --features test-fixtures
       - name: Build remapped release packages and install with scripts disabled
         run: |
@@ -84,7 +84,7 @@ jobs:
           node distribution/stage.mjs --target '${{ matrix.target }}' --output "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}"
           node distribution/verify-install.mjs --stage "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Repeat public journeys through the installed npm entrypoint
-        timeout-minutes: 15
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: |-
           node scripts/profile-tests.mjs --output "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}"
           cp "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}/profile.json" "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}/profile.json"

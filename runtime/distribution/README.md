@@ -17,9 +17,14 @@ Each build runs source checks, builds a remapped release binary, stages its nati
 package plus the common wrapper, installs the packed bytes offline with lifecycle
 scripts disabled, then repeats every enumerated native test executable through the
 installed entrypoint. The Windows profile includes console cancellation. Source
-and installation timeouts remain unchanged. The aggregate job requires all three
+and installed regression steps allow 60 minutes on the Windows VM and 15 minutes
+on Linux/macOS. Native jobs allow 60 minutes on Windows and 45 minutes elsewhere;
+the Windows TypeScript CI job allows 60 minutes. The aggregate job requires all three
 successful jobs and verifies actual native/launcher hashes, exact source/version,
 complete profile accounting, identical wrapper bytes, and tarball integrity.
+Ordinary installed profiling checks the same approved executable inventory as
+release assembly, including the zero-test `specgit-process-fixture` target. A
+regression compares that inventory with Cargo's actual compiled test executables.
 
 Local qualification uses the same scripts, from a clean committed source tree:
 

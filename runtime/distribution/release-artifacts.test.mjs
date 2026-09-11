@@ -4,11 +4,23 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { targets, run } from './stage.mjs';
-import { expectedSuites, prepare, qualify, verifyPrepared } from './release-artifacts.mjs';
+import { assertProfileInventory, expectedSuites, prepare, qualify, verifyPrepared } from './release-artifacts.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const source = 'a'.repeat(40);
+test('approved inventory matches every actual Cargo test executable', () => {
+  const runtime = fileURLToPath(new URL('../', import.meta.url));
+  const output = run('cargo', ['test', '--locked', '--all-targets', '--features', 'test-fixtures', '--no-run', '--message-format=json'], {
+    cwd: runtime, timeout: 120_000, maxBuffer: 64 * 1024 * 1024,
+  });
+  const actual = output.trim().split('\n').map(line => JSON.parse(line))
+    .filter(row => row.reason === 'compiler-artifact' && row.profile.test && row.executable)
+    .map(row => path.relative(runtime, row.target.src_path).split(path.sep).join('/')).sort();
+  assert(actual.length > 0, 'Cargo must enumerate the actual test workload.');
+  assert.deepEqual(expectedSuites, actual);
+});
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'specgit-release-evidence-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -50,6 +62,7 @@ function fixture(t) {
     const evidence = { version: '2.0.0', source, platform: name, binary: '/private/build/path', artifact_sha256: digest(bytes), launcher_sha256: digest(launcher), packages: [native, wrapperArtifact], checks: ['offline_install', 'ignore_scripts', 'tarball_integrity', 'asset_allowlist', 'npm_bin_shim', 'machine_version_help', 'json_exit_2', 'json_exit_3', 'hook_stdin_stdout', 'no_git_rust_or_credentials', 'installed_surfaces'] };
     const file = path.join(directory, 'installed.json'); writeFileSync(file, JSON.stringify(evidence)); files.push(file);
     const suites = expectedSuites.map(source => {
+      if (source === 'tests/fixtures/process-child.rs') return { name: 'specgit-process-fixture', source, exit: 0, passed: true, counts: [0, 0, 0, 0, 0], tests: [] };
       const test = source === 'tests/cli.rs' && platform.os === 'win32' ? 'console_interrupt_preserves_native_cancellation_json_through_the_installed_entrypoint' : 'synthetic_accounting_test';
       return { name: source, source, exit: 0, passed: true, counts: [1, 0, 0, 0, 0], tests: [{ name: test, outcome: 'ok' }] };
     });
@@ -79,4 +92,22 @@ test('wrong source, missing platform, mismatched executable and omitted suite ca
   writeFileSync(file, JSON.stringify(original));
   rmSync(f.files[0]);
   assert.throws(() => qualify(f.input, '2.0.0', source), /Three independently installed/);
+});
+test('a zero-test fixture remains required and unknown or duplicate executables are rejected', t => {
+  const f = fixture(t);
+  const file = path.join(path.dirname(f.files[0]), 'profile.json');
+  const original = JSON.parse(readFileSync(file, 'utf8'));
+  const helper = original.suites.find(suite => suite.source === 'tests/fixtures/process-child.rs');
+  assert.deepEqual(helper.counts, [0, 0, 0, 0, 0]);
+  assertProfileInventory(original);
+  for (const suites of [
+    original.suites.filter(suite => suite !== helper),
+    [...original.suites, helper],
+    [...original.suites, { ...helper, source: 'tests/unknown.rs' }],
+  ]) {
+    const changed = { ...original, suites, test_processes: suites.length };
+    assert.throws(() => assertProfileInventory(changed), /omits or duplicates/);
+    writeFileSync(file, JSON.stringify(changed));
+    assert.throws(() => qualify(f.input, '2.0.0', source), /omits or duplicates/);
+  }
 });
