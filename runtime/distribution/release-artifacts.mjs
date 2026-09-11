@@ -11,7 +11,7 @@ const need = (condition, message) => { if (!condition) throw new Error(message);
 const read = file => JSON.parse(readFileSync(file, 'utf8'));
 const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 const platforms = Object.values(targets).map(target => `specgit-${target.key}`);
-export const expectedSuites = ['src/lib.rs', 'src/main.rs', ...readdirSync(fileURLToPath(new URL('../tests/', import.meta.url))).filter(name => name.endsWith('.rs')).map(name => `tests/${name}`)].sort();
+export const expectedSuites = ['src/lib.rs', 'src/main.rs', 'tests/fixtures/process-child.rs', ...readdirSync(fileURLToPath(new URL('../tests/', import.meta.url))).filter(name => name.endsWith('.rs')).map(name => `tests/${name}`)].sort();
 export function identity(version, source) {
   need(/^\d+\.\d+\.\d+$/.test(version ?? ''), 'An exact stable release version is required.');
   need(/^[a-f0-9]{40}$/.test(source ?? ''), 'An exact source commit is required.');
@@ -26,9 +26,13 @@ export function findEvidence(directory) {
   }
   return result;
 }
-function verifyProfile(evidence, profile, release) {
-  need(profile.passed === true && Array.isArray(profile.suites) && profile.test_processes === profile.suites.length && profile.suites.length > 0, 'Installed test profile is incomplete.');
+export function assertProfileInventory(profile) {
+  need(Array.isArray(profile.suites) && profile.test_processes === profile.suites.length && profile.suites.length > 0, 'Installed test profile is incomplete.');
   need(JSON.stringify(profile.suites.map(suite => suite.source).sort()) === JSON.stringify(expectedSuites), 'Installed profile omits or duplicates a native test executable.');
+}
+function verifyProfile(evidence, profile, release) {
+  need(profile.passed === true, 'Installed test profile is incomplete.');
+  assertProfileInventory(profile);
   const native = release.packages.find(item => item.name === evidence.platform);
   const wrapper = release.packages.find(item => item.name === 'specgit');
   need(profile.artifact_sha256 === native?.executable_sha256 && profile.launcher_sha256 === wrapper?.executable_sha256, 'Profile does not identify the actual packaged executable and launcher.');
