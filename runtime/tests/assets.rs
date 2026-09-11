@@ -325,3 +325,36 @@ fn windows_atomic_replace_preserves_an_edit_during_the_sharing_conflict() {
     assert_eq!(result.unwrap_err().code, Code::ConcurrentEdit);
     assert_eq!(fs::read(&path).unwrap(), b"user edit");
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_atomic_replace_preserves_a_permission_edit_during_the_conflict() {
+    let (_temp, root) = fixture();
+    let path = root.join("checkpoint.json");
+    fs::write(&path, b"before").unwrap();
+    let original = fs::metadata(&path).unwrap().permissions();
+    let locked = store(&root);
+    let change = Change::new(path.clone(), Some(b"after".to_vec())).unwrap();
+    let blocker = windows_atomic_blocker(&path);
+    let edited_path = path.clone();
+    let mut readonly = original.clone();
+    readonly.set_readonly(true);
+    let (send, receive) = std::sync::mpsc::channel();
+    let edit = std::thread::spawn(move || {
+        receive.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        fs::set_permissions(&edited_path, readonly).unwrap();
+        drop(blocker);
+    });
+    let result = locked.apply_checked(vec![change], |_| {
+        send.send(()).unwrap();
+        Ok(())
+    });
+    edit.join().unwrap();
+    let kept_readonly = fs::metadata(&path).unwrap().permissions().readonly();
+    let kept_bytes = fs::read(&path).unwrap();
+    fs::set_permissions(&path, original).unwrap();
+    assert_eq!(result.unwrap_err().code, Code::ConcurrentEdit);
+    assert!(kept_readonly);
+    assert_eq!(kept_bytes, b"before");
+}

@@ -674,6 +674,8 @@ fn atomic(path: &Path, bytes: &[u8], permissions: Option<&Permissions>) -> Resul
     let parent = path.parent().ok_or_else(io_error)?;
     ensure_directory(parent)?;
     safe_path(path)?;
+    #[cfg(windows)]
+    let expected = Snapshot::read(path)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| filesystem_error("temporary_create", &e))?;
     temp.write_all(bytes)
@@ -694,11 +696,49 @@ fn atomic(path: &Path, bytes: &[u8], permissions: Option<&Permissions>) -> Resul
         .sync_all()
         .map_err(|e| filesystem_error("temporary_sync", &e))?;
     safe_path(path)?;
+    #[cfg(not(windows))]
     temp.persist(path)
         .map_err(|e| filesystem_error("atomic_replace", &e.error))?;
+    #[cfg(windows)]
+    persist_windows(temp, path, &expected)?;
     #[cfg(unix)]
     File::open(parent)
         .and_then(|f| f.sync_all())
         .map_err(|e| filesystem_error("directory_sync", &e))?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn persist_windows(
+    mut temp: tempfile::NamedTempFile,
+    path: &Path,
+    expected: &Snapshot,
+) -> Result<(), Diagnostic> {
+    let started = Instant::now();
+    loop {
+        match temp.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(failure) => {
+                // Windows can refuse replacement while another handle is open.
+                // Retain the same synced staging file and preserve the target.
+                if !matches!(failure.error.raw_os_error(), Some(5 | 32 | 33))
+                    || started.elapsed() >= Duration::from_secs(1)
+                {
+                    return Err(filesystem_error("atomic_replace", &failure.error));
+                }
+                temp = failure.file;
+                std::thread::sleep(Duration::from_millis(20));
+                let actual = Snapshot::read(path)?;
+                if actual.bytes != expected.bytes
+                    || PermissionRecord::capture(actual.permissions.as_ref())
+                        != PermissionRecord::capture(expected.permissions.as_ref())
+                {
+                    return Err(error(
+                        Code::ConcurrentEdit,
+                        "The destination changed while its atomic replacement was blocked.",
+                    ));
+                }
+            }
+        }
+    }
 }
