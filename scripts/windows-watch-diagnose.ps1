@@ -6,6 +6,10 @@ $raw = Join-Path $diagnosticRoot 'raw'
 New-Item -ItemType Directory $public, $raw -Force | Out-Null
 Push-Location runtime
 try {
+  & cargo test --locked --features test-fixtures --test assets windows_atomic_replace -- --nocapture *> (Join-Path $public 'atomic-replace.log')
+  $atomicExit = $LASTEXITCODE
+  @{ exit = $atomicExit } | ConvertTo-Json | Set-Content (Join-Path $public 'atomic-replace-result.json')
+  if ($atomicExit -ne 0) { exit $atomicExit }
   & cargo test --locked --features test-fixtures --test watch --no-run *> (Join-Path $public 'build.log')
   if ($LASTEXITCODE -ne 0) { throw 'Observer test build failed.' }
   $tests = @(
