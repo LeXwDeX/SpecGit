@@ -76,14 +76,14 @@
   },
   "dependencies": {
     "@inquirer/core": "^11.2.1",
-    "@inquirer/prompts": "^8.5.2",
+    "@inquirer/prompts": "^8.7.1",
     "chalk": "^5.6.2",
     "commander": "^15.0.0",
     "cross-spawn": "7.0.6",
     "fast-glob": "^3.3.3",
     "ora": "^9.4.1",
     "yaml": "^2.8.3",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "private": true
 }
