@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
+import { assertProfileInventory } from '../distribution/release-artifacts.mjs';
 
 const { values } = parseArgs({ options: { output: { type: 'string' }, compare: { type: 'string' } } });
 if (!values.output) throw new Error('Use --output <new profile directory> [--compare <baseline profile.json>].');
@@ -61,6 +62,13 @@ const profile = {
   test_processes: suites.length, suites, passed: suites.every(suite => suite.passed),
   timing_scope: 'Each complete test executable, including its real CLI/Git/fixture subprocess work; child timings are not separately attributed.',
 };
+try {
+  assertProfileInventory(profile);
+} catch (error) {
+  profile.passed = false;
+  profile.inventory_error = error.message;
+  process.stderr.write(error.message + '\n');
+}
 if (values.compare) {
   const baseline = JSON.parse(readFileSync(values.compare, 'utf8'));
   const workload = value => value.suites.map(suite => ({ source: suite.source, tests: suite.tests }));

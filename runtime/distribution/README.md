@@ -20,6 +20,9 @@ installed entrypoint. The Windows profile includes console cancellation. Source
 and installation timeouts remain unchanged. The aggregate job requires all three
 successful jobs and verifies actual native/launcher hashes, exact source/version,
 complete profile accounting, identical wrapper bytes, and tarball integrity.
+Ordinary installed profiling checks the same approved executable inventory as
+release assembly, including the zero-test `specgit-process-fixture` target. A
+regression compares that inventory with Cargo's actual compiled test executables.
 
 Local qualification uses the same scripts, from a clean committed source tree:
 
