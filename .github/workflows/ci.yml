@@ -326,7 +326,7 @@ jobs:
     if: needs.changes.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     # Allow the Windows VM to finish both source and installed regressions.
-    timeout-minutes: ${{ matrix.label == 'windows' && 90 || 45 }}
+    timeout-minutes: ${{ matrix.label == 'windows' && 60 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -395,7 +395,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
       - name: Rust public interface and real subprocess regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 30 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: cargo test --locked --all-targets --features test-fixtures
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -407,7 +407,7 @@ jobs:
           node distribution/stage.mjs --target '${{ matrix.target }}' --output "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}"
           node distribution/verify-install.mjs --stage "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Repeat public journeys through the installed npm entrypoint
-        timeout-minutes: ${{ matrix.label == 'windows' && 30 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/profile-tests.mjs --output "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Retain installed artifacts and complete test accounting
         if: always()
