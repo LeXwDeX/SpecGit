@@ -1,0 +1,24 @@
+version: 2
+remote: origin
+provider: github
+target: codex/independent-github-target-20260911-0115
+language: en
+validation:
+  titles: false
+  labels: off
+  bodies: false
+tags: []
+templates:
+  issue:
+    source: builtin
+  pr:
+    source: builtin
+agent:
+  native_auto_merge: false
+  close_issues_after_merge: false
+observation:
+  poll_seconds: 15
+  max_wait_seconds: 1800
+  notify:
+  - attention
+  - completed
