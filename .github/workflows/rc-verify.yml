@@ -202,7 +202,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_observer_diagnostics }}
     name: Windows observer diagnostics
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 20
+    timeout-minutes: 60
     permissions:
       contents: read
     defaults:
@@ -232,7 +232,7 @@ jobs:
         with:
           toolchain: 1.97.0
       - name: Diagnose observer lifecycle with unchanged deadlines
-        timeout-minutes: 15
+        timeout-minutes: 60
         run: ./scripts/windows-watch-diagnose.ps1
       - name: Upload observer diagnostics
         if: always()
