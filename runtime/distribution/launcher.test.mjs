@@ -6,6 +6,15 @@ import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkPlatformReference } from './check-surfaces.mjs';
+test('installed reference rejects missing, extra or mislabeled platform promises', () => {
+  const manifest = { optionalDependencies: { 'specgit-darwin-arm64': '2.0.0' } };
+  const reference = '| macOS arm64 | `specgit-darwin-arm64` |';
+  checkPlatformReference(reference, manifest);
+  assert.throws(() => checkPlatformReference('', manifest), /platform inventory/);
+  assert.throws(() => checkPlatformReference(reference + '\n| Linux glibc arm64 | `specgit-linux-arm64-gnu` |', manifest), /platform inventory/);
+  assert.throws(() => checkPlatformReference(reference.replace('macOS arm64', 'macOS x64/arm64'), manifest), /Platform label/);
+});
 const here = path.dirname(fileURLToPath(import.meta.url));
 function fixture({ platform = 'darwin', arch = 'arm64', version = '2.0.0-dev.0', missing = false, corrupt = false, glibc } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'specgit-launcher-'));

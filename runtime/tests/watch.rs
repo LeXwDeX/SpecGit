@@ -512,7 +512,6 @@ fn final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt() {
     let f = fixture("github");
     f.edit(|s| {
         s["calls"] = json!([]);
-        s["read_failure"] = json!("auth");
         s["git_proxy_delay_ms"] = json!(100);
     });
     let proxy = tempfile::tempdir().unwrap();
@@ -565,6 +564,8 @@ fn final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt() {
         start.elapsed()
     );
     assert!(f.state()["git_proxy_hits"].as_u64().unwrap() > 0);
+    assert_eq!(f.state()["observation_discovery_failed"], true);
+    assert!(f.state()["calls"].as_array().unwrap().is_empty());
     let identity: Identity =
         serde_json::from_value(result["evidence"]["subscription"].clone()).unwrap();
     assert!(

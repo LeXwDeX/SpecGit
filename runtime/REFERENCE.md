@@ -238,9 +238,15 @@ Native workflow retirement is a separately authorized repository operation.
 Private backups, foreign content and old drafts remain recoverable.
 
 The npm wrapper selects an exact-version precompiled platform package, verifies
-its binary digest and forwards argv/I/O to Rust. Declared package targets are
-Linux glibc x64/arm64, macOS x64/arm64 and Windows x64 MSVC. Node.js 20.19 or newer
-is required; end-user installation needs no Rust toolchain or private source.
+its binary digest and forwards argv/I/O to Rust. Supported platform packages:
+
+| Platform | Package |
+|---|---|
+| Linux glibc x64 | `specgit-linux-x64-gnu` |
+| macOS arm64 | `specgit-darwin-arm64` |
+| Windows x64 MSVC | `specgit-win32-x64` |
+
+Node.js 20.19 or newer is required; end-user installation needs no Rust toolchain or private source.
 Linux requires the glibc floor recorded in its manifest. Unsupported targets fail
 explicitly. Every target needs its own installed/runtime qualification.
 
