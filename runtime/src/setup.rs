@@ -21,6 +21,7 @@ pub struct Options {
     pub provider: Option<Provider>,
     pub api_host: Option<String>,
     pub claude_settings: Option<PathBuf>,
+    pub host_roots: BTreeMap<String, PathBuf>,
     pub uninstall: bool,
     pub dry_run: bool,
     pub rollback: Option<String>,
@@ -32,6 +33,143 @@ struct Receipt {
     owner: String,
     files: BTreeMap<String, String>,
     registration: Option<Registration>,
+    #[serde(default)]
+    hosts: BTreeMap<String, HostRegistration>,
+}
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct HostRegistration {
+    root: PathBuf,
+    skill_hash: String,
+    instructions: String,
+    block: String,
+    created_instructions: bool,
+}
+const HOST_START: &str = "<!-- specgit:global:v2:start -->";
+const HOST_END: &str = "<!-- specgit:global:v2:end -->";
+
+pub fn host_root(host: &str) -> Result<PathBuf, Diagnostic> {
+    if host == "codex"
+        && let Some(root) = std::env::var_os("CODEX_HOME")
+    {
+        return Ok(PathBuf::from(root));
+    }
+    if host == "opencode"
+        && let Some(root) = std::env::var_os("XDG_CONFIG_HOME")
+    {
+        return Ok(PathBuf::from(root).join("opencode"));
+    }
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .ok_or_else(|| Diagnostic::input("Home is unavailable; supply an explicit host root."))?;
+    match host {
+        "codex" => Ok(PathBuf::from(home).join(".codex")),
+        "opencode" => Ok(PathBuf::from(home).join(".config/opencode")),
+        _ => Err(Diagnostic::input("Select codex or opencode.")),
+    }
+}
+
+fn host_changes(
+    host: &str,
+    root: &Path,
+    old: Option<&HostRegistration>,
+    uninstall: bool,
+) -> Result<(Vec<Change>, Option<HostRegistration>), Diagnostic> {
+    if !["codex", "opencode"].contains(&host) || old.is_some_and(|r| r.root != root) {
+        return Err(conflict(
+            "Uninstall the recorded host root before selecting another root.",
+        ));
+    }
+    assets::safe_path(root)?;
+    if host == "codex"
+        && old.is_some_and(|r| r.instructions == "AGENTS.md")
+        && Snapshot::read(&root.join("AGENTS.override.md"))?
+            .bytes
+            .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
+    {
+        return Err(conflict(
+            "A new Codex override shadows the registered instructions; reconcile the host guidance first.",
+        ));
+    }
+    let instructions = if let Some(old) = old {
+        if !["AGENTS.md", "AGENTS.override.md"].contains(&old.instructions.as_str()) {
+            return Err(conflict("The host instruction receipt is unsafe."));
+        }
+        old.instructions.clone()
+    } else if host == "codex"
+        && Snapshot::read(&root.join("AGENTS.override.md"))?
+            .bytes
+            .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
+    {
+        "AGENTS.override.md".into()
+    } else {
+        "AGENTS.md".into()
+    };
+    let skill = Change::new(
+        root.join("skills/specgit-native/SKILL.md"),
+        (!uninstall).then(skill_bytes),
+    )?;
+    if let Some(old) = old {
+        if skill.before.digest().as_ref() != Some(&old.skill_hash) {
+            return Err(conflict("The registered host skill was edited or removed."));
+        }
+    } else if skill.before.bytes.is_some() || uninstall {
+        return Err(conflict(
+            "The host skill is unowned; reconcile that existing installation first.",
+        ));
+    }
+    let mut guidance = Change::new(root.join(&instructions), None)?;
+    let before = std::str::from_utf8(guidance.before.bytes.as_deref().unwrap_or_default())
+        .map_err(|_| conflict("Host instructions must be UTF-8."))?;
+    let generated = format!(
+        "{HOST_START}\n## SpecGit 2\n\nFor Issue and PR/MR delivery work, load the specgit-native skill and use the installed SpecGit 2 command contract (`specgit --help`, `specgit --schema`). Read the project's AGENTS.md and .specgit.yaml before changes. If project guidance still requires retired v1 commands such as finish or bind, resolve the project migration before using the v2 workflow. Native gh/glab operations require existing user authorization; installed guidance grants none.\n{HOST_END}"
+    );
+    let (after, block) = if let Some(old) = old {
+        if before.matches(HOST_START).count() != 1
+            || before.matches(HOST_END).count() != 1
+            || !old.block.contains(HOST_START)
+            || !old.block.contains(HOST_END)
+            || before.matches(&old.block).count() != 1
+        {
+            return Err(conflict(
+                "The managed host instruction block was edited or removed.",
+            ));
+        }
+        let block = if old.block.starts_with("\n\n") {
+            format!("\n\n{generated}\n")
+        } else {
+            format!("{generated}\n")
+        };
+        (
+            before.replacen(&old.block, if uninstall { "" } else { &block }, 1),
+            block,
+        )
+    } else {
+        if before.contains(HOST_START) || before.contains(HOST_END) {
+            return Err(conflict(
+                "An unowned SpecGit instruction marker already exists.",
+            ));
+        }
+        let block = format!(
+            "{}{generated}\n",
+            if before.is_empty() { "" } else { "\n\n" }
+        );
+        (format!("{before}{block}"), block)
+    };
+    let created_instructions =
+        old.map_or(guidance.before.bytes.is_none(), |r| r.created_instructions);
+    guidance.after = if uninstall && created_instructions && after.is_empty() {
+        None
+    } else {
+        Some(after.into_bytes())
+    };
+    let registration = (!uninstall).then(|| HostRegistration {
+        root: root.to_owned(),
+        skill_hash: assets::hash(&skill_bytes()),
+        instructions,
+        block,
+        created_instructions,
+    });
+    Ok((vec![skill, guidance], registration))
 }
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -125,6 +263,10 @@ fn read_receipt(root: &Path) -> Result<(Snapshot, Receipt), Diagnostic> {
         if r.version != 2
             || r.owner != "specgit"
             || r.files.len() > 30
+            || r.hosts.len() > 2
+            || r.hosts
+                .keys()
+                .any(|host| !["codex", "opencode"].contains(&host.as_str()))
             || r.files.keys().any(|p| !owned_relative(p))
         {
             return Err(conflict("The ownership receipt is unsupported or unsafe."));
@@ -270,6 +412,20 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
             .map(|r| r.settings.clone())
     });
     let mut allowed = vec![options.root.clone()];
+    let mut selected_hosts: BTreeMap<_, _> = planned_receipt
+        .hosts
+        .iter()
+        .map(|(host, registration)| (host.clone(), registration.root.clone()))
+        .collect();
+    for (host, root) in &options.host_roots {
+        if selected_hosts.get(host).is_some_and(|old| old != root) {
+            return Err(conflict(
+                "Uninstall the recorded host root before selecting another root.",
+            ));
+        }
+        selected_hosts.insert(host.clone(), root.clone());
+    }
+    allowed.extend(selected_hosts.values().cloned());
     if let Some(path) = &selected_settings {
         allowed.push(
             path.parent()
@@ -421,6 +577,15 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         }
         changes.push(change);
     }
+    for (host, root) in &selected_hosts {
+        let (host_assets, registration) =
+            host_changes(host, root, previous.hosts.get(host), options.uninstall)?;
+        changes.extend(host_assets);
+        if let Some(registration) = registration {
+            receipt.hosts.insert(host.clone(), registration);
+        }
+    }
+    let has_registration = selected_settings.is_some() || !selected_hosts.is_empty();
     let after = if options.uninstall {
         None
     } else {
@@ -438,7 +603,7 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
     let summary:Vec<_>=changes.iter().map(|c|json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     if options.dry_run {
         return Ok(
-            json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"written":false,"operation":if options.uninstall {"uninstall"} else if planned_snapshot.bytes.is_some() {"update"} else {"install"},"manifest_exported":false,"registration":if selected_settings.is_some(){if options.uninstall {"removal_planned"} else {"write_planned"}}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
+            json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"written":false,"operation":if options.uninstall {"uninstall"} else if planned_snapshot.bytes.is_some() {"update"} else {"install"},"manifest_exported":false,"registration":if has_registration{if options.uninstall {"removal_planned"} else {"write_planned"}}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
         );
     }
     // Planning is read-only. Recheck ownership after acquiring the lock; apply
@@ -472,7 +637,7 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
     }
     let applied = store.apply(changes)?;
     Ok(
-        json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"transaction":applied,"manifest_exported":!options.uninstall,"registration":if selected_settings.is_some()&&!options.uninstall{"written_not_verified"}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
+        json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"transaction":applied,"manifest_exported":!options.uninstall,"registration":if has_registration&&!options.uninstall{"written_not_verified"}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
     )
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
