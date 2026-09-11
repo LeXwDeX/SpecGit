@@ -1,30 +1,9 @@
 version: 1
-delivery: rust-native-delivery
+delivery: portable-wrapper-archive
 context:
   kind: worktree
-  label: specgit-rust-delivery-20260909
-  branch: feat/512-rust-native-delivery
+  label: specgit-wrapper-mode-fix-20260911
+  branch: codex/547-portable-wrapper
 issues:
-  - 512
-  - 492
-  - 477
-  - 531
-  - 513
-  - 514
-  - 532
-  - 473
-  - 474
-  - 533
-  - 535
-  - 536
-  - 534
-  - 510
-  - 511
-  - 526
-  - 528
-  - 530
-  - 537
-  - 542
-  - 543
+  - 547
 issueKinds: []
-pr: 525
