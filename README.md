@@ -83,7 +83,25 @@ configuration, `setup`, watch/inbox and host framing. A written integration file
 not proof that a host imported it or delivered a message; next-turn delivery and
 idle wake capability are reported separately.
 
-After CLI upgrades, inspect `specgit setup --dry-run` and
+After installing the package, register the hosts you use:
+
+```sh
+specgit setup --provider github --register-codex --register-opencode --dry-run --json
+specgit setup --provider github --register-codex --register-opencode --json
+```
+
+Select `--provider gitlab --api-host <host>` for GitLab. Each host flag is optional;
+omit the host you do not use. The command installs `specgit-native` and a managed
+global `AGENTS.md` block, preserving unrelated instructions. Codex uses
+`CODEX_HOME` or `~/.codex` (and an existing nonempty `AGENTS.override.md`);
+OpenCode uses `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`. Explicit
+`--codex-root` and `--opencode-root` select alternative configuration directories.
+Restart or reload the host to discover its new guidance. Registration reports
+`written_not_verified` until actual host import is checked; it does not install
+unverified event hooks. Existing unowned skills or edited managed blocks produce
+an ownership conflict instead of being overwritten.
+
+After CLI upgrades, inspect `specgit setup --provider github --dry-run` and
 `specgit init --dry-run --json`, apply the chosen refresh, and verify the installed
 project and host state.
 

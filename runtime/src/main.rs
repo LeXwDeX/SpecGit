@@ -87,6 +87,16 @@ enum Commands {
         register_claude: bool,
         #[arg(long, requires = "register_claude")]
         claude_settings: Option<PathBuf>,
+        /// Install Codex's native skill and managed global instructions.
+        #[arg(long)]
+        register_codex: bool,
+        #[arg(long, requires = "register_codex")]
+        codex_root: Option<PathBuf>,
+        /// Install OpenCode's native skill and managed global instructions.
+        #[arg(long)]
+        register_opencode: bool,
+        #[arg(long, requires = "register_opencode")]
+        opencode_root: Option<PathBuf>,
         #[arg(long, conflicts_with = "rollback")]
         uninstall: bool,
         #[arg(long, conflicts_with = "rollback")]
@@ -331,6 +341,10 @@ async fn main() {
                 api_host,
                 register_claude,
                 claude_settings,
+                register_codex,
+                codex_root,
+                register_opencode,
+                opencode_root,
                 uninstall,
                 dry_run,
                 rollback,
@@ -350,12 +364,30 @@ async fn main() {
                 } else {
                     None
                 };
+                let mut host_roots = std::collections::BTreeMap::new();
+                for (host, register, path) in [
+                    ("codex", register_codex, codex_root),
+                    ("opencode", register_opencode, opencode_root),
+                ] {
+                    if register {
+                        match path
+                            .map(Ok)
+                            .unwrap_or_else(|| specgit::setup::host_root(host))
+                        {
+                            Ok(root) => {
+                                host_roots.insert(host.to_owned(), root);
+                            }
+                            Err(d) => return Report::failure("setup", d),
+                        }
+                    }
+                }
                 specgit::setup::run(
                     specgit::setup::Options {
                         root,
                         provider,
                         api_host,
                         claude_settings: settings,
+                        host_roots,
                         uninstall,
                         dry_run,
                         rollback,
