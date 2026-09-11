@@ -59,10 +59,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: changes
     if: needs.changes.outputs.build == 'true'
-    # Headroom for the #67 install/external e2e on the slowest leg:
-    # Windows executes the heavy npm/git fixtures serially; retain the
-    # existing full-suite budget on the registered self-hosted VM.
-    timeout-minutes: 20
+    # The Windows VM runs heavy npm/git fixtures serially and can exceed 20 minutes.
+    timeout-minutes: ${{ matrix.label == 'windows-pwsh' && 60 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +79,7 @@ jobs:
           # ("onTaskUpdate", fixed 60s birpc timeout, no config knob in
           # vitest 3.2.6) fail as unhandled errors and redden an otherwise
           # green run (36/36 files passed). One worker keeps the runner
-          # responsive; wall-clock stays inside the job timeout.
+          # responsive; the Windows VM has a larger job budget.
           - os: [self-hosted, Windows, X64]
             shell: pwsh
             label: windows-pwsh
@@ -327,8 +325,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
-    # A fresh Windows VM may need the native compiler installed first.
-    timeout-minutes: 45
+    # Allow the Windows VM to finish both source and installed regressions.
+    timeout-minutes: ${{ matrix.label == 'windows' && 90 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -397,7 +395,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
       - name: Rust public interface and real subprocess regressions
-        timeout-minutes: 15
+        timeout-minutes: ${{ matrix.label == 'windows' && 30 || 15 }}
         run: cargo test --locked --all-targets --features test-fixtures
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -409,7 +407,7 @@ jobs:
           node distribution/stage.mjs --target '${{ matrix.target }}' --output "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}"
           node distribution/verify-install.mjs --stage "$RUNNER_TEMP/specgit-native-stage-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-native-installed-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Repeat public journeys through the installed npm entrypoint
-        timeout-minutes: 15
+        timeout-minutes: ${{ matrix.label == 'windows' && 30 || 15 }}
         run: node scripts/profile-tests.mjs --output "$RUNNER_TEMP/specgit-native-profile-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Retain installed artifacts and complete test accounting
         if: always()
