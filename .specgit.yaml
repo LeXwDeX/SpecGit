@@ -6,5 +6,6 @@ context:
   branch: codex/552-windows-atomic-replace
 issues:
   - 552
+  - 554
 issueKinds: []
 pr: 553
