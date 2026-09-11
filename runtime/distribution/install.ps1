@@ -32,8 +32,15 @@ try {
     if ((Get-FileHash -Algorithm SHA256 $packed).Hash.ToLowerInvariant() -cne $expected) {
         throw 'SHA-256 mismatch; existing installation was preserved.'
     }
-    & tar -xzf $packed -C $scratch package/bin/specgit.exe
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot extract the native executable.' }
+    # GNU tar also appears on Windows PATH; drive-letter archive arguments are
+    # interpreted as remote hosts. Select the directory separately.
+    Push-Location -LiteralPath $scratch
+    try {
+        & tar -xzf "./$archive" package/bin/specgit.exe
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot extract the native executable.' }
+    } finally {
+        Pop-Location
+    }
     $binary = Join-Path $scratch 'package\bin\specgit.exe'
     $reported = & $binary --human --version
     if ($LASTEXITCODE -ne 0 -or $reported -cne "specgit $Version") { throw 'Native version/platform check failed.' }

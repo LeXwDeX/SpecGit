@@ -36,7 +36,7 @@ else
 fi
 [ "$actual" = "$expected" ] || fail 'SHA-256 mismatch; existing installation was preserved.'
 # Extract only the executable; archive paths cannot select the destination.
-tar -xOf "$scratch/$archive" package/bin/specgit > "$scratch/specgit"
+(cd "$scratch" && tar -xOf "./$archive" package/bin/specgit) > "$scratch/specgit"
 chmod 755 "$scratch/specgit"
 [ "$("$scratch/specgit" --human --version)" = "specgit $version" ] || fail 'Native version/platform check failed.'
 mkdir -p "$install_dir"
