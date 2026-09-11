@@ -1,10 +1,9 @@
 version: 1
-delivery: portable-wrapper-archive
+delivery: release-test-inventory
 context:
   kind: worktree
-  label: specgit-wrapper-mode-fix-20260911
-  branch: codex/547-portable-wrapper
+  label: specgit-release-inventory-fix-20260911
+  branch: codex/549-release-test-inventory
 issues:
-  - 547
+  - 549
 issueKinds: []
-pr: 548
