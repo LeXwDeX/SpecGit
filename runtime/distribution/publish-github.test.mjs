@@ -9,9 +9,9 @@ const source = 'a'.repeat(40);
 function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const names = ['native.tgz', 'wrapper.tgz', 'SHASUMS256.txt', 'release.json'];
+  const names = ['native.tgz', 'wrapper.tgz', 'install.sh', 'install.ps1', 'SHASUMS256.txt', 'release.json'];
   for (const name of names) writeFileSync(path.join(directory, name), `qualified ${name}`);
-  const release = { version: '2.0.0', source, packages: names.slice(0, 2).map(name => ({ tarball: path.join(directory, name) })) };
+  const release = { version: '2.0.0', source, installers: ['install.sh', 'install.ps1'], packages: names.slice(0, 2).map(name => ({ tarball: path.join(directory, name) })) };
   const remote = { exists: draft !== undefined, draft: draft ?? true, latest: false, tag: true, assets: new Map(existing.map(name => [name, Buffer.from(name === corrupt ? 'different' : `qualified ${name}`)])) };
   const calls = [];
   let interrupted = false;
@@ -69,7 +69,7 @@ test('a matching pre-existing draft can be completed; a conflicting asset causes
   assert.equal(conflict.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
 });
 test('published releases are read back without duplicate uploads; foreign source tags are never changed', t => {
-  const f = fixture(t, { draft: false, existing: ['native.tgz', 'wrapper.tgz', 'SHASUMS256.txt', 'release.json'] });
+  const f = fixture(t, { draft: false, existing: ['native.tgz', 'wrapper.tgz', 'install.sh', 'install.ps1', 'SHASUMS256.txt', 'release.json'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => ['upload', 'create'].includes(call[1])), false);
   const foreign = fixture(t, { draft: true, otherSource: 'b'.repeat(40) });
