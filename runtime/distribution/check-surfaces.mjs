@@ -87,6 +87,14 @@ export function writeSchemas(binary, schemaRoot, staticSchemaRoot) {
   return { schema_version: contract.schema_version, cli_version: contract.cli_version, generated_from: 'target_executable' };
 }
 
+export function checkPlatformReference(reference, manifest) {
+  const rows = [...reference.matchAll(/^\| ([^|\r\n]+) \| `(specgit-[a-z0-9-]+)` \|$/gm)];
+  const names = rows.map(row => row[2]);
+  assert.deepEqual(names.sort(), Object.keys(manifest.optionalDependencies).sort(), 'Installed reference platform inventory differs from package dependencies.');
+  const labels = { 'specgit-linux-x64-gnu': 'Linux glibc x64', 'specgit-darwin-arm64': 'macOS arm64', 'specgit-win32-x64': 'Windows x64 MSVC' };
+  for (const row of rows) assert.equal(row[1].trim(), labels[row[2]], `Platform label disagrees with ${row[2]}.`);
+}
+
 export function checkSurfaces(launcher, packageRoot, options = {}) {
   const schemaRoot = path.join(packageRoot, 'schemas');
   const schemas = new Map(readdirSync(schemaRoot).filter(name => name.endsWith('.schema.json'))
@@ -113,6 +121,7 @@ export function checkSurfaces(launcher, packageRoot, options = {}) {
     assert.equal(typeof help.evidence.text, 'string');
   }
   const reference = readFileSync(path.join(packageRoot, 'README.md'), 'utf8');
+  checkPlatformReference(reference, JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8')));
   for (const command of commands) assert(reference.includes('`' + command.name + '`'), `${command.name} is missing from installed reference.`);
   const declaration = schemas.get('declaration.schema.json');
   assert(!('verification' in declaration.properties));

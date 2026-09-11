@@ -22,15 +22,23 @@ fn main() {
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         if args.first().is_some_and(|a| a == "rev-parse")
             && args.get(1).is_some_and(|a| a == "--show-toplevel")
-            && state["calls"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c["method"] == "GET")
+            && state["observation_discovery_failed"] == true
         {
             state["hanging_git_pid"] = serde_json::json!(std::process::id());
             snapshot::write(&path, &state);
             std::thread::sleep(Duration::from_secs(120));
+        }
+        if args.first().is_some_and(|a| a == "rev-parse")
+            && args.get(1).is_some_and(|a| a == "--show-toplevel")
+            && state["initial_git_complete"] == true
+        {
+            // End observation at its first discovery read. The next local read
+            // is the final revalidation whose real child must hit the deadline.
+            // This avoids spending that fault budget on unrelated API discovery.
+            state["observation_discovery_failed"] = serde_json::json!(true);
+            snapshot::write(&path, &state);
+            eprintln!("fatal: synthetic observation discovery failure");
+            std::process::exit(128);
         }
         // This proxy is used by the final-revalidation deadline test only. Its
         // Git snapshot is immutable. Warm each real query during initial local
@@ -41,6 +49,9 @@ fn main() {
             state["git_proxy_hits"] =
                 serde_json::json!(state["git_proxy_hits"].as_u64().unwrap_or(0) + 1);
             snapshot::write(&path, &state);
+            if state["initial_git_complete"] == true {
+                std::thread::sleep(Duration::from_millis(150));
+            }
             let stdout: Vec<u8> = serde_json::from_value(cached["stdout"].clone()).unwrap();
             let stderr: Vec<u8> = serde_json::from_value(cached["stderr"].clone()).unwrap();
             std::io::stdout().write_all(&stdout).unwrap();
@@ -63,6 +74,9 @@ fn main() {
             "stderr": &output.stderr,
             "code": code,
         });
+        if args.first().is_some_and(|a| a == "status") {
+            state["initial_git_complete"] = serde_json::json!(true);
+        }
         snapshot::write(&path, &state);
         std::io::stdout().write_all(&output.stdout).unwrap();
         std::io::stderr().write_all(&output.stderr).unwrap();
