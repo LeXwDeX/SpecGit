@@ -1,65 +1,92 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { publishNpm, requireMain, verifyBuildRun } from './publish.mjs';
+import { publishChannels, publishNpm, requireMain, selectRecoveryPackages, verifyBuildRun, verifyRecovery } from './publish.mjs';
 
 const source = 'a'.repeat(40);
-const packages = ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64', 'specgit'].map(name => ({ name, version: '2.0.0', integrity: `sha512-${name}`, tarball: `/qualified/${name}-2.0.0.tgz` }));
+const packages = ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64', 'specgit'].map(name => ({ name, version: '2.0.0', tarball: `/qualified/${name}.tgz`, executable_sha256: 'c'.repeat(64) }));
 const release = { version: '2.0.0', source, packages };
-function transport({ present = [], responseLost, conflict = false, invisible = false } = {}) {
+test('channels are independent, preflight never writes, and registry conflicts precede combined writes', async () => {
+  const calls = [];
+  const io = { registry: async () => { calls.push('registry'); return { phase: 'platforms_missing' }; }, github: () => { calls.push('github'); return {}; }, npm: async () => { calls.push('npm'); return {}; } };
+  await publishChannels(release, '.', release, { github: true }, io);
+  assert.deepEqual(calls.splice(0), ['github']);
+  await publishChannels(release, '.', release, { npm: true }, io);
+  assert.deepEqual(calls.splice(0), ['registry', 'npm']);
+  const preflight = await publishChannels(release, '.', release, { npm: true, github: true, preflight: true }, io);
+  assert.equal(preflight.publication_performed, false);
+  assert.deepEqual(calls.splice(0), ['registry']);
+  await publishChannels(release, '.', release, { npm: true, github: true }, io);
+  assert.deepEqual(calls.splice(0), ['registry', 'github', 'npm']);
+  await assert.rejects(publishChannels(release, '.', release, { npm: true, github: true }, { ...io, registry: async () => { throw new Error('conflicting bytes'); } }), /conflicting bytes/);
+  assert.deepEqual(calls, []);
+});
+function transport({ present = [], lost, conflict, invisible } = {}) {
   const published = new Set(present);
   const calls = [];
   const tags = new Map();
-  const registry = async () => {
+  return { calls, published, attempts: 2, wait: async () => {}, registry: async () => {
     if (conflict) throw new Error('Published bytes differ');
-    const observations = packages.map(item => ({ ...item, state: published.has(item.name) && !invisible ? 'verified' : 'missing' }));
-    return { observations, can_promote_latest: observations.every(item => item.state === 'verified') };
-  };
-  const npm = args => {
+    const observations = packages.map(p => ({ ...p, state: published.has(p.name) && !invisible ? 'verified' : 'missing' }));
+    return { observations, can_promote_latest: observations.every(p => p.state === 'verified') };
+  }, npm: args => {
     calls.push(args);
     if (args[0] === 'publish') {
-      const artifact = packages.find(item => item.tarball === args[1]);
-      assert(artifact);
-      if (artifact.name === 'specgit') assert(packages.filter(item => item.name !== 'specgit').every(item => published.has(item.name)), 'wrapper must be last');
-      published.add(artifact.name);
-      if (responseLost === artifact.name) throw new Error('response lost after server applied publication');
+      const item = packages.find(p => p.tarball === args[1]);
+      if (item.name === 'specgit') assert(packages.filter(p => p.name !== 'specgit').every(p => published.has(p.name)));
+      published.add(item.name);
+      if (item.name === lost) throw new Error('response lost');
     }
     if (args[0] === 'dist-tag') tags.set(args[2].split('@')[0], '2.0.0');
     if (args[0] === 'view') return JSON.stringify(tags.get(args[1]));
     return '';
-  };
-  return { registry, npm, calls, published, wait: async () => {}, attempts: 2 };
+  } };
 }
-test('publishes exact artifacts before the wrapper, then verifies latest last', async () => {
-  const io = transport();
-  const result = await publishNpm(release, io);
-  assert.equal(result.latest_verified, true);
-  const publishes = io.calls.filter(call => call[0] === 'publish');
-  assert.deepEqual(publishes.map(call => call[1]), packages.map(item => item.tarball));
-  assert(publishes.every(call => call.includes('--ignore-scripts') && call.includes('--provenance=false') && call.includes('--tag=v2-staging')));
-  assert.equal(io.calls.filter(call => call[0] === 'dist-tag').at(-1)[2], 'specgit@2.0.0');
+test('npm resumes existing Mac/Linux versions and promotes the wrapper last', async () => {
+  const io = transport({ present: packages.slice(0, 2).map(p => p.name) });
+  assert.equal((await publishNpm(release, io)).latest_verified, true);
+  assert.deepEqual(io.calls.filter(c => c[0] === 'publish').map(c => c[1]), packages.slice(2).map(p => p.tarball));
+  assert.equal(io.calls.filter(c => c[0] === 'dist-tag').at(-1)[2], 'specgit@2.0.0');
 });
-test('lost publish response stops writes; retry reads and reuses the applied immutable package', async () => {
-  const io = transport({ responseLost: packages[0].name });
+test('lost npm responses stop writes and subsequent runs reconcile the applied version', async () => {
+  const io = transport({ lost: packages[0].name });
   await assert.rejects(publishNpm(release, io), /response lost/);
-  assert.equal(io.calls.filter(call => call[0] === 'publish').length, 1);
-  assert.equal(io.calls.some(call => call[0] === 'dist-tag'), false);
+  assert.equal(io.calls.filter(c => c[0] === 'publish').length, 1);
+  assert(!io.calls.some(c => c[0] === 'dist-tag'));
   const retry = transport({ present: [...io.published] });
   await publishNpm(release, retry);
-  assert.equal(retry.calls.some(call => call[0] === 'publish' && call[1] === packages[0].tarball), false);
+  assert(!retry.calls.some(c => c[0] === 'publish' && c[1] === packages[0].tarball));
 });
-test('matching complete releases are reused; mismatched bytes never publish or promote', async () => {
-  const existing = transport({ present: packages.map(item => item.name) });
-  await publishNpm(release, existing);
-  assert.equal(existing.calls.some(call => call[0] === 'publish'), false);
-  const conflict = transport({ conflict: true });
-  await assert.rejects(publishNpm(release, conflict), /Published bytes differ/);
-  assert.deepEqual(conflict.calls.map(call => call[0]), ['whoami']);
+test('registry conflicts and unobserved publication never promote latest', async () => {
+  for (const options of [{ conflict: true }, { invisible: true }]) {
+    const io = transport(options);
+    await assert.rejects(publishNpm(release, io), /differ|unknown/);
+    assert(!io.calls.some(c => c[0] === 'dist-tag'));
+  }
 });
-test('unknown registry propagation is bounded and never exposes an incomplete wrapper or latest', async () => {
-  const io = transport({ invisible: true });
-  await assert.rejects(publishNpm(release, io), /propagation/);
-  assert.equal(io.calls.filter(call => call[0] === 'publish').length, 1);
-  assert.equal(io.calls.some(call => call[0] === 'dist-tag'), false);
+test('explicit archived npm recovery requires unchanged runtime inputs and inventory', () => {
+  const previous = { ...release, source: 'b'.repeat(40) };
+  const calls = [];
+  verifyRecovery(release, previous, args => calls.push(args));
+  assert.deepEqual(calls[0], ['merge-base', '--is-ancestor', previous.source, source]);
+  assert(calls[1].includes('runtime/src'));
+  assert.throws(() => verifyRecovery(release, previous, () => { throw new Error('changed source'); }), /changed source/);
+  assert.throws(() => verifyRecovery(release, { ...previous, packages: previous.packages.slice(1) }, () => {}), /inventory differs/);
+  assert.throws(() => verifyRecovery(release, { ...previous, version: '2.0.1' }, () => {}), /same version/);
+});
+test('partial npm recovery keeps published Mac/Linux bytes and uses current unpublished Windows and wrapper', async () => {
+  const current = { ...release, packages: packages.map(p => ({ ...p, integrity: `new-${p.name}` })) };
+  const previous = { ...release, source: 'b'.repeat(40), packages: packages.map(p => ({ ...p, tarball: `/old/${p.name}.tgz`, integrity: `old-${p.name}`, executable_sha256: p.name === 'specgit-win32-x64' ? 'd'.repeat(64) : p.executable_sha256 })) };
+  const present = new Map(previous.packages.slice(0, 2).map(p => [p.name, p.integrity]));
+  const metadata = async p => present.has(p.name) ? { dist: { integrity: present.get(p.name) } } : null;
+  const selected = await selectRecoveryPackages(current, previous, metadata);
+  assert.deepEqual(selected.packages.map(p => p.tarball), [...previous.packages.slice(0, 2), ...current.packages.slice(2)].map(p => p.tarball));
+  assert.deepEqual(selected.packages.map(p => p.qualified_source), [previous.source, previous.source, current.source, current.source]);
+  for (const p of current.packages.slice(2)) present.set(p.name, p.integrity);
+  assert.deepEqual((await selectRecoveryPackages(current, previous, metadata)).packages, selected.packages, 'retry must retain the exact same four artifacts');
+  present.set('specgit-win32-x64', previous.packages[2].integrity);
+  await assert.rejects(selectRecoveryPackages(current, previous, metadata), /already published specgit-win32-x64/);
+  present.set('specgit-win32-x64', 'unqualified-version-bytes');
+  await assert.rejects(selectRecoveryPackages(current, previous, metadata), /neither qualified bundle matches/);
 });
 test('main identity and native build provenance reject foreign, stale and unsuccessful candidates', () => {
   requireMain(source, () => ({ ref: 'refs/heads/main', object: { type: 'commit', sha: source } }));

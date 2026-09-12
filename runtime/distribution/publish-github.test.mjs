@@ -3,16 +3,17 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { publishGithub } from './publish.mjs';
+import { githubFiles, publishGithub } from './publish.mjs';
 
 const source = 'a'.repeat(40);
 function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const names = ['native.tgz', 'wrapper.tgz', 'SHASUMS256.txt', 'release.json'];
-  for (const name of names) writeFileSync(path.join(directory, name), `qualified ${name}`);
-  const release = { version: '2.0.0', source, packages: names.slice(0, 2).map(name => ({ tarball: path.join(directory, name) })) };
-  const remote = { exists: draft !== undefined, draft: draft ?? true, latest: false, tag: true, assets: new Map(existing.map(name => [name, Buffer.from(name === corrupt ? 'different' : `qualified ${name}`)])) };
+  const packages = ['mac.tgz', 'linux.tgz', 'win.tgz', 'wrapper.tgz'];
+  for (const name of packages) writeFileSync(path.join(directory, name), `qualified ${name}`);
+  const release = { version: '2.0.0', source, packages: packages.map(name => ({ name: name === 'wrapper.tgz' ? 'specgit' : name, tarball: path.join(directory, name) })) };
+  const names = githubFiles(release, directory).map(file => path.basename(file));
+  const remote = { exists: draft !== undefined, draft: draft ?? true, latest: false, tag: true, assets: new Map(existing.map(name => [name, name === corrupt ? Buffer.from('different') : readFileSync(path.join(directory, name))])) };
   const calls = [];
   let interrupted = false;
   const request = (route, args = []) => {
@@ -45,6 +46,9 @@ test('new release is created as draft and only published after all byte readback
   const f = fixture(t);
   const result = publishGithub(f.release, f.directory, f.io);
   assert.deepEqual(result.assets_verified, f.names);
+  assert.equal(f.names.length, 5);
+  assert(!f.names.includes('wrapper.tgz'));
+  assert(!JSON.parse(readFileSync(path.join(f.directory, 'release.json'), 'utf8')).packages.some(p => p.name === 'specgit'));
   assert.equal(f.remote.draft, false);
   assert.equal(f.calls.filter(call => call[1] === 'create').length, 1);
   const edit = f.calls.findIndex(call => call[1] === 'edit');
@@ -60,16 +64,19 @@ test('an interrupted upload leaves a matching draft that resumes without duplica
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length);
 });
 test('a matching pre-existing draft can be completed; a conflicting asset causes zero upload or publish writes', t => {
-  const f = fixture(t, { draft: true, existing: ['native.tgz'] });
+  const f = fixture(t, { draft: true, existing: ['mac.tgz'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => call[1] === 'create'), false);
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length - 1);
-  const conflict = fixture(t, { draft: true, existing: ['wrapper.tgz'], corrupt: 'wrapper.tgz' });
+  const conflict = fixture(t, { draft: true, existing: ['win.tgz'], corrupt: 'win.tgz' });
   assert.throws(() => publishGithub(conflict.release, conflict.directory, conflict.io), /differs/);
   assert.equal(conflict.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
+  const extra = fixture(t, { draft: true, existing: ['wrapper.tgz'] });
+  assert.throws(() => publishGithub(extra.release, extra.directory, extra.io), /Unexpected Release asset/);
+  assert.equal(extra.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
 });
 test('published releases are read back without duplicate uploads; foreign source tags are never changed', t => {
-  const f = fixture(t, { draft: false, existing: ['native.tgz', 'wrapper.tgz', 'SHASUMS256.txt', 'release.json'] });
+  const f = fixture(t, { draft: false, existing: ['mac.tgz', 'linux.tgz', 'win.tgz', 'SHASUMS256.txt', 'release.json'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => ['upload', 'create'].includes(call[1])), false);
   const foreign = fixture(t, { draft: true, otherSource: 'b'.repeat(40) });

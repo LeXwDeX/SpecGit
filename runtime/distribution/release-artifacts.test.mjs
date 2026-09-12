@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { targets, run } from './stage.mjs';
 import { assertProfileInventory, expectedSuites, prepare, qualify, verifyPrepared } from './release-artifacts.mjs';
 
@@ -75,9 +76,35 @@ test('assembles only the exact three-platform bytes with portable public evidenc
   const result = prepare(f.input, f.output, '2.0.0', source);
   assert.equal(result.packages.length, 4);
   assert.equal(verifyPrepared(f.output, '2.0.0', source).source, source);
+  assert.equal(existsSync(path.join(f.output, 'install.sh')), false);
+  assert.equal(existsSync(path.join(f.output, 'install.ps1')), false);
   for (const platform of Object.values(targets)) assert.equal(readFileSync(path.join(f.output, `installed-specgit-${platform.key}.json`), 'utf8').includes('/private/build/path'), false);
   writeFileSync(path.join(f.output, result.packages[0].tarball), 'changed');
   assert.throws(() => verifyPrepared(f.output, '2.0.0', source), /Tarball bytes changed/);
+});
+test('publisher bundle verification is offline and publication requires main build evidence', t => {
+  const f = fixture(t);
+  prepare(f.input, f.output, '2.0.0', source);
+  const guard = path.join(f.output, 'offline-guard.mjs');
+  writeFileSync(guard, `
+import cp from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+const original = cp.spawnSync;
+cp.spawnSync = (program, ...args) => {
+  if (/^(npm|gh)(\\.cmd|\\.exe)?$/.test(program)) throw new Error('Unexpected network CLI');
+  return original(program, ...args);
+};
+syncBuiltinESMExports();
+globalThis.fetch = () => { throw new Error('Unexpected registry request'); };
+`);
+  const args = ['--import', pathToFileURL(guard).href, fileURLToPath(new URL('./publish.mjs', import.meta.url)), '--directory', f.output, '--version', '2.0.0', '--source', source];
+  const verified = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 30_000 });
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.equal(JSON.parse(verified.stdout).bundle_verified, true);
+  assert.equal(JSON.parse(verified.stdout).publication_performed, false);
+  const retired = spawnSync(process.execPath, [...args, '--npm', '--github'], { encoding: 'utf8', timeout: 30_000 });
+  assert.equal(retired.status, 1, retired.stderr);
+  assert.match(retired.stderr, /explicit --build-run/);
 });
 test('wrong source, missing platform, mismatched executable and omitted suite cannot produce release output', t => {
   const f = fixture(t);
