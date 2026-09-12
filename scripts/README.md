@@ -26,7 +26,6 @@ change. Review the resulting tracked diff and use the verification class in
 | `ci-metadata-content.ts` | Fail-closed validation for every content input admitted to metadata-only CI: policy/record/provider schemas, workflow, mandatory generated guidance and all setup entry points, issue forms and legacy Markdown templates, `.gitignore`, `CODEOWNERS`, Changesets, Dependabot, and review configuration |
 | `vitest.metadata.config.mjs` | Restrict the metadata suite to the applicable contract tests |
 | `merge-version-pr.mjs` | Apply configured, current-head merge automation to the generated version PR |
-| `release-state.mjs` | Decide release eligibility and reconcile npm publication, tag, and GitHub Release state |
 | `npm-pack-output.mjs` | Parse the supported npm pack JSON shapes without guessing an artifact |
 
 The release sequence and recovery rules are documented in

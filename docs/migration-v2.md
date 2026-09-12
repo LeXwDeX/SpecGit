@@ -14,7 +14,7 @@ current engineering gates; GitHub Release installation uses the standalone Rust 
 | `finish` / `accept`, merge and promotion controllers | Native observation with truthful unknowns; no SpecGit-owned eligibility engine |
 | Core/controller merges and closes Issues | Authorized Agent registers native auto-merge; platform merges and normally closes Issues |
 | Residual Issue closure policy | Default notification; optional authorized Agent closure after fresh native readback |
-| Root TypeScript npm package | Thin npm launcher with native platform packages, or manual GitHub binary installation |
+| Root TypeScript npm package | Manual installation of the native GitHub Release binary |
 
 The new `--schema` and [command reference](../runtime/REFERENCE.md) describe actual
 flags. Machine exit zero means the requested operation/read succeeded, including
