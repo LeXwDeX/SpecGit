@@ -65,25 +65,30 @@ export function localRelease(files) {
   need(seen.size === expected.size && artifacts.size === expected.size + 1, 'Complete platform publication set is missing.');
   return { version, source, packages: [...artifacts.values()].sort((a, b) => a.name.localeCompare(b.name)) };
 }
+export async function registryMetadata(artifact, fetcher = fetch) {
+  const url = `https://registry.npmjs.org/${encodeURIComponent(artifact.name)}/${encodeURIComponent(artifact.version)}`;
+  const response = await fetcher(url, { signal: AbortSignal.timeout(10_000), redirect: 'error' });
+  if (response.status === 404) return null;
+  need(response.ok, `Registry read failed for ${artifact.name}: HTTP ${response.status}.`);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new Error('Registry metadata exceeds its size limit.'); }
+    chunks.push(value);
+  }
+  const metadata = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  need(metadata.name === artifact.name && metadata.version === artifact.version, 'Registry identity mismatch.');
+  return metadata;
+}
 export async function registryRelease(release, fetcher = fetch) {
   const observations = [];
   for (const artifact of release.packages) {
-    const url = `https://registry.npmjs.org/${encodeURIComponent(artifact.name)}/${encodeURIComponent(artifact.version)}`;
-    const response = await fetcher(url, { signal: AbortSignal.timeout(10_000), redirect: 'error' });
-    if (response.status === 404) { observations.push({ ...artifact, state: 'missing' }); continue; }
-    need(response.ok, `Registry read failed for ${artifact.name}: HTTP ${response.status}.`);
-    const reader = response.body.getReader();
-    const chunks = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new Error('Registry metadata exceeds its size limit.'); }
-      chunks.push(value);
-    }
-    const metadata = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    need(metadata.name === artifact.name && metadata.version === artifact.version, 'Registry identity mismatch.');
+    const metadata = await registryMetadata(artifact, fetcher);
+    if (!metadata) { observations.push({ ...artifact, state: 'missing' }); continue; }
     need(metadata.dist?.integrity === artifact.integrity, `Published bytes differ for ${artifact.name}@${artifact.version}; choose a new version.`);
     observations.push({ ...artifact, state: 'verified' });
   }

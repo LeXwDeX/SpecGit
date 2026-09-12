@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { verifyPrepared } from './release-artifacts.mjs';
 import { publishNpm } from './npm-publish.mjs';
-import { registryRelease } from './release-check.mjs';
+import { registryMetadata, registryRelease } from './release-check.mjs';
 
 export { publishNpm } from './npm-publish.mjs';
 
@@ -36,9 +36,26 @@ export function verifyRecovery(current, previous, git = args => command('git', [
   git(['merge-base', '--is-ancestor', previous.source, current.source]);
   // Packaging provenance may change; runtime, launcher, schemas and licenses may not.
   git(['diff', '--exit-code', previous.source, current.source, '--', 'runtime/src', 'runtime/tests', 'runtime/Cargo.toml', 'runtime/Cargo.lock', 'runtime/.cargo', 'runtime/schemas', 'runtime/REFERENCE.md', 'runtime/distribution/launcher.cjs', 'runtime/distribution/stage.mjs', 'runtime/distribution/check-surfaces.mjs', 'LICENSE', 'package.json']);
-  const hashes = release => release.packages.map(p => [p.name, p.executable_sha256]).sort((a, b) => a[0].localeCompare(b[0]));
   need(current.packages.every(p => /^[a-f0-9]{64}$/.test(p.executable_sha256 ?? '')), 'Current executable identity is missing.');
-  need(JSON.stringify(hashes(current)) === JSON.stringify(hashes(previous)), 'Recovery executables differ from current-main qualification.');
+  need(JSON.stringify(current.packages.map(p => p.name).sort()) === JSON.stringify(previous.packages.map(p => p.name).sort()), 'Recovery package inventory differs.');
+}
+export async function selectRecoveryPackages(current, previous, metadata = registryMetadata) {
+  const packages = [];
+  for (const artifact of current.packages) {
+    const old = previous.packages.find(p => p.name === artifact.name);
+    need(old, 'Recovery package is missing.');
+    const published = await metadata(artifact);
+    let selected = artifact;
+    let qualified_source = current.source;
+    if (published && published.dist?.integrity !== artifact.integrity) {
+      need(published.dist?.integrity === old.integrity, `Published bytes differ for ${artifact.name}; neither qualified bundle matches.`);
+      need(old.executable_sha256 === artifact.executable_sha256, `Recovery executable differs for already published ${artifact.name}.`);
+      selected = old;
+      qualified_source = previous.source;
+    }
+    packages.push({ ...selected, qualified_source });
+  }
+  return { ...current, packages };
 }
 export function githubFiles(release, scratch) {
   const native = release.packages.filter(item => item.name !== 'specgit');
@@ -120,7 +137,7 @@ export async function publishChannels(release, directory, npmRelease, values, { 
   const observed = values.npm ? await registry(npmRelease) : undefined;
   const githubResult = values.github && !values.preflight ? github(release, directory) : undefined;
   const npmResult = values.npm && !values.preflight ? await npm(npmRelease) : observed;
-  return { ...(githubResult ? { github: githubResult } : {}), ...(npmResult ? { npm: npmResult, npm_source: npmRelease.source } : {}), publication_performed: !values.preflight && Boolean(values.github || values.npm) };
+  return { ...(githubResult ? { github: githubResult } : {}), ...(npmResult ? { npm: npmResult, npm_sources: Object.fromEntries(npmRelease.packages.map(p => [p.name, p.qualified_source ?? npmRelease.source])) } : {}), publication_performed: !values.preflight && Boolean(values.github || values.npm) };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
@@ -143,10 +160,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       if (values['npm-directory']) {
         const oldDirectory = path.resolve(values['npm-directory']);
         const oldSource = JSON.parse(readFileSync(path.join(oldDirectory, 'release.json'), 'utf8')).source;
-        npmRelease = verifyPrepared(oldDirectory, values.version, oldSource);
+        const previous = verifyPrepared(oldDirectory, values.version, oldSource);
         need(/^[1-9][0-9]*$/.test(values['npm-build-run'] ?? ''), 'Recovery requires --npm-build-run.');
         verifyBuildRun(api(`repos/${repository}/actions/runs/${values['npm-build-run']}`), oldSource);
-        verifyRecovery(release, npmRelease);
+        verifyRecovery(release, previous);
+        npmRelease = await selectRecoveryPackages(release, previous);
       }
       // Read every npm identity before either channel writes, but availability
       // is never a GitHub-only prerequisite. A missing version is resumable.
