@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { publishChannels, publishNpm, requireMain, verifyBuildRun, verifyRecovery } from './publish.mjs';
+import { publishChannels, publishNpm, requireMain, selectRecoveryPackages, verifyBuildRun, verifyRecovery } from './publish.mjs';
 
 const source = 'a'.repeat(40);
 const packages = ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64', 'specgit'].map(name => ({ name, version: '2.0.0', tarball: `/qualified/${name}.tgz`, executable_sha256: 'c'.repeat(64) }));
@@ -63,15 +63,30 @@ test('registry conflicts and unobserved publication never promote latest', async
     assert(!io.calls.some(c => c[0] === 'dist-tag'));
   }
 });
-test('explicit archived npm recovery requires unchanged runtime inputs and matching current binaries', () => {
+test('explicit archived npm recovery requires unchanged runtime inputs and inventory', () => {
   const previous = { ...release, source: 'b'.repeat(40) };
   const calls = [];
   verifyRecovery(release, previous, args => calls.push(args));
   assert.deepEqual(calls[0], ['merge-base', '--is-ancestor', previous.source, source]);
   assert(calls[1].includes('runtime/src'));
   assert.throws(() => verifyRecovery(release, previous, () => { throw new Error('changed source'); }), /changed source/);
-  assert.throws(() => verifyRecovery(release, { ...previous, packages: previous.packages.map(p => ({ ...p, executable_sha256: 'd'.repeat(64) })) }, () => {}), /executables differ/);
+  assert.throws(() => verifyRecovery(release, { ...previous, packages: previous.packages.slice(1) }, () => {}), /inventory differs/);
   assert.throws(() => verifyRecovery(release, { ...previous, version: '2.0.1' }, () => {}), /same version/);
+});
+test('partial npm recovery keeps published Mac/Linux bytes and uses current unpublished Windows and wrapper', async () => {
+  const current = { ...release, packages: packages.map(p => ({ ...p, integrity: `new-${p.name}` })) };
+  const previous = { ...release, source: 'b'.repeat(40), packages: packages.map(p => ({ ...p, tarball: `/old/${p.name}.tgz`, integrity: `old-${p.name}`, executable_sha256: p.name === 'specgit-win32-x64' ? 'd'.repeat(64) : p.executable_sha256 })) };
+  const present = new Map(previous.packages.slice(0, 2).map(p => [p.name, p.integrity]));
+  const metadata = async p => present.has(p.name) ? { dist: { integrity: present.get(p.name) } } : null;
+  const selected = await selectRecoveryPackages(current, previous, metadata);
+  assert.deepEqual(selected.packages.map(p => p.tarball), [...previous.packages.slice(0, 2), ...current.packages.slice(2)].map(p => p.tarball));
+  assert.deepEqual(selected.packages.map(p => p.qualified_source), [previous.source, previous.source, current.source, current.source]);
+  for (const p of current.packages.slice(2)) present.set(p.name, p.integrity);
+  assert.deepEqual((await selectRecoveryPackages(current, previous, metadata)).packages, selected.packages, 'retry must retain the exact same four artifacts');
+  present.set('specgit-win32-x64', previous.packages[2].integrity);
+  await assert.rejects(selectRecoveryPackages(current, previous, metadata), /already published specgit-win32-x64/);
+  present.set('specgit-win32-x64', 'unqualified-version-bytes');
+  await assert.rejects(selectRecoveryPackages(current, previous, metadata), /neither qualified bundle matches/);
 });
 test('main identity and native build provenance reject foreign, stale and unsuccessful candidates', () => {
   requireMain(source, () => ({ ref: 'refs/heads/main', object: { type: 'commit', sha: source } }));

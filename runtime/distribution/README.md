@@ -83,11 +83,16 @@ node runtime/distribution/publish.mjs \
 
 Recovery still requires fresh current-main three-platform qualification. It also
 verifies the original successful main build, original installed profiles and
-tarballs, ancestry, unchanged runtime/test/schema/launcher/license inputs, and
-byte-identical executables and launcher in both bundles. It publishes the original
-npm tarballs with their original source and uses current-main archives on GitHub.
-Any mismatch requires a new version or investigation, not a relaxed gate. The JSON
-result reports `source` and `npm_source` separately. Keep both bundles and their
+tarballs, ancestry and unchanged runtime/test/schema/launcher/license inputs.
+Already published packages must match one qualified bundle exactly; an original
+package can be reused only when its executable matches current-main qualification.
+Missing packages use current-main tarballs. Thus the existing macOS/Linux packages
+remain unchanged, while unpublished Windows and wrapper packages use the new build.
+A rebuilt Windows EXE can carry different PE timestamps/debug identity; no hash is
+ignored or normalized. A differing previously published executable stops recovery.
+On retry, each published package is matched against both qualified bundles, so
+an interrupted mixed-source publication resumes with identical bytes. The JSON
+result reports `source` and per-package `npm_sources`. Keep both bundles and their
 run IDs; do not delete, repack or overwrite either during recovery.
 
 Actual publication remains a separate authorized action. A successful preflight,
