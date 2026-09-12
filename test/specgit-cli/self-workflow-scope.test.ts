@@ -32,6 +32,28 @@ const selectedSteps = (build: 'true' | 'false' | ''): Step[] => steps().filter((
 });
 
 describe('self acceptance CI scope', () => {
+  it('reads the trusted pnpm manifest before isolation using the action workspace-relative path contract', () => {
+    const root = mkdtempSync(join(tmpdir(), 'specgit-engineering-pnpm-'));
+    try {
+      const selected = selectedSteps('false');
+      const setupIndex = selected.findIndex((step) => step.name === 'Setup engineering pnpm');
+      const checkoutIndex = selected.findIndex((step) => step.name === 'Checkout trusted engineering source for metadata validation');
+      const isolateIndex = selected.findIndex((step) => step.name === 'Isolate trusted engineering source');
+      expect(setupIndex).toBeGreaterThan(checkoutIndex);
+      expect(setupIndex).toBeLessThan(isolateIndex);
+      mkdirSync(join(root, '.specgit-engineering'));
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@1.0.0' }));
+      writeFileSync(join(root, '.specgit-engineering', 'package.json'), JSON.stringify({ packageManager: 'pnpm@9.15.9' }));
+      const manifest = selected[setupIndex].with?.package_json_file;
+      expect(typeof manifest).toBe('string');
+      // The pinned action joins its input to GITHUB_WORKSPACE, including absolute inputs.
+      const observed = JSON.parse(readFileSync(join(root, String(manifest)), 'utf8'));
+      expect(observed.packageManager).toBe('pnpm@9.15.9');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('refuses existing engineering destinations before any subsequent build can execute', () => {
     const root = mkdtempSync(join(tmpdir(), 'specgit-engineering-isolation-'));
     try {
