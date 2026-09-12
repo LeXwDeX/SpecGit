@@ -1,11 +1,9 @@
 version: 1
-delivery: github-release-installers
+delivery: native-binary-release
 context:
   kind: worktree
-  label: specgit-github-only-20260911
-  branch: codex/github-release-installers
+  label: specgit-native-release-20260912
+  branch: codex/native-binary-release
 issues:
-  - 555
-  - 557
+  - 559
 issueKinds: []
-pr: 556
