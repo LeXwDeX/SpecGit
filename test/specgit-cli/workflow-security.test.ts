@@ -14,7 +14,7 @@ import { externalAcceptanceWorkflowYaml } from '../../src/cli/external-harness.j
 //
 // Trust boundary: specgit-accept.yml and ci.yml/security.yml run on
 // pull_request (fork code included) and workflow_dispatch. The release
-// workflow (push-to-main only) checks out trusted refs and is therefore
+// workflow (explicit dispatch on main only) checks out trusted refs and is therefore
 // exempt from the read-only rules.
 
 const WORKFLOWS_DIR = path.join(__dirname, '..', '..', '.github', 'workflows');
@@ -256,46 +256,34 @@ const assertRequiredChecksDerivable = (ciText: string, policyText: string, label
   }
 };
 
-// The OIDC response JSON embeds the raw JWT — a short-lived bearer
-// credential for the npm audience. Anyone who can read the run log
-// (fork PR authors included) must never see it: the response goes
-// straight to a file, and only derived claims or the token length are
-// logged. (#71 follow-up)
-const assertOidcTokenNeverLogged = (text: string, label: string): void => {
-  const steps = allSteps(parse(text) as Workflow).filter((step) =>
-    (step.run ?? '').includes('ACTIONS_ID_TOKEN_REQUEST'),
-  );
-  if (steps.length === 0) {
-    throw new Error(`${label}: OIDC audience probe step missing`);
-  }
-  for (const step of steps) {
-    const run = step.run ?? '';
-    const stepName = step.name ?? 'unnamed';
-    if (/\btee\b/.test(run)) {
-      throw new Error(`${label}: "${stepName}" pipes the OIDC response through tee — the raw JWT would land in the log`);
-    }
-    if (/console\.(log|info|warn|error)\(\s*value\s*\)/.test(run)) {
-      throw new Error(`${label}: "${stepName}" prints the raw OIDC token value`);
-    }
-    if (!/value\.length/.test(run) || !/claims\.aud/.test(run)) {
-      throw new Error(`${label}: "${stepName}" must log only safe derived claims or the token length`);
-    }
-  }
+// npm publication is retired, including its registry and OIDC rehearsal.
+const assertNoNpmPublication = (text: string, label: string): void => {
+  if (/npm (publish|view|dist-tag)|ACTIONS_ID_TOKEN_REQUEST|id-token:|NODE_AUTH_TOKEN/.test(text)) throw new Error(`${label}: retired npm publication access`);
 };
 
-// The v2 Release Action builds only. Publishing uses the coordinator's native
-// session after independent qualification; no write actor belongs in this job.
+// Explicit dispatch publishes only after three trusted main-branch build jobs.
 const assertReleaseActorCredentials = (text: string, label: string): void => {
   const doc = parse(text) as Workflow;
-  for (const job of Object.values(doc.jobs ?? {})) {
+  if (JSON.stringify(Object.keys(doc.on ?? {})) !== JSON.stringify(['workflow_dispatch']) || doc.jobs?.build.if !== "github.repository == 'LeXwDeX/SpecGit' && github.ref == 'refs/heads/main'") throw new Error(`${label}: explicit trusted main release required`);
+  if (JSON.stringify(doc.permissions) !== JSON.stringify({ contents: 'read' })) throw new Error(`${label}: build permissions must stay read-only`);
+  if (String(doc.jobs?.assemble.needs) !== 'build' || doc.jobs?.assemble.if !== undefined) throw new Error(`${label}: publication must require successful builds`);
+  let publishers = 0;
+  for (const [id, job] of Object.entries(doc.jobs ?? {})) {
     const permissions = job.permissions ?? doc.permissions;
-    if (JSON.stringify(permissions) !== JSON.stringify({ contents: 'read' })) throw new Error(`${label}: release build must retain read-only permissions`);
+    const expected = id === 'assemble' ? { contents: 'write', actions: 'read' } : { contents: 'read' };
+    if (JSON.stringify(permissions) !== JSON.stringify(expected)) throw new Error(`${label}: unexpected release permissions`);
     for (const step of job.steps ?? []) {
-      if (step.uses?.startsWith('actions/checkout@') && step.with?.['persist-credentials'] !== false) throw new Error(`${label}: release build must not persist checkout credentials`);
-      if (step.with?.token !== undefined || step.env?.GH_TOKEN !== undefined || step.env?.NODE_AUTH_TOKEN !== undefined) throw new Error(`${label}: release build must not select a publishing actor`);
-      if (/npm publish|changeset publish|gh release|git push|git remote set-url|--npm|--github/.test(step.run ?? '')) throw new Error(`${label}: release build must not contain publishing or origin URL mutations`);
+      if (step.uses?.startsWith('actions/checkout@') && step.with?.['persist-credentials'] !== false) throw new Error(`${label}: release must not persist checkout credentials`);
+      const publisher = id === 'assemble' && step.run?.startsWith('node runtime/distribution/publish.mjs ');
+      if (publisher) {
+        publishers++;
+        if (step.env?.GH_TOKEN !== '${{ github.token }}' || !step.run?.includes('--source "$GITHUB_SHA" --build-run "$GITHUB_RUN_ID" --github')) throw new Error(`${label}: publisher requires the current workflow actor and source`);
+      }
+      if (step.with?.token !== undefined || step.env?.NODE_AUTH_TOKEN !== undefined || (!publisher && step.env?.GH_TOKEN !== undefined)) throw new Error(`${label}: unexpected publishing actor`);
+      if (/npm publish|changeset publish|gh release|git push|git remote set-url|--npm/.test(step.run ?? '') || (!publisher && /--github/.test(step.run ?? ''))) throw new Error(`${label}: unauthorized publishing or origin URL mutations`);
     }
   }
+  if (publishers !== 1) throw new Error(`${label}: one final publisher required`);
 };
 
 describe('workflow security invariants (#66, #69, #71)', () => {
@@ -443,11 +431,11 @@ describe('workflow security invariants (#66, #69, #71)', () => {
     assertRequiredChecksDerivable(ciFile, policyFile, 'policy→ci.yml');
   });
 
-  it('rc-verify.yml never logs the raw OIDC token (derived claims or length only)', () => {
-    assertOidcTokenNeverLogged(rcVerifyFile, 'rc-verify.yml');
+  it('rc-verify.yml has no retired npm publication or OIDC access', () => {
+    assertNoNpmPublication(rcVerifyFile, 'rc-verify.yml');
   });
 
-  it('release builds have no publishing actor, persisted credential or mutation path', () => {
+  it('release writes are confined to the final trusted main-branch publication step', () => {
     assertReleaseActorCredentials(readWorkflow('release-prepare.yml'), 'release-prepare.yml');
   });
 });
@@ -465,7 +453,7 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     expect(() => assertReleaseActorCredentials(releaseFile.replace('persist-credentials: false', 'persist-credentials: true'), 'mutant')).toThrow(/persist checkout/);
   });
 
-  it('reintroducing native publication into the build-only action is detected', () => {
+  it('adding an unchecked publication step outside the publisher is detected', () => {
     const releaseFile = readWorkflow('release-prepare.yml');
     const workflow = parse(releaseFile);
     workflow.jobs.assemble.steps.push({ name: 'unsafe publication', run: 'gh release create v2.0.0' });
@@ -647,15 +635,8 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     );
   });
 
-  it('tee-ing the OIDC response (or printing the raw token) back into the log is detected', () => {
-    const teeMutant = rcVerifyFile.replace(
-      '"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npmjs.org" > oidc.json',
-      '"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npmjs.org" | tee oidc.json',
-    );
-    expect(teeMutant).not.toBe(rcVerifyFile);
-    expect(() => assertOidcTokenNeverLogged(teeMutant, 'mutant')).toThrow(/tee/);
-    const rawValueMutant = rcVerifyFile.replace('${value.length} chars', 'value');
-    expect(rawValueMutant).not.toBe(rcVerifyFile);
-    expect(() => assertOidcTokenNeverLogged(rawValueMutant, 'mutant')).toThrow();
+  it('restoring npm publication or OIDC access is detected', () => {
+    expect(() => assertNoNpmPublication(rcVerifyFile + '\nrun: npm publish --dry-run', 'mutant')).toThrow(/retired npm/);
+    expect(() => assertNoNpmPublication(rcVerifyFile + '\nid-token: write', 'mutant')).toThrow(/retired npm/);
   });
 });

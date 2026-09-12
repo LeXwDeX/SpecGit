@@ -6,11 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { verifyPrepared } from './release-artifacts.mjs';
-import { publishNpm } from './npm-publish.mjs';
-import { registryMetadata, registryRelease } from './release-check.mjs';
-
-export { publishNpm } from './npm-publish.mjs';
+import { verifyNativeBundle } from './native-release.mjs';
 
 const repository = 'LeXwDeX/SpecGit';
 const need = (condition, message) => { if (!condition) throw new Error(message); };
@@ -28,46 +24,38 @@ export function requireMain(source, lookup = () => api(`repos/${repository}/git/
   const main = lookup();
   need(main.ref === 'refs/heads/main' && main.object?.type === 'commit' && main.object.sha === source, 'Publication source must be the current verified main commit.');
 }
-export function verifyBuildRun(run, source) {
-  need(run.head_sha === source && run.head_branch === 'main' && run.head_repository?.full_name === repository && run.repository?.full_name === repository && run.path === '.github/workflows/release-prepare.yml' && run.event === 'workflow_dispatch' && run.status === 'completed' && run.conclusion === 'success', 'Release artifacts must come from a successful main build of this exact workflow and source.');
+export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
+  const owned = run.head_sha === source && run.head_branch === 'main' && run.head_repository?.full_name === repository && run.repository?.full_name === repository && run.path === '.github/workflows/release-prepare.yml' && run.event === 'workflow_dispatch';
+  const completed = run.status === 'completed' && run.conclusion === 'success';
+  const running = run.status === 'in_progress' && String(run.id) === activeRun && ['linux', 'macos', 'windows'].every(label => {
+    const matches = jobs.filter(job => job.name === `Build native release (${label})`);
+    return matches.length === 1 && matches[0].conclusion === 'success' && matches[0].status === 'completed' && matches[0].labels?.includes('self-hosted');
+  });
+  need(owned && (completed || running), 'Release requires the exact main build with three successful native smoke jobs.');
 }
-export function verifyRecovery(current, previous, git = args => command('git', ['-C', fileURLToPath(new URL('../../', import.meta.url)), ...args])) {
-  need(current.version === previous.version && current.source !== previous.source, 'Recovery requires the same version from an explicitly different source.');
-  git(['merge-base', '--is-ancestor', previous.source, current.source]);
-  // Packaging provenance may change; runtime, launcher, schemas and licenses may not.
-  git(['diff', '--exit-code', previous.source, current.source, '--', 'runtime/src', 'runtime/tests', 'runtime/Cargo.toml', 'runtime/Cargo.lock', 'runtime/.cargo', 'runtime/schemas', 'runtime/REFERENCE.md', 'runtime/distribution/launcher.cjs', 'runtime/distribution/stage.mjs', 'runtime/distribution/check-surfaces.mjs', 'LICENSE', 'package.json']);
-  need(current.packages.every(p => /^[a-f0-9]{64}$/.test(p.executable_sha256 ?? '')), 'Current executable identity is missing.');
-  need(JSON.stringify(current.packages.map(p => p.name).sort()) === JSON.stringify(previous.packages.map(p => p.name).sort()), 'Recovery package inventory differs.');
+export function githubFiles(release) {
+  need(release.binaries?.length === 3 && new Set(release.binaries.map(b => b.filename)).size === 3, 'Three native GitHub executables are required.');
+  for (const entry of release.binaries) need(createHash('sha256').update(readFileSync(entry.file)).digest('hex') === entry.sha256, 'Native executable digest differs before publication.');
+  return release.binaries.map(entry => entry.file);
 }
-export async function selectRecoveryPackages(current, previous, metadata = registryMetadata) {
-  const packages = [];
-  for (const artifact of current.packages) {
-    const old = previous.packages.find(p => p.name === artifact.name);
-    need(old, 'Recovery package is missing.');
-    const published = await metadata(artifact);
-    let selected = artifact;
-    let qualified_source = current.source;
-    if (published && published.dist?.integrity !== artifact.integrity) {
-      need(published.dist?.integrity === old.integrity, `Published bytes differ for ${artifact.name}; neither qualified bundle matches.`);
-      need(old.executable_sha256 === artifact.executable_sha256, `Recovery executable differs for already published ${artifact.name}.`);
-      selected = old;
-      qualified_source = previous.source;
-    }
-    packages.push({ ...selected, qualified_source });
-  }
-  return { ...current, packages };
+export function releaseNotes(release, buildRun) {
+  return `SpecGit v${release.version}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.
+
+Download the matching executable below, rename it to specgit (specgit.exe on Windows), and put it in a directory on PATH. On macOS/Linux run chmod +x specgit. Verify its SHA-256 against this table, then run specgit --human --version. No Node.js, npm or Rust installation is required.
+
+| Binary | SHA-256 |
+| --- | --- |
+${release.binaries.map(b => `| ${b.filename} | \`${b.sha256}\` |`).join('\n')}
+
+Each binary passed version, help and schema smoke tests on its native self-hosted runner.
+Source: \`${release.source}\`.
+${buildRun ? `Build: https://github.com/${repository}/actions/runs/${buildRun}\n` : ''}
+License: https://github.com/${repository}/blob/${release.source}/LICENSE
+See the v2 migration guide before replacing a v1 project configuration.
+`;
 }
-export function githubFiles(release, scratch) {
-  const native = release.packages.filter(item => item.name !== 'specgit');
-  need(native.length === 3, 'Three native GitHub archives are required.');
-  const manifest = path.join(scratch, 'release.json');
-  writeFileSync(manifest, JSON.stringify({ version: release.version, source: release.source, packages: native.map(({ name, sha256, executable_sha256, tarball }) => ({ name, sha256, executable_sha256, tarball: path.basename(tarball) })) }, null, 2) + '\n');
-  const files = [...native.map(item => item.tarball), manifest];
-  const sums = path.join(scratch, 'SHASUMS256.txt');
-  writeFileSync(sums, files.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${path.basename(file)}`).sort().join('\n') + '\n');
-  return [...native.map(item => item.tarball), sums, manifest];
-}
-export function publishGithub(release, directory, { request = api, cli = gh } = {}) {
+export function publishGithub(release, directory, { request = api, cli = gh, buildRun } = {}) {
+  const files = githubFiles(release);
   const tag = `v${release.version}`;
   // A tag with the right spelling alone does not prove its source commit.
   const tags = request(`repos/${repository}/git/matching-refs/tags/${tag}`);
@@ -86,10 +74,9 @@ export function publishGithub(release, directory, { request = api, cli = gh } = 
   let current = pages.flat().find(item => item.tag_name === tag);
   const scratch = mkdtempSync(path.join(tmpdir(), 'specgit-release-metadata-'));
   try {
-    const files = githubFiles(release, scratch);
+    const notes = path.join(scratch, 'notes.md');
+    writeFileSync(notes, releaseNotes(release, buildRun));
     if (!current) {
-      const notes = path.join(scratch, 'notes.md');
-      writeFileSync(notes, `SpecGit ${tag}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.\n\nManual installation: download the matching platform archive and verify it with SHASUMS256.txt. Extract it and place package/bin/specgit (specgit.exe on Windows) in a directory on PATH. Keep the bundled license texts. Run specgit --human --version. Node.js, npm and Rust are not required.\n\nThese are the exact native archives from the verified Actions build. npm is a separate publication channel; this GitHub Release does not claim that npm publication is complete. After npm availability is confirmed, install with npm install -g specgit@${release.version} --ignore-scripts.\n\nExact source: \`${release.source}\`. See the v2 migration guide before replacing a v1 project configuration.\n`);
       cli(['release', 'create', tag, '--repo', repository, '--verify-tag', '--title', `SpecGit ${tag}`, '--notes-file', notes, '--draft']);
     }
     function state() {
@@ -125,7 +112,7 @@ export function publishGithub(release, directory, { request = api, cli = gh } = 
     current = state();
     verifyAssets(current, 'uploaded', false);
     need(request(`repos/${repository}/commits/${tag}`).sha === release.source, 'Release tag changed before publication.');
-    cli(['release', 'edit', tag, '--repo', repository, '--draft=false', '--prerelease=false', '--latest']);
+    cli(['release', 'edit', tag, '--repo', repository, '--draft=false', '--prerelease=false', '--latest', '--notes-file', notes]);
     current = state();
     need(current.isDraft === false && current.isPrerelease === false, 'Stable Release state is not confirmed.');
     need(request(`repos/${repository}/releases/latest`).tag_name === tag, 'The latest GitHub Release is not confirmed.');
@@ -133,43 +120,21 @@ export function publishGithub(release, directory, { request = api, cli = gh } = 
     return { tag, source: release.source, url: current.url, assets_verified: files.map(file => path.basename(file)) };
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
-export async function publishChannels(release, directory, npmRelease, values, { registry = registryRelease, github = publishGithub, npm = candidate => publishNpm(candidate, { npm: args => command('npm', args) }) } = {}) {
-  const observed = values.npm ? await registry(npmRelease) : undefined;
-  const githubResult = values.github && !values.preflight ? github(release, directory) : undefined;
-  const npmResult = values.npm && !values.preflight ? await npm(npmRelease) : observed;
-  return { ...(githubResult ? { github: githubResult } : {}), ...(npmResult ? { npm: npmResult, npm_sources: Object.fromEntries(npmRelease.packages.map(p => [p.name, p.qualified_source ?? npmRelease.source])) } : {}), publication_performed: !values.preflight && Boolean(values.github || values.npm) };
-}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { directory: { type: 'string' }, version: { type: 'string' }, source: { type: 'string' }, npm: { type: 'boolean', default: false }, github: { type: 'boolean', default: false }, preflight: { type: 'boolean', default: false }, 'npm-directory': { type: 'string' }, 'npm-build-run': { type: 'string' }, 'verify-build-run': { type: 'string' }, 'build-run': { type: 'string' } } });
-    if (values['verify-build-run']) {
-      verifyBuildRun(JSON.parse(readFileSync(values['verify-build-run'], 'utf8')), values.source);
-      process.stdout.write(JSON.stringify({ build_run_verified: true, source: values.source }) + '\n');
-    } else {
-      need(values.directory, 'Use --directory <qualified bundle> --version <stable version> --source <commit> --build-run <id> [--github] [--npm] [--preflight]. No channel flags means offline verification.');
-      need(!values['npm-directory'] || values.npm, '--npm-directory requires --npm.');
-      need(!values['npm-build-run'] || values['npm-directory'], '--npm-build-run requires --npm-directory.');
-      const directory = path.resolve(values.directory);
-      const release = verifyPrepared(directory, values.version, values.source);
-      if (values.github || values.npm) {
-        need(/^[1-9][0-9]*$/.test(values['build-run'] ?? ''), 'An explicit --build-run <successful main Actions run> is required for publication.');
-        verifyBuildRun(api(`repos/${repository}/actions/runs/${values['build-run']}`), release.source);
-        requireMain(release.source);
-      }
-      let npmRelease = release;
-      if (values['npm-directory']) {
-        const oldDirectory = path.resolve(values['npm-directory']);
-        const oldSource = JSON.parse(readFileSync(path.join(oldDirectory, 'release.json'), 'utf8')).source;
-        const previous = verifyPrepared(oldDirectory, values.version, oldSource);
-        need(/^[1-9][0-9]*$/.test(values['npm-build-run'] ?? ''), 'Recovery requires --npm-build-run.');
-        verifyBuildRun(api(`repos/${repository}/actions/runs/${values['npm-build-run']}`), oldSource);
-        verifyRecovery(release, previous);
-        npmRelease = await selectRecoveryPackages(release, previous);
-      }
-      // Read every npm identity before either channel writes, but availability
-      // is never a GitHub-only prerequisite. A missing version is resumable.
-      const result = await publishChannels(release, directory, npmRelease, values);
-      process.stdout.write(JSON.stringify({ version: release.version, source: release.source, bundle_verified: true, ...result }) + '\n');
+    const { values } = parseArgs({ options: { directory: { type: 'string' }, version: { type: 'string' }, source: { type: 'string' }, github: { type: 'boolean', default: false }, preflight: { type: 'boolean', default: false }, 'build-run': { type: 'string' } } });
+    need(values.directory, 'Use --directory <native bundle> --version <stable version> --source <commit> [--github --build-run <id>] [--preflight].');
+    const directory = path.resolve(values.directory);
+    const release = verifyNativeBundle(directory, values.version, values.source);
+    if (values.github) {
+      need(/^[1-9][0-9]*$/.test(values['build-run'] ?? ''), 'An explicit --build-run is required.');
+      const run = api(`repos/${repository}/actions/runs/${values['build-run']}`);
+      const activeRun = process.env.GITHUB_ACTIONS === 'true' && process.env.GITHUB_RUN_ID === values['build-run'] ? values['build-run'] : undefined;
+      const jobs = activeRun ? api(`repos/${repository}/actions/runs/${values['build-run']}/jobs?per_page=100`, ['--paginate', '--slurp']).flatMap(page => page.jobs) : [];
+      verifyBuildRun(run, release.source, { activeRun, jobs });
+      requireMain(release.source);
     }
+    const github = values.github && !values.preflight ? publishGithub(release, directory, { buildRun: values['build-run'] }) : undefined;
+    process.stdout.write(JSON.stringify({ version: release.version, source: release.source, bundle_verified: true, ...(github ? { github } : {}), publication_performed: Boolean(github) }) + '\n');
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }
 }

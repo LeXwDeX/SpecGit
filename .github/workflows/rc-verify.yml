@@ -1,11 +1,8 @@
 name: RC Verify
 
-# Retained TypeScript engineering package verification (#71): build,
-# tarball shape, registry reachability, and the npm OIDC dry-run chain.
-# This is not qualification of the public native v2 release. The only registry
-# interactions are read-only (npm view) and `npm publish --dry-run`,
-# which never uploads. Native v2 qualification uses the three-platform
-# Release build; the coordinator publishes its independently verified bundle.
+# Retained offline TypeScript engineering package checks. GitHub native
+# releases use compile-and-smoke verification in release-prepare.yml.
+# npm registry, publication and OIDC flows are retired.
 
 on:
   workflow_call:
@@ -22,7 +19,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write # dry-run provenance: prove the OIDC chain pre-publish
 
 concurrency:
   group: rc-verify-${{ github.ref }}
@@ -53,11 +49,8 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          # Node 24 ships npm 11.5+, required for OIDC trusted publishing
-          # and provenance — the same chain the real publish uses.
           node-version: '24'
           cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
@@ -70,19 +63,6 @@ jobs:
         # Verify the build above; npm pack would otherwise invoke prepare again.
         env:
           npm_config_ignore_scripts: 'true'
-
-      # Stage an RC version for the rest of the job: the dry-run below
-      # would otherwise collide with the already-published base version,
-      # and verifying an actual RC version is the point. Workspace-only —
-      # never committed, never published.
-      - name: Stage a release-candidate version
-        run: |
-          RC_VERSION="1.15.1-rc.${GITHUB_RUN_ID}"
-          npm pkg set "name=specgit-legacy-engineering-rc" "version=${RC_VERSION}"
-          # This throwaway checkout is a named dry-run fixture. The real root
-          # stays private and public native packages are built separately.
-          npm pkg delete private
-          echo "RC_VERSION=${RC_VERSION}" >> "$GITHUB_ENV"
 
       - name: Pack and verify the tarball shape
         run: |
@@ -106,48 +86,6 @@ jobs:
           }
           console.log(`Tarball OK: ${tar.name}@${tar.version} (${tar.filename}, ${files.length} files)`);
           EOF
-
-      - name: Registry reachability and dist-tag baseline (read-only)
-        run: npm view specgit version dist-tags --json
-
-      - name: Dry-run publish the RC version (never uploads)
-        # --tag rc: prerelease dist-tag intent, proven without publishing.
-        run: npm publish --dry-run --ignore-scripts --tag rc
-
-      # Fork pull requests cannot be granted id-token: write, so the
-      # provenance proof runs on same-repo PRs and manual dispatch only.
-      - name: Prove OIDC provenance before any real publish
-        if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.fork == false) }}
-        run: |
-          set -e
-          # Audience probe: this runner can mint an npm-audience OIDC token.
-          # The response embeds the raw JWT — a short-lived bearer
-          # credential. It goes straight to a file (never piped to the
-          # log); only derived claims and the token length are printed.
-          curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npmjs.org" > oidc.json
-          node --input-type=module <<'EOF'
-          import { readFileSync } from 'node:fs';
-          const { value } = JSON.parse(readFileSync('oidc.json', 'utf8'));
-          const parts = value.split('.');
-          if (parts.length !== 3) {
-            console.error('OIDC response is not a JWT');
-            process.exit(1);
-          }
-          // Safe derived claims only: audience, issuer, expiry, length.
-          const claims = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-          if (claims.aud !== 'npmjs.org') {
-            console.error(`unexpected OIDC audience: ${claims.aud}`);
-            process.exit(1);
-          }
-          console.log(`OIDC token minted for audience ${claims.aud} (issuer ${claims.iss}, exp ${claims.exp}, ${value.length} chars)`);
-          EOF
-          npm publish --dry-run --ignore-scripts --provenance --tag rc
-
-      - name: Note the fork limitation (visible, never silent)
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
-        run: |
-          echo "::warning::Provenance dry-run skipped: fork pull requests cannot be granted id-token: write. Provenance is proven on same-repo PRs and in the release job."
 
   windows-diagnostics:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics }}
