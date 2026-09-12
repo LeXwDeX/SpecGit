@@ -25,7 +25,8 @@ architecture and SHA-256, then publishes exactly these assets:
 - `specgit-win32-x64.exe`
 
 Only the final job has repository write permission, and only its publisher step
-receives the workflow's `GH_TOKEN`. No custom release credential is needed. The
+receives the workflow's `GH_TOKEN`. The publishing runner needs GitHub CLI 2.99 or newer (including `gh api --slurp`).
+No custom release credential is needed. The
 publisher checks current `main` and the three successful build jobs before writing,
 creates a draft, uploads missing binaries, verifies downloaded bytes, then makes the
 Release stable/latest. Checksums and the source/build link live in the Release
@@ -38,7 +39,7 @@ Rerun the failed workflow job so it uses the original successful build artifacts
 Matching tags/assets are reused; different immutable bytes or a foreign tag stop
 the run. Do not rebuild and overwrite an already published version.
 
-The Actions artifact `specgit-release-<source SHA>` also supports explicit recovery
+The Actions artifact `specgit-release-<source SHA>-<attempt>` also supports explicit recovery
 through the existing authenticated `gh` session:
 
 ```sh

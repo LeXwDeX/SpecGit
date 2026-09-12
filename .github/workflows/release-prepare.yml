@@ -110,7 +110,7 @@ jobs:
         run: node runtime/distribution/native-release.mjs --assemble --input "$RUNNER_TEMP/specgit-release-input-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}" --version "$RELEASE_VERSION" --source "$GITHUB_SHA"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: specgit-release-${{ github.sha }}
+          name: specgit-release-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/specgit-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           retention-days: 14

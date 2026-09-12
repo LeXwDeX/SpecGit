@@ -58,6 +58,7 @@ describe('native GitHub release workflow (#559)', () => {
     expect(workflow.jobs.assemble['runs-on']).toEqual(['self-hosted', 'Linux', 'X64']);
     const steps = workflow.jobs.assemble.steps as Array<{ uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }>;
     expect(steps.find(step => step.uses?.startsWith('actions/download-artifact@'))?.with).toMatchObject({ pattern: 'release-platform-*', 'digest-mismatch': 'error' });
+    expect(steps.find(step => step.uses?.startsWith('actions/upload-artifact@'))?.with?.name).toBe('specgit-release-${{ github.sha }}-${{ github.run_attempt }}');
     const assemble = steps.findIndex(step => step.run?.includes('native-release.mjs --assemble'));
     const publish = steps.findIndex(step => step.run?.includes('distribution/publish.mjs'));
     expect(assemble).toBeGreaterThan(-1);
