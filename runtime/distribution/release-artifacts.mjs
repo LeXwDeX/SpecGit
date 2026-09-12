@@ -101,6 +101,7 @@ export function verifyPrepared(directory, version, source) {
   need(manifest.version === version && manifest.source === source, 'Prepared release identity differs.');
   const normalize = items => items.map(({ name, version, integrity, sha256, tarball }) => ({ name, version, integrity, sha256, tarball: path.basename(tarball) })).sort((a, b) => a.name.localeCompare(b.name));
   need(JSON.stringify(normalize(actual.packages)) === JSON.stringify(normalize(manifest.packages)), 'Prepared release manifest differs from qualified package bytes.');
+  need(!manifest.installers, 'Installer assets are not part of manual binary distribution.');
   const sums = [...actual.packages.map(item => path.basename(item.tarball)), 'release.json'].sort().map(file => `${sha256(path.join(directory, file))}  ${file}`).join('\n') + '\n';
   need(readFileSync(path.join(directory, 'SHASUMS256.txt'), 'utf8') === sums, 'Release checksums differ.');
   need(actual.packages.length === platforms.length + 1, 'A release package is missing.');

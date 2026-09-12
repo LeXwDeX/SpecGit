@@ -11,32 +11,45 @@ messages do not grant new permission.
 
 ## Install
 
-The stable v2.0.0 distribution has three supported targets:
+Supported targets are macOS Apple Silicon, Linux x64 with glibc, and Windows x64.
+GitHub Releases and npm are independent distribution channels. A GitHub release
+does not imply the corresponding npm version is already available.
 
-| System | Architecture | Native npm package |
-| --- | --- | --- |
-| macOS | Apple Silicon / arm64 | `specgit-darwin-arm64` |
-| Linux | x64, glibc | `specgit-linux-x64-gnu` |
-| Windows | x64 | `specgit-win32-x64` |
+### npm
+
+After the requested version is available on npm, use Node.js 20.19 or newer:
 
 ```sh
 npm install -g specgit@2.0.0 --ignore-scripts
 specgit --human --version
-specgit --schema
 ```
 
-The npm launcher requires Node.js 20.19 or newer. It selects the exact-version
-native package, verifies its checksum and forwards arguments, I/O and signals.
-No Rust compiler, source checkout, private GitHub download or install script is
-needed. Keep npm optional dependencies enabled. Unsupported architectures and
-Linux musl fail with an explicit diagnostic; Linux packages record and check the
-actual binary's minimum glibc version.
+The thin launcher selects the native package for your operating system. No Rust
+compiler or installation lifecycle script is required. Until npm publication of
+2.0.0 completes, the registry's `latest` tag may still select version 1.x.
 
-The matching platform `.tgz` asset in the GitHub Release also contains a standalone
-executable under `package/bin/specgit` (`specgit.exe` on Windows). Verify the asset
-with `SHASUMS256.txt`, extract it and run that executable directly if Node.js is not
-wanted. The platform tarball bundles its license texts. The `specgit-2.0.0.tgz`
-asset is the npm launcher package, not a standalone executable.
+### Manual GitHub installation
+
+Download the matching `.tgz` and `SHASUMS256.txt` from the
+[GitHub Release](https://github.com/LeXwDeX/SpecGit/releases). These are the native
+archives produced and verified by our Actions runners; no installer or npm wrapper
+is included as a separate Release asset.
+
+| Platform | Archive |
+| --- | --- |
+| macOS Apple Silicon | `specgit-darwin-arm64-2.0.0.tgz` |
+| Linux x64 glibc | `specgit-linux-x64-gnu-2.0.0.tgz` |
+| Windows x64 | `specgit-win32-x64-2.0.0.tgz` |
+
+Calculate the archive's SHA-256 (`shasum -a 256 <archive>` on macOS,
+`sha256sum <archive>` on Linux, or `Get-FileHash <archive> -Algorithm SHA256`
+in PowerShell) and compare the full hash with its exact entry in the checksum file.
+Then extract the archive with `tar -xzf <archive>`. Place `package/bin/specgit`
+(`package/bin/specgit.exe` on Windows) in a directory on PATH and keep the bundled
+license texts. On macOS/Linux preserve the executable permission, or use
+`chmod +x specgit`. Run `specgit --human --version` to confirm the installed version.
+Manual installation needs neither Node.js nor npm nor a Rust compiler. Check PATH
+if an older npm installation is selected instead.
 
 ## Start a delivery
 
@@ -130,8 +143,9 @@ The [Release Action](.github/workflows/release-prepare.yml) compiles and indepen
 installs macOS arm64, Linux x64 and Windows x64 on self-hosted runners, repeats the
 native journeys through each installed entrypoint, then assembles the package set
 and checksums. It does not publish. The coordinator publishes those exact bytes
-through the existing authenticated npm/gh session and reads back registry and
-Release state. See [distribution and recovery](runtime/distribution/README.md) and the retained
+through the existing authenticated `gh` session and reads back the stable tag
+and every Release asset. npm is no longer a publication target.
+See [distribution and recovery](runtime/distribution/README.md) and the retained
 [engineering release gates](docs/release-gates.md).
 
 The [lightweight design](docs/design/specgit-2-rust-design.md) and
@@ -139,4 +153,4 @@ The [lightweight design](docs/design/specgit-2-rust-design.md) and
 retained requirements. CLI reference suggestions are optional; implemented features
 are verified on their real interfaces.
 
-The retained Nix target is explicitly named `legacy-engineering` (`nix run .#legacy-engineering`). It builds the old TypeScript engineering CLI. Nix has no default v2 package; install native v2 through the npm wrapper or the platform archives above.
+The retained Nix target is explicitly named `legacy-engineering` (`nix run .#legacy-engineering`). It builds the old TypeScript engineering CLI. Nix has no default v2 package; install native v2 through the GitHub Release scripts or platform archives above.

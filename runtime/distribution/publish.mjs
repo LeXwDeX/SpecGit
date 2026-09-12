@@ -7,7 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { verifyPrepared } from './release-artifacts.mjs';
-import { registryRelease } from './release-check.mjs';
+import { publishNpm } from './npm-publish.mjs';
+import { registryMetadata, registryRelease } from './release-check.mjs';
+
+export { publishNpm } from './npm-publish.mjs';
 
 const repository = 'LeXwDeX/SpecGit';
 const need = (condition, message) => { if (!condition) throw new Error(message); };
@@ -21,54 +24,48 @@ function command(program, args, options = {}) {
 }
 function gh(args, options) { return command('gh', args, options); }
 const api = (route, args = [], options) => JSON.parse(gh(['api', route, ...args], options));
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-export async function publishNpm(release, { registry = registryRelease, npm = args => command('npm', args), wait = sleep, attempts = 6 } = {}) {
-  // Uses the caller's existing npm authentication; it never reads token files.
-  npm(['whoami', '--registry=https://registry.npmjs.org']);
-  let state = await registry(release);
-  async function observed(name) {
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      state = await registry(release);
-      if (state.observations.find(item => item.name === name)?.state === 'verified') return;
-      if (attempt + 1 < attempts) await wait(5000);
-    }
-    throw new Error(`Registry propagation for ${name}@${release.version} remains unknown. Retry the same immutable release after checking the registry.`);
-  }
-  // Every version is immutable. A lost publish response stops here; a rerun
-  // reads the registry first and never blindly repeats an applied publication.
-  for (const artifact of [...release.packages.filter(item => item.name !== 'specgit'), release.packages.find(item => item.name === 'specgit')]) {
-    need(artifact, 'Missing wrapper package.');
-    state = await registry(release);
-    if (artifact.name === 'specgit') need(state.observations.filter(item => item.name !== 'specgit').every(item => item.state === 'verified'), 'Native packages must be visible before the wrapper.');
-    if (state.observations.find(item => item.name === artifact.name)?.state !== 'verified') {
-      npm(['publish', artifact.tarball, '--registry=https://registry.npmjs.org', '--access=public', '--ignore-scripts', '--provenance=false', '--tag=v2-staging']);
-      await observed(artifact.name);
-    }
-  }
-  state = await registry(release);
-  need(state.can_promote_latest, 'All immutable package versions must be verified before latest promotion.');
-  for (const artifact of [...release.packages.filter(item => item.name !== 'specgit'), release.packages.find(item => item.name === 'specgit')]) {
-    npm(['dist-tag', 'add', `${artifact.name}@${artifact.version}`, 'latest', '--registry=https://registry.npmjs.org']);
-    let matched = false;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      const latest = JSON.parse(npm(['view', artifact.name, 'dist-tags.latest', '--json', '--registry=https://registry.npmjs.org']));
-      if (latest === artifact.version) { matched = true; break; }
-      if (attempt + 1 < attempts) await wait(5000);
-    }
-    need(matched, `The latest tag for ${artifact.name} is not confirmed. Retry the same release.`);
-  }
-  return { ...state, latest_verified: true, publication_performed: true };
-}
-export function verifyLatest(release, npm = args => command('npm', args)) {
-  for (const artifact of release.packages) need(JSON.parse(npm(['view', artifact.name, 'dist-tags.latest', '--json', '--registry=https://registry.npmjs.org'])) === release.version, `The latest tag for ${artifact.name} is not confirmed.`);
-}
 export function requireMain(source, lookup = () => api(`repos/${repository}/git/ref/heads/main`)) {
   const main = lookup();
   need(main.ref === 'refs/heads/main' && main.object?.type === 'commit' && main.object.sha === source, 'Publication source must be the current verified main commit.');
 }
 export function verifyBuildRun(run, source) {
   need(run.head_sha === source && run.head_branch === 'main' && run.head_repository?.full_name === repository && run.repository?.full_name === repository && run.path === '.github/workflows/release-prepare.yml' && run.event === 'workflow_dispatch' && run.status === 'completed' && run.conclusion === 'success', 'Release artifacts must come from a successful main build of this exact workflow and source.');
+}
+export function verifyRecovery(current, previous, git = args => command('git', ['-C', fileURLToPath(new URL('../../', import.meta.url)), ...args])) {
+  need(current.version === previous.version && current.source !== previous.source, 'Recovery requires the same version from an explicitly different source.');
+  git(['merge-base', '--is-ancestor', previous.source, current.source]);
+  // Packaging provenance may change; runtime, launcher, schemas and licenses may not.
+  git(['diff', '--exit-code', previous.source, current.source, '--', 'runtime/src', 'runtime/tests', 'runtime/Cargo.toml', 'runtime/Cargo.lock', 'runtime/.cargo', 'runtime/schemas', 'runtime/REFERENCE.md', 'runtime/distribution/launcher.cjs', 'runtime/distribution/stage.mjs', 'runtime/distribution/check-surfaces.mjs', 'LICENSE', 'package.json']);
+  need(current.packages.every(p => /^[a-f0-9]{64}$/.test(p.executable_sha256 ?? '')), 'Current executable identity is missing.');
+  need(JSON.stringify(current.packages.map(p => p.name).sort()) === JSON.stringify(previous.packages.map(p => p.name).sort()), 'Recovery package inventory differs.');
+}
+export async function selectRecoveryPackages(current, previous, metadata = registryMetadata) {
+  const packages = [];
+  for (const artifact of current.packages) {
+    const old = previous.packages.find(p => p.name === artifact.name);
+    need(old, 'Recovery package is missing.');
+    const published = await metadata(artifact);
+    let selected = artifact;
+    let qualified_source = current.source;
+    if (published && published.dist?.integrity !== artifact.integrity) {
+      need(published.dist?.integrity === old.integrity, `Published bytes differ for ${artifact.name}; neither qualified bundle matches.`);
+      need(old.executable_sha256 === artifact.executable_sha256, `Recovery executable differs for already published ${artifact.name}.`);
+      selected = old;
+      qualified_source = previous.source;
+    }
+    packages.push({ ...selected, qualified_source });
+  }
+  return { ...current, packages };
+}
+export function githubFiles(release, scratch) {
+  const native = release.packages.filter(item => item.name !== 'specgit');
+  need(native.length === 3, 'Three native GitHub archives are required.');
+  const manifest = path.join(scratch, 'release.json');
+  writeFileSync(manifest, JSON.stringify({ version: release.version, source: release.source, packages: native.map(({ name, sha256, executable_sha256, tarball }) => ({ name, sha256, executable_sha256, tarball: path.basename(tarball) })) }, null, 2) + '\n');
+  const files = [...native.map(item => item.tarball), manifest];
+  const sums = path.join(scratch, 'SHASUMS256.txt');
+  writeFileSync(sums, files.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${path.basename(file)}`).sort().join('\n') + '\n');
+  return [...native.map(item => item.tarball), sums, manifest];
 }
 export function publishGithub(release, directory, { request = api, cli = gh } = {}) {
   const tag = `v${release.version}`;
@@ -87,12 +84,12 @@ export function publishGithub(release, directory, { request = api, cli = gh } = 
   const pages = request(`repos/${repository}/releases?per_page=100`, ['--paginate', '--slurp']);
   need(Array.isArray(pages) && pages.every(page => Array.isArray(page)), 'Release discovery is incomplete.');
   let current = pages.flat().find(item => item.tag_name === tag);
-  const files = [...release.packages.map(item => item.tarball), path.join(directory, 'SHASUMS256.txt'), path.join(directory, 'release.json')];
   const scratch = mkdtempSync(path.join(tmpdir(), 'specgit-release-metadata-'));
   try {
+    const files = githubFiles(release, scratch);
     if (!current) {
       const notes = path.join(scratch, 'notes.md');
-      writeFileSync(notes, `SpecGit ${tag}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.\n\nInstall with npm: \`npm install -g specgit@${release.version} --ignore-scripts\`. The three platform tgz assets also contain standalone executables under \`package/bin/\`; extracting one does not require Node.js.\n\nVerify downloaded assets with SHASUMS256.txt. Exact source: \`${release.source}\`. See the repository's v2 migration guide before replacing a v1 project configuration.\n`);
+      writeFileSync(notes, `SpecGit ${tag}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.\n\nManual installation: download the matching platform archive and verify it with SHASUMS256.txt. Extract it and place package/bin/specgit (specgit.exe on Windows) in a directory on PATH. Keep the bundled license texts. Run specgit --human --version. Node.js, npm and Rust are not required.\n\nThese are the exact native archives from the verified Actions build. npm is a separate publication channel; this GitHub Release does not claim that npm publication is complete. After npm availability is confirmed, install with npm install -g specgit@${release.version} --ignore-scripts.\n\nExact source: \`${release.source}\`. See the v2 migration guide before replacing a v1 project configuration.\n`);
       cli(['release', 'create', tag, '--repo', repository, '--verify-tag', '--title', `SpecGit ${tag}`, '--notes-file', notes, '--draft']);
     }
     function state() {
@@ -103,6 +100,7 @@ export function publishGithub(release, directory, { request = api, cli = gh } = 
     function verifyAssets(value, phase, allowMissing) {
       const destinationRoot = path.join(scratch, phase);
       mkdirSync(destinationRoot);
+      need(value.assets.every(asset => files.some(file => path.basename(file) === asset.name)), 'Unexpected Release asset; reconcile the inventory without overwriting published assets.');
       const missing = [];
       for (const file of files) {
         const name = path.basename(file);
@@ -135,26 +133,43 @@ export function publishGithub(release, directory, { request = api, cli = gh } = 
     return { tag, source: release.source, url: current.url, assets_verified: files.map(file => path.basename(file)) };
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
+export async function publishChannels(release, directory, npmRelease, values, { registry = registryRelease, github = publishGithub, npm = candidate => publishNpm(candidate, { npm: args => command('npm', args) }) } = {}) {
+  const observed = values.npm ? await registry(npmRelease) : undefined;
+  const githubResult = values.github && !values.preflight ? github(release, directory) : undefined;
+  const npmResult = values.npm && !values.preflight ? await npm(npmRelease) : observed;
+  return { ...(githubResult ? { github: githubResult } : {}), ...(npmResult ? { npm: npmResult, npm_sources: Object.fromEntries(npmRelease.packages.map(p => [p.name, p.qualified_source ?? npmRelease.source])) } : {}), publication_performed: !values.preflight && Boolean(values.github || values.npm) };
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { directory: { type: 'string' }, version: { type: 'string' }, source: { type: 'string' }, npm: { type: 'boolean', default: false }, github: { type: 'boolean', default: false }, 'verify-build-run': { type: 'string' }, 'build-run': { type: 'string' } } });
+    const { values } = parseArgs({ options: { directory: { type: 'string' }, version: { type: 'string' }, source: { type: 'string' }, npm: { type: 'boolean', default: false }, github: { type: 'boolean', default: false }, preflight: { type: 'boolean', default: false }, 'npm-directory': { type: 'string' }, 'npm-build-run': { type: 'string' }, 'verify-build-run': { type: 'string' }, 'build-run': { type: 'string' } } });
     if (values['verify-build-run']) {
       verifyBuildRun(JSON.parse(readFileSync(values['verify-build-run'], 'utf8')), values.source);
       process.stdout.write(JSON.stringify({ build_run_verified: true, source: values.source }) + '\n');
     } else {
-      need(values.directory, 'Use --directory <qualified release bundle> --version <stable version> --source <commit> [--build-run <id> --npm] [--github]. Without write flags, registry verification is read-only.');
+      need(values.directory, 'Use --directory <qualified bundle> --version <stable version> --source <commit> --build-run <id> [--github] [--npm] [--preflight]. No channel flags means offline verification.');
+      need(!values['npm-directory'] || values.npm, '--npm-directory requires --npm.');
+      need(!values['npm-build-run'] || values['npm-directory'], '--npm-build-run requires --npm-directory.');
       const directory = path.resolve(values.directory);
       const release = verifyPrepared(directory, values.version, values.source);
-      if (values.npm || values.github) {
+      if (values.github || values.npm) {
         need(/^[1-9][0-9]*$/.test(values['build-run'] ?? ''), 'An explicit --build-run <successful main Actions run> is required for publication.');
         verifyBuildRun(api(`repos/${repository}/actions/runs/${values['build-run']}`), release.source);
         requireMain(release.source);
       }
-      const registry = values.npm ? await publishNpm(release) : await registryRelease(release);
-      if (values.github) need(registry.can_promote_latest, 'All exact npm package versions must be registry-verified before GitHub Release publication.');
-      if (values.github) verifyLatest(release);
-      const github = values.github ? publishGithub(release, directory) : undefined;
-      process.stdout.write(JSON.stringify({ version: release.version, source: release.source, registry, ...(github ? { github } : {}), publication_performed: values.npm || values.github }) + '\n');
+      let npmRelease = release;
+      if (values['npm-directory']) {
+        const oldDirectory = path.resolve(values['npm-directory']);
+        const oldSource = JSON.parse(readFileSync(path.join(oldDirectory, 'release.json'), 'utf8')).source;
+        const previous = verifyPrepared(oldDirectory, values.version, oldSource);
+        need(/^[1-9][0-9]*$/.test(values['npm-build-run'] ?? ''), 'Recovery requires --npm-build-run.');
+        verifyBuildRun(api(`repos/${repository}/actions/runs/${values['npm-build-run']}`), oldSource);
+        verifyRecovery(release, previous);
+        npmRelease = await selectRecoveryPackages(release, previous);
+      }
+      // Read every npm identity before either channel writes, but availability
+      // is never a GitHub-only prerequisite. A missing version is resumable.
+      const result = await publishChannels(release, directory, npmRelease, values);
+      process.stdout.write(JSON.stringify({ version: release.version, source: release.source, bundle_verified: true, ...result }) + '\n');
     }
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }
 }
