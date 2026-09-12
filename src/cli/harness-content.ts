@@ -153,6 +153,12 @@ ${afterVerification ? `    needs: required_verification
           persist-credentials: false
           path: .specgit-engineering
 
+      - name: Setup engineering pnpm
+        if: steps.scope.outputs.build == 'false'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          package_json_file: .specgit-engineering/package.json
+
       - name: Isolate trusted engineering source
         if: steps.scope.outputs.build == 'false'
         run: |
@@ -161,12 +167,6 @@ ${afterVerification ? `    needs: required_verification
             exit 1
           fi
           mv .specgit-engineering "$RUNNER_TEMP/specgit-cli"
-
-      - name: Setup engineering pnpm
-        if: steps.scope.outputs.build == 'false'
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-        with:
-          package_json_file: \${{ runner.temp }}/specgit-cli/package.json
 
       - name: Build trusted engineering CLI for metadata validation
         if: steps.scope.outputs.build == 'false'
