@@ -1,12 +1,9 @@
 version: 1
-delivery: runner-completion-adoption
+delivery: release-2-completion
 context:
   kind: worktree
-  label: specgit-runner-completion-adoption-20260912
-  branch: codex/runner-completion-adoption
+  label: specgit-release-completion-20260912
+  branch: codex/release-2-completion
 issues:
-  - 527
-  - 561
-  - 563
+  - 493
 issueKinds: []
-pr: 562
