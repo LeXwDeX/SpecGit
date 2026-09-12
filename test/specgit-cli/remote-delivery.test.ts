@@ -554,6 +554,16 @@ describe('completion workflow trust boundary', () => {
     expect(workflow.jobs.complete.steps.find((step: { name?: string }) => step.name === 'Complete the bound delivery').env.GH_TOKEN)
       .toBe('${{ secrets.RELEASE_BOT_TOKEN || github.token }}');
   });
+  it('initializes complete Node and npm before the self-hosted pnpm installer', () => {
+    const workflow = parse(completionWorkflowYaml({ defaultBranch: 'main', version: '2.0.0', selfHosted: true }));
+    const steps = workflow.jobs.complete.steps;
+    const initialize = steps.findIndex((step: { name?: string }) => step.name === 'Initialize Node and npm');
+    const pnpm = steps.findIndex((step: { uses?: string }) => step.uses?.startsWith('pnpm/action-setup@'));
+    expect(initialize).toBeGreaterThanOrEqual(0);
+    expect(pnpm).toBeGreaterThan(initialize);
+    expect(steps[initialize].uses).toMatch(/^actions\/setup-node@/);
+    expect(steps[initialize].with).toEqual({ 'node-version': '20.19.0', 'package-manager-cache': false });
+  });
   it('uses approved engineering source for metadata completion after the public v2 package changes layout', async () => {
     const root = mkdtempSync(join(tmpdir(), 'specgit-runtime-selection-'));
     try {

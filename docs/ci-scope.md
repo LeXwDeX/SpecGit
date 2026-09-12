@@ -71,6 +71,17 @@ X64 handles shared jobs; both TypeScript and Rust require native Linux X64, macO
 ARM64, and Windows X64 legs. This replaces the retired #105 shadow arrangement.
 Registration alone is not execution evidence: current-head job results are required.
 
+GitHub's managed CodeQL default setup is separate from the committed workflow
+files. Its runner type must be `labeled`, with `code-scanning` assigned to the
+Linux X64 runner. Verify both the default-setup API response and actual analysis
+job runner labels; YAML inspection alone misses this configuration. Keep the
+existing languages and query suite when changing the runner route.
+Managed analysis also requires working Node.js and Python 3 commands on the
+runner's default PATH; setup steps in another job do not provide that environment.
+Verify those commands as the runner user before validating the managed scans.
+After a migration, verify that the trusted Completion workflow is active and
+successfully handles an already merged request on the default branch.
+
 Windows requires Git for Windows (including Bash), PowerShell 7, and Visual Studio
 Build Tools with the C++ desktop workload and Windows SDK. CI checks prerequisites
 and installs pinned Node, pnpm, and Rust versions. An unavailable runner or missing
