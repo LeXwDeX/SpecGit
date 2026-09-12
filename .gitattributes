@@ -11,7 +11,3 @@ test/specgit/helpers/fake-gh-script.cjs text eol=lf
 # Vite's SSR shebang removal requires LF; this executable is also imported
 # by the workspace configuration tests on Windows (#432).
 scripts/ci-change-scope.mjs text eol=lf
-
-# Release installers are hashed and distributed identically across build hosts.
-runtime/distribution/install.sh text eol=lf
-runtime/distribution/install.ps1 text eol=lf

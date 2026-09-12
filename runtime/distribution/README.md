@@ -1,101 +1,97 @@
 # SpecGit 2.0 distribution and release recovery
 
-GitHub Releases is the only publication channel. The shell and PowerShell
-installers download verified standalone native executables; Node.js and npm are
-not needed on the installation host. The qualified `.tgz` format and thin launcher
-remain in the build for offline regression compatibility. Existing npm versions
-are historical and are not updated by this workflow.
+GitHub Releases provides Actions-built native archives for manual installation.
+npm provides `npm install -g specgit@2.0.0 --ignore-scripts` through the thin native
+launcher. These channels are independent; GitHub-only publication does not read npm.
 
-## Build and independently install
+## Qualification
 
-The [Release Action](../../.github/workflows/release-prepare.yml) is dispatched
-explicitly with `release_version=2.0.0`. It runs the three targets on self-hosted
-macOS arm64, Linux x64 and Windows x64 runners. It has read-only repository
-permissions and performs no npm, tag, PR or GitHub Release writes. Ordinary pushes
-do not start publication or create version PRs. Final dispatch is coordinated.
+Dispatch [Release](../../.github/workflows/release-prepare.yml) with the exact
+stable `release_version`. It runs macOS arm64, Linux x64 glibc and Windows x64 on
+self-hosted runners. Actions has read-only repository permissions and does not
+publish packages, tags or Releases. The coordinator uses its existing `gh` and npm
+sessions for authorized publication; never read or copy credentials.
 
-Each build runs source checks, builds a remapped release binary, stages its native
-package plus the common wrapper, installs the packed bytes offline with lifecycle
-scripts disabled, then repeats every enumerated native test executable through the
-installed entrypoint. The Windows profile includes console cancellation. Source
-and installed regression steps allow 60 minutes on the Windows VM and 15 minutes
-on Linux/macOS. Native jobs allow 60 minutes on Windows and 45 minutes elsewhere;
-the Windows TypeScript CI job allows 60 minutes. The aggregate job requires all three
-successful jobs and verifies actual native/launcher hashes, exact source/version,
-complete profile accounting, identical wrapper bytes, and tarball integrity.
-Ordinary installed profiling checks the same approved executable inventory as
-release assembly, including the zero-test `specgit-process-fixture` target. A
-regression compares that inventory with Cargo's actual compiled test executables.
+Each target runs formatting/lint, compiles the full native test inventory, runs
+source and distribution regressions, builds a remapped release executable, packs
+and installs its native package and wrapper offline with lifecycle scripts
+disabled, then repeats the complete native test inventory through the installed
+entrypoint. Windows includes console cancellation. Distribution regressions retain
+raw output locally and identify failed repository test filenames and exit codes
+in Actions output. All test files run even when one fails; the phase stays failed.
 
-Local qualification uses the same scripts, from a clean committed source tree:
+Assembly requires all three successful targets, exact source/version, complete
+test accounting, matching installed executable/launcher hashes and tarball
+integrity. No compile-only or source-only result qualifies a release.
 
-```sh
-node runtime/distribution/stage.mjs --target aarch64-apple-darwin --output /tmp/new-stage
-node runtime/distribution/verify-install.mjs --stage /tmp/new-stage --output /tmp/new-install
-```
+The Actions artifact `specgit-release-<source SHA>` contains four npm `.tgz` files,
+portable installed/profile evidence, `release.json` and `SHASUMS256.txt`.
+Private runner paths are omitted. Native archives bundle license texts and the
+standalone executable under `package/bin/`. The launcher has no lifecycle scripts;
+its archived mode is `0644` on every host, while npm supplies executable shims.
 
-Output directories must be fresh. `--binary` accepts an already remapped binary;
-the staging host still executes its offline schema, so cross-compilation alone is
-not qualification. `stage.mjs` also checks ELF/Mach-O/PE architecture, known private
-build paths, dependency licenses, and Linux's actual minimum glibc requirement.
-The wrapper contains no lifecycle scripts and never downloads or compiles code.
-It checks exact platform versions and binary digests before forwarding argv/I/O.
-Unix signals reach the native child; Windows Ctrl-C is delivered by the attached
-console rather than Node's forceful process-termination API.
+## One command after approval
 
-The bundle artifact is `specgit-release-<source SHA>`. It contains four npm `.tgz`
-files (three binaries plus one wrapper), `install.sh`, `install.ps1`, `release.json`,
-`SHASUMS256.txt`, and portable installation/profile evidence. Platform `.tgz` assets also contain the
-standalone executable under `package/bin/`; direct execution does not require
-Node.js. All necessary license texts are bundled. Evidence exported into the
-bundle omits runner/home/Node paths. Package contents exclude Rust source and debug
-sidecars. Paths are remapped and text uses LF to keep wrapper bytes identical.
-The JavaScript launcher is archived with mode `0644` on every platform; npm's
-bin installation makes the installed command executable. Native binaries retain
-their platform executable permissions. A real pack/offline-install regression
-checks both identical wrapper archives and the installed command.
-
-## Publish the exact verified bytes
-
-The coordinator performs final writes through its existing authenticated `gh`
-session after applicable acceptance. Actions builds and verifies; it does not
-publish. Never read or copy credentials.
-
-1. Merge the accepted delivery into `main`, then dispatch the three-platform build
-   for that exact main commit. Download its successful bundle without modifying it.
-2. Re-read the run's repository, workflow, branch, commit and successful conclusion.
-3. Publish with the native release script from this checkout:
+Merge the accepted changes, dispatch the final build on that exact `main`, and
+download its successful artifact into a fresh directory. Keep these exact bytes.
 
 ```sh
 node runtime/distribution/publish.mjs \
-  --directory /absolute/downloaded-bundle \
-  --version 2.0.0 --source <main-commit-sha> --build-run <actions-run-id> \
-  --github
+  --directory /absolute/current-main-bundle \
+  --version 2.0.0 --source <current-main-sha> --build-run <successful-run-id> \
+  --github --npm
 ```
 
-The script verifies current main and the successful build, all installed profiles,
-all tarballs, both installer scripts and SHA-256 checksums. It creates a draft,
-uploads the four tarballs, `install.sh`, `install.ps1`, `release.json` and
-`SHASUMS256.txt`, downloads and verifies every asset, then publishes a stable latest
-Release and reads it back. No npm lookup, publication or dist-tag promotion is
-required. The retired `--npm` option fails before publication.
+Use `--github` alone for manual binary distribution, or `--npm` alone for npm.
+With no channel flags, verification is offline and read-only. Add `--preflight`
+to the channel command to verify local evidence, current main, exact successful
+build provenance and (for npm) registry integrity without publishing anything.
+Preflight does not prove that npm will permit a later publish.
 
-Without `--github`, the command verifies only the local bundle and performs no
-network access. The [installation instructions](../../README.md#install) describe
-script downloads, version pinning, custom directories and manual extraction.
+GitHub receives only the three unchanged native archives, a native-only
+`release.json` and its matching `SHASUMS256.txt`. The publisher creates a draft,
+uploads missing assets, downloads and hashes all assets, then makes it stable and
+latest and repeats readback. The npm wrapper and installer scripts are not GitHub
+Release assets. Existing unexpected or conflicting assets stop recovery.
 
-## Recovery
+npm checks every existing exact version before writes, publishes missing platform
+packages before the wrapper, then promotes and verifies `latest` with the wrapper
+last. Registry integrity conflicts stop the command. Lost write responses stop;
+the next explicit invocation reconciles before continuing. GitHub is published
+before npm in a combined run, so an npm rejection may leave a completed GitHub
+Release; resume the same command and bundle without replacing published bytes.
 
-An existing tag must resolve to the selected source. Matching assets are reused;
-conflicting bytes are never overwritten. A lost write response stops the command;
-the next explicit run reads native state before continuing. Incomplete drafts
-remain recoverable and cannot be reported as a completed release. Keep the exact
-bundle/source for recovery and keep `main` stable during coordinated publication.
+## Recovering the partially published 2.0.0 npm set
 
-Do not delete or republish historical npm versions as part of release recovery.
-Deprecation or removal is a separate owner-selected maintenance action.
+macOS/Linux 2.0.0 already exist from source
+`6f011d218c99e45a2c605d8bec956c22bea327a2`, formal run `34592057943`.
+The Windows name was blocked by npm; a support review was submitted. Do not rename
+or retry to evade that block. Wait for support to clear it before actual npm writes.
 
-The previous five-architecture staging plan is superseded by this release's three
-actually tested targets. Linux arm64, Intel macOS and musl are not advertised as
-supported v2.0.0 targets. The [v1 migration guide](../../docs/migration-v2.md) describes
-project cutover separately from installation and publication.
+The original qualified bundle is immutable. New main provenance changes package
+metadata, so never substitute newly packed 2.0.0 bytes for these existing versions.
+Use the explicit recovery options with the final current-main bundle:
+
+```sh
+node runtime/distribution/publish.mjs \
+  --directory /absolute/current-main-bundle \
+  --version 2.0.0 --source <current-main-sha> --build-run <successful-run-id> \
+  --npm-directory /absolute/original-6f011d21-bundle \
+  --npm-build-run 34592057943 \
+  --github --npm
+```
+
+Recovery still requires fresh current-main three-platform qualification. It also
+verifies the original successful main build, original installed profiles and
+tarballs, ancestry, unchanged runtime/test/schema/launcher/license inputs, and
+byte-identical executables and launcher in both bundles. It publishes the original
+npm tarballs with their original source and uses current-main archives on GitHub.
+Any mismatch requires a new version or investigation, not a relaxed gate. The JSON
+result reports `source` and `npm_source` separately. Keep both bundles and their
+run IDs; do not delete, repack or overwrite either during recovery.
+
+Actual publication remains a separate authorized action. A successful preflight,
+CI check or merge is not publication. Verify the final registry tags and installed
+command from public npm after publication. Manual installation instructions are in
+the [README](../../README.md#install); project cutover is in the
+[migration guide](../../docs/migration-v2.md).
