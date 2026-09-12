@@ -76,16 +76,13 @@ test('assembles only the exact three-platform bytes with portable public evidenc
   const result = prepare(f.input, f.output, '2.0.0', source);
   assert.equal(result.packages.length, 4);
   assert.equal(verifyPrepared(f.output, '2.0.0', source).source, source);
-  const installer = path.join(f.output, 'install.sh');
-  const original = readFileSync(installer);
-  writeFileSync(installer, 'changed installer');
-  assert.throws(() => verifyPrepared(f.output, '2.0.0', source), /installer differs/);
-  writeFileSync(installer, original);
+  assert.equal(existsSync(path.join(f.output, 'install.sh')), false);
+  assert.equal(existsSync(path.join(f.output, 'install.ps1')), false);
   for (const platform of Object.values(targets)) assert.equal(readFileSync(path.join(f.output, `installed-specgit-${platform.key}.json`), 'utf8').includes('/private/build/path'), false);
   writeFileSync(path.join(f.output, result.packages[0].tarball), 'changed');
   assert.throws(() => verifyPrepared(f.output, '2.0.0', source), /Tarball bytes changed/);
 });
-test('publisher bundle verification is offline and the retired npm flag performs no publication', t => {
+test('publisher bundle verification is offline and publication requires main build evidence', t => {
   const f = fixture(t);
   prepare(f.input, f.output, '2.0.0', source);
   const guard = path.join(f.output, 'offline-guard.mjs');
@@ -107,7 +104,7 @@ globalThis.fetch = () => { throw new Error('Unexpected registry request'); };
   assert.equal(JSON.parse(verified.stdout).publication_performed, false);
   const retired = spawnSync(process.execPath, [...args, '--npm', '--github'], { encoding: 'utf8', timeout: 30_000 });
   assert.equal(retired.status, 1, retired.stderr);
-  assert.match(retired.stderr, /npm publication is retired/);
+  assert.match(retired.stderr, /explicit --build-run/);
 });
 test('wrong source, missing platform, mismatched executable and omitted suite cannot produce release output', t => {
   const f = fixture(t);

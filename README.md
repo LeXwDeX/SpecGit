@@ -11,45 +11,45 @@ messages do not grant new permission.
 
 ## Install
 
-GitHub Releases is the distribution channel. Node.js, npm and a Rust compiler
-are not required. Supported targets are macOS Apple Silicon, Linux x64 with glibc,
-and Windows x64.
+Supported targets are macOS Apple Silicon, Linux x64 with glibc, and Windows x64.
+GitHub Releases and npm are independent distribution channels. A GitHub release
+does not imply the corresponding npm version is already available.
 
-macOS / Linux:
+### npm
+
+After the requested version is available on npm, use Node.js 20.19 or newer:
 
 ```sh
-curl -fsSL https://github.com/LeXwDeX/SpecGit/releases/latest/download/install.sh -o install-specgit.sh
-sh install-specgit.sh
-export PATH="$HOME/.local/bin:$PATH"
+npm install -g specgit@2.0.0 --ignore-scripts
 specgit --human --version
 ```
 
-Windows, from 64-bit PowerShell:
+The thin launcher selects the native package for your operating system. No Rust
+compiler or installation lifecycle script is required. Until npm publication of
+2.0.0 completes, the registry's `latest` tag may still select version 1.x.
 
-```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/LeXwDeX/SpecGit/releases/latest/download/install.ps1 -OutFile install-specgit.ps1
-./install-specgit.ps1
-$env:PATH = "$env:LOCALAPPDATA\SpecGit\bin;$env:PATH"
-specgit --human --version
-```
+### Manual GitHub installation
 
-The scripts select a stable release, verify the platform archive against
-`SHASUMS256.txt`, and check the native version before replacing an existing
-installation. They install into `~/.local/bin` or `%LOCALAPPDATA%\SpecGit\bin`;
-add that directory to your persistent user PATH for future terminals. They do not
-change shell profiles or require admin rights. PowerShell uses your existing
-script execution policy; manual archive installation is also available below.
+Download the matching `.tgz` and `SHASUMS256.txt` from the
+[GitHub Release](https://github.com/LeXwDeX/SpecGit/releases). These are the native
+archives produced and verified by our Actions runners; no installer or npm wrapper
+is included as a separate Release asset.
 
-To pin a release or choose a directory, use `sh install-specgit.sh 2.0.0 /my/bin`
-or `./install-specgit.ps1 -Version 2.0.0 -InstallDir C:\Tools\SpecGit`.
-Run the installer again to upgrade. If an old npm command appears first in PATH,
-remove that old CLI with `npm uninstall -g specgit` or put the native directory first.
+| Platform | Archive |
+| --- | --- |
+| macOS Apple Silicon | `specgit-darwin-arm64-2.0.0.tgz` |
+| Linux x64 glibc | `specgit-linux-x64-gnu-2.0.0.tgz` |
+| Windows x64 | `specgit-win32-x64-2.0.0.tgz` |
 
-The matching platform `.tgz` asset in the GitHub Release also contains a standalone
-executable under `package/bin/specgit` (`specgit.exe` on Windows). Verify the asset
-with `SHASUMS256.txt`, extract it and run that executable directly if Node.js is not
-wanted. The platform tarball bundles its license texts. The `specgit-2.0.0.tgz`
-asset is the npm launcher package, not a standalone executable.
+Calculate the archive's SHA-256 (`shasum -a 256 <archive>` on macOS,
+`sha256sum <archive>` on Linux, or `Get-FileHash <archive> -Algorithm SHA256`
+in PowerShell) and compare the full hash with its exact entry in the checksum file.
+Then extract the archive with `tar -xzf <archive>`. Place `package/bin/specgit`
+(`package/bin/specgit.exe` on Windows) in a directory on PATH and keep the bundled
+license texts. On macOS/Linux preserve the executable permission, or use
+`chmod +x specgit`. Run `specgit --human --version` to confirm the installed version.
+Manual installation needs neither Node.js nor npm nor a Rust compiler. Check PATH
+if an older npm installation is selected instead.
 
 ## Start a delivery
 

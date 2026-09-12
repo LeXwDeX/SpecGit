@@ -8,6 +8,7 @@ import { parseArgs } from 'node:util';
 import { buildNative, stage, targets, verifyArchitecture } from '../distribution/stage.mjs';
 import { expectedSuites } from '../distribution/release-artifacts.mjs';
 import { PhaseCache, digest, fileDigest, readCompiledTests } from './native-cache.mjs';
+import { runDistributionTests } from './distribution-tests.mjs';
 
 const runtime = fileURLToPath(new URL('../', import.meta.url));
 const repo = path.dirname(runtime);
@@ -98,8 +99,8 @@ export async function main(args) {
     case 'distribution-tests':
       await cache.run('distribution-tests', ['compile-tests'], async () => {
         const directory = attempt('distribution-tests');
-        const files = readdirSync(path.join(runtime, 'distribution')).filter(name => name.endsWith('.test.mjs')).map(name => `distribution/${name}`);
-        command(process.execPath, ['--test', ...files], { log: path.join(directory, 'tests.log') });
+        const files = readdirSync(path.join(runtime, 'distribution')).filter(name => name.endsWith('.test.mjs')).sort();
+        runDistributionTests(files, directory, { cwd: runtime });
         return { value: { directory }, files: [directory] };
       });
       break;
