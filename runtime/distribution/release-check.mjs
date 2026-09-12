@@ -65,44 +65,11 @@ export function localRelease(files) {
   need(seen.size === expected.size && artifacts.size === expected.size + 1, 'Complete platform publication set is missing.');
   return { version, source, packages: [...artifacts.values()].sort((a, b) => a.name.localeCompare(b.name)) };
 }
-export async function registryMetadata(artifact, fetcher = fetch) {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(artifact.name)}/${encodeURIComponent(artifact.version)}`;
-  const response = await fetcher(url, { signal: AbortSignal.timeout(10_000), redirect: 'error' });
-  if (response.status === 404) return null;
-  need(response.ok, `Registry read failed for ${artifact.name}: HTTP ${response.status}.`);
-  const reader = response.body.getReader();
-  const chunks = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new Error('Registry metadata exceeds its size limit.'); }
-    chunks.push(value);
-  }
-  const metadata = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  need(metadata.name === artifact.name && metadata.version === artifact.version, 'Registry identity mismatch.');
-  return metadata;
-}
-export async function registryRelease(release, fetcher = fetch) {
-  const observations = [];
-  for (const artifact of release.packages) {
-    const metadata = await registryMetadata(artifact, fetcher);
-    if (!metadata) { observations.push({ ...artifact, state: 'missing' }); continue; }
-    need(metadata.dist?.integrity === artifact.integrity, `Published bytes differ for ${artifact.name}@${artifact.version}; choose a new version.`);
-    observations.push({ ...artifact, state: 'verified' });
-  }
-  const missingPlatforms = observations.filter(p => p.name !== 'specgit' && p.state === 'missing');
-  const wrapper = observations.find(p => p.name === 'specgit');
-  need(wrapper, 'Wrapper package observation is missing.');
-  const phase = missingPlatforms.length ? 'platforms_missing' : wrapper.state === 'missing' ? 'wrapper_missing' : 'registry_verified';
-  return { version: release.version, phase, observations, next: missingPlatforms.length ? missingPlatforms.map(p => p.name) : wrapper.state === 'missing' ? ['specgit'] : [], can_promote_latest: phase === 'registry_verified' && /^\d+\.\d+\.\d+$/.test(release.version), publication_performed: false };
-}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { evidence: { type: 'string', multiple: true }, registry: { type: 'boolean', default: false } } });
+    const { values } = parseArgs({ options: { evidence: { type: 'string', multiple: true } } });
     const release = localRelease(values.evidence ?? []);
-    const result = values.registry ? await registryRelease(release) : { ...release, phase: 'local_qualified_registry_unchecked', can_promote_latest: false, publication_performed: false };
+    const result = { ...release, phase: 'local_qualified', publication_performed: false };
     process.stdout.write(JSON.stringify(result) + '\n');
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }
 }

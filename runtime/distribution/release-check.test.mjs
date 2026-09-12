@@ -1,35 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { localRelease, registryRelease } from './release-check.mjs';
+import { localRelease } from './release-check.mjs';
 import { run, targets } from './stage.mjs';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-const release = { version: '2.0.0', packages: ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64', 'specgit'].map(name => ({ name, version: '2.0.0', integrity: `sha512-${name}` })) };
-function registry(missing = [], corrupt = false) {
-  return async url => {
-    const name = new URL(url).pathname.split('/')[1];
-    if (missing.includes(name)) return new Response('{}', { status: 404 });
-    const artifact = release.packages.find(p => p.name === name);
-    return Response.json({ name, version: '2.0.0', dist: { integrity: corrupt ? 'different' : artifact.integrity } });
-  };
-}
-test('partial publication resumes platforms before the wrapper or latest', async () => {
-  const result = await registryRelease(release, registry(['specgit-linux-x64-gnu', 'specgit']));
-  assert.equal(result.phase, 'platforms_missing');
-  assert.deepEqual(result.next, ['specgit-linux-x64-gnu']);
-  assert.equal(result.can_promote_latest, false);
-  const wrapperOnly = await registryRelease(release, registry(['specgit']));
-  assert.equal(wrapperOnly.phase, 'wrapper_missing');
-  assert.deepEqual(wrapperOnly.next, ['specgit']);
-  assert.equal(wrapperOnly.can_promote_latest, false);
-  assert.equal((await registryRelease(release, registry())).can_promote_latest, true);
-});
-test('unknown metadata, auth failures and changed immutable integrity stop recovery', async () => {
-  await assert.rejects(registryRelease(release, registry([], true)), /Published bytes differ/);
-  await assert.rejects(registryRelease(release, async () => new Response('{}', { status: 403 })), /Registry read failed/);
-  await assert.rejects(registryRelease(release, async () => new Response('not json')), /JSON/);
+test('offline installed qualification rejects a missing platform set', () => {
   assert.throws(() => localRelease([]), /Three independently installed/);
 });
 test('synthetic archives remain valid after relocation through colon-containing host paths', t => {
