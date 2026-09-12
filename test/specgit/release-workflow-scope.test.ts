@@ -20,13 +20,14 @@ const workflow = (name: string): Workflow => parse(readFileSync(
 )) as Workflow;
 
 describe('release and dependency workflow scope (#423)', () => {
-  it('requires explicit native build intent and leaves publication to the coordinator', () => {
+  it('requires explicit native build intent before automatic GitHub binary publication', () => {
     const release = workflow('release-prepare');
     expect(Object.keys(release.on)).toEqual(['workflow_dispatch']);
     expect(release.on.workflow_dispatch?.inputs?.release_version?.required).toBe(true);
     expect(release.jobs.build.if).toContain("github.repository == 'LeXwDeX/SpecGit'");
     expect(release.jobs.assemble.needs).toBe('build');
-    expect(release.jobs.release).toBeUndefined();
+    expect(release.jobs.build.if).toContain("github.ref == 'refs/heads/main'");
+    expect(release.jobs.assemble.steps.some(step => step.run?.includes('publish.mjs') && step.env?.GH_TOKEN === '${{ github.token }}')).toBe(true);
     for (const job of Object.values(release.jobs)) {
       for (const step of job.steps) expect(step.run ?? '').not.toMatch(/npm publish|changeset publish|gh release|git push/);
     }

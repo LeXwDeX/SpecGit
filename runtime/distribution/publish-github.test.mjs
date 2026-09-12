@@ -3,15 +3,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { githubFiles, publishGithub } from './publish.mjs';
+import { createHash } from 'node:crypto';
+import { githubFiles, publishGithub, releaseNotes } from './publish.mjs';
 
 const source = 'a'.repeat(40);
 function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const packages = ['mac.tgz', 'linux.tgz', 'win.tgz', 'wrapper.tgz'];
-  for (const name of packages) writeFileSync(path.join(directory, name), `qualified ${name}`);
-  const release = { version: '2.0.0', source, packages: packages.map(name => ({ name: name === 'wrapper.tgz' ? 'specgit' : name, tarball: path.join(directory, name) })) };
+  const packages = ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64.exe'];
+  for (const name of [...packages, 'wrapper.tgz']) writeFileSync(path.join(directory, name), `qualified ${name}`);
+  const release = { version: '2.0.0', source, binaries: packages.map(filename => ({ filename, file: path.join(directory, filename), sha256: createHash('sha256').update(readFileSync(path.join(directory, filename))).digest('hex') })) };
   const names = githubFiles(release, directory).map(file => path.basename(file));
   const remote = { exists: draft !== undefined, draft: draft ?? true, latest: false, tag: true, assets: new Map(existing.map(name => [name, name === corrupt ? Buffer.from('different') : readFileSync(path.join(directory, name))])) };
   const calls = [];
@@ -46,9 +47,13 @@ test('new release is created as draft and only published after all byte readback
   const f = fixture(t);
   const result = publishGithub(f.release, f.directory, f.io);
   assert.deepEqual(result.assets_verified, f.names);
-  assert.equal(f.names.length, 5);
+  assert.equal(f.names.length, 3);
   assert(!f.names.includes('wrapper.tgz'));
-  assert(!JSON.parse(readFileSync(path.join(f.directory, 'release.json'), 'utf8')).packages.some(p => p.name === 'specgit'));
+  assert(!f.names.some(name => /\.tgz$|\.json$|\.txt$/.test(name)));
+  const notes = releaseNotes(f.release, '123');
+  for (const binary of f.release.binaries) assert(notes.includes(binary.sha256));
+  assert(notes.includes(source));
+  assert(notes.includes('/actions/runs/123'));
   assert.equal(f.remote.draft, false);
   assert.equal(f.calls.filter(call => call[1] === 'create').length, 1);
   const edit = f.calls.findIndex(call => call[1] === 'edit');
@@ -64,11 +69,11 @@ test('an interrupted upload leaves a matching draft that resumes without duplica
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length);
 });
 test('a matching pre-existing draft can be completed; a conflicting asset causes zero upload or publish writes', t => {
-  const f = fixture(t, { draft: true, existing: ['mac.tgz'] });
+  const f = fixture(t, { draft: true, existing: ['specgit-darwin-arm64'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => call[1] === 'create'), false);
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length - 1);
-  const conflict = fixture(t, { draft: true, existing: ['win.tgz'], corrupt: 'win.tgz' });
+  const conflict = fixture(t, { draft: true, existing: ['specgit-win32-x64.exe'], corrupt: 'specgit-win32-x64.exe' });
   assert.throws(() => publishGithub(conflict.release, conflict.directory, conflict.io), /differs/);
   assert.equal(conflict.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
   const extra = fixture(t, { draft: true, existing: ['wrapper.tgz'] });
@@ -76,7 +81,7 @@ test('a matching pre-existing draft can be completed; a conflicting asset causes
   assert.equal(extra.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
 });
 test('published releases are read back without duplicate uploads; foreign source tags are never changed', t => {
-  const f = fixture(t, { draft: false, existing: ['mac.tgz', 'linux.tgz', 'win.tgz', 'SHASUMS256.txt', 'release.json'] });
+  const f = fixture(t, { draft: false, existing: ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64.exe'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => ['upload', 'create'].includes(call[1])), false);
   const foreign = fixture(t, { draft: true, otherSource: 'b'.repeat(40) });

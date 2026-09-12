@@ -38,6 +38,14 @@ Name tests `*.test.ts` under the matching suite. Run a focused file with `pnpm e
 
 Use Conventional Commit prefixes found in history: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`. Bind tracked work through SpecGit before implementation. Target `main`; follow [the PR template](.github/PULL_REQUEST_TEMPLATE.md) with WHY, changes, evidence, and `Closes #n` for every bound issue. Update contract docs alongside behavior. Add a changeset only for explicit npm publication intent. Acceptance requires a ready PR and current-head checks; completion requires confirmed merge and issue closure.
 
+## Release workflow
+
+GitHub Release is the permanent publication channel. Release work compiles the
+three native binaries on self-hosted runners, runs version/help/schema smoke tests,
+and publishes those binaries through the explicit main-branch Release workflow.
+Do not restore npm publication or require full installed npm qualification in the
+release workflow. Ordinary CI remains responsible for source and compatibility tests.
+
 ## Agent Guidance
 
 All CI/CD in this repository must run on our self-hosted runners. GitHub-hosted runners and hosted fallbacks are prohibited to preserve account minutes. Keep this routing in generated acceptance/completion workflows as well as CI, security, and release workflows; see [CI scope](docs/ci-scope.md).

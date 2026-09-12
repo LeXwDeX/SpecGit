@@ -1,10 +1,10 @@
 version: 1
-delivery: completion-node-bootstrap
+delivery: native-binary-release
 context:
   kind: worktree
-  label: specgit-completion-bootstrap-20260912
-  branch: codex/completion-node-bootstrap
+  label: specgit-native-release-20260912
+  branch: codex/native-binary-release
 issues:
-  - 527
+  - 559
 issueKinds: []
-pr: 558
+pr: 560

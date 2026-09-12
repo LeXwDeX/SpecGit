@@ -185,8 +185,8 @@ notes; skipping release assessment during scheduling does not exempt that conten
 The test matrix, lint/typecheck and RC jobs install locked dependencies with
 `--ignore-scripts` and build explicitly once. RC tarball verification also disables npm lifecycle
 scripts so it checks that explicit build without rebuilding during `npm pack`.
-Normal package installation and the release workflow retain their lifecycle
-behavior. The measured baseline and scheduled broader improvements are recorded
+The native Release workflow compiles binaries and runs simple smoke tests; it has
+no npm publication or installation lifecycle. The measured baseline and scheduled broader improvements are recorded
 in the [delivery performance audit](delivery-performance-audit.md).
 
 ## Required verification
@@ -219,13 +219,13 @@ SpecGit Acceptance waits on this aggregate; the aggregate never waits on
 SpecGit Acceptance. Branch protection and the approved policy must be migrated
 together, through checks required by the previously approved policy.
 
-Ordinary metadata pushes do not start release preparation or publication. A
-nonempty changeset explicitly requests release work, so its merge may install
-build dependencies and prepare a version PR even when the note itself needed
-only metadata verification. The version PR and publication still pass their
-normal package/release gates. Explicit `pnpm release` and manual release dispatch
-remain release entry points; an optional exact version guard detects stale
-dispatch input.
+Ordinary pushes and changesets do not start publication. The permanent Release
+workflow requires explicit dispatch on `main` with an exact stable version. It
+compiles the three native binaries, runs version/help/schema smoke checks, then
+publishes them to GitHub Release. Full source and compatibility tests stay in CI;
+the Release job does not repeat installed npm qualification. The reusable RC job
+retains offline engineering tarball checks, while its npm registry, dry-run publish
+and OIDC steps are removed. See the [release procedure](../runtime/distribution/README.md).
 
 ## The acceptance job
 
