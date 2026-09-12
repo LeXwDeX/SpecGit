@@ -106,6 +106,10 @@ the single Linux runner available for the work acceptance needs. After changing
 the source acceptance generator, run `pnpm run build` and
 `node scripts/refresh-self-acceptance.mjs` to refresh its CI block and standalone
 workflows; metadata validation checks that the shared job has not drifted.
+Metadata Acceptance reads the pnpm version from the trusted checkout using
+`.specgit-engineering/package.json` before moving that checkout into isolation.
+The pinned pnpm Action joins its manifest input to the workspace path, so an
+absolute temporary path cannot select that trusted manifest.
 
 For validation before an authorized merge, a draft branch can use a `[skip ci]`
 commit and a manual **CI** dispatch at that branch. Skipped automatic checks do not
