@@ -79,8 +79,20 @@ existing languages and query suite when changing the runner route.
 Managed analysis also requires working Node.js and Python 3 commands on the
 runner's default PATH; setup steps in another job do not provide that environment.
 Verify those commands as the runner user before validating the managed scans.
+Completion also needs a GitHub CLI that supports `gh api --paginate --slurp`
+on that same default PATH. The Linux runner is verified with gh 2.99.0;
+its system gh 2.45.0 lacks `--slurp` and fails request identification before
+the job can initialize its toolchain. Check `gh --version` and
+`gh api --help` as the runner user when provisioning or replacing the runner.
 After a migration, verify that the trusted Completion workflow is active and
 successfully handles an already merged request on the default branch.
+If a merged delivery has an unresolved derived repair, preserve its original
+repair receipts and explicitly adopt the repair Issue in a new reviewed
+delivery, including its binding and closing reference. A successful setup
+step does not prove completion, and rerunning a workflow cannot satisfy a
+repair that requires that same pending workflow to have already succeeded.
+Verify the replacement delivery's current checks, target merge and Issue
+closures; retain the superseded failed attempts as historical evidence.
 
 Windows requires Git for Windows (including Bash), PowerShell 7, and Visual Studio
 Build Tools with the C++ desktop workload and Windows SDK. CI checks prerequisites
