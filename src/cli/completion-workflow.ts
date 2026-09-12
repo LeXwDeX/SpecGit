@@ -110,6 +110,11 @@ ${input.selfHosted ? `      - uses: actions/checkout@3d3c42e5aac5ba805825da76410
           ref: \${{ github.sha }}
           persist-credentials: false
           path: specgit-runtime
+      - name: Initialize Node and npm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+          package-manager-cache: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           package_json_file: specgit-runtime/package.json
