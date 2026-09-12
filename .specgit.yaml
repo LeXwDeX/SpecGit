@@ -1,10 +1,10 @@
 version: 1
-delivery: native-binary-release
+delivery: runner-completion-adoption
 context:
   kind: worktree
-  label: specgit-native-release-20260912
-  branch: codex/native-binary-release
+  label: specgit-runner-completion-adoption-20260912
+  branch: codex/runner-completion-adoption
 issues:
-  - 559
+  - 527
+  - 561
 issueKinds: []
-pr: 560
