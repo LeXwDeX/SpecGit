@@ -1,37 +1,23 @@
-<!-- SpecGit delivery PR: the bound issues below are verified against the PR
-     body, the PR head, and required CI by the SpecGit Acceptance gate. -->
-
 ## WHY
 
 Closes #<issue-number>
-<!-- Replace <issue-number> with the bound issue number(s), one "Closes #n" line
-     each. Required: the acceptance gate fails `closing_refs_incomplete` without
-     them. -->
 
-One sentence per issue: the independently verifiable need this delivery
-serves.
+Describe the independently verifiable need for each selected Issue.
 
 ## What changed
 
-- …
-- …
+Describe resulting behavior and relevant compatibility boundaries.
 
 ## Evidence
 
-- `specgit finish` on this branch exits `0` (paste the verdict summary or the
-  `--json` `status`/`verdict.accepted` fields if non-obvious)
-- CI (including SpecGit Acceptance) green at the PR head
+- Relevant local Rust and repository contract checks
+- Current PR head CI, including SpecGit Acceptance
+- Installed-runtime evidence where applicable
 
 ## Checklist
 
-- [ ] The PR body closes every bound issue (`Closes #n`)
-- [ ] Release changes retain GitHub Releases as the only public distribution channel
-- [ ] Docs updated in the same PR where behavior changed
-      (README / docs/cli.md / docs/reference.md / docs/baseline-v1.md)
-- [ ] No public-contract drift: exit codes, `--json` envelope, command set —
-      changes update [docs/baseline-v1.md](../docs/baseline-v1.md) first
-- [ ] No secrets, no tokens, no telemetry added
-- [ ] The applicable checks in [docs/ci-scope.md](../docs/ci-scope.md) pass:
-      product changes run build, lint, both typechecks, and tests; recognized
-      metadata-only changes run the metadata contracts without compiling the
-      product
+- [ ] All selected Issues have closing references
+- [ ] Native contract and documentation match behavior
+- [ ] Applicable checks in docs/ci-scope.md pass
+- [ ] GitHub Releases remains the only public distribution channel
+- [ ] No secrets or unrelated changes included

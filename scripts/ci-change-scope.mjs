@@ -1,42 +1,32 @@
 #!/usr/bin/env node
 // CI scheduling is based on committed changes, never on .gitignore contents.
-// Verification needs only Node and Git; release assessment uses the locked Changesets parser.
+// Verification needs only Node and Git. Publication requires explicit workflow dispatch.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseReleaseNote } from './ci-changesets.mjs';
 
 const METADATA_FILES = new Set([
-  '.gitignore', '.specgit.yaml', 'spec_git/policy.yaml', 'spec_git/providers.yaml',
+  '.gitignore', '.specgit.yaml',
   'README.md', 'AGENTS.md', 'CLAUDE.md', 'CHANGELOG.md', 'CONTRIBUTING.md',
   'CODE_OF_CONDUCT.md', 'LICENSE', 'SECURITY.md',
-  '.changeset/README.md', '.changeset/config.json', '.coderabbit.yaml',
+  '.coderabbit.yaml',
   '.github/dependabot.yml', '.github/workflows/README.md', '.devcontainer/README.md',
-  'scripts/README.md', 'skills/README.md', '.github/CODEOWNERS',
-]);
-const NIX_INPUTS = new Set([
-  'flake.nix', 'flake.lock', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
-  'scripts/update-flake.sh', '.github/workflows/ci.yml', 'scripts/ci-change-scope.mjs',
+  'scripts/README.md', '.github/CODEOWNERS',
 ]);
 const DEPENDENCY_INPUTS = new Set([
-  'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc',
+  'package.json', 'pnpm-lock.yaml', 'runtime/Cargo.toml', 'runtime/Cargo.lock',
   '.github/dependabot.yml', '.github/workflows/security.yml', 'scripts/ci-change-scope.mjs',
 ]);
-const SKILLS = '(?:doctor|finish|issue|pr|status)';
-const LOCAL_ENTRY = new RegExp(`^(?:\\.agents/skills/specgit-${SKILLS}/SKILL\\.md|\\.opencode/command/specgit-${SKILLS}\\.md)$`);
-const CHANGESET = /^\.changeset\/(?!README\.md$)[^/]+\.md$/;
 const LOCAL_STATE = /^(?:\.local\/|\.pnpm-store\/|node_modules\/|dist\/|coverage\/|\.DS_Store$)/;
 
 /** @param {string} file */
 function metadataPath(file) {
   if (/[\\\p{Cc}]/u.test(file) || file.startsWith('/')
     || file.split('/').some((part) => part === '.' || part === '..' || part === '')) return false;
-  return METADATA_FILES.has(file) || /^(?:docs|workflows)\/.+\.md$/.test(file)
+  return METADATA_FILES.has(file) || /^docs\/.+\.md$/.test(file)
     || /^\.github\/ISSUE_TEMPLATE\/[^/]+\.(?:md|ya?ml)$/.test(file)
-    || file === '.github/PULL_REQUEST_TEMPLATE.md'
-    || /^spec_git\/scopes\/[a-z0-9]+(?:-[a-z0-9]+)*\.yaml$/.test(file)
-    || CHANGESET.test(file) || LOCAL_ENTRY.test(file);
+    || file === '.github/PULL_REQUEST_TEMPLATE.md';
 }
 
 /** @param {string[]} paths */
@@ -46,9 +36,7 @@ export function classifyPaths(paths) {
   return {
     build: !metadata,
     metadata,
-    nix: unique.some((file) => NIX_INPUTS.has(file)),
     dependencies: unique.some((file) => DEPENDENCY_INPUTS.has(file)),
-    release_intent: false,
     paths: unique,
   };
 }
@@ -70,16 +58,6 @@ function git(...args) {
 /** @param {string} ref */
 function commit(ref) {
   return git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`).trim();
-}
-
-/** @param {string} ref @param {string} file */
-function gitText(ref, file) {
-  return git('show', `${ref}:${file}`);
-}
-
-/** @param {string} text @param {string} file */
-function validateChangeset(text, file) {
-  return parseReleaseNote(text, file).releases.length > 0;
 }
 
 /** @param {string} base @param {string} head */
@@ -131,27 +109,10 @@ export function inspectChanges(options = {}) {
     range = eventRange(eventName, event);
   }
   if (range === null) {
-    return { build: true, metadata: false, nix: true, dependencies: true, release_intent: options.verificationOnly ? null : false, paths: [], reason: 'Full verification requested or no prior branch revision.' };
+    return { build: true, metadata: false, dependencies: true, paths: [], reason: 'Full verification requested or no prior branch revision.' };
   }
   const entries = changedEntries(range.base, range.head);
   const result = { ...classifyEntries(entries), base: range.base, head: range.head };
-  // A verification decision is not a release verdict. In particular, metadata
-  // validation still parses changed release notes with the locked parser.
-  if (options.verificationOnly) return { ...result, release_intent: null };
-  let releaseIntent = false;
-  for (const entry of entries) {
-    if (entry.status !== 'D' && CHANGESET.test(entry.path)) {
-      const requestsRelease = validateChangeset(gitText(range.head, entry.path), entry.path);
-      releaseIntent ||= requestsRelease;
-    }
-  }
-  if (entries.some((entry) => entry.path === 'package.json')) {
-    const previous = JSON.parse(gitText(range.base, 'package.json'));
-    const next = JSON.parse(gitText(range.head, 'package.json'));
-    if (typeof previous.version !== 'string' || typeof next.version !== 'string') throw new Error('Package version evidence is missing.');
-    releaseIntent ||= previous.version !== next.version;
-  }
-  result.release_intent = releaseIntent;
   return result;
 }
 
@@ -172,7 +133,7 @@ function main() {
   const result = inspectChanges(options);
   if (assertMetadata && (!result.metadata || result.build)) throw new Error('This change requires product verification; metadata-only validation is not applicable.');
   if (process.env.GITHUB_OUTPUT) {
-    for (const key of /** @type {const} */ (['build', 'metadata', 'nix', 'dependencies', 'release_intent'])) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${result[key]}\n`);
+    for (const key of /** @type {const} */ (['build', 'metadata', 'dependencies'])) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${result[key]}\n`);
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }

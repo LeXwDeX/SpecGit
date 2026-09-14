@@ -75,6 +75,6 @@ See [manual installation](../../README.md#install) and
 
 The public npm wrapper, platform-package staging and npm-installed qualification
 have been removed. CI installs a copy of the compiled native executable and runs
-the full Rust test inventory against it. Root Node/pnpm dependencies and offline
-TypeScript package fixtures are private engineering tools only; they do not
-provide another distribution channel. Historical v1 guides are archived.
+the full Rust test inventory against it. The private root Node workspace only checks repository contracts. The v1
+TypeScript implementation and package fixtures are retired. Historical v1 guides
+are archived and do not provide another supported workflow.

@@ -13,7 +13,7 @@ possible that is not possible (or not verifiable) today?
 ## The WHY NOT (current behavior)
 
 What SpecGit does today instead, and why that falls short. Cite the
-[Product Baseline](https://github.com/LeXwDeX/SpecGit/blob/main/docs/baseline-v1.md)
+[Native contract](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
 if the request touches the public contract (commands, exit codes, JSON
 envelope, state/assets, supported platforms).
 
@@ -32,6 +32,6 @@ Workarounds today, and why they are not enough.
 - [ ] This is one need — if it splits into independently verifiable parts,
       those become their own issues
 - [ ] If this changes platform support, it states the gap against the current
-      [platform contract](https://github.com/LeXwDeX/SpecGit/blob/main/docs/gitlab-support.md)
+      [platform contract](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
 - [ ] Not a security vulnerability (those go privately via
       [GitHub vulnerability reporting](https://github.com/LeXwDeX/SpecGit/security/advisories/new))
