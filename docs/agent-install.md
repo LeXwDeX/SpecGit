@@ -107,14 +107,16 @@ configuration is authoritative for a refresh. For fresh setup, leave automatic
 merge/closure preferences at their defaults unless the user already chose them.
 
 If native capabilities are unavailable, `init` may require an explicit
-`--manual-observe` choice. Present that specific choice unless it is already
-selected in the session; do not silently weaken protections or administer the
+`--manual-observe` choice. The README installation prompt explicitly selects this
+fallback: when that is the user's request, include `--manual-observe` in both the
+preview and apply commands without asking again. Otherwise present that specific
+choice unless it is already selected in the session. Do not weaken protections or administer the
 forge to make initialization pass. An applicable preview with no conflicts is
 sufficient to continue the user's authorized local setup without another generic
 confirmation.
 
 Read back `.specgit.yaml` and the managed project guidance after initialization.
-Run `specgit status --json` and `specgit doctor --json` and preserve their actual
+Run `specgit status --json` and `specgit doctor --provider <provider> --json` and preserve their actual
 reported state. Do not create a test Issue or PR to demonstrate installation.
 
 ## 4. Register the active agent

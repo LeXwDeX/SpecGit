@@ -16,8 +16,10 @@ Read https://raw.githubusercontent.com/LeXwDeX/SpecGit/main/docs/agent-install.m
 and carry out the installation and initialization described there for this machine
 and the current repository. Install the latest stable SpecGit binary from GitHub
 Releases, verify it, initialize the project with specgit init, and configure the
-integration for the agent running this task. Use the repository and agent context
-already available; ask only for information that cannot be determined. Finish the
+integration for the agent running this task. Use manual observation if native
+capabilities cannot be verified, preserve existing settings, and do not enable new
+merge or closure automation. Use the repository and agent context already available;
+ask only for information that cannot be determined. Finish the
 installation and verification, rather than only giving me commands to run.
 If the document is inaccessible, retrieve it through my authenticated gh session
 or report the access problem; do not guess its contents.
