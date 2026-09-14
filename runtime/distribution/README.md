@@ -44,6 +44,10 @@ For failed publication, reuse the retained signed bundle from the original attem
 Re-signing creates different signature bytes and cannot overwrite an existing
 immutable signature asset. Before any upload, retrying the job with the original
 successful build artifacts is safe.
+For a failed run, manual recovery requires all three native build jobs and every
+assembly step before publication, including signing, to have succeeded. A build
+or signing failure is not recoverable publication evidence. The retained signature
+and archive hashes are verified again before any write.
 Matching tags/assets are reused; different immutable bytes or a foreign tag stop
 the run. Do not rebuild and overwrite an already published version.
 
@@ -53,7 +57,7 @@ through the existing authenticated `gh` session:
 ```sh
 node runtime/distribution/publish.mjs \
   --directory /absolute/native-bundle \
-  --version 2.0.0 --source <current-main-sha> --build-run <successful-run-id> \
+  --version 2.0.0 --source <current-main-sha> --build-run <qualified-run-id> \
   --github
 ```
 

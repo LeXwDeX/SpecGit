@@ -18,3 +18,22 @@ test('the active release can publish only after all three native smoke jobs succ
   assert.throws(() => verifyBuildRun(active, source, { activeRun: '456', jobs }), /three successful/);
   assert.throws(() => verifyBuildRun(active, source, { jobs }), /three successful/);
 });
+
+test('an interrupted signed publication can reuse its bundle only after qualified build and signing jobs', () => {
+  const failed = { ...run, conclusion: 'failure' };
+  const builds = ['linux', 'macos', 'windows'].map(label => ({ name: `Build native release (${label})`, status: 'completed', conclusion: 'success', labels: ['self-hosted'] }));
+  const steps = [
+    { name: 'Assemble the three smoke-tested binaries', conclusion: 'success' },
+    { name: 'Sign and verify the ZIP checksum manifest', conclusion: 'success' },
+    { name: 'Retain signed bundle', conclusion: 'success' },
+    { name: 'Publish verified ZIPs, checksums and signature to GitHub Release', conclusion: 'failure' },
+  ];
+  const assembly = { name: 'assemble', status: 'completed', conclusion: 'failure', steps };
+  verifyBuildRun(failed, source, { jobs: [...builds, assembly] });
+  for (const jobs of [builds, [...builds, assembly, assembly], [...builds.slice(1), assembly],
+    [...builds, { ...assembly, steps: steps.map((step, index) => index === 1 ? { ...step, conclusion: 'failure' } : step) }],
+    [...builds, { ...assembly, steps: steps.filter(step => !step.name.startsWith('Sign and verify')) }],
+    [...builds, { ...assembly, steps: steps.map(step => ({ ...step, conclusion: 'success' })) }],
+  ]) assert.throws(() => verifyBuildRun(failed, source, { jobs }), /recovery/);
+  assert.throws(() => verifyBuildRun({ ...failed, head_sha: 'b'.repeat(40) }, source, { jobs: [...builds, assembly] }), /exact main/);
+});

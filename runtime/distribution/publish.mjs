@@ -27,11 +27,19 @@ export function requireMain(source, lookup = () => api(`repos/${repository}/git/
 export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
   const owned = run.head_sha === source && run.head_branch === 'main' && run.head_repository?.full_name === repository && run.repository?.full_name === repository && run.path === '.github/workflows/release-prepare.yml' && run.event === 'workflow_dispatch';
   const completed = run.status === 'completed' && run.conclusion === 'success';
-  const running = run.status === 'in_progress' && String(run.id) === activeRun && ['linux', 'macos', 'windows'].every(label => {
+  const nativeJobsPassed = ['linux', 'macos', 'windows'].every(label => {
     const matches = jobs.filter(job => job.name === `Build native release (${label})`);
     return matches.length === 1 && matches[0].conclusion === 'success' && matches[0].status === 'completed' && matches[0].labels?.includes('self-hosted');
   });
-  need(owned && (completed || running), 'Release requires the exact main build with three successful native smoke jobs.');
+  const running = run.status === 'in_progress' && String(run.id) === activeRun && nativeJobsPassed;
+  const assembly = jobs.filter(job => job.name === 'assemble');
+  const steps = assembly.length === 1 ? assembly[0].steps ?? [] : [];
+  const publish = steps.findIndex(step => step.name === 'Publish verified ZIPs, checksums and signature to GitHub Release');
+  const recoverable = run.status === 'completed' && run.conclusion === 'failure' && nativeJobsPassed &&
+    assembly[0]?.status === 'completed' && assembly[0]?.conclusion === 'failure' && publish > 0 &&
+    steps[publish].conclusion === 'failure' && steps.slice(0, publish).every(step => step.conclusion === 'success') &&
+    steps.slice(0, publish).some(step => step.name === 'Sign and verify the ZIP checksum manifest');
+  need(owned && (completed || running || recoverable), 'Release requires the exact main build with three successful native smoke jobs; recovery also requires a verified signed bundle and failure confined to publication.');
 }
 export function githubFiles(release, directory) {
   need(release.archives?.length === 3 && new Set(release.archives.map(a => a.filename)).size === 3, 'Three native ZIP archives are required.');
@@ -138,7 +146,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       need(/^[1-9][0-9]*$/.test(values['build-run'] ?? ''), 'An explicit --build-run is required.');
       const run = api(`repos/${repository}/actions/runs/${values['build-run']}`);
       const activeRun = process.env.GITHUB_ACTIONS === 'true' && process.env.GITHUB_RUN_ID === values['build-run'] ? values['build-run'] : undefined;
-      const jobs = activeRun ? api(`repos/${repository}/actions/runs/${values['build-run']}/jobs?per_page=100`, ['--paginate', '--slurp']).flatMap(page => page.jobs) : [];
+      const jobs = activeRun || run.conclusion === 'failure' ? api(`repos/${repository}/actions/runs/${values['build-run']}/jobs?per_page=100`, ['--paginate', '--slurp']).flatMap(page => page.jobs) : [];
       verifyBuildRun(run, release.source, { activeRun, jobs });
       requireMain(release.source);
     }
