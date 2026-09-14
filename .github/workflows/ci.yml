@@ -403,8 +403,12 @@ jobs:
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/native-resume.mjs --phase source-tests --target '${{ matrix.target }}'
       - uses: actions/setup-python@ad3497abcd142e169a10aac37abd5175c44f33c4
+        if: runner.os != 'macOS'
         with:
           python-version: '3.13'
+      - name: Check the existing macOS Python ZIP support
+        if: runner.os == 'macOS'
+        run: python3 -c 'import sys, zipfile; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
       - name: Native distribution regressions
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/native-resume.mjs --phase distribution-tests --target '${{ matrix.target }}'
