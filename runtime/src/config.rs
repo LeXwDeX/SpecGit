@@ -1,4 +1,4 @@
-//! The single shared v2 declaration. Parsing never writes or contacts a forge.
+//! The single local v2 declaration. Parsing never writes or contacts a forge.
 use crate::{
     assets::safe_path,
     diagnostic::{Code, Diagnostic},

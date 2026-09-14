@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SpecGit 2 shared declaration",
+  "title": "SpecGit 2 local declaration",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -304,7 +304,7 @@
       ]
     }
   },
-  "description": "The shared .specgit.yaml v2 declaration. Runtime validation additionally rejects duplicate YAML keys, duplicate tag names, invalid Git refs, Unicode control characters, excessive UTF-8 byte lengths and max_wait_seconds below poll_seconds. The complete file is limited to 1 MiB. JSON Schema maxLength counts Unicode characters; runtime byte limits remain authoritative.",
+  "description": "The local .specgit.yaml v2 declaration. Runtime validation additionally rejects duplicate YAML keys, duplicate tag names, invalid Git refs, Unicode control characters, excessive UTF-8 byte lengths and max_wait_seconds below poll_seconds. The complete file is limited to 1 MiB. JSON Schema maxLength counts Unicode characters; runtime byte limits remain authoritative.",
   "allOf": [
     {
       "if": {

@@ -120,3 +120,33 @@ fn generated_guidance_uses_native_observation_and_preferences_are_not_authority(
     assert!(prose.contains("\"native_auto_merge\":false"));
     assert!(prose.contains("\"close_issues_after_merge\":false"));
 }
+
+#[test]
+fn receiptless_2_0_0_migration_upgrades_only_the_exact_released_templates() {
+    for (language, old) in [
+        (Language::En, include_str!("fixtures/guidance-2.0.0-en.txt")),
+        (Language::Zh, include_str!("fixtures/guidance-2.0.0-zh.txt")),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().canonicalize().unwrap();
+        let d = Declaration {
+            language,
+            ..Declaration::default()
+        };
+        std::fs::write(root.join("AGENTS.md"), format!("User rules\n{old}\n")).unwrap();
+        let changes = guidance::changes(&root, &root.join("private"), &d, &d, false).unwrap();
+        let updated = String::from_utf8(changes[0].after.clone().unwrap()).unwrap();
+        assert!(updated.starts_with("User rules\n"));
+        assert!(
+            updated
+                .replace("\r\n", "\n")
+                .contains(&guidance::render(&d))
+        );
+        std::fs::write(
+            root.join("AGENTS.md"),
+            old.replace("## SpecGit 2", "## Edited"),
+        )
+        .unwrap();
+        assert!(guidance::changes(&root, &root.join("private"), &d, &d, false).is_err());
+    }
+}

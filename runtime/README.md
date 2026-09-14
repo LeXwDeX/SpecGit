@@ -55,7 +55,7 @@ cannot prove auto-merge support, so that capability remains unknown. A readable
 GitHub repository auto-merge setting does not establish request eligibility or
 complete target rules. Default branches come from the native project, not a guess.
 
-`.specgit.yaml` contains the shared v2 declaration. `agent.native_auto_merge` and
+`.specgit.yaml` contains the local v2 declaration. `agent.native_auto_merge` and
 `agent.close_issues_after_merge` both default to false. Native protection rules
 remain on the platform. Unknown/duplicate fields, unsafe paths and invalid values
 fail before writes; a retired declaration field requires explicit migration.

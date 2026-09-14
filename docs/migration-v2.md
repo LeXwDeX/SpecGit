@@ -11,7 +11,7 @@ project assets so it can preserve user files and retire owned v1 hooks safely.
 
 | SpecGit 1.x | SpecGit 2.0 |
 | --- | --- |
-| Committed delivery record and dummy binding commits | Shared v2 declaration; local recovery state under Git; real changes create the request |
+| Committed delivery record and dummy binding commits | Local v2 declaration; local recovery state under Git; real changes create the request |
 | `finish` / `accept`, merge and promotion controllers | Native observation with truthful unknowns; no SpecGit-owned eligibility engine |
 | Core/controller merges and closes Issues | Authorized Agent registers native auto-merge; platform merges and normally closes Issues |
 | Residual Issue closure policy | Default notification; optional authorized Agent closure after fresh native readback |

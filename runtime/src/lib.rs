@@ -32,3 +32,5 @@ pub mod forge;
 pub mod observation;
 
 pub mod cli_contract;
+
+pub mod local_exclude;

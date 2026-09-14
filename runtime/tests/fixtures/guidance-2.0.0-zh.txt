@@ -1,0 +1,13 @@
+<!-- specgit:v2:start -->
+## SpecGit 2
+
+Runtime: 2.0.0. Declaration: `.specgit.yaml` (v2).
+
+SpecGit 管理规格 Issue 与原生 PR/MR 关联。实施前先查重，再明确选择包含原因、范围、方案和验收要求的完整 Issue。将选定 Issue 汇聚到一个原生请求，保留用户正文与关闭引用。
+
+Agent 监督开发与修复。声明启用原生自动合并偏好时，Agent 按既有用户授权通过 gh/glab 登记。GitHub/GitLab 负责 CI、评审、保护与实际合并。通过 specgit watch 观察原生状态。Hook 只通知变化，不授予写入权限。
+
+合并后回读关联 Issue；尚未关闭时通知 Agent。Agent 补关默认禁用；即使启用该偏好，仍须既有授权，并原生回读合并与关闭结果。通过 specgit init --check 查看不支持或未知的原生能力，再明确选择手动观察，或由获授权的管理员配置平台。
+
+Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
+<!-- specgit:v2:end -->

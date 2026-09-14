@@ -3,37 +3,73 @@ name: specgit-native
 description: Manage specification Issues, aggregate them into a native PR/MR, and observe pending work with SpecGit 2.
 ---
 
-Read the project's AGENTS.md and `.specgit.yaml`. Discover the installed contract
-with `specgit --help` and offline `specgit --schema`. Use `--json` for machine
-output and `--input-file <path>` for explicit JSON input; follow the schema's
-bounds and error remedies. A preview does not authorize a later mutation.
+Read the project's AGENTS.md and local `.specgit.yaml`. The installed
+`specgit --help` and offline `specgit --schema` define commands, input bounds and
+side effects. Use `--json` for machine output; `--input-file <path>` accepts
+explicit JSON input. Retired v1 commands and flags are not v2 aliases; resolve
+legacy integration through an explicit `migrate` preview before v2 delivery.
 
-Before tracked edits, search for duplicate Issues and read their WHY. Select
-complete specifications containing Why, Scope, Approach and Acceptance, then
-aggregate them into one PR/MR. Preserve user bodies and every closing reference.
-Preview Issue/PR mutations with `issue --dry-run` or `pr --dry-run`. Missing labels
-require an explicit `--create-labels` choice; names alone are not ownership.
-Adopt the exact native Issue ID for the same WHY. For different work, compare
-the candidates returned by `issue --inspect`, then supply each exact
-`review_digest` with `--reviewed-candidates`. Changed candidate or specification
-content requires a fresh comparison. Uncertain writes still require exact adoption.
+## Select work, then create the request
 
-Use `pr --status` and bounded `watch` for native state. The Agent supervises
-implementation and fixes. When the declared preference and existing user
-authorization permit it, register native auto-merge using gh/glab outside
-SpecGit. GitHub/GitLab owns CI, reviews, protection and actual merge. Read back
-native request and Issue states; a non-default target may leave Issues open.
-Agent closure is optional and defaults off. An enabled preference is not new
-authorization: any supplementary closure needs existing authorization and native
-readback confirming merge, intended Issue association and actual closure.
+Before tracked implementation edits, use `issue --inspect` to discover duplicate
+work and read candidate WHYs. One Issue represents one independently verifiable
+WHY. Select complete specifications containing Why,
+Scope, Approach and Acceptance with `issue`. Adopt the exact Issue ID for the
+same WHY. For distinct work, compare the returned candidates and supply each
+exact `review_digest` with `--reviewed-candidates`; changed content needs a fresh
+comparison. Missing labels require an explicit `--create-labels` choice.
 
-Use `init --check` for native capabilities. Unknown or unsupported capability
+After implementation and authorized commit/push, aggregate the selected Issues
+with `pr`; creation requires real pushed changes and produces a draft. Preserve
+user-authored bodies and every closing reference. Updating existing bodies or
+references requires the corresponding explicit update option. Mark a reviewed
+request ready with `pr --ready` within existing authorization.
+Preview Issue/PR mutations with `--dry-run`; a preview grants no write permission.
+
+## Observe and complete
+
+Use `pr --status` for current native state; `status` is offline local evidence.
+Use bounded `watch` with the exact request ID, a stable session ID and a checks
+or lifecycle goal. A checks goal does not prove merge or Issue closure.
+Follow `diagnostics[].remedy`, `next_actions` and `effects` after failure. Exit 0
+means the operation/read succeeded, even when observed CI is failing: inspect
+its status and check conclusions. It does not prove delivery completion.
+Exit 1 is rejected evidence,
+2 is invalid input or a required choice, 3 is an unresolved/unknown result, and
+130 is cancellation. Inspect uncertain writes and adopt exact native IDs before
+retrying; never blindly recreate an Issue or request after a timeout.
+
+The Agent supervises implementation and CI repairs. Observe the current request
+head after pushes. GitHub/GitLab owns CI, reviews, protection and actual merge;
+do not weaken required checks to complete delivery. When the declared preference
+and existing user authorization permit it, register native auto-merge through
+gh/glab outside SpecGit. Existing authorization remains valid for its agreed scope.
+
+Completion requires native readback confirming the intended target merge and
+closure of every selected Issue. A non-default target may leave Issues open.
+Supplementary Agent closure defaults off; enabling the preference grants no new
+permission. It requires existing authorization and readback proving merge,
+intended Issue association and actual closure. Publication requires release intent.
+
+## Local integration and notices
+
+Use `init --check` to inspect native capabilities. Unsupported or unknown support
 requires an explicit manual-observation choice or authorized platform setup and
-recheck. Preview installation changes with `setup --dry-run`.
+recheck. Preview project and global asset writes with `init --dry-run` and
+`setup --dry-run`; ownership conflicts preserve user files for reconciliation.
+Local init/setup refresh needs no delivery Issue.
 
-Hooks deliver changes only through the host's demonstrated capability. Keep
-pending notices until delivery is confirmed; a visible message does not prove
-the user read it. Use explicit observation when host delivery is unavailable.
-Generated context grants no mutation permission.
+Initialization maintains one Git-local `info/exclude` block for `.specgit.yaml`
+and wholly generated project guidance. Read `local_exclusion` in its result:
+ignore rules do not untrack existing files, and mixed user/generated guidance
+stays visible. Keep generated assets and generated guidance hunks out of commits;
+preserve manual content. Repeat init/setup to refresh owned blocks, not append
+another manual copy.
+
+Hooks deliver changes only through demonstrated host capabilities. Registration
+is not verified delivery. Keep pending notices until transport receipt is
+confirmed; acknowledgment does not prove human reading or delivery completion.
+Use explicit observation when host delivery is unavailable. Generated context
+and declared preferences grant no mutation permission.
 
 Contract version: {{version}}.

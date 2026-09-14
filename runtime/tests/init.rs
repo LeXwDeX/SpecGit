@@ -311,11 +311,11 @@ fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration()
         )
     };
     git(&["config", "core.autocrlf", "true"]);
-    git(&["add", ".specgit.yaml", "AGENTS.md"]);
+    git(&["add", "-f", ".specgit.yaml", "AGENTS.md"]);
     git(&["commit", "-m", "Chinese branch"]);
     git(&["checkout", "-b", "english"]);
     assert_eq!(f.run(&["init", "--language", "en"])["exit"], 0);
-    git(&["add", ".specgit.yaml", "AGENTS.md"]);
+    git(&["add", "-f", ".specgit.yaml", "AGENTS.md"]);
     git(&["commit", "-m", "English branch"]);
     git(&["checkout", "feature"]);
     assert_eq!(f.run(&["init"])["exit"], 0);
@@ -452,4 +452,142 @@ fn supported_native_settings_allow_explicit_preference_and_refresh_detects_drift
             .iter()
             .all(|call| call["method"] == "GET")
     );
+}
+
+#[test]
+fn local_exclusions_are_idempotent_and_preserve_user_rules() {
+    let f = Fixture::new();
+    let exclude = f.root.join(".git/info/exclude");
+    let original = b"# My rules\r\n/local-cache\r\n";
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(&exclude, original).unwrap();
+    let preview = f.run(&[
+        "init",
+        "--provider",
+        "github",
+        "--mirror-claude",
+        "--dry-run",
+    ]);
+    assert_eq!(preview["exit"], 0, "{preview}");
+    assert_eq!(fs::read(&exclude).unwrap(), original);
+    let first = f.run(&["init", "--provider", "github", "--mirror-claude"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    let bytes = fs::read(&exclude).unwrap();
+    assert!(bytes.starts_with(original));
+    for name in [".specgit.yaml", "AGENTS.md", "CLAUDE.md"] {
+        assert!(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args(["check-ignore", name])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let again = f.run(&["init"]);
+    assert_eq!(again["exit"], 0, "{again}");
+    assert_eq!(fs::read(&exclude).unwrap(), bytes);
+    let agents = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
+    assert_eq!(agents.matches("<!-- specgit:v2:start -->").count(), 1);
+    assert_eq!(
+        String::from_utf8(bytes)
+            .unwrap()
+            .matches("# specgit:local:v2:start")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn local_exclusion_reports_tracked_config_and_preserves_mixed_guidance() {
+    let f = Fixture::new();
+    fs::write(f.root.join("AGENTS.md"), "User rules\n").unwrap();
+    let first = f.run(&["init", "--provider", "github"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["add", "-f", ".specgit.yaml"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let again = f.run(&["init"]);
+    assert_eq!(
+        again["evidence"]["local_exclusion"]["already_tracked"],
+        json!([".specgit.yaml"])
+    );
+    assert_eq!(
+        again["evidence"]["local_exclusion"]["mixed_guidance_paths"],
+        json!(["AGENTS.md"])
+    );
+    assert!(
+        !Command::new("git")
+            .current_dir(&f.root)
+            .args(["check-ignore", "AGENTS.md"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["ls-files", "--error-unmatch", ".specgit.yaml"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn linked_worktree_uses_common_git_exclude() {
+    let mut f = Fixture::new();
+    let common = f.root.join(".git/info/exclude");
+    fs::create_dir_all(common.parent().unwrap()).unwrap();
+    fs::write(&common, b"# original\n").unwrap();
+    let original = fs::read(&common).unwrap();
+    let worktree = f.root.parent().unwrap().join("linked");
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            // Rust's canonical Windows path has a verbatim prefix that Git
+            // cannot use as a worktree argument. Resolve the sibling from cwd.
+            .args(["worktree", "add", "-b", "linked", "../linked"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    f.root = worktree;
+    let init = f.run(&["init", "--provider", "github"]);
+    assert_eq!(init["exit"], 0, "{init}");
+    assert_eq!(
+        PathBuf::from(
+            init["evidence"]["local_exclusion"]["path"]
+                .as_str()
+                .unwrap()
+        )
+        .canonicalize()
+        .unwrap(),
+        common.canonicalize().unwrap()
+    );
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["check-ignore", ".specgit.yaml"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let transaction = init["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap();
+    let rollback = f.run(&["init", "--rollback", transaction]);
+    assert_eq!(rollback["exit"], 0, "{rollback}");
+    assert_eq!(fs::read(common).unwrap(), original);
 }
