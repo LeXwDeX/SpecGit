@@ -35,7 +35,7 @@ describe('native GitHub release workflow (#559)', () => {
   it('keeps builds read-only and gives only the final publication job write permission', () => {
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(workflow.jobs.build.permissions ?? workflow.permissions).toEqual({ contents: 'read' });
-    expect(workflow.jobs.assemble.permissions).toEqual({ contents: 'write', actions: 'read' });
+    expect(workflow.jobs.assemble.permissions).toEqual({ contents: 'write', actions: 'read', 'id-token': 'write' });
     for (const job of Object.values(workflow.jobs) as Array<{ steps: Array<{ uses?: string; with?: Record<string, unknown> }> }>) {
       for (const step of job.steps.filter(step => step.uses?.startsWith('actions/checkout@'))) expect(step.with?.['persist-credentials']).toBe(false);
     }
@@ -60,9 +60,13 @@ describe('native GitHub release workflow (#559)', () => {
     expect(steps.find(step => step.uses?.startsWith('actions/download-artifact@'))?.with).toMatchObject({ pattern: 'release-platform-*', 'digest-mismatch': 'error' });
     expect(steps.find(step => step.uses?.startsWith('actions/upload-artifact@'))?.with?.name).toBe('specgit-release-${{ github.sha }}-${{ github.run_attempt }}');
     const assemble = steps.findIndex(step => step.run?.includes('native-release.mjs --assemble'));
+    const sign = steps.findIndex(step => step.run?.includes('cosign sign-blob'));
     const publish = steps.findIndex(step => step.run?.includes('distribution/publish.mjs'));
     expect(assemble).toBeGreaterThan(-1);
-    expect(publish).toBeGreaterThan(assemble);
+    expect(sign).toBeGreaterThan(assemble);
+    expect(publish).toBeGreaterThan(sign);
+    expect(steps[sign].run).toContain('cosign verify-blob');
+    expect(steps[sign].run).toContain('release-prepare.yml@refs/heads/main');
     expect(steps[publish].run).toContain('--source "$GITHUB_SHA" --build-run "$GITHUB_RUN_ID" --github');
     expect(steps[publish].env?.GH_TOKEN).toBe('${{ github.token }}');
   });

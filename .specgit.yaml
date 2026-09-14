@@ -6,5 +6,6 @@ context:
   branch: codex/github-release-only
 issues:
   - 565
+  - 567
 issueKinds: []
 pr: 566
