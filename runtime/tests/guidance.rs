@@ -137,7 +137,11 @@ fn receiptless_2_0_0_migration_upgrades_only_the_exact_released_templates() {
         let changes = guidance::changes(&root, &root.join("private"), &d, &d, false).unwrap();
         let updated = String::from_utf8(changes[0].after.clone().unwrap()).unwrap();
         assert!(updated.starts_with("User rules\n"));
-        assert!(updated.contains(&guidance::render(&d)));
+        assert!(
+            updated
+                .replace("\r\n", "\n")
+                .contains(&guidance::render(&d))
+        );
         std::fs::write(
             root.join("AGENTS.md"),
             old.replace("## SpecGit 2", "## Edited"),
