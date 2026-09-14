@@ -18,24 +18,32 @@ self-hosted runners. Each compiled binary runs three simple smoke checks:
 installed native CLI regression suites; those remain in CI.
 
 When all three builds and smoke checks succeed, the final job verifies the source,
-architecture and SHA-256, then publishes exactly these assets:
+architecture and SHA-256, packages the tested executables using Python 3.13 ZIP
+support, and signs the checksum manifest with Cosign 3.1.3 using GitHub Actions
+OIDC. It publishes exactly these assets:
 
-- `specgit-darwin-arm64`
-- `specgit-linux-x64-gnu`
-- `specgit-win32-x64.exe`
+- `specgit-<version>-darwin-arm64.zip`
+- `specgit-<version>-linux-x64-gnu.zip`
+- `specgit-<version>-win32-x64.zip`
+- `SHA256SUMS`
+- `SHA256SUMS.sigstore.json`
 
-Only the final job has repository write permission, and only its publisher step
+Only the final job has repository write and OIDC token permissions, and only its publisher step
 receives the workflow's `GH_TOKEN`. The publishing runner needs GitHub CLI 2.99 or newer (including `gh api --slurp`).
 No custom release credential is needed. The
 publisher checks current `main` and the three successful build jobs before writing,
-creates a draft, uploads missing binaries, verifies downloaded bytes, then makes the
-Release stable/latest. Checksums and the source/build link live in the Release
-notes. The internal `native-release.json` and smoke reports remain Actions artifacts,
+verifies the signature against the exact main Release workflow identity, creates a
+draft, uploads missing assets, verifies downloaded bytes, then makes the Release
+stable/latest. Checksums also appear with the source/build link in Release notes.
+The internal `native-release.json` and smoke reports remain Actions artifacts,
 not Release attachments. A branch dispatch cannot publish.
 
 ## Resume an interrupted publication
 
-Rerun the failed workflow job so it uses the original successful build artifacts.
+For failed publication, reuse the retained signed bundle from the original attempt.
+Re-signing creates different signature bytes and cannot overwrite an existing
+immutable signature asset. Before any upload, retrying the job with the original
+successful build artifacts is safe.
 Matching tags/assets are reused; different immutable bytes or a foreign tag stop
 the run. Do not rebuild and overwrite an already published version.
 
@@ -49,7 +57,9 @@ node runtime/distribution/publish.mjs \
   --github
 ```
 
-Without `--github`, bundle verification is offline and read-only. With `--preflight`,
+The recovery runner needs Python 3.13, Node.js and Cosign 3.1.3 (or compatible).
+Without `--github`, archive/checksum verification is offline and read-only and does
+not claim signature verification. With `--preflight`,
 the publisher verifies provenance and current main but performs no publication.
 Retired `--npm` and npm recovery flags are rejected. Existing public npm versions
 are historical; this workflow does not change or delete them.

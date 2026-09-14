@@ -1,8 +1,10 @@
 # 快速开始
 
-SpecGit 只通过 [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) 分发原生二进制。
-选择 macOS arm64、Linux x64 glibc 或 Windows x64 文件，核对 Release 描述中的 SHA-256，
-重命名为 `specgit`（Windows 为 `specgit.exe`），放入 PATH。macOS/Linux 还需运行 `chmod +x specgit`。
+SpecGit 只通过 [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) 分发原生 ZIP 包。
+选择 macOS arm64、Linux x64 glibc 或 Windows x64 包，同时下载该版本的 `SHA256SUMS` 和
+`SHA256SUMS.sigstore.json`。按[安装说明](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md)
+验证签名身份，再核对 ZIP 的 SHA-256。全部通过后解压出 `specgit`（Windows 为 `specgit.exe`），
+放入 PATH。macOS/Linux 还需运行 `chmod +x specgit`。
 无需 Node.js、npm 或 Rust 编译器。仓库操作需要 Git 和已经认证的 `gh` / `glab`。
 
 ```sh

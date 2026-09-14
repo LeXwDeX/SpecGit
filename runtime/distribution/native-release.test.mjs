@@ -66,7 +66,7 @@ test('publisher verification stays offline and retired npm flags are rejected', 
   const f = fixture(t);
   assemble(f.input, f.output, version, source);
   const guard = path.join(f.root, 'offline-guard.mjs');
-  writeFileSync(guard, `import cp from 'node:child_process'; import { syncBuiltinESMExports } from 'node:module'; cp.spawnSync = () => { throw new Error('Unexpected subprocess'); }; syncBuiltinESMExports(); globalThis.fetch = () => { throw new Error('Unexpected network'); };`);
+  writeFileSync(guard, `import cp from 'node:child_process'; import { syncBuiltinESMExports } from 'node:module'; const original = cp.spawnSync; cp.spawnSync = (program, args, options) => { if (!['python', 'python3'].includes(program)) throw new Error('Unexpected subprocess'); return original(program, args, options); }; syncBuiltinESMExports(); globalThis.fetch = () => { throw new Error('Unexpected network'); };`);
   const args = ['--import', pathToFileURL(guard).href, fileURLToPath(new URL('./publish.mjs', import.meta.url)), '--directory', f.output, '--version', version, '--source', source];
   const result = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 30_000 });
   assert.equal(result.status, 0, result.stderr);
@@ -74,4 +74,17 @@ test('publisher verification stays offline and retired npm flags are rejected', 
   const retired = spawnSync(process.execPath, [...args, '--npm'], { encoding: 'utf8', timeout: 30_000 });
   assert.equal(retired.status, 1);
   assert.match(retired.stderr, /Unknown option.*npm/);
+});
+
+test('ZIP bytes and checksum manifest cannot be altered after qualification', t => {
+  const f = fixture(t);
+  const release = assemble(f.input, f.output, version, source);
+  const manifest = path.join(f.output, 'SHA256SUMS');
+  const original = readFileSync(manifest);
+  writeFileSync(manifest, '0'.repeat(64));
+  assert.throws(() => verifyNativeBundle(f.output, version, source), /SHA256SUMS differs/);
+  writeFileSync(manifest, original);
+  const archive = path.join(f.output, release.archives[0].filename);
+  const changed = readFileSync(archive); changed[50] ^= 1; writeFileSync(archive, changed);
+  assert.throws(() => verifyNativeBundle(f.output, version, source), /ZIP digest differs/);
 });

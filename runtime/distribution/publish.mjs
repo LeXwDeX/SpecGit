@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { verifyNativeBundle } from './native-release.mjs';
+import { checksums, checksumsName, signatureName, verifyNativeBundle } from './native-release.mjs';
 
 const repository = 'LeXwDeX/SpecGit';
 const need = (condition, message) => { if (!condition) throw new Error(message); };
@@ -33,19 +33,26 @@ export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
   });
   need(owned && (completed || running), 'Release requires the exact main build with three successful native smoke jobs.');
 }
-export function githubFiles(release) {
-  need(release.binaries?.length === 3 && new Set(release.binaries.map(b => b.filename)).size === 3, 'Three native GitHub executables are required.');
-  for (const entry of release.binaries) need(createHash('sha256').update(readFileSync(entry.file)).digest('hex') === entry.sha256, 'Native executable digest differs before publication.');
-  return release.binaries.map(entry => entry.file);
+export function githubFiles(release, directory) {
+  need(release.archives?.length === 3 && new Set(release.archives.map(a => a.filename)).size === 3, 'Three native ZIP archives are required.');
+  for (const entry of release.archives) need(createHash('sha256').update(readFileSync(entry.file)).digest('hex') === entry.sha256, 'ZIP digest differs before publication.');
+  need(readFileSync(path.join(directory, checksumsName), 'utf8') === checksums(release.archives), 'SHA256SUMS differs before publication.');
+  need(readFileSync(path.join(directory, signatureName)).length > 0, 'Signature bundle is required.');
+  return [...release.archives.map(entry => entry.file), path.join(directory, checksumsName), path.join(directory, signatureName)];
+}
+export function verifySignature(directory, execute = command) {
+  execute('cosign', ['verify-blob', '--bundle', path.join(directory, signatureName),
+    '--certificate-identity', `https://github.com/${repository}/.github/workflows/release-prepare.yml@refs/heads/main`,
+    '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', path.join(directory, checksumsName)]);
 }
 export function releaseNotes(release, buildRun) {
   return `SpecGit v${release.version}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.
 
-Download the matching executable below, rename it to specgit (specgit.exe on Windows), and put it in a directory on PATH. On macOS/Linux run chmod +x specgit. Verify its SHA-256 against this table, then run specgit --human --version. No Node.js, npm or Rust installation is required.
+Download the matching ZIP, SHA256SUMS and SHA256SUMS.sigstore.json from this same Release. Verify the Sigstore signature on SHA256SUMS using the exact main Release workflow identity, then check the ZIP SHA-256 before extracting specgit (specgit.exe on Windows) into a directory on PATH. See https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md for verification commands. No Node.js, npm or Rust installation is required.
 
-| Binary | SHA-256 |
+| ZIP | SHA-256 |
 | --- | --- |
-${release.binaries.map(b => `| ${b.filename} | \`${b.sha256}\` |`).join('\n')}
+${release.archives.map(b => `| ${b.filename} | \`${b.sha256}\` |`).join('\n')}
 
 Each binary passed version, help and schema smoke tests on its native self-hosted runner.
 Source: \`${release.source}\`.
@@ -54,8 +61,9 @@ License: https://github.com/${repository}/blob/${release.source}/LICENSE
 See the v2 migration guide before replacing a v1 project configuration.
 `;
 }
-export function publishGithub(release, directory, { request = api, cli = gh, buildRun } = {}) {
-  const files = githubFiles(release);
+export function publishGithub(release, directory, { request = api, cli = gh, buildRun, verify = verifySignature } = {}) {
+  const files = githubFiles(release, directory);
+  verify(directory);
   const tag = `v${release.version}`;
   // A tag with the right spelling alone does not prove its source commit.
   const tags = request(`repos/${repository}/git/matching-refs/tags/${tag}`);
@@ -134,6 +142,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       verifyBuildRun(run, release.source, { activeRun, jobs });
       requireMain(release.source);
     }
+    if (values.github && values.preflight) { githubFiles(release, directory); verifySignature(directory); }
     const github = values.github && !values.preflight ? publishGithub(release, directory, { buildRun: values['build-run'] }) : undefined;
     process.stdout.write(JSON.stringify({ version: release.version, source: release.source, bundle_verified: true, ...(github ? { github } : {}), publication_performed: Boolean(github) }) + '\n');
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }

@@ -18,9 +18,9 @@ shell when selecting the native CPU. Supported Release assets are:
 
 | System | Release asset | Installed filename |
 | --- | --- | --- |
-| macOS Apple Silicon | `specgit-darwin-arm64` | `specgit` |
-| Linux x64 with glibc | `specgit-linux-x64-gnu` | `specgit` |
-| Windows x64 | `specgit-win32-x64.exe` | `specgit.exe` |
+| macOS Apple Silicon | `specgit-<version>-darwin-arm64.zip` | `specgit` |
+| Linux x64 with glibc | `specgit-<version>-linux-x64-gnu.zip` | `specgit` |
+| Windows x64 | `specgit-<version>-win32-x64.zip` | `specgit.exe` |
 
 Unsupported architectures and Linux musl do not have a matching binary. Report
 that concrete gap; npm, a different architecture and unofficial mirrors are not
@@ -47,19 +47,34 @@ GitHub authentication is not required solely because the target project uses
 GitLab. When access is unavailable, report it instead of falling back to npm.
 Do not print, copy or request a token value.
 
-Keep the returned tag, version, chosen asset URL and SHA-256 from that same Release.
-Require a non-draft, non-prerelease stable version and exactly one asset matching
-the machine. Download that tag's asset into a fresh temporary directory. Do not
-resolve `latest` again between selecting metadata and downloading bytes.
+Keep the returned tag, version and asset URLs from that same Release. Require a
+non-draft, non-prerelease stable version and exactly one ZIP matching the machine,
+plus `SHA256SUMS` and `SHA256SUMS.sigstore.json`. The ZIP version omits the tag's `v`
+prefix. Download these three assets into a fresh temporary directory. Do not
+resolve `latest` again between selecting and downloading. An older Release with
+only bare executables lacks this signed-package contract; report that gap and stop.
 
-Compare the downloaded SHA-256 with the Release's asset digest or the exact asset
-row in its notes. If both are present, they must agree. Missing or mismatching
-evidence stops installation. Use `shasum -a 256`, `sha256sum` or PowerShell
-`Get-FileHash -Algorithm SHA256` as appropriate.
+Use Cosign 3.1.3 or a compatible newer version from the
+[official installation guide](https://docs.sigstore.dev/cosign/system_config/installation/).
+Verify the checksum manifest before trusting its hashes:
 
-Copy the verified binary to the selected bin directory with its installed filename;
-on Unix give it executable permission. Verify the installed file has the same
-SHA-256. Run the absolute installed path before testing the PATH-selected command:
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' SHA256SUMS
+```
+
+Require successful signature, certificate identity, issuer and transparency-log
+verification. Do not disable verification or accept another workflow identity.
+Match exactly one SHA-256 row for the selected ZIP in the verified manifest.
+Compare it with `shasum -a 256`, `sha256sum` or PowerShell
+`Get-FileHash -Algorithm SHA256`. If GitHub's asset digest is present it must agree.
+Missing, mismatching or unverified evidence stops installation before extraction.
+
+Extract the verified ZIP into a fresh directory using `unzip` or PowerShell
+`Expand-Archive`. Require exactly the expected root-level `specgit` / `specgit.exe`
+regular file. Copy it to the chosen bin directory, preserving an existing executable
+first. On Unix give it executable permission. Compare the installed binary hash
+with the extracted binary hash; the ZIP hash identifies the archive, not the binary.
+Run the absolute installed path before testing the PATH-selected command:
 
 ```sh
 specgit --human --version
@@ -153,7 +168,8 @@ refresh; do not replace their settings with fresh defaults.
 
 ## Completion report
 
-Report the installed version, Release URL, binary path and verified SHA-256;
+Report the installed version, Release URL, binary path, verified ZIP and binary
+SHA-256 values, and verified signer identity;
 the target repository and actual init/status/doctor outcomes; the selected host
 and whether its registration/discovery was verified; and any remaining concrete
 blocker or user action. Include the backup location if a file was replaced.
