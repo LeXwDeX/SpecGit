@@ -98,8 +98,8 @@ test('a rejected signature stops publication before any forge operation', t => {
   assert.equal(f.calls.length, 0);
   verifySignature(f.directory, (program, args) => {
     assert.equal(program, 'cosign');
-    assert(args.includes('https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main'));
-    assert(args.includes('https://token.actions.githubusercontent.com'));
-    assert.equal(args.at(-1), path.join(f.directory, 'SHA256SUMS'));
+    assert.deepEqual(args, ['verify-blob', '--bundle', path.join(f.directory, 'SHA256SUMS.sigstore.json'),
+      '--certificate-identity', 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main',
+      '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', path.join(f.directory, 'SHA256SUMS')]);
   });
 });
