@@ -5,9 +5,10 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { buildNative, stage, targets, verifyArchitecture } from '../distribution/stage.mjs';
-import { expectedSuites } from '../distribution/release-artifacts.mjs';
+import { buildNative, targets, verifyArchitecture } from '../distribution/native-build.mjs';
+import { expectedSuites } from './profile-inventory.mjs';
 import { PhaseCache, digest, fileDigest, readCompiledTests } from './native-cache.mjs';
+import { installNative } from '../distribution/install-native.mjs';
 import { runDistributionTests } from './distribution-tests.mjs';
 
 const runtime = fileURLToPath(new URL('../', import.meta.url));
@@ -85,7 +86,7 @@ export async function main(args) {
         const directory = attempt('source-tests');
         const manifest = readCompiledTests(compiled.value.manifest, source);
         const env = { ...process.env };
-        for (const key of ['SPECGIT_TEST_BINARY', 'SPECGIT_TEST_LAUNCHER', 'SPECGIT_TEST_NODE']) delete env[key];
+        delete env.SPECGIT_TEST_BINARY;
         const failures = [];
         for (const [index, artifact] of manifest.artifacts.entries()) {
           try { command(artifact.executable, ['--color', 'never'], { env, log: path.join(directory, `${index}.log`) }); }
@@ -116,16 +117,15 @@ export async function main(args) {
     case 'install': {
       const value = await cache.run('install', ['compile-release', 'distribution-tests'], async () => {
         const directory = attempt('install');
-        const staging = path.join(directory, 'stage');
         const installed = path.join(directory, 'installed');
-        stage(target, staging, cache.get('compile-release').value.binary);
-        command(process.execPath, ['distribution/verify-install.mjs', '--stage', staging, '--output', installed], { log: path.join(directory, 'install.log') });
+        const version = json(path.join(repo, 'package.json')).version;
+        installNative(cache.get('compile-release').value.binary, installed, version, source, target);
         const evidence = json(path.join(installed, 'installed.json'));
         assert.equal(evidence.source, source);
-        return { value: { directory: installed }, files: [path.join(installed, 'installed.json'), path.join(installed, 'node_modules'), ...evidence.packages.map(row => path.join(installed, row.tarball))] };
+        return { value: { directory: installed }, files: [evidence.binary, ...['installed.json', 'smoke.json', 'README.md', 'schemas'].map(name => path.join(installed, name))] };
       });
       const evidence = json(path.join(value.directory, 'installed.json'));
-      exportEnv({ SPECGIT_NATIVE_INSTALLED: value.directory, SPECGIT_TEST_BINARY: evidence.binary, SPECGIT_TEST_LAUNCHER: evidence.launcher, SPECGIT_TEST_NODE: process.execPath });
+      exportEnv({ SPECGIT_NATIVE_INSTALLED: value.directory, SPECGIT_TEST_BINARY: evidence.binary });
       break;
     }
     case 'profile': {
@@ -136,7 +136,7 @@ export async function main(args) {
       exportEnv({ SPECGIT_NATIVE_INSTALLED: installed.value.directory });
       const value = await cache.run('profile', ['compile-tests', 'install'], async () => {
         const directory = path.join(attempt('profile'), 'results');
-        const env = { ...process.env, SPECGIT_TEST_BINARY: evidence.binary, SPECGIT_TEST_LAUNCHER: evidence.launcher, SPECGIT_TEST_NODE: process.execPath };
+        const env = { ...process.env, SPECGIT_TEST_BINARY: evidence.binary };
         exportEnv({ SPECGIT_NATIVE_PROFILE: directory });
         try { command(process.execPath, ['scripts/profile-tests.mjs', '--artifacts', compiled.value.manifest, '--output', directory], { env }); }
         finally {

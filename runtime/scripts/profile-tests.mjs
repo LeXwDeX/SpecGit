@@ -7,13 +7,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
-import { assertProfileInventory } from '../distribution/release-artifacts.mjs';
+import { assertProfileInventory } from './profile-inventory.mjs';
 import { readCompiledTests } from './native-cache.mjs';
 
 const { values } = parseArgs({ options: { output: { type: 'string' }, compare: { type: 'string' }, artifacts: { type: 'string' } } });
 if (!values.output) throw new Error('Use --output <new profile directory> [--compare <baseline profile.json>].');
-assert(process.env.SPECGIT_TEST_BINARY && process.env.SPECGIT_TEST_LAUNCHER && process.env.SPECGIT_TEST_NODE,
-  'Performance qualification requires a separately installed npm entrypoint.');
+assert(process.env.SPECGIT_TEST_BINARY, 'Performance qualification requires a separately installed native executable.');
 const output = path.resolve(values.output);
 assert(!existsSync(output), 'Select a fresh evidence directory.');
 mkdirSync(output, { recursive: true });
@@ -24,9 +23,6 @@ function run(executable, args) {
   const result = spawnSync(executable, args, { encoding: 'utf8', timeout: Math.max(1, Math.floor(deadline - start)), maxBuffer: 32 * 1024 * 1024 });
   return { ...result, milliseconds: performance.now() - start };
 }
-const installedNode = run(process.env.SPECGIT_TEST_NODE, ['--version']);
-assert.equal(installedNode.status, 0, 'The selected installed Node must be executable.');
-assert(/^v\d+\.\d+\.\d+\s*$/.test(installedNode.stdout), 'Unrecognized installed Node version.');
 let buildMilliseconds = 0;
 let artifacts;
 if (values.artifacts) {
@@ -60,14 +56,14 @@ for (const artifact of artifacts.sort((a, b) => a.target.src_path.localeCompare(
   const accounted = JSON.stringify(outcomes.map(row => row.name).sort()) === JSON.stringify(names)
     && counts && counts[0] + counts[1] + counts[2] === names.length && counts[3] === 0 && counts[4] === 0;
   const passed = result.status === 0 && !result.error && accounted && counts[1] === 0;
+  if (!passed) process.stderr.write(text + '\n');
   suites.push({ source, name: artifact.target.name, milliseconds: result.milliseconds, enumeration_milliseconds: list.milliseconds, exit: result.status, error: result.error?.code ?? null, passed: Boolean(passed), counts, tests: outcomes });
   process.stdout.write(`${source}: ${result.milliseconds.toFixed(0)} ms, ${passed ? 'passed' : 'FAILED'}, ${names.length} enumerated\n`);
 }
 const profile = {
   schema_version: 1, platform: process.platform, arch: process.arch,
   artifact_sha256: createHash('sha256').update(readFileSync(process.env.SPECGIT_TEST_BINARY)).digest('hex'),
-  launcher_sha256: createHash('sha256').update(readFileSync(process.env.SPECGIT_TEST_LAUNCHER)).digest('hex'),
-  node_version: process.version, installed_node_version: installedNode.stdout.trim(), build_milliseconds: buildMilliseconds,
+  node_version: process.version, build_milliseconds: buildMilliseconds,
   compilation_reused: Boolean(values.artifacts),
   total_milliseconds: performance.now() - started,
   test_processes: suites.length, suites, passed: suites.every(suite => suite.passed),
@@ -85,7 +81,6 @@ if (values.compare) {
   const workload = value => value.suites.map(suite => ({ source: suite.source, tests: suite.tests }));
   const equivalent = baseline.passed === true && profile.passed && baseline.platform === profile.platform
     && baseline.arch === profile.arch && baseline.node_version === profile.node_version
-    && baseline.installed_node_version === profile.installed_node_version
     && JSON.stringify(workload(baseline)) === JSON.stringify(workload(profile));
   profile.comparison = { equivalent, baseline_milliseconds: baseline.total_milliseconds, candidate_milliseconds: profile.total_milliseconds,
     ratio: equivalent ? profile.total_milliseconds / baseline.total_milliseconds : null };

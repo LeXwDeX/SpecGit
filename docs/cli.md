@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # CLI Reference
 
 The `specgit` CLI has ten commands. The human story is `issue` → `finish`; `setup` installs agent entry points; `bind`/`unbind`/`accept` are machine aliases for scripts. All evaluation is evidence-derived and fail-closed: commands either report verified facts or report why they cannot.
@@ -669,7 +671,7 @@ preserves that choice.
 
 For scripts, agents, `--json`, and every non-TTY run, use this explicit sequence:
 
-1. **`npm install -g specgit@latest`** — update the CLI package.
+1. **`download the native binary from GitHub Releases`** — update the CLI package.
 2. **`specgit init --force --no-protect`** — converge the init-owned tier while preserving omitted policy and automation choices. `--no-protect` forbids an implicit protection probe or change. Append `--no-ignore` when the repository intentionally tracks the authoritative tier without the managed ignore region.
 3. **`specgit setup --tool all`** — converge both agent surfaces deterministically.
 4. **`specgit status --json`** — require `assets.generated.clean: true`. Clean implies complete; first resolve any `uninspected` code. A `conflict` is unowned content at a managed path, so the tools preserve it and fail closed until a human resolves it.

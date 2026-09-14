@@ -4,15 +4,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
-import { githubFiles, publishGithub, releaseNotes } from './publish.mjs';
+import { githubFiles, publishGithub, releaseNotes, verifySignature } from './publish.mjs';
 
 const source = 'a'.repeat(40);
 function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const packages = ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64.exe'];
+  const packages = ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip', 'specgit-2.0.0-win32-x64.zip'];
   for (const name of [...packages, 'wrapper.tgz']) writeFileSync(path.join(directory, name), `qualified ${name}`);
-  const release = { version: '2.0.0', source, binaries: packages.map(filename => ({ filename, file: path.join(directory, filename), sha256: createHash('sha256').update(readFileSync(path.join(directory, filename))).digest('hex') })) };
+  const release = { version: '2.0.0', source, archives: packages.map(filename => ({ filename, file: path.join(directory, filename), sha256: createHash('sha256').update(readFileSync(path.join(directory, filename))).digest('hex') })) };
+  writeFileSync(path.join(directory, 'SHA256SUMS'), release.archives.map(a => `${a.sha256}  ${a.filename}\n`).join(''));
+  writeFileSync(path.join(directory, 'SHA256SUMS.sigstore.json'), 'signature fixture');
   const names = githubFiles(release, directory).map(file => path.basename(file));
   const remote = { exists: draft !== undefined, draft: draft ?? true, latest: false, tag: true, assets: new Map(existing.map(name => [name, name === corrupt ? Buffer.from('different') : readFileSync(path.join(directory, name))])) };
   const calls = [];
@@ -41,17 +43,18 @@ function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUploa
     }
     throw new Error(`Unexpected CLI ${args}`);
   };
-  return { directory, release, names, remote, calls, io: { request, cli } };
+  return { directory, release, names, remote, calls, io: { request, cli, verify: () => {} } };
 }
 test('new release is created as draft and only published after all byte readbacks', t => {
   const f = fixture(t);
   const result = publishGithub(f.release, f.directory, f.io);
   assert.deepEqual(result.assets_verified, f.names);
-  assert.equal(f.names.length, 3);
+  assert.equal(f.names.length, 5);
   assert(!f.names.includes('wrapper.tgz'));
-  assert(!f.names.some(name => /\.tgz$|\.json$|\.txt$/.test(name)));
+  assert(f.names.includes('SHA256SUMS.sigstore.json'));
+  assert(f.names.filter(name => name.endsWith('.zip')).length === 3);
   const notes = releaseNotes(f.release, '123');
-  for (const binary of f.release.binaries) assert(notes.includes(binary.sha256));
+  for (const binary of f.release.archives) assert(notes.includes(binary.sha256));
   assert(notes.includes(source));
   assert(notes.includes('/actions/runs/123'));
   assert.equal(f.remote.draft, false);
@@ -69,11 +72,11 @@ test('an interrupted upload leaves a matching draft that resumes without duplica
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length);
 });
 test('a matching pre-existing draft can be completed; a conflicting asset causes zero upload or publish writes', t => {
-  const f = fixture(t, { draft: true, existing: ['specgit-darwin-arm64'] });
+  const f = fixture(t, { draft: true, existing: ['specgit-2.0.0-darwin-arm64.zip'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => call[1] === 'create'), false);
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length - 1);
-  const conflict = fixture(t, { draft: true, existing: ['specgit-win32-x64.exe'], corrupt: 'specgit-win32-x64.exe' });
+  const conflict = fixture(t, { draft: true, existing: ['specgit-2.0.0-win32-x64.zip'], corrupt: 'specgit-2.0.0-win32-x64.zip' });
   assert.throws(() => publishGithub(conflict.release, conflict.directory, conflict.io), /differs/);
   assert.equal(conflict.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
   const extra = fixture(t, { draft: true, existing: ['wrapper.tgz'] });
@@ -81,10 +84,22 @@ test('a matching pre-existing draft can be completed; a conflicting asset causes
   assert.equal(extra.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
 });
 test('published releases are read back without duplicate uploads; foreign source tags are never changed', t => {
-  const f = fixture(t, { draft: false, existing: ['specgit-darwin-arm64', 'specgit-linux-x64-gnu', 'specgit-win32-x64.exe'] });
+  const f = fixture(t, { draft: false, existing: ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip', 'specgit-2.0.0-win32-x64.zip', 'SHA256SUMS', 'SHA256SUMS.sigstore.json'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => ['upload', 'create'].includes(call[1])), false);
   const foreign = fixture(t, { draft: true, otherSource: 'b'.repeat(40) });
   assert.throws(() => publishGithub(foreign.release, foreign.directory, foreign.io), /another commit/);
   assert.equal(foreign.calls.some(call => ['upload', 'create', 'edit'].includes(call[1])), false);
+});
+
+test('a rejected signature stops publication before any forge operation', t => {
+  const f = fixture(t);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, verify: () => { throw new Error('Signature rejected'); } }), /Signature rejected/);
+  assert.equal(f.calls.length, 0);
+  verifySignature(f.directory, (program, args) => {
+    assert.equal(program, 'cosign');
+    assert.deepEqual(args, ['verify-blob', '--bundle', path.join(f.directory, 'SHA256SUMS.sigstore.json'),
+      '--certificate-identity', 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main',
+      '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', path.join(f.directory, 'SHA256SUMS')]);
+  });
 });

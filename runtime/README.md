@@ -11,12 +11,13 @@ user's authenticated gh/glab session when existing authorization permits it.
 Project preferences and hook messages grant no additional authority. Optional
 Agent closure defaults off and requires authorization plus native readback.
 
-The [command reference](REFERENCE.md) ships with the native npm wrapper. The
+The [command reference](REFERENCE.md) documents the native GitHub Release executable. The
 installed executable's offline `--schema` is the command/input/output discovery
 source. [Distribution](distribution/README.md) describes the three-platform build and
-installed-entrypoint checks. The root TypeScript workspace is private and retained
-for engineering gates and historical regressions. Public v2 packages are generated
-only by native distribution staging. Installation does not migrate a project.
+installed-entrypoint checks. The v1 TypeScript implementation has been retired.
+The private root Node workspace contains repository verification tooling only.
+Public v2 packages are generated only by native binary release builds.
+Installation does not migrate a project.
 
 ## Using the runtime
 
@@ -129,15 +130,14 @@ transport's containment guarantee. Cancellation terminates the owned process tre
 
 `node scripts/profile-tests.mjs --output <new-directory>` records suite timing and
 exact results through the selected installed entrypoint. It requires the
-`SPECGIT_TEST_BINARY`, `SPECGIT_TEST_LAUNCHER` and `SPECGIT_TEST_NODE` installation
-evidence. `--compare <baseline/profile.json>` requires comparable platform,
+`SPECGIT_TEST_BINARY` installation evidence. `--compare <baseline/profile.json>` requires comparable platform,
 Node version and workload. Measurements alone do not prove an improvement.
 
 Migration preserves old work and requires an explicit v2 declaration plus an
 exact reviewed preview digest. It changes owned local integration only; native
 workflow retirement needs a separately authorized repository change. Unknown
 writers, dynamic includes or unfinished native execution prevent activation.
-See the packaged reference for recovery and release boundaries.
+See the native reference for recovery and release boundaries.
 
 Native CI and formal release preparation retain verified compilation and phase
 outputs in the owned runner tool cache. Retrying a later failure reuses successful

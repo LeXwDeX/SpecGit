@@ -17,16 +17,15 @@ docs/reference.md, docs/baseline-v1.md).
 ## Evidence
 
 - SpecGit version: `specgit --version` →
-- Node version: `node --version` →
 - OS:
 - The command run (with `--json` if possible) and its **exit code**
-  (`0`/`1`/`2`/`3`; `130` = Ctrl-C interruption):
+  (include the exact number):
 
 ```
 <paste the --json envelope or the human output>
 ```
 
-- The diagnostic `code` from `errors[]` (if any):
+- The diagnostic `code` from `diagnostics[]` (if any):
 
 ## Reproduction
 
@@ -36,10 +35,10 @@ The smallest sequence of commands that reproduces the defect:
 git clone …
 specgit init …
 specgit issue …
-specgit finish …
+specgit pr --status --json
 ```
 
 ## Notes
 
-Did you check [Troubleshooting](https://github.com/LeXwDeX/SpecGit/blob/main/docs/troubleshooting.md)
+Did you check [Native reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
 for the code first? What did it suggest, and why didn't it fix it?
