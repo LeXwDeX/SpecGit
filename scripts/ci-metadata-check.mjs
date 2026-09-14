@@ -7,10 +7,13 @@ import { parse } from 'yaml';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = name => readFileSync(path.join(root, name), 'utf8');
-const declaration = parse(read('.specgit.yaml'));
-assert.equal(declaration.version, 2);
-assert.equal(declaration.target, 'main');
-assert(!('issues' in declaration), 'Native associations must not use v1 binding records.');
+// Local initialization is optional in clean CI checkouts.
+if (existsSync(path.join(root, '.specgit.yaml'))) {
+  const declaration = parse(read('.specgit.yaml'));
+  assert.equal(declaration.version, 2);
+  assert.equal(declaration.target, 'main');
+  assert(!('issues' in declaration), 'Native associations must not use v1 binding records.');
+}
 const workspace = JSON.parse(read('package.json'));
 assert.equal(workspace.private, true);
 assert(!workspace.bin && !workspace.exports, 'The private tooling workspace must not expose a CLI.');

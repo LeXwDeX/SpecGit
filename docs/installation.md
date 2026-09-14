@@ -76,3 +76,18 @@ Replacing a binary alone does not migrate project configuration.
 See the [native command reference](../runtime/REFERENCE.md) and
 [release procedure](../runtime/distribution/README.md). Old v1 documentation is
 retained as historical engineering evidence, not as current setup guidance.
+
+### Local generated files
+
+`init` and v2 migration maintain one owned block in Git's local `info/exclude`
+(resolved by Git, including linked worktrees). It excludes `.specgit.yaml` and
+wholly generated `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
+the block without duplication and preserves surrounding user rules. Preview
+and rollback include this file. Damaged or duplicated markers require reconciliation.
+
+The JSON `local_exclusion` result lists exclusions, mixed guidance and already
+tracked generated files. Git ignore rules do not remove tracked files from the
+index. Review and explicitly untrack whole generated files with `git rm --cached`
+when authorized; keep local copies. Preserve manually maintained guidance and
+omit generated hunks from commits. Global `setup` assets live under the selected
+host/install roots, outside the project by default; do not commit them either.

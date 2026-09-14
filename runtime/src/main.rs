@@ -15,7 +15,7 @@ use std::{
 #[command(
     name = "specgit",
     version,
-    about = "Native issue-based delivery harness (Rust 2 development)"
+    about = "Native issue-based delivery harness"
 )]
 struct Cli {
     #[arg(long, global = true)]
@@ -46,7 +46,7 @@ enum Commands {
     Watch(specgit::watch::Options),
     /// Refresh pending events or explicitly acknowledge transport receipt.
     Inbox(specgit::watch::InboxOptions),
-    /// Inspect native flow and install the shared project declaration and guidance.
+    /// Inspect native flow and install the local project declaration and guidance.
     Init {
         #[arg(long)]
         remote: Option<String>,
