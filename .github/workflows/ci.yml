@@ -408,10 +408,10 @@ jobs:
       - name: Compile remapped release executable
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/native-resume.mjs --phase compile-release --target '${{ matrix.target }}'
-      - name: Install packages with scripts disabled
+      - name: Install native executable
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/native-resume.mjs --phase install --target '${{ matrix.target }}'
-      - name: Repeat public journeys through the installed npm entrypoint
+      - name: Repeat public journeys through the installed native executable
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/native-resume.mjs --phase profile --target '${{ matrix.target }}'
       - name: Retain installed artifacts and complete test accounting
@@ -421,7 +421,7 @@ jobs:
           name: native-qualification-${{ matrix.target }}-${{ github.run_attempt }}
           path: |
             ${{ env.SPECGIT_NATIVE_PROFILE }}/
-            ${{ env.SPECGIT_NATIVE_INSTALLED }}/*.tgz
+            ${{ env.SPECGIT_NATIVE_INSTALLED }}/specgit*
             ${{ env.SPECGIT_NATIVE_INSTALLED }}/installed.json
           retention-days: 7
 

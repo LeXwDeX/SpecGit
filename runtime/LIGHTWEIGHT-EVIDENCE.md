@@ -1,3 +1,5 @@
+> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+
 # Lightweight Rust implementation evidence
 
 2026-09-10 qualification snapshot. **The product is not yet merged or published.**

@@ -1,3 +1,5 @@
+> Current distribution: native binaries from GitHub Releases only. See [Getting Started](Getting-Started) and the [v2 reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md). The remaining v1 workflow descriptions below are historical.
+
 # SpecGit Wiki
 
 SpecGit is a lightweight delivery binding and acceptance tool for teams and
@@ -32,8 +34,8 @@ source repository's CI policy is not imposed on their business pipelines.
 | [GitLab Support](GitLab-Support) | Host declaration, compatibility, and pipeline ownership |
 | [Provider Architecture](Provider-Architecture) | Local Git and forge capabilities |
 
-Install with `npm install -g specgit@latest`; requirements are Node.js `>=20.19`,
-Git, and an authenticated `gh` or `glab`. Use `specgit --version` to identify the
+Install with [GitHub Release binaries](https://github.com/LeXwDeX/SpecGit/releases/latest); requirements are
+Git and an authenticated `gh` or `glab`. Use `specgit --version` to identify the
 installed runtime and consult the [release notes](https://github.com/LeXwDeX/SpecGit/releases)
 for changes in that version.
 

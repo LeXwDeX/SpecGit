@@ -239,7 +239,10 @@ Ordinary pushes and changesets do not start publication. The permanent Release
 workflow requires explicit dispatch on `main` with an exact stable version. It
 compiles the three native binaries, runs version/help/schema smoke checks, then
 publishes them to GitHub Release. Full source and compatibility tests stay in CI;
-the Release job does not repeat installed npm qualification. The reusable RC job
+the Release job does not repeat the installed CLI regression suite. Native CI
+copies the compiled executable into a fresh installation directory, verifies
+version/help/schema and all command surfaces, then repeats every native test suite
+against that exact installed binary. No npm wrapper or package is involved. The reusable RC job
 retains offline engineering tarball checks, while its npm registry, dry-run publish
 and OIDC steps are removed. See the [release procedure](../runtime/distribution/README.md).
 
@@ -252,7 +255,7 @@ then build and run the current CLI.
 Metadata-only changes check out the repository's trusted default branch into
 an isolated directory, install locked dependencies with lifecycle scripts disabled,
 and compile the retained TypeScript engineering verifier there. They do not build
-or test the native product. Public v2 packages contain no TypeScript `dist/` modules
+or test the native product. Public v2 binaries contain no TypeScript `dist/` modules
 and are not used as engineering runtimes. Policy/schema implementation changes
 take the product path; source installation or compilation failure fails the job.
 

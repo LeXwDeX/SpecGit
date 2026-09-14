@@ -1,3 +1,5 @@
+> Current distribution: native binaries from GitHub Releases only. See [Getting Started](Getting-Started) and the [v2 reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md). The remaining v1 workflow descriptions below are historical.
+
 # SpecGit Wiki
 
 SpecGit 是供团队和编码 Agent 使用的轻量交付绑定与验收工具。它把分支或
@@ -28,7 +30,7 @@ SpecGit 自身仓库在合并前保留轻量远程文档/元数据验证和验�
 | [GitLab 支持](GitLab-Support-zh) | 主机声明、兼容范围与流水线归属 |
 | [Provider 架构](Provider-Architecture-zh) | 本地 Git 与平台能力边界 |
 
-安装命令为 `npm install -g specgit@latest`。需要 Node.js `>=20.19`、Git 和
+安装命令为 [GitHub Release binaries](https://github.com/LeXwDeX/SpecGit/releases/latest)。需要 Git 和
 已认证的 `gh` 或 `glab`。用 `specgit --version` 确认已安装版本，并查阅相应的
 [发行说明](https://github.com/LeXwDeX/SpecGit/releases)，了解该版本的变更。
 

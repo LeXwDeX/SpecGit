@@ -1,10 +1,10 @@
 version: 1
-delivery: release-2-completion
+delivery: github-release-only
 context:
   kind: worktree
-  label: specgit-release-completion-20260912
-  branch: codex/release-2-completion
+  label: specgit-github-only-20260914
+  branch: codex/github-release-only
 issues:
-  - 493
+  - 565
 issueKinds: []
-pr: 564
+pr: null

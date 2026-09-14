@@ -7,14 +7,5 @@ pub fn binary() -> PathBuf {
 }
 #[allow(dead_code)]
 pub fn command() -> Command {
-    if let Some(launcher) = std::env::var_os("SPECGIT_TEST_LAUNCHER") {
-        let mut command = Command::new(
-            std::env::var_os("SPECGIT_TEST_NODE")
-                .expect("Installed launcher checks require the absolute Node executable."),
-        );
-        command.arg(launcher);
-        command
-    } else {
-        Command::new(binary())
-    }
+    Command::new(binary())
 }

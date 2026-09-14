@@ -1,3 +1,5 @@
+> **Archived v1 reference.** Current installation is native GitHub Release binaries only; see [Getting Started](Getting-Started) and the [v2 command reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md).
+
 # Provider 架构
 
 SpecGit 区分本地 git 事实、平台证据和已授权的写入操作，使验收与改变交付状态的

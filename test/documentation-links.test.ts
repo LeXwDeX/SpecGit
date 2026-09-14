@@ -205,14 +205,15 @@ describe('wiki consistency', () => {
       .toEqual(expected);
   });
 
-  it('covers the current command, verdict, upgrade, validation, and completion contracts', () => {
+  it('distinguishes native installation from archived v1 workflow contracts', () => {
     const allEnglish = pairs.map((name) => wiki(`${name}.md`)).join('\n');
     for (const command of [
       'init', 'setup', 'issue', 'pr', 'finish', 'bind', 'unbind', 'status', 'accept', 'doctor',
     ]) {
       expect(allEnglish, `Wiki must name specgit ${command}`).toContain(`specgit ${command}`);
     }
-    expect(wiki('Getting-Started.md')).toMatch(/npm install -g specgit@latest/);
+    expect(wiki('Getting-Started.md')).toContain('GitHub Releases');
+    expect(wiki('Getting-Started.md')).not.toMatch(/npm install/);
     expect(wiki('Getting-Started.md')).toContain('init --force');
     expect(wiki('Getting-Started.md')).toContain('specgit setup');
     expect(wiki('CLI-Reference.md')).toMatch(/0.*1.*2.*3.*130/s);

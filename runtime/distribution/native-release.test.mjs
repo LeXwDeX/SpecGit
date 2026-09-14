@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assemble, binaryName, prepareBinary, smoke, verifyNativeBundle } from './native-release.mjs';
-import { targets } from './stage.mjs';
+import { targets } from './native-build.mjs';
 
 const version = '2.0.0';
 const source = 'a'.repeat(40);

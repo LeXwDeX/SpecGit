@@ -1,3 +1,5 @@
+> **Archived v1 reference.** Use the [native installation guide](installation.md) and [v2 command reference](../runtime/REFERENCE.md) for current work. npm distribution is retired.
+
 # Getting Started
 
 This guide takes you from zero to your first **accepted** delivery. For installation details see [Installation](installation.md); for the underlying model see [Concepts](concepts.md).
@@ -164,4 +166,4 @@ drift exists. Automation uses `init --force --no-protect`, `setup --tool all`,
 then `status --json`; append `--no-ignore` to init for the intentionally tracked
 authoritative model. Deliberately absent setup surfaces do not cause the prompt,
 although accepting it installs both surfaces. See the reviewed recovery and
-verification sequence in [Installation](installation.md#upgrade-to-a-newer-cli-version).
+verification sequence in [Installation](installation.md#upgrade-and-refresh).

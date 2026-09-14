@@ -36,7 +36,7 @@ Name tests `*.test.ts` under the matching suite. Run a focused file with `pnpm e
 
 ## Commit & Pull Request Guidelines
 
-Use Conventional Commit prefixes found in history: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`. Bind tracked work through SpecGit before implementation. Target `main`; follow [the PR template](.github/PULL_REQUEST_TEMPLATE.md) with WHY, changes, evidence, and `Closes #n` for every bound issue. Update contract docs alongside behavior. Add a changeset only for explicit npm publication intent. Acceptance requires a ready PR and current-head checks; completion requires confirmed merge and issue closure.
+Use Conventional Commit prefixes found in history: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`. Bind tracked work through SpecGit before implementation. Target `main`; follow [the PR template](.github/PULL_REQUEST_TEMPLATE.md) with WHY, changes, evidence, and `Closes #n` for every bound issue. Update contract docs alongside behavior. Public distribution uses GitHub Releases only; do not add npm publication or wrapper packages. Acceptance requires a ready PR and current-head checks; completion requires confirmed merge and issue closure.
 
 ## Release workflow
 
