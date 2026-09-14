@@ -554,13 +554,9 @@ fn linked_worktree_uses_common_git_exclude() {
     assert!(
         Command::new("git")
             .current_dir(&f.root)
-            .args([
-                "worktree",
-                "add",
-                "-b",
-                "linked",
-                worktree.to_str().unwrap()
-            ])
+            // Rust's canonical Windows path has a verbatim prefix that Git
+            // cannot use as a worktree argument. Resolve the sibling from cwd.
+            .args(["worktree", "add", "-b", "linked", "../linked"])
             .output()
             .unwrap()
             .status
