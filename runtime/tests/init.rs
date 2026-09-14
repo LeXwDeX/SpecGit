@@ -574,8 +574,10 @@ fn linked_worktree_uses_common_git_exclude() {
             init["evidence"]["local_exclusion"]["path"]
                 .as_str()
                 .unwrap()
-        ),
-        common
+        )
+        .canonicalize()
+        .unwrap(),
+        common.canonicalize().unwrap()
     );
     assert!(
         Command::new("git")
