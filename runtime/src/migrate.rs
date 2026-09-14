@@ -166,12 +166,17 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
         ],
     )
     .await?;
+    let exclude = crate::local_exclude::path(&process, &root).await?;
+    let exclude_parent = exclude
+        .parent()
+        .ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?
+        .to_owned();
     let private = git_dir.join("specgit-v2");
     let store_root = private.join("assets");
     if let Some(id) = &options.rollback {
         let store = AssetStore::lock(
             &store_root,
-            &[root.clone(), private.clone()],
+            &[root.clone(), private.clone(), exclude_parent.clone()],
             Duration::from_secs(2),
         )?;
         return Ok(Report::success(
@@ -292,6 +297,12 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
             .await?;
             changes.push(config::routing_change(&base, host)?);
         }
+        changes.push(guidance::migration_receipt(
+            &root,
+            &private,
+            &declaration,
+            &changes,
+        )?);
         // Configuration is last: local writers are retired and their preimages are durable first.
         changes.push(Change {
             path: root.join(".specgit.yaml"),
@@ -300,9 +311,14 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
             after: Some(declaration.bytes()?),
         });
     }
+    let local_exclusion = if options.retire_only {
+        serde_json::Value::Null
+    } else {
+        crate::local_exclude::plan(&process, &root, &exclude, &mut changes).await?
+    };
     let planned_changes: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"before_sha256":c.before.digest(),"after_sha256":c.after.as_deref().map(hash)})).collect();
     let fingerprint = hash(&serde_json::to_vec(&json!({"context":context,"items":inventory.items,"declaration":declaration,"remote":remote,"retire_only":options.retire_only,"planned_changes":planned_changes})).map_err(|_| Diagnostic::input("Cannot encode migration preview."))?);
-    let mut evidence = json!({"preview_sha256":fingerprint,"context":context,"inventory":inventory.items,"planned_changes":planned_changes,"unprovable_assets":inventory.blockers,"probes":probes,"remote_retirement":remote,"declaration":declaration,"retired_policy_semantics":["custom_completion","independent_closure","derived_repairs","aggregate_scopes","cross_head_reuse_receipts"],"legacy_work":{"delivery":old.delivery,"issues":old.issues,"request":old.pr,"disposition":"preserved_for_v1_not_adopted"},"native_writes":false,"v1_executable":"preserved","written":false});
+    let mut evidence = json!({"local_exclusion":local_exclusion,"preview_sha256":fingerprint,"context":context,"inventory":inventory.items,"planned_changes":planned_changes,"unprovable_assets":inventory.blockers,"probes":probes,"remote_retirement":remote,"declaration":declaration,"retired_policy_semantics":["custom_completion","independent_closure","derived_repairs","aggregate_scopes","cross_head_reuse_receipts"],"legacy_work":{"delivery":old.delivery,"issues":old.issues,"request":old.pr,"disposition":"preserved_for_v1_not_adopted"},"native_writes":false,"v1_executable":"preserved","written":false});
     let blocked = remote_error.is_some()
         || !inventory.blockers.is_empty()
         || remote
@@ -349,7 +365,7 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
     }
     let store = AssetStore::lock(
         &store_root,
-        &[root.clone(), private.clone()],
+        &[root.clone(), private.clone(), exclude_parent.clone()],
         Duration::from_secs(2),
     )?;
     inventory.verify()?;

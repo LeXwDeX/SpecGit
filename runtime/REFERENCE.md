@@ -13,7 +13,7 @@ The core, watch and hooks have no merge, Issue-close, branch-delete or settings
 administration capability. An authorized Agent uses gh/glab outside SpecGit for
 native auto-merge registration or optional supplementary Issue closure.
 
-`.specgit.yaml` is the only shared declaration. Local selection, uncertain-write
+`.specgit.yaml` is the local project declaration. Local selection, uncertain-write
 intents and subscriptions live under the Git directory; they are not remote
 completion evidence. A minimal declaration is:
 
@@ -107,7 +107,7 @@ commands use the global input/output contract above.
 | Command | Purpose and options |
 | --- | --- |
 | `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` register Claude hooks. `--register-codex` / `--register-opencode` install each host's native skill and managed global instructions; `--codex-root` / `--opencode-root` select explicit host configuration directories. Existing registered roots persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes all registrations owned by the selected setup root, preserving unrelated instructions. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall; repeat explicit host roots if rolling back a removed receipt. Written registration is not verified host import or event delivery. |
-| `init` | Inspect native capabilities and write the shared declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
+| `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–3,600; default 1,800), `--poll-seconds` (1–300; default 15). |
@@ -252,3 +252,18 @@ Installation needs no Node.js, npm or Rust compiler. Each target receives native
 smoke checks during release and the complete installed CLI regression suite in CI.
 See [distribution](distribution/README.md) for publication and recovery.
 Installation does not authorize publication or native administration.
+
+### Local generated files
+
+`init` and v2 migration maintain one owned block in Git's local `info/exclude`
+(resolved by Git, including linked worktrees). It excludes `.specgit.yaml` and
+wholly generated `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
+the block without duplication and preserves surrounding user rules. Preview
+and rollback include this file. Damaged or duplicated markers require reconciliation.
+
+The JSON `local_exclusion` result lists exclusions, mixed guidance and already
+tracked generated files. Git ignore rules do not remove tracked files from the
+index. Review and explicitly untrack whole generated files with `git rm --cached`
+when authorized; keep local copies. Preserve manually maintained guidance and
+omit generated hunks from commits. Global `setup` assets live under the selected
+host/install roots, outside the project by default; do not commit them either.

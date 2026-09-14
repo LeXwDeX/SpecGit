@@ -175,3 +175,18 @@ and whether its registration/discovery was verified; and any remaining concrete
 blocker or user action. Include the backup location if a file was replaced.
 Distinguish completed installation, project initialization and host integration.
 A failed or unknown check remains failed or unknown.
+
+### Local generated files
+
+`init` and v2 migration maintain one owned block in Git's local `info/exclude`
+(resolved by Git, including linked worktrees). It excludes `.specgit.yaml` and
+wholly generated `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
+the block without duplication and preserves surrounding user rules. Preview
+and rollback include this file. Damaged or duplicated markers require reconciliation.
+
+The JSON `local_exclusion` result lists exclusions, mixed guidance and already
+tracked generated files. Git ignore rules do not remove tracked files from the
+index. Review and explicitly untrack whole generated files with `git rm --cached`
+when authorized; keep local copies. Preserve manually maintained guidance and
+omit generated hunks from commits. Global `setup` assets live under the selected
+host/install roots, outside the project by default; do not commit them either.

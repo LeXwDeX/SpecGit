@@ -69,6 +69,11 @@ async fn prepare_and_run(
             "Native settings are managed outside SpecGit; inspect and configure them with an authorized native tool.",
         ));
     }
+    let exclude = crate::local_exclude::path(&process, &root).await?;
+    let exclude_parent = exclude
+        .parent()
+        .ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?
+        .to_owned();
     let private_root = git_dir.join("specgit-v2");
     if let Some(id) = &options.rollback {
         if options.inspect_only
@@ -90,7 +95,7 @@ async fn prepare_and_run(
         }
         let store = AssetStore::lock(
             &private_root.join("assets"),
-            &[root.clone(), private_root.clone()],
+            &[root.clone(), private_root.clone(), exclude_parent.clone()],
             Duration::from_secs(2),
         )?;
         return Ok(Report::success(
@@ -281,6 +286,8 @@ async fn prepare_and_run(
         .await?;
         changes.push(config::routing_change(&base, host)?);
     }
+    evidence["local_exclusion"] =
+        crate::local_exclude::plan(&process, &root, &exclude, &mut changes).await?;
     if options.dry_run {
         evidence["planned_paths"] = json!(
             changes
@@ -292,7 +299,7 @@ async fn prepare_and_run(
     }
     let store = AssetStore::lock(
         &context.git_dir.join("specgit-v2/assets"),
-        &[root.clone(), private_root],
+        &[root.clone(), private_root, exclude_parent],
         Duration::from_secs(2),
     )?;
     let pending = store.pending_transactions()?;

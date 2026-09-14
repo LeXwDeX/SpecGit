@@ -138,7 +138,7 @@ fn new_user_command_registers_both_hosts_and_repeat_is_idempotent() {
         assert!(
             fs::read_to_string(dir.join("skills/specgit-native/SKILL.md"))
                 .unwrap()
-                .contains("Contract version: 2.0.0")
+                .contains(&format!("Contract version: {}", env!("CARGO_PKG_VERSION")))
         );
     }
     assert_eq!(run(&[])["evidence"]["transaction"]["changes"], 0);
