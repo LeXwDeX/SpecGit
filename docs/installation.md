@@ -1,5 +1,7 @@
 # Installation
 
+To have an agent install and initialize SpecGit, use the [agent guide](agent-install.md).
+
 GitHub Releases are the only supported distribution channel. Download from the
 [latest stable Release](https://github.com/LeXwDeX/SpecGit/releases/latest).
 
