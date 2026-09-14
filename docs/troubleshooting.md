@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # Troubleshooting
 
 Concrete fixes for concrete problems. Most entries correspond to a diagnostic code — run with `--json` to see codes directly. If `specgit finish` exited `3`, follow each `errors[].fix`; use the environment entries only for git, repository, origin, routed forge CLI, authentication, or policy probes. If it exited `1`, jump to the gate it named.

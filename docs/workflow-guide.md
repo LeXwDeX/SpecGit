@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # SpecGit Workflow Guide
 
 This is the canonical walkthrough for humans and agents. The project guidance is
@@ -35,7 +37,7 @@ references remain the same under every configured language.
 Install or upgrade the published CLI:
 
 ```bash
-npm install -g specgit@latest
+download the native binary from GitHub Releases
 specgit --version
 ```
 

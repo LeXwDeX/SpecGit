@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # GitLab (glab) Support
 
 **v1 scope: GitHub.com plus explicitly declared GitLab — both shipped.**
@@ -55,7 +57,7 @@ exact SpecGit version into an isolated prefix, run these steps in its acceptance
 job (Node.js 20.19 or newer, Git and authenticated glab must already be available):
 
 ```sh
-npm install --prefix "$CI_PROJECT_DIR/../specgit-cli" --no-save --ignore-scripts --no-audit --no-fund specgit@1.15.1
+# Retired v1 bootstrap: use the native v2 migration guide instead.
 node .gitlab/specgit-accept.mjs --prepare-gitlab-event
 SPECGIT_ACCEPT_RUNTIME="$CI_PROJECT_DIR/../specgit-cli/node_modules/specgit" node .gitlab/specgit-accept.mjs
 ```

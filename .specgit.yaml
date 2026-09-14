@@ -1,10 +1,11 @@
-version: 1
-delivery: release-2-completion
-context:
-  kind: worktree
-  label: specgit-release-completion-20260912
-  branch: codex/release-2-completion
-issues:
-  - 493
-issueKinds: []
-pr: 564
+version: 2
+remote: origin
+provider: github
+target: main
+language: en
+validation:
+  titles: true
+  labels: kind
+agent:
+  native_auto_merge: true
+  close_issues_after_merge: true

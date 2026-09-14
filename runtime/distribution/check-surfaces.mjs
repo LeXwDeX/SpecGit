@@ -87,32 +87,24 @@ export function writeSchemas(binary, schemaRoot, staticSchemaRoot) {
   return { schema_version: contract.schema_version, cli_version: contract.cli_version, generated_from: 'target_executable' };
 }
 
-export function checkPlatformReference(reference, manifest) {
-  const rows = [...reference.matchAll(/^\| ([^|\r\n]+) \| `(specgit-[a-z0-9-]+)` \|$/gm)];
-  const names = rows.map(row => row[2]);
-  assert.deepEqual(names.sort(), Object.keys(manifest.optionalDependencies).sort(), 'Installed reference platform inventory differs from package dependencies.');
-  const labels = { 'specgit-linux-x64-gnu': 'Linux glibc x64', 'specgit-darwin-arm64': 'macOS arm64', 'specgit-win32-x64': 'Windows x64 MSVC' };
-  for (const row of rows) assert.equal(row[1].trim(), labels[row[2]], `Platform label disagrees with ${row[2]}.`);
-}
-
-export function checkSurfaces(launcher, packageRoot, options = {}) {
+export function checkSurfaces(binary, packageRoot, options = {}) {
   const schemaRoot = path.join(packageRoot, 'schemas');
   const schemas = new Map(readdirSync(schemaRoot).filter(name => name.endsWith('.schema.json'))
     .map(name => [name, JSON.parse(readFileSync(path.join(schemaRoot, name), 'utf8'))]));
-  const contract = readContract(process.execPath, [launcher], options);
+  const contract = readContract(binary, [], options);
   const generated = generatedSchemas(contract);
   assert.deepEqual([...schemas.keys()].sort(), [...generated.keys(), ...staticNames].sort(), 'Installed schema inventory differs from executable.');
   for (const [name, schema] of generated) assert.deepEqual(schemas.get(name), schema, `${name} differs from installed clap contract.`);
   const commands = contract.command.commands.filter(c => c.name !== 'help');
   const invoke = args => {
-    const result = spawnSync(process.execPath, [launcher, ...args], { encoding: 'utf8', timeout: 10_000, maxBuffer: 4 * 1024 * 1024, ...options });
+    const result = spawnSync(binary, args, { encoding: 'utf8', timeout: 10_000, maxBuffer: 4 * 1024 * 1024, ...options });
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '');
     return JSON.parse(result.stdout);
   };
   for (const command of commands) {
-    const scoped = readContract(process.execPath, [launcher, command.name], options);
+    const scoped = readContract(binary, [command.name], options);
     assert.equal(scoped.command.name, command.name);
     assert.deepEqual(scoped.command.arguments, command.arguments, `${command.name} scoped arguments differ from root discovery.`);
     assert.deepEqual(scoped.command.effects, command.effects, `${command.name} scoped effects differ from root discovery.`);
@@ -121,7 +113,6 @@ export function checkSurfaces(launcher, packageRoot, options = {}) {
     assert.equal(typeof help.evidence.text, 'string');
   }
   const reference = readFileSync(path.join(packageRoot, 'README.md'), 'utf8');
-  checkPlatformReference(reference, JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8')));
   for (const command of commands) assert(reference.includes('`' + command.name + '`'), `${command.name} is missing from installed reference.`);
   const declaration = schemas.get('declaration.schema.json');
   assert(!('verification' in declaration.properties));

@@ -1,3 +1,5 @@
+> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+
 # SpecGit 2.0: Rust rewrite, native delivery and asynchronous hooks
 
 > Historical baseline, superseded on 2026-09-10. The operative Rust target is now

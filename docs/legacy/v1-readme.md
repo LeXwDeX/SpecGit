@@ -1,3 +1,5 @@
+> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+
 # Historical SpecGit 1.x guide
 
 This retained guide describes the former TypeScript product and its acceptance controller. It is not the SpecGit 2.0 command or release contract. See the [current guide](../../README.md).
@@ -188,7 +190,7 @@ specgit setup --tool all
 specgit status --json
 ```
 
-Review the resulting diff. Follow [Installation](../../docs/installation.md#upgrade-to-a-newer-cli-version)
+Review the resulting diff. Follow [Installation](../../docs/installation.md#upgrade-and-refresh)
 for ownership conflicts and projects that intentionally track authoritative files
 without the managed ignore block. Use `doctor` for a reported environment or
 provider problem; `status` checks local state and generated-asset drift.

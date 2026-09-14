@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # Using SpecGit in an Existing Project
 
 You can adopt SpecGit without rewriting repository history. SpecGit adds up to
@@ -142,7 +144,7 @@ longer requires a retired check.
 ## Refresh after upgrading the package
 
 Updating the global package does not update repository files. After
-`npm install -g specgit@latest`, a human can run plain `specgit init` in each adopted
+`download the native binary from GitHub Releases`, a human can run plain `specgit init` in each adopted
 repository. With a valid existing policy, it uses the shared read-only inspector
 and asks only when required init assets or already installed setup surfaces are
 proven stale or missing. A detected ownership conflict returns exit `3` before

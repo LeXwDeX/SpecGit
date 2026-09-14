@@ -1,3 +1,5 @@
+> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+
 # SpecGit 2.0 historical requirement dispositions
 
 > Frozen historical ledger. On 2026-09-10, all 296 rows were carried into the

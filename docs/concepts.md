@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # Concepts
 
 This guide explains the core ideas behind SpecGit and how they fit together. For practical usage see [Getting Started](getting-started.md); for the one-screen version see [Overview](overview.md).

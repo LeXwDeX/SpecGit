@@ -6,10 +6,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { buildNative, run, targets, verifyArchitecture } from './stage.mjs';
+import { buildNative, run, targets, verifyArchitecture } from './native-build.mjs';
 
 const need = (condition, message) => { if (!condition) throw new Error(message); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const zipScript = fileURLToPath(new URL('./zip-native.py', import.meta.url));
+function zip(mode, archive, binary, name) {
+  run(process.platform === 'win32' ? 'python' : 'python3', [zipScript, mode, archive, binary, name]);
+}
+export const checksumsName = 'SHA256SUMS';
+export const signatureName = 'SHA256SUMS.sigstore.json';
+export const checksums = archives => archives.map(entry => `${entry.sha256}  ${entry.filename}\n`).join('');
 export const smokeChecks = ['version', 'help', 'schema'];
 export const binaryName = target => {
   need(targets[target], 'Unsupported native release target.');
@@ -77,7 +84,15 @@ export function assemble(input, output, version, source) {
     copyFileSync(entry.file, path.join(output, entry.filename));
     chmodSync(path.join(output, entry.filename), 0o755);
   }
-  const release = { version, source, binaries: binaries.map(({ file: _file, ...entry }) => entry) };
+  const archives = binaries.map(entry => {
+    const filename = `specgit-${version}-${targets[entry.target].key}.zip`;
+    const installed = targets[entry.target].os === 'win32' ? 'specgit.exe' : 'specgit';
+    const archive = path.join(output, filename);
+    zip('create', archive, entry.file, installed);
+    return { target: entry.target, filename, installed, sha256: digest(readFileSync(archive)) };
+  });
+  writeFileSync(path.join(output, checksumsName), checksums(archives));
+  const release = { version, source, archives, binaries: binaries.map(({ file: _file, ...entry }) => entry) };
   writeFileSync(path.join(output, 'native-release.json'), JSON.stringify(release, null, 2) + '\n');
   return release;
 }
@@ -86,7 +101,20 @@ export function verifyNativeBundle(directory, version, source) {
   const release = JSON.parse(readFileSync(path.join(directory, 'native-release.json'), 'utf8'));
   need(release.version === version && release.source === source, 'Native bundle source/version mismatch.');
   need(Array.isArray(release.binaries) && release.binaries.length === 3 && new Set(release.binaries.map(b => b.target)).size === 3, 'Exactly three distinct native targets are required.');
-  return { ...release, binaries: release.binaries.map(entry => verifiedBinary(entry, directory, version, source)) };
+  const binaries = release.binaries.map(entry => verifiedBinary(entry, directory, version, source));
+  need(Array.isArray(release.archives) && release.archives.length === 3 && new Set(release.archives.map(a => a.target)).size === 3, 'Exactly three distinct ZIP targets are required.');
+  const archives = release.archives.map(entry => {
+    const binary = binaries.find(b => b.target === entry.target);
+    need(binary && entry.filename === `specgit-${version}-${targets[entry.target].key}.zip`, 'ZIP filename/target mismatch.');
+    const installed = targets[entry.target].os === 'win32' ? 'specgit.exe' : 'specgit';
+    need(entry.installed === installed, 'ZIP installed filename mismatch.');
+    const file = path.join(directory, entry.filename);
+    need(lstatSync(file).isFile() && digest(readFileSync(file)) === entry.sha256, 'ZIP digest differs.');
+    zip('verify', file, binary.file, installed);
+    return { ...entry, file };
+  });
+  need(readFileSync(path.join(directory, checksumsName), 'utf8') === checksums(archives), 'SHA256SUMS differs from verified ZIPs.');
+  return { ...release, binaries, archives };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
