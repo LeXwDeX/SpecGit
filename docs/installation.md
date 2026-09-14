@@ -25,11 +25,12 @@ specgit --human --version
 specgit --help
 specgit --schema
 specgit status --json
-specgit doctor --json
+specgit doctor --provider github --json
 ```
 
 Help/schema checks are offline; they do not prove forge access. `doctor` probes
-read-only native capabilities and authentication in the target repository.
+read-only native capabilities and authentication in the target repository. Use
+`--provider gitlab` and the appropriate `--api-host` for GitLab.
 
 ## Upgrade and refresh
 
