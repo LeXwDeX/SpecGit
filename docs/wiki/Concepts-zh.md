@@ -1,3 +1,5 @@
+> **Archived v1 reference.** Current installation is native GitHub Release binaries only; see [Getting Started](Getting-Started) and the [v2 command reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md).
+
 # 核心概念
 
 SpecGit 的契约建立在真实 Git 和平台证据上。它保存交付绑定与项目策略，每次请求

@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # SpecGit on a Team
 
 Everything else in these docs works identically for one person or twenty. What changes on a team is coordination: whose policy is authoritative, how a delivery maps onto branches and PRs, and what review actually reviews.

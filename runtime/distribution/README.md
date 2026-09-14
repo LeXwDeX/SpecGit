@@ -15,7 +15,7 @@ The version must match Cargo and the private development workspace. The workflow
 builds macOS arm64, Linux x64 glibc and Windows x64 with pinned Rust on the three
 self-hosted runners. Each compiled binary runs three simple smoke checks:
 `--human --version`, `--help` and `--schema`. Release does not repeat full source,
-package installation or installed-entrypoint regression suites; those remain in CI.
+installed native CLI regression suites; those remain in CI.
 
 When all three builds and smoke checks succeed, the final job verifies the source,
 architecture and SHA-256, then publishes exactly these assets:
@@ -56,3 +56,11 @@ are historical; this workflow does not change or delete them.
 
 See [manual installation](../../README.md#install) and
 [v2 migration](../../docs/migration-v2.md).
+
+## Private engineering compatibility
+
+The public npm wrapper, platform-package staging and npm-installed qualification
+have been removed. CI installs a copy of the compiled native executable and runs
+the full Rust test inventory against it. Root Node/pnpm dependencies and offline
+TypeScript package fixtures are private engineering tools only; they do not
+provide another distribution channel. Historical v1 guides are archived.

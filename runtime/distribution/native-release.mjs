@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { buildNative, run, targets, verifyArchitecture } from './stage.mjs';
+import { buildNative, run, targets, verifyArchitecture } from './native-build.mjs';
 
 const need = (condition, message) => { if (!condition) throw new Error(message); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');

@@ -1,3 +1,5 @@
+> **Archived v1 reference.** Current installation is native GitHub Release binaries only; see [Getting Started](Getting-Started) and the [v2 command reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md).
+
 # GitLab 支持
 
 ## 声明主机

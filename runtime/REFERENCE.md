@@ -1,8 +1,7 @@
 # SpecGit 2 native command reference
 
 This reference describes the SpecGit 2.0 native CLI. Installing it does not
-migrate a project or authorize native mutations. Public npm packages contain the
-native launcher and exact-version platform packages; the private root TypeScript
+migrate a project or authorize native mutations. GitHub Releases contain the native executables; the private root TypeScript
 workspace is retained only for engineering gates and historical regressions.
 
 ## Responsibility and configuration
@@ -54,7 +53,7 @@ Git, forge executables or credentials. `specgit <command> --schema` narrows the
 contract. `-h` and `-V` are short help/version forms. The schema comes from the
 same command definitions as argv and includes types, choices, bounds, defaults,
 conflicts and side-effect classification. Packaged `schemas/` are generated from
-the staged executable's contract and checked against the installed launcher.
+the executable's contract and checked against the installed native binary.
 
 Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
@@ -237,20 +236,17 @@ dynamic includes, shared hooks or unfinished native runs can prevent activation.
 Native workflow retirement is a separately authorized repository operation.
 Private backups, foreign content and old drafts remain recoverable.
 
-The npm wrapper selects an exact-version precompiled platform package, verifies
-its binary digest and forwards argv/I/O to Rust. Supported platform packages:
+GitHub Releases are the only public distribution channel. Download a native executable:
 
-| Platform | Package |
+| Platform | Binary |
 |---|---|
 | Linux glibc x64 | `specgit-linux-x64-gnu` |
 | macOS arm64 | `specgit-darwin-arm64` |
-| Windows x64 MSVC | `specgit-win32-x64` |
+| Windows x64 MSVC | `specgit-win32-x64.exe` |
 
-Node.js 20.19 or newer is required; end-user installation needs no Rust toolchain or private source.
-Linux requires the glibc floor recorded in its manifest. Unsupported targets fail
-explicitly. Every target needs its own installed/runtime qualification.
-
-Staging, local installation and public registry publication are separate outcomes.
-See [distribution](distribution/README.md) for qualification and publishing paths.
-Neither this reference nor installation authorizes publication, source visibility
-changes, native administration or a new credential flow.
+Check its SHA-256 against the Release notes, rename it to `specgit` (`specgit.exe`
+on Windows), and put it on PATH. Unix platforms require `chmod +x specgit`.
+Installation needs no Node.js, npm or Rust compiler. Each target receives native
+smoke checks during release and the complete installed CLI regression suite in CI.
+See [distribution](distribution/README.md) for publication and recovery.
+Installation does not authorize publication or native administration.

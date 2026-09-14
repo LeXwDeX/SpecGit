@@ -159,10 +159,10 @@ describe('docs consistency (upgrades refresh generated assets)', () => {
   it('the installation guide carries the complete published-CLI refresh sequence', () => {
     const text = read('docs', 'installation.md');
     for (const step of [
-      'npm install -g specgit@latest',
+      'GitHub Releases',
       'specgit status',
-      'specgit init --force',
-      'specgit setup --tool all',
+      'specgit init --check',
+      'specgit setup --dry-run',
       'specgit doctor',
     ]) {
       expect(text, `upgrade guide must include ${step}`).toContain(step);

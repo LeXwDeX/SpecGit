@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # FAQ
 
 Quick answers to the questions people ask most. If something is actually failing, [Troubleshooting](troubleshooting.md) maps codes to fixes. For definitions, see the [Glossary](glossary.md).
@@ -39,7 +41,7 @@ The authoritative pair: `spec_git/policy.yaml` (from `init`) and `.specgit.yaml`
 
 **After updating the npm package, must I rerun `init` and `setup`?**
 The package install and repository refresh are separate. After
-`npm install -g specgit@latest`, a human runs plain `specgit init`. With a valid existing policy,
+`download the native binary from GitHub Releases`, a human runs plain `specgit init`. With a valid existing policy,
 it asks only when the read-only inspector proves required or installed managed
 assets stale or missing. A detected ownership conflict returns `asset_conflict`
 (exit 3) before any prompt or write. Yes runs the equivalent of

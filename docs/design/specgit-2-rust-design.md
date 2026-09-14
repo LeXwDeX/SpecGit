@@ -1,3 +1,5 @@
+> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+
 # SpecGit 2.0 轻量级 Rust 设计
 
 > **2026-09-10 正式发行更新：** 用户已明确授权从 `main` 发布稳定版 `v2.0.0`，并要求 Action 构建 macOS、Linux、Windows 三个版本。本次已选目标为 macOS arm64、Linux x64 glibc、Windows x64；不是五架构。原先“不合并、不发布、保持草稿”的阶段限制由后续发布授权取代，实际合并/发布仍由总管完成适用验收后统一执行。源码可见性、自有 runner 和不削弱检查的约束继续有效。

@@ -9,7 +9,7 @@ they run; this page is an operator index, not a second scheduling policy.
 | Script | Purpose | Normal invocation |
 | --- | --- | --- |
 | `build-skills.mjs` | Regenerate the tracked portable-skill mirror from the built CLI | `pnpm run build && pnpm run build:skills` after changing the agent-surface generator |
-| `pack-version-check.mjs` | Pack the candidate, install it in isolation, and require its CLI version to match `package.json` | `pnpm run check:pack-version` before publication |
+| `pack-version-check.mjs` | Pack the candidate, install it in isolation, and require its CLI version to match `package.json` | `pnpm run check:pack-version` for private TypeScript regression verification |
 | `update-flake.sh` | Recalculate the pnpm dependency hash in `flake.nix` and verify the Nix build | `./scripts/update-flake.sh` after an intentional lockfile change |
 
 Run these inside the already bound delivery that owns the source or dependency

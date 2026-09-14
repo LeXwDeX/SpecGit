@@ -1,7 +1,7 @@
 {
   "name": "specgit",
   "version": "2.0.0",
-  "description": "SpecGit development workspace; public v2 packages are built from runtime/distribution",
+  "description": "Private SpecGit engineering workspace; install native binaries from GitHub Releases",
   "keywords": [
     "specgit",
     "delivery-binding",
@@ -22,9 +22,6 @@
   "author": "SpecGit Contributors",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
-  "publishConfig": {
-    "access": "public"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -57,8 +54,7 @@
     "prepublishOnly": "node runtime/distribution/forbid-root-publish.mjs",
     "check:pack-version": "node scripts/pack-version-check.mjs",
     "release": "pnpm run release:ci",
-    "release:ci": "node runtime/distribution/publish.mjs",
-    "changeset": "changeset"
+    "release:ci": "node runtime/distribution/publish.mjs"
   },
   "engines": {
     "node": ">=20.19.0"

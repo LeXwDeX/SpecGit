@@ -108,7 +108,8 @@ is retained for old installations and engineering evidence.
 The root `package.json` is a **private development workspace**. TypeScript sources,
 `bin/specgit.js` and their tests remain available for this repository's existing
 engineering gates and historical regression coverage. Root `npm publish` is
-refused. Local package/launcher fixtures remain for compatibility regression tests;
+refused. The public npm wrapper and platform-package staging have been removed.
+Private TypeScript package fixtures remain solely for historical regression tests;
 release binaries come directly from the committed Rust source.
 
 ```sh

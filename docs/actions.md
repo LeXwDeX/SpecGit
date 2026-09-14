@@ -1,3 +1,5 @@
+> **Archived v1 reference.** These commands and integration rules describe the retired TypeScript CLI. For current installation use [GitHub Release binaries](installation.md); for the native command contract use the [v2 reference](../runtime/REFERENCE.md). npm distribution is retired.
+
 # GitHub Actions
 
 SpecGit verifies deliveries against CI evidence. This page defines how GitHub Actions produce that evidence — how check names are chosen, how to wire required checks, and the security rules for the workflows involved.
