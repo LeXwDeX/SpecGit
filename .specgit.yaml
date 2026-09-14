@@ -1,11 +1,11 @@
-version: 1
-delivery: github-release-only
-context:
-  kind: worktree
-  label: specgit-github-only-20260914
-  branch: codex/github-release-only
-issues:
-  - 565
-  - 567
-issueKinds: []
-pr: 566
+version: 2
+remote: origin
+provider: github
+target: main
+language: en
+validation:
+  titles: true
+  labels: kind
+agent:
+  native_auto_merge: true
+  close_issues_after_merge: true

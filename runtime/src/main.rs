@@ -156,7 +156,7 @@ fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
             Code::InvalidInput,
             "major_version",
             "This v1 command or option is retired in SpecGit 2; its meaning is not reinterpreted.",
-            "Use the retained v1 executable for an unmigrated project. Preview explicit migration with specgit migrate --config-file <v2.yaml>; use issue/pr for native associations and authorized gh/glab operations for native auto-merge.",
+            "Preview explicit migration with specgit migrate --config-file <v2.yaml>; use issue/pr for native associations and authorized gh/glab operations for native auto-merge.",
         );
     }
     Diagnostic::input("Invalid command arguments; run specgit --help.")

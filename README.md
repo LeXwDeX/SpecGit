@@ -109,16 +109,17 @@ available as historical engineering evidence.
 ## Development and releases
 
 The runtime lives in `runtime/`; its pinned Rust toolchain builds the executable.
-The root TypeScript workspace is private and retained for engineering gates and
-historical regression coverage. Its npm tooling does not distribute the product.
-The npm wrapper and platform-package staging have been removed. The Nix target
-`legacy-engineering` likewise serves the old private engineering CLI.
+The v1 TypeScript implementation and its test/build workflows are retired.
+The private root Node workspace contains only repository verification tooling.
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm run build
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm test
-cargo test --manifest-path runtime/Cargo.toml --locked --features test-fixtures
+node scripts/ci-metadata-check.mjs
+cd runtime
+cargo fmt --all --check
+cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
+cargo test --locked --all-targets --features test-fixtures
 ```
 
 The [Release workflow](.github/workflows/release-prepare.yml) runs from `main` after
@@ -128,5 +129,5 @@ using the main Release workflow identity. Publication verifies source identity, 
 uploaded bytes, and preserves existing immutable releases. Full source and
 installed-binary regressions run in ordinary CI.
 
-See [CI scope](docs/ci-scope.md) for current checks and the
-[historical engineering gates](docs/release-gates.md) for the retained v1 evidence.
+See [CI scope](docs/ci-scope.md) for current checks. Historical v1 documents are
+reference material, not executable workflows or supported commands.

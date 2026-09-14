@@ -56,6 +56,7 @@ for (const artifact of artifacts.sort((a, b) => a.target.src_path.localeCompare(
   const accounted = JSON.stringify(outcomes.map(row => row.name).sort()) === JSON.stringify(names)
     && counts && counts[0] + counts[1] + counts[2] === names.length && counts[3] === 0 && counts[4] === 0;
   const passed = result.status === 0 && !result.error && accounted && counts[1] === 0;
+  if (!passed) process.stderr.write(text + '\n');
   suites.push({ source, name: artifact.target.name, milliseconds: result.milliseconds, enumeration_milliseconds: list.milliseconds, exit: result.status, error: result.error?.code ?? null, passed: Boolean(passed), counts, tests: outcomes });
   process.stdout.write(`${source}: ${result.milliseconds.toFixed(0)} ms, ${passed ? 'passed' : 'FAILED'}, ${names.length} enumerated\n`);
 }

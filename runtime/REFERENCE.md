@@ -1,8 +1,8 @@
 # SpecGit 2 native command reference
 
 This reference describes the SpecGit 2.0 native CLI. Installing it does not
-migrate a project or authorize native mutations. GitHub Releases contain the native executables; the private root TypeScript
-workspace is retained only for engineering gates and historical regressions.
+migrate a project or authorize native mutations. GitHub Releases contain the native
+executables. The v1 implementation and its engineering gates are retired.
 
 ## Responsibility and configuration
 

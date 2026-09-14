@@ -14,9 +14,10 @@ Agent closure defaults off and requires authorization plus native readback.
 The [command reference](REFERENCE.md) documents the native GitHub Release executable. The
 installed executable's offline `--schema` is the command/input/output discovery
 source. [Distribution](distribution/README.md) describes the three-platform build and
-installed-entrypoint checks. The root TypeScript workspace is private and retained
-for engineering gates and historical regressions. Public v2 packages are generated
-only by native binary release builds. Installation does not migrate a project.
+installed-entrypoint checks. The v1 TypeScript implementation has been retired.
+The private root Node workspace contains repository verification tooling only.
+Public v2 packages are generated only by native binary release builds.
+Installation does not migrate a project.
 
 ## Using the runtime
 

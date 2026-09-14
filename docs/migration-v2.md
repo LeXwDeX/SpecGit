@@ -3,8 +3,9 @@
 Installing the native executable does not migrate a repository. Keep the known
 working v1 package and an explicit backup until the project cutover is verified.
 Old drafts, Issues, branches, foreign hooks and unrelated user files are retained.
-The private TypeScript workspace in this repository remains available for its
-current engineering gates; GitHub Release installation uses the standalone Rust executable.
+The v1 TypeScript implementation in this repository is retired. GitHub Release
+installation uses the standalone Rust executable; migration still recognizes old
+project assets so it can preserve user files and retire owned v1 hooks safely.
 
 ## Changed responsibilities
 
