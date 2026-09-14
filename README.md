@@ -14,8 +14,8 @@ Open your coding agent in the repository you want to use with SpecGit, then past
 ```text
 Read https://raw.githubusercontent.com/LeXwDeX/SpecGit/main/docs/agent-install.md
 and carry out the installation and initialization described there for this machine
-and the current repository. Install the latest stable SpecGit binary from GitHub
-Releases, verify it, initialize the project with specgit init, and configure the
+and the current repository. Install the latest stable SpecGit ZIP from GitHub
+Releases, verify its signature and SHA-256, extract it, initialize the project with specgit init, and configure the
 integration for the agent running this task. Use manual observation if native
 capabilities cannot be verified, preserve existing settings, and do not enable new
 merge or closure automation. Use the repository and agent context already available;
@@ -25,13 +25,14 @@ If the document is inaccessible, retrieve it through my authenticated gh session
 or report the access problem; do not guess its contents.
 ```
 
-The [agent installation document](docs/agent-install.md) covers download checksums,
+The [agent installation document](docs/agent-install.md) covers signatures, checksums,
 PATH, existing installations, project initialization and agent registration.
 It works with Codex, Claude Code and OpenCode through their supported integrations;
 other agents can use the CLI and project guidance directly.
 
 SpecGit is distributed **only through GitHub Releases** as native macOS arm64,
-Linux x64 glibc and Windows x64 executables. End-user installation needs no Node.js,
+Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
+Sigstore signature bundle. End-user installation needs no Node.js,
 npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `glab`.
 For installation without an agent, see the [manual guide](docs/installation.md).
 
@@ -122,7 +123,8 @@ cargo test --manifest-path runtime/Cargo.toml --locked --features test-fixtures
 
 The [Release workflow](.github/workflows/release-prepare.yml) runs from `main` after
 an explicit dispatch with a stable version. Three self-hosted runners compile and
-smoke-test the native binaries. Publication verifies source identity, SHA-256 and
+smoke-test the native binaries. The final job creates ZIPs and signs `SHA256SUMS`
+using the main Release workflow identity. Publication verifies source identity, signature, SHA-256 and
 uploaded bytes, and preserves existing immutable releases. Full source and
 installed-binary regressions run in ordinary CI.
 

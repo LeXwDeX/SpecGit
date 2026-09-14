@@ -7,14 +7,33 @@ GitHub Releases are the only supported distribution channel. Download from the
 
 | Platform | Download |
 | --- | --- |
-| macOS Apple Silicon | `specgit-darwin-arm64` |
-| Linux x64 glibc | `specgit-linux-x64-gnu` |
-| Windows x64 | `specgit-win32-x64.exe` |
+| macOS Apple Silicon | `specgit-<version>-darwin-arm64.zip` |
+| Linux x64 glibc | `specgit-<version>-linux-x64-gnu.zip` |
+| Windows x64 | `specgit-<version>-win32-x64.zip` |
 
-Compare the SHA-256 with the Release description using `shasum -a 256 <file>` on
-macOS, `sha256sum <file>` on Linux or `Get-FileHash <file> -Algorithm SHA256` in
-PowerShell. Rename the executable to `specgit` (`specgit.exe` on Windows) and put
-it in a directory on PATH. Run `chmod +x specgit` on macOS/Linux.
+Use the version without the tag's `v` prefix. Download the matching ZIP,
+`SHA256SUMS` and `SHA256SUMS.sigstore.json` from that same Release. Older Releases
+with only bare executables do not meet this signed-package contract.
+
+Install [Cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+(3.1.3 or compatible newer), then verify the manifest:
+
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' SHA256SUMS
+```
+
+After verification succeeds, calculate the ZIP's SHA-256 using
+`shasum -a 256 <file.zip>` on macOS, `sha256sum <file.zip>` on Linux or
+`Get-FileHash <file.zip> -Algorithm SHA256` in PowerShell. Compare it with the exact
+filename's single row in the signed manifest. Stop on missing or mismatched
+signatures or hashes; do not disable verification.
+
+Extract with `unzip <file.zip> -d <fresh-directory>` or
+`Expand-Archive -LiteralPath <file.zip> -DestinationPath <fresh-directory>`.
+The ZIP contains `specgit` (`specgit.exe` on Windows). Back up any existing
+installation and copy the executable into a user-owned directory on PATH.
+Run `chmod +x specgit` on macOS/Linux. Confirm the installed executable hash equals
+the extracted executable hash; it is different from the archive hash.
 
 Installation does not require Node.js, npm or a Rust compiler. Git and an
 already authenticated `gh` or `glab` session are required for repository work.

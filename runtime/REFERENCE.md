@@ -236,16 +236,18 @@ dynamic includes, shared hooks or unfinished native runs can prevent activation.
 Native workflow retirement is a separately authorized repository operation.
 Private backups, foreign content and old drafts remain recoverable.
 
-GitHub Releases are the only public distribution channel. Download a native executable:
+GitHub Releases are the only public distribution channel. Download a native ZIP:
 
 | Platform | Binary |
 |---|---|
-| Linux glibc x64 | `specgit-linux-x64-gnu` |
-| macOS arm64 | `specgit-darwin-arm64` |
-| Windows x64 MSVC | `specgit-win32-x64.exe` |
+| Linux glibc x64 | `specgit-<version>-linux-x64-gnu.zip` |
+| macOS arm64 | `specgit-<version>-darwin-arm64.zip` |
+| Windows x64 MSVC | `specgit-<version>-win32-x64.zip` |
 
-Check its SHA-256 against the Release notes, rename it to `specgit` (`specgit.exe`
-on Windows), and put it on PATH. Unix platforms require `chmod +x specgit`.
+Verify the same Release's `SHA256SUMS.sigstore.json` signature, then compare the
+ZIP hash against `SHA256SUMS` before extraction. Follow the exact signer identity
+and commands in the [installation guide](../docs/installation.md). Extract `specgit`
+(`specgit.exe` on Windows) and put it on PATH. Unix requires `chmod +x specgit`.
 Installation needs no Node.js, npm or Rust compiler. Each target receives native
 smoke checks during release and the complete installed CLI regression suite in CI.
 See [distribution](distribution/README.md) for publication and recovery.

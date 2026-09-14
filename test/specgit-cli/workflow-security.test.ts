@@ -270,7 +270,7 @@ const assertReleaseActorCredentials = (text: string, label: string): void => {
   let publishers = 0;
   for (const [id, job] of Object.entries(doc.jobs ?? {})) {
     const permissions = job.permissions ?? doc.permissions;
-    const expected = id === 'assemble' ? { contents: 'write', actions: 'read' } : { contents: 'read' };
+    const expected = id === 'assemble' ? { contents: 'write', actions: 'read', 'id-token': 'write' } : { contents: 'read' };
     if (JSON.stringify(permissions) !== JSON.stringify(expected)) throw new Error(`${label}: unexpected release permissions`);
     for (const step of job.steps ?? []) {
       if (step.uses?.startsWith('actions/checkout@') && step.with?.['persist-credentials'] !== false) throw new Error(`${label}: release must not persist checkout credentials`);
@@ -284,6 +284,14 @@ const assertReleaseActorCredentials = (text: string, label: string): void => {
     }
   }
   if (publishers !== 1) throw new Error(`${label}: one final publisher required`);
+  const steps = doc.jobs?.assemble.steps ?? [];
+  const signer = steps.findIndex(step => step.run?.includes('cosign sign-blob'));
+  const publisher = steps.findIndex(step => step.run?.startsWith('node runtime/distribution/publish.mjs '));
+  const signing = steps[signer]?.run ?? '';
+  if (signer < 0 || signer >= publisher || !signing.includes('cosign verify-blob') ||
+      !signing.includes("--certificate-identity 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main'") ||
+      !signing.includes("--certificate-oidc-issuer 'https://token.actions.githubusercontent.com'") ||
+      /--insecure|--ignore-tlog|--ignore-sct/.test(signing)) throw new Error(`${label}: verified main workflow signature required before publication`);
 };
 
 describe('workflow security invariants (#66, #69, #71)', () => {
@@ -451,6 +459,13 @@ describe('mutation sensitivity: every invariant rejects its known-bad mutant (#6
     assertReleaseActorCredentials(releaseFile, 'baseline');
     expect(() => assertReleaseActorCredentials(releaseFile.replace('contents: read', 'contents: write'), 'mutant')).toThrow(/read-only/);
     expect(() => assertReleaseActorCredentials(releaseFile.replace('persist-credentials: false', 'persist-credentials: true'), 'mutant')).toThrow(/persist checkout/);
+  });
+
+  it('a missing or foreign signature identity is rejected', () => {
+    const releaseFile = readWorkflow('release-prepare.yml');
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('cosign sign-blob', 'echo sign-blob'), 'mutant')).toThrow(/signature required/);
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('release-prepare.yml@refs/heads/main', 'other.yml@refs/heads/main'), 'mutant')).toThrow(/signature required/);
+    expect(() => assertReleaseActorCredentials(releaseFile.replace('cosign verify-blob', 'cosign verify-blob --ignore-tlog'), 'mutant')).toThrow(/signature required/);
   });
 
   it('adding an unchecked publication step outside the publisher is detected', () => {

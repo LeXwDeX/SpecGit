@@ -1,9 +1,11 @@
 # Getting Started
 
-Install a native executable from [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest).
-Choose macOS arm64, Linux x64 glibc or Windows x64, verify its SHA-256 against the
-Release description, rename it to `specgit` (`specgit.exe` on Windows), and put it
-on PATH. Unix platforms also need `chmod +x specgit`. No Node.js, npm or Rust
+Download the native ZIP for macOS arm64, Linux x64 glibc or Windows x64 from
+[GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest), together with
+`SHA256SUMS` and `SHA256SUMS.sigstore.json`. Follow the
+[signature verification and installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md).
+Verify the signature and ZIP hash before extracting `specgit` (`specgit.exe` on Windows)
+and putting it on PATH. Unix platforms also need `chmod +x specgit`. No Node.js, npm or Rust
 compiler is needed. Repository operations need Git and an authenticated `gh` / `glab`.
 
 ```sh
