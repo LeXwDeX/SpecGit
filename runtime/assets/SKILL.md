@@ -32,7 +32,9 @@ Use `pr --status` for current native state; `status` is offline local evidence.
 Use bounded `watch` with the exact request ID, a stable session ID and a checks
 or lifecycle goal. A checks goal does not prove merge or Issue closure.
 Follow `diagnostics[].remedy`, `next_actions` and `effects` after failure. Exit 0
-means the operation succeeded, not delivery completion; 1 is rejected evidence,
+means the operation/read succeeded, even when observed CI is failing: inspect
+its status and check conclusions. It does not prove delivery completion.
+Exit 1 is rejected evidence,
 2 is invalid input or a required choice, 3 is an unresolved/unknown result, and
 130 is cancellation. Inspect uncertain writes and adopt exact native IDs before
 retrying; never blindly recreate an Issue or request after a timeout.
