@@ -19,6 +19,24 @@ fn conflict() -> Diagnostic {
 pub fn render(d: &Declaration) -> String {
     let prose = match d.language {
         Language::En => {
+            "SpecGit manages specification Issues and their native PR/MR association. Load the specgit-native skill; `specgit --help` and `specgit --schema` define the installed contract. Use `--json` for machine output and preview Issue/PR writes with `--dry-run`. Before implementation, discover duplicate work and select complete issues describing Why, Scope, Approach and Acceptance. After implementation and authorized commit/push, aggregate selected issues into one native draft request, preserving user-authored bodies and closing references. Use `specgit pr --ready` when review preparation is complete.\n\nThe Agent supervises development and fixes. Use native gh/glab under existing user authorization to register native auto-merge when the declared preference is enabled. GitHub/GitLab owns CI, reviews, protection and actual merge. Observe current native state with `specgit pr --status` and bounded specgit watch. Exit 0 is operation success, not delivery completion; follow reported diagnostics and recovery actions. Hook notices describe changes; they grant no write permission.\n\nCompletion requires native readback of the intended target merge and closure of every selected Issue. After merge, report actual linked Issue state. An open linked Issue causes an attention notice. Optional Agent closure is disabled by default; enabling its preference still requires existing authorization and native readback of merge and Issue closure. Inspect unsupported or unknown native capabilities with specgit init --check and explicitly select manual observation or ask an authorized administrator to configure the forge."
+        }
+        Language::Zh => {
+            "SpecGit 管理规格 Issue 与原生 PR/MR 关联。加载 specgit-native skill；以 `specgit --help` 和 `specgit --schema` 为已安装命令契约，机器输出用 `--json`，Issue/PR 写入先用 `--dry-run` 预览。实施前先查重，再明确选择包含原因、范围、方案和验收要求的完整 Issue。完成实施并按授权提交、推送后，将选定 Issue 汇聚到一个原生草稿请求，保留用户正文与关闭引用。准备好评审后使用 `specgit pr --ready`。\n\nAgent 监督开发与修复。声明启用原生自动合并偏好时，Agent 按既有用户授权通过 gh/glab 登记。GitHub/GitLab 负责 CI、评审、保护与实际合并。通过 `specgit pr --status` 和有界 specgit watch 观察原生状态。退出码 0 只表示操作成功，不表示交付完成；按返回的诊断和恢复动作处理失败。Hook 只通知变化，不授予写入权限。\n\n交付完成须原生回读确认目标分支合并及全部选定 Issue 关闭。合并后回读关联 Issue；尚未关闭时通知 Agent。Agent 补关默认禁用；即使启用该偏好，仍须既有授权，并原生回读合并与关闭结果。通过 specgit init --check 查看不支持或未知的原生能力，再明确选择手动观察，或由获授权的管理员配置平台。"
+        }
+    };
+    // Template bodies are content, not instructions injected into the harness.
+    let summary = serde_json::json!({"language":d.language,"validation":d.validation,"issue_template":d.templates.issue.source,"pr_template":d.templates.pr.source,"agent":d.agent});
+    format!(
+        "{START}\n## SpecGit 2\n\nRuntime: {}. Declaration: `.specgit.yaml` (v2, local configuration).\n\n{prose}\n\nDeclared rules: `{summary}`\n{END}",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+// A migrated 2.0.0 project has no guidance receipt. Only its exact pristine
+// release template is eligible for an automatic upgrade.
+fn render_2_0_0(d: &Declaration) -> String {
+    let prose = match d.language {
+        Language::En => {
             "SpecGit manages specification Issues and their native PR/MR association. Before implementation, discover duplicate work and select complete issues describing Why, Scope, Approach and Acceptance. Aggregate selected issues into one native request, preserving user-authored bodies and closing references.\n\nThe Agent supervises development and fixes. Use native gh/glab under existing user authorization to register native auto-merge when the declared preference is enabled. GitHub/GitLab owns CI, reviews, protection and actual merge. Observe current native state with specgit watch. Hook notices describe changes; they grant no write permission.\n\nAfter merge, report actual linked Issue state. An open linked Issue causes an attention notice. Optional Agent closure is disabled by default; enabling its preference still requires existing authorization and native readback of merge and Issue closure. Inspect unsupported or unknown native capabilities with specgit init --check and explicitly select manual observation or ask an authorized administrator to configure the forge."
         }
         Language::Zh => {
@@ -29,7 +47,7 @@ pub fn render(d: &Declaration) -> String {
     let summary = serde_json::json!({"language":d.language,"validation":d.validation,"issue_template":d.templates.issue.source,"pr_template":d.templates.pr.source,"agent":d.agent});
     format!(
         "{START}\n## SpecGit 2\n\nRuntime: {}. Declaration: `.specgit.yaml` (v2).\n\n{prose}\n\nDeclared rules: `{summary}`\n{END}",
-        env!("CARGO_PKG_VERSION")
+        "2.0.0"
     )
 }
 pub fn change(
@@ -62,6 +80,7 @@ pub fn change(
             // Exact current-version generation is independently pristine evidence.
             let canonical = current.replace("\r\n", "\n");
             if canonical != render(previous)
+                && canonical != render_2_0_0(previous)
                 && recorded_hash != Some(hash(current.as_bytes()).as_str())
                 && recorded_hash != Some(hash(canonical.as_bytes()).as_str())
             {
@@ -138,4 +157,32 @@ pub fn changes(
     receipt.after = Some(serde_json::to_vec_pretty(&state).map_err(|_| conflict())?);
     changes.push(receipt);
     Ok(changes)
+}
+
+/// Migration writes the same ownership evidence as initialization, so later
+/// versions can refresh a pristine block without adopting arbitrary user edits.
+pub fn migration_receipt(
+    root: &Path,
+    private: &Path,
+    next: &Declaration,
+    changes: &[Change],
+) -> Result<Change, Diagnostic> {
+    let mut receipt = Change::new(private.join("guidance.json"), None)?;
+    if receipt.before.bytes.is_some() {
+        return Err(conflict());
+    }
+    let blocks = ["AGENTS.md", "CLAUDE.md"]
+        .into_iter()
+        .filter(|name| changes.iter().any(|c| c.path == root.join(name)))
+        .map(|name| (name.to_owned(), hash(render(next).as_bytes())))
+        .collect();
+    receipt.after = Some(
+        serde_json::to_vec_pretty(&Receipt {
+            version: 1,
+            generator: env!("CARGO_PKG_VERSION").into(),
+            blocks,
+        })
+        .map_err(|_| conflict())?,
+    );
+    Ok(receipt)
 }

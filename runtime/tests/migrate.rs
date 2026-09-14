@@ -155,6 +155,24 @@ fn native_cutover_and_rollback_preserve_old_work_and_foreign_bytes_on_both_forge
         let a = apply(&f, &path, &p, &[]);
         assert_eq!(a["exit"], 0, "{a}");
         assert_eq!(a["status"], "migrated");
+        let private = PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
+            .join("specgit-v2/guidance.json");
+        let receipt: Value = serde_json::from_slice(&fs::read(&private).unwrap()).unwrap();
+        assert_eq!(receipt["generator"], env!("CARGO_PKG_VERSION"));
+        assert!(receipt["blocks"]["AGENTS.md"].as_str().is_some());
+        assert_eq!(
+            a["evidence"]["local_exclusion"]["excluded_paths"],
+            json!([".specgit.yaml"])
+        );
+        assert!(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args(["check-ignore", "--no-index", ".specgit.yaml"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
         assert!(
             !f.root
                 .join(".github/workflows/specgit-complete.yml")
@@ -190,6 +208,7 @@ fn native_cutover_and_rollback_preserve_old_work_and_foreign_bytes_on_both_forge
             a["evidence"]["transaction"].as_str().unwrap(),
         ]);
         assert_eq!(r["exit"], 0, "{r}");
+        assert!(!private.exists());
         assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), before);
         assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), pointer);
         assert!(

@@ -239,12 +239,12 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
     let context_id = &context_id[..16];
     let mut text = if language == Language::Zh {
         format!(
-            "SpecGit 2 [{context_id}]：当前分支 {branch}，本地{}。远端状态尚未检查；开始受跟踪的修改前先选择原生 issue，完成以原生合并和 issue 状态为准。",
+            "SpecGit 2 [{context_id}]：当前分支 {branch}，本地{}。远端状态尚未检查；开始受跟踪的修改前先选择原生 issue，完成须确认目标分支已合并、全部选定 issue 已关闭。",
             if context.dirty { "有改动" } else { "干净" }
         )
     } else {
         format!(
-            "SpecGit 2 [{context_id}]: branch {branch}; local tree {}. Remote state is not checked. Select native issues before tracked edits; completion requires observed native merge and issue states.",
+            "SpecGit 2 [{context_id}]: branch {branch}; local tree {}. Remote state is not checked. Select native issues before tracked edits; completion requires the intended target merge and every selected issue closed.",
             if context.dirty {
                 "has changes"
             } else {
