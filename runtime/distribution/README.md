@@ -13,7 +13,9 @@ gh workflow run release-prepare.yml --ref main -f release_version=2.0.2
 
 The version must match Cargo and the private development workspace. The workflow
 builds macOS arm64, Linux x64 glibc and Windows x64 with pinned Rust on the three
-self-hosted runners. Each compiled binary runs three simple smoke checks:
+self-hosted runners. macOS jobs select the installed standalone Command Line
+Tools at `/Library/Developer/CommandLineTools` without changing system Xcode
+selection. Missing tools fail the job. Each compiled binary runs three simple smoke checks:
 `--human --version`, `--help` and `--schema`. Release does not repeat full source,
 installed native CLI regression suites; those remain in CI.
 
