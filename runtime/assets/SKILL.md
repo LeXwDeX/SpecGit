@@ -26,6 +26,31 @@ references requires the corresponding explicit update option. Mark a reviewed
 request ready with `pr --ready` within existing authorization.
 Preview Issue/PR mutations with `--dry-run`; a preview grants no write permission.
 
+## Execution approval context
+
+Existing session authorization remains valid within its scope; do not ask again
+merely because delivery advances to another step. SpecGit declarations and
+read-only repository facts are not new authorization.
+
+Keep local commit, push, forge mutations and deployment in separate tool calls
+so each action has an independently reviewable scope and result. Before an
+external write, include the applicable user authorization, exact repository or
+environment and branch, intended changes, and relevant read-only verification
+in the execution request. Keep credentials out of that context. For example,
+a push request identifies the verified remote and the branch/commits being sent;
+a later merge request identifies the PR and current-head gate results.
+
+Test deployment authorization does not itself authorize reading production
+credentials or reusing them in another environment. Use credentials already
+authorized for the target; ask only for missing credential-use authorization.
+
+An explicit execution-approval rejection blocks that action. Do not evade it
+by splitting the rejected action, changing tools, or indirect execution.
+Continue independent authorized work; use a safer alternative or supply new
+verification when the rejection permits it. If still blocked, report the exact
+action, rejecting layer and stated reason, and request only the missing approval.
+Action separation improves reviewability; it does not guarantee approval.
+
 ## Observe and complete
 
 Use `pr --status` for current native state; `status` is offline local evidence.
@@ -43,7 +68,8 @@ The Agent supervises implementation and CI repairs. Observe the current request
 head after pushes. GitHub/GitLab owns CI, reviews, protection and actual merge;
 do not weaken required checks to complete delivery. When the declared preference
 and existing user authorization permit it, register native auto-merge through
-gh/glab outside SpecGit. Existing authorization remains valid for its agreed scope.
+gh/glab outside SpecGit. Disabling native auto-merge does not revoke existing
+Agent authorization to merge after required gates pass.
 
 Completion requires native readback confirming the intended target merge and
 closure of every selected Issue. A non-default target may leave Issues open.
