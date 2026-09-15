@@ -135,10 +135,9 @@ fn new_user_command_registers_both_hosts_and_repeat_is_idempotent() {
                 .unwrap()
                 .contains("specgit-native")
         );
-        assert!(
-            fs::read_to_string(dir.join("skills/specgit-native/SKILL.md"))
-                .unwrap()
-                .contains(&format!("Contract version: {}", env!("CARGO_PKG_VERSION")))
+        assert_eq!(
+            fs::read_to_string(dir.join("skills/specgit-native/SKILL.md")).unwrap(),
+            include_str!("../assets/SKILL.md").replace("{{version}}", env!("CARGO_PKG_VERSION"))
         );
     }
     assert_eq!(run(&[])["evidence"]["transaction"]["changes"], 0);
