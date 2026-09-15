@@ -1,3 +1,11 @@
+# 2.0.2
+
+- Select standalone macOS Command Line Tools in CI and release jobs so an unrelated Xcode setup state does not block native builds.
+
+- Make delivery actions independently reviewable with existing authorization, exact targets and verification context in the installed Agent skill.
+- Distinguish deployment from cross-environment credential authorization; preserve explicit approval rejections and continue independent authorized work.
+- Clarify that disabling platform auto-merge does not revoke authorized Agent delivery. Approval outcomes remain controlled by the host.
+
 # 2.0.0
 
 - Replace the public TypeScript runtime with the lightweight Rust CLI and thin npm launcher.

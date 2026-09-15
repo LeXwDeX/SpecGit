@@ -6,7 +6,7 @@ on:
       release_version:
         description: Exact stable Cargo/workspace/package version
         type: string
-        default: 2.0.1
+        default: 2.0.2
         required: true
 permissions:
   contents: read
@@ -66,6 +66,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node distribution/release-version.mjs --version "$RELEASE_VERSION"
+      - name: Select standalone macOS Command Line Tools
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |-
+          test -x /Library/Developer/CommandLineTools/usr/bin/clang
+          DEVELOPER_DIR=/Library/Developer/CommandLineTools xcrun --find clang
+          echo 'DEVELOPER_DIR=/Library/Developer/CommandLineTools' >> "$GITHUB_ENV"
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
