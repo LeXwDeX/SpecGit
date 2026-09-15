@@ -1,6 +1,6 @@
 {
   "name": "specgit",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "description": "Private native SpecGit engineering workspace; install from GitHub Releases",
   "type": "module",
