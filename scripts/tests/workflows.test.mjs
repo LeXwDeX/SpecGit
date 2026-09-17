@@ -53,3 +53,28 @@ test('protected acceptance requires applicable native verification and a ready m
   const commands = jobs.rust.steps.map(s => s.run ?? '').join('\n');
   for (const phase of ['lint', 'compile-tests', 'source-tests', 'distribution-tests', 'compile-release', 'install', 'profile']) assert(commands.includes(`--phase ${phase} `));
 });
+
+test('runner smoke is dispatch-only, single-platform, checkout-free and tokenless', () => {
+  const raw = workflow('runner-smoke.yml');
+  const doc = parse(raw);
+  assert.deepEqual(Object.keys(doc.on), ['workflow_dispatch']);
+  const platform = doc.on.workflow_dispatch.inputs.platform;
+  assert.equal(platform.type, 'choice');
+  assert.equal(platform.required, true);
+  assert.deepEqual(platform.options, ['linux', 'windows']);
+  assert.deepEqual(Object.keys(doc.jobs), ['smoke-linux', 'smoke-windows']);
+  assert.deepEqual(doc.jobs['smoke-linux']['runs-on'], ['self-hosted', 'Linux', 'X64']);
+  assert.deepEqual(doc.jobs['smoke-windows']['runs-on'], ['self-hosted', 'Windows', 'X64']);
+  assert.equal(doc.jobs['smoke-linux'].if, "inputs.platform == 'linux'");
+  assert.equal(doc.jobs['smoke-windows'].if, "inputs.platform == 'windows'");
+  for (const job of Object.values(doc.jobs)) {
+    assert.equal(job['timeout-minutes'], 10);
+    assert.deepEqual(job.permissions, {});
+    for (const step of job.steps) assert.equal(step.uses, undefined);
+  }
+  assert(!raw.includes('actions/checkout'));
+  assert(!raw.includes('github.token'));
+  assert(!raw.includes('secrets.'));
+  for (const line of raw.split('\n').filter(l => l.trimStart().startsWith('runs-on:')))
+    assert(!/macos|darwin|arm64/i.test(line), `runner smoke must not target macOS: ${line.trim()}`);
+});
