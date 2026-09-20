@@ -29,10 +29,7 @@ jobs:
               - X64
             label: linux
             target: x86_64-unknown-linux-gnu
-          - os:
-              - self-hosted
-              - macOS
-              - ARM64
+          - os: macos-15
             label: macos
             target: aarch64-apple-darwin
           - os:
@@ -66,13 +63,14 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node distribution/release-version.mjs --version "$RELEASE_VERSION"
-      - name: Select standalone macOS Command Line Tools
+      - name: Verify hosted macOS ARM64 toolchain
         if: runner.os == 'macOS'
         shell: bash
-        run: |-
-          test -x /Library/Developer/CommandLineTools/usr/bin/clang
-          DEVELOPER_DIR=/Library/Developer/CommandLineTools xcrun --find clang
-          echo 'DEVELOPER_DIR=/Library/Developer/CommandLineTools' >> "$GITHUB_ENV"
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_ARCH" = ARM64
+          test "$(uname -m)" = arm64
+          xcrun --find clang
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:

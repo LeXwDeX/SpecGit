@@ -358,3 +358,19 @@ fn windows_atomic_replace_preserves_a_permission_edit_during_the_conflict() {
     assert!(kept_readonly);
     assert_eq!(kept_bytes, b"before");
 }
+
+#[test]
+fn persisted_sha256_format_matches_known_vectors() {
+    for (input, expected) in [
+        (
+            &b""[..],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            &b"abc"[..],
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+    ] {
+        assert_eq!(specgit::assets::hash(input), expected);
+    }
+}
