@@ -495,7 +495,6 @@ fn candidate_review_digest(
     intent: &IssueIntent,
     candidates: &[crate::delivery_model::Issue],
 ) -> String {
-    use sha2::{Digest, Sha256};
     let review = serde_json::json!({
         "version": 1,
         "repository": repository,
@@ -507,7 +506,7 @@ fn candidate_review_digest(
         "labels": intent.labels,
         "candidates": candidates,
     });
-    format!("{:x}", Sha256::digest(review.to_string().as_bytes()))
+    crate::assets::hash(review.to_string().as_bytes())
 }
 fn validate(
     d: &config::Declaration,

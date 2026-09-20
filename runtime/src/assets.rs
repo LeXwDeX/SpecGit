@@ -13,7 +13,10 @@ use std::{
 const FILE_LIMIT: u64 = 134_217_728;
 const JOURNAL_LIMIT: usize = 1_048_576;
 pub fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 fn error(code: Code, message: &str) -> Diagnostic {
     Diagnostic::new(

@@ -19,7 +19,7 @@ The change classifier examines the complete Git diff, retains both sides of a
 rename, and fails closed on missing range evidence. `.gitignore` never grants
 verification exemptions. Unknown paths require product verification.
 
-All committed CI workflows use self-hosted runners; hosted fallbacks are forbidden.
+macOS ARM64 uses the GitHub-hosted `macos-15` runner. Linux x64 and Windows x64 use the owner-provided self-hosted runners; hosted fallbacks for those platforms are forbidden.
 The native matrix runs Linux x64, macOS arm64 and Windows x64. Each platform checks
 Rust formatting and lint, compiles and runs every source test, verifies native
 distribution tooling, compiles and installs the release executable, then repeats
@@ -27,7 +27,7 @@ the public regression inventory through that installed executable. Verified phas
 artifacts support local recovery without treating an incomplete phase as passed.
 
 Repository contract tests check workflow permissions, signed publication identity,
-self-hosted routing, the required dependency chain and metadata classification.
+platform-specific runner routing, the required dependency chain and metadata classification.
 `Required verification` succeeds only when classification and repository contracts
 pass and every applicable Rust matrix job succeeds. Documentation-only changes
 must have the Rust job skipped. `SpecGit Acceptance` depends on that result and
