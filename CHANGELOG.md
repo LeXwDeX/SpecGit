@@ -1,3 +1,10 @@
+# 2.0.3
+
+- Use GitHub-hosted macOS ARM64 runners for verification and releases; retain self-hosted Linux and Windows runners.
+- Preserve SHA-256 hexadecimal output with sha2 0.11 and add standard digest regression vectors.
+- Update regex, base64, yaml and pnpm/action-setup dependencies.
+- Validate release runner routing against the selected platform policy.
+
 # 2.0.2
 
 - Select standalone macOS Command Line Tools in CI and release jobs so an unrelated Xcode setup state does not block native builds.
