@@ -123,8 +123,8 @@ cargo test --locked --all-targets --features test-fixtures
 ```
 
 The [Release workflow](.github/workflows/release-prepare.yml) runs from `main` after
-an explicit dispatch with a stable version. Three self-hosted runners compile and
-smoke-test the native binaries. The final job creates ZIPs and signs `SHA256SUMS`
+an explicit dispatch with a stable version. GitHub-hosted macOS ARM64 and owner-provided
+Linux/Windows x64 runners compile and smoke-test the native binaries. The final job creates ZIPs and signs `SHA256SUMS`
 using the main Release workflow identity. Publication verifies source identity, signature, SHA-256 and
 uploaded bytes, and preserves existing immutable releases. Full source and
 installed-binary regressions run in ordinary CI.

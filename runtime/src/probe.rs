@@ -6,7 +6,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -349,7 +348,7 @@ pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<
                     .filter(|c| !c.is_control())
                     .take(200)
                     .collect();
-                results.push(Probe::available(&operation, serde_json::json!({"version":version,"executable":path,"identity":format!("{:x}",Sha256::digest(identity.as_bytes()))})));
+                results.push(Probe::available(&operation, serde_json::json!({"version":version,"executable":path,"identity":crate::assets::hash(identity.as_bytes())})));
             }
             Ok(out) => {
                 results.push(Probe::failed(
