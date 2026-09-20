@@ -49,7 +49,7 @@ cargo test --locked --all-targets --features test-fixtures
 
 Run relevant native distribution tests when changing installation or release.
 CI verifies Linux x64, macOS arm64 and Windows x64 source and installed journeys
-on self-hosted runners. `Required verification` aggregates the applicable jobs;
+on GitHub-hosted macOS and owner-provided Linux/Windows runners. `Required verification` aggregates the applicable jobs;
 `SpecGit Acceptance` requires its success and a ready PR targeting main.
 Publishing is a separate explicitly dispatched signed GitHub Release workflow.
 

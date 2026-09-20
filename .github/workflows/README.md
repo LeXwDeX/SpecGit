@@ -5,5 +5,5 @@
 - Security: dependency review, Cargo audit and private Node tooling audit.
 - Release: explicit main dispatch, three native builds, signed ZIP publication.
 
-All jobs use self-hosted runners. No v1 verifier or completion controller remains.
+macOS ARM64 jobs use GitHub-hosted `macos-15`; Linux and Windows jobs use owner-provided self-hosted runners. No v1 verifier or completion controller remains.
 GitHub owns native auto-merge and Issue closure. See [CI scope](../../docs/ci-scope.md).

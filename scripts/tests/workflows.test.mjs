@@ -18,14 +18,18 @@ for (const [label, mutate] of [
   ['extra publication credential', s => s.replace('GH_TOKEN: ${{ github.token }}', 'GH_TOKEN: ${{ secrets.UNRELATED_TOKEN }}')],
 ]) test(`rejects ${label}`, () => assert.throws(() => assertReleaseActorCredentials(mutate(release), label)));
 
-test('every workflow uses pinned actions, self-hosted runners and isolated checkout credentials', () => {
+test('every workflow uses pinned actions, approved runner routes and isolated checkout credentials', () => {
   for (const file of readdirSync(new URL('../../.github/workflows/', import.meta.url)).filter(x => x.endsWith('.yml'))) {
     const doc = parse(workflow(file));
     assert.deepEqual(doc.permissions, { contents: 'read' }, file);
     for (const [id, job] of Object.entries(doc.jobs)) {
       const routes = Array.isArray(job['runs-on']) ? [job['runs-on']] : job.strategy?.matrix?.include?.map(row => row.os);
       assert(routes?.length > 0, `${file}/${id}: missing native runner route`);
-      for (const route of routes) assert(route.includes('self-hosted'), `${file}/${id}: hosted runner`);
+      for (const route of routes) {
+        if (route === 'macos-15') continue;
+        assert(Array.isArray(route) && route.includes('self-hosted') && route.includes('X64') &&
+          (route.includes('Linux') || route.includes('Windows')), `${file}/${id}: unapproved runner route`);
+      }
       for (const step of job.steps ?? []) {
         if (step.uses) assert.match(step.uses, /@[a-f\d]{40}$/, `${file}/${id}: unpinned action`);
         if (step.uses?.startsWith('actions/checkout@')) assert.equal(step.with?.['persist-credentials'], false);
@@ -77,4 +81,19 @@ test('runner smoke is dispatch-only, single-platform, checkout-free and tokenles
   assert(!raw.includes('secrets.'));
   for (const line of raw.split('\n').filter(l => l.trimStart().startsWith('runs-on:')))
     assert(!/macos|darwin|arm64/i.test(line), `runner smoke must not target macOS: ${line.trim()}`);
+});
+
+test('CI and release use hosted ARM64 macOS and owned Linux/Windows runners', () => {
+  for (const [file, id] of [['ci.yml', 'rust'], ['release-prepare.yml', 'build']]) {
+    const job = parse(workflow(file)).jobs[id];
+    assert.deepEqual(job.strategy.matrix.include.map(row => [row.label, row.os]), [
+      ['linux', ['self-hosted', 'Linux', 'X64']],
+      ['macos', 'macos-15'],
+      ['windows', ['self-hosted', 'Windows', 'X64']],
+    ]);
+    const check = job.steps.find(step => step.name === 'Verify hosted macOS ARM64 toolchain');
+    assert.equal(check.if, "runner.os == 'macOS'");
+    assert(check.run.includes('test "$RUNNER_ENVIRONMENT" = github-hosted'));
+    assert(check.run.includes('test "$RUNNER_ARCH" = ARM64'));
+  }
 });
