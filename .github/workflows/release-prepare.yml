@@ -101,7 +101,7 @@ jobs:
           pattern: release-platform-*
           path: ${{ runner.temp }}/specgit-release-input-${{ github.run_id }}-${{ github.run_attempt }}
           digest-mismatch: error
-      - uses: actions/setup-python@ad3497abcd142e169a10aac37abd5175c44f33c4
+      - uses: actions/setup-python@af9bcc7548695e66d75709de6f29e337624b8de8
         with:
           python-version: '3.13'
       - name: Assemble the three smoke-tested binaries
