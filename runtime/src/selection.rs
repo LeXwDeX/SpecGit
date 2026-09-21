@@ -42,6 +42,28 @@ pub struct RequestIntent {
     pub body: String,
     pub labels: Vec<String>,
 }
+/// Public, redacted metadata for a valid checkpoint owned by another branch.
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchMismatch {
+    pub status: &'static str,
+    pub path: PathBuf,
+    pub recorded_branch: String,
+    pub recorded_target: String,
+    pub recorded_project_id: u64,
+    pub current_branch: Option<String>,
+    pub pending_write: bool,
+    pub write_eligible: bool,
+}
+/// Ownership classification for callers that explicitly support read-only foreign checkpoints.
+#[derive(Debug, Clone)]
+pub enum ReadOutcome {
+    Absent,
+    Current(Selection),
+    BranchMismatch {
+        selection: Selection,
+        checkpoint: BranchMismatch,
+    },
+}
 fn invalid() -> Diagnostic {
     Diagnostic::new(
         Code::OwnershipConflict,
@@ -80,14 +102,66 @@ pub fn read_path(path: &Path) -> Result<Option<Selection>, Diagnostic> {
     }
     Ok(Some(s))
 }
+/// Read a checkpoint for mutation-capable flows, rejecting every ownership mismatch.
 pub fn read(context: &Context) -> Result<Option<Selection>, Diagnostic> {
-    let selection = read_path(&path(context))?;
-    if selection.as_ref().is_some_and(|s| {
-        s.repository != context.repository || Some(&s.branch) != context.branch.as_ref()
-    }) {
+    match classify(context)? {
+        ReadOutcome::Absent => Ok(None),
+        ReadOutcome::Current(selection) => Ok(Some(selection)),
+        ReadOutcome::BranchMismatch { checkpoint, .. } => {
+            Err(branch_mismatch_diagnostic(&checkpoint))
+        }
+    }
+}
+/// Classify a valid same-repository checkpoint without exposing its intent in reports.
+///
+/// Native operations must separately verify the recorded project ID and target.
+/// Offline diagnostics report recorded identity without claiming remote verification.
+pub fn classify(context: &Context) -> Result<ReadOutcome, Diagnostic> {
+    let checkpoint_path = path(context);
+    let Some(selection) = read_path(&checkpoint_path)? else {
+        return Ok(ReadOutcome::Absent);
+    };
+    if selection.repository != context.repository {
         return Err(invalid());
     }
-    Ok(selection)
+    if Some(&selection.branch) == context.branch.as_ref() {
+        return Ok(ReadOutcome::Current(selection));
+    }
+    let checkpoint = BranchMismatch {
+        status: "branch_mismatch",
+        path: checkpoint_path,
+        recorded_branch: selection.branch.clone(),
+        recorded_target: selection.target.clone(),
+        recorded_project_id: selection.project_id,
+        current_branch: context.branch.clone(),
+        pending_write: selection
+            .intents
+            .iter()
+            .any(|intent| intent.write_started && intent.issue.is_none())
+            || (selection.request_write_started && selection.request.is_none()),
+        write_eligible: false,
+    };
+    Ok(ReadOutcome::BranchMismatch {
+        selection,
+        checkpoint,
+    })
+}
+/// Build the strict failure used when a mutation-capable flow crosses branches.
+pub fn branch_mismatch_diagnostic(checkpoint: &BranchMismatch) -> Diagnostic {
+    Diagnostic::new(
+        Code::OwnershipConflict,
+        "selection_branch",
+        &format!(
+            "The delivery checkpoint at {} belongs to branch '{}', not the current branch {}.",
+            checkpoint.path.display(),
+            checkpoint.recorded_branch,
+            checkpoint
+                .current_branch
+                .as_deref()
+                .unwrap_or("<detached HEAD>")
+        ),
+        "Return to the recorded branch or use a separate worktree for independent delivery; the checkpoint remains unchanged.",
+    )
 }
 pub struct Locked {
     store: AssetStore,
