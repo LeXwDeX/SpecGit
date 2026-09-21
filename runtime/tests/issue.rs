@@ -3,7 +3,335 @@
 mod delivery;
 use delivery::Fixture;
 use serde_json::json;
-use std::{fs, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+fn git(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn files_below(root: &Path) -> Vec<PathBuf> {
+    fn visit(base: &Path, current: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(current) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(base, &path, out);
+            } else {
+                out.push(path.strip_prefix(base).unwrap().to_path_buf());
+            }
+        }
+    }
+    let mut out = vec![];
+    visit(root, root, &mut out);
+    out.sort();
+    out
+}
+
+fn checkpoint_path(f: &Fixture) -> PathBuf {
+    f.root.join(".git/specgit-v2/selection.json")
+}
+
+fn assert_foreign_checkpoint(report: &serde_json::Value, recorded: &str, current: &str) {
+    let checkpoint = &report["evidence"]["checkpoint"];
+    assert_eq!(checkpoint["status"], "branch_mismatch", "{report}");
+    assert_eq!(checkpoint["recorded_branch"], recorded, "{report}");
+    assert_eq!(checkpoint["current_branch"], current, "{report}");
+    assert_eq!(checkpoint["recorded_target"], "main", "{report}");
+    assert_eq!(checkpoint["recorded_project_id"], 7, "{report}");
+    assert_eq!(checkpoint["pending_write"], false, "{report}");
+    assert_eq!(report["evidence"]["write_eligible"], false, "{report}");
+}
+
+#[test]
+fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let selected = f.run(&["issue", "--create-labels", "feat: branch A work"]);
+        assert_eq!(selected["exit"], 0, "{selected}");
+        let checkpoint = checkpoint_path(&f);
+        let before_checkpoint = fs::read(&checkpoint).unwrap();
+        let before_files = files_below(&f.root.join(".git/specgit-v2"));
+
+        git(&f.root, &["switch", "-c", "branch-b"]);
+        let writes = f.writes();
+        let calls = f.state()["calls"].as_array().unwrap().len();
+
+        let status = f.run(&["status"]);
+        assert_eq!(status["exit"], 0, "{status}");
+        assert_eq!(status["status"], "checkpoint_branch_mismatch", "{status}");
+        assert!(status["evidence"]["selection"].is_null(), "{status}");
+        assert_foreign_checkpoint(&status, "feature", "branch-b");
+
+        let inspect = f.run(&["issue", "fix: branch B inspection", "--inspect"]);
+        assert_eq!(inspect["exit"], 0, "{inspect}");
+        assert_eq!(inspect["status"], "prepared_blocked", "{inspect}");
+        assert_foreign_checkpoint(&inspect, "feature", "branch-b");
+        assert_eq!(inspect["effects"]["outcome"], "not_applied", "{inspect}");
+        assert!(
+            inspect["evidence"]["prepared"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate["title"] == "fix: branch B inspection"),
+            "{inspect}"
+        );
+        assert!(
+            inspect["evidence"]["prepared"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|candidate| candidate["title"] != "feat: branch A work"),
+            "foreign intents leaked into inspection: {inspect}"
+        );
+        assert!(
+            f.state()["calls"].as_array().unwrap()[calls..]
+                .iter()
+                .any(|call| {
+                    let endpoint = call["endpoint"].as_str().unwrap_or_default();
+                    endpoint.starts_with("search/issues?")
+                        || (endpoint.contains("/issues?") && endpoint.contains("search="))
+                }),
+            "inspection must perform a fresh native candidate search"
+        );
+
+        let dry_run = f.run(&[
+            "issue",
+            "docs: branch B preview",
+            "--dry-run",
+            "--create-labels",
+        ]);
+        assert_eq!(dry_run["exit"], 0, "{dry_run}");
+        assert_eq!(dry_run["status"], "prepared_blocked", "{dry_run}");
+        assert_foreign_checkpoint(&dry_run, "feature", "branch-b");
+        assert_eq!(dry_run["effects"]["outcome"], "not_applied", "{dry_run}");
+
+        for mutation in [
+            vec!["issue", "1"],
+            vec!["issue", "--create-labels", "fix: forbidden branch B write"],
+            vec!["pr"],
+        ] {
+            let rejected = f.run(&mutation);
+            assert_eq!(rejected["exit"], 3, "{rejected}");
+            assert_eq!(rejected["diagnostics"][0]["code"], "ownership_conflict");
+            let diagnostic = rejected["diagnostics"][0].to_string();
+            assert!(diagnostic.contains("feature"), "{rejected}");
+            assert!(diagnostic.contains("branch-b"), "{rejected}");
+            assert!(diagnostic.contains("selection.json"), "{rejected}");
+        }
+        assert_eq!(f.writes(), writes);
+        assert_eq!(fs::read(&checkpoint).unwrap(), before_checkpoint);
+        assert_eq!(files_below(&f.root.join(".git/specgit-v2")), before_files);
+
+        git(&f.root, &["switch", "feature"]);
+        let resumed = f.run(&["status"]);
+        assert_eq!(resumed["exit"], 0, "{resumed}");
+        assert_eq!(resumed["evidence"]["selection"]["issues"], json!([1]));
+    }
+}
+
+#[test]
+fn foreign_branch_diagnostics_preserve_unresolved_issue_and_request_writes() {
+    for pending in ["issue", "request"] {
+        let f = Fixture::new("github");
+        assert_eq!(
+            f.run(&["issue", "--create-labels", "feat: unresolved write"])["exit"],
+            0
+        );
+        let checkpoint = checkpoint_path(&f);
+        let mut selection: serde_json::Value =
+            serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+        if pending == "issue" {
+            selection["intents"][0]["issue"] = serde_json::Value::Null;
+            selection["intents"][0]["write_started"] = json!(true);
+            selection["issues"] = json!([]);
+        } else {
+            selection["request"] = serde_json::Value::Null;
+            selection["request_write_started"] = json!(true);
+        }
+        fs::write(&checkpoint, serde_json::to_vec_pretty(&selection).unwrap()).unwrap();
+        let before = fs::read(&checkpoint).unwrap();
+        git(&f.root, &["switch", "-c", "foreign-pending"]);
+
+        let status = f.run(&["status"]);
+        assert_eq!(status["exit"], 0, "{status}");
+        assert_eq!(
+            status["evidence"]["checkpoint"]["pending_write"], true,
+            "{status}"
+        );
+        let inspect = f.run(&["issue", "fix: independent foreign inspection", "--inspect"]);
+        assert_eq!(inspect["status"], "prepared_blocked", "{inspect}");
+        assert_eq!(inspect["evidence"]["checkpoint"]["pending_write"], true);
+        assert!(
+            inspect["evidence"]["prepared"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|candidate| candidate["title"] != "feat: unresolved write"),
+            "{inspect}"
+        );
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
+
+        git(&f.root, &["switch", "feature"]);
+        let owner = f.run(&["status"]);
+        assert_eq!(owner["exit"], 0, "{owner}");
+        if pending == "issue" {
+            assert_eq!(
+                owner["evidence"]["selection"]["intents"][0]["issue"],
+                serde_json::Value::Null
+            );
+            assert_eq!(
+                owner["evidence"]["selection"]["intents"][0]["write_started"],
+                true
+            );
+        } else {
+            assert_eq!(
+                owner["evidence"]["selection"]["request"],
+                serde_json::Value::Null
+            );
+            assert_eq!(
+                owner["evidence"]["selection"]["request_write_started"],
+                true
+            );
+        }
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
+    }
+}
+
+#[test]
+fn malformed_or_foreign_repository_checkpoints_remain_rejected() {
+    for replacement in [
+        json!({"version":2}),
+        json!({
+            "version": 3,
+            "repository": {"provider":"github","host":"forge.example","path":"fixture/repo"},
+            "project_id": 7,
+            "branch": "feature",
+            "target": "main",
+            "issues": [],
+            "intents": [],
+            "request": null,
+            "request_write_started": false,
+            "request_intent": null
+        }),
+        json!({
+            "version": 2,
+            "repository": {"provider":"github","host":"forge.example","path":"somebody-else/repo"},
+            "project_id": 7,
+            "branch": "feature",
+            "target": "main",
+            "issues": [],
+            "intents": [],
+            "request": null,
+            "request_write_started": false,
+            "request_intent": null
+        }),
+    ] {
+        let f = Fixture::new("github");
+        assert_eq!(
+            f.run(&["issue", "--create-labels", "feat: establish checkpoint"])["exit"],
+            0
+        );
+        let checkpoint = checkpoint_path(&f);
+        fs::write(
+            &checkpoint,
+            serde_json::to_vec_pretty(&replacement).unwrap(),
+        )
+        .unwrap();
+        let before = fs::read(&checkpoint).unwrap();
+        let writes = f.writes();
+        git(&f.root, &["switch", "-c", "other-branch"]);
+        for command in [
+            vec!["status"],
+            vec!["issue", "fix: must not degrade", "--inspect"],
+            vec![
+                "issue",
+                "fix: must not degrade",
+                "--dry-run",
+                "--create-labels",
+            ],
+        ] {
+            let rejected = f.run(&command);
+            assert_eq!(rejected["exit"], 3, "{rejected}");
+            assert_eq!(rejected["diagnostics"][0]["code"], "ownership_conflict");
+        }
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
+        assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn detached_head_can_diagnose_a_foreign_checkpoint_but_cannot_mutate_it() {
+    let f = Fixture::new("github");
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "feat: owner"])["exit"],
+        0
+    );
+    let checkpoint = checkpoint_path(&f);
+    let before = fs::read(&checkpoint).unwrap();
+    git(&f.root, &["switch", "--detach"]);
+    let status = f.run(&["status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    assert_eq!(status["status"], "checkpoint_branch_mismatch", "{status}");
+    assert_eq!(
+        status["evidence"]["checkpoint"]["recorded_branch"],
+        "feature"
+    );
+    assert!(status["evidence"]["checkpoint"]["current_branch"].is_null());
+    let rejected = f.run(&["issue", "1"]);
+    assert_eq!(rejected["exit"], 2, "{rejected}");
+    assert_eq!(rejected["diagnostics"][0]["code"], "invalid_input");
+    assert_eq!(fs::read(&checkpoint).unwrap(), before);
+}
+
+#[test]
+fn linked_worktree_has_an_independent_checkpoint_namespace() {
+    let mut f = Fixture::new("github");
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "feat: primary worktree"])["exit"],
+        0
+    );
+    let primary_root = f.root.clone();
+    let primary_checkpoint = checkpoint_path(&f);
+    let primary_before = fs::read(&primary_checkpoint).unwrap();
+    let linked = primary_root.parent().unwrap().join("linked");
+    git(
+        &primary_root,
+        &["worktree", "add", "-b", "linked-branch", "../linked"],
+    );
+    f.root = linked;
+
+    let status = f.run(&["status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    assert!(status["evidence"]["selection"].is_null(), "{status}");
+    let inspect = f.run(&["issue", "fix: linked inspection", "--inspect"]);
+    assert_eq!(inspect["exit"], 0, "{inspect}");
+    assert_ne!(inspect["status"], "prepared_blocked", "{inspect}");
+    assert!(
+        inspect["evidence"]["prepared"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["title"] == "fix: linked inspection"),
+        "{inspect}"
+    );
+    assert_eq!(fs::read(&primary_checkpoint).unwrap(), primary_before);
+    assert!(!checkpoint_path(&f).exists());
+}
 #[test]
 fn both_forges_create_many_specs_then_resume_preserving_native_edits_without_new_writes() {
     for provider in ["github", "gitlab"] {

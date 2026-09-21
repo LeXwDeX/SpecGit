@@ -188,6 +188,29 @@ rejected rather than guessed. A read-only probe never establishes write permissi
 The user's authenticated gh/glab session provides forge access; SpecGit does not
 store credentials. Forbidden or ambiguous 404 responses do not establish absence.
 
+### Branch switches and checkpoint ownership
+
+A delivery checkpoint belongs to one branch in one worktree. Switching branches
+with Git does not move or reset it. `status` can report
+`checkpoint_branch_mismatch` with the current context, a null active `selection`,
+and a `checkpoint` summary containing its path, recorded/current branches,
+recorded target/project ID and pending-write flag. Offline status keeps
+`remote_state: not_checked`; native operations separately verify project identity. A detached checkout reports a null current branch. This
+successful read is not permission to write: `write_eligible` is false.
+
+On another branch, `issue --inspect` and `issue --dry-run` prepare only the current
+invocation's specifications and read duplicate candidates. They return
+`prepared_blocked`, `writes: false`, `write_eligible: false` and the checkpoint
+summary. They do not inherit the other branch's Issues or pending intents, create
+a lock or update the checkpoint. Exit 0 means the read/preview succeeded; this
+blocked preview cannot be applied in that worktree's current branch.
+
+Resume the original delivery on its recorded branch, or use a separate worktree
+for independent work. Mutations still reject mismatched ownership, and their
+locked concurrency rechecks remain in force. Malformed checkpoints and repository
+identity mismatches remain errors. Do not delete a checkpoint, rewrite its branch
+or discard unresolved write intent to get past these checks.
+
 ## Observation and host delivery
 
 `pr --status` reports lifecycle facts such as `open`, `closed_unmerged`, `merged`,

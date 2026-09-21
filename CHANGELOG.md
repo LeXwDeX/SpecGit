@@ -1,3 +1,9 @@
+# 2.0.4
+
+- Keep offline status useful after switching away from a branch with a delivery checkpoint: report both branches and preserve the original checkpoint.
+- Allow read-only Issue discovery across branch checkpoints while explicitly marking writes as blocked; retain strict ownership checks for mutations.
+- Cover branch switching, pending writes, malformed checkpoints and worktree isolation with native regression tests.
+
 # 2.0.3
 
 - Use GitHub-hosted macOS ARM64 runners for verification and releases; retain self-hosted Linux and Windows runners.
