@@ -113,7 +113,24 @@ async fn execute(
             "A new delivery branch must be valid, distinct from source/target, and start in a clean worktree.",
         ));
     }
-    let previous = selection::read(&context)?;
+    let (previous, foreign_checkpoint) = match selection::classify(&context)? {
+        selection::ReadOutcome::Absent => (None, None),
+        selection::ReadOutcome::Current(current) => (Some(current), None),
+        selection::ReadOutcome::BranchMismatch {
+            selection: recorded,
+            checkpoint,
+        } => {
+            if recorded.project_id != project_facts.id || recorded.target != target {
+                return Err(Diagnostic::input(
+                    "The project identity or delivery target changed; reconcile the existing selection explicitly.",
+                ));
+            }
+            if !(options.inspect || options.dry_run) {
+                return Err(selection::branch_mismatch_diagnostic(&checkpoint));
+            }
+            (None, Some(checkpoint))
+        }
+    };
     let mut selection = previous.clone().unwrap_or(Selection {
         version: 2,
         repository: context.repository.clone(),
@@ -329,6 +346,16 @@ async fn execute(
         .cloned()
         .collect();
     if options.inspect || options.dry_run {
+        if let Some(checkpoint) = foreign_checkpoint {
+            let mut report = Report::success(
+                "issue",
+                "prepared_blocked",
+                serde_json::json!({"prepared":selection.intents,"adopted":selection.issues,"selection":selection,"candidates":candidate_reports,"writes":false,"write_eligible":false,"checkpoint":checkpoint,"repository":context.repository,"project_id":project_facts.id,"target":target,"new_branch":options.branch,"missing_labels":missing_labels,"label_creation_requested":options.create_labels}),
+            );
+            report.next_actions.push(serde_json::json!({"kind":"return_to_checkpoint_branch","branch":checkpoint.recorded_branch,"remedy":"Return to the recorded branch to resume the existing checkpoint."}));
+            report.next_actions.push(serde_json::json!({"kind":"use_independent_worktree","remedy":"Use a separate worktree for this prepared delivery before performing writes."}));
+            return Ok(report);
+        }
         return Ok(Report::success(
             "issue",
             "prepared",
