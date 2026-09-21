@@ -42,8 +42,8 @@ fn files_below(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn checkpoint_path(f: &Fixture) -> PathBuf {
-    f.root.join(".git/specgit-v2/selection.json")
+fn checkpoint_path(fixture: &Fixture) -> PathBuf {
+    fixture.root.join(".git/specgit-v2/selection.json")
 }
 
 fn assert_foreign_checkpoint(report: &serde_json::Value, recorded: &str, current: &str) {
@@ -60,24 +60,24 @@ fn assert_foreign_checkpoint(report: &serde_json::Value, recorded: &str, current
 #[test]
 fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint() {
     for provider in ["github", "gitlab"] {
-        let f = Fixture::new(provider);
-        let selected = f.run(&["issue", "--create-labels", "feat: branch A work"]);
+        let fixture = Fixture::new(provider);
+        let selected = fixture.run(&["issue", "--create-labels", "feat: branch A work"]);
         assert_eq!(selected["exit"], 0, "{selected}");
-        let checkpoint = checkpoint_path(&f);
+        let checkpoint = checkpoint_path(&fixture);
         let before_checkpoint = fs::read(&checkpoint).unwrap();
-        let before_files = files_below(&f.root.join(".git/specgit-v2"));
+        let before_files = files_below(&fixture.root.join(".git/specgit-v2"));
 
-        git(&f.root, &["switch", "-c", "branch-b"]);
-        let writes = f.writes();
-        let calls = f.state()["calls"].as_array().unwrap().len();
+        git(&fixture.root, &["switch", "-c", "branch-b"]);
+        let writes = fixture.writes();
+        let calls = fixture.state()["calls"].as_array().unwrap().len();
 
-        let status = f.run(&["status"]);
+        let status = fixture.run(&["status"]);
         assert_eq!(status["exit"], 0, "{status}");
         assert_eq!(status["status"], "checkpoint_branch_mismatch", "{status}");
         assert!(status["evidence"]["selection"].is_null(), "{status}");
         assert_foreign_checkpoint(&status, "feature", "branch-b");
 
-        let inspect = f.run(&["issue", "fix: branch B inspection", "--inspect"]);
+        let inspect = fixture.run(&["issue", "fix: branch B inspection", "--inspect"]);
         assert_eq!(inspect["exit"], 0, "{inspect}");
         assert_eq!(inspect["status"], "prepared_blocked", "{inspect}");
         assert_foreign_checkpoint(&inspect, "feature", "branch-b");
@@ -99,7 +99,7 @@ fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint(
             "foreign intents leaked into inspection: {inspect}"
         );
         assert!(
-            f.state()["calls"].as_array().unwrap()[calls..]
+            fixture.state()["calls"].as_array().unwrap()[calls..]
                 .iter()
                 .any(|call| {
                     let endpoint = call["endpoint"].as_str().unwrap_or_default();
@@ -109,7 +109,7 @@ fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint(
             "inspection must perform a fresh native candidate search"
         );
 
-        let dry_run = f.run(&[
+        let dry_run = fixture.run(&[
             "issue",
             "docs: branch B preview",
             "--dry-run",
@@ -125,7 +125,7 @@ fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint(
             vec!["issue", "--create-labels", "fix: forbidden branch B write"],
             vec!["pr"],
         ] {
-            let rejected = f.run(&mutation);
+            let rejected = fixture.run(&mutation);
             assert_eq!(rejected["exit"], 3, "{rejected}");
             assert_eq!(rejected["diagnostics"][0]["code"], "ownership_conflict");
             let diagnostic = rejected["diagnostics"][0].to_string();
@@ -133,12 +133,15 @@ fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint(
             assert!(diagnostic.contains("branch-b"), "{rejected}");
             assert!(diagnostic.contains("selection.json"), "{rejected}");
         }
-        assert_eq!(f.writes(), writes);
+        assert_eq!(fixture.writes(), writes);
         assert_eq!(fs::read(&checkpoint).unwrap(), before_checkpoint);
-        assert_eq!(files_below(&f.root.join(".git/specgit-v2")), before_files);
+        assert_eq!(
+            files_below(&fixture.root.join(".git/specgit-v2")),
+            before_files
+        );
 
-        git(&f.root, &["switch", "feature"]);
-        let resumed = f.run(&["status"]);
+        git(&fixture.root, &["switch", "feature"]);
+        let resumed = fixture.run(&["status"]);
         assert_eq!(resumed["exit"], 0, "{resumed}");
         assert_eq!(resumed["evidence"]["selection"]["issues"], json!([1]));
     }
@@ -147,12 +150,12 @@ fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint(
 #[test]
 fn foreign_branch_diagnostics_preserve_unresolved_issue_and_request_writes() {
     for pending in ["issue", "request"] {
-        let f = Fixture::new("github");
+        let fixture = Fixture::new("github");
         assert_eq!(
-            f.run(&["issue", "--create-labels", "feat: unresolved write"])["exit"],
+            fixture.run(&["issue", "--create-labels", "feat: unresolved write"])["exit"],
             0
         );
-        let checkpoint = checkpoint_path(&f);
+        let checkpoint = checkpoint_path(&fixture);
         let mut selection: serde_json::Value =
             serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
         if pending == "issue" {
@@ -165,15 +168,15 @@ fn foreign_branch_diagnostics_preserve_unresolved_issue_and_request_writes() {
         }
         fs::write(&checkpoint, serde_json::to_vec_pretty(&selection).unwrap()).unwrap();
         let before = fs::read(&checkpoint).unwrap();
-        git(&f.root, &["switch", "-c", "foreign-pending"]);
+        git(&fixture.root, &["switch", "-c", "foreign-pending"]);
 
-        let status = f.run(&["status"]);
+        let status = fixture.run(&["status"]);
         assert_eq!(status["exit"], 0, "{status}");
         assert_eq!(
             status["evidence"]["checkpoint"]["pending_write"], true,
             "{status}"
         );
-        let inspect = f.run(&["issue", "fix: independent foreign inspection", "--inspect"]);
+        let inspect = fixture.run(&["issue", "fix: independent foreign inspection", "--inspect"]);
         assert_eq!(inspect["status"], "prepared_blocked", "{inspect}");
         assert_eq!(inspect["evidence"]["checkpoint"]["pending_write"], true);
         assert!(
@@ -186,8 +189,8 @@ fn foreign_branch_diagnostics_preserve_unresolved_issue_and_request_writes() {
         );
         assert_eq!(fs::read(&checkpoint).unwrap(), before);
 
-        git(&f.root, &["switch", "feature"]);
-        let owner = f.run(&["status"]);
+        git(&fixture.root, &["switch", "feature"]);
+        let owner = fixture.run(&["status"]);
         assert_eq!(owner["exit"], 0, "{owner}");
         if pending == "issue" {
             assert_eq!(
@@ -241,20 +244,20 @@ fn malformed_or_foreign_repository_checkpoints_remain_rejected() {
             "request_intent": null
         }),
     ] {
-        let f = Fixture::new("github");
+        let fixture = Fixture::new("github");
         assert_eq!(
-            f.run(&["issue", "--create-labels", "feat: establish checkpoint"])["exit"],
+            fixture.run(&["issue", "--create-labels", "feat: establish checkpoint"])["exit"],
             0
         );
-        let checkpoint = checkpoint_path(&f);
+        let checkpoint = checkpoint_path(&fixture);
         fs::write(
             &checkpoint,
             serde_json::to_vec_pretty(&replacement).unwrap(),
         )
         .unwrap();
         let before = fs::read(&checkpoint).unwrap();
-        let writes = f.writes();
-        git(&f.root, &["switch", "-c", "other-branch"]);
+        let writes = fixture.writes();
+        git(&fixture.root, &["switch", "-c", "other-branch"]);
         for command in [
             vec!["status"],
             vec!["issue", "fix: must not degrade", "--inspect"],
@@ -265,26 +268,26 @@ fn malformed_or_foreign_repository_checkpoints_remain_rejected() {
                 "--create-labels",
             ],
         ] {
-            let rejected = f.run(&command);
+            let rejected = fixture.run(&command);
             assert_eq!(rejected["exit"], 3, "{rejected}");
             assert_eq!(rejected["diagnostics"][0]["code"], "ownership_conflict");
         }
         assert_eq!(fs::read(&checkpoint).unwrap(), before);
-        assert_eq!(f.writes(), writes);
+        assert_eq!(fixture.writes(), writes);
     }
 }
 
 #[test]
 fn detached_head_can_diagnose_a_foreign_checkpoint_but_cannot_mutate_it() {
-    let f = Fixture::new("github");
+    let fixture = Fixture::new("github");
     assert_eq!(
-        f.run(&["issue", "--create-labels", "feat: owner"])["exit"],
+        fixture.run(&["issue", "--create-labels", "feat: owner"])["exit"],
         0
     );
-    let checkpoint = checkpoint_path(&f);
+    let checkpoint = checkpoint_path(&fixture);
     let before = fs::read(&checkpoint).unwrap();
-    git(&f.root, &["switch", "--detach"]);
-    let status = f.run(&["status"]);
+    git(&fixture.root, &["switch", "--detach"]);
+    let status = fixture.run(&["status"]);
     assert_eq!(status["exit"], 0, "{status}");
     assert_eq!(status["status"], "checkpoint_branch_mismatch", "{status}");
     assert_eq!(
@@ -292,7 +295,7 @@ fn detached_head_can_diagnose_a_foreign_checkpoint_but_cannot_mutate_it() {
         "feature"
     );
     assert!(status["evidence"]["checkpoint"]["current_branch"].is_null());
-    let rejected = f.run(&["issue", "1"]);
+    let rejected = fixture.run(&["issue", "1"]);
     assert_eq!(rejected["exit"], 2, "{rejected}");
     assert_eq!(rejected["diagnostics"][0]["code"], "invalid_input");
     assert_eq!(fs::read(&checkpoint).unwrap(), before);
@@ -300,25 +303,25 @@ fn detached_head_can_diagnose_a_foreign_checkpoint_but_cannot_mutate_it() {
 
 #[test]
 fn linked_worktree_has_an_independent_checkpoint_namespace() {
-    let mut f = Fixture::new("github");
+    let mut fixture = Fixture::new("github");
     assert_eq!(
-        f.run(&["issue", "--create-labels", "feat: primary worktree"])["exit"],
+        fixture.run(&["issue", "--create-labels", "feat: primary worktree"])["exit"],
         0
     );
-    let primary_root = f.root.clone();
-    let primary_checkpoint = checkpoint_path(&f);
+    let primary_root = fixture.root.clone();
+    let primary_checkpoint = checkpoint_path(&fixture);
     let primary_before = fs::read(&primary_checkpoint).unwrap();
     let linked = primary_root.parent().unwrap().join("linked");
     git(
         &primary_root,
         &["worktree", "add", "-b", "linked-branch", "../linked"],
     );
-    f.root = linked;
+    fixture.root = linked;
 
-    let status = f.run(&["status"]);
+    let status = fixture.run(&["status"]);
     assert_eq!(status["exit"], 0, "{status}");
     assert!(status["evidence"]["selection"].is_null(), "{status}");
-    let inspect = f.run(&["issue", "fix: linked inspection", "--inspect"]);
+    let inspect = fixture.run(&["issue", "fix: linked inspection", "--inspect"]);
     assert_eq!(inspect["exit"], 0, "{inspect}");
     assert_ne!(inspect["status"], "prepared_blocked", "{inspect}");
     assert!(
@@ -330,7 +333,7 @@ fn linked_worktree_has_an_independent_checkpoint_namespace() {
         "{inspect}"
     );
     assert_eq!(fs::read(&primary_checkpoint).unwrap(), primary_before);
-    assert!(!checkpoint_path(&f).exists());
+    assert!(!checkpoint_path(&fixture).exists());
 }
 #[test]
 fn both_forges_create_many_specs_then_resume_preserving_native_edits_without_new_writes() {

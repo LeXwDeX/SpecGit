@@ -492,7 +492,9 @@ async fn main() {
                     Ok(context) => {
                         let selection = match specgit::selection::classify(&context) {
                             Ok(specgit::selection::ReadOutcome::Absent) => None,
-                            Ok(specgit::selection::ReadOutcome::Current(s)) => Some(s),
+                            Ok(specgit::selection::ReadOutcome::Current(current_selection)) => {
+                                Some(current_selection)
+                            }
                             Ok(specgit::selection::ReadOutcome::BranchMismatch {
                                 checkpoint,
                                 ..
