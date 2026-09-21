@@ -490,8 +490,22 @@ async fn main() {
                 .await
                 {
                     Ok(context) => {
-                        let selection = match specgit::selection::read(&context) {
-                            Ok(s) => s,
+                        let selection = match specgit::selection::classify(&context) {
+                            Ok(specgit::selection::ReadOutcome::Absent) => None,
+                            Ok(specgit::selection::ReadOutcome::Current(s)) => Some(s),
+                            Ok(specgit::selection::ReadOutcome::BranchMismatch {
+                                checkpoint,
+                                ..
+                            }) => {
+                                let mut report = Report::success(
+                                    "status",
+                                    "checkpoint_branch_mismatch",
+                                    serde_json::json!({"context":context,"declaration":declaration,"selection":null,"checkpoint":checkpoint,"write_eligible":false,"remote_state":"not_checked"}),
+                                );
+                                report.next_actions.push(serde_json::json!({"kind":"return_to_checkpoint_branch","branch":checkpoint.recorded_branch,"remedy":"Return to the recorded branch to resume this checkpoint."}));
+                                report.next_actions.push(serde_json::json!({"kind":"use_independent_worktree","remedy":"Use a separate worktree for an independent delivery; do not move or discard this checkpoint."}));
+                                return report;
+                            }
                             Err(d) => return Report::failure("status", d),
                         };
                         Report::success(
