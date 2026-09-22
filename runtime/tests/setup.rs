@@ -140,6 +140,18 @@ fn new_user_command_registers_both_hosts_and_repeat_is_idempotent() {
             include_str!("../assets/SKILL.md").replace("{{version}}", env!("CARGO_PKG_VERSION"))
         );
     }
+    let codex_hooks: Value =
+        serde_json::from_slice(&fs::read(root.join("codex/hooks.json")).unwrap()).unwrap();
+    assert_eq!(
+        codex_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["args"][0],
+        "hook"
+    );
+    assert!(
+        codex_hooks["hooks"]["PreToolUse"][0]["matcher"]
+            .as_str()
+            .unwrap()
+            .contains("apply_patch")
+    );
     assert_eq!(run(&[])["evidence"]["transaction"]["changes"], 0);
     run(&["--uninstall"]);
     for host in ["codex", "opencode"] {
@@ -151,6 +163,7 @@ fn new_user_command_registers_both_hosts_and_repeat_is_idempotent() {
                 .exists()
         );
     }
+    assert!(!root.join("codex/hooks.json").exists());
 }
 
 #[test]
