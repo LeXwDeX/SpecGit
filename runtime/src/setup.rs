@@ -35,6 +35,8 @@ struct Receipt {
     registration: Option<Registration>,
     #[serde(default)]
     hosts: BTreeMap<String, HostRegistration>,
+    #[serde(default)]
+    host_hooks: BTreeMap<String, Registration>,
 }
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -264,9 +266,11 @@ fn read_receipt(root: &Path) -> Result<(Snapshot, Receipt), Diagnostic> {
             || r.owner != "specgit"
             || r.files.len() > 30
             || r.hosts.len() > 2
+            || r.host_hooks.len() > 1
             || r.hosts
                 .keys()
                 .any(|host| !["codex", "opencode"].contains(&host.as_str()))
+            || r.host_hooks.keys().any(|host| host != "codex")
             || r.files.keys().any(|p| !owned_relative(p))
         {
             return Err(conflict("The ownership receipt is unsupported or unsafe."));
@@ -283,7 +287,7 @@ fn read_receipt(root: &Path) -> Result<(Snapshot, Receipt), Diagnostic> {
 }
 fn manifest(binary: &Path, root: &Path) -> BTreeMap<String, Value> {
     ["SessionStart","PreToolUse","PostToolUse","Stop"].into_iter().map(|event|{
-        let mut entry=json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ "Write|Edit|MultiEdit|Bash|PowerShell" }else{""},"hooks":[{"type":"command","command":binary,"args":["hook","--event",event,"--state-root",root],"timeout":5}]});
+        let mut entry=json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ "Write|Edit|MultiEdit|Bash|PowerShell|apply_patch" }else{""},"hooks":[{"type":"command","command":binary,"args":["hook","--event",event,"--state-root",root],"timeout":5}]});
         if event == "PostToolUse" {
             entry["hooks"].as_array_mut().expect("hooks is an array").push(json!({"type":"command","command":binary,"args":["hook","--event",event,"--state-root",root,"--observe"],"async":true,"timeout":1830}));
         }
@@ -547,7 +551,7 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         changes.push(host_skill);
         let change =
             registration_change(settings, previous.registration.as_ref(), entries.as_ref())?;
-        if let Some(entries) = entries {
+        if let Some(entries) = &entries {
             let mut registration = if let Some(old) = &previous.registration {
                 old.clone()
             } else {
@@ -568,7 +572,7 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
                         .collect(),
                 }
             };
-            registration.entries = entries;
+            registration.entries = entries.clone();
             registration.skill = Some(OwnedHostSkill {
                 path: host_skill_path,
                 hash: assets::hash(&skill_bytes()),
@@ -583,6 +587,41 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         changes.extend(host_assets);
         if let Some(registration) = registration {
             receipt.hosts.insert(host.clone(), registration);
+        }
+        if host == "codex" {
+            let hooks_path = root.join("hooks.json");
+            let previous_hooks = previous.host_hooks.get(host);
+            let hook_change = registration_change(&hooks_path, previous_hooks, entries.as_ref())?;
+            if let Some(entries) = &entries {
+                let mut registration = if let Some(old) = previous_hooks {
+                    old.clone()
+                } else {
+                    let before = match &hook_change.before.bytes {
+                        Some(bytes) => input::json(bytes, 1_048_576, 32)?,
+                        None => json!({}),
+                    };
+                    Registration {
+                        settings: hooks_path,
+                        entries: BTreeMap::new(),
+                        created_file: hook_change.before.bytes.is_none(),
+                        created_hook_map: before.get("hooks").is_none(),
+                        skill: None,
+                        created_event_keys: entries
+                            .keys()
+                            .filter(|event| {
+                                before
+                                    .get("hooks")
+                                    .and_then(|hooks| hooks.get(*event))
+                                    .is_none()
+                            })
+                            .cloned()
+                            .collect(),
+                    }
+                };
+                registration.entries = entries.clone();
+                receipt.host_hooks.insert(host.clone(), registration);
+            }
+            changes.push(hook_change);
         }
     }
     let has_registration = selected_settings.is_some() || !selected_hosts.is_empty();

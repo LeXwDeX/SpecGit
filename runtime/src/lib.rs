@@ -3,6 +3,7 @@ pub mod assets;
 pub mod config;
 pub mod delivery_context;
 pub mod diagnostic;
+pub mod guard;
 pub mod guidance;
 pub mod hook;
 pub mod i18n;

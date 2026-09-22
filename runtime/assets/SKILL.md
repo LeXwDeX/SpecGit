@@ -85,6 +85,13 @@ recheck. Preview project and global asset writes with `init --dry-run` and
 `setup --dry-run`; ownership conflicts preserve user files for reconciliation.
 Local init/setup refresh needs no delivery Issue.
 
+When the repository requires host-independent enforcement, use
+`specgit guard --install` to merge owned pre-commit and pre-push blocks into
+the effective Git hooks path. The pre-push block validates each branch ref and
+replays stdin to existing shell hooks. Husky's `.husky/_` dispatcher is mapped
+to its user scripts. Unsupported non-shell hooks are preserved and reported.
+Use `specgit guard --uninstall` to remove only the recorded SpecGit blocks.
+
 Initialization maintains one Git-local `info/exclude` block for `.specgit.yaml`
 and wholly generated project guidance. Read `local_exclusion` in its result:
 ignore rules do not untrack existing files, and mixed user/generated guidance

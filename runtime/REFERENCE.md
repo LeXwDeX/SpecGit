@@ -58,7 +58,7 @@ the executable's contract and checked against the installed native binary.
 Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
 `--human` forces text. `--json` and `--human` conflict. `hook` uses host-specific
-framing regardless of ordinary output selection.
+framing and `guard` uses Git-hook exit semantics regardless of ordinary output selection.
 
 Explicit JSON input is one object with `command`, `options` and optional `args`:
 
@@ -106,12 +106,13 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` register Claude hooks. `--register-codex` / `--register-opencode` install each host's native skill and managed global instructions; `--codex-root` / `--opencode-root` select explicit host configuration directories. Existing registered roots persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes all registrations owned by the selected setup root, preserving unrelated instructions. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall; repeat explicit host roots if rolling back a removed receipt. Written registration is not verified host import or event delivery. |
+| `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` register Claude hooks. `--register-codex` registers Codex hooks and installs its native skill and managed global instructions. `--register-opencode` installs OpenCode guidance and skill until that host exposes the same blocking protocol. `--codex-root` / `--opencode-root` select explicit host configuration directories. Existing registered roots persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes only registrations owned by the selected setup root. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–3,600; default 1,800), `--poll-seconds` (1–300; default 15). |
-| `hook` | Host event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. Bounded informational framing; no write permission is granted. |
+| `hook` | Codex/Claude event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. |
+| `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`, optional `--state-root`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
 | `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
@@ -234,11 +235,13 @@ notices are refreshed before delivery and superseded by changed evidence.
 performs one read and retains pending intent. Explicit inbox acknowledgment is a
 transport receipt, not human reading, approval or permission to mutate.
 
-Claude registration includes SessionStart, PreToolUse, PostToolUse and Stop.
+Codex and Claude registration include SessionStart, PreToolUse, PostToolUse and Stop.
 Relevant PostToolUse may launch a bounded asynchronous observer. Registration is
 `written_not_verified`; import, context injection, visible messages and later-turn
 delivery require separate host evidence. Immediate idle wake is not supported.
-Stop does not request another model turn, and hooks never acknowledge themselves.
+Stop requests at most one recovery turn when a dirty initialized project lacks a
+valid checkpoint; the host's repeated-event flag makes the next Stop silent.
+Hooks never acknowledge themselves.
 Use explicit watch/inbox when automatic delivery is unavailable.
 
 ## Assets, migration and installation

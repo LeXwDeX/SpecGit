@@ -550,12 +550,20 @@ Unknown optional host fields are preserved; unsupported event/schema versions
 produce a safe diagnostic. Broken context collection should not falsely block
 unrelated ordinary tools. Ignore the adapter's own operations to avoid recursion.
 
+PreToolUse resolves direct file paths, including new-file ancestors and patch
+headers, before selecting a repository. Initialized v2 repositories deny tracked
+edits unless the local checkpoint matches repository, current branch, target and
+complete selected Issue intents. Cross-repository patch calls are denied and split.
+Only confidently classified shell mutations enter this gate; Git pre-commit and
+pre-push guards provide the host-independent backstop.
+
 Capabilities distinguish exported manifest, imported event, context injection,
 visible message, next-turn delivery and idle wake-up. Validate each claimed host
 path with the installed binary. Standard asynchronous output may arrive next turn;
 wake only through a supported, tested host mechanism. Without immediate delivery,
-persist inbox entries and surface the limitation. Stop is a single honest handoff,
-not an endless block loop. Local status and explicit watch remain useful without
+persist inbox entries and surface the limitation. Stop can request one recovery
+turn for a dirty project without a valid checkpoint; the repeated-event flag
+prevents an endless block loop. Local status and explicit watch remain useful without
 any host integration.
 
 ## Migration, acceptance and later task handoff

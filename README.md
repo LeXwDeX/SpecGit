@@ -87,6 +87,13 @@ unrelated guidance and reports ownership conflicts. Written registration is
 reported separately from actual host discovery or event delivery; a reload or
 another turn may be needed to verify the host.
 
+Codex and Claude PreToolUse hooks reject tracked edits in an initialized v2
+project until the current repository and branch have a complete selected-Issue
+checkpoint. `specgit guard --install` adds owned pre-commit and pre-push blocks
+to the effective native/custom hook path, including Husky user scripts, and
+`--uninstall` removes only those blocks. The installed pre-push block buffers
+and replays Git's standard ref stdin for the existing user hook.
+
 After CLI upgrades, use the [agent installation document](docs/agent-install.md)
 again to verify the executable selected by PATH and refresh the existing project
 and host integration. Existing settings are preserved unless a change is selected.
