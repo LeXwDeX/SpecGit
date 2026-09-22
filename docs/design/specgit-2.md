@@ -274,13 +274,17 @@ adapter; avoid on-demand package downloads or repository-supplied shell snippets
 | Event | Work | Output |
 | --- | --- | --- |
 | SessionStart / resume | Resolve initialized project, refresh local context, deliver pending events | Current delivery and outstanding work |
-| PreToolUse | Cheap local checks for relevant mutating tools | Binding/flow diagnostic; no remote polling |
+| PreToolUse | Resolve direct file targets and confidently mutating commands to their actual repository; validate the local Issue checkpoint | Structured deny before an uncovered tracked edit; no remote polling |
 | PostToolUse | Detect relevant delivery changes and start/resume background observation | Asynchronous state-change or terminal result |
-| Stop | Report relevant pending delivery state, without an unconditional blocking loop | Honest handoff when work remains |
+| Stop | Report relevant pending delivery state and allow one checkpoint-recovery continuation | Honest handoff when work remains; repeated Stop is silent |
 
 A command-shaped event is only a trigger hint. Re-read actual Git/forge facts;
 never infer a successful push or merge solely from a shell command string. Ignore
 SpecGit's own observation calls to prevent recursive hook invocation.
+
+Direct file tools include new files and multi-file patches. A single tool call
+that crosses repositories is split before authorization. Ambiguous shell commands
+remain non-blocking trigger hints and are checked again through Git state.
 
 Host capability negotiation distinguishes context injection, visible message,
 next-turn delivery and idle wake-up. Standard async output may wait until the
@@ -291,7 +295,8 @@ A fallback pending-event inbox must be disclosed and exercised on resume.
 Setup installs global hook assets and skills under an OS-appropriate per-user
 location, with an override for isolated tests. It reports the installed path,
 schema version and import/registration status. Native Claude registration is an
-explicit host choice. Existing user hooks/settings remain intact; updates and
+explicit host choice; Codex registration owns equivalent entries in its hooks
+file. Existing user hooks/settings remain intact; updates and
 uninstall touch only provably owned entries. Preserve unknown JSON and hook
 stdin, reject unsafe symlink/path traversal, detect concurrent user edits and
 use atomic writes with rollback. Never overwrite a foreign entry based on name. Project init never writes global

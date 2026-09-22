@@ -38,6 +38,42 @@ fn fixture() -> tempfile::TempDir {
     );
     t
 }
+fn checkpoint(root: &std::path::Path, branch: &str) {
+    let git_dir = String::from_utf8(
+        Command::new("git")
+            .current_dir(root)
+            .args(["rev-parse", "--absolute-git-dir"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let directory = std::path::Path::new(git_dir.trim()).join("specgit-v2");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("selection.json"),
+        serde_json::to_vec_pretty(&json!({
+            "version": 2,
+            "repository": {"provider":"github","host":"github.com","path":"owner/repo"},
+            "project_id": 7,
+            "branch": branch,
+            "target": "main",
+            "issues": [41],
+            "intents": [{
+                "title":"feat: fixture",
+                "body":"## Why\nfixture\n\n## Scope\nfixture\n\n## Approach\nfixture\n\n## Acceptance\nfixture",
+                "labels": [],
+                "issue": 41,
+                "write_started": true
+            }],
+            "request": null,
+            "request_write_started": false,
+            "request_intent": null
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
 fn run(event: &str, bytes: &[u8]) -> std::process::Output {
     let mut child = executable::command()
         .args(["hook", "--event", event])
@@ -95,6 +131,7 @@ fn event_context_keeps_unknown_input_and_never_grants_permission_or_loops_stop()
         "version: 2\nremote: origin\nlanguage: zh\n",
     )
     .unwrap();
+    checkpoint(t.path(), "master");
     for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
         let p = json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":"file","unknown":{"retain":[1,true]}},"future_field":"retained by host"});
         let original = p.clone();
@@ -129,6 +166,89 @@ fn event_context_keeps_unknown_input_and_never_grants_permission_or_loops_stop()
             );
         }
     }
+}
+#[test]
+fn pre_tool_use_denies_tracked_edits_without_a_current_issue_checkpoint() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\nlanguage: en\n",
+    )
+    .unwrap();
+    for payload in [
+        json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}}),
+        json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: new/file.rs\n+x\n*** End Patch"}}),
+    ] {
+        let out = run("PreToolUse", &serde_json::to_vec(&payload).unwrap());
+        assert!(out.status.success());
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert!(
+            value["hookSpecificOutput"]["permissionDecisionReason"]
+                .as_str()
+                .unwrap()
+                .contains("Issue checkpoint")
+        );
+    }
+}
+
+#[test]
+fn pre_tool_use_accepts_only_the_checkpoint_branch_and_rejects_cross_repository_patches() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\ntarget: main\nlanguage: en\n",
+    )
+    .unwrap();
+    checkpoint(t.path(), "master");
+    let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}});
+    let value: Value =
+        serde_json::from_slice(&run("PreToolUse", &serde_json::to_vec(&payload).unwrap()).stdout)
+            .unwrap();
+    assert!(
+        value["hookSpecificOutput"]
+            .get("permissionDecision")
+            .is_none()
+    );
+    git(t.path(), &["checkout", "-b", "other"]);
+    let value: Value =
+        serde_json::from_slice(&run("PreToolUse", &serde_json::to_vec(&payload).unwrap()).stdout)
+            .unwrap();
+    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+
+    let other = fixture();
+    fs::write(
+        other.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\n",
+    )
+    .unwrap();
+    let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"apply_patch","tool_input":{"command":format!("*** Begin Patch\n*** Update File: {}\n+x\n*** Update File: {}\n+y\n*** End Patch",t.path().join("a").display(),other.path().join("b").display())}});
+    let value: Value =
+        serde_json::from_slice(&run("PreToolUse", &serde_json::to_vec(&payload).unwrap()).stdout)
+            .unwrap();
+    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+}
+
+#[test]
+fn stop_requests_at_most_one_checkpoint_recovery_turn() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\n",
+    )
+    .unwrap();
+    let mut payload =
+        json!({"session_id":"fixture-session","hook_event_name":"Stop","cwd":t.path()});
+    let value: Value =
+        serde_json::from_slice(&run("Stop", &serde_json::to_vec(&payload).unwrap()).stdout)
+            .unwrap();
+    assert_eq!(value["decision"], "block");
+    payload["stop_hook_active"] = json!(true);
+    assert!(
+        run("Stop", &serde_json::to_vec(&payload).unwrap())
+            .stdout
+            .is_empty()
+    );
 }
 #[test]
 fn malformed_duplicate_and_oversized_hook_inputs_remain_nonblocking() {
@@ -214,6 +334,10 @@ fn native_write_commands_trigger_observation_context_but_observer_commands_do_no
     )
     .unwrap();
     for (command, relevant) in [
+        ("touch generated.rs", true),
+        ("sed -i.bak 's/a/b/' source.rs", true),
+        ("printf data > output.txt", true),
+        ("printf 'a > b'", false),
         ("specgit pr --ready", true),
         ("specgit --json pr --ready", true),
         ("specgit --cwd '/tmp/project space' --json pr --ready", true),
