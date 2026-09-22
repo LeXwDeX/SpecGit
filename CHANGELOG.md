@@ -1,3 +1,10 @@
+# 2.1.0
+
+- Require a matching project, branch and Issue checkpoint before Codex or Claude tracked edits, including direct file tools, `apply_patch` and confidently mutating shell commands.
+- Resolve file targets to their actual Git repository, reject cross-repository tool calls, and limit Stop recovery to one bounded turn.
+- Add installable `pre-commit` and `pre-push` guards that preserve existing native hooks, Husky scripts and custom `core.hooksPath` content while validating staged changes and every pushed branch ref.
+- Register owned Codex `hooks.json` entries without replacing foreign hooks, retain Claude compatibility, and keep OpenCode on skill and guidance integration until it exposes an equivalent blocking hook protocol.
+
 # 2.0.4
 
 - Keep offline status useful after switching away from a branch with a delivery checkpoint: report both branches and preserve the original checkpoint.
