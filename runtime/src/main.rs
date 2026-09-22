@@ -7,7 +7,7 @@ use specgit::{
     report::Report,
 };
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
     path::PathBuf,
 };
 
@@ -87,7 +87,7 @@ enum Commands {
         register_claude: bool,
         #[arg(long, requires = "register_claude")]
         claude_settings: Option<PathBuf>,
-        /// Install Codex's native skill and managed global instructions.
+        /// Register Codex hooks and install its native skill and managed global instructions.
         #[arg(long)]
         register_codex: bool,
         #[arg(long, requires = "register_codex")]
@@ -113,6 +113,15 @@ enum Commands {
         observe: bool,
         #[arg(long)]
         state_root: Option<PathBuf>,
+    },
+    /// Enforce the local Issue checkpoint from a Git pre-commit or pre-push hook.
+    Guard {
+        #[arg(long, value_enum, conflicts_with_all = ["install", "uninstall"])]
+        stage: Option<specgit::guard::Stage>,
+        #[arg(long, conflicts_with_all = ["stage", "uninstall"])]
+        install: bool,
+        #[arg(long, conflicts_with_all = ["stage", "install"])]
+        uninstall: bool,
     },
     /// Probe native command support and authenticated read-only API access.
     Doctor {
@@ -188,7 +197,7 @@ async fn main() {
         let root_name = command.get_name().to_owned();
         let mut contract = specgit::cli_contract::schema_with_effects(&mut command, |path| {
             let name = path.last().map(String::as_str).unwrap_or(&root_name);
-            serde_json::json!({"authorization":"existing_session_only","remote_writes":match name {"issue"|"pr"=>"explicit_issue_or_request_content_only",_=>"none"},"local_writes":"mode_dependent_see_options","forbidden":["merge","close_issue","delete_branch","administer_settings"],"framing":if name=="hook" {"host_event_protocol"} else {"single_json_document"}})
+            serde_json::json!({"authorization":"existing_session_only","remote_writes":match name {"issue"|"pr"=>"explicit_issue_or_request_content_only",_=>"none"},"local_writes":"mode_dependent_see_options","forbidden":["merge","close_issue","delete_branch","administer_settings"],"framing":if name=="hook" {"host_event_protocol"} else if name=="guard" {"git_hook_protocol"} else {"single_json_document"}})
         });
         contract["cli_version"] = env!("CARGO_PKG_VERSION").into();
         emit(Report::success("schema", "ok", contract), true);
@@ -285,6 +294,42 @@ async fn main() {
         // host stdin cannot hold runtime shutdown past the hook deadline.
         std::process::exit(0);
     }
+    if let Commands::Guard {
+        stage,
+        install,
+        uninstall,
+    } = &cli.command
+    {
+        if *install || *uninstall {
+            match specgit::guard::install(&Process::default(), &cwd, *uninstall).await {
+                Ok(value) => {
+                    println!("{value}");
+                    std::process::exit(0);
+                }
+                Err(diagnostic) => {
+                    eprintln!("{diagnostic}");
+                    std::process::exit(diagnostic.exit().into());
+                }
+            }
+        }
+        let Some(stage) = stage else {
+            eprintln!("git_guard: select exactly one of --stage, --install, or --uninstall.");
+            std::process::exit(2);
+        };
+        let mut bytes = vec![];
+        if matches!(stage, specgit::guard::Stage::PrePush) {
+            let _ = io::stdin()
+                .take((specgit::cli_contract::MAX_INPUT_BYTES + 1) as u64)
+                .read_to_end(&mut bytes);
+        }
+        match specgit::guard::check(*stage, &bytes, &Process::default(), &cwd).await {
+            Ok(()) => std::process::exit(0),
+            Err(diagnostic) => {
+                eprintln!("{diagnostic}");
+                std::process::exit(diagnostic.exit().into());
+            }
+        }
+    }
     let process = Process::default();
     let cancel = process.cancellation.clone();
     let task = tokio::spawn(async move {
@@ -334,7 +379,9 @@ async fn main() {
                 .await
             }
 
-            Commands::Hook { .. } => unreachable!("hook has its own framing"),
+            Commands::Hook { .. } | Commands::Guard { .. } => {
+                unreachable!("hook and guard have their own framing")
+            }
             Commands::Setup {
                 root,
                 provider,

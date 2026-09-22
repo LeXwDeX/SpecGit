@@ -84,7 +84,7 @@ explicitly reviewed document/issue amendment and its own evidence.
 | F32 | Bounded background observation | Regression + Smoke: hook returns while watcher runs, deadline/backoff/cancel, stalled subprocess, no daemon or generic job scheduling | #492 |
 | F33 | Subscription/event identity | Regression + Smoke: duplicate sessions/two worktrees/head-target changes, stable event IDs, no cross-conversation delivery, stale lease PID reuse | #492 |
 | F34 | Durable inbox/restart | Regression + Smoke: kill at persistence/delivery boundaries, fresh process re-reads before success, at-least-once dedupe, retention expiry reported | #492 |
-| F35 | Claude hook framing and relevance | Regression + installed Smoke: bounded stdin, event-specific stdout/exit mapping, SessionStart/Pre/Post/Stop, irrelevant repo silent, recursion excluded | #510 |
+| F35 | Codex/Claude hook framing and relevance | Regression + installed Smoke: bounded stdin, event-specific deny/context/Stop mapping, target-repository resolution, SessionStart/Pre/Post/Stop, irrelevant repo silent, recursion excluded | #510, #592 |
 | F36 | Actual host notification | Live: exact host import/event/context path, material state change, failure and completed; manifest/stdout alone never counted as delivered | #510, #492 |
 | F37 | Wake-up versus next-turn fallback | Live: claimed idle wake tested separately; unsupported host retains and presents inbox next turn; no invented Codex capability or endless Stop loop | #510, #492 |
 | F38 | Promotion association evidence | Regression + Live: two feature requests into intermediate then default; custom names; already closed, reverted/unpromoted/partial/duplicate/squash/cherry-pick limits explicit | #477 |
@@ -92,6 +92,7 @@ explicitly reviewed document/issue amendment and its own evidence.
 | F40 | Major-version authority and removed flags | Regression + Smoke: one active integration per project, v1 old draft preserved, obsolete closure/scope/reuse flags actionable, no silent reinterpretation | #513 |
 | F41 | Real Windows performance and coverage | Smoke + CI: green same-workload baseline/candidate per-file/process timings, complete applicable test accounting, no timeout/skip trick | #474 |
 | F42 | Public precompiled distribution | Smoke: credential-free public-registry install on target matrix, no Rust/private GitHub requirement, libc/architecture errors, disabled scripts where supported | #514 |
+| F43 | Local Git checkpoint backstop | Regression + installed Smoke: staged changes, multi-ref branch pushes, deletion/tag policy, malformed and mirror refs, native/custom hooksPath plus Husky/Lefthook coexistence | #593 |
 | F43 | Release integrity/recovery/privacy | Code + Regression + qualification Smoke: wrapper/binary versions/checksums, partial platform publish/tag/registry lag, no private paths/source; explicit authorized publication separately Live | #514 |
 | F44 | Private-source publishing capability | Code + qualification evidence: actual configured OIDC path and private-repo provenance limitation; no fake provenance or source-visibility change | #514 |
 | F45 | All shipped surfaces agree | Code + Smoke: help/schema/skills/generated guidance/README/reference/migration/install/release docs match actual 2.0 artifact; historical prose marked | #513 |

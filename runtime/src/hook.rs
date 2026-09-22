@@ -71,6 +71,27 @@ fn relevant(payload: &Value) -> bool {
         .and_then(Value::as_str)
         .unwrap_or("");
     let tokens: Vec<_> = command.split_whitespace().collect();
+    let executable = tokens.first().map(|token| {
+        token
+            .trim_matches(['\'', '"'])
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("")
+    });
+    if executable.is_some_and(|name| {
+        [
+            "rm", "mv", "cp", "touch", "mkdir", "rmdir", "truncate", "install", "patch", "rm.exe",
+            "mv.exe", "cp.exe",
+        ]
+        .contains(&name)
+    }) || (executable == Some("sed")
+        && tokens
+            .iter()
+            .any(|token| *token == "-i" || token.starts_with("-i.")))
+        || has_unquoted_redirect(command)
+    {
+        return true;
+    }
     if let Some(index) = tokens.iter().position(|token| {
         let executable = token
             .trim_matches(['\'', '"'])
@@ -120,10 +141,125 @@ fn relevant(payload: &Value) -> bool {
             .contains(&pair[1])
     })
 }
+fn has_unquoted_redirect(command: &str) -> bool {
+    let mut single = false;
+    let mut double = false;
+    let mut escaped = false;
+    for character in command.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if !single => escaped = true,
+            '\'' if !double => single = !single,
+            '"' if !single => double = !double,
+            '>' if !single && !double => return true,
+            _ => {}
+        }
+    }
+    false
+}
 struct Prepared {
     context: project::Context,
     language: Language,
     session: String,
+    target: Option<String>,
+}
+fn deny(message: &str) -> Output {
+    Output {
+        json: Some(json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": message
+            }
+        })),
+        diagnostic: None,
+    }
+}
+fn requested_paths(payload: &Value, cwd: &Path) -> Vec<PathBuf> {
+    let tool = payload
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let input = payload.get("tool_input").unwrap_or(&Value::Null);
+    let mut values = vec![];
+    for key in ["file_path", "path"] {
+        if let Some(path) = input.get(key).and_then(Value::as_str) {
+            values.push(path.to_owned());
+        }
+    }
+    if tool == "apply_patch" {
+        let patch = input
+            .get("patch")
+            .or_else(|| input.get("command"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        for line in patch.lines() {
+            for marker in ["*** Add File: ", "*** Update File: ", "*** Delete File: "] {
+                if let Some(path) = line.strip_prefix(marker) {
+                    values.push(path.trim().to_owned());
+                }
+            }
+        }
+    }
+    values
+        .into_iter()
+        .filter(|path| !path.is_empty() && path.len() <= 4096)
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        })
+        .collect()
+}
+fn existing_anchor(path: &Path) -> Option<PathBuf> {
+    let mut current = if path.is_dir() {
+        path.to_owned()
+    } else {
+        path.parent()?.to_owned()
+    };
+    while !current.exists() {
+        current = current.parent()?.to_owned();
+    }
+    Some(current)
+}
+async fn target_root(
+    process: &Process,
+    payload: &Value,
+    cwd: &Path,
+) -> Result<Option<PathBuf>, Output> {
+    let paths = requested_paths(payload, cwd);
+    let anchors = if paths.is_empty() {
+        vec![cwd.to_owned()]
+    } else {
+        paths
+            .iter()
+            .filter_map(|path| existing_anchor(path))
+            .collect()
+    };
+    let mut selected: Option<PathBuf> = None;
+    for anchor in anchors {
+        let bytes = match project::git(process, &anchor, &["rev-parse", "--show-toplevel"]).await {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
+        };
+        let root = match String::from_utf8(bytes) {
+            Ok(value) => PathBuf::from(value.trim_end_matches(['\r', '\n'])),
+            Err(_) => continue,
+        };
+        if selected.as_ref().is_some_and(|existing| existing != &root) {
+            return Err(deny(
+                "SpecGit cannot authorize one tool call that edits multiple repositories; split the edit by repository.",
+            ));
+        }
+        selected = Some(root);
+    }
+    Ok(selected)
 }
 async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> {
     if !["SessionStart", "PreToolUse", "PostToolUse", "Stop"].contains(&event) {
@@ -179,12 +315,8 @@ async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> 
         },
         ..Process::default()
     };
-    let root = match project::git(&process, &cwd, &["rev-parse", "--show-toplevel"]).await {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(s) => PathBuf::from(s.trim_end_matches(['\r', '\n'])),
-            Err(_) => return Ok(None),
-        },
-        Err(_) => return Ok(None),
+    let Some(root) = target_root(&process, &payload, &cwd).await? else {
+        return Ok(None);
     };
     let marker = match config::read(&root) {
         Ok(Some(d)) => d,
@@ -216,6 +348,7 @@ async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> 
         context,
         language: marker.language,
         session: session.to_owned(),
+        target: marker.target,
     }))
 }
 pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Output {
@@ -223,6 +356,7 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         context,
         language,
         session,
+        target,
     } = match prepare(event, bytes).await {
         Ok(Some(p)) => p,
         Ok(None) => return Output::default(),
@@ -237,6 +371,29 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         .as_bytes(),
     );
     let context_id = &context_id[..16];
+    let selection = crate::selection::read(&context);
+    let checkpoint_valid = selection.as_ref().is_ok_and(|selected| {
+        selected.as_ref().is_some_and(|selected| {
+            !selected.issues.is_empty()
+                && selected.issues.iter().all(|issue| {
+                    selected
+                        .intents
+                        .iter()
+                        .any(|intent| intent.issue == Some(*issue))
+                })
+                && target
+                    .as_ref()
+                    .is_none_or(|target| target == &selected.target)
+        })
+    });
+    if event == "PreToolUse" && !checkpoint_valid {
+        let reason = if language == Language::Zh {
+            "SpecGit 已阻止本次受跟踪修改：当前项目和分支没有有效的 Issue checkpoint。先运行 specgit issue --inspect 查重，再选择或创建包含 Why、Scope、Approach、Acceptance 的 Issue。"
+        } else {
+            "SpecGit blocked this tracked edit because this project and branch have no valid Issue checkpoint. Run specgit issue --inspect first, then select or create Issues with Why, Scope, Approach, and Acceptance."
+        };
+        return deny(reason);
+    }
     let mut text = if language == Language::Zh {
         format!(
             "SpecGit 2 [{context_id}]：当前分支 {branch}，本地{}。远端状态尚未检查；开始受跟踪的修改前先选择原生 issue，完成须确认目标分支已合并、全部选定 issue 已关闭。",
@@ -260,9 +417,19 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         }
     }
     if event == "Stop" {
-        // additionalContext on Stop requests another model turn. An informational
-        // systemMessage is an honest one-shot handoff, without a blocking loop.
-        if context.dirty {
+        if context.dirty && !checkpoint_valid {
+            Output {
+                json: Some(json!({
+                    "decision": "block",
+                    "reason": if language == Language::Zh {
+                        "工作区已有未关联有效 Issue checkpoint 的修改。检查并登记规格，或明确说明这些修改为何不属于本次交付；不要宣称交付完成。"
+                    } else {
+                        "The worktree has changes without a valid Issue checkpoint. Inspect and record the specification, or explain why the changes are outside this delivery; do not claim completion."
+                    }
+                })),
+                diagnostic: None,
+            }
+        } else if context.dirty {
             info(&text)
         } else {
             Output::default()
