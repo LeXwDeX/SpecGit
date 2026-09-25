@@ -8,7 +8,7 @@ registry checks and partial-publication recovery have been removed.
 After the intended changes are merged, dispatch the workflow on `main`:
 
 ```sh
-gh workflow run release-prepare.yml --ref main -f release_version=2.1.0
+gh workflow run release-prepare.yml --ref main -f release_version=2.1.1
 ```
 
 The version must match Cargo and the private development workspace. The workflow
@@ -59,7 +59,7 @@ through the existing authenticated `gh` session:
 ```sh
 node runtime/distribution/publish.mjs \
   --directory /absolute/native-bundle \
-  --version 2.1.0 --source <current-main-sha> --build-run <qualified-run-id> \
+  --version 2.1.1 --source <current-main-sha> --build-run <qualified-run-id> \
   --github
 ```
 
