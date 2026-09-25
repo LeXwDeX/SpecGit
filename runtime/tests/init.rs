@@ -84,9 +84,72 @@ impl Fixture {
         assert_eq!(v["exit"].as_i64(), out.status.code().map(i64::from));
         v
     }
+    fn run_human(&self, args: &[&str]) -> Value {
+        let mut paths = vec![self.bin.clone()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let out = executable::command()
+            .current_dir(&self.root)
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("SPECGIT_FIXTURE_API_FILE", &self.state)
+            .args(args)
+            .arg("--human")
+            .output()
+            .unwrap();
+        assert!(out.status.code().is_some(), "human command should exit");
+        let text = String::from_utf8(out.stdout).unwrap();
+        let json_start = text.find('{').expect("human report contains evidence JSON");
+        serde_json::from_str(&text[json_start..]).unwrap()
+    }
     fn state(&self) -> Value {
         serde_json::from_slice(&fs::read(&self.state).unwrap()).unwrap()
     }
+}
+
+#[test]
+fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
+    let f = Fixture::new();
+    let json_report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let human_evidence = f.run_human(&["init", "--provider", "github", "--inspect"]);
+    let checks = json_report["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 9);
+    let by_id = |id: &str| checks.iter().find(|check| check["id"] == id).unwrap();
+    assert_eq!(by_id("forge.read_access")["status"], "verified");
+    assert_eq!(by_id("forge.read_access")["requirement"], "required");
+    assert_eq!(by_id("issue.duplicate_read")["status"], "not_checked");
+    assert_eq!(by_id("issue.duplicate_read")["presentation"], "blocking");
+    assert_eq!(by_id("issue.write_permission")["status"], "not_checked");
+    assert_eq!(by_id("target.protection")["status"], "unknown");
+    assert_eq!(by_id("target.protection")["presentation"], "warning");
+    assert_eq!(by_id("request.eligibility")["requirement"], "optional");
+    assert_eq!(by_id("request.eligibility")["status"], "not_applicable");
+    for json_check in checks {
+        let human_check = human_evidence["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["id"] == json_check["id"])
+            .unwrap();
+        for field in ["id", "status", "requirement", "applies_to"] {
+            assert_eq!(human_check[field], json_check[field], "field {field}");
+        }
+    }
+    assert_eq!(json_report["exit"], 2);
+    assert_eq!(json_report["status"], "confirmation_required");
+    assert_eq!(json_report["evidence"]["written"], false);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert!(!f.root.join(".git/specgit-v2").exists());
+    assert_eq!(
+        f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["method"] == "POST" || call["method"] == "PUT")
+            .count(),
+        0,
+        "inspection must not probe native write permissions"
+    );
 }
 #[test]
 fn both_forges_init_refresh_reject_settings_writes_and_preserve_user_content() {
@@ -146,6 +209,13 @@ fn api_failure_and_invalid_declaration_leave_project_files_untouched() {
     fs::write(&f.state, state.to_string()).unwrap();
     let r = f.run(&["init", "--provider", "github"]);
     assert_eq!(r["exit"], 3);
+    let access = r["evidence"]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "forge.read_access")
+        .unwrap();
+    assert_eq!(access["status"], "failed");
     assert!(!f.root.join(".specgit.yaml").exists());
     assert!(!f.root.join("AGENTS.md").exists());
     fs::write(
