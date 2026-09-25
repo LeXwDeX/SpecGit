@@ -1,5 +1,5 @@
 use specgit::{
-    config::{Declaration, Labels, Language},
+    config::{Declaration, Labels, Language, Notification},
     diagnostic::Code,
 };
 #[test]
@@ -8,6 +8,11 @@ fn defaults_and_full_roundtrip_preserve_shared_choices() {
     assert_eq!(d.language, Language::En);
     assert_eq!(d.validation.labels, Labels::Off);
     assert_eq!(d.observation.poll_seconds, 15);
+    assert_eq!(d.observation.max_wait_seconds, 1800);
+    assert_eq!(
+        d.observation.notify,
+        vec![Notification::Attention, Notification::Completed]
+    );
     assert!(d.remote.is_none());
     assert!(!d.agent.native_auto_merge);
     assert!(!d.agent.close_issues_after_merge);
@@ -40,7 +45,10 @@ fn rejects_unknown_duplicate_conflicting_and_unbounded_input() {
         "version: 2\nvalidation: {titles: true, titles: false}",
         "version: 2\nvalidation: {extra: 1}",
         "version: 2\nobservation: {poll_seconds: 0}",
+        "version: 2\nobservation: {poll_seconds: 3601}",
         "version: 2\nobservation: {max_wait_seconds: 999999}",
+        "version: 2\nobservation: {max_wait_seconds: 86401}",
+        "version: 2\nobservation: {poll_seconds: 30, max_wait_seconds: 29}",
         "version: 2\nobservation: {notify: [completed, completed]}",
         "version: 2\nverification: {required_checks: [test, test]}",
         "version: 2\nvalidation: {labels: project}",
@@ -70,6 +78,17 @@ fn rejects_unknown_duplicate_conflicting_and_unbounded_input() {
             .code,
         Code::InputLimit
     );
+}
+
+#[test]
+fn observation_configuration_accepts_documented_upper_bounds() {
+    let declaration = Declaration::parse(
+        b"version: 2\nobservation: {poll_seconds: 3600, max_wait_seconds: 86400, notify: []}\n",
+    )
+    .unwrap();
+    assert_eq!(declaration.observation.poll_seconds, 3600);
+    assert_eq!(declaration.observation.max_wait_seconds, 86400);
+    assert!(declaration.observation.notify.is_empty());
 }
 #[test]
 fn off_is_a_string_enum_and_invalid_files_are_unchanged() {

@@ -78,10 +78,16 @@ Ordinary non-TTY output defaults to one JSON report. `--json` selects it explici
 consume stdin. Help and schema are offline and work outside a Git repository.
 JSON is the output boundary: internal use cases share typed library values.
 
-`pr --status` describes native facts without computing merge eligibility. A
-successful observation is not approval to mutate. A merged request with linked
-Issues still open produces attention; any supplementary closure belongs to an
-explicitly authorized Agent action outside the runtime.
+`pr --status` describes native facts without computing merge eligibility. With
+`--request <id>`, it reads an exact request from the configured repository even
+when the current checkout is on another branch, detached, or the source branch
+has been deleted. `evidence.local_applicability` separately reports local branch,
+head and target mismatches; native completion does not certify the current
+checkout. `evidence.request.target` is native; `evidence.target` is local
+configuration. Implicit status and `watch` remain worktree scoped. A successful
+observation is not approval to mutate. A merged request with linked Issues still
+open produces attention; any supplementary closure belongs to an explicitly
+authorized Agent action outside the runtime.
 
 `watch` is bounded and session/worktree scoped. `inbox` refreshes pending changes;
 `--no-refresh` lists unverified receipt IDs, and `--ack` records transport receipt.

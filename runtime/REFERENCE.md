@@ -40,9 +40,17 @@ safe relative `path`, or `inline` with nonempty `body`. Optional `title` and
 body selection. Unselected repository templates are only discovery candidates.
 
 Observation defaults are a 15-second poll, a 1,800-second maximum and
-attention/completed notices. Configuration fields are `observation.poll_seconds`,
-`max_wait_seconds` and `notify`. Runtime validation enforces relational timing
-bounds, unique lists, Git branch syntax, UTF-8 limits and safe paths. Unknown or
+attention/completed notices. `watch` uses explicit `--poll-seconds` and
+`--timeout-seconds` values first, then `observation.poll_seconds` and
+`observation.max_wait_seconds`, then those defaults. Poll intervals range from
+1 to 3,600 seconds; maximum waits range from the poll interval to 86,400
+seconds. `inbox` performs one refresh with a 90-second maximum, further limited
+by `max_wait_seconds`. Configuration fields are `observation.poll_seconds`,
+`max_wait_seconds` and `notify`. Hook notices classify `completed` events as
+`completed`; every other event is `attention`. This filter only controls hook
+notices: direct `watch` and refreshing `inbox` output retains all event states.
+Runtime validation enforces relational timing bounds, unique lists, Git branch
+syntax, UTF-8 limits and safe paths. Unknown or
 duplicate YAML keys fail. Retired rule-engine configuration must be removed in an
 explicitly reviewed migration; platform protection rules remain on the forge.
 
@@ -109,8 +117,8 @@ commands use the global input/output contract above.
 | `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` register Claude hooks. `--register-codex` registers Codex hooks and installs its native skill and managed global instructions. `--register-opencode` installs OpenCode guidance and skill until that host exposes the same blocking protocol. `--codex-root` / `--opencode-root` select explicit host configuration directories. Existing registered roots persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes only registrations owned by the selected setup root. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
-| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options. |
-| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–3,600; default 1,800), `--poll-seconds` (1–300; default 15). |
+| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
+| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. |
 | `hook` | Codex/Claude event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. |
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`, optional `--state-root`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. |
@@ -221,10 +229,22 @@ request with open linked Issues produces attention. Agent supplementary closure
 is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
 
+With an explicit `--request`, `pr --status` reads the exact request from the
+configured repository even on another branch, detached HEAD, or after its source
+branch is deleted. The report keeps native request status separate from
+`evidence.local_applicability`, which reports source-branch, local-head and target
+mismatches; `evidence.request.target` is the native target and `evidence.target`
+is the local configured target. A native `completed` status does not certify the current checkout.
+Without an explicit ID, status remains local-checkpoint/branch scoped. `watch`
+also stays bound to the current worktree; use `pr --status --request <id>` for
+cross-branch reads. Fork and cross-project reads are unsupported.
+
 Issue associations retain per-Issue sources: `native_closing`, `body_reference`
 and `local_selection`. The native source comes from the platform's closing-Issue
 query; unavailable queries remain diagnostic evidence, never an empty successful
-result. Local selections apply only to their exact request ID. Explicitly observing
+result. Unsupported body-reference syntax adds a diagnostic while retaining the
+request and any separately read native association/Issue facts; mutation commands
+still reject that syntax. Local selections apply only to their exact request ID. Explicitly observing
 a different request does not inherit the previous request's selected Issues.
 Association changes participate in watch event revisions, including source changes
 that leave the set of Issue IDs unchanged.
@@ -234,6 +254,17 @@ notices are refreshed before delivery and superseded by changed evidence.
 `--goal checks` observes checks without claiming lifecycle completion. `--once`
 performs one read and retains pending intent. Explicit inbox acknowledgment is a
 transport receipt, not human reading, approval or permission to mutate.
+Each watch event includes the legacy `next_action` text and a typed `next_step`;
+the report-level `next_actions` repeats those same typed steps for direct
+consumers. The action records the goal, check outcome, draft state, auto-merge
+registration, open Issue IDs and diagnostic codes used to form its message.
+Drafts with passing checks suggest the explicitly authorized ready-for-review
+operation; they do not approve or merge. Ready requests distinguish registered,
+unregistered and unknown auto-merge state, and never infer review, merge or
+delivery completion from passing checks. Merged requests with open Issues name
+those IDs; a merged request without verified closing facts remains unknown.
+Watch, inbox and Hook actions are advisory and never ready, merge or close
+anything automatically.
 
 Codex and Claude registration include SessionStart, PreToolUse, PostToolUse and Stop.
 Relevant PostToolUse may launch a bounded asynchronous observer. Registration is
