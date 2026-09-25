@@ -20,8 +20,10 @@ rename, and fails closed on missing range evidence. `.gitignore` never grants
 verification exemptions. Unknown paths require product verification.
 
 All native CI uses GitHub-hosted standard runners: `ubuntu-24.04` (Linux x64),
-`macos-15` (ARM64), and `windows-2025` (Windows x64). These runners are [free and
-unlimited for public repositories](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories).
+`macos-15` (ARM64), and `windows-2025` (Windows x64). GitHub-managed CodeQL default
+setup is separately configured in repository security settings to use its standard
+GitHub runner. Standard hosted runners are [free and unlimited for public
+repositories](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories).
 If repository visibility changes, recheck the account billing allowance before
 relying on hosted-runner costs.
 The native matrix runs Linux x64, macOS arm64 and Windows x64. Each platform checks
