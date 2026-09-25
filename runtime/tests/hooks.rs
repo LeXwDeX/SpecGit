@@ -226,6 +226,26 @@ fn pre_tool_use_allows_issue_lifecycle_commands_without_a_current_checkpoint() {
             "issue lifecycle command was blocked by the source-edit checkpoint guard: {command}"
         );
     }
+
+    let compound_payload = json!({
+        "session_id":"fixture-session",
+        "hook_event_name":"PreToolUse",
+        "cwd":t.path(),
+        "tool_name":"Bash",
+        "tool_input":{"command":"specgit issue --inspect 'fix: first checkpoint' && touch tracked-file"}
+    });
+    let compound = run(
+        "PreToolUse",
+        &serde_json::to_vec(&compound_payload).unwrap(),
+    );
+    let value: Value = serde_json::from_slice(&compound.stdout).unwrap();
+    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(
+        value["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("Issue checkpoint")
+    );
 }
 
 #[test]
