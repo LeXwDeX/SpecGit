@@ -25,7 +25,7 @@ jobs:
   # Classify the complete diff with Node and Git before installing dependencies.
   changes:
     name: Detect changes
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.scope.outputs.build }}
       metadata: ${{ steps.scope.outputs.metadata }}
@@ -54,7 +54,7 @@ jobs:
 
   metadata:
     name: Native repository contracts
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -79,13 +79,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: [self-hosted, Linux, X64]
+          - os: ubuntu-24.04
             label: linux
             target: x86_64-unknown-linux-gnu
           - os: macos-15
             label: macos
             target: aarch64-apple-darwin
-          - os: [self-hosted, Windows, X64]
+          - os: windows-2025
             label: windows
             target: x86_64-pc-windows-msvc
     defaults:
@@ -191,7 +191,7 @@ jobs:
 
   required_verification:
     name: Required verification
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     needs: [changes, metadata, rust]
     if: always()
     steps:
@@ -212,7 +212,7 @@ jobs:
 
   acceptance:
     name: SpecGit Acceptance
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     needs: required_verification
     if: always()
     steps:

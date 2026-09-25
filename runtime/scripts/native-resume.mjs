@@ -34,11 +34,11 @@ export async function main(args) {
   const { values } = parseArgs({ args, options: { phase: { type: 'string' }, target: { type: 'string' } } });
   const target = values.target ?? process.env.SPECGIT_NATIVE_TARGET;
   assert(targets[target], 'Select a supported --target.');
-  assert(process.env.RUNNER_TOOL_CACHE && path.isAbsolute(process.env.RUNNER_TOOL_CACHE), 'An owned persistent runner cache is required.');
+  assert(process.env.RUNNER_TEMP && path.isAbsolute(process.env.RUNNER_TEMP), 'A writable per-job runner temporary directory is required.');
   assert.equal(command('git', ['status', '--porcelain', '--untracked-files=normal'], { capture: true }).trim(), '', 'Native qualification requires a clean source tree.');
   const source = command('git', ['rev-parse', 'HEAD'], { capture: true }).trim();
   const rust = command('rustc', ['--version', '--verbose'], { capture: true }).trim();
-  const allowedRoot = path.resolve(process.env.RUNNER_TOOL_CACHE);
+  const allowedRoot = path.resolve(process.env.RUNNER_TEMP);
   const buildIdentity = { workspace: repo, target, rust, flags: digest(process.env.RUSTFLAGS ?? ''), platform: process.platform, arch: process.arch };
   const namespace = digest(JSON.stringify(buildIdentity));
   // Keep paths short enough for native Windows tools. Full identities remain in

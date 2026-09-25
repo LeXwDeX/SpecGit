@@ -12,10 +12,12 @@ gh workflow run release-prepare.yml --ref main -f release_version=2.1.1
 ```
 
 The version must match Cargo and the private development workspace. The workflow
-builds macOS arm64 on GitHub-hosted `macos-15`, and Linux x64 glibc and Windows
-x64 on owner-provided self-hosted runners, with pinned Rust. macOS jobs verify
-the hosted environment, ARM64 architecture and the image-provided compiler
-without changing system Xcode selection. Missing tools fail the job. Each compiled binary runs three simple smoke checks:
+builds on GitHub-hosted standard runners: Linux x64 glibc on `ubuntu-24.04`,
+macOS arm64 on `macos-15`, and Windows x64 on `windows-2025`, with pinned Rust.
+These standard runners are free and unlimited for public repositories. The macOS
+job verifies the hosted environment, ARM64 architecture and the image-provided
+compiler without changing system Xcode selection. Missing tools fail the job.
+Each compiled binary runs three simple smoke checks:
 `--human --version`, `--help` and `--schema`. Release does not repeat full source,
 installed native CLI regression suites; those remain in CI.
 

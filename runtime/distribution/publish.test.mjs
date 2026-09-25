@@ -12,7 +12,7 @@ test('main and build provenance reject stale, foreign or failed candidates', () 
 });
 test('the active release can publish only after all three native smoke jobs succeed', () => {
   const active = { ...run, status: 'in_progress', conclusion: null };
-  const jobs = ['linux', 'macos', 'windows'].map(label => ({ name: `Build native release (${label})`, status: 'completed', conclusion: 'success', labels: label === 'macos' ? ['macos-15'] : ['self-hosted', label === 'linux' ? 'Linux' : 'Windows', 'X64'] }));
+  const jobs = ['linux', 'macos', 'windows'].map(label => ({ name: `Build native release (${label})`, status: 'completed', conclusion: 'success', labels: { linux: ['ubuntu-24.04'], macos: ['macos-15'], windows: ['windows-2025'] }[label] }));
   verifyBuildRun(active, source, { activeRun: '123', jobs });
   for (const changed of [jobs.slice(1), [...jobs, jobs[0]], jobs.map((j, i) => i ? j : { ...j, conclusion: 'failure' }), jobs.map((j, i) => i ? j : { ...j, labels: ['ubuntu-latest'] })]) assert.throws(() => verifyBuildRun(active, source, { activeRun: '123', jobs: changed }), /three successful/);
   assert.throws(() => verifyBuildRun(active, source, { activeRun: '456', jobs }), /three successful/);
@@ -21,7 +21,7 @@ test('the active release can publish only after all three native smoke jobs succ
 
 test('an interrupted signed publication can reuse its bundle only after qualified build and signing jobs', () => {
   const failed = { ...run, conclusion: 'failure' };
-  const builds = ['linux', 'macos', 'windows'].map(label => ({ name: `Build native release (${label})`, status: 'completed', conclusion: 'success', labels: label === 'macos' ? ['macos-15'] : ['self-hosted', label === 'linux' ? 'Linux' : 'Windows', 'X64'] }));
+  const builds = ['linux', 'macos', 'windows'].map(label => ({ name: `Build native release (${label})`, status: 'completed', conclusion: 'success', labels: { linux: ['ubuntu-24.04'], macos: ['macos-15'], windows: ['windows-2025'] }[label] }));
   const steps = [
     { name: 'Assemble the three smoke-tested binaries', conclusion: 'success' },
     { name: 'Sign and verify the ZIP checksum manifest', conclusion: 'success' },
@@ -38,15 +38,15 @@ test('an interrupted signed publication can reuse its bundle only after qualifie
   assert.throws(() => verifyBuildRun({ ...failed, head_sha: 'b'.repeat(40) }, source, { jobs: [...builds, assembly] }), /exact main/);
 });
 
-test('active publication rejects retired Mac and mismatched self-hosted platforms', () => {
+test('active publication rejects mismatched hosted labels and self-hosted platforms', () => {
   const active = { ...run, status: 'in_progress', conclusion: null };
   const jobs = ['linux', 'macos', 'windows'].map(label => ({
     name: `Build native release (${label})`, status: 'completed', conclusion: 'success',
-    labels: label === 'macos' ? ['macos-15'] : ['self-hosted', label === 'linux' ? 'Linux' : 'Windows', 'X64'],
+    labels: { linux: ['ubuntu-24.04'], macos: ['macos-15'], windows: ['windows-2025'] }[label],
   }));
-  for (const [index, labels] of [[1, ['self-hosted', 'macOS', 'ARM64']], [1, ['macos-15-intel']],
-    [1, ['self-hosted', 'macos-15']], [0, ['self-hosted', 'Windows', 'X64']], [2, ['windows-latest']],
-    [0, ['self-hosted', 'Linux', 'ARM64']]]) {
+  for (const [index, labels] of [[1, ['self-hosted', 'macos-15']], [1, ['macos-15-intel']],
+    [0, ['self-hosted', 'ubuntu-24.04']], [0, ['ubuntu-22.04']],
+    [2, ['self-hosted', 'windows-2025']], [2, ['windows-latest']]]) {
     assert.throws(() => verifyBuildRun(active, source, { activeRun: '123',
       jobs: jobs.map((job, i) => i === index ? { ...job, labels } : job),
     }), /three successful/);
