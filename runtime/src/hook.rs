@@ -112,9 +112,10 @@ fn relevant(event: &str, payload: &Value) -> bool {
             // Issue lifecycle commands establish or inspect the checkpoint.
             // Their CLI performs duplicate inspection and write preflight before
             // any local or native mutation, so the source-edit guard must not
-            // block the command that creates the first checkpoint.
+            // block a direct command that creates the first checkpoint. Do not
+            // exempt compound shell input; the hook must still inspect it.
             if option == "issue" {
-                return event != "PreToolUse";
+                return event != "PreToolUse" || index != 0 || has_unquoted_shell_control(command);
             }
             let value = if option == "--cwd" {
                 remaining = &remaining[1..];
@@ -163,6 +164,38 @@ fn has_unquoted_redirect(command: &str) -> bool {
             '"' if !single => double = !double,
             '>' if !single && !double => return true,
             _ => {}
+        }
+    }
+    false
+}
+fn has_unquoted_shell_control(command: &str) -> bool {
+    let mut single = false;
+    let mut double = false;
+    let mut escaped = false;
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && !single {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' && !double {
+            single = !single;
+        } else if character == '"' && !single {
+            double = !double;
+        } else if !single && !double {
+            if [';', '&', '|', '\n', '\r', '`', '(', ')'].contains(&character)
+                || (character == '$' && characters.peek() == Some(&'('))
+            {
+                return true;
+            }
+        } else if double
+            && (character == '`' || (character == '$' && characters.peek() == Some(&'(')))
+        {
+            return true;
         }
     }
     false
