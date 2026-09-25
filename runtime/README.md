@@ -146,9 +146,11 @@ writers, dynamic includes or unfinished native execution prevent activation.
 See the native reference for recovery and release boundaries.
 
 Native CI and formal release preparation retain verified compilation and phase
-outputs in the owned runner tool cache. Retrying a later failure reuses successful
-phases only when the exact source, platform, toolchain and output hashes still
-match. Tests execute the retained Cargo binaries directly; upload retries reuse
-the qualified packages. Missing or changed outputs invalidate their dependent
-phases. Failed phase logs remain available in the cache. Windows profiling keeps
-the same 60-minute budget as its workflow step.
+outputs under the current job's `RUNNER_TEMP`. Later phases in that same job
+reuse successful work only when the exact source, platform, toolchain and output
+hashes still match. GitHub-hosted jobs start on clean VMs, so no executable cache
+is reused across jobs or workflow runs. Tests execute the retained Cargo binaries
+directly, and the workflow uploads its qualification evidence. Missing or changed
+outputs invalidate their dependent phases. Failed phase logs remain available
+until the job ends. Windows profiling keeps the same 60-minute budget as its
+workflow step.

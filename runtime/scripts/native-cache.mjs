@@ -14,7 +14,7 @@ export function snapshotFiles(paths, allowedRoot) {
   const rows = [];
   function visit(file) {
     file = path.resolve(file);
-    assert(inside(allowedRoot, file), 'Cached outputs must stay inside the owned runner cache.');
+    assert(inside(allowedRoot, file), 'Cached outputs must stay inside the per-job runner directory.');
     const stat = lstatSync(file);
     if (stat.isSymbolicLink()) rows.push({ file, link: readlinkSync(file) });
     else if (stat.isDirectory()) {
