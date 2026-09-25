@@ -61,12 +61,22 @@ specgit issue 21 22 --json
 specgit pr --title 'feat: implement selected specs' --body-file request.md --dry-run --json
 specgit pr --title 'feat: implement selected specs' --body-file request.md --json
 specgit pr --status --json
+specgit pr --ready --request 42 --json
 specgit watch --request 42 --session task-42 --goal lifecycle --json
+# After platform review and merge, re-read the native request and Issues:
+specgit pr --status --request 42 --json
 ```
 
 Replace the example IDs with real Issues and the resulting request number.
 Previews do not authorize later writes. A branch without pushed changes remains
 pending; SpecGit does not create an empty delivery just to attach a PR.
+Marking the request ready requires existing user authorization. Review and merge
+happen on GitHub or GitLab; watch observes current evidence but does not perform
+review, merge, or Issue closure. After merge, verify the native request and every
+associated Issue with the explicit status read above.
+For a read from another checkout, use `specgit pr --status --request <id>`; it
+reports same-repository native state and a separate local-applicability result.
+Implicit lookup and `watch` remain bound to the current worktree.
 
 ## Responsibilities and evidence
 
@@ -107,6 +117,7 @@ available as historical engineering evidence.
 ## Documentation
 
 - [Agent installation and initialization](docs/agent-install.md)
+- [Supported coding agents and delivery flow](docs/supported-tools.md)
 - [Manual installation](docs/installation.md)
 - [Native commands, configuration and JSON contract](runtime/REFERENCE.md)
 - [Migration from v1](docs/migration-v2.md)

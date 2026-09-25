@@ -1,6 +1,8 @@
+> **Archived SpecGit v1 reference.** This schema and gate table describe the retired TypeScript CLI. For v2 use the [native runtime reference](../runtime/REFERENCE.md) and [migration guide](migration-v2.md).
+
 # Reference
 
-Exact schemas, gates, codes, and behavioral rules. Everything here is normative. Templates for both files live in [`schemas/specgit/templates/`](../schemas/specgit/templates), and the schema-facing description of the record and policy lives in [`schemas/specgit/schema.yaml`](../schemas/specgit/schema.yaml).
+This page preserves the v1 schemas, gates, codes, and behavioral rules as historical evidence. The retired v1 template sources are no longer shipped in this repository. The current v2 declaration schema is [`runtime/schemas/declaration.schema.json`](../runtime/schemas/declaration.schema.json); the normative runtime contract is [`runtime/REFERENCE.md`](../runtime/REFERENCE.md).
 
 ```text
   specgit init / setup      initialize once; rerun after upgrades
