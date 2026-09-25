@@ -18,6 +18,7 @@ pub struct Retirement {
     pub default_branch: String,
     pub commit: String,
     pub scanned_paths: Vec<String>,
+    pub managed_workflows: Vec<(u64, String)>,
     pub blockers: Vec<String>,
     pub unfinished_runs: Vec<u64>,
     pub active_schedules: Vec<(u64, String)>,
@@ -38,6 +39,22 @@ fn id(v: &Value) -> Result<u64, Diagnostic> {
         .and_then(Value::as_u64)
         .filter(|n| *n > 0)
         .ok_or_else(malformed)
+}
+fn github_managed_workflow(path: &str) -> bool {
+    matches!(
+        path,
+        "dynamic/dependabot/dependabot-updates"
+            | "dynamic/github-code-scanning/codeql"
+            | "dynamic/agents/github-advanced-security"
+    )
+}
+fn unsupported_github_workflow(path: &str) -> Diagnostic {
+    Diagnostic::new(
+        Code::EvidenceRejected,
+        "migration_remote",
+        &format!("GitHub returned an unsupported active workflow path: {path}."),
+        "Inspect the native workflow inventory and update SpecGit's explicit workflow classification before activating v2.",
+    )
 }
 async fn contents(
     reader: &ForgeRead,
@@ -191,6 +208,7 @@ pub async fn inspect(reader: &ForgeRead, repo: &Repository) -> Result<Retirement
         default_branch: facts.default_branch.clone(),
         commit: commit.clone(),
         scanned_paths: vec![],
+        managed_workflows: vec![],
         blockers: vec![],
         unfinished_runs: vec![],
         active_schedules: vec![],
@@ -217,8 +235,14 @@ pub async fn inspect(reader: &ForgeRead, repo: &Repository) -> Result<Retirement
                 return Err(malformed());
             }
             let path = string(&workflow, "path")?;
+            if github_managed_workflow(path) {
+                result
+                    .managed_workflows
+                    .push((id(&workflow)?, path.to_owned()));
+                continue;
+            }
             if !path.starts_with(".github/workflows/") {
-                return Err(malformed());
+                return Err(unsupported_github_workflow(path));
             }
             let bytes = contents(reader, repo, &commit, path).await?;
             result.scanned_paths.push(path.to_owned());
@@ -367,6 +391,8 @@ pub async fn inspect(reader: &ForgeRead, repo: &Repository) -> Result<Retirement
     }
     result.scanned_paths.sort();
     result.scanned_paths.dedup();
+    result.managed_workflows.sort();
+    result.managed_workflows.dedup();
     result.blockers.sort();
     result.blockers.dedup();
     result.unfinished_runs.sort();

@@ -366,6 +366,64 @@ fn active_native_workflow_and_incomplete_counted_page_block_cutover() {
     let p = preview(&f, &path, &[]);
     assert_eq!(p["diagnostics"][0]["code"], "malformed_response", "{p}");
 }
+
+#[test]
+fn github_managed_dynamic_workflows_are_reported_and_repository_workflows_are_scanned() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (f, path) = fixture("github");
+    let content = "name: business\njobs:\n  build:\n    steps:\n      - run: cargo test\n";
+    let dynamic = [
+        "dynamic/dependabot/dependabot-updates",
+        "dynamic/github-code-scanning/codeql",
+        "dynamic/agents/github-advanced-security",
+    ];
+    let mut workflows: Vec<Value> = dynamic
+        .iter()
+        .enumerate()
+        .map(|(index, path)| json!({"id":20 + index as u64,"state":"active","path":path}))
+        .collect();
+    workflows.push(json!({"id":30,"state":"active","path":".github/workflows/business.yml"}));
+    f.edit(|s| {
+        s["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":4,"workflows":workflows});
+        s["read_routes"][format!("repos/fixture/repo/contents/.github/workflows/business.yml?ref={MAIN}")]=json!({"path":".github/workflows/business.yml","type":"file","sha":"b".repeat(40),"size":content.len(),"encoding":"base64","content":STANDARD.encode(content)});
+    });
+
+    let preview = preview(&f, &path, &[]);
+
+    assert_eq!(preview["exit"], 0, "{preview}");
+    assert_eq!(
+        preview["evidence"]["remote_retirement"]["managed_workflows"],
+        json!([
+            [20, "dynamic/dependabot/dependabot-updates"],
+            [21, "dynamic/github-code-scanning/codeql"],
+            [22, "dynamic/agents/github-advanced-security"]
+        ])
+    );
+    assert_eq!(
+        preview["evidence"]["remote_retirement"]["scanned_paths"],
+        json!([".github/workflows/business.yml"])
+    );
+}
+
+#[test]
+fn unknown_github_dynamic_workflow_blocks_with_specific_diagnostic() {
+    let (f, path) = fixture("github");
+    f.edit(|s| {
+        s["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":1,"workflows":[{"id":40,"state":"active","path":"dynamic/new-platform-workflow"}]});
+    });
+
+    let preview = preview(&f, &path, &[]);
+
+    assert_eq!(preview["exit"], 3, "{preview}");
+    assert_eq!(preview["diagnostics"][0]["code"], "evidence_rejected");
+    assert_eq!(
+        preview["diagnostics"][0]["message"],
+        "GitHub returned an unsupported active workflow path: dynamic/new-platform-workflow."
+    );
+}
+
 #[test]
 fn gitlab_static_includes_are_followed_and_external_includes_are_explicitly_unverified() {
     use base64::{Engine, engine::general_purpose::STANDARD};
