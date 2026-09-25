@@ -554,8 +554,8 @@ pub async fn observe_handle(
         .collect::<Vec<_>>();
     let text = format!(
         "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Next steps: {}. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
-        next_steps.join(" "),
-        json!({"subscription":observation.state.identity,"events":events})
+        json!({"subscription":observation.state.identity,"events":events}),
+        next_steps.join(" ")
     );
     Output {
         json: Some(

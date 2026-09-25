@@ -597,6 +597,18 @@ fn merged_open_issues_include_ids_and_hook_text_matches_the_structured_action() 
             hook_text.contains(next_step["message"].as_str().unwrap()),
             "{offered}"
         );
+        let offered_label = hook_text
+            .find("SpecGit observation offered (not acknowledged):")
+            .unwrap();
+        let next_steps_label = hook_text.find("Next steps:").unwrap();
+        assert!(
+            offered_label < next_steps_label,
+            "event evidence and next-step text are in the wrong order: {offered}"
+        );
+        assert!(
+            hook_text[offered_label..next_steps_label].contains("events"),
+            "event evidence is missing before the next-step label: {offered}"
+        );
         assert!(
             hook_text.contains(&serde_json::to_string(next_step).unwrap()),
             "{offered}"
