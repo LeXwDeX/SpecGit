@@ -438,6 +438,13 @@ fn native_api(args: &[String], path: &std::path::Path) {
     }
     if method == "GET" {
         if let Some(value) = state.get("read_routes").and_then(|r| r.get(endpoint)) {
+            if let Some(error) = value
+                .get("__fixture_error")
+                .and_then(serde_json::Value::as_str)
+            {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
             println!("{value}");
             return;
         }

@@ -56,6 +56,20 @@ fn unsupported_github_workflow(path: &str) -> Diagnostic {
         "Inspect the native workflow inventory and update SpecGit's explicit workflow classification before activating v2.",
     )
 }
+fn github_workflow_read_failure(path: &str, failure: Diagnostic) -> Diagnostic {
+    Diagnostic::new(
+        failure.code,
+        "migration_remote",
+        &format!(
+            "Cannot inspect active GitHub workflow '{path}': {}",
+            failure.message
+        ),
+        &format!(
+            "{} Verify the registered workflow file at the selected default-branch commit and check GitHub Actions read access.",
+            failure.remedy
+        ),
+    )
+}
 async fn contents(
     reader: &ForgeRead,
     repo: &Repository,
@@ -72,7 +86,13 @@ async fn contents(
     } else {
         format!("{base}/repository/files/{}?ref={commit}", encode(path))
     };
-    let value = reader.get(&endpoint).await?;
+    let value = match reader.get(&endpoint).await {
+        Ok(value) => value,
+        Err(failure) if repo.provider == Provider::Github => {
+            return Err(github_workflow_read_failure(path, failure));
+        }
+        Err(failure) => return Err(failure),
+    };
     let size = value
         .get("size")
         .and_then(Value::as_u64)
