@@ -193,6 +193,62 @@ fn pre_tool_use_denies_tracked_edits_without_a_current_issue_checkpoint() {
 }
 
 #[test]
+fn pre_tool_use_allows_issue_lifecycle_commands_without_a_current_checkpoint() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\nlanguage: en\n",
+    )
+    .unwrap();
+    for (tool_name, command) in [
+        ("Bash", "specgit issue --inspect 'fix: first checkpoint'"),
+        (
+            "Bash",
+            "specgit --json issue --dry-run 'fix: first checkpoint'",
+        ),
+        ("Bash", "specgit issue 'fix: first checkpoint'"),
+        (
+            "PowerShell",
+            "specgit issue --inspect 'fix: first checkpoint'",
+        ),
+    ] {
+        let payload = json!({
+            "session_id":"fixture-session",
+            "hook_event_name":"PreToolUse",
+            "cwd":t.path(),
+            "tool_name":tool_name,
+            "tool_input":{"command":command}
+        });
+        let out = run("PreToolUse", &serde_json::to_vec(&payload).unwrap());
+        assert!(out.status.success());
+        assert!(
+            out.stdout.is_empty(),
+            "issue lifecycle command was blocked by the source-edit checkpoint guard: {command}"
+        );
+    }
+
+    let compound_payload = json!({
+        "session_id":"fixture-session",
+        "hook_event_name":"PreToolUse",
+        "cwd":t.path(),
+        "tool_name":"Bash",
+        "tool_input":{"command":"specgit issue --inspect 'fix: first checkpoint' && touch tracked-file"}
+    });
+    let compound = run(
+        "PreToolUse",
+        &serde_json::to_vec(&compound_payload).unwrap(),
+    );
+    let value: Value = serde_json::from_slice(&compound.stdout).unwrap();
+    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(
+        value["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("Issue checkpoint")
+    );
+}
+
+#[test]
 fn pre_tool_use_accepts_only_the_checkpoint_branch_and_rejects_cross_repository_patches() {
     let t = fixture();
     fs::write(
