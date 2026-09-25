@@ -10,10 +10,9 @@
 
 本版落实用户最新决定：**管理 Issue，将多个 Issue 汇聚到一个 PR/MR；Agent 监督实现和修复，GitHub/GitLab 执行原生自动合并和自动关闭 Issue。SpecGit 负责初始化检查、关联、观察和 hook 通知。合并后仍有未关闭的 Issue 时，hook 通知 Agent；Agent 补关是可选行为。**
 
-本文件是后续 Rust 实现的统一目标。旧 [架构](specgit-2.md)、[契约](specgit-2-contract.md)、[历史台账](specgit-2-history.md)、[F01–F48 验收矩阵](specgit-2-acceptance.md) 保留为历史基线，其与本文件冲突的要求不再适用于新实现。此设计不会自动改变当前 1.x 的命令、项目约束或远端设置。
+本文件是 2026-09-10 确认的 Rust 设计记录，不是当前运行时行为或发行状态的权威来源。实际命令与配置以 [native reference](../../runtime/REFERENCE.md) 为准，安装和迁移步骤见 [installation](../installation.md) 与 [migration](../migration-v2.md)。
 
 - [历史映射与旧 F01–F48 去向](specgit-2-rust-history.md)：296 条原台账加 22 条后续 Issue，共 318 条；每条有明确去向。
-- [现有代码、分支和任务交接](specgit-2-rust-handoff.md)：可复用资产、未完成证据、实施顺序及现有 Issue 的范围调整。
 - 本文顺序：产品边界 → 用户流程 → 四层设计 → Rust 实现 → 迁移与交付。代码片段与配置键是拟定契约，不能当作已存在的 API。
 
 ## 1. 产品边界和决定

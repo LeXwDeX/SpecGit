@@ -11,8 +11,9 @@ A clear description of the defect.
 
 ## What I expected
 
-The behavior the docs promise (cite the page if you can: README, docs/cli.md,
-docs/reference.md, docs/baseline-v1.md).
+The behavior the docs promise (cite the page if you can: README,
+docs/installation.md, docs/migration-v2.md, docs/ci-scope.md, or
+runtime/REFERENCE.md).
 
 ## Evidence
 
