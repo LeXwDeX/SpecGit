@@ -89,8 +89,12 @@ export async function main(args) {
         delete env.SPECGIT_TEST_BINARY;
         const failures = [];
         for (const [index, artifact] of manifest.artifacts.entries()) {
-          try { command(artifact.executable, ['--color', 'never'], { env, log: path.join(directory, `${index}.log`) }); }
-          catch (error) { failures.push(error.message); }
+          const log = path.join(directory, `${index}.log`);
+          try { command(artifact.executable, ['--color', 'never'], { env, log }); }
+          catch (error) {
+            const output = readFileSync(log, 'utf8');
+            failures.push(`${artifact.target.src_path}: ${error.message}\n${output.slice(-64 * 1024)}`);
+          }
         }
         assert.equal(failures.length, 0, failures.join('\n'));
         return { value: { directory }, files: [directory] };
