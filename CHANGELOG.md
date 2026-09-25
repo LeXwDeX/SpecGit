@@ -1,3 +1,11 @@
+# 2.1.1
+
+- Apply configured polling, wait budgets and notification filters consistently across watch, inbox and Hook delivery.
+- Preserve readable native observation evidence when closing references cannot be parsed; support explicit same repository cross branch request reads.
+- Align embedded guidance and current v2 documentation with the existing authorization and delivery contract.
+- Add typed, read only next step guidance for draft requests, checks, merge state and Issue closure.
+- Correct the Hook summary so event evidence appears before the suggested next steps.
+
 # 2.1.0
 
 - Require a matching project, branch and Issue checkpoint before Codex or Claude tracked edits, including direct file tools, `apply_patch` and confidently mutating shell commands.

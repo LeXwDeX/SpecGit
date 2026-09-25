@@ -122,6 +122,44 @@ fn generated_guidance_uses_native_observation_and_preferences_are_not_authority(
 }
 
 #[test]
+fn generated_guidance_states_issue_scope_and_authorization_contract_in_both_languages() {
+    for language in [Language::En, Language::Zh] {
+        let declaration = Declaration {
+            language,
+            ..Declaration::default()
+        };
+        let prose = guidance::render(&declaration);
+        match language {
+            Language::En => {
+                assert!(prose.contains(
+                    "Read-only inspection, audit, and review do not require an Issue checkpoint"
+                ));
+                assert!(
+                    prose
+                        .contains("Before tracked product edits, select a complete relevant Issue")
+                );
+                assert!(prose.contains("pure documentation work"));
+                assert!(prose.contains("Local init/setup is maintenance, not delivery"));
+                assert!(prose.contains("Issue/PR writes, including marking a request ready, require existing user authorization"));
+                assert!(
+                    prose.contains("Existing session authorization remains valid within its scope")
+                );
+                assert!(prose.contains("`--dry-run` previews grant no permission"));
+            }
+            Language::Zh => {
+                assert!(prose.contains("只读检查、审计和评审不需要 Issue checkpoint"));
+                assert!(prose.contains("修改已跟踪的产品代码前，选择一个包含"));
+                assert!(prose.contains("纯文档工作按仓库自己的文档流程处理"));
+                assert!(prose.contains("本地 init/setup 属于维护，不是交付"));
+                assert!(prose.contains("Issue/PR 写入（包括将请求标记为 ready）需要已有用户授权"));
+                assert!(prose.contains("会话已有授权在其范围内持续有效"));
+                assert!(prose.contains("`--dry-run` 预览都不产生授权"));
+            }
+        }
+    }
+}
+
+#[test]
 fn receiptless_2_0_0_migration_upgrades_only_the_exact_released_templates() {
     for (language, old) in [
         (Language::En, include_str!("fixtures/guidance-2.0.0-en.txt")),

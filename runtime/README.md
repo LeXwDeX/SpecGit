@@ -78,10 +78,16 @@ Ordinary non-TTY output defaults to one JSON report. `--json` selects it explici
 consume stdin. Help and schema are offline and work outside a Git repository.
 JSON is the output boundary: internal use cases share typed library values.
 
-`pr --status` describes native facts without computing merge eligibility. A
-successful observation is not approval to mutate. A merged request with linked
-Issues still open produces attention; any supplementary closure belongs to an
-explicitly authorized Agent action outside the runtime.
+`pr --status` describes native facts without computing merge eligibility. With
+`--request <id>`, it reads an exact request from the configured repository even
+when the current checkout is on another branch, detached, or the source branch
+has been deleted. `evidence.local_applicability` separately reports local branch,
+head and target mismatches; native completion does not certify the current
+checkout. `evidence.request.target` is native; `evidence.target` is local
+configuration. Implicit status and `watch` remain worktree scoped. A successful
+observation is not approval to mutate. A merged request with linked Issues still
+open produces attention; any supplementary closure belongs to an explicitly
+authorized Agent action outside the runtime.
 
 `watch` is bounded and session/worktree scoped. `inbox` refreshes pending changes;
 `--no-refresh` lists unverified receipt IDs, and `--ack` records transport receipt.
@@ -140,9 +146,11 @@ writers, dynamic includes or unfinished native execution prevent activation.
 See the native reference for recovery and release boundaries.
 
 Native CI and formal release preparation retain verified compilation and phase
-outputs in the owned runner tool cache. Retrying a later failure reuses successful
-phases only when the exact source, platform, toolchain and output hashes still
-match. Tests execute the retained Cargo binaries directly; upload retries reuse
-the qualified packages. Missing or changed outputs invalidate their dependent
-phases. Failed phase logs remain available in the cache. Windows profiling keeps
-the same 60-minute budget as its workflow step.
+outputs under the current job's `RUNNER_TEMP`. Later phases in that same job
+reuse successful work only when the exact source, platform, toolchain and output
+hashes still match. GitHub-hosted jobs start on clean VMs, so no executable cache
+is reused across jobs or workflow runs. Tests execute the retained Cargo binaries
+directly, and the workflow uploads its qualification evidence. Missing or changed
+outputs invalidate their dependent phases. Failed phase logs remain available
+until the job ends. Windows profiling keeps the same 60-minute budget as its
+workflow step.

@@ -3,6 +3,97 @@
   "title": "SpecGit 2 JSON report",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "watch_action_kind": {
+      "enum": [
+        "wait_for_checks",
+        "inspect_checks",
+        "repair_checks",
+        "interpret_checks",
+        "prepare_review",
+        "review_or_merge_on_platform",
+        "inspect_open_issues",
+        "verify_issue_closure",
+        "reopen_or_choose_followup",
+        "refresh_native_evidence",
+        "reconcile_subscription",
+        "resume_subscription",
+        "completed"
+      ]
+    },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "goal",
+        "request_id",
+        "request_state",
+        "check_outcome",
+        "draft",
+        "auto_merge",
+        "close_issues_after_merge",
+        "issue_ids",
+        "failed_checks",
+        "diagnostics",
+        "message",
+        "command",
+        "requires_user_authorization"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/watch_action_kind"
+        },
+        "goal": {
+          "enum": ["checks", "lifecycle"]
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_state": {
+          "type": ["string", "null"]
+        },
+        "check_outcome": {
+          "enum": ["unobserved", "pending", "passed", "completed", "failed"]
+        },
+        "draft": {
+          "type": ["boolean", "null"]
+        },
+        "auto_merge": {
+          "enum": ["registered", "not_registered", "unknown", null]
+        },
+        "close_issues_after_merge": {
+          "type": "boolean"
+        },
+        "issue_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "failed_checks": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": ["string", "null"]
+        },
+        "requires_user_authorization": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
   "properties": {
     "schema_version": {
       "const": 2
@@ -67,19 +158,27 @@
     "next_actions": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "minLength": 1
+        "oneOf": [
+          {
+            "$ref": "#/$defs/next_action"
+          },
+          {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "not": {
+                  "$ref": "#/$defs/watch_action_kind"
+                }
+              }
+            },
+            "additionalProperties": true
           }
-        },
-        "additionalProperties": true
+        ]
       },
-      "description": "Diagnostic guidance, never additional authorization or an automatically executed action."
+      "description": "Typed watch next steps or other diagnostic guidance, never additional authorization or an automatically executed action."
     },
     "effects": {
       "type": "object",

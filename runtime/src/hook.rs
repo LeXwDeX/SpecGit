@@ -165,6 +165,7 @@ struct Prepared {
     language: Language,
     session: String,
     target: Option<String>,
+    observation: config::Observation,
 }
 fn deny(message: &str) -> Output {
     Output {
@@ -349,6 +350,7 @@ async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> 
         language: marker.language,
         session: session.to_owned(),
         target: marker.target,
+        observation: marker.observation,
     }))
 }
 pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Output {
@@ -357,6 +359,7 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         language,
         session,
         target,
+        observation,
     } = match prepare(event, bytes).await {
         Ok(Some(p)) => p,
         Ok(None) => return Output::default(),
@@ -410,7 +413,7 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         )
     };
     if ["SessionStart", "PostToolUse"].contains(&event) {
-        match pending_notice(&context, &session, state_root) {
+        match pending_notice(&context, &session, state_root, &observation.notify) {
             Ok(Some(notice)) => { text.push('\n'); text.push_str(&notice); },
             Ok(None) => {},
             Err(_) => text.push_str("\nSpecGit has unreadable local observation state; inspect it with explicit diagnostics."),
@@ -448,6 +451,7 @@ fn pending_notice(
     context: &project::Context,
     session: &str,
     state_root: Option<&Path>,
+    notifications: &[config::Notification],
 ) -> Result<Option<String>, crate::diagnostic::Diagnostic> {
     let Some(request) = crate::selection::read(context)?.and_then(|s| s.request) else {
         return Ok(None);
@@ -464,7 +468,11 @@ fn pending_notice(
     let ids: Vec<_> = state
         .events
         .iter()
-        .filter(|e| !e.superseded && e.acknowledged_at.is_none())
+        .filter(|e| {
+            !e.superseded
+                && e.acknowledged_at.is_none()
+                && crate::watch::notification_enabled(&e.state, notifications)
+        })
         .map(|e| e.id.as_str())
         .collect();
     if ids.is_empty() {
@@ -507,14 +515,15 @@ pub async fn observe_handle(
             );
         }
     };
+    let notifications = prepared.observation.notify;
     let observation = crate::watch::observe_subscription(
         crate::watch::Options {
             request,
             session: prepared.session,
             goal: crate::watch_store::Goal::Lifecycle,
             state_root: state_root.map(Path::to_path_buf),
-            timeout_seconds: 1800,
-            poll_seconds: 15,
+            timeout_seconds: None,
+            poll_seconds: None,
             once: false,
         },
         process,
@@ -530,13 +539,23 @@ pub async fn observe_handle(
             );
         }
     };
-    let events = observation.pending();
+    let events: Vec<_> = observation
+        .pending()
+        .into_iter()
+        .filter(|event| crate::watch::notification_enabled(&event.state, &notifications))
+        .collect();
     if events.is_empty() {
         return Output::default();
     }
+    let next_steps = events
+        .iter()
+        .filter_map(|event| event.next_step.as_ref())
+        .map(|next_step| next_step.message.as_str())
+        .collect::<Vec<_>>();
     let text = format!(
-        "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
-        json!({"subscription":observation.state.identity,"events":events})
+        "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Next steps: {}. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
+        json!({"subscription":observation.state.identity,"events":events}),
+        next_steps.join(" ")
     );
     Output {
         json: Some(

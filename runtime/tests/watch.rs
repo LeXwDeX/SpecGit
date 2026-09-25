@@ -6,7 +6,7 @@ mod delivery;
 use acceptance::fixture;
 use delivery::executable;
 use serde_json::{Value, json};
-use specgit::watch_store::{self, EventState, Identity, Revision, Store};
+use specgit::watch_store::{self, ActionKind, EventState, Identity, Revision, Store};
 
 /// Preserve the observer's result on assertion failures and reap the exact child.
 struct WatchProcess {
@@ -102,6 +102,9 @@ fn watch(goal: &str) -> [&str; 8] {
     ]
 }
 fn inbox() -> [&'static str; 7] {
+    inbox_for("checks")
+}
+fn inbox_for(goal: &'static str) -> [&'static str; 7] {
     [
         "inbox",
         "--request",
@@ -109,8 +112,86 @@ fn inbox() -> [&'static str; 7] {
         "--session",
         "session-a",
         "--goal",
-        "checks",
+        goal,
     ]
+}
+fn request_reads(f: &delivery::Fixture) -> usize {
+    f.state()["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|call| {
+            call["method"] == "GET"
+                && call["endpoint"]
+                    .as_str()
+                    .is_some_and(|endpoint| endpoint.ends_with("/pulls/41"))
+        })
+        .count()
+}
+
+fn set_draft(f: &delivery::Fixture) {
+    f.edit(|state| state["requests"][0]["draft"] = json!(true));
+}
+
+fn set_check_state(f: &delivery::Fixture, provider: &str, state: &str) {
+    f.edit(|fixture| {
+        for (route, response) in fixture["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/check-runs?") {
+                response["check_runs"][0]["status"] = json!(match state {
+                    "pending" => "in_progress",
+                    "failed" => "completed",
+                    _ => "completed",
+                });
+                response["check_runs"][0]["conclusion"] = match state {
+                    "pending" => Value::Null,
+                    "failed" => json!("failure"),
+                    _ => json!("success"),
+                };
+            } else if route == "projects/7/pipelines/71" {
+                response["status"] = json!(match state {
+                    "pending" => "running",
+                    "failed" => "failed",
+                    _ => "success",
+                });
+            } else if provider == "gitlab" && route.contains("pipelines/71/jobs?") {
+                response[0]["status"] = json!(match state {
+                    "pending" => "running",
+                    "failed" => "failed",
+                    _ => "success",
+                });
+            }
+        }
+    });
+}
+
+fn set_auto_merge(f: &delivery::Fixture, provider: &str, state: &str) {
+    f.edit(|fixture| {
+        let request = fixture["requests"][0].as_object_mut().unwrap();
+        match (provider, state) {
+            ("github", "registered") => {
+                request.insert(
+                    "auto_merge".into(),
+                    json!({"merge_method":"squash","enabled_by":{"id":99}}),
+                );
+            }
+            ("github", "not_registered") => {
+                request.insert("auto_merge".into(), Value::Null);
+            }
+            ("github", "unknown") => {
+                request.remove("auto_merge");
+            }
+            ("gitlab", "registered") => {
+                request.insert("merge_when_pipeline_succeeds".into(), json!(true));
+            }
+            ("gitlab", "not_registered") => {
+                request.insert("merge_when_pipeline_succeeds".into(), json!(false));
+            }
+            ("gitlab", "unknown") => {
+                request.remove("merge_when_pipeline_succeeds");
+            }
+            _ => panic!("unsupported fixture provider/state: {provider}/{state}"),
+        }
+    });
 }
 #[test]
 fn both_native_forges_offer_stable_event_ids_without_remote_writes() {
@@ -133,6 +214,555 @@ fn both_native_forges_offer_stable_event_ids_without_remote_writes() {
         assert_eq!(f.state()["calls"].as_array().unwrap().len(), calls);
         assert_eq!(f.writes(), writes);
     }
+}
+
+#[test]
+fn legacy_watch_events_without_typed_actions_remain_readable() {
+    let f = fixture("github");
+    let result = f.run(&watch("checks"));
+    let mut legacy_event = result["evidence"]["events"][0].clone();
+    legacy_event.as_object_mut().unwrap().remove("next_step");
+    let event: watch_store::Event = serde_json::from_value(legacy_event).unwrap();
+    assert!(event.next_step.is_none());
+}
+
+#[test]
+fn watch_action_kinds_match_the_report_schema() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    let schema_kinds = schema["$defs"]["watch_action_kind"]["enum"]
+        .as_array()
+        .unwrap();
+    let action_kinds = [
+        ActionKind::WaitForChecks,
+        ActionKind::InspectChecks,
+        ActionKind::RepairChecks,
+        ActionKind::InterpretChecks,
+        ActionKind::PrepareReview,
+        ActionKind::ReviewOrMergeOnPlatform,
+        ActionKind::InspectOpenIssues,
+        ActionKind::VerifyIssueClosure,
+        ActionKind::ReopenOrChooseFollowup,
+        ActionKind::RefreshNativeEvidence,
+        ActionKind::ReconcileSubscription,
+        ActionKind::ResumeSubscription,
+        ActionKind::Completed,
+    ];
+    assert_eq!(schema_kinds.len(), action_kinds.len());
+    for action_kind in action_kinds {
+        let serialized = serde_json::to_value(action_kind).unwrap();
+        assert!(schema_kinds.contains(&serialized), "{serialized}");
+    }
+    assert_eq!(
+        schema["properties"]["next_actions"]["items"]["oneOf"][0]["$ref"],
+        "#/$defs/next_action"
+    );
+}
+
+#[test]
+fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
+    use std::time::{Duration, Instant};
+
+    let f = acceptance::fixture_with_observation(
+        "github",
+        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 4\n  notify: []\n",
+    );
+    let initial = f.run(&watch("lifecycle"));
+    let identity: Identity =
+        serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
+    let before = request_reads(&f);
+    let mut child = WatchProcess::spawn(
+        f.native_command(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+        ]),
+        &identity,
+        "project-observation-defaults",
+    );
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(7);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert!(
+        status.is_some(),
+        "project max_wait_seconds was not applied: {}",
+        child.diagnostic()
+    );
+    assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
+    assert!(started.elapsed() < Duration::from_secs(6));
+    assert!(
+        request_reads(&f) >= before + 2,
+        "poll_seconds was not applied"
+    );
+    assert_eq!(
+        watch_store::read(&identity, None)
+            .unwrap()
+            .unwrap()
+            .events
+            .last()
+            .unwrap()
+            .state,
+        EventState::TimedOut
+    );
+}
+
+#[test]
+fn explicit_watch_values_override_project_observation_defaults() {
+    use std::time::{Duration, Instant};
+
+    let f = acceptance::fixture_with_observation(
+        "github",
+        "observation:\n  poll_seconds: 5\n  max_wait_seconds: 20\n  notify: []\n",
+    );
+    let initial = f.run(&watch("lifecycle"));
+    let identity: Identity =
+        serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
+    let before = request_reads(&f);
+    let mut child = WatchProcess::spawn(
+        f.native_command(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+            "--timeout-seconds",
+            "2",
+            "--poll-seconds",
+            "1",
+        ]),
+        &identity,
+        "explicit-observation-overrides",
+    );
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert!(
+        status.is_some(),
+        "explicit timeout_seconds was not applied: {}",
+        child.diagnostic()
+    );
+    assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert!(
+        request_reads(&f) >= before + 2,
+        "explicit poll_seconds was not applied"
+    );
+}
+
+#[test]
+fn watch_preserves_documented_cli_upper_bounds_and_rejects_inconsistent_timing() {
+    let f = fixture("github");
+    let mut accepted = watch("checks").to_vec();
+    accepted.extend(["--timeout-seconds", "86400", "--poll-seconds", "3600"]);
+    let result = f.run(&accepted);
+    assert_eq!(result["exit"], 0, "{result}");
+
+    let mut inconsistent = f.command(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+        "--timeout-seconds",
+        "1",
+        "--poll-seconds",
+        "2",
+    ]);
+    assert_eq!(
+        inconsistent.output().unwrap().status.code(),
+        Some(2),
+        "timeout must cover at least one poll interval"
+    );
+}
+
+#[test]
+fn configured_notification_filters_do_not_filter_direct_watch_evidence() {
+    let f = acceptance::fixture_with_observation(
+        "github",
+        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 5\n  notify: []\n",
+    );
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("closed");
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+    });
+
+    let offered = hook_output(&f, "PostToolUse", true);
+    assert!(offered["hookSpecificOutput"]["additionalContext"].is_null());
+    let resumed = hook_output(&f, "SessionStart", false);
+    let resumed_context = resumed["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(!resumed_context.contains("unverified event receipts"));
+
+    let direct = f.run(&watch("lifecycle"));
+    assert_eq!(direct["status"], "completed");
+    assert_eq!(direct["evidence"]["events"][0]["state"], "completed");
+    let direct_inbox = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+    ]);
+    assert_eq!(direct_inbox["status"], "completed");
+    assert_eq!(direct_inbox["evidence"]["events"][0]["state"], "completed");
+}
+
+#[test]
+fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
+    for provider in ["github", "gitlab"] {
+        for check_state in ["pending", "passed", "failed"] {
+            let f = fixture(provider);
+            set_draft(&f);
+            set_check_state(&f, provider, check_state);
+            let writes = f.writes();
+            let result = f.run(&watch("lifecycle"));
+            let event = &result["evidence"]["events"][0];
+            let next_step = &event["next_step"];
+            assert_eq!(event["next_action"], next_step["message"], "{result}");
+            assert_eq!(result["next_actions"][0], *next_step, "{result}");
+            assert_eq!(next_step["goal"], "lifecycle", "{result}");
+            assert_eq!(next_step["draft"], true, "{result}");
+            match check_state {
+                "pending" => {
+                    assert_eq!(result["status"], "pending", "{provider}: {result}");
+                    assert_eq!(next_step["kind"], "wait_for_checks", "{result}");
+                    assert!(next_step["message"].as_str().unwrap().contains("checks"));
+                    assert!(next_step["message"].as_str().unwrap().contains("draft"));
+                }
+                "passed" => {
+                    assert_eq!(result["status"], "checks_passed", "{provider}: {result}");
+                    assert_eq!(next_step["kind"], "prepare_review", "{result}");
+                    assert_eq!(
+                        next_step["command"], "specgit pr --ready --request 41 --json",
+                        "{result}"
+                    );
+                    assert_eq!(next_step["requires_user_authorization"], true, "{result}");
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("does not approve or merge")
+                    );
+                }
+                "failed" => {
+                    assert_eq!(result["status"], "failed", "{provider}: {result}");
+                    assert_eq!(next_step["kind"], "repair_checks", "{result}");
+                    assert_eq!(
+                        next_step["failed_checks"][0],
+                        if provider == "github" {
+                            "Test"
+                        } else {
+                            "pipeline"
+                        },
+                        "{result}"
+                    );
+                    assert!(next_step["message"].as_str().unwrap().contains("failed"));
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(f.writes(), writes, "{provider}/{check_state}");
+        }
+    }
+}
+
+#[test]
+fn ready_requests_name_auto_merge_fact_without_inferring_review_or_merge() {
+    for provider in ["github", "gitlab"] {
+        for auto_merge in ["registered", "not_registered", "unknown"] {
+            let f = fixture(provider);
+            set_auto_merge(&f, provider, auto_merge);
+            let writes = f.writes();
+            let result = f.run(&watch("checks"));
+            let next_step = &result["next_actions"][0];
+            assert_eq!(result["evidence"]["events"][0]["next_step"], *next_step);
+            assert_eq!(next_step["kind"], "review_or_merge_on_platform", "{result}");
+            assert_eq!(next_step["goal"], "checks", "{result}");
+            assert_eq!(next_step["draft"], false, "{result}");
+            assert_eq!(next_step["auto_merge"], auto_merge, "{result}");
+            let message = next_step["message"].as_str().unwrap();
+            assert!(message.contains("review"), "{result}");
+            assert!(message.contains("approval"), "{result}");
+            assert!(message.contains("not inferred"), "{result}");
+            assert!(
+                message.contains(match auto_merge {
+                    "registered" => "registered",
+                    "not_registered" => "not registered",
+                    _ => "unknown",
+                }),
+                "{result}"
+            );
+            assert_eq!(f.writes(), writes, "{provider}/{auto_merge}");
+        }
+    }
+}
+
+#[test]
+fn checks_and_lifecycle_goals_keep_their_next_steps_distinct() {
+    let f = fixture("github");
+    let checks = f.run(&watch("checks"));
+    let lifecycle = f.run(&watch("lifecycle"));
+    let checks_action = &checks["next_actions"][0];
+    let lifecycle_action = &lifecycle["next_actions"][0];
+    assert_eq!(checks_action["goal"], "checks", "{checks}");
+    assert_eq!(lifecycle_action["goal"], "lifecycle", "{lifecycle}");
+    assert!(
+        checks_action["message"]
+            .as_str()
+            .unwrap()
+            .contains("checks goal")
+    );
+    assert!(
+        lifecycle_action["message"]
+            .as_str()
+            .unwrap()
+            .contains("lifecycle")
+    );
+    assert!(
+        checks_action["message"]
+            .as_str()
+            .unwrap()
+            .contains("not delivery completion")
+    );
+}
+
+#[test]
+fn merged_open_issues_include_ids_and_hook_text_matches_the_structured_action() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|state| {
+            state["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            state["requests"][0]["merged"] = json!(true);
+            state["issues"][0]["state"] = json!("open");
+        });
+        let writes = f.writes();
+        let direct = f.run(&watch("lifecycle"));
+        assert_eq!(
+            direct["status"], "merged_issues_open",
+            "{provider}: {direct}"
+        );
+        let event = &direct["evidence"]["events"][0];
+        let next_step = &event["next_step"];
+        assert_eq!(next_step["kind"], "inspect_open_issues", "{direct}");
+        assert_eq!(next_step["issue_ids"], json!([1]), "{direct}");
+        assert_eq!(event["next_action"], next_step["message"], "{direct}");
+        assert_eq!(direct["next_actions"][0], *next_step, "{direct}");
+        assert!(next_step["message"].as_str().unwrap().contains("#1"));
+        assert_eq!(
+            next_step["command"],
+            "specgit pr --status --request 41 --json"
+        );
+
+        let inbox_report = f.run(&inbox_for("lifecycle"));
+        assert_eq!(
+            inbox_report["next_actions"][0], *next_step,
+            "{inbox_report}"
+        );
+        let offered = hook_output(&f, "PostToolUse", true);
+        let hook_text = offered["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            hook_text.contains(next_step["message"].as_str().unwrap()),
+            "{offered}"
+        );
+        let offered_label = hook_text
+            .find("SpecGit observation offered (not acknowledged):")
+            .unwrap();
+        let next_steps_label = hook_text.find("Next steps:").unwrap();
+        assert!(
+            offered_label < next_steps_label,
+            "event evidence and next-step text are in the wrong order: {offered}"
+        );
+        assert!(
+            hook_text[offered_label..next_steps_label].contains("events"),
+            "event evidence is missing before the next-step label: {offered}"
+        );
+        assert!(
+            hook_text.contains(&serde_json::to_string(next_step).unwrap()),
+            "{offered}"
+        );
+        assert_eq!(f.writes(), writes, "{provider}");
+    }
+}
+
+#[test]
+fn merged_without_verified_issue_set_stays_unknown_and_closed_unmerged_has_an_explicit_choice() {
+    for provider in ["github", "gitlab"] {
+        let merged = fixture(provider);
+        merged.edit(|state| {
+            state["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            state["requests"][0]["merged"] = json!(true);
+            state["native_closing_failure"] = json!("forbidden");
+            state["issues"][0]["state"] = json!("closed");
+        });
+        let writes = merged.writes();
+        let result = merged.run(&watch("lifecycle"));
+        assert_eq!(result["status"], "unknown", "{provider}: {result}");
+        let next_step = &result["next_actions"][0];
+        assert_eq!(next_step["kind"], "verify_issue_closure", "{result}");
+        assert!(
+            next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("does not confirm")
+        );
+        assert_eq!(next_step["issue_ids"], json!([1]), "{result}");
+        assert_eq!(merged.writes(), writes, "{provider}");
+
+        let closed = fixture(provider);
+        closed.edit(|state| {
+            state["requests"][0]["state"] = json!("closed");
+            state["requests"][0]["merged"] = json!(false);
+        });
+        let writes = closed.writes();
+        let result = closed.run(&watch("lifecycle"));
+        assert_eq!(result["status"], "closed_unmerged", "{provider}: {result}");
+        assert_eq!(
+            result["next_actions"][0]["kind"], "reopen_or_choose_followup",
+            "{result}"
+        );
+        assert!(
+            result["next_actions"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not delivery completion")
+        );
+        assert_eq!(closed.writes(), writes, "{provider}");
+    }
+}
+
+#[test]
+fn enabled_agent_closure_preference_does_not_authorize_or_execute_issue_closure() {
+    for provider in ["github", "gitlab"] {
+        let f = acceptance::fixture_with_observation(
+            provider,
+            "agent:\n  close_issues_after_merge: true\n",
+        );
+        f.edit(|state| {
+            state["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            state["requests"][0]["merged"] = json!(true);
+            state["issues"][0]["state"] = json!("open");
+        });
+        let writes = f.writes();
+        let result = f.run(&watch("lifecycle"));
+        let next_step = &result["next_actions"][0];
+        assert_eq!(next_step["kind"], "inspect_open_issues", "{result}");
+        assert!(next_step["close_issues_after_merge"].as_bool().unwrap());
+        assert!(
+            next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("does not grant authorization")
+        );
+        assert!(!next_step["requires_user_authorization"].as_bool().unwrap());
+        assert_eq!(
+            next_step["command"],
+            "specgit pr --status --request 41 --json"
+        );
+        assert_eq!(f.writes(), writes, "{provider}");
+    }
+}
+
+#[test]
+fn attention_only_notifications_deliver_failed_native_observations() {
+    let f = acceptance::fixture_with_observation(
+        "github",
+        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 5\n  notify: [attention]\n",
+    );
+    f.edit(|s| s["read_failure"] = json!("auth"));
+
+    let offered = hook_output(&f, "PostToolUse", true);
+    let text = offered.to_string();
+    assert!(text.contains("unknown"), "{offered}");
+}
+
+#[test]
+fn completed_only_notifications_suppress_attention_events() {
+    let f = acceptance::fixture_with_observation(
+        "github",
+        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 5\n  notify: [completed]\n",
+    );
+    f.edit(|s| s["read_failure"] = json!("auth"));
+
+    let offered = hook_output(&f, "PostToolUse", true);
+    let text = offered.to_string();
+    assert!(!text.contains("unknown"), "{offered}");
+    assert!(!text.contains("unverified event receipts"), "{offered}");
+}
+
+#[test]
+fn malformed_body_references_keep_watch_and_inbox_diagnostics() {
+    let f = fixture("github");
+    f.edit(|s| {
+        s["native_closing"] = json!([1]);
+        s["requests"][0]["state"] = json!("closed");
+        s["requests"][0]["merged"] = json!(true);
+        s["requests"][0]["body"] = json!("- Closes #1");
+        s["issues"][0]["state"] = json!("closed");
+    });
+
+    let observed = f.run(&watch("lifecycle"));
+    assert_eq!(observed["status"], "unknown", "{observed}");
+    let event = &observed["evidence"]["events"][0];
+    assert!(event["reason"].as_str().unwrap().contains("invalid_input"));
+
+    let refreshed = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+    ]);
+    assert_eq!(refreshed["status"], "unknown", "{refreshed}");
+    assert_eq!(refreshed["evidence"]["events"][0]["id"], event["id"]);
+    assert!(
+        refreshed["evidence"]["events"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_input")
+    );
 }
 #[test]
 fn session_receipts_do_not_steal_events_and_ack_is_not_human_reading() {
@@ -500,6 +1130,17 @@ fn native_neutral_failure_and_running_results_remain_distinct() {
             },
             "{provider}/{conclusion}: {result}"
         );
+        assert_eq!(
+            result["next_actions"][0]["kind"],
+            if ["skipped", "neutral"].contains(&conclusion) {
+                "interpret_checks"
+            } else if ["pending", "running"].contains(&conclusion) {
+                "wait_for_checks"
+            } else {
+                "repair_checks"
+            },
+            "{provider}/{conclusion}: {result}"
+        );
     }
 }
 
@@ -600,7 +1241,11 @@ fn hook_output(f: &delivery::Fixture, event: &str, observe: bool) -> Value {
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
-    serde_json::from_slice(&out.stdout).unwrap()
+    if out.stdout.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&out.stdout).unwrap()
+    }
 }
 #[test]
 fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverified_ids() {
@@ -949,6 +1594,7 @@ fn native_association_without_body_syntax_emits_completed_after_actual_closure()
         assert_eq!(r["status"], "completed", "{provider}: {r}");
         assert_eq!(r["exit"], 0);
         assert_eq!(r["evidence"]["events"][0]["state"], "completed");
+        assert_eq!(r["next_actions"][0]["kind"], "completed", "{r}");
         assert_eq!(f.writes(), writes);
     }
 }
