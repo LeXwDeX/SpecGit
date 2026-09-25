@@ -23,12 +23,13 @@ test('every workflow uses pinned actions, approved runner routes and isolated ch
     const doc = parse(workflow(file));
     assert.deepEqual(doc.permissions, { contents: 'read' }, file);
     for (const [id, job] of Object.entries(doc.jobs)) {
-      const routes = Array.isArray(job['runs-on']) ? [job['runs-on']] : job.strategy?.matrix?.include?.map(row => row.os);
-      assert(routes?.length > 0, `${file}/${id}: missing native runner route`);
+      const routes = job.strategy?.matrix?.include
+        ? job.strategy.matrix.include.map(row => row.os)
+        : [job['runs-on']];
+      assert(routes.length > 0, `${file}/${id}: missing native runner route`);
       for (const route of routes) {
-        if (route === 'macos-15') continue;
-        assert(Array.isArray(route) && route.includes('self-hosted') && route.includes('X64') &&
-          (route.includes('Linux') || route.includes('Windows')), `${file}/${id}: unapproved runner route`);
+        assert(['ubuntu-24.04', 'macos-15', 'windows-2025'].includes(route),
+          `${file}/${id}: runner must use a standard GitHub-hosted label`);
       }
       for (const step of job.steps ?? []) {
         if (step.uses) assert.match(step.uses, /@[a-f\d]{40}$/, `${file}/${id}: unpinned action`);
@@ -58,38 +59,13 @@ test('protected acceptance requires applicable native verification and a ready m
   for (const phase of ['lint', 'compile-tests', 'source-tests', 'distribution-tests', 'compile-release', 'install', 'profile']) assert(commands.includes(`--phase ${phase} `));
 });
 
-test('runner smoke is dispatch-only, single-platform, checkout-free and tokenless', () => {
-  const raw = workflow('runner-smoke.yml');
-  const doc = parse(raw);
-  assert.deepEqual(Object.keys(doc.on), ['workflow_dispatch']);
-  const platform = doc.on.workflow_dispatch.inputs.platform;
-  assert.equal(platform.type, 'choice');
-  assert.equal(platform.required, true);
-  assert.deepEqual(platform.options, ['linux', 'windows']);
-  assert.deepEqual(Object.keys(doc.jobs), ['smoke-linux', 'smoke-windows']);
-  assert.deepEqual(doc.jobs['smoke-linux']['runs-on'], ['self-hosted', 'Linux', 'X64']);
-  assert.deepEqual(doc.jobs['smoke-windows']['runs-on'], ['self-hosted', 'Windows', 'X64']);
-  assert.equal(doc.jobs['smoke-linux'].if, "inputs.platform == 'linux'");
-  assert.equal(doc.jobs['smoke-windows'].if, "inputs.platform == 'windows'");
-  for (const job of Object.values(doc.jobs)) {
-    assert.equal(job['timeout-minutes'], 10);
-    assert.deepEqual(job.permissions, {});
-    for (const step of job.steps) assert.equal(step.uses, undefined);
-  }
-  assert(!raw.includes('actions/checkout'));
-  assert(!raw.includes('github.token'));
-  assert(!raw.includes('secrets.'));
-  for (const line of raw.split('\n').filter(l => l.trimStart().startsWith('runs-on:')))
-    assert(!/macos|darwin|arm64/i.test(line), `runner smoke must not target macOS: ${line.trim()}`);
-});
-
-test('CI and release use hosted ARM64 macOS and owned Linux/Windows runners', () => {
+test('CI and release use GitHub-hosted native runners for all platforms', () => {
   for (const [file, id] of [['ci.yml', 'rust'], ['release-prepare.yml', 'build']]) {
     const job = parse(workflow(file)).jobs[id];
     assert.deepEqual(job.strategy.matrix.include.map(row => [row.label, row.os]), [
-      ['linux', ['self-hosted', 'Linux', 'X64']],
+      ['linux', 'ubuntu-24.04'],
       ['macos', 'macos-15'],
-      ['windows', ['self-hosted', 'Windows', 'X64']],
+      ['windows', 'windows-2025'],
     ]);
     const check = job.steps.find(step => step.name === 'Verify hosted macOS ARM64 toolchain');
     assert.equal(check.if, "runner.os == 'macOS'");

@@ -12,6 +12,9 @@ pub struct Fixture {
 }
 impl Fixture {
     pub fn new(provider: &str) -> Self {
+        Self::with_observation(provider, "")
+    }
+    pub fn with_observation(provider: &str, observation_yaml: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
         let root = base.join("project");
@@ -40,7 +43,7 @@ impl Fixture {
         fs::write(
             root.join(".specgit.yaml"),
             format!(
-                "version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: kind\n"
+                "version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: kind\n{observation_yaml}"
             ),
         )
         .unwrap();
