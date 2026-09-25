@@ -425,6 +425,49 @@ fn unknown_github_dynamic_workflow_blocks_with_specific_diagnostic() {
 }
 
 #[test]
+fn unreadable_registered_github_workflows_keep_failure_class_and_add_path_context() {
+    let workflow_path = ".github/workflows/specgit-reuse.yml";
+    let workflow_route =
+        "repos/fixture/repo/contents/.github/workflows/specgit-reuse.yml?ref=".to_owned() + MAIN;
+
+    let (missing, missing_config) = fixture("github");
+    missing.edit(|state| {
+        state["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":1,"workflows":[{"id":41,"state":"active","path":workflow_path}]});
+    });
+    let missing_preview = preview(&missing, &missing_config, &[]);
+    assert_eq!(missing_preview["exit"], 3, "{missing_preview}");
+    assert_eq!(
+        missing_preview["diagnostics"][0]["code"],
+        "ambiguous_not_found"
+    );
+    assert!(
+        missing_preview["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(workflow_path)
+    );
+
+    let (forbidden, forbidden_config) = fixture("github");
+    forbidden.edit(|state| {
+        state["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":1,"workflows":[{"id":41,"state":"active","path":workflow_path}]});
+        state["read_routes"][workflow_route] =
+            json!({"__fixture_error":"HTTP 403 private https://sentinel:secret@example.invalid/?token=secret"});
+    });
+    let forbidden_preview = preview(&forbidden, &forbidden_config, &[]);
+    assert_eq!(forbidden_preview["exit"], 3, "{forbidden_preview}");
+    assert_eq!(
+        forbidden_preview["diagnostics"][0]["code"],
+        "permission_denied"
+    );
+    let diagnostic = forbidden_preview["diagnostics"][0].to_string();
+    assert!(diagnostic.contains(workflow_path));
+    assert!(!diagnostic.contains("sentinel"));
+    assert!(!diagnostic.contains("secret"));
+}
+
+#[test]
 fn gitlab_static_includes_are_followed_and_external_includes_are_explicitly_unverified() {
     use base64::{Engine, engine::general_purpose::STANDARD};
     let (f, path) = fixture("gitlab");
