@@ -92,6 +92,32 @@
           "type": "boolean"
         }
       }
+    },
+    "init_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "requirement",
+        "status",
+        "presentation",
+        "applies_to",
+        "source",
+        "observed_at",
+        "reason",
+        "next_step"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "requirement": {"enum": ["required", "recommended", "optional"]},
+        "status": {"enum": ["verified", "not_configured", "failed", "unknown", "not_checked", "not_applicable"]},
+        "presentation": {"enum": ["pass", "hint", "warning", "blocking"]},
+        "applies_to": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+        "source": {"type": "string", "minLength": 1},
+        "observed_at": {"type": ["integer", "null"], "minimum": 0},
+        "reason": {"type": "string", "minLength": 1},
+        "next_step": {"type": "string", "minLength": 1}
+      }
     }
   },
   "properties": {
@@ -247,6 +273,27 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {"const": "init"},
+          "evidence": {"type": "object"}
+        },
+        "required": ["operation", "evidence"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "checks": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/init_check"}
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
