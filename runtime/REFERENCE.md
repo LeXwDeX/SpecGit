@@ -136,6 +136,18 @@ and hook. No separate server is required for ordinary Agent use.
 hosts can require an explicit provider. `--api-host` is private worktree routing,
 not a shared credential field; SSH and API ports are distinct.
 
+`init --inspect` adds an additive `evidence.checks` list. Each stable check ID
+reports its requirement (`required`, `recommended`, `optional`), observed fact
+status, presentation (`pass`, `hint`, `warning`, `blocking`), applicable stages,
+evidence source/time, reason and next step. JSON and `--human` render the same
+check facts. This first-stage list maps facts already collected by init; it does
+not perform Issue duplicate searches or permission writes. `issue.duplicate_read`
+and `issue.write_permission` therefore remain `not_checked` until the relevant
+Issue operation. A readable account endpoint proves neither Issue write access
+nor merge eligibility. Unknown facts only affect the operation that depends on
+them; target-protection uncertainty is a warning because init has no declared
+policy making that check mandatory.
+
 Capability records use `supported`, `unsupported` or `unknown` with source and
 reason. Unsupported/unknown native flow returns `confirmation_required` before
 project writes unless an explicit manual fallback was selected. The report remains
