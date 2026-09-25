@@ -49,7 +49,7 @@ fn codex_and_opencode_preserve_user_guidance_across_refresh_and_uninstall() {
         let skill = fs::read_to_string(root.join("skills/specgit-native/SKILL.md")).unwrap();
         assert!(skill.contains("Read-only inspection, audits, and reviews need no delivery Issue"));
         assert!(skill.contains("Existing session authorization remains valid within its scope"));
-        assert!(skill.replace('\n', " ").contains("Native Issue/PR writes, including marking a request ready, require existing scope-specific user authorization"));
+        assert!(skill.replace("\r\n", "\n").replace('\n', " ").contains("Native Issue/PR writes, including marking a request ready, require existing scope-specific user authorization"));
         fs::write(&path, format!("{text}user appended\n")).unwrap();
     }
     setup::install(&o, &binary).unwrap();
