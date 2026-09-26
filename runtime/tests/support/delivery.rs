@@ -3,7 +3,11 @@ pub(crate) mod executable;
 #[path = "snapshot.rs"]
 mod snapshot;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    path::PathBuf,
+    process::{Command, Output},
+};
 pub struct Fixture {
     _temp: tempfile::TempDir,
     pub root: PathBuf,
@@ -90,19 +94,25 @@ impl Fixture {
         assert_eq!(value["exit"].as_i64(), out.status.code().map(i64::from));
         value
     }
+    #[allow(dead_code)]
+    pub fn run_human(&self, args: &[&str]) -> Output {
+        self.configure(args, executable::command(), false)
+            .output()
+            .unwrap()
+    }
     pub fn command(&self, args: &[&str]) -> Command {
-        self.configure(args, executable::command())
+        self.configure(args, executable::command(), true)
     }
     /// Fault injection needs the feature-enabled test binary during installed-runtime qualification.
     #[allow(dead_code)]
     pub fn feature_command(&self, args: &[&str]) -> Command {
-        self.configure(args, Command::new(env!("CARGO_BIN_EXE_specgit")))
+        self.configure(args, Command::new(env!("CARGO_BIN_EXE_specgit")), true)
     }
     #[allow(dead_code)]
     pub fn native_command(&self, args: &[&str]) -> Command {
-        self.configure(args, Command::new(executable::binary()))
+        self.configure(args, Command::new(executable::binary()), true)
     }
-    fn configure(&self, args: &[&str], mut command: Command) -> Command {
+    fn configure(&self, args: &[&str], mut command: Command, json: bool) -> Command {
         let mut paths = vec![self.bin.clone()];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
@@ -111,8 +121,8 @@ impl Fixture {
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("SPECGIT_FIXTURE_API_FILE", &self.state)
-            .args(args)
-            .arg("--json");
+            .args(args);
+        command.arg(if json { "--json" } else { "--human" });
         command
     }
     pub fn state(&self) -> Value {

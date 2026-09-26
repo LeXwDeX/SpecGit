@@ -77,7 +77,10 @@ pub fn safe_path(path: &Path) -> Result<(), Diagnostic> {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(error(
                     Code::UnsafePath,
-                    "A symbolic-link boundary prevents this asset operation.",
+                    &format!(
+                        "A symbolic-link boundary at {:?} prevents this asset operation.",
+                        prefix
+                    ),
                 ));
             }
             Ok(_) => {}
