@@ -133,13 +133,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["operation", "assessment", "relevant_checks", "blocked_by", "unverified_by"],
+            "required": ["operation", "assessment", "relevant_checks", "blocked_by", "unverified_by", "warnings"],
             "properties": {
               "operation": {"type": "string", "minLength": 1},
               "assessment": {"enum": ["blocked", "unverified", "no_reported_blocker"]},
               "relevant_checks": {"type": "array", "items": {"type": "string"}},
               "blocked_by": {"type": "array", "items": {"type": "string"}},
-              "unverified_by": {"type": "array", "items": {"type": "string"}}
+              "unverified_by": {"type": "array", "items": {"type": "string"}},
+              "warnings": {"type": "array", "items": {"type": "string"}}
             }
           }
         }

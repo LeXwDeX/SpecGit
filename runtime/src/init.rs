@@ -84,6 +84,7 @@ struct OperationAssessment {
     relevant_checks: Vec<&'static str>,
     blocked_by: Vec<&'static str>,
     unverified_by: Vec<&'static str>,
+    warnings: Vec<&'static str>,
 }
 
 const INIT_OPERATIONS: &[&str] = &[
@@ -126,6 +127,14 @@ fn operation_assessments(checks: &[InitCheck]) -> Vec<OperationAssessment> {
                 })
                 .map(|check| check.id)
                 .collect();
+            let warnings: Vec<_> = relevant
+                .iter()
+                .filter(|check| {
+                    check.requirement == CheckRequirement::Recommended
+                        && check.presentation == CheckPresentation::Warning
+                })
+                .map(|check| check.id)
+                .collect();
             let assessment = if !blocked_by.is_empty() {
                 "blocked"
             } else if !unverified_by.is_empty() {
@@ -139,6 +148,7 @@ fn operation_assessments(checks: &[InitCheck]) -> Vec<OperationAssessment> {
                 relevant_checks: relevant.iter().map(|check| check.id).collect(),
                 blocked_by,
                 unverified_by,
+                warnings,
             }
         })
         .collect()
