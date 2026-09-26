@@ -9,6 +9,37 @@ struct Fixture {
     state: PathBuf,
     bin: PathBuf,
 }
+
+fn report_schema() -> Value {
+    serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap()
+}
+
+fn init_evidence_schema(report_schema: &Value) -> Value {
+    json!({
+        "$schema": report_schema["$schema"],
+        "$defs": report_schema["$defs"],
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["checks", "operation_assessments"],
+        "properties": {
+            "checks": {"type":"array","items":{"$ref":"#/$defs/init_check"}},
+            "operation_assessments": {"$ref":"#/$defs/init_operation_assessments"}
+        }
+    })
+}
+
+fn assert_report_matches_schema(report: &Value) {
+    let schema = report_schema();
+    jsonschema::draft202012::validate(&schema, report)
+        .unwrap_or_else(|error| panic!("report violates report.schema.json: {error}"));
+}
+
+fn assert_init_evidence_matches_schema(evidence: &Value) {
+    let schema = init_evidence_schema(&report_schema());
+    jsonschema::draft202012::validate(&schema, evidence)
+        .unwrap_or_else(|error| panic!("init evidence violates report.schema.json: {error}"));
+}
+
 impl Fixture {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
@@ -112,6 +143,8 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
     let f = Fixture::new();
     let json_report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
     let human_evidence = f.run_human(&["init", "--provider", "github", "--inspect"]);
+    assert_report_matches_schema(&json_report);
+    assert_init_evidence_matches_schema(&human_evidence);
     let checks = json_report["evidence"]["checks"].as_array().unwrap();
     assert_eq!(checks.len(), 10);
     assert_eq!(
@@ -122,6 +155,26 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
         specgit::config::INIT_CHECK_IDS
     );
     let by_id = |id: &str| checks.iter().find(|check| check["id"] == id).unwrap();
+    let context = &json_report["evidence"]["context"];
+    let expected_repository = json!({
+        "provider": context["repository"]["provider"],
+        "host": context["repository"]["host"],
+        "path": context["repository"]["path"],
+    });
+    for check in checks {
+        assert_eq!(
+            check["scope"],
+            json!({
+                "repository":expected_repository,
+                "branch":context["branch"],
+                "commit":context["head"],
+            })
+        );
+    }
+    let mut invalid_report = json_report.clone();
+    invalid_report["evidence"]["checks"][0]["scope"]["unexpected"] = json!(true);
+    let schema = report_schema();
+    assert!(jsonschema::draft202012::validate(&schema, &invalid_report).is_err());
     assert_eq!(by_id("forge.read_access")["status"], "verified");
     assert_eq!(by_id("forge.read_access")["requirement"], "required");
     assert_eq!(by_id("forge.read_access")["diagnostic"], Value::Null);
@@ -147,6 +200,7 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
             "requirement_source",
             "presentation",
             "applies_to",
+            "scope",
             "diagnostic",
         ] {
             assert_eq!(human_check[field], json_check[field], "field {field}");
@@ -215,6 +269,98 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
             .count(),
         0,
         "inspection must not probe native write permissions"
+    );
+}
+
+#[test]
+fn init_inspection_keeps_commit_scope_when_head_is_detached() {
+    let f = Fixture::new();
+    let detached = Command::new("git")
+        .current_dir(&f.root)
+        .args(["checkout", "--detach"])
+        .output()
+        .unwrap();
+    assert!(detached.status.success(), "stderr={:?}", detached.stderr);
+    let head = Command::new("git")
+        .current_dir(&f.root)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(head.status.success());
+    let expected_head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_report_matches_schema(&report);
+    assert_eq!(report["evidence"]["context"]["branch"], Value::Null);
+    for check in report["evidence"]["checks"].as_array().unwrap() {
+        assert_eq!(check["scope"]["branch"], Value::Null);
+        assert_eq!(check["scope"]["commit"], expected_head);
+    }
+}
+
+#[test]
+fn init_inspection_reports_null_scope_when_repository_context_cannot_be_resolved() {
+    let f = Fixture::new();
+    let removed = Command::new("git")
+        .current_dir(&f.root)
+        .args(["remote", "remove", "origin"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success());
+
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_report_matches_schema(&report);
+    let checks = report["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 10);
+    assert_eq!(checks[0]["status"], "unknown");
+    assert!(!report["diagnostics"].as_array().unwrap().is_empty());
+    for check in checks {
+        assert_eq!(
+            check["scope"],
+            json!({"repository":null,"branch":null,"commit":null})
+        );
+    }
+    assert_eq!(report["evidence"]["written"], false);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert!(!f.root.join(".git/specgit-v2").exists());
+    assert_eq!(f.state()["calls"], json!([]));
+}
+
+#[test]
+fn init_check_scope_schema_requires_all_keys_and_explicitly_allows_unknowns() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    let scope = &schema["$defs"]["init_check_scope"];
+    let repository = &scope["properties"]["repository"]["oneOf"][1];
+    assert_eq!(scope["additionalProperties"], false);
+    assert_eq!(scope["required"], json!(["repository", "branch", "commit"]));
+    assert_eq!(
+        scope["properties"]["commit"]["pattern"],
+        "^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+    );
+    assert_eq!(
+        scope["properties"]["repository"]["oneOf"][0]["type"],
+        "null"
+    );
+    assert_eq!(
+        scope["properties"]["branch"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(
+        scope["properties"]["commit"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(repository["additionalProperties"], false);
+    assert_eq!(repository["required"], json!(["provider", "host", "path"]));
+    assert_eq!(
+        repository["properties"]["provider"]["enum"],
+        json!(["github", "gitlab"])
+    );
+    assert!(
+        schema["$defs"]["init_check"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("scope"))
     );
 }
 
@@ -327,7 +473,25 @@ fn api_failure_and_invalid_declaration_leave_project_files_untouched() {
     state["deny"] = json!(true);
     fs::write(&f.state, state.to_string()).unwrap();
     let r = f.run(&["init", "--provider", "github"]);
+    assert_report_matches_schema(&r);
+    let head = Command::new("git")
+        .current_dir(&f.root)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(head.status.success());
+    let expected_head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
     assert_eq!(r["exit"], 3);
+    for check in r["evidence"]["checks"].as_array().unwrap() {
+        assert_eq!(
+            check["scope"],
+            json!({
+                "repository":{"provider":"github","host":"forge.example","path":"fixture/repo"},
+                "branch":"feature",
+                "commit":expected_head,
+            })
+        );
+    }
     let access = r["evidence"]["checks"]
         .as_array()
         .unwrap()
