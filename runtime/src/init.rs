@@ -5,7 +5,7 @@ use crate::{
     guidance,
     probe::{self, Capability, ForgeRead},
     process::Process,
-    project::{self, Provider},
+    project::{self, Context, Provider, Repository},
     report::Report,
     templates,
 };
@@ -71,11 +71,28 @@ struct InitCheck {
     status: CheckFactStatus,
     presentation: CheckPresentation,
     applies_to: &'static [&'static str],
+    scope: InitCheckScope,
     source: String,
     observed_at: Option<u64>,
     diagnostic: Option<Diagnostic>,
     reason: String,
     next_step: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InitCheckScope {
+    repository: Option<Repository>,
+    branch: Option<String>,
+    commit: Option<String>,
+}
+impl InitCheckScope {
+    fn from_context(context: Option<&Context>) -> Self {
+        Self {
+            repository: context.map(|context| context.repository.clone()),
+            branch: context.and_then(|context| context.branch.clone()),
+            commit: context.map(|context| context.head.clone()),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -155,8 +172,8 @@ fn operation_assessments(checks: &[InitCheck]) -> Vec<OperationAssessment> {
         .collect()
 }
 
-fn append_check_report(evidence: &mut Value, policy: &InitPolicy) {
-    let checks = init_checks(evidence, policy);
+fn append_check_report(evidence: &mut Value, policy: &InitPolicy, scope: InitCheckScope) {
+    let checks = init_checks(evidence, policy, &scope);
     evidence["checks"] =
         serde_json::to_value(&checks).expect("typed initialization checks serialize");
     evidence["operation_assessments"] = json!({
@@ -166,7 +183,7 @@ fn append_check_report(evidence: &mut Value, policy: &InitPolicy) {
     });
 }
 
-fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
+fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) -> Vec<InitCheck> {
     let mut checks = Vec::new();
     let probes = evidence["probes"].as_array().cloned().unwrap_or_default();
     let find_probe = |operation: &str| {
@@ -184,6 +201,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         status: if has_identity { CheckFactStatus::Verified } else { CheckFactStatus::Unknown },
         presentation: if has_identity { CheckPresentation::Pass } else { CheckPresentation::Blocking },
         applies_to: &["local_development", "issue_inspection", "request_delivery"],
+        scope: scope.clone(),
         source: "resolved Git root, remote, forge project identity, branch and HEAD".into(),
         observed_at: Some(crate::probe::now()),
         diagnostic: None,
@@ -208,6 +226,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         status: if cli_available { CheckFactStatus::Verified } else if cli_status == Some("unavailable") || cli_status == Some("forbidden") { CheckFactStatus::Failed } else { CheckFactStatus::Unknown },
         presentation: if cli_available { CheckPresentation::Pass } else { CheckPresentation::Blocking },
         applies_to: &["issue_inspection", "issue_creation", "request_delivery"],
+        scope: scope.clone(),
         source: cli_probe.and_then(|probe| probe["operation"].as_str()).unwrap_or("native forge CLI version probe").into(),
         observed_at: cli_probe.and_then(|probe| probe["observed_at"].as_u64()),
         diagnostic: None,
@@ -236,6 +255,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         },
         presentation: if account_available { CheckPresentation::Pass } else { CheckPresentation::Blocking },
         applies_to: &["issue_inspection", "issue_creation", "request_delivery"],
+        scope: scope.clone(),
         source: "authenticated forge account API read".into(),
         observed_at: account_observed_at,
         diagnostic: account_diagnostic.clone(),
@@ -261,6 +281,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         status: CheckFactStatus::NotChecked,
         presentation: CheckPresentation::Blocking,
         applies_to: &["issue_selection", "issue_creation"],
+        scope: scope.clone(),
         source: "not probed by init; specgit issue --inspect performs the bounded duplicate read"
             .into(),
         observed_at: None,
@@ -277,6 +298,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         status: CheckFactStatus::NotChecked,
         presentation: CheckPresentation::Hint,
         applies_to: &["issue_creation"],
+        scope: scope.clone(),
         source: "not checked; init never performs a write probe".into(),
         observed_at: None,
         diagnostic: None,
@@ -290,6 +312,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         status: CheckFactStatus::NotChecked,
         presentation: CheckPresentation::Hint,
         applies_to: &["request_delivery"],
+        scope: scope.clone(),
         source: "not checked; init never performs a request write probe".into(),
         observed_at: None,
         diagnostic: None,
@@ -379,6 +402,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
             status,
             presentation,
             applies_to: stages,
+            scope: scope.clone(),
             source: source.into(),
             observed_at: Some(crate::probe::now()),
             diagnostic: None,
@@ -525,14 +549,30 @@ async fn prepare_and_run(
     }
     *language = declaration.language;
     declaration.validate()?;
-    let context = config::resolve(
+    let context = match config::resolve(
         &process,
         &root,
         declaration.remote.as_deref(),
         declaration.provider,
         options.api_host.as_deref(),
     )
-    .await?;
+    .await
+    {
+        Ok(context) => context,
+        Err(diagnostic) if options.inspect_only => {
+            let mut report = Report::failure("init", diagnostic);
+            report.evidence =
+                json!({"probes":[],"written":false,"project":"unknown","request":null});
+            append_check_report(
+                &mut report.evidence,
+                &declaration.init_policy,
+                InitCheckScope::from_context(None),
+            );
+            return Ok(report);
+        }
+        Err(diagnostic) => return Err(diagnostic),
+    };
+    let check_scope = InitCheckScope::from_context(Some(&context));
     declaration.remote = Some(context.remote.clone());
     // Retain explicit custom-host selection. Standard native hosts remain derivable.
     if declaration.provider.is_none()
@@ -575,7 +615,11 @@ async fn prepare_and_run(
             let mut report = Report::failure("init", d);
             report.evidence =
                 json!({"probes":probes,"written":false,"project":"unknown","request":null});
-            append_check_report(&mut report.evidence, &declaration.init_policy);
+            append_check_report(
+                &mut report.evidence,
+                &declaration.init_policy,
+                InitCheckScope::from_context(Some(&context)),
+            );
             return Ok(report);
         }
     };
@@ -614,7 +658,7 @@ async fn prepare_and_run(
     let failed = probes.iter().any(|p| p.status != Capability::Available);
     let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"capabilities":capabilities,"request":request,"templates":{"issue":{"source":issue.source,"required_sections":issue.required_sections},"pr":{"source":pr.source,"required_sections":pr.required_sections},"local_candidates":candidates,"inherited_native_templates":"not_checked"},"declaration":declaration,"written":false,"initial_adoption":existing.is_none()});
     if options.inspect_only {
-        append_check_report(&mut evidence, &declaration.init_policy);
+        append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());
     }
     if failed {
         let mut report = Report::success("init", "unknown", evidence);
