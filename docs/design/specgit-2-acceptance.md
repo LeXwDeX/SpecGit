@@ -10,7 +10,7 @@
 
 Status: required acceptance plan, not executed results. This matrix covers the
 [architecture](specgit-2.md), [harness contract](specgit-2-contract.md) and the
-296 entries in the [history ledger](specgit-2-history.md). Each implementation
+296 entries in the [history ledger](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-history.md). Each implementation
 issue must link its relevant rows and supply evidence at its final revision.
 The original task independently verifies the completed 2.0 result against these
 features, including code review, smoke tests and applicable regression tests.
