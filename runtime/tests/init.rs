@@ -20,10 +20,11 @@ fn init_evidence_schema(report_schema: &Value) -> Value {
         "$defs": report_schema["$defs"],
         "type": "object",
         "additionalProperties": true,
-        "required": ["checks", "operation_assessments"],
+        "required": ["checks", "operation_assessments", "availability"],
         "properties": {
             "checks": {"type":"array","items":{"$ref":"#/$defs/init_check"}},
-            "operation_assessments": {"$ref":"#/$defs/init_operation_assessments"}
+            "operation_assessments": {"$ref":"#/$defs/init_operation_assessments"},
+            "availability": {"$ref":"#/$defs/init_availability"}
         }
     })
 }
@@ -270,6 +271,267 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
         0,
         "inspection must not probe native write permissions"
     );
+}
+
+#[test]
+fn init_inspection_reports_three_independent_availability_layers() {
+    let f = Fixture::new();
+    let json_report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let human_evidence = f.run_human(&["init", "--provider", "github", "--inspect"]);
+    let availability = json_report["evidence"]
+        .get("availability")
+        .expect("init inspection reports layered availability");
+    let layers = availability["layers"].as_array().unwrap();
+    assert_eq!(
+        layers
+            .iter()
+            .map(|layer| layer["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "specification_development",
+            "protected_delivery",
+            "delivery_completion"
+        ]
+    );
+    let layer = |id: &str| layers.iter().find(|entry| entry["id"] == id).unwrap();
+    assert_eq!(availability["scope"], "reported_init_facts_only");
+    assert_eq!(layer("specification_development")["status"], "ready");
+    assert_eq!(
+        layer("specification_development")["checks"],
+        json!(["project.identity"])
+    );
+    assert_eq!(layer("specification_development")["blocked_by"], json!([]));
+    assert_eq!(
+        layer("specification_development")["unverified_by"],
+        json!([])
+    );
+    assert_eq!(layer("protected_delivery")["status"], "unverified");
+    assert!(
+        layer("protected_delivery")["checks"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("target.protection"))
+    );
+    assert!(
+        layer("protected_delivery")["warnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("target.protection"))
+    );
+    assert!(
+        layer("protected_delivery")["unverified_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("request.write_permission"))
+    );
+    assert!(
+        layer("protected_delivery")["unverified_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ci.required_verification"))
+    );
+    assert!(
+        layer("protected_delivery")["next_step"]
+            .as_str()
+            .is_some_and(|step| !step.is_empty())
+    );
+    assert_eq!(
+        layer("delivery_completion")["status"],
+        "unverified",
+        "init's capability checks do not establish merge or delivery completion"
+    );
+    assert_eq!(layer("delivery_completion")["checks"], json!([]));
+    assert_eq!(layer("delivery_completion")["facts"], json!([]));
+    for unknown in [
+        "native.merge_readback",
+        "native.issue_closure_readback",
+        "main.installed_acceptance",
+    ] {
+        assert!(
+            layer("delivery_completion")["unverified_by"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(unknown)),
+            "missing lifecycle evidence {unknown} must remain visible"
+        );
+    }
+    assert!(availability.get("overall").is_none());
+    assert_eq!(
+        json_report["evidence"]["operation_assessments"]["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["operation"] == "protected_delivery")
+            .unwrap()["assessment"],
+        "no_reported_blocker",
+        "the layer conclusion must not promote the narrower operation assessment"
+    );
+    assert_eq!(&human_evidence["availability"], availability);
+    assert_report_matches_schema(&json_report);
+    assert_init_evidence_matches_schema(&human_evidence);
+
+    let mut contradictory = json_report.clone();
+    contradictory["evidence"]["availability"]["layers"][1]["status"] = json!("ready");
+    assert!(jsonschema::draft202012::validate(&report_schema(), &contradictory).is_err());
+
+    let mut missing_reason = json_report.clone();
+    missing_reason["evidence"]["availability"]["layers"][1]["unverified_by"] = json!([]);
+    missing_reason["evidence"]["availability"]["layers"][1]["warnings"] = json!([]);
+    assert!(jsonschema::draft202012::validate(&report_schema(), &missing_reason).is_err());
+
+    let mut wrong_order = json_report.clone();
+    wrong_order["evidence"]["availability"]["layers"][0]["id"] = json!("protected_delivery");
+    assert!(jsonschema::draft202012::validate(&report_schema(), &wrong_order).is_err());
+}
+
+#[test]
+fn required_unknown_target_protection_blocks_protected_delivery_not_local_development() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".specgit.yaml"),
+        b"version: 2\ninit_policy: {required_checks: [target.protection]}\n",
+    )
+    .unwrap();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let availability = report["evidence"]
+        .get("availability")
+        .expect("init inspection reports layered availability");
+    assert_report_matches_schema(&report);
+    let layers = availability["layers"].as_array().unwrap();
+    let layer = |id: &str| layers.iter().find(|entry| entry["id"] == id).unwrap();
+    assert_eq!(layer("specification_development")["status"], "ready");
+    assert_eq!(layer("protected_delivery")["status"], "blocked");
+    assert!(
+        layer("protected_delivery")["blocked_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("target.protection"))
+    );
+    assert_eq!(layer("delivery_completion")["status"], "unverified");
+}
+
+#[test]
+fn init_inspection_does_not_treat_green_ci_on_an_open_request_as_delivery_completion() {
+    let f = Fixture::new();
+    let head = String::from_utf8(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let mut state = f.state();
+    state["request_fixture"] = json!(true);
+    state["requests"] = json!([{
+        "number": 9,
+        "state": "open",
+        "merged": false,
+        "head": {"repo": {"id": 7}, "ref": "feature"},
+        "base": {"repo": {"id": 7}, "ref": "preview"}
+    }]);
+    let mut routes = serde_json::Map::new();
+    routes.insert(
+        format!("repos/fixture/repo/actions/runs?head_sha={head}&per_page=100&page=1"),
+        json!({
+            "total_count": 1,
+            "workflow_runs": [{
+                "id": 71,
+                "head_sha": head,
+                "status": "completed",
+                "conclusion": "success"
+            }]
+        }),
+    );
+    state["read_routes"] = Value::Object(routes);
+    fs::write(&f.state, state.to_string()).unwrap();
+
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_report_matches_schema(&report);
+    assert!(!report["evidence"]["request"].is_null());
+    let completion = report["evidence"]["availability"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == "delivery_completion")
+        .unwrap();
+    assert_eq!(completion["status"], "unverified");
+    assert_eq!(completion["facts"], json!(["native.open_request"]));
+    assert!(
+        completion["unverified_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("native.merge_readback"))
+    );
+    let calls = f.state()["calls"].as_array().unwrap().clone();
+    assert!(
+        calls.iter().all(|call| !call["endpoint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("actions/runs")),
+        "init inspection must not claim CI readiness or add a CI probe"
+    );
+}
+
+#[test]
+fn init_inspection_keeps_merged_request_with_open_issue_unverified_without_lifecycle_readbacks() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["request_fixture"] = json!(true);
+    state["requests"] = json!([]);
+    state["read_routes"] = json!({
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+        "repos/fixture/repo/pulls/9": {
+            "number": 9,
+            "state": "closed",
+            "merged": true,
+            "updated_at": "2026-09-10T00:00:00Z"
+        },
+        "repos/fixture/repo/issues/624": {
+            "number": 624,
+            "state": "open",
+            "updated_at": "2026-09-10T00:00:00Z"
+        }
+    });
+    state["stale_installed_acceptance"] = json!({
+        "source_sha": "a".repeat(40),
+        "observed_at": "2026-09-10T00:00:00Z",
+        "result": "passed"
+    });
+    fs::write(&f.state, state.to_string()).unwrap();
+
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_report_matches_schema(&report);
+    let completion = report["evidence"]["availability"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == "delivery_completion")
+        .unwrap();
+    assert_eq!(completion["status"], "unverified");
+    assert_eq!(completion["facts"], json!([]));
+    assert_eq!(
+        completion["unverified_by"],
+        json!([
+            "native.merge_readback",
+            "native.issue_closure_readback",
+            "main.installed_acceptance"
+        ])
+    );
+    let calls = f.state()["calls"].as_array().unwrap().clone();
+    assert!(calls.iter().all(|call| {
+        !call["endpoint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/pulls/9")
+            && !call["endpoint"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("/issues/624")
+    }));
 }
 
 #[test]
