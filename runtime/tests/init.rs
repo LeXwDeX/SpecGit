@@ -122,6 +122,22 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
         specgit::config::INIT_CHECK_IDS
     );
     let by_id = |id: &str| checks.iter().find(|check| check["id"] == id).unwrap();
+    let context = &json_report["evidence"]["context"];
+    let expected_repository = json!({
+        "provider": context["repository"]["provider"],
+        "host": context["repository"]["host"],
+        "path": context["repository"]["path"],
+    });
+    for check in checks {
+        assert_eq!(
+            check["scope"],
+            json!({
+                "repository":expected_repository,
+                "branch":context["branch"],
+                "commit":context["head"],
+            })
+        );
+    }
     assert_eq!(by_id("forge.read_access")["status"], "verified");
     assert_eq!(by_id("forge.read_access")["requirement"], "required");
     assert_eq!(by_id("forge.read_access")["diagnostic"], Value::Null);
@@ -147,6 +163,7 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
             "requirement_source",
             "presentation",
             "applies_to",
+            "scope",
             "diagnostic",
         ] {
             assert_eq!(human_check[field], json_check[field], "field {field}");
@@ -215,6 +232,96 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
             .count(),
         0,
         "inspection must not probe native write permissions"
+    );
+}
+
+#[test]
+fn init_inspection_keeps_commit_scope_when_head_is_detached() {
+    let f = Fixture::new();
+    let detached = Command::new("git")
+        .current_dir(&f.root)
+        .args(["checkout", "--detach"])
+        .output()
+        .unwrap();
+    assert!(detached.status.success(), "stderr={:?}", detached.stderr);
+    let head = Command::new("git")
+        .current_dir(&f.root)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(head.status.success());
+    let expected_head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_eq!(report["evidence"]["context"]["branch"], Value::Null);
+    for check in report["evidence"]["checks"].as_array().unwrap() {
+        assert_eq!(check["scope"]["branch"], Value::Null);
+        assert_eq!(check["scope"]["commit"], expected_head);
+    }
+}
+
+#[test]
+fn init_inspection_reports_null_scope_when_repository_context_cannot_be_resolved() {
+    let f = Fixture::new();
+    let removed = Command::new("git")
+        .current_dir(&f.root)
+        .args(["remote", "remove", "origin"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success());
+
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let checks = report["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 10);
+    assert_eq!(checks[0]["status"], "unknown");
+    assert!(!report["diagnostics"].as_array().unwrap().is_empty());
+    for check in checks {
+        assert_eq!(
+            check["scope"],
+            json!({"repository":null,"branch":null,"commit":null})
+        );
+    }
+    assert_eq!(report["evidence"]["written"], false);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert!(!f.root.join(".git/specgit-v2").exists());
+    assert_eq!(f.state()["calls"], json!([]));
+}
+
+#[test]
+fn init_check_scope_schema_requires_all_keys_and_explicitly_allows_unknowns() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    let scope = &schema["$defs"]["init_check_scope"];
+    let repository = &scope["properties"]["repository"]["oneOf"][1];
+    assert_eq!(scope["additionalProperties"], false);
+    assert_eq!(scope["required"], json!(["repository", "branch", "commit"]));
+    assert_eq!(
+        scope["properties"]["commit"]["pattern"],
+        "^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+    );
+    assert_eq!(
+        scope["properties"]["repository"]["oneOf"][0]["type"],
+        "null"
+    );
+    assert_eq!(
+        scope["properties"]["branch"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(
+        scope["properties"]["commit"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(repository["additionalProperties"], false);
+    assert_eq!(repository["required"], json!(["provider", "host", "path"]));
+    assert_eq!(
+        repository["properties"]["provider"]["enum"],
+        json!(["github", "gitlab"])
+    );
+    assert!(
+        schema["$defs"]["init_check"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("scope"))
     );
 }
 

@@ -150,6 +150,15 @@ typed diagnostic (`code`, `operation`, `message`, `remedy`). JSON and `--human`
 render the same check facts. The `forge.read_access` diagnostic preserves safe
 account-read classifications such as authentication, permission, rate-limit,
 network and ambiguous-not-found failures; raw command output is never included.
+Each check also carries `scope.repository`, `scope.branch` and `scope.commit`.
+The repository is the normalized native identity (`provider`, `host`, `path`),
+and branch/commit identify the local checkout that was inspected. A detached
+HEAD has a null branch; unavailable identity fields are explicit nulls. The
+per-check scope does not repeat local filesystem paths or raw remote URLs. Check
+impact remains represented by requirement, status, presentation and applicable
+operations, with `evidence.operation_assessments` listing reported blockers,
+unverified requirements and warnings. Scope does not imply authorization or
+readiness for an operation.
 This first-stage list maps facts already collected by init; it does not perform
 Issue duplicate searches or permission writes. `issue.duplicate_read`, `issue.write_permission` and
 `request.write_permission` therefore remain `not_checked` until the relevant
