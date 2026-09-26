@@ -124,6 +124,7 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
     let by_id = |id: &str| checks.iter().find(|check| check["id"] == id).unwrap();
     assert_eq!(by_id("forge.read_access")["status"], "verified");
     assert_eq!(by_id("forge.read_access")["requirement"], "required");
+    assert_eq!(by_id("forge.read_access")["diagnostic"], Value::Null);
     assert_eq!(by_id("issue.duplicate_read")["status"], "not_checked");
     assert_eq!(by_id("issue.duplicate_read")["presentation"], "blocking");
     assert_eq!(by_id("issue.write_permission")["status"], "not_checked");
@@ -146,6 +147,7 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
             "requirement_source",
             "presentation",
             "applies_to",
+            "diagnostic",
         ] {
             assert_eq!(human_check[field], json_check[field], "field {field}");
         }
@@ -334,6 +336,7 @@ fn api_failure_and_invalid_declaration_leave_project_files_untouched() {
         .unwrap();
     assert_eq!(access["status"], "failed");
     assert_eq!(access["presentation"], "blocking");
+    assert_eq!(access["diagnostic"]["code"], "permission_denied");
     let issue_inspection = r["evidence"]["operation_assessments"]["operations"]
         .as_array()
         .unwrap()
@@ -356,6 +359,155 @@ fn api_failure_and_invalid_declaration_leave_project_files_untouched() {
         fs::read(f.root.join(".specgit.yaml")).unwrap(),
         b"version: 2\nunknown: preserve\n"
     );
+}
+
+#[test]
+fn account_read_diagnostics_are_specific_safe_and_consistent_for_both_forges() {
+    let cases = [
+        (
+            "unauthenticated",
+            Some("HTTP 401 authentication failed"),
+            None,
+            "authentication_failed",
+            "unknown",
+            "登录所选主机",
+        ),
+        (
+            "permission_denied",
+            Some("HTTP 403 private https://sentinel:secret@example.invalid/?token=secret"),
+            None,
+            "permission_denied",
+            "failed",
+            "该操作的权限",
+        ),
+        (
+            "rate_limited",
+            Some("HTTP 429 rate limit exceeded"),
+            None,
+            "rate_limited",
+            "unknown",
+            "限流窗口",
+        ),
+        (
+            "network_failed",
+            Some("error connecting to host; tls handshake failed"),
+            None,
+            "network_failed",
+            "unknown",
+            "TLS 配置",
+        ),
+        (
+            "ambiguous_not_found",
+            Some("HTTP 404 not found"),
+            None,
+            "ambiguous_not_found",
+            "unknown",
+            "项目身份和访问权限",
+        ),
+        (
+            "malformed_response",
+            None,
+            Some("{"),
+            "malformed_response",
+            "unknown",
+            "原生平台响应",
+        ),
+        (
+            "unclassified_failure",
+            Some("HTTP 418 unexpected upstream response"),
+            None,
+            "process_failed",
+            "unknown",
+            "通过原生 CLI",
+        ),
+    ];
+    for provider in ["github", "gitlab"] {
+        for (name, failure, response, code, status, remedy_fragment) in cases {
+            let f = Fixture::new();
+            let mut state = f.state();
+            if let Some(failure) = failure {
+                state["account_failure"] = json!(failure);
+            }
+            if let Some(response) = response {
+                state["account_response"] = json!(response);
+            }
+            fs::write(&f.state, state.to_string()).unwrap();
+            let args = [
+                "init",
+                "--provider",
+                provider,
+                "--language",
+                "zh",
+                "--inspect",
+            ];
+            let report = f.run_raw(&args);
+            let access = report["evidence"]["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["id"] == "forge.read_access")
+                .unwrap();
+            let diagnostic = &access["diagnostic"];
+            assert_eq!(diagnostic["code"], code, "{provider} {name}: {report}");
+            assert_eq!(diagnostic["operation"], format!("{provider}_api_read"));
+            assert_eq!(access["status"], status, "{provider} {name}: {report}");
+            assert_eq!(access["presentation"], "blocking");
+            assert_eq!(access["reason"], diagnostic["message"]);
+            assert_eq!(access["next_step"], diagnostic["remedy"]);
+            assert!(
+                diagnostic["remedy"]
+                    .as_str()
+                    .unwrap()
+                    .contains(remedy_fragment),
+                "{provider} {name}: {diagnostic}"
+            );
+            assert_eq!(access["status"] == "failed", code == "permission_denied");
+            let issue_inspection = report["evidence"]["operation_assessments"]["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["operation"] == "issue_inspection")
+                .unwrap();
+            assert_eq!(issue_inspection["assessment"], "blocked");
+            assert!(
+                issue_inspection["blocked_by"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("forge.read_access"))
+            );
+            let calls = f.state()["calls"].as_array().unwrap().clone();
+            assert!(calls.iter().any(|call| call["endpoint"] == "user"));
+            assert!(calls.iter().all(|call| call["method"] == "GET"));
+            assert_eq!(report["evidence"]["written"], false);
+            assert!(!f.root.join(".specgit.yaml").exists());
+            assert!(!f.root.join("AGENTS.md").exists());
+            assert!(!f.root.join(".git/specgit-v2").exists());
+            if code == "permission_denied" {
+                let serialized = report.to_string();
+                assert!(!serialized.contains("sentinel"));
+                assert!(!serialized.contains("secret"));
+            }
+            let human = f.run_human(&args);
+            let human_access = human["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["id"] == "forge.read_access")
+                .unwrap();
+            for field in [
+                "status",
+                "presentation",
+                "diagnostic",
+                "reason",
+                "next_step",
+            ] {
+                assert_eq!(
+                    human_access[field], access[field],
+                    "{provider} {name} {field}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

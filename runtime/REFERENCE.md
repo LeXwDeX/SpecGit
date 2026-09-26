@@ -145,10 +145,13 @@ not a shared credential field; SSH and API ports are distinct.
 `init --inspect` adds an additive `evidence.checks` list. Each stable check ID
 reports its requirement (`required`, `recommended`, `optional`), observed fact
 status, presentation (`pass`, `hint`, `warning`, `blocking`), applicable stages,
-evidence source/time, `requirement_source`, reason and next step. JSON and
-`--human` render the same check facts. This first-stage list maps facts already
-collected by init; it does not perform Issue duplicate searches or permission
-writes. `issue.duplicate_read`, `issue.write_permission` and
+evidence source/time, `requirement_source`, reason, next step and a nullable
+typed diagnostic (`code`, `operation`, `message`, `remedy`). JSON and `--human`
+render the same check facts. The `forge.read_access` diagnostic preserves safe
+account-read classifications such as authentication, permission, rate-limit,
+network and ambiguous-not-found failures; raw command output is never included.
+This first-stage list maps facts already collected by init; it does not perform
+Issue duplicate searches or permission writes. `issue.duplicate_read`, `issue.write_permission` and
 `request.write_permission` therefore remain `not_checked` until the relevant
 Issue or request operation. A readable account endpoint proves neither Issue
 nor request write access or merge eligibility. Unknown facts only affect the
