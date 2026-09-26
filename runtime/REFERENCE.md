@@ -259,6 +259,13 @@ request with open linked Issues produces attention. Agent supplementary closure
 is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
 
+For GitHub, the complete current-head check-run pages are validated before
+selecting the highest native run ID for each `(app ID, check name)` context.
+Older attempts on the same head do not determine `pr --status`, `watch` or
+`inbox` outcomes; distinct Apps with the same check name remain separate.
+Incomplete pages, repeated IDs and mismatched heads remain unavailable evidence.
+The native check-run ID lets an operator inspect a superseded attempt on GitHub.
+
 With an explicit `--request`, `pr --status` reads the exact request from the
 configured repository even on another branch, detached HEAD, or after its source
 branch is deleted. The report keeps native request status separate from
