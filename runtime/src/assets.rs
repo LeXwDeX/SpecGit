@@ -18,6 +18,13 @@ pub fn hash(bytes: &[u8]) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+#[cfg(feature = "test-fixtures")]
+fn fixture_crash(point: &str) {
+    if std::env::var("SPECGIT_FIXTURE_ASSET_CRASH").as_deref() == Ok(point) {
+        std::process::exit(99);
+    }
+}
+
 fn error(code: Code, message: &str) -> Diagnostic {
     Diagnostic::new(
         code,
@@ -442,6 +449,8 @@ impl AssetStore {
         self.save_journal(&directory, &journal)?;
         for (i, change) in changes.iter().enumerate() {
             let result = (|| {
+                #[cfg(feature = "test-fixtures")]
+                fixture_crash(&format!("before-write:{i}"));
                 before_write(i)?;
                 self.validate(&change.path)?;
                 self.expected_snapshot(&change.path, &change.before)?;
@@ -470,6 +479,8 @@ impl AssetStore {
                 return Err(original);
             }
         }
+        #[cfg(feature = "test-fixtures")]
+        fixture_crash("before-commit");
         journal.state = "committed".into();
         self.save_journal(&directory, &journal)?;
         Ok(Applied {
