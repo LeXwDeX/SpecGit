@@ -33,6 +33,27 @@ pub struct Validation {
     #[serde(default)]
     pub bodies: bool,
 }
+/// Stable IDs currently emitted by the read-only init report.
+pub const INIT_CHECK_IDS: &[&str] = &[
+    "project.identity",
+    "forge.cli",
+    "forge.read_access",
+    "issue.duplicate_read",
+    "issue.write_permission",
+    "request.write_permission",
+    "target.protection",
+    "issue.closing",
+    "request.eligibility",
+    "auto_merge.setting",
+];
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitPolicy {
+    /// A project can strengthen an init diagnostic, but cannot weaken a built-in requirement.
+    #[serde(default)]
+    pub required_checks: Vec<String>,
+}
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tag {
@@ -142,6 +163,8 @@ pub struct Declaration {
     pub language: Language,
     #[serde(default)]
     pub validation: Validation,
+    #[serde(default)]
+    pub init_policy: InitPolicy,
     #[serde(default, deserialize_with = "tag_list")]
     pub tags: Vec<Tag>,
     #[serde(default)]
@@ -160,6 +183,7 @@ impl Default for Declaration {
             target: None,
             language: Language::En,
             validation: Validation::default(),
+            init_policy: InitPolicy::default(),
             tags: vec![],
             templates: Templates::default(),
             agent: Agent::default(),
@@ -267,6 +291,19 @@ impl Declaration {
             return Err(invalid());
         }
         if self.validation.labels == Labels::Project && self.tags.is_empty() {
+            return Err(invalid());
+        }
+        if self.init_policy.required_checks.len() > INIT_CHECK_IDS.len()
+            || self
+                .init_policy
+                .required_checks
+                .iter()
+                .enumerate()
+                .any(|(i, id)| {
+                    !INIT_CHECK_IDS.contains(&id.as_str())
+                        || self.init_policy.required_checks[..i].contains(id)
+                })
+        {
             return Err(invalid());
         }
         for t in [&self.templates.issue, &self.templates.pr] {
