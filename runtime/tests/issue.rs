@@ -665,7 +665,7 @@ fn inspect_names_symlinked_checkpoint_boundary_in_json_and_human_without_writes(
     std::os::windows::fs::symlink_dir(outside.path(), &link).unwrap();
     let sentinel = outside.path().join("sentinel");
     fs::write(&sentinel, b"unchanged").unwrap();
-    let boundary = format!("{:?}", link);
+    let boundary = link.file_name().unwrap().to_string_lossy().into_owned();
     let args = ["issue", "fix: symlink checkpoint diagnostic", "--inspect"];
 
     let report = f.run(&args);
