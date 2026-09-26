@@ -74,8 +74,9 @@ writers without weakening native protections, then apply the exact reviewed dige
 Replacing a binary alone does not migrate project configuration.
 
 See the [native command reference](../runtime/REFERENCE.md) and
-[release procedure](../runtime/distribution/README.md). Old v1 documentation is
-retained as historical engineering evidence, not as current setup guidance.
+[release procedure](../runtime/distribution/README.md). The v1 commands `finish`,
+`accept`, `bind` and `unbind`, along with npm distribution, are retired. For an
+existing v1 project, follow the migration guide above.
 
 ### Local generated files
 

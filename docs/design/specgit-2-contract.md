@@ -6,11 +6,11 @@
 > In particular, SpecGit no longer owns finish/merge/protection orchestration;
 > hooks notify an Agent about residual open issues, and authorized Agent closure
 > is optional. See the [feature dispositions](specgit-2-rust-history.md) and
-> [handoff](specgit-2-rust-handoff.md) before continuing product work.
+> [handoff](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-rust-handoff.md) before continuing product work.
 
 Status: proposed implementation contract for the Rust rewrite. Read with the
 [architecture and implementation sequence](specgit-2.md) and
-[historical requirements ledger](specgit-2-history.md). None of these documents
+[historical requirements ledger](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-history.md). None of these documents
 claims that 2.0 is shipped. The existing 1.x contract still governs 1.x.
 
 ## The harness that remains

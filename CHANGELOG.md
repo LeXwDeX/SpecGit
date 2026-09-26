@@ -322,7 +322,7 @@
     2026-08-20, protected), Metadata API shape unchanged at the pinned tag,
     fixtures verified unchanged on the live instance, and one real dogfood
     delivery whose `specgit finish` exited 0 on 19.3.0 — see
-    [docs/evidence/gitlab-19.3.md](docs/evidence/gitlab-19.3.md)
+    [docs/evidence/gitlab-19.3.md](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/evidence/gitlab-19.3.md)
   - Fake-glab test double now enforces GitLab method routing ([#234](https://github.com/LeXwDeX/SpecGit/issues/234)): known
     paths with unrouted verbs return a GitLab-shaped 404, guarding against
     regressions like the [#229](https://github.com/LeXwDeX/SpecGit/issues/229) PATCH-vs-PUT bug
@@ -498,7 +498,7 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
   page 1.
 
   - The rule is now contract, written as the second fail-closed branch in
-    [docs/baseline-v1.md](docs/baseline-v1.md): every list-shaped
+    [docs/baseline-v1.md](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/baseline-v1.md): every list-shaped
     evidence input is paginated to exhaustion or signals truncation, and a
     truncation signal degrades the verdict to `unknown`
     (`evidence_truncated`, exit 3) — never a complete-evidence exit 1.
@@ -514,7 +514,7 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
     refuses on zero/several matches, so truncation cannot flip an outcome
     (≥2 always refuses with the candidate list).
   - The GitLab provider plan's `rel="next"` continuation
-    ([docs/gitlab-support.md](docs/gitlab-support.md)) is confirmed to
+    ([docs/gitlab-support.md](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/gitlab-support.md)) is confirmed to
     carry the same rule from day one: continuation to exhaustion, full
     page without a usable link ⇒ `evidence_truncated`, exit 3.
   - TDD: a >100-issues scripted-provider fixture pins the sequence gate's
@@ -600,8 +600,8 @@ true` and more than 100 open issues, an earlier open issue on page 2 was
     all gates green, zero gh reachable).
   - Dogfood evidence (GA gate 4): a real nested-group delivery on
     forge.example.com 19.2.4 CE with `specgit finish` exit 0 — archived in
-    [docs/release-gates.md](docs/release-gates.md) GA-4 and
-    [docs/evidence/gitlab-19.2.md](docs/evidence/gitlab-19.2.md);
+    [docs/release-gates.md](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/release-gates.md) GA-4 and
+    [docs/evidence/gitlab-19.2.md](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/evidence/gitlab-19.2.md);
     FU-5 (read-only project access token) applied as the CI-side glab
     credential.
   - GitHub-side zero regression: the GitHub paths are byte-unaffected
@@ -980,7 +980,7 @@ passed | 1 skipped (798)` across `43` files, matrix-layer files
   with the last five consecutive `main` runs red on the leg (through
   `15ce8ef`), so self-hosted coverage leaves the release matrix with the
   rationale recorded on the issue and referenced from
-  [docs/release-gates.md](docs/release-gates.md) §3. Required checks are
+  [docs/release-gates.md](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/release-gates.md) §3. Required checks are
   untouched — hosted `linux-bash`/`macos-bash`/`windows-pwsh` legs stay,
   `spec_git/policy.yaml` unchanged.
 

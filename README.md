@@ -111,8 +111,8 @@ and host integration. Existing settings are preserved unless a change is selecte
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before
 replacing its declaration or lifecycle workflows. `finish`, `accept`, `bind` and
 the old acceptance controller are retired in the native v2 CLI. Binary installation
-alone does not migrate a repository. The [v1 guide](docs/legacy/v1-readme.md) remains
-available as historical engineering evidence.
+alone does not migrate a repository. Use the migration guide for a v1 project's
+repository-specific cutover; retired v1 command workflows are no longer maintained.
 
 ## Documentation
 
@@ -147,5 +147,6 @@ using the main Release workflow identity. Publication verifies source identity, 
 uploaded bytes, and preserves existing immutable releases. Full source and
 installed-binary regressions run in ordinary CI.
 
-See [CI scope](docs/ci-scope.md) for current checks. Historical v1 documents are
-reference material, not executable workflows or supported commands.
+See [CI scope](docs/ci-scope.md) for current checks. The installed CLI help/schema
+and [native command reference](runtime/REFERENCE.md) define current behavior;
+dated design records preserve rationale rather than release status.
