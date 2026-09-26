@@ -37,9 +37,13 @@ pub fn diagnostic(d: &mut Diagnostic, language: Language) {
             "资源不存在或当前会话无权访问。",
             "先核对项目身份和访问权限，再判断资源是否缺失。",
         ),
-        Code::NetworkFailed | Code::RateLimited | Code::Timeout => (
-            "网络、限流或超时使当前证据不可用。",
-            "检查原生 CLI 的网络状态或等待限流解除后重试。",
+        Code::RateLimited => (
+            "API 限流使当前读取暂不可用。",
+            "等待原生限流窗口恢复后重试。",
+        ),
+        Code::NetworkFailed | Code::Timeout => (
+            "网络连接或请求超时使当前证据不可用。",
+            "检查网络连接和原生 CLI 的 TLS 配置，然后重试。",
         ),
         Code::IdentityMismatch | Code::ConcurrentEdit => (
             "项目身份、配置或文件在检查后发生变化。",
@@ -91,6 +95,28 @@ pub fn report(report: &mut Report, language: Language) {
                 diagnostic(&mut d, language);
                 if let Ok(v) = serde_json::to_value(d) {
                     *value = v;
+                }
+            }
+        }
+    }
+    if let Some(checks) = report
+        .evidence
+        .get_mut("checks")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for check in checks {
+            let parsed = check
+                .get("diagnostic")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<Diagnostic>(value).ok());
+            if let Some(mut d) = parsed {
+                diagnostic(&mut d, language);
+                if let Ok(value) = serde_json::to_value(&d)
+                    && let Some(fields) = check.as_object_mut()
+                {
+                    fields.insert("diagnostic".into(), value);
+                    fields.insert("reason".into(), serde_json::Value::String(d.message));
+                    fields.insert("next_step".into(), serde_json::Value::String(d.remedy));
                 }
             }
         }
