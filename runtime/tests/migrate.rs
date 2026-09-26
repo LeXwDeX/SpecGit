@@ -758,3 +758,159 @@ fn an_unbound_v1_project_requires_migration_and_preserves_its_policy() {
     assert_eq!(r["exit"], 0, "{r}");
     assert!(!f.root.join(".specgit.yaml").exists());
 }
+
+fn interrupt_migration(stage: &str) -> (Fixture, String, Value) {
+    let (f, path) = fixture("github");
+    let p = preview(&f, &path, &[]);
+    assert_eq!(p["exit"], 0, "{p}");
+    let planned = p["evidence"]["planned_changes"].as_array().unwrap();
+    let point = match stage {
+        "after_backup" => "before-write:0".to_owned(),
+        "during_writes" => "before-write:2".to_owned(),
+        "before_retirement" => {
+            let index = planned
+                .iter()
+                .position(|change| {
+                    Path::new(change["path"].as_str().unwrap())
+                        .ends_with(".github/workflows/specgit-complete.yml")
+                })
+                .unwrap();
+            format!("before-write:{}", index + 1)
+        }
+        "before_completion" => "before-commit".to_owned(),
+        _ => panic!("unknown interruption stage: {stage}"),
+    };
+    let out = f
+        .feature_command(&[
+            "migrate",
+            "--config-file",
+            path.to_str().unwrap(),
+            "--apply",
+            "--expect",
+            p["evidence"]["preview_sha256"].as_str().unwrap(),
+        ])
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", point)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(99), "{out:?}");
+    assert_eq!(f.writes(), 0);
+    let transactions = PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
+        .join("specgit-v2/assets/transactions");
+    let mut dirs = fs::read_dir(transactions)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(dirs.len(), 1);
+    let dir = dirs.pop().unwrap();
+    let journal: Value =
+        serde_json::from_slice(&fs::read(dir.join("journal.json")).unwrap()).unwrap();
+    assert_eq!(journal["state"], "prepared");
+    assert_eq!(
+        journal["entries"].as_array().unwrap().len(),
+        planned.len() + 1
+    );
+    for entry in journal["entries"].as_array().unwrap() {
+        if entry["before"].is_string() {
+            assert!(dir.join(entry["backup"].as_str().unwrap()).is_file());
+        }
+    }
+    let id = dir.file_name().unwrap().to_str().unwrap().to_owned();
+    (f, id, journal)
+}
+
+fn rollback_interrupted_migration(f: &Fixture, id: &str) {
+    let rollback = f.run(&["migrate", "--rollback", id]);
+    assert_eq!(rollback["exit"], 0, "{rollback}");
+    assert_eq!(f.writes(), 0);
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 1")
+    );
+    assert!(
+        f.root
+            .join(".github/workflows/specgit-complete.yml")
+            .exists()
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join("AGENTS.md")).unwrap(),
+        "Human prefix\n<!-- specgit:block:start -->\nold contract\n<!-- specgit:block:end -->\nHuman suffix\n"
+    );
+}
+
+#[test]
+fn migration_interrupted_after_durable_backup_can_roll_back() {
+    let (f, id, journal) = interrupt_migration("after_backup");
+    assert_eq!(journal["entries"][0]["before"], Value::Null);
+    assert!(!Path::new(journal["entries"][0]["path"].as_str().unwrap()).exists());
+    rollback_interrupted_migration(&f, &id);
+}
+
+#[test]
+fn migration_interrupted_during_asset_writes_can_roll_back() {
+    let (f, id, journal) = interrupt_migration("during_writes");
+    assert!(Path::new(journal["entries"][0]["path"].as_str().unwrap()).exists());
+    let first_asset = &journal["entries"][1];
+    assert_ne!(first_asset["before"], first_asset["after"]);
+    let written = Path::new(first_asset["path"].as_str().unwrap());
+    match first_asset["after"].as_str() {
+        Some(expected) => assert_eq!(specgit::assets::hash(&fs::read(written).unwrap()), expected),
+        None => assert!(!written.exists()),
+    }
+    rollback_interrupted_migration(&f, &id);
+}
+
+#[test]
+fn migration_interrupted_before_old_writer_retirement_can_roll_back() {
+    let (f, id, journal) = interrupt_migration("before_retirement");
+    let entries = journal["entries"].as_array().unwrap();
+    let writer = f.root.join(".github/workflows/specgit-complete.yml");
+    let writer_index = entries
+        .iter()
+        .position(|entry| entry["path"] == writer.to_str().unwrap())
+        .unwrap();
+    assert!(writer_index > 1);
+    assert_eq!(
+        specgit::assets::hash(&fs::read(&writer).unwrap()),
+        entries[writer_index]["before"].as_str().unwrap()
+    );
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 1")
+    );
+    rollback_interrupted_migration(&f, &id);
+}
+
+#[test]
+fn migration_interrupted_before_completion_preserves_user_edit_then_rolls_back() {
+    let (f, id, journal) = interrupt_migration("before_completion");
+    assert!(Path::new(journal["entries"][0]["path"].as_str().unwrap()).exists());
+    assert!(
+        !f.root
+            .join(".github/workflows/specgit-complete.yml")
+            .exists()
+    );
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 2")
+    );
+    let agents = f.root.join("AGENTS.md");
+    let migrated = fs::read(&agents).unwrap();
+    fs::write(&agents, b"user edit after interruption\n").unwrap();
+    let conflict = f.run(&["migrate", "--rollback", &id]);
+    assert_eq!(conflict["exit"], 3, "{conflict}");
+    assert_eq!(conflict["diagnostics"][0]["code"], "rollback_conflict");
+    assert_eq!(
+        fs::read(&agents).unwrap(),
+        b"user edit after interruption\n"
+    );
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 2")
+    );
+    fs::write(agents, migrated).unwrap();
+    rollback_interrupted_migration(&f, &id);
+}

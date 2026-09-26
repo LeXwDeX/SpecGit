@@ -93,6 +93,11 @@ impl Fixture {
     pub fn command(&self, args: &[&str]) -> Command {
         self.configure(args, executable::command())
     }
+    /// Fault injection needs the feature-enabled test binary during installed-runtime qualification.
+    #[allow(dead_code)]
+    pub fn feature_command(&self, args: &[&str]) -> Command {
+        self.configure(args, Command::new(env!("CARGO_BIN_EXE_specgit")))
+    }
     #[allow(dead_code)]
     pub fn native_command(&self, args: &[&str]) -> Command {
         self.configure(args, Command::new(executable::binary()))
