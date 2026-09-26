@@ -159,7 +159,7 @@ jobs:
       - name: Rust public interface and real subprocess regressions
         timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
         run: node scripts/native-resume.mjs --phase source-tests --target '${{ matrix.target }}'
-      - uses: actions/setup-python@ad3497abcd142e169a10aac37abd5175c44f33c4
+      - uses: actions/setup-python@af9bcc7548695e66d75709de6f29e337624b8de8
         if: runner.os != 'macOS'
         with:
           python-version: '3.13'
