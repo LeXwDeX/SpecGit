@@ -432,6 +432,16 @@ fn native_api(args: &[String], path: &std::path::Path) {
         std::process::exit(1);
     }
     snapshot::write(path, &state);
+    if method == "GET" && endpoint == "user" {
+        if let Some(error) = state["account_failure"].as_str() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        if let Some(response) = state["account_response"].as_str() {
+            print!("{response}");
+            return;
+        }
+    }
     if state["deny"].as_bool() == Some(true) {
         eprintln!("HTTP 403");
         std::process::exit(1);

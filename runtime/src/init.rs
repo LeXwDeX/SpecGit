@@ -73,6 +73,7 @@ struct InitCheck {
     applies_to: &'static [&'static str],
     source: String,
     observed_at: Option<u64>,
+    diagnostic: Option<Diagnostic>,
     reason: String,
     next_step: String,
 }
@@ -185,6 +186,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         applies_to: &["local_development", "issue_inspection", "request_delivery"],
         source: "resolved Git root, remote, forge project identity, branch and HEAD".into(),
         observed_at: Some(crate::probe::now()),
+        diagnostic: None,
         reason: if has_identity {
             "The repository and current revision were resolved; native project identity was matched.".into()
         } else {
@@ -208,6 +210,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         applies_to: &["issue_inspection", "issue_creation", "request_delivery"],
         source: cli_probe.and_then(|probe| probe["operation"].as_str()).unwrap_or("native forge CLI version probe").into(),
         observed_at: cli_probe.and_then(|probe| probe["observed_at"].as_u64()),
+        diagnostic: None,
         reason: if cli_available { "The native forge CLI is installed and responds to its version probe.".into() } else { format!("The native forge CLI probe status is {}.", cli_status.unwrap_or("not_checked")) },
         next_step: if cli_available { "Use the installed native CLI for the applicable read or write under existing authorization.".into() } else { "Install or repair the matching forge CLI, then rerun init --inspect.".into() },
     });
@@ -215,6 +218,9 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
     let account_available = account.is_some_and(|probe| probe["status"] == "available");
     let account_status = account.map(|probe| probe["status"].as_str().unwrap_or("unknown"));
     let account_observed_at = account.and_then(|probe| probe["observed_at"].as_u64());
+    let account_diagnostic = account
+        .and_then(|probe| probe.get("diagnostic"))
+        .and_then(|value| serde_json::from_value::<Diagnostic>(value.clone()).ok());
     let account_failed =
         account_status.is_some_and(|status| matches!(status, "forbidden" | "unavailable"));
     checks.push(InitCheck {
@@ -232,13 +238,18 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         applies_to: &["issue_inspection", "issue_creation", "request_delivery"],
         source: "authenticated forge account API read".into(),
         observed_at: account_observed_at,
+        diagnostic: account_diagnostic.clone(),
         reason: if account_available {
             "The authenticated account endpoint was readable; native write permissions were not checked.".into()
+        } else if let Some(diagnostic) = account_diagnostic.as_ref() {
+            diagnostic.message.clone()
         } else {
             format!("The authenticated account read is {status}; no write permission is inferred.", status = account_status.unwrap_or("not_checked"))
         },
         next_step: if account_available {
             "Run the relevant native read or write command under existing authorization.".into()
+        } else if let Some(diagnostic) = account_diagnostic.as_ref() {
+            diagnostic.remedy.clone()
         } else {
             "Restore authenticated read access, then rerun init --inspect.".into()
         },
@@ -253,6 +264,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         source: "not probed by init; specgit issue --inspect performs the bounded duplicate read"
             .into(),
         observed_at: None,
+        diagnostic: None,
         reason:
             "Initialization does not enumerate Issues, so duplicate status is not established here."
                 .into(),
@@ -267,6 +279,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         applies_to: &["issue_creation"],
         source: "not checked; init never performs a write probe".into(),
         observed_at: None,
+        diagnostic: None,
         reason: "Readable account identity does not prove Issue creation permission.".into(),
         next_step: "Create or adopt an Issue only under existing authorization; reconcile an uncertain result by native readback.".into(),
     });
@@ -279,6 +292,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
         applies_to: &["request_delivery"],
         source: "not checked; init never performs a request write probe".into(),
         observed_at: None,
+        diagnostic: None,
         reason: "Readable account identity does not prove request creation or update permission.".into(),
         next_step: "Create or update a request only under existing authorization; reconcile an uncertain result by native readback.".into(),
     });
@@ -367,6 +381,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy) -> Vec<InitCheck> {
             applies_to: stages,
             source: source.into(),
             observed_at: Some(crate::probe::now()),
+            diagnostic: None,
             reason: format!("{reason} {detail}"),
             next_step: next_step.into(),
         });
