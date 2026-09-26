@@ -12,6 +12,9 @@ pub struct Fixture {
 }
 impl Fixture {
     pub fn new(provider: &str) -> Self {
+        Self::with_observation(provider, "")
+    }
+    pub fn with_observation(provider: &str, observation_yaml: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
         let root = base.join("project");
@@ -40,7 +43,7 @@ impl Fixture {
         fs::write(
             root.join(".specgit.yaml"),
             format!(
-                "version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: kind\n"
+                "version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: kind\n{observation_yaml}"
             ),
         )
         .unwrap();
@@ -89,6 +92,11 @@ impl Fixture {
     }
     pub fn command(&self, args: &[&str]) -> Command {
         self.configure(args, executable::command())
+    }
+    /// Fault injection needs the feature-enabled test binary during installed-runtime qualification.
+    #[allow(dead_code)]
+    pub fn feature_command(&self, args: &[&str]) -> Command {
+        self.configure(args, Command::new(env!("CARGO_BIN_EXE_specgit")))
     }
     #[allow(dead_code)]
     pub fn native_command(&self, args: &[&str]) -> Command {

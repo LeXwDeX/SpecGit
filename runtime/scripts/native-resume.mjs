@@ -34,11 +34,11 @@ export async function main(args) {
   const { values } = parseArgs({ args, options: { phase: { type: 'string' }, target: { type: 'string' } } });
   const target = values.target ?? process.env.SPECGIT_NATIVE_TARGET;
   assert(targets[target], 'Select a supported --target.');
-  assert(process.env.RUNNER_TOOL_CACHE && path.isAbsolute(process.env.RUNNER_TOOL_CACHE), 'An owned persistent runner cache is required.');
+  assert(process.env.RUNNER_TEMP && path.isAbsolute(process.env.RUNNER_TEMP), 'A writable per-job runner temporary directory is required.');
   assert.equal(command('git', ['status', '--porcelain', '--untracked-files=normal'], { capture: true }).trim(), '', 'Native qualification requires a clean source tree.');
   const source = command('git', ['rev-parse', 'HEAD'], { capture: true }).trim();
   const rust = command('rustc', ['--version', '--verbose'], { capture: true }).trim();
-  const allowedRoot = path.resolve(process.env.RUNNER_TOOL_CACHE);
+  const allowedRoot = path.resolve(process.env.RUNNER_TEMP);
   const buildIdentity = { workspace: repo, target, rust, flags: digest(process.env.RUSTFLAGS ?? ''), platform: process.platform, arch: process.arch };
   const namespace = digest(JSON.stringify(buildIdentity));
   // Keep paths short enough for native Windows tools. Full identities remain in
@@ -89,8 +89,12 @@ export async function main(args) {
         delete env.SPECGIT_TEST_BINARY;
         const failures = [];
         for (const [index, artifact] of manifest.artifacts.entries()) {
-          try { command(artifact.executable, ['--color', 'never'], { env, log: path.join(directory, `${index}.log`) }); }
-          catch (error) { failures.push(error.message); }
+          const log = path.join(directory, `${index}.log`);
+          try { command(artifact.executable, ['--color', 'never'], { env, log }); }
+          catch (error) {
+            const output = readFileSync(log, 'utf8');
+            failures.push(`${artifact.target.src_path}: ${error.message}\n${output.slice(-64 * 1024)}`);
+          }
         }
         assert.equal(failures.length, 0, failures.join('\n'));
         return { value: { directory }, files: [directory] };

@@ -5,7 +5,7 @@
 > Historical baseline, superseded on 2026-09-10. The operative Rust target is now
 > [the lightweight Agent-native CLI design](specgit-2-rust-design.md), with
 > [explicit history/feature dispositions](specgit-2-rust-history.md) and
-> [implementation handoff](specgit-2-rust-handoff.md). The text below preserves
+> [implementation handoff](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-rust-handoff.md). The text below preserves
 > the earlier proposal. Its local acceptance/merge/promotion engines and absolute
 > ban on optional Agent issue closure no longer define the new implementation.
 > This supersession does not change the currently shipped 1.x runtime.
@@ -17,7 +17,7 @@ below are the proposed defaults for implementation and acceptance.
 
 The detailed [harness contract](specgit-2-contract.md) specifies configuration,
 language/templates, native command effects, binding and acceptance. The
-[history ledger](specgit-2-history.md) records all reviewed issue dispositions.
+[history ledger](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-history.md) records all reviewed issue dispositions.
 
 ## Product purpose
 
@@ -407,7 +407,7 @@ The [feature acceptance matrix](specgit-2-acceptance.md) defines 48 required
 feature checks and independent final code/smoke/regression/live acceptance.
 Completion requires evidence against the document, not only a task summary.
 
-The [historical ledger](specgit-2-history.md) maps every reviewed issue to retained
+The [historical ledger](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-history.md) maps every reviewed issue to retained
 requirements, changed ownership, retired mechanisms or historical evidence.
 Issue bodies contain independently executable acceptance; changing their scope
 does not implement them. All implementation items remain open.

@@ -30,8 +30,8 @@ export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
   const nativeJobsPassed = ['linux', 'macos', 'windows'].every(label => {
     const matches = jobs.filter(job => job.name === `Build native release (${label})`);
     const labels = matches[0]?.labels ?? [];
-    const expected = label === 'macos' ? ['macos-15'] : ['self-hosted', label === 'linux' ? 'Linux' : 'Windows', 'X64'];
-    const routed = expected.every(value => labels.includes(value)) && (label !== 'macos' || !labels.includes('self-hosted'));
+    const expected = { linux: 'ubuntu-24.04', macos: 'macos-15', windows: 'windows-2025' }[label];
+    const routed = labels.includes(expected) && !labels.includes('self-hosted');
     return matches.length === 1 && matches[0].conclusion === 'success' && matches[0].status === 'completed' && routed;
   });
   const running = run.status === 'in_progress' && String(run.id) === activeRun && nativeJobsPassed;
@@ -65,7 +65,7 @@ Download the matching ZIP, SHA256SUMS and SHA256SUMS.sigstore.json from this sam
 | --- | --- |
 ${release.archives.map(b => `| ${b.filename} | \`${b.sha256}\` |`).join('\n')}
 
-Each binary passed version, help and schema smoke tests on its native runner (GitHub-hosted macOS ARM64; self-hosted Linux and Windows x64).
+Each binary passed version, help and schema smoke tests on its GitHub-hosted standard native runner (Linux x64, macOS ARM64, or Windows x64).
 Source: \`${release.source}\`.
 ${buildRun ? `Build: https://github.com/${repository}/actions/runs/${buildRun}\n` : ''}
 License: https://github.com/${repository}/blob/${release.source}/LICENSE

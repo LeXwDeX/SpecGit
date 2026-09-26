@@ -117,7 +117,7 @@ fn github_result(v: &Value) -> Result<(String, Option<String>), Diagnostic> {
     };
     Ok((status.into(), conclusion))
 }
-fn latest(map: &mut BTreeMap<String, Check>, key: String, check: Check) -> Result<(), Diagnostic> {
+fn latest<K: Ord>(map: &mut BTreeMap<K, Check>, key: K, check: Check) -> Result<(), Diagnostic> {
     match map.get(&key) {
         Some(old) if old.id == check.id => return Err(malformed()),
         Some(old) if old.id > check.id => {}
@@ -136,36 +136,42 @@ pub async fn github(
         return Err(malformed());
     }
     let base = prefix(repo);
-    // The forge selects latest check runs. Do not reconstruct Actions jobs,
-    // attempts, suites or cross-workflow ownership from independent API reads.
+    // GitHub can return older runs from another suite for the same head even
+    // with filter=latest. Resolve each App/name context by native run ID.
     let rows = counted(
         reader,
         &format!("{base}/commits/{head}/check-runs?filter=latest"),
         "check_runs",
     )
     .await?;
-    let mut checks = Vec::new();
+    let mut latest_runs = BTreeMap::new();
     for row in rows {
         if text(&row, "head_sha")? != head {
             return Err(malformed());
         }
         let (status, conclusion) = github_result(&row)?;
-        checks.push(Check {
-            name: text(&row, "name")?.into(),
-            source: "check".into(),
-            head: head.into(),
-            id: number(&row, "id")?,
-            app: Some(number(&row["app"], "id")?),
-            workflow: None,
-            workflow_attempt: None,
-            pipeline: None,
-            project: None,
-            status,
-            conclusion,
-            started_at: timestamp(&row, "started_at")?,
-            completed_at: timestamp(&row, "completed_at")?,
-            allow_failure: false,
-        });
+        let name = text(&row, "name")?.to_owned();
+        let app = number(&row["app"], "id")?;
+        latest(
+            &mut latest_runs,
+            (app, name.clone()),
+            Check {
+                name,
+                source: "check".into(),
+                head: head.into(),
+                id: number(&row, "id")?,
+                app: Some(app),
+                workflow: None,
+                workflow_attempt: None,
+                pipeline: None,
+                project: None,
+                status,
+                conclusion,
+                started_at: timestamp(&row, "started_at")?,
+                completed_at: timestamp(&row, "completed_at")?,
+                allow_failure: false,
+            },
+        )?;
     }
     let statuses = reader
         .list(&format!("{base}/commits/{head}/statuses"), None, 10)
@@ -208,6 +214,7 @@ pub async fn github(
             },
         )?;
     }
+    let mut checks: Vec<_> = latest_runs.into_values().collect();
     checks.extend(latest_statuses.into_values());
     Ok(checks)
 }

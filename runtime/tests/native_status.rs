@@ -5,8 +5,32 @@ mod acceptance;
 mod delivery;
 use acceptance::fixture;
 use serde_json::{Value, json};
-use std::fs;
+use std::{fs, process::Command};
 const STAMP: &str = "2026-09-09T00:00:00Z";
+fn git(f: &delivery::Fixture, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(&f.root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+fn complete_request(f: &delivery::Fixture, provider: &str) {
+    f.edit(|s| {
+        s["native_closing"] = json!([1]);
+        s["requests"][0]["state"] = json!(if provider == "github" {
+            "closed"
+        } else {
+            "merged"
+        });
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+    });
+}
 #[test]
 fn both_native_forges_observe_current_head_evidence_without_remote_writes() {
     for provider in ["github", "gitlab"] {
@@ -15,8 +39,156 @@ fn both_native_forges_observe_current_head_evidence_without_remote_writes() {
         let r = f.run(&["pr", "--status"]);
         assert_eq!(r["exit"], 0, "{provider}: {r}");
         assert_eq!(r["status"], "open");
+        assert_eq!(r["evidence"]["local_applicability"]["status"], "applicable");
+        assert_eq!(r["evidence"]["local_branch"], "feature");
         assert!(!r["evidence"]["checks"].as_array().unwrap().is_empty());
         assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn explicit_same_repository_status_survives_local_source_head_and_target_mismatch() {
+    let checkouts = [
+        ("main", "source_branch_mismatch"),
+        ("other", "source_branch_mismatch"),
+        ("detached", "detached_head"),
+        ("deleted_source", "source_branch_mismatch"),
+        ("head_mismatch", "head_mismatch"),
+    ];
+    for provider in ["github", "gitlab"] {
+        for (checkout, expected_reason) in checkouts {
+            let f = fixture(provider);
+            complete_request(&f, provider);
+            match checkout {
+                "main" => git(&f, &["switch", "-c", "main"]),
+                "other" => git(&f, &["switch", "-c", "experiment"]),
+                "detached" => git(&f, &["checkout", "--detach", "HEAD"]),
+                "deleted_source" => {
+                    git(&f, &["switch", "-c", "main"]);
+                    git(&f, &["branch", "-D", "feature"]);
+                }
+                "head_mismatch" => {
+                    fs::write(f.root.join("local-change.txt"), "new local commit").unwrap();
+                    git(&f, &["add", "local-change.txt"]);
+                    git(&f, &["commit", "-m", "local-only commit"]);
+                }
+                _ => unreachable!(),
+            }
+            let writes = f.writes();
+            let result = f.run(&["pr", "--status", "--request", "41"]);
+            assert_eq!(result["exit"], 0, "{provider}/{checkout}: {result}");
+            assert_eq!(
+                result["status"], "completed",
+                "{provider}/{checkout}: {result}"
+            );
+            assert_eq!(result["evidence"]["request"]["target"], "main");
+            assert_eq!(result["evidence"]["target"], "main");
+            assert_eq!(
+                result["evidence"]["local_applicability"]["status"], "not_applicable",
+                "{provider}/{checkout}: {result}"
+            );
+            assert!(
+                result["evidence"]["local_applicability"]["reasons"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(expected_reason)),
+                "{provider}/{checkout}: {result}"
+            );
+            if checkout != "head_mismatch" {
+                assert!(
+                    !result["evidence"]["associations"][0]["sources"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!("local_selection")),
+                    "foreign-branch selection leaked: {provider}/{checkout}: {result}"
+                );
+            }
+            assert_eq!(f.writes(), writes);
+        }
+    }
+}
+
+#[test]
+fn explicit_status_reports_native_target_when_local_target_differs() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        complete_request(&f, provider);
+        let declaration_path = f.root.join(".specgit.yaml");
+        let mut declaration = fs::read_to_string(&declaration_path).unwrap();
+        declaration.push_str("target: release\n");
+        fs::write(declaration_path, declaration).unwrap();
+
+        let result = f.run(&["pr", "--status", "--request", "41"]);
+        assert_eq!(result["exit"], 0, "{provider}: {result}");
+        assert_eq!(result["status"], "completed", "{provider}: {result}");
+        assert_eq!(result["evidence"]["request"]["target"], "main");
+        assert_eq!(result["evidence"]["target"], "release");
+        assert_eq!(
+            result["evidence"]["local_applicability"]["status"], "not_applicable",
+            "{provider}: {result}"
+        );
+        assert!(
+            result["evidence"]["local_applicability"]["reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("target_mismatch"))
+        );
+        assert!(
+            !result["evidence"]["associations"][0]["sources"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("local_selection"))
+        );
+    }
+}
+
+#[test]
+fn implicit_status_and_watch_remain_worktree_scoped_after_cross_branch_query_is_added() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    git(&f, &["switch", "-c", "main"]);
+    let writes = f.writes();
+
+    let implicit = f.run(&["pr", "--status"]);
+    assert_eq!(implicit["exit"], 3, "{implicit}");
+    assert!(implicit["evidence"].is_null());
+
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+        "--once",
+    ]);
+    assert_eq!(watched["status"], "unknown", "{watched}");
+    assert_eq!(watched["evidence"]["events"][0]["state"], "unknown");
+
+    let ready = f.run(&["pr", "--ready"]);
+    assert_ne!(ready["exit"], 0, "{ready}");
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn explicit_status_still_rejects_foreign_native_identity_and_read_denial() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["source_project_id"] = json!(8);
+            s["requests"][0]["target_project_id"] = json!(8);
+            s["requests"][0]["head"]["repo"]["id"] = json!(8);
+            s["requests"][0]["base"]["repo"]["id"] = json!(8);
+        });
+        let foreign = f.run(&["pr", "--status", "--request", "41"]);
+        assert_eq!(foreign["exit"], 3, "{provider}: {foreign}");
+        assert!(foreign["evidence"].is_null());
+
+        f.edit(|s| s["read_failure"] = json!("auth"));
+        let denied = f.run(&["pr", "--status", "--request", "41"]);
+        assert_eq!(denied["exit"], 3, "{provider}: {denied}");
+        assert!(denied["evidence"].is_null());
     }
 }
 #[test]
@@ -71,6 +243,94 @@ fn native_latest_pending_check_is_not_replaced_by_old_actions_green() {
             .all(|route| !route.contains("/actions/"))
     );
     assert_eq!(f.writes(), writes);
+}
+#[test]
+fn github_same_head_uses_latest_run_per_app_and_name_for_status_and_watch() {
+    for (old_result, current_result, expected_watch) in [
+        ("cancelled", "success", "checks_passed"),
+        ("success", "pending", "pending"),
+        ("success", "failure", "failed"),
+    ] {
+        let f = fixture("github");
+        f.edit(|s| {
+            for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+                if !route.contains("/check-runs?filter=latest") {
+                    continue;
+                }
+                let mut old = value["check_runs"][0].clone();
+                old["id"] = json!(81);
+                old["status"] = json!("completed");
+                old["conclusion"] = json!(old_result);
+                let mut current = old.clone();
+                current["id"] = json!(82);
+                current["status"] = json!(if current_result == "pending" {
+                    "in_progress"
+                } else {
+                    "completed"
+                });
+                current["conclusion"] = if current_result == "pending" {
+                    Value::Null
+                } else {
+                    json!(current_result)
+                };
+                current["completed_at"] = if current_result == "pending" {
+                    Value::Null
+                } else {
+                    json!(STAMP)
+                };
+                value["check_runs"] = json!([old, current]);
+                value["total_count"] = json!(2);
+            }
+        });
+        let writes = f.writes();
+        let status = f.run(&["pr", "--status"]);
+        assert_eq!(status["exit"], 0, "{status}");
+        let checks = status["evidence"]["checks"].as_array().unwrap();
+        assert_eq!(checks.len(), 1, "{status}");
+        assert_eq!(checks[0]["id"], 82, "{status}");
+        let watched = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "latest-runs",
+            "--goal",
+            "checks",
+            "--once",
+        ]);
+        assert_eq!(watched["status"], expected_watch, "{watched}");
+        let inbox = f.run(&[
+            "inbox",
+            "--request",
+            "41",
+            "--session",
+            "latest-runs",
+            "--goal",
+            "checks",
+        ]);
+        assert_eq!(inbox["status"], expected_watch, "{inbox}");
+        assert_eq!(f.writes(), writes);
+    }
+}
+#[test]
+fn github_same_named_checks_from_different_apps_remain_distinct() {
+    let f = fixture("github");
+    f.edit(|s| {
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if !route.contains("/check-runs?filter=latest") {
+                continue;
+            }
+            let mut other = value["check_runs"][0].clone();
+            other["id"] = json!(82);
+            other["app"]["id"] = json!(99);
+            value["check_runs"].as_array_mut().unwrap().push(other);
+            value["total_count"] = json!(2);
+        }
+    });
+    let result = f.run(&["pr", "--status"]);
+    let checks = result["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 2, "{result}");
+    assert_ne!(checks[0]["app"], checks[1]["app"], "{result}");
 }
 #[test]
 fn complete_requires_native_merge_and_every_referenced_issue_closed() {
@@ -161,6 +421,7 @@ fn current_checks_require_complete_consistent_pages() {
                 .map(|id| {
                     let mut row = template.clone();
                     row["id"] = json!(id);
+                    row["name"] = json!(format!("Test {id}"));
                     row
                 })
                 .collect();
@@ -172,6 +433,7 @@ fn current_checks_require_complete_consistent_pages() {
                 } else {
                     101
                 });
+                final_row["name"] = json!("Test 101");
                 routes.insert(
                     first.replace("&page=1", "&page=2"),
                     json!({
@@ -479,5 +741,66 @@ fn native_association_confirms_selected_issue_without_body_closing_syntax() {
         assert_eq!(r["evidence"]["association_discrepancies"], json!([]));
         assert_eq!(r["status"], "completed", "{r}");
         assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn malformed_body_references_keep_native_observation_evidence_and_diagnostics() {
+    let unsupported_bodies = [
+        "- Closes #1",
+        "The change closes #1 inline",
+        "Closes #1, #2",
+        "Resolves https://github.com/fixture/repo/issues/1",
+        "Closes fixture/repo#1",
+    ];
+    for provider in ["github", "gitlab"] {
+        for body in unsupported_bodies {
+            let f = fixture(provider);
+            f.edit(|s| {
+                s["native_closing"] = json!([1]);
+                s["requests"][0]["state"] = json!(if provider == "github" {
+                    "closed"
+                } else {
+                    "merged"
+                });
+                s["requests"][0]["merged"] = json!(true);
+                s["requests"][0][if provider == "github" {
+                    "body"
+                } else {
+                    "description"
+                }] = json!(body);
+                s["issues"][0]["state"] = json!("closed");
+            });
+            let writes = f.writes();
+            let result = f.run(&["pr", "--status", "--request", "41"]);
+            assert_eq!(
+                result["evidence"]["request"]["id"], 41,
+                "{provider}: {body}: {result}"
+            );
+            assert_eq!(
+                result["evidence"]["native_closing_available"], true,
+                "{provider}: {body}: {result}"
+            );
+            assert_eq!(
+                result["evidence"]["associations"],
+                json!([{"issue":1,"sources":["native_closing","local_selection"]}]),
+                "{provider}: {body}: {result}"
+            );
+            assert_eq!(result["evidence"]["issues"][0]["state"], "closed");
+            assert_eq!(
+                result["status"], "completed",
+                "{provider}: {body}: {result}"
+            );
+            assert_eq!(result["exit"], 2, "{provider}: {body}: {result}");
+            assert!(
+                result["diagnostics"].as_array().is_some_and(|diagnostics| {
+                    diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic["code"] == "invalid_input")
+                }),
+                "{provider}: {body}: {result}"
+            );
+            assert_eq!(f.writes(), writes);
+        }
     }
 }

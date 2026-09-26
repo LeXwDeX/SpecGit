@@ -1,7 +1,9 @@
 //! Bounded local subscription intent and transport receipts, never remote truth.
 use crate::{
     assets::{self, AssetStore, Snapshot},
+    delivery_model::AutoMerge,
     diagnostic::{Code, Diagnostic},
+    observation::CheckOutcome,
     project::{Context, Repository},
 };
 use serde::{Deserialize, Serialize};
@@ -75,6 +77,42 @@ pub enum EventState {
     IdentityChanged,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionKind {
+    WaitForChecks,
+    InspectChecks,
+    RepairChecks,
+    InterpretChecks,
+    PrepareReview,
+    ReviewOrMergeOnPlatform,
+    InspectOpenIssues,
+    VerifyIssueClosure,
+    ReopenOrChooseFollowup,
+    RefreshNativeEvidence,
+    ReconcileSubscription,
+    ResumeSubscription,
+    Completed,
+}
+/// Typed, read-only guidance derived from the same native facts as the event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NextAction {
+    pub kind: ActionKind,
+    pub goal: Goal,
+    pub request_id: u64,
+    pub request_state: Option<String>,
+    pub check_outcome: CheckOutcome,
+    pub draft: Option<bool>,
+    pub auto_merge: Option<AutoMerge>,
+    pub close_issues_after_merge: bool,
+    pub issue_ids: Vec<u64>,
+    pub failed_checks: Vec<String>,
+    pub diagnostics: Vec<String>,
+    pub message: String,
+    pub command: Option<String>,
+    pub requires_user_authorization: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Revision {
     pub head: String,
@@ -92,6 +130,8 @@ pub struct Event {
     pub state: EventState,
     pub reason: String,
     pub next_action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<NextAction>,
     pub observed_at: u64,
     pub validated_at: u64,
     pub acknowledged_at: Option<u64>,
@@ -282,6 +322,34 @@ impl Store {
         next_action: String,
         at: u64,
     ) -> Result<State, Diagnostic> {
+        self.publish_inner(revision, state, reason, next_action, None, at)
+    }
+    pub fn publish_next_action(
+        &self,
+        revision: Revision,
+        state: EventState,
+        reason: String,
+        next_step: NextAction,
+        at: u64,
+    ) -> Result<State, Diagnostic> {
+        self.publish_inner(
+            revision,
+            state,
+            reason,
+            next_step.message.clone(),
+            Some(next_step),
+            at,
+        )
+    }
+    fn publish_inner(
+        &self,
+        revision: Revision,
+        state: EventState,
+        reason: String,
+        next_action: String,
+        next_step: Option<NextAction>,
+        at: u64,
+    ) -> Result<State, Diagnostic> {
         let fingerprint = assets::hash(
             &serde_json::to_vec(&(&revision, &state, &reason)).map_err(|_| invalid())?,
         );
@@ -302,6 +370,12 @@ impl Store {
                 .filter(|e| e.fingerprint == fingerprint && !e.superseded)
             {
                 current.validated_at = at;
+                if let Some(next_step) = next_step {
+                    current.next_action = next_step.message.clone();
+                    current.next_step = Some(next_step);
+                } else if current.next_step.is_none() {
+                    current.next_action = next_action;
+                }
                 return Ok(());
             }
             for event in &mut s.events {
@@ -321,6 +395,7 @@ impl Store {
                 state,
                 reason,
                 next_action,
+                next_step,
                 observed_at: at,
                 validated_at: at,
                 acknowledged_at: None,
