@@ -139,11 +139,11 @@ fn symlink_ancestors_and_outside_roots_are_rejected_before_writes() {
     std::os::unix::fs::symlink(outside.path(), &link).unwrap();
     #[cfg(windows)]
     std::os::windows::fs::symlink_dir(outside.path(), &link).unwrap();
-    assert_eq!(
-        Change::new(link.join("owned"), Some(vec![1]))
-            .unwrap_err()
-            .code,
-        Code::UnsafePath
+    let rejected = Change::new(link.join("owned"), Some(vec![1])).unwrap_err();
+    assert_eq!(rejected.code, Code::UnsafePath);
+    assert!(
+        rejected.message.contains(&format!("{:?}", link)),
+        "{rejected:?}"
     );
     let locked = store(&root);
     let target = outside.path().canonicalize().unwrap().join("unowned");
