@@ -658,7 +658,7 @@ fn inspect_does_not_create_checkpoint_and_branch_selection_preserves_git_state()
 fn inspect_names_symlinked_checkpoint_boundary_in_json_and_human_without_writes() {
     let f = Fixture::new("github");
     let outside = tempfile::tempdir().unwrap();
-    let link = f.root.join(".git/specgit-v2");
+    let link = f.root.join(".git").join("specgit-v2");
     #[cfg(unix)]
     std::os::unix::fs::symlink(outside.path(), &link).unwrap();
     #[cfg(windows)]
