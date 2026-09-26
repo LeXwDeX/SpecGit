@@ -655,6 +655,46 @@ fn inspect_does_not_create_checkpoint_and_branch_selection_preserves_git_state()
 }
 
 #[test]
+fn inspect_names_symlinked_checkpoint_boundary_in_json_and_human_without_writes() {
+    let f = Fixture::new("github");
+    let outside = tempfile::tempdir().unwrap();
+    let link = f.root.join(".git/specgit-v2");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(outside.path(), &link).unwrap();
+    let sentinel = outside.path().join("sentinel");
+    fs::write(&sentinel, b"unchanged").unwrap();
+    let boundary = format!("{:?}", link);
+    let args = ["issue", "fix: symlink checkpoint diagnostic", "--inspect"];
+
+    let report = f.run(&args);
+    assert_eq!(report["exit"], 3, "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], "unsafe_path", "{report}");
+    assert_eq!(
+        report["diagnostics"][0]["operation"], "owned_assets",
+        "{report}"
+    );
+    assert!(
+        report["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(&boundary),
+        "{report}"
+    );
+    assert_eq!(report["effects"]["outcome"], "not_applied", "{report}");
+
+    let human = f.run_human(&args);
+    assert_eq!(human.status.code(), Some(3), "{human:?}");
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(stderr.contains(&boundary), "{stderr}");
+
+    assert_eq!(f.writes(), 0);
+    assert_eq!(fs::read(&sentinel).unwrap(), b"unchanged");
+    assert!(!outside.path().join("selection.json").exists());
+}
+
+#[test]
 fn missing_labels_need_explicit_choice_and_dry_run_leaves_no_local_state() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new(provider);
