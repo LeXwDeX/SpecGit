@@ -168,6 +168,27 @@ operation that depends on them; target-protection uncertainty is a warning
 because init has no declared
 policy making that check mandatory.
 
+`evidence.availability` reports three ordered, independent layers:
+`specification_development`, `protected_delivery` and `delivery_completion`.
+Each layer lists the init check IDs it considered, any directly observed facts,
+blocking and unverified conditions, warnings, and a next step. `ready` means the
+reported facts contain no blocker, unknown requirement or warning; `blocked`
+means a required init check is blocking; `unverified` means a needed fact is
+unknown, not checked or warned. These conclusions are scoped to facts already
+collected by this read-only command. They do not change the command exit status
+or grant permission.
+
+Local specification development is assessed independently from remote request
+writes, CI and target protection. Protected delivery remains unverified while
+request write access or current required-verification evidence is unknown; a
+target-protection warning also keeps that layer unverified unless the project
+promotes it to a required check, in which case it blocks that layer. Init does
+not probe CI. Delivery completion remains unverified because init does not read
+back a merged native request, every associated Issue's closure, or installed
+acceptance on the exact main merge. An observed open request is listed as a
+fact but does not establish completion. The three layers are never collapsed
+into one overall-green conclusion.
+
 `evidence.operation_assessments` summarizes those checks per operation. Each
 entry lists relevant checks, required blockers, required facts still
 unverified, and nonblocking recommended warnings. `blocked`, `unverified` and

@@ -105,6 +105,33 @@ struct OperationAssessment {
     warnings: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AvailabilityStatus {
+    Ready,
+    Blocked,
+    Unverified,
+}
+
+#[derive(Serialize)]
+struct AvailabilityLayer {
+    id: &'static str,
+    status: AvailabilityStatus,
+    checks: Vec<&'static str>,
+    facts: Vec<&'static str>,
+    blocked_by: Vec<&'static str>,
+    unverified_by: Vec<&'static str>,
+    warnings: Vec<&'static str>,
+    next_step: &'static str,
+}
+
+#[derive(Serialize)]
+struct AvailabilityReport {
+    scope: &'static str,
+    note: &'static str,
+    layers: Vec<AvailabilityLayer>,
+}
+
 const INIT_OPERATIONS: &[&str] = &[
     "local_diagnostics",
     "local_development",
@@ -172,6 +199,120 @@ fn operation_assessments(checks: &[InitCheck]) -> Vec<OperationAssessment> {
         .collect()
 }
 
+fn availability_layer(
+    id: &'static str,
+    operations: &[&str],
+    checks: &[InitCheck],
+    facts: Vec<&'static str>,
+    additional_unverified: &[&'static str],
+    next_step: &'static str,
+) -> AvailabilityLayer {
+    let relevant: Vec<_> = checks
+        .iter()
+        .filter(|check| {
+            operations
+                .iter()
+                .any(|operation| check.applies_to.contains(operation))
+        })
+        .collect();
+    let blocked_by: Vec<_> = relevant
+        .iter()
+        .filter(|check| {
+            check.requirement == CheckRequirement::Required
+                && check.presentation == CheckPresentation::Blocking
+        })
+        .map(|check| check.id)
+        .collect();
+    let mut unverified_by: Vec<_> = relevant
+        .iter()
+        .filter(|check| {
+            check.presentation != CheckPresentation::Blocking
+                && matches!(
+                    check.status,
+                    CheckFactStatus::Unknown | CheckFactStatus::NotChecked
+                )
+        })
+        .map(|check| check.id)
+        .collect();
+    for fact in additional_unverified {
+        if !unverified_by.contains(fact) {
+            unverified_by.push(fact);
+        }
+    }
+    let warnings: Vec<_> = relevant
+        .iter()
+        .filter(|check| {
+            check.requirement == CheckRequirement::Recommended
+                && check.presentation == CheckPresentation::Warning
+        })
+        .map(|check| check.id)
+        .collect();
+    let status = if !blocked_by.is_empty() {
+        AvailabilityStatus::Blocked
+    } else if !unverified_by.is_empty() || !warnings.is_empty() {
+        AvailabilityStatus::Unverified
+    } else {
+        AvailabilityStatus::Ready
+    };
+    AvailabilityLayer {
+        id,
+        status,
+        checks: relevant.iter().map(|check| check.id).collect(),
+        facts,
+        blocked_by,
+        unverified_by,
+        warnings,
+        next_step,
+    }
+}
+
+fn availability_report(checks: &[InitCheck], evidence: &Value) -> AvailabilityReport {
+    let specification_development = availability_layer(
+        "specification_development",
+        &["local_development"],
+        checks,
+        vec![],
+        &[],
+        "Resolve any listed local-development blocker; remote write access, CI and target protection are assessed separately.",
+    );
+    let protected_delivery = availability_layer(
+        "protected_delivery",
+        &["request_delivery", "protected_delivery"],
+        checks,
+        vec![],
+        &["ci.required_verification"],
+        "Verify current required checks, target protection and request write access before relying on protected delivery.",
+    );
+    let completion_facts = if evidence["request"].is_null() {
+        vec![]
+    } else {
+        vec!["native.open_request"]
+    };
+    let delivery_completion = AvailabilityLayer {
+        id: "delivery_completion",
+        status: AvailabilityStatus::Unverified,
+        checks: vec![],
+        facts: completion_facts,
+        blocked_by: vec![],
+        unverified_by: vec![
+            "native.merge_readback",
+            "native.issue_closure_readback",
+            "main.installed_acceptance",
+        ],
+        warnings: vec![],
+        next_step: "Read back the merged native request and every associated Issue, then verify installed/runtime acceptance on that exact main merge.",
+    };
+    AvailabilityReport {
+        scope: "reported_init_facts_only",
+        note: "Layer conclusions use only facts included in this init --inspect report. Listed checks are not write authorization; absent lifecycle readbacks remain unverified, and no single overall conclusion is emitted.",
+        layers: vec![
+            specification_development,
+            protected_delivery,
+            delivery_completion,
+        ],
+    }
+}
+
 fn append_check_report(evidence: &mut Value, policy: &InitPolicy, scope: InitCheckScope) {
     let checks = init_checks(evidence, policy, &scope);
     evidence["checks"] =
@@ -181,6 +322,8 @@ fn append_check_report(evidence: &mut Value, policy: &InitPolicy, scope: InitChe
         "note": "These assessments cover only the listed init checks; they do not establish write authorization, complete CI readiness, or delivery completion.",
         "operations": operation_assessments(&checks),
     });
+    evidence["availability"] = serde_json::to_value(availability_report(&checks, evidence))
+        .expect("typed initialization availability serializes");
 }
 
 fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) -> Vec<InitCheck> {
