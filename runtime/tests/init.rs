@@ -10,11 +10,8 @@ struct Fixture {
     bin: PathBuf,
 }
 
-fn report_schema_with_init_checks() -> Value {
-    let mut schema: Value =
-        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
-    schema["properties"]["evidence"] = init_evidence_schema(&schema);
-    schema
+fn report_schema() -> Value {
+    serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap()
 }
 
 fn init_evidence_schema(report_schema: &Value) -> Value {
@@ -32,15 +29,13 @@ fn init_evidence_schema(report_schema: &Value) -> Value {
 }
 
 fn assert_report_matches_schema(report: &Value) {
-    let schema = report_schema_with_init_checks();
+    let schema = report_schema();
     jsonschema::draft202012::validate(&schema, report)
         .unwrap_or_else(|error| panic!("report violates report.schema.json: {error}"));
 }
 
 fn assert_init_evidence_matches_schema(evidence: &Value) {
-    let report_schema: Value =
-        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
-    let schema = init_evidence_schema(&report_schema);
+    let schema = init_evidence_schema(&report_schema());
     jsonschema::draft202012::validate(&schema, evidence)
         .unwrap_or_else(|error| panic!("init evidence violates report.schema.json: {error}"));
 }
@@ -178,7 +173,7 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
     }
     let mut invalid_report = json_report.clone();
     invalid_report["evidence"]["checks"][0]["scope"]["unexpected"] = json!(true);
-    let schema = report_schema_with_init_checks();
+    let schema = report_schema();
     assert!(jsonschema::draft202012::validate(&schema, &invalid_report).is_err());
     assert_eq!(by_id("forge.read_access")["status"], "verified");
     assert_eq!(by_id("forge.read_access")["requirement"], "required");
