@@ -781,7 +781,7 @@ fn interrupt_migration(stage: &str) -> (Fixture, String, Value) {
         _ => panic!("unknown interruption stage: {stage}"),
     };
     let out = f
-        .command(&[
+        .feature_command(&[
             "migrate",
             "--config-file",
             path.to_str().unwrap(),
