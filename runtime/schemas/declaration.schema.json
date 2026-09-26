@@ -48,6 +48,33 @@
       ],
       "default": "en"
     },
+    "init_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required_checks": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 10,
+          "items": {
+            "enum": [
+              "project.identity",
+              "forge.cli",
+              "forge.read_access",
+              "issue.duplicate_read",
+              "issue.write_permission",
+              "request.write_permission",
+              "target.protection",
+              "issue.closing",
+              "request.eligibility",
+              "auto_merge.setting"
+            ]
+          },
+          "default": []
+        }
+      },
+      "description": "Project-only promotions to required for the currently reported init checks. Built-in requirements cannot be downgraded."
+    },
     "validation": {
       "type": "object",
       "additionalProperties": false,

@@ -39,6 +39,12 @@ safe relative `path`, or `inline` with nonempty `body`. Optional `title` and
 `required_sections` describe selected content. Final body files override template
 body selection. Unselected repository templates are only discovery candidates.
 
+Optional `init_policy.required_checks` lists stable IDs from the current init
+report that this project promotes to `required` (for example,
+`[target.protection]`). Unknown and duplicate IDs are invalid. The declaration
+cannot lower a built-in requirement. This policy changes the diagnosis only;
+it does not change forge settings, grant write permission, or authorize actions.
+
 Observation defaults are a 15-second poll, a 1,800-second maximum and
 attention/completed notices. `watch` uses explicit `--poll-seconds` and
 `--timeout-seconds` values first, then `observation.poll_seconds` and
@@ -139,14 +145,26 @@ not a shared credential field; SSH and API ports are distinct.
 `init --inspect` adds an additive `evidence.checks` list. Each stable check ID
 reports its requirement (`required`, `recommended`, `optional`), observed fact
 status, presentation (`pass`, `hint`, `warning`, `blocking`), applicable stages,
-evidence source/time, reason and next step. JSON and `--human` render the same
-check facts. This first-stage list maps facts already collected by init; it does
-not perform Issue duplicate searches or permission writes. `issue.duplicate_read`
-and `issue.write_permission` therefore remain `not_checked` until the relevant
-Issue operation. A readable account endpoint proves neither Issue write access
-nor merge eligibility. Unknown facts only affect the operation that depends on
-them; target-protection uncertainty is a warning because init has no declared
+evidence source/time, `requirement_source`, reason and next step. JSON and
+`--human` render the same check facts. This first-stage list maps facts already
+collected by init; it does not perform Issue duplicate searches or permission
+writes. `issue.duplicate_read`, `issue.write_permission` and
+`request.write_permission` therefore remain `not_checked` until the relevant
+Issue or request operation. A readable account endpoint proves neither Issue
+nor request write access or merge eligibility. Unknown facts only affect the
+operation that depends on them; target-protection uncertainty is a warning
+because init has no declared
 policy making that check mandatory.
+
+`evidence.operation_assessments` summarizes those checks per operation. Each
+entry lists relevant checks, required blockers, required facts still
+unverified, and nonblocking recommended warnings. `blocked`, `unverified` and
+`no_reported_blocker` apply only to the
+listed init checks; a clear entry is not a claim of write permission, complete
+CI readiness, or completed delivery. A recommended or optional warning cannot
+block unrelated local diagnosis. `issue.write_permission` remains unverified
+until the authorized write and native readback, rather than becoming a guessed
+permission failure.
 
 Capability records use `supported`, `unsupported` or `unknown` with source and
 reason. Unsupported/unknown native flow returns `confirmation_required` before

@@ -99,6 +99,7 @@
       "required": [
         "id",
         "requirement",
+        "requirement_source",
         "status",
         "presentation",
         "applies_to",
@@ -110,6 +111,7 @@
       "properties": {
         "id": {"type": "string", "minLength": 1},
         "requirement": {"enum": ["required", "recommended", "optional"]},
+        "requirement_source": {"enum": ["builtin", "project_declaration"]},
         "status": {"enum": ["verified", "not_configured", "failed", "unknown", "not_checked", "not_applicable"]},
         "presentation": {"enum": ["pass", "hint", "warning", "blocking"]},
         "applies_to": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
@@ -117,6 +119,31 @@
         "observed_at": {"type": ["integer", "null"], "minimum": 0},
         "reason": {"type": "string", "minLength": 1},
         "next_step": {"type": "string", "minLength": 1}
+      }
+    },
+    "init_operation_assessments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "note", "operations"],
+      "properties": {
+        "scope": {"const": "reported_checks_only"},
+        "note": {"type": "string", "minLength": 1},
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "assessment", "relevant_checks", "blocked_by", "unverified_by", "warnings"],
+            "properties": {
+              "operation": {"type": "string", "minLength": 1},
+              "assessment": {"enum": ["blocked", "unverified", "no_reported_blocker"]},
+              "relevant_checks": {"type": "array", "items": {"type": "string"}},
+              "blocked_by": {"type": "array", "items": {"type": "string"}},
+              "unverified_by": {"type": "array", "items": {"type": "string"}},
+              "warnings": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
       }
     }
   },
@@ -285,6 +312,7 @@
         "properties": {
           "evidence": {
             "properties": {
+              "operation_assessments": {"$ref": "#/$defs/init_operation_assessments"},
               "checks": {
                 "type": "array",
                 "items": {"$ref": "#/$defs/init_check"}
