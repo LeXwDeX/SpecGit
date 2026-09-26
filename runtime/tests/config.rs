@@ -1,5 +1,5 @@
 use specgit::{
-    config::{Declaration, Labels, Language, Notification},
+    config::{Declaration, INIT_CHECK_IDS, Labels, Language, Notification},
     diagnostic::Code,
 };
 #[test]
@@ -16,12 +16,14 @@ fn defaults_and_full_roundtrip_preserve_shared_choices() {
     assert!(d.remote.is_none());
     assert!(!d.agent.native_auto_merge);
     assert!(!d.agent.close_issues_after_merge);
+    assert!(d.init_policy.required_checks.is_empty());
     let full = br#"version: 2
 remote: upstream
 provider: gitlab
 target: preview
 language: zh
 validation: {titles: true, labels: project, bodies: true}
+init_policy: {required_checks: [target.protection]}
 tags: [{name: 'area::cli', color: '336699', description: CLI}]
 templates:
   issue: {source: inline, body: 'Why {{title}}', required_sections: [Why]}
@@ -34,6 +36,7 @@ observation: {poll_seconds: 30, max_wait_seconds: 900, notify: [completed]}
     assert_eq!(d2.language, Language::Zh);
     assert_eq!(d2.target.as_deref(), Some("preview"));
     assert_eq!(d2.templates.issue.body, d.templates.issue.body);
+    assert_eq!(d2.init_policy.required_checks, ["target.protection"]);
 }
 #[test]
 fn rejects_unknown_duplicate_conflicting_and_unbounded_input() {
@@ -44,6 +47,9 @@ fn rejects_unknown_duplicate_conflicting_and_unbounded_input() {
         "version: 2\nlanguage: fr",
         "version: 2\nvalidation: {titles: true, titles: false}",
         "version: 2\nvalidation: {extra: 1}",
+        "version: 2\ninit_policy: {optional_checks: [target.protection]}",
+        "version: 2\ninit_policy: {required_checks: [unknown.check]}",
+        "version: 2\ninit_policy: {required_checks: [target.protection, target.protection]}",
         "version: 2\nobservation: {poll_seconds: 0}",
         "version: 2\nobservation: {poll_seconds: 3601}",
         "version: 2\nobservation: {max_wait_seconds: 999999}",
@@ -89,6 +95,19 @@ fn observation_configuration_accepts_documented_upper_bounds() {
     assert_eq!(declaration.observation.poll_seconds, 3600);
     assert_eq!(declaration.observation.max_wait_seconds, 86400);
     assert!(declaration.observation.notify.is_empty());
+}
+
+#[test]
+fn init_policy_schema_ids_match_runtime_validation() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../schemas/declaration.schema.json")).unwrap();
+    let ids = schema["properties"]["init_policy"]["properties"]["required_checks"]["items"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, INIT_CHECK_IDS);
 }
 #[test]
 fn off_is_a_string_enum_and_invalid_files_are_unchanged() {
