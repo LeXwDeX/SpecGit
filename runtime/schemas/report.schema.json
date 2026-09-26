@@ -191,6 +191,71 @@
           }
         }
       }
+    },
+    "init_availability_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "checks", "facts", "blocked_by", "unverified_by", "warnings", "next_step"],
+      "properties": {
+        "id": {"enum": ["specification_development", "protected_delivery", "delivery_completion"]},
+        "status": {"enum": ["ready", "blocked", "unverified"]},
+        "checks": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "facts": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "blocked_by": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "unverified_by": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "next_step": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "blocked"}}, "required": ["status"]},
+          "then": {"properties": {"blocked_by": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "ready"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "blocked_by": {"maxItems": 0},
+              "unverified_by": {"maxItems": 0},
+              "warnings": {"maxItems": 0}
+            },
+            "anyOf": [
+              {"properties": {"checks": {"minItems": 1}}},
+              {"properties": {"facts": {"minItems": 1}}}
+            ]
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "unverified"}}, "required": ["status"]},
+          "then": {
+            "properties": {"blocked_by": {"maxItems": 0}},
+            "anyOf": [
+              {"properties": {"unverified_by": {"minItems": 1}}},
+              {"properties": {"warnings": {"minItems": 1}}}
+            ]
+          }
+        }
+      ]
+    },
+    "init_availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "note", "layers"],
+      "properties": {
+        "scope": {"const": "reported_init_facts_only"},
+        "note": {"type": "string", "minLength": 1},
+        "layers": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {"allOf": [{"$ref": "#/$defs/init_availability_layer"}, {"properties": {"id": {"const": "specification_development"}}}]},
+            {"allOf": [{"$ref": "#/$defs/init_availability_layer"}, {"properties": {"id": {"const": "protected_delivery"}}}]},
+            {"allOf": [{"$ref": "#/$defs/init_availability_layer"}, {"properties": {"id": {"const": "delivery_completion"}}}]}
+          ],
+          "items": false
+        }
+      }
     }
   },
   "properties": {
@@ -358,6 +423,7 @@
         "properties": {
           "evidence": {
             "properties": {
+              "availability": {"$ref": "#/$defs/init_availability"},
               "operation_assessments": {"$ref": "#/$defs/init_operation_assessments"},
               "checks": {
                 "type": "array",
