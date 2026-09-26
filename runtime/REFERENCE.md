@@ -157,8 +157,9 @@ because init has no declared
 policy making that check mandatory.
 
 `evidence.operation_assessments` summarizes those checks per operation. Each
-entry lists relevant checks, required blockers and required facts still
-unverified. `blocked`, `unverified` and `no_reported_blocker` apply only to the
+entry lists relevant checks, required blockers, required facts still
+unverified, and nonblocking recommended warnings. `blocked`, `unverified` and
+`no_reported_blocker` apply only to the
 listed init checks; a clear entry is not a claim of write permission, complete
 CI readiness, or completed delivery. A recommended or optional warning cannot
 block unrelated local diagnosis. `issue.write_permission` remains unverified

@@ -184,6 +184,10 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
         operation("protected_delivery")["assessment"],
         "no_reported_blocker"
     );
+    assert_eq!(
+        operation("protected_delivery")["warnings"],
+        json!(["target.protection"])
+    );
     assert_eq!(operation("request_delivery")["assessment"], "unverified");
     assert!(
         operation("request_delivery")["unverified_by"]
@@ -245,6 +249,7 @@ fn project_promotion_is_scoped_and_cannot_downgrade_built_in_requirements() {
         operation("protected_delivery")["blocked_by"],
         json!(["target.protection"])
     );
+    assert_eq!(operation("protected_delivery")["warnings"], json!([]));
     assert_eq!(
         operation("local_diagnostics")["assessment"],
         "no_reported_blocker"
