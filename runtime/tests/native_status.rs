@@ -245,6 +245,94 @@ fn native_latest_pending_check_is_not_replaced_by_old_actions_green() {
     assert_eq!(f.writes(), writes);
 }
 #[test]
+fn github_same_head_uses_latest_run_per_app_and_name_for_status_and_watch() {
+    for (old_result, current_result, expected_watch) in [
+        ("cancelled", "success", "checks_passed"),
+        ("success", "pending", "pending"),
+        ("success", "failure", "failed"),
+    ] {
+        let f = fixture("github");
+        f.edit(|s| {
+            for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+                if !route.contains("/check-runs?filter=latest") {
+                    continue;
+                }
+                let mut old = value["check_runs"][0].clone();
+                old["id"] = json!(81);
+                old["status"] = json!("completed");
+                old["conclusion"] = json!(old_result);
+                let mut current = old.clone();
+                current["id"] = json!(82);
+                current["status"] = json!(if current_result == "pending" {
+                    "in_progress"
+                } else {
+                    "completed"
+                });
+                current["conclusion"] = if current_result == "pending" {
+                    Value::Null
+                } else {
+                    json!(current_result)
+                };
+                current["completed_at"] = if current_result == "pending" {
+                    Value::Null
+                } else {
+                    json!(STAMP)
+                };
+                value["check_runs"] = json!([old, current]);
+                value["total_count"] = json!(2);
+            }
+        });
+        let writes = f.writes();
+        let status = f.run(&["pr", "--status"]);
+        assert_eq!(status["exit"], 0, "{status}");
+        let checks = status["evidence"]["checks"].as_array().unwrap();
+        assert_eq!(checks.len(), 1, "{status}");
+        assert_eq!(checks[0]["id"], 82, "{status}");
+        let watched = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "latest-runs",
+            "--goal",
+            "checks",
+            "--once",
+        ]);
+        assert_eq!(watched["status"], expected_watch, "{watched}");
+        let inbox = f.run(&[
+            "inbox",
+            "--request",
+            "41",
+            "--session",
+            "latest-runs",
+            "--goal",
+            "checks",
+        ]);
+        assert_eq!(inbox["status"], expected_watch, "{inbox}");
+        assert_eq!(f.writes(), writes);
+    }
+}
+#[test]
+fn github_same_named_checks_from_different_apps_remain_distinct() {
+    let f = fixture("github");
+    f.edit(|s| {
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if !route.contains("/check-runs?filter=latest") {
+                continue;
+            }
+            let mut other = value["check_runs"][0].clone();
+            other["id"] = json!(82);
+            other["app"]["id"] = json!(99);
+            value["check_runs"].as_array_mut().unwrap().push(other);
+            value["total_count"] = json!(2);
+        }
+    });
+    let result = f.run(&["pr", "--status"]);
+    let checks = result["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 2, "{result}");
+    assert_ne!(checks[0]["app"], checks[1]["app"], "{result}");
+}
+#[test]
 fn complete_requires_native_merge_and_every_referenced_issue_closed() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
@@ -333,6 +421,7 @@ fn current_checks_require_complete_consistent_pages() {
                 .map(|id| {
                     let mut row = template.clone();
                     row["id"] = json!(id);
+                    row["name"] = json!(format!("Test {id}"));
                     row
                 })
                 .collect();
@@ -344,6 +433,7 @@ fn current_checks_require_complete_consistent_pages() {
                 } else {
                     101
                 });
+                final_row["name"] = json!("Test 101");
                 routes.insert(
                     first.replace("&page=1", "&page=2"),
                     json!({
