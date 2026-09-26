@@ -8,8 +8,11 @@ use crate::{
     project::Repository,
     selection, spec,
 };
-use serde::Serialize;
-use std::{collections::BTreeMap, path::Path};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,7 +40,7 @@ impl Status {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckOutcome {
     Unobserved,
@@ -54,6 +57,25 @@ pub enum AssociationSource {
     BodyReference,
     LocalSelection,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalApplicabilityStatus {
+    Applicable,
+    NotApplicable,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalApplicabilityReason {
+    DetachedHead,
+    SourceBranchMismatch,
+    HeadMismatch,
+    TargetMismatch,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalApplicability {
+    pub status: LocalApplicabilityStatus,
+    pub reasons: Vec<LocalApplicabilityReason>,
+}
 #[derive(Debug, Serialize)]
 pub struct IssueAssociation {
     pub issue: u64,
@@ -64,8 +86,10 @@ pub struct Evidence {
     pub repository: Option<Repository>,
     pub project_id: Option<u64>,
     pub request: Option<PullRequest>,
+    pub local_branch: Option<String>,
     pub local_head: Option<String>,
     pub target: Option<String>,
+    pub local_applicability: Option<LocalApplicability>,
     pub issues: Option<Vec<Issue>>,
     pub associations: Option<Vec<IssueAssociation>>,
     pub native_closing_available: bool,
@@ -179,13 +203,57 @@ fn changed() -> Diagnostic {
     )
 }
 pub async fn observe(request: Option<u64>, process: Process, cwd: &Path) -> Observation {
-    match Box::pin(execute(request, process, cwd)).await {
+    observe_in_scope(request, Scope::Worktree, process, cwd).await
+}
+/// Read one exact request in the configured repository without applying it to this worktree.
+pub async fn observe_explicit(request: u64, process: Process, cwd: &Path) -> Observation {
+    observe_in_scope(Some(request), Scope::ExplicitReadOnly, process, cwd).await
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Worktree,
+    ExplicitReadOnly,
+}
+async fn observe_in_scope(
+    request: Option<u64>,
+    scope: Scope,
+    process: Process,
+    cwd: &Path,
+) -> Observation {
+    match Box::pin(execute(request, scope, process, cwd)).await {
         Ok(o) => o,
         Err(d) => Observation::unavailable(d),
     }
 }
+fn local_applicability(
+    context: &crate::project::Context,
+    local_target: &str,
+    request: &PullRequest,
+) -> LocalApplicability {
+    let mut reasons = Vec::new();
+    match context.branch.as_deref() {
+        None => reasons.push(LocalApplicabilityReason::DetachedHead),
+        Some(branch) if branch != request.source => {
+            reasons.push(LocalApplicabilityReason::SourceBranchMismatch)
+        }
+        Some(_) => {}
+    }
+    if context.head != request.head {
+        reasons.push(LocalApplicabilityReason::HeadMismatch);
+    }
+    if local_target != request.target {
+        reasons.push(LocalApplicabilityReason::TargetMismatch);
+    }
+    let status = if reasons.is_empty() {
+        LocalApplicabilityStatus::Applicable
+    } else {
+        LocalApplicabilityStatus::NotApplicable
+    };
+    LocalApplicability { status, reasons }
+}
 async fn execute(
     request: Option<u64>,
+    scope: Scope,
     process: Process,
     cwd: &Path,
 ) -> Result<Observation, Diagnostic> {
@@ -196,16 +264,18 @@ async fn execute(
     let repo = &w.context.repository;
     // An explicit native identity does not depend on an unrelated local locator.
     // A usable matching checkpoint contributes provenance; it never gets repaired here.
-    let selected = if let Some(number) = request {
+    let selected_candidate = if let Some(number) = request {
         selection::read(&w.context).ok().flatten().filter(|s| {
             s.request == Some(number) && s.project_id == w.facts.id && s.target == w.target
         })
     } else {
         selection::read(&w.context)?
     };
-    if selected
-        .as_ref()
-        .is_some_and(|s| s.project_id != w.facts.id || s.target != w.target)
+    if scope == Scope::Worktree
+        && request.is_none()
+        && selected_candidate
+            .as_ref()
+            .is_some_and(|s| s.project_id != w.facts.id || s.target != w.target)
     {
         return Err(Diagnostic::new(
             Code::IdentityMismatch,
@@ -214,7 +284,7 @@ async fn execute(
             "Select the exact native request.",
         ));
     }
-    let number = if let Some(n) = request.or(selected.as_ref().and_then(|s| s.request)) {
+    let number = if let Some(n) = request.or(selected_candidate.as_ref().and_then(|s| s.request)) {
         n
     } else {
         let rows = native_delivery::request_candidates(&w.reader, repo, w.branch()?).await?;
@@ -230,30 +300,40 @@ async fn execute(
     };
     let observed = forge::request(&w.reader, repo, number).await?;
     let r = &observed.facts;
-    if r.target_project != w.facts.id
-        || r.source_project != w.facts.id
-        || r.source != w.branch()?
-        || r.target != w.target
+    if r.target_project != w.facts.id || r.source_project != w.facts.id {
+        return Err(Diagnostic::new(
+            Code::IdentityMismatch,
+            "observe",
+            "The request belongs to another native project.",
+            "Only observe requests returned by the configured repository; cross-project and fork reads are unsupported.",
+        ));
+    }
+    if scope == Scope::Worktree
+        && (Some(r.source.as_str()) != w.context.branch.as_deref() || r.target != w.target)
     {
         return Err(Diagnostic::new(
             Code::IdentityMismatch,
             "observe",
-            "The request does not belong to the selected project/source/target.",
-            "Reconcile the exact native identity before observing.",
+            "The request source/target is outside this worktree's observation scope.",
+            "Use pr --status --request for same-repository read-only facts; watch and implicit observation remain bound to the local source and target.",
         ));
     }
+    let selected = selected_candidate
+        .filter(|selection| scope != Scope::ExplicitReadOnly || selection.target == r.target);
+    let applicability = local_applicability(&w.context, &w.target, r);
     let mut evidence = Evidence {
         repository: Some(repo.clone()),
         project_id: Some(w.facts.id),
         request: Some(r.clone()),
+        local_branch: w.context.branch.clone(),
         local_head: Some(w.context.head.clone()),
         target: Some(w.target.clone()),
+        local_applicability: Some(applicability),
         auto_merge: Some(observed.auto_merge()),
         close_issues_after_merge: w.close_issues_after_merge(),
         ..Evidence::default()
     };
     let mut diagnostics = Vec::new();
-    let body_ids = spec::references(&r.body)?;
     let mut associations = BTreeMap::<u64, Vec<AssociationSource>>::new();
     let mut native_ids = None;
     match forge::closing_issues(&w.reader, repo, w.facts.id, number).await {
@@ -269,6 +349,13 @@ async fn execute(
         }
         Err(d) => diagnostics.push(d),
     }
+    let body_ids = match spec::references(&r.body) {
+        Ok(ids) => ids,
+        Err(d) => {
+            diagnostics.push(d);
+            BTreeSet::new()
+        }
+    };
     for id in &body_ids {
         associations
             .entry(*id)

@@ -84,9 +84,189 @@ impl Fixture {
         assert_eq!(v["exit"].as_i64(), out.status.code().map(i64::from));
         v
     }
+    fn run_human(&self, args: &[&str]) -> Value {
+        let mut paths = vec![self.bin.clone()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let out = executable::command()
+            .current_dir(&self.root)
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("SPECGIT_FIXTURE_API_FILE", &self.state)
+            .args(args)
+            .arg("--human")
+            .output()
+            .unwrap();
+        assert!(out.status.code().is_some(), "human command should exit");
+        let text = String::from_utf8(out.stdout).unwrap();
+        let json_start = text.find('{').expect("human report contains evidence JSON");
+        serde_json::from_str(&text[json_start..]).unwrap()
+    }
     fn state(&self) -> Value {
         serde_json::from_slice(&fs::read(&self.state).unwrap()).unwrap()
     }
+}
+
+#[test]
+fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
+    let f = Fixture::new();
+    let json_report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let human_evidence = f.run_human(&["init", "--provider", "github", "--inspect"]);
+    let checks = json_report["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 10);
+    assert_eq!(
+        checks
+            .iter()
+            .map(|check| check["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        specgit::config::INIT_CHECK_IDS
+    );
+    let by_id = |id: &str| checks.iter().find(|check| check["id"] == id).unwrap();
+    assert_eq!(by_id("forge.read_access")["status"], "verified");
+    assert_eq!(by_id("forge.read_access")["requirement"], "required");
+    assert_eq!(by_id("issue.duplicate_read")["status"], "not_checked");
+    assert_eq!(by_id("issue.duplicate_read")["presentation"], "blocking");
+    assert_eq!(by_id("issue.write_permission")["status"], "not_checked");
+    assert_eq!(by_id("request.write_permission")["status"], "not_checked");
+    assert_eq!(by_id("target.protection")["status"], "unknown");
+    assert_eq!(by_id("target.protection")["presentation"], "warning");
+    assert_eq!(by_id("request.eligibility")["requirement"], "optional");
+    assert_eq!(by_id("request.eligibility")["status"], "not_applicable");
+    for json_check in checks {
+        let human_check = human_evidence["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["id"] == json_check["id"])
+            .unwrap();
+        for field in [
+            "id",
+            "status",
+            "requirement",
+            "requirement_source",
+            "presentation",
+            "applies_to",
+        ] {
+            assert_eq!(human_check[field], json_check[field], "field {field}");
+        }
+    }
+    assert_eq!(
+        human_evidence["operation_assessments"],
+        json_report["evidence"]["operation_assessments"]
+    );
+    let operations = json_report["evidence"]["operation_assessments"]["operations"]
+        .as_array()
+        .unwrap();
+    let operation = |id: &str| {
+        operations
+            .iter()
+            .find(|entry| entry["operation"] == id)
+            .unwrap()
+    };
+    assert_eq!(
+        operation("local_diagnostics")["assessment"],
+        "no_reported_blocker"
+    );
+    assert_eq!(operation("issue_creation")["assessment"], "blocked");
+    assert!(
+        operation("issue_creation")["blocked_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("issue.duplicate_read"))
+    );
+    assert!(
+        operation("issue_creation")["unverified_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("issue.write_permission"))
+    );
+    assert_eq!(
+        operation("protected_delivery")["assessment"],
+        "no_reported_blocker"
+    );
+    assert_eq!(
+        operation("protected_delivery")["warnings"],
+        json!(["target.protection"])
+    );
+    assert_eq!(operation("request_delivery")["assessment"], "unverified");
+    assert!(
+        operation("request_delivery")["unverified_by"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("request.write_permission"))
+    );
+    assert_eq!(
+        json_report["evidence"]["operation_assessments"]["scope"],
+        "reported_checks_only"
+    );
+    assert_eq!(json_report["exit"], 2);
+    assert_eq!(json_report["status"], "confirmation_required");
+    assert_eq!(json_report["evidence"]["written"], false);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert!(!f.root.join(".git/specgit-v2").exists());
+    assert_eq!(
+        f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["method"] == "POST" || call["method"] == "PUT")
+            .count(),
+        0,
+        "inspection must not probe native write permissions"
+    );
+}
+
+#[test]
+fn project_promotion_is_scoped_and_cannot_downgrade_built_in_requirements() {
+    let f = Fixture::new();
+    fs::write(f.root.join(".specgit.yaml"), b"version: 2\ninit_policy: {required_checks: [target.protection, project.identity, request.eligibility]}\n").unwrap();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let checks = report["evidence"]["checks"].as_array().unwrap();
+    let by_id = |id: &str| checks.iter().find(|check| check["id"] == id).unwrap();
+    assert_eq!(by_id("target.protection")["requirement"], "required");
+    assert_eq!(
+        by_id("target.protection")["requirement_source"],
+        "project_declaration"
+    );
+    assert_eq!(by_id("target.protection")["status"], "unknown");
+    assert_eq!(by_id("target.protection")["presentation"], "blocking");
+    assert_eq!(by_id("project.identity")["requirement"], "required");
+    assert_eq!(by_id("project.identity")["requirement_source"], "builtin");
+    assert_eq!(by_id("request.eligibility")["requirement"], "required");
+    assert_eq!(by_id("request.eligibility")["status"], "not_applicable");
+    assert_eq!(by_id("request.eligibility")["presentation"], "hint");
+    let operations = report["evidence"]["operation_assessments"]["operations"]
+        .as_array()
+        .unwrap();
+    let operation = |id: &str| {
+        operations
+            .iter()
+            .find(|entry| entry["operation"] == id)
+            .unwrap()
+    };
+    assert_eq!(operation("protected_delivery")["assessment"], "blocked");
+    assert_eq!(
+        operation("protected_delivery")["blocked_by"],
+        json!(["target.protection"])
+    );
+    assert_eq!(operation("protected_delivery")["warnings"], json!([]));
+    assert_eq!(
+        operation("local_diagnostics")["assessment"],
+        "no_reported_blocker"
+    );
+    assert_eq!(
+        operation("request_merge")["assessment"],
+        "no_reported_blocker"
+    );
+    assert_eq!(
+        f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["method"] == "POST" || call["method"] == "PUT")
+            .count(),
+        0
+    );
 }
 #[test]
 fn both_forges_init_refresh_reject_settings_writes_and_preserve_user_content() {
@@ -146,6 +326,21 @@ fn api_failure_and_invalid_declaration_leave_project_files_untouched() {
     fs::write(&f.state, state.to_string()).unwrap();
     let r = f.run(&["init", "--provider", "github"]);
     assert_eq!(r["exit"], 3);
+    let access = r["evidence"]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "forge.read_access")
+        .unwrap();
+    assert_eq!(access["status"], "failed");
+    assert_eq!(access["presentation"], "blocking");
+    let issue_inspection = r["evidence"]["operation_assessments"]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["operation"] == "issue_inspection")
+        .unwrap();
+    assert_eq!(issue_inspection["assessment"], "blocked");
     assert!(!f.root.join(".specgit.yaml").exists());
     assert!(!f.root.join("AGENTS.md").exists());
     fs::write(
@@ -381,6 +576,24 @@ fn project_auto_merge_setting_is_a_fact_and_not_request_authority() {
         assert_eq!(
             report["evidence"]["capabilities"]["auto_merge"]["status"], expected,
             "{report}"
+        );
+        let auto_merge = report["evidence"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["id"] == "auto_merge.setting")
+            .unwrap();
+        assert_eq!(
+            auto_merge["status"],
+            if enabled {
+                "verified"
+            } else {
+                "not_configured"
+            }
+        );
+        assert_eq!(
+            auto_merge["presentation"],
+            if enabled { "pass" } else { "hint" }
         );
         assert_eq!(
             report["evidence"]["capabilities"]["request_eligibility"]["status"],

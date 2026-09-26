@@ -473,7 +473,7 @@ Hook 适配宿主各事件的 stdout/exit 规则，不原样转发 CLI 退出码
 | L12 | 真实 hook/宿主体验 | 安装、导入、触发、正确会话交付分项实测；下一轮与空闲唤醒分开；Stop 不循环 |
 | L13 | 实际 CLI 与文档一致 | 验证已采用的机器调用、输出/错误、输入、恢复、hook framing、语言与旧命令迁移；C01–C12 仅为参考，不要求全部实现 |
 | L14 | 安全迁移与职责退役 | 旧配置/工作流/共享 hooks 清单，备份与条件恢复；当前执行链无旧 controller |
-| L15 | CI 与同等工作量性能 | 当前 head 自有 Linux/macOS/Windows 执行；Windows 整体旅程与分进程数据；不减测造加速 |
+| L15 | CI 与同等工作量性能 | 当前 head GitHub-hosted Linux/macOS/Windows 执行；Windows 整体旅程与分进程数据；不减测造加速 |
 | L16 | 公共 npm 分发和隐私 | 无 GitHub 凭据/编译器安装，各支持目标真实 smoke；一致版本/checksum；无私有路径/标识 |
 | L17 | 发行能力与恢复 | 明确实际认证路径；部分平台发布/registry 延迟恢复；未授权不发布、不变更源库可见性 |
 | L18 | 历史、业务解耦和四层审查 | 全 318 条与旧 F01–F48 有处置；保留项有具体回归/证据；按 §3.1.1 核对功能状态归属、小接口、独立测试及典型扩展的修改范围 |
@@ -488,15 +488,15 @@ Hook 适配宿主各事件的 stdout/exit 规则，不原样转发 CLI 退出码
 
 原生 CI 负责业务作业调度。GitLab parent-child pipeline 与 multi-project pipeline 的身份语义不同，观察结果要保留平台实际来源，不能用名字或一个通用同-SHA 假设替代。见 [GitLab downstream pipelines](https://docs.gitlab.com/ci/pipelines/downstream_pipelines/)。
 
-本仓库遵循现有 [CI 范围规则](../ci-scope.md)：文档本次走内容审查和 metadata check；后续 Rust 产品更改走实际适用的构建、类型/lint、测试、安装与自有 runner CI。缩小产品职责是设计变更，不能先删必要测试再称验收通过。
+本仓库遵循现有 [CI 范围规则](../ci-scope.md)：文档本次走内容审查和 metadata check；后续 Rust 产品更改走实际适用的构建、类型/lint、测试、安装与 GitHub-hosted 标准 runner CI。缩小产品职责是设计变更，不能先删必要测试再称验收通过。
 
 ### 7.3 分发与发布边界
 
 公开 npm wrapper 只负责选择准确版本的原生平台包并转发 I/O/信号。最终用户不需要私有 GitHub 权限、Rust 编译器或源码下载。平台包必须先完整可用，再推进 wrapper/dist-tag；发布重试核对 registry、tag 和 artifact 身份，不覆盖已有版本。
 
-优先完成现有自有 Linux x64、macOS arm64、Windows x64 的真实运行；拟发布的其他架构/libc 也必须有对应安装证据。无法实际验证的目标暂不宣称支持。构建 artifact 检查源码路径、调试信息、私有部署标识、许可证和 checksum。
+优先完成 GitHub-hosted Linux x64、macOS arm64、Windows x64 的真实运行；拟发布的其他架构/libc 也必须有对应安装证据。无法实际验证的目标暂不宣称支持。构建 artifact 检查源码路径、调试信息、私有部署标识、许可证和 checksum。
 
-**当前 npm trusted publishing 文档明确不支持 self-hosted runner；私有源码仓库也不能获得 npm provenance。** 因此旧 F44/#514 的“在现有自有 runner 上验证 OIDC 即可发布”不是已成立的路径。保持用户的自有 runner 约束；实际发布时由用户/CI 管理者配置 npm 支持的认证方式并验证，或等待有证据的平台支持变化。不能私自切回托管 runner、读取令牌、公开源码或伪造 provenance。见 [npm trusted publishers](https://docs.npmjs.com/trusted-publishers/)。
+旧 F44/#514 记录的是 npm trusted publishing 的历史认证边界；当前仓库已不再发布 npm 包，不能把这段历史约束当成现行 runner 策略。本项目当前 CI、安全检查和 GitHub Release 使用 `ubuntu-24.04`、`macos-15`、`windows-2025` 标准 GitHub-hosted runner。仓库为公开仓库，因此这些标准 runner 免费且不限量。正式发布仍限定在 main 的显式 workflow dispatch，并通过 GitHub Actions OIDC/Cosign 签名；不读取自定义密钥，也不改变仓库可见性。
 
 发行能力可以先在不发布的安装/打包场景验证；真实 publication 需要单独的明确发布意图。本次整理和继续开发不产生该授权。
 

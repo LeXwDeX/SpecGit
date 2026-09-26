@@ -60,7 +60,7 @@ missing. Use current-head and installed/runtime evidence for claims.
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Repository runtime: 2.1.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Repository runtime: 2.1.1. Declaration: `.specgit.yaml` (v2, local configuration).
 
 SpecGit 管理规格 Issue 与原生 PR/MR 关联。加载 specgit-native skill；以 `specgit --help` 和 `specgit --schema` 为已安装命令契约，机器输出用 `--json`，Issue/PR 写入先用 `--dry-run` 预览。实施前先查重，再明确选择包含原因、范围、方案和验收要求的完整 Issue。完成实施并按授权提交、推送后，将选定 Issue 汇聚到一个原生草稿请求，保留用户正文与关闭引用。准备好评审后使用 `specgit pr --ready`。
 

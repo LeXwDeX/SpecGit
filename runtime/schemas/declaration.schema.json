@@ -48,6 +48,33 @@
       ],
       "default": "en"
     },
+    "init_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required_checks": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 10,
+          "items": {
+            "enum": [
+              "project.identity",
+              "forge.cli",
+              "forge.read_access",
+              "issue.duplicate_read",
+              "issue.write_permission",
+              "request.write_permission",
+              "target.protection",
+              "issue.closing",
+              "request.eligibility",
+              "auto_merge.setting"
+            ]
+          },
+          "default": []
+        }
+      },
+      "description": "Project-only promotions to required for the currently reported init checks. Built-in requirements cannot be downgraded."
+    },
     "validation": {
       "type": "object",
       "additionalProperties": false,
@@ -121,19 +148,21 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 3600,
-          "default": 15
+          "default": 15,
+          "description": "Default watch polling interval; --poll-seconds overrides it."
         },
         "max_wait_seconds": {
           "type": "integer",
           "minimum": 1,
           "maximum": 86400,
           "default": 1800,
-          "description": "Must also be at least poll_seconds."
+          "description": "Default watch deadline; --timeout-seconds overrides it. Must also be at least poll_seconds."
         },
         "notify": {
           "type": "array",
           "maxItems": 2,
           "uniqueItems": true,
+          "description": "Hook notice categories only; direct watch and inbox queries always return event evidence.",
           "items": {
             "enum": [
               "attention",

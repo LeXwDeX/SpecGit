@@ -55,7 +55,7 @@ pub async fn stdin(event: &str, state_root: Option<&Path>, observe: bool) -> Out
         ),
     }
 }
-fn relevant(payload: &Value) -> bool {
+fn relevant(event: &str, payload: &Value) -> bool {
     let tool = payload
         .get("tool_name")
         .and_then(Value::as_str)
@@ -109,6 +109,14 @@ fn relevant(payload: &Value) -> bool {
                 remaining = &remaining[1..];
                 continue;
             }
+            // Issue lifecycle commands establish or inspect the checkpoint.
+            // Their CLI performs duplicate inspection and write preflight before
+            // any local or native mutation, so the source-edit guard must not
+            // block a direct command that creates the first checkpoint. Do not
+            // exempt compound shell input; the hook must still inspect it.
+            if option == "issue" {
+                return event != "PreToolUse" || index != 0 || has_unquoted_shell_control(command);
+            }
             let value = if option == "--cwd" {
                 remaining = &remaining[1..];
                 let Some(value) = remaining.first().copied() else {
@@ -118,7 +126,7 @@ fn relevant(payload: &Value) -> bool {
             } else if let Some(value) = option.strip_prefix("--cwd=") {
                 value
             } else {
-                return ["issue", "pr", "merge"].contains(&option);
+                return ["pr", "merge"].contains(&option);
             };
             let quote = value.chars().next().filter(|c| ['\'', '"'].contains(c));
             let mut ends_here = quote.is_none_or(|q| value.len() > 1 && value.ends_with(q));
@@ -160,11 +168,44 @@ fn has_unquoted_redirect(command: &str) -> bool {
     }
     false
 }
+fn has_unquoted_shell_control(command: &str) -> bool {
+    let mut single = false;
+    let mut double = false;
+    let mut escaped = false;
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && !single {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' && !double {
+            single = !single;
+        } else if character == '"' && !single {
+            double = !double;
+        } else if !single && !double {
+            if [';', '&', '|', '\n', '\r', '`', '(', ')'].contains(&character)
+                || (character == '$' && characters.peek() == Some(&'('))
+            {
+                return true;
+            }
+        } else if double
+            && (character == '`' || (character == '$' && characters.peek() == Some(&'(')))
+        {
+            return true;
+        }
+    }
+    false
+}
 struct Prepared {
     context: project::Context,
     language: Language,
     session: String,
     target: Option<String>,
+    observation: config::Observation,
 }
 fn deny(message: &str) -> Output {
     Output {
@@ -296,7 +337,7 @@ async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> 
     if event == "Stop" && payload.get("stop_hook_active").and_then(Value::as_bool) == Some(true) {
         return Ok(None);
     }
-    if matches!(event, "PreToolUse" | "PostToolUse") && !relevant(&payload) {
+    if matches!(event, "PreToolUse" | "PostToolUse") && !relevant(event, &payload) {
         return Ok(None);
     }
     let cwd = match payload
@@ -349,6 +390,7 @@ async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> 
         language: marker.language,
         session: session.to_owned(),
         target: marker.target,
+        observation: marker.observation,
     }))
 }
 pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Output {
@@ -357,6 +399,7 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         language,
         session,
         target,
+        observation,
     } = match prepare(event, bytes).await {
         Ok(Some(p)) => p,
         Ok(None) => return Output::default(),
@@ -410,7 +453,7 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         )
     };
     if ["SessionStart", "PostToolUse"].contains(&event) {
-        match pending_notice(&context, &session, state_root) {
+        match pending_notice(&context, &session, state_root, &observation.notify) {
             Ok(Some(notice)) => { text.push('\n'); text.push_str(&notice); },
             Ok(None) => {},
             Err(_) => text.push_str("\nSpecGit has unreadable local observation state; inspect it with explicit diagnostics."),
@@ -448,6 +491,7 @@ fn pending_notice(
     context: &project::Context,
     session: &str,
     state_root: Option<&Path>,
+    notifications: &[config::Notification],
 ) -> Result<Option<String>, crate::diagnostic::Diagnostic> {
     let Some(request) = crate::selection::read(context)?.and_then(|s| s.request) else {
         return Ok(None);
@@ -464,7 +508,11 @@ fn pending_notice(
     let ids: Vec<_> = state
         .events
         .iter()
-        .filter(|e| !e.superseded && e.acknowledged_at.is_none())
+        .filter(|e| {
+            !e.superseded
+                && e.acknowledged_at.is_none()
+                && crate::watch::notification_enabled(&e.state, notifications)
+        })
         .map(|e| e.id.as_str())
         .collect();
     if ids.is_empty() {
@@ -507,14 +555,15 @@ pub async fn observe_handle(
             );
         }
     };
+    let notifications = prepared.observation.notify;
     let observation = crate::watch::observe_subscription(
         crate::watch::Options {
             request,
             session: prepared.session,
             goal: crate::watch_store::Goal::Lifecycle,
             state_root: state_root.map(Path::to_path_buf),
-            timeout_seconds: 1800,
-            poll_seconds: 15,
+            timeout_seconds: None,
+            poll_seconds: None,
             once: false,
         },
         process,
@@ -530,13 +579,23 @@ pub async fn observe_handle(
             );
         }
     };
-    let events = observation.pending();
+    let events: Vec<_> = observation
+        .pending()
+        .into_iter()
+        .filter(|event| crate::watch::notification_enabled(&event.state, &notifications))
+        .collect();
     if events.is_empty() {
         return Output::default();
     }
+    let next_steps = events
+        .iter()
+        .filter_map(|event| event.next_step.as_ref())
+        .map(|next_step| next_step.message.as_str())
+        .collect::<Vec<_>>();
     let text = format!(
-        "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
-        json!({"subscription":observation.state.identity,"events":events})
+        "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Next steps: {}. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
+        json!({"subscription":observation.state.identity,"events":events}),
+        next_steps.join(" ")
     );
     Output {
         json: Some(

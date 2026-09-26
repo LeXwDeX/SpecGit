@@ -15,7 +15,7 @@ use std::{
 };
 #[derive(Debug, clap::Args)]
 pub struct Options {
-    /// Adopt this exact native PR/MR ID; otherwise resume or discover the current source branch.
+    /// Read this exact request with --status, or adopt it for delivery; otherwise resume/discover locally.
     #[arg(long)]
     pub request: Option<u64>,
     #[arg(long)]
@@ -34,7 +34,7 @@ pub struct Options {
     pub ready: bool,
     #[arg(long, conflicts_with_all = ["ready", "update_body", "update_references"])]
     pub inspect: bool,
-    /// Read native lifecycle facts without creating or modifying a request.
+    /// Read native lifecycle facts; an explicit --request permits same-repository cross-checkout reads.
     #[arg(long, conflicts_with_all = ["title", "body_file", "tags", "ready", "update_body", "update_references", "inspect"])]
     pub status: bool,
     /// Preview request creation or changes without writing local or remote state.
@@ -46,10 +46,12 @@ pub struct Options {
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     if options.status {
-        return Report::observation(
-            "pr.status",
-            crate::observation::observe(options.request, process, cwd).await,
-        );
+        let observation = if let Some(request) = options.request {
+            crate::observation::observe_explicit(request, process, cwd).await
+        } else {
+            crate::observation::observe(None, process, cwd).await
+        };
+        return Report::observation("pr.status", observation);
     }
     let mut effects = Effects::default();
     let mut report = match execute(options, process, cwd, &mut effects).await {

@@ -366,6 +366,107 @@ fn active_native_workflow_and_incomplete_counted_page_block_cutover() {
     let p = preview(&f, &path, &[]);
     assert_eq!(p["diagnostics"][0]["code"], "malformed_response", "{p}");
 }
+
+#[test]
+fn github_managed_dynamic_workflows_are_reported_and_repository_workflows_are_scanned() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (f, path) = fixture("github");
+    let content = "name: business\njobs:\n  build:\n    steps:\n      - run: cargo test\n";
+    let dynamic = [
+        "dynamic/dependabot/dependabot-updates",
+        "dynamic/github-code-scanning/codeql",
+        "dynamic/agents/github-advanced-security",
+    ];
+    let mut workflows: Vec<Value> = dynamic
+        .iter()
+        .enumerate()
+        .map(|(index, path)| json!({"id":20 + index as u64,"state":"active","path":path}))
+        .collect();
+    workflows.push(json!({"id":30,"state":"active","path":".github/workflows/business.yml"}));
+    f.edit(|s| {
+        s["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":4,"workflows":workflows});
+        s["read_routes"][format!("repos/fixture/repo/contents/.github/workflows/business.yml?ref={MAIN}")]=json!({"path":".github/workflows/business.yml","type":"file","sha":"b".repeat(40),"size":content.len(),"encoding":"base64","content":STANDARD.encode(content)});
+    });
+
+    let preview = preview(&f, &path, &[]);
+
+    assert_eq!(preview["exit"], 0, "{preview}");
+    assert_eq!(
+        preview["evidence"]["remote_retirement"]["managed_workflows"],
+        json!([
+            [20, "dynamic/dependabot/dependabot-updates"],
+            [21, "dynamic/github-code-scanning/codeql"],
+            [22, "dynamic/agents/github-advanced-security"]
+        ])
+    );
+    assert_eq!(
+        preview["evidence"]["remote_retirement"]["scanned_paths"],
+        json!([".github/workflows/business.yml"])
+    );
+}
+
+#[test]
+fn unknown_github_dynamic_workflow_blocks_with_specific_diagnostic() {
+    let (f, path) = fixture("github");
+    f.edit(|s| {
+        s["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":1,"workflows":[{"id":40,"state":"active","path":"dynamic/new-platform-workflow"}]});
+    });
+
+    let preview = preview(&f, &path, &[]);
+
+    assert_eq!(preview["exit"], 3, "{preview}");
+    assert_eq!(preview["diagnostics"][0]["code"], "evidence_rejected");
+    assert_eq!(
+        preview["diagnostics"][0]["message"],
+        "GitHub returned an unsupported active workflow path: dynamic/new-platform-workflow."
+    );
+}
+
+#[test]
+fn unreadable_registered_github_workflows_keep_failure_class_and_add_path_context() {
+    let workflow_path = ".github/workflows/specgit-reuse.yml";
+    let workflow_route =
+        "repos/fixture/repo/contents/.github/workflows/specgit-reuse.yml?ref=".to_owned() + MAIN;
+
+    let (missing, missing_config) = fixture("github");
+    missing.edit(|state| {
+        state["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":1,"workflows":[{"id":41,"state":"active","path":workflow_path}]});
+    });
+    let missing_preview = preview(&missing, &missing_config, &[]);
+    assert_eq!(missing_preview["exit"], 3, "{missing_preview}");
+    assert_eq!(
+        missing_preview["diagnostics"][0]["code"],
+        "ambiguous_not_found"
+    );
+    assert!(
+        missing_preview["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(workflow_path)
+    );
+
+    let (forbidden, forbidden_config) = fixture("github");
+    forbidden.edit(|state| {
+        state["read_routes"]["repos/fixture/repo/actions/workflows?per_page=100&page=1"] =
+            json!({"total_count":1,"workflows":[{"id":41,"state":"active","path":workflow_path}]});
+        state["read_routes"][workflow_route] =
+            json!({"__fixture_error":"HTTP 403 private https://sentinel:secret@example.invalid/?token=secret"});
+    });
+    let forbidden_preview = preview(&forbidden, &forbidden_config, &[]);
+    assert_eq!(forbidden_preview["exit"], 3, "{forbidden_preview}");
+    assert_eq!(
+        forbidden_preview["diagnostics"][0]["code"],
+        "permission_denied"
+    );
+    let diagnostic = forbidden_preview["diagnostics"][0].to_string();
+    assert!(diagnostic.contains(workflow_path));
+    assert!(!diagnostic.contains("sentinel"));
+    assert!(!diagnostic.contains("secret"));
+}
+
 #[test]
 fn gitlab_static_includes_are_followed_and_external_includes_are_explicitly_unverified() {
     use base64::{Engine, engine::general_purpose::STANDARD};
@@ -656,4 +757,160 @@ fn an_unbound_v1_project_requires_migration_and_preserves_its_policy() {
     ]);
     assert_eq!(r["exit"], 0, "{r}");
     assert!(!f.root.join(".specgit.yaml").exists());
+}
+
+fn interrupt_migration(stage: &str) -> (Fixture, String, Value) {
+    let (f, path) = fixture("github");
+    let p = preview(&f, &path, &[]);
+    assert_eq!(p["exit"], 0, "{p}");
+    let planned = p["evidence"]["planned_changes"].as_array().unwrap();
+    let point = match stage {
+        "after_backup" => "before-write:0".to_owned(),
+        "during_writes" => "before-write:2".to_owned(),
+        "before_retirement" => {
+            let index = planned
+                .iter()
+                .position(|change| {
+                    Path::new(change["path"].as_str().unwrap())
+                        .ends_with(".github/workflows/specgit-complete.yml")
+                })
+                .unwrap();
+            format!("before-write:{}", index + 1)
+        }
+        "before_completion" => "before-commit".to_owned(),
+        _ => panic!("unknown interruption stage: {stage}"),
+    };
+    let out = f
+        .feature_command(&[
+            "migrate",
+            "--config-file",
+            path.to_str().unwrap(),
+            "--apply",
+            "--expect",
+            p["evidence"]["preview_sha256"].as_str().unwrap(),
+        ])
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", point)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(99), "{out:?}");
+    assert_eq!(f.writes(), 0);
+    let transactions = PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
+        .join("specgit-v2/assets/transactions");
+    let mut dirs = fs::read_dir(transactions)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(dirs.len(), 1);
+    let dir = dirs.pop().unwrap();
+    let journal: Value =
+        serde_json::from_slice(&fs::read(dir.join("journal.json")).unwrap()).unwrap();
+    assert_eq!(journal["state"], "prepared");
+    assert_eq!(
+        journal["entries"].as_array().unwrap().len(),
+        planned.len() + 1
+    );
+    for entry in journal["entries"].as_array().unwrap() {
+        if entry["before"].is_string() {
+            assert!(dir.join(entry["backup"].as_str().unwrap()).is_file());
+        }
+    }
+    let id = dir.file_name().unwrap().to_str().unwrap().to_owned();
+    (f, id, journal)
+}
+
+fn rollback_interrupted_migration(f: &Fixture, id: &str) {
+    let rollback = f.run(&["migrate", "--rollback", id]);
+    assert_eq!(rollback["exit"], 0, "{rollback}");
+    assert_eq!(f.writes(), 0);
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 1")
+    );
+    assert!(
+        f.root
+            .join(".github/workflows/specgit-complete.yml")
+            .exists()
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join("AGENTS.md")).unwrap(),
+        "Human prefix\n<!-- specgit:block:start -->\nold contract\n<!-- specgit:block:end -->\nHuman suffix\n"
+    );
+}
+
+#[test]
+fn migration_interrupted_after_durable_backup_can_roll_back() {
+    let (f, id, journal) = interrupt_migration("after_backup");
+    assert_eq!(journal["entries"][0]["before"], Value::Null);
+    assert!(!Path::new(journal["entries"][0]["path"].as_str().unwrap()).exists());
+    rollback_interrupted_migration(&f, &id);
+}
+
+#[test]
+fn migration_interrupted_during_asset_writes_can_roll_back() {
+    let (f, id, journal) = interrupt_migration("during_writes");
+    assert!(Path::new(journal["entries"][0]["path"].as_str().unwrap()).exists());
+    let first_asset = &journal["entries"][1];
+    assert_ne!(first_asset["before"], first_asset["after"]);
+    let written = Path::new(first_asset["path"].as_str().unwrap());
+    match first_asset["after"].as_str() {
+        Some(expected) => assert_eq!(specgit::assets::hash(&fs::read(written).unwrap()), expected),
+        None => assert!(!written.exists()),
+    }
+    rollback_interrupted_migration(&f, &id);
+}
+
+#[test]
+fn migration_interrupted_before_old_writer_retirement_can_roll_back() {
+    let (f, id, journal) = interrupt_migration("before_retirement");
+    let entries = journal["entries"].as_array().unwrap();
+    let writer = f.root.join(".github/workflows/specgit-complete.yml");
+    let writer_index = entries
+        .iter()
+        .position(|entry| entry["path"] == writer.to_str().unwrap())
+        .unwrap();
+    assert!(writer_index > 1);
+    assert_eq!(
+        specgit::assets::hash(&fs::read(&writer).unwrap()),
+        entries[writer_index]["before"].as_str().unwrap()
+    );
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 1")
+    );
+    rollback_interrupted_migration(&f, &id);
+}
+
+#[test]
+fn migration_interrupted_before_completion_preserves_user_edit_then_rolls_back() {
+    let (f, id, journal) = interrupt_migration("before_completion");
+    assert!(Path::new(journal["entries"][0]["path"].as_str().unwrap()).exists());
+    assert!(
+        !f.root
+            .join(".github/workflows/specgit-complete.yml")
+            .exists()
+    );
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 2")
+    );
+    let agents = f.root.join("AGENTS.md");
+    let migrated = fs::read(&agents).unwrap();
+    fs::write(&agents, b"user edit after interruption\n").unwrap();
+    let conflict = f.run(&["migrate", "--rollback", &id]);
+    assert_eq!(conflict["exit"], 3, "{conflict}");
+    assert_eq!(conflict["diagnostics"][0]["code"], "rollback_conflict");
+    assert_eq!(
+        fs::read(&agents).unwrap(),
+        b"user edit after interruption\n"
+    );
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 2")
+    );
+    fs::write(agents, migrated).unwrap();
+    rollback_interrupted_migration(&f, &id);
 }

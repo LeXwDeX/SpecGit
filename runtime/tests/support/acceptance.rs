@@ -7,7 +7,14 @@ fn blob(bytes: &[u8], id: &str) -> Value {
     json!({"sha":id,"content":STANDARD.encode(bytes),"encoding":"base64","size":bytes.len()})
 }
 pub fn fixture(provider: &str) -> Fixture {
-    let f = Fixture::new(provider);
+    fixture_with_observation(provider, "")
+}
+pub fn fixture_with_observation(provider: &str, observation_yaml: &str) -> Fixture {
+    let f = if observation_yaml.is_empty() {
+        Fixture::new(provider)
+    } else {
+        Fixture::with_observation(provider, observation_yaml)
+    };
     assert_eq!(
         f.run(&["issue", "--create-labels", "feat: first spec"])["exit"],
         0

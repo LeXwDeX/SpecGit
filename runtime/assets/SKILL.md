@@ -19,6 +19,12 @@ same WHY. For distinct work, compare the returned candidates and supply each
 exact `review_digest` with `--reviewed-candidates`; changed content needs a fresh
 comparison. Missing labels require an explicit `--create-labels` choice.
 
+Read-only inspection, audits, and reviews need no delivery Issue and authorize no
+writes. Select a complete relevant Issue before tracked product edits. Follow the
+repository's documentation route for pure documentation work, including any
+Issue checkpoint required by an installed host hook. Local `init` and `setup` are
+maintenance, not delivery; they do not create an Issue or authorize forge writes.
+
 After implementation and authorized commit/push, aggregate the selected Issues
 with `pr`; creation requires real pushed changes and produces a draft. Preserve
 user-authored bodies and every closing reference. Updating existing bodies or
@@ -29,8 +35,10 @@ Preview Issue/PR mutations with `--dry-run`; a preview grants no write permissio
 ## Execution approval context
 
 Existing session authorization remains valid within its scope; do not ask again
-merely because delivery advances to another step. SpecGit declarations and
-read-only repository facts are not new authorization.
+merely because delivery advances to another step. Native Issue/PR writes,
+including marking a request ready, require existing scope-specific user
+authorization. SpecGit declarations, read-only repository facts, and `--dry-run`
+previews grant no write permission.
 
 Keep local commit, push, forge mutations and deployment in separate tool calls
 so each action has an independently reviewable scope and result. Before an

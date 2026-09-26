@@ -3,6 +3,150 @@
   "title": "SpecGit 2 JSON report",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "watch_action_kind": {
+      "enum": [
+        "wait_for_checks",
+        "inspect_checks",
+        "repair_checks",
+        "interpret_checks",
+        "prepare_review",
+        "review_or_merge_on_platform",
+        "inspect_open_issues",
+        "verify_issue_closure",
+        "reopen_or_choose_followup",
+        "refresh_native_evidence",
+        "reconcile_subscription",
+        "resume_subscription",
+        "completed"
+      ]
+    },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "goal",
+        "request_id",
+        "request_state",
+        "check_outcome",
+        "draft",
+        "auto_merge",
+        "close_issues_after_merge",
+        "issue_ids",
+        "failed_checks",
+        "diagnostics",
+        "message",
+        "command",
+        "requires_user_authorization"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/watch_action_kind"
+        },
+        "goal": {
+          "enum": ["checks", "lifecycle"]
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_state": {
+          "type": ["string", "null"]
+        },
+        "check_outcome": {
+          "enum": ["unobserved", "pending", "passed", "completed", "failed"]
+        },
+        "draft": {
+          "type": ["boolean", "null"]
+        },
+        "auto_merge": {
+          "enum": ["registered", "not_registered", "unknown", null]
+        },
+        "close_issues_after_merge": {
+          "type": "boolean"
+        },
+        "issue_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "failed_checks": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": ["string", "null"]
+        },
+        "requires_user_authorization": {
+          "type": "boolean"
+        }
+      }
+    },
+    "init_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "requirement",
+        "requirement_source",
+        "status",
+        "presentation",
+        "applies_to",
+        "source",
+        "observed_at",
+        "reason",
+        "next_step"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "requirement": {"enum": ["required", "recommended", "optional"]},
+        "requirement_source": {"enum": ["builtin", "project_declaration"]},
+        "status": {"enum": ["verified", "not_configured", "failed", "unknown", "not_checked", "not_applicable"]},
+        "presentation": {"enum": ["pass", "hint", "warning", "blocking"]},
+        "applies_to": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+        "source": {"type": "string", "minLength": 1},
+        "observed_at": {"type": ["integer", "null"], "minimum": 0},
+        "reason": {"type": "string", "minLength": 1},
+        "next_step": {"type": "string", "minLength": 1}
+      }
+    },
+    "init_operation_assessments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "note", "operations"],
+      "properties": {
+        "scope": {"const": "reported_checks_only"},
+        "note": {"type": "string", "minLength": 1},
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "assessment", "relevant_checks", "blocked_by", "unverified_by", "warnings"],
+            "properties": {
+              "operation": {"type": "string", "minLength": 1},
+              "assessment": {"enum": ["blocked", "unverified", "no_reported_blocker"]},
+              "relevant_checks": {"type": "array", "items": {"type": "string"}},
+              "blocked_by": {"type": "array", "items": {"type": "string"}},
+              "unverified_by": {"type": "array", "items": {"type": "string"}},
+              "warnings": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  },
   "properties": {
     "schema_version": {
       "const": 2
@@ -67,19 +211,27 @@
     "next_actions": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "minLength": 1
+        "oneOf": [
+          {
+            "$ref": "#/$defs/next_action"
+          },
+          {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "not": {
+                  "$ref": "#/$defs/watch_action_kind"
+                }
+              }
+            },
+            "additionalProperties": true
           }
-        },
-        "additionalProperties": true
+        ]
       },
-      "description": "Diagnostic guidance, never additional authorization or an automatically executed action."
+      "description": "Typed watch next steps or other diagnostic guidance, never additional authorization or an automatically executed action."
     },
     "effects": {
       "type": "object",
@@ -148,6 +300,28 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {"const": "init"},
+          "evidence": {"type": "object"}
+        },
+        "required": ["operation", "evidence"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "operation_assessments": {"$ref": "#/$defs/init_operation_assessments"},
+              "checks": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/init_check"}
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
