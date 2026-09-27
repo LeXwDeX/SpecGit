@@ -28,7 +28,7 @@ help/schema，以及真实 GitHub Wiki 的全部 17 页。Wiki 初始提交为
 6. 工程 schema 生成物被描述为公共包内容；CI phase 恢复与独立 Release 构建混淆；npm 恢复退役与 GitHub 中断恢复相互矛盾。
 7. 历史设计包装了仍然有效的旧 runner/npm/授权要求，F43 编号重复；现明确归档并将后加 Git guard 行标为 F43a。
 8. CHANGELOG 缺少 2.0.1 和 2.2.0，Issue 模板没有统一的 Why / Scope / Approach / Acceptance。
-9. 文档检查原来只有部分页面且不检查锚点和 Wiki，现覆盖仓库全部 Markdown、main 链接、Wiki 导航和版本引用。
+9. 文档检查原来只有部分页面且不检查锚点和 Wiki，现覆盖仓库全部 Markdown、main 链接、Wiki 导航和版本引用。CI 审查发现的新脚本 HTML 清洗步骤已移除：锚点只生成允许字符，保留代码标题中的泛型名称，不承担 HTML 渲染/清洗职责。
 
 ## 逐文件处置
 
@@ -90,12 +90,12 @@ help/schema，以及真实 GitHub Wiki 的全部 17 页。Wiki 初始提交为
 
 `node scripts/ci-metadata-check.mjs` 扫描全部仓库 Markdown 的本地和 main 分支链接、
 锚点、Wiki 页面导航，并检查当前版本及 Issue 模板结构；`pnpm test` 覆盖链接丢失、
-锚点丢失、Unicode、重复标题和代码围栏。该离线检查不声称所有外部历史 URL 永久可用。
+锚点丢失、Unicode、重复标题、代码围栏和含泛型的代码标题。该离线检查不声称所有外部历史 URL 永久可用。
 
 82 条当前命令示例已用已发布二进制追加 `--schema` 做离线解析，未执行远端写入。
 历史台账 318 个 ID 唯一，分类数 139 / 85 / 47 / 45 / 2 与原记录一致。
 本地 Rust 1.97.0 fmt/clippy 通过；源测试 264 通过、0 失败、1 项真实宿主用例
-按原条件忽略；仓库测试 17 通过，分发测试 17 通过。
+按原条件忽略；仓库测试 18 通过，分发测试 17 通过。
 
 本轮修改内嵌 skill、reference 和版本输入，按产品路径验证：Rust fmt、clippy、
 全部源测试、分发测试及隔离安装后的完整回归，随后等待当前 head 的三平台 CI。
