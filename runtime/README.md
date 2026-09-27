@@ -37,6 +37,9 @@ resume its request:
 specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --dry-run --json
 specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --json
 specgit pr --status --json
+# After review preparation, within existing authorization:
+specgit pr --ready --request 42 --dry-run --json
+specgit pr --ready --request 42 --json
 specgit watch --request 42 --session task-42 --goal lifecycle --json
 ```
 
@@ -115,7 +118,7 @@ supported; pending notices remain available through explicit observation.
 Use the pinned toolchain from this directory:
 
 ```sh
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
 cargo test --locked --all-targets --features test-fixtures
 cargo install --locked --path . --root /tmp/specgit-native --debug
@@ -145,7 +148,7 @@ workflow retirement needs a separately authorized repository change. Unknown
 writers, dynamic includes or unfinished native execution prevent activation.
 See the native reference for recovery and release boundaries.
 
-Native CI and formal release preparation retain verified compilation and phase
+Native CI retains verified compilation and phase
 outputs under the current job's `RUNNER_TEMP`. Later phases in that same job
 reuse successful work only when the exact source, platform, toolchain and output
 hashes still match. GitHub-hosted jobs start on clean VMs, so no executable cache
@@ -153,4 +156,6 @@ is reused across jobs or workflow runs. Tests execute the retained Cargo binarie
 directly, and the workflow uploads its qualification evidence. Missing or changed
 outputs invalidate their dependent phases. Failed phase logs remain available
 until the job ends. Windows profiling keeps the same 60-minute budget as its
-workflow step.
+workflow step. The separate Release workflow builds from main and retains its
+smoke reports and signed bundle as Actions artifacts; it does not use this CI
+phase-resumption mechanism.

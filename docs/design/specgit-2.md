@@ -1,4 +1,9 @@
-> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+> **Historical archive — not current operating instructions.** This document
+> preserves its dated design or qualification snapshot. Its commands, npm packaging,
+> runner policy, authorization and pending/completed statements apply only to that
+> snapshot; they do not authorize or qualify current work. Current behavior is in
+> the [native reference](../../runtime/REFERENCE.md), [CI scope](../ci-scope.md),
+> [installation](../installation.md) and [release procedure](../../runtime/distribution/README.md).
 
 # SpecGit 2.0: Rust rewrite, native delivery and asynchronous hooks
 

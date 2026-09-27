@@ -8,6 +8,6 @@
   GitHub runner independently of these tracked workflow files.
 
 All CI, security, and release jobs use GitHub-hosted standard runners: `ubuntu-24.04`,
-`macos-15` (ARM64), and `windows-2025`. These runners are free and unlimited for
-public repositories. No v1 verifier or completion controller remains.
+`macos-15` (ARM64), and `windows-2025` for the tracked workflows. CodeQL routing is
+read from its native setting separately. No v1 verifier or completion controller remains.
 GitHub owns native auto-merge and Issue closure. See [CI scope](../../docs/ci-scope.md).

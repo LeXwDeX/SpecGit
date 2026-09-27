@@ -30,6 +30,32 @@ The declaration records preferences and grants no permission. Complete only
 after current-head checks, confirmed target merge and every associated Issue
 closure. Never weaken platform protection or skip required verification.
 
+## Self-hosting and local integration
+
+Use one shared user-level SpecGit binary for operational work in all repositories
+and worktrees. Resolve `command -v specgit` and confirm `specgit --human --version`;
+do not install an operational CLI copy inside a project. Isolated build and
+installed-runtime qualification artifacts are test outputs, not PATH replacements.
+Initialize each participating project with `specgit init`.
+
+Read-only audits need no Issue checkpoint. Product edits need a complete selected
+Issue; documentation follows the short path below and any installed hook's
+checkpoint requirement. Codex/Claude hooks and `specgit guard --install` enforce
+local context while preserving existing user hooks. A checkpoint belongs to its
+original branch/worktree; use a new worktree for independent work.
+
+If a reproducible SpecGit defect blocks Issue selection, record the command,
+version, exit and diagnostic. Under existing authorization, use authenticated
+native gh/glab to search duplicate WHYs and create/read back a complete Issue;
+resume SpecGit with the exact native ID when possible. Only if that same defect
+still blocks its linked repair may a documented one-task checkpoint bypass be
+used, restoring the normal check after repair. This does not bypass forge
+protection, verification, review or publication gates.
+
+Differing existing PR/MR bodies are preview-only in 2.2. Review a `--dry-run`, edit
+on the native platform with concurrent-change review, then refresh `pr --status`.
+See the [native reference](runtime/REFERENCE.md) for recovery and boundaries.
+
 ## Verification
 
 For README, Wiki and manual guidance use the [documentation short path](docs/ci-scope.md#documentation-short-path):
@@ -49,7 +75,7 @@ cargo test --locked --all-targets --features test-fixtures
 
 Run relevant native distribution tests when changing installation or release.
 CI verifies Linux x64, macOS arm64 and Windows x64 source and installed journeys
-on GitHub-hosted macOS and owner-provided Linux/Windows runners. `Required verification` aggregates the applicable jobs;
+on GitHub-hosted standard Linux, macOS ARM64 and Windows runners. `Required verification` aggregates the applicable jobs;
 `SpecGit Acceptance` requires its success and a ready PR targeting main.
 Publishing is a separate explicitly dispatched signed GitHub Release workflow.
 
@@ -60,11 +86,11 @@ missing. Use current-head and installed/runtime evidence for claims.
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Repository runtime: 2.2.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.2.1. Declaration: `.specgit.yaml` (v2, local configuration).
 
-SpecGit 管理规格 Issue 与原生 PR/MR 关联。加载 specgit-native skill；以 `specgit --help` 和 `specgit --schema` 为已安装命令契约，机器输出用 `--json`，Issue/PR 写入先用 `--dry-run` 预览。实施前先查重，再明确选择包含原因、范围、方案和验收要求的完整 Issue。完成实施并按授权提交、推送后，将选定 Issue 汇聚到一个原生草稿请求，保留用户正文与关闭引用。准备好评审后使用 `specgit pr --ready`。
+SpecGit 管理规格 Issue 与原生 PR/MR 关联。加载 specgit-native skill；以 `specgit --help` 和 `specgit --schema` 为已安装命令契约，机器输出用 `--json`，Issue/PR 写入先用 `--dry-run` 预览。只读检查、审计和评审不需要 Issue checkpoint，也不会授权写入。修改已跟踪的产品代码前，选择一个包含原因、范围、方案和验收要求且与工作相关的完整 Issue。纯文档工作按仓库自己的文档流程处理；如果已安装的 host hook 要求 Issue checkpoint，编辑前选择相关 Issue。本地 init/setup 属于维护，不是交付，也不会获得 forge 写入权限。Issue/PR 写入（包括将请求标记为 ready）需要已有用户授权。声明和 `--dry-run` 预览都不产生授权；会话已有授权在其范围内持续有效，不要仅因交付进入下一步而重复请求。完成实施并按授权提交、推送后，将选定 Issue 汇聚到一个原生草稿请求，保留用户正文与关闭引用。准备好评审后使用 `specgit pr --ready`。
 
-Agent 监督开发与修复。Codex 和 Claude 的 PreToolUse hook 会解析实际目标仓库与分支；已初始化的 v2 仓库在当前分支缺少完整 Issue checkpoint 时拒绝 tracked edits。对无法可靠分类的 shell 命令不提前阻断，由本地 Git guard 兜底。使用 `specgit guard --install` 安装受管理的 pre-commit/pre-push 检查；保留并调用已有用户 hook。GitHub/GitLab 负责 CI、评审、保护与实际合并。通过 `specgit pr --status` 和有界 `specgit watch` 观察原生状态。退出码 0 只表示操作成功，不表示交付完成；按返回的诊断和恢复动作处理失败。Hook 不授予远端写入权限。
+Agent 监督开发与修复。声明启用原生自动合并偏好时，Agent 按既有用户授权通过 gh/glab 登记。GitHub/GitLab 负责 CI、评审、保护与实际合并。通过 `specgit pr --status` 和有界 specgit watch 观察原生状态。退出码 0 只表示操作成功，不表示交付完成；按返回的诊断和恢复动作处理失败。Hook 只通知变化，不授予写入权限。
 
 交付完成须原生回读确认目标分支合并及全部选定 Issue 关闭。合并后回读关联 Issue；尚未关闭时通知 Agent。Agent 补关默认禁用；即使启用该偏好，仍须既有授权，并原生回读合并与关闭结果。通过 specgit init --check 查看不支持或未知的原生能力，再明确选择手动观察，或由获授权的管理员配置平台。
 

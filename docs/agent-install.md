@@ -29,7 +29,8 @@ fallback distribution channels.
 Use an existing user-owned bin directory on PATH. If none exists, use a user-local
 directory such as `~/.local/bin` or `%USERPROFILE%\.local\bin`, add it to the user's
 PATH without replacing existing entries, and retain the previous PATH setting.
-Preserve an existing executable before replacement. Do not uninstall an old npm
+Use this shared user-level binary for all repositories and worktrees; do not create
+a project-local operational CLI copy. Preserve an existing executable before replacement. Do not uninstall an old npm
 package, alter a system-owned executable or remove other PATH entries as a shortcut.
 
 ## 2. Download and verify one stable Release
@@ -178,15 +179,19 @@ A failed or unknown check remains failed or unknown.
 
 ### Local generated files
 
-`init` and v2 migration maintain one owned block in Git's local `info/exclude`
-(resolved by Git, including linked worktrees). It excludes `.specgit.yaml` and
-wholly generated `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
-the block without duplication and preserves surrounding user rules. Preview
-and rollback include this file. Damaged or duplicated markers require reconciliation.
+`init` and v2 migration maintain one owned block in Git's local `info/exclude`,
+resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
+`.specgit.yaml`. SpecGit does not add exclusions for project `AGENTS.md` /
+`CLAUDE.md`: one worktree cannot establish ownership of another worktree's guidance.
+Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
+identify them and review their purpose before changing them. Repeated initialization
+refreshes the block without duplicating it and preserves surrounding user rules.
+Preview and rollback include this file; damaged markers require reconciliation.
 
-The JSON `local_exclusion` result lists exclusions, mixed guidance and already
-tracked generated files. Git ignore rules do not remove tracked files from the
-index. Review and explicitly untrack whole generated files with `git rm --cached`
-when authorized; keep local copies. Preserve manually maintained guidance and
-omit generated hunks from commits. Global `setup` assets live under the selected
-host/install roots, outside the project by default; do not commit them either.
+The JSON `local_exclusion` result reports exclusions and already tracked files.
+Ignore rules never untrack a file. Review project guidance changes under the
+repository's normal documentation policy; preserve manual content and owned
+markers. Do not hide or untrack guidance merely because SpecGit generated part
+of it. Untracking an already committed local declaration requires an explicit,
+reviewed repository change. Global `setup` assets belong under the selected
+user/host roots, outside the project by default.

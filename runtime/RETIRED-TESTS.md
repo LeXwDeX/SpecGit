@@ -1,5 +1,11 @@
 # Retired engine test disposition
 
+This is the historical 2.0 controller-removal mapping, not the current check-reader
+inventory. Since 2.2, bounded GitHub workflow-run identity and GitLab merge-parent
+proof prevent old green results from masking replacement executions. Job/DAG
+reconstruction and local merge eligibility remain retired. See the
+[current consistency boundaries](REFERENCE.md#22-consistency-boundaries).
+
 - `finish.rs::both_native_forges_accept_complete_current_head_evidence_without_remote_writes` — Preserved native observation subset in native_status.rs; acceptance assertions removed.
 - `finish.rs::candidate_cannot_remove_approved_required_check_and_initial_adoption_is_explicit` — Retired: approved declaration/required-check and initial-adoption acceptance engine.
 - `finish.rs::current_rerun_masks_old_green_and_missing_native_protection_remains_unknown` — Preserved native observation subset in native_status.rs; acceptance assertions removed.
