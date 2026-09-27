@@ -8,7 +8,7 @@ declaration grants mutation permission.
 | --- | --- | --- |
 | [#633](https://github.com/LeXwDeX/SpecGit/issues/633) | Reject unsafe automatic replacement of existing PR/MR bodies; retain reference-preserving previews | `pr::explicit_body_update_previews_all_refs_but_never_overwrites_native_content` |
 | [#634](https://github.com/LeXwDeX/SpecGit/issues/634) | Persist adopted native specifications independently of creation intents; share Guard/Hook checkpoint validation | `design_regressions::adopted_specs_enable_guard_and_edit_hook_without_creation_intents` |
-| [#635](https://github.com/LeXwDeX/SpecGit/issues/635) | Revalidate same-head check execution identities and results at the observation boundary | `design_regressions::same_head_check_rerun_invalidates_the_observation` |
+| [#635](https://github.com/LeXwDeX/SpecGit/issues/635) | Revalidate same-head execution identities and results; exclude proven superseded GitHub workflow suites | `design_regressions::same_head_check_rerun_invalidates_the_observation` and workflow supersession cases in `native_status` |
 | [#636](https://github.com/LeXwDeX/SpecGit/issues/636) | Offer actionable async check events without waiting for lifecycle completion | `design_regressions::async_hook_offers_prepare_review_before_lifecycle_timeout` |
 | [#637](https://github.com/LeXwDeX/SpecGit/issues/637) | Recheck branch, commit, declaration and native project before Issue writes | Branch and declaration change tests in `design_regressions` |
 | [#638](https://github.com/LeXwDeX/SpecGit/issues/638) | Serialize Issue candidate reads and creation across checkouts sharing the user data root | `design_regressions::concurrent_checkouts_share_issue_creation_lock` |
@@ -39,6 +39,10 @@ separate delivery gates.
 - Issue creation coordination is limited to the same OS user, host and shared
   data root. It is not a distributed uniqueness guarantee; native search can lag
   writes. Review and reconcile any duplicate WHYs on the platform before resuming.
+- GitHub observations require native workflow-run identity reads (Actions read
+  access for private repositories). Supersession is scoped to workflow, event,
+  branch and associated PR IDs. Missing identities or not-yet-visible replacement
+  checks remain unknown; independent suites and actual pending checks are kept.
 - GitLab merged-results evidence must prove both current source and target
   parents. Unknown ancestry and unsupported merge-train shapes remain unknown,
   rather than being accepted as successful current evidence.

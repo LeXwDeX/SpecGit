@@ -127,6 +127,91 @@ fn latest<K: Ord>(map: &mut BTreeMap<K, Check>, key: K, check: Check) -> Result<
     }
     Ok(())
 }
+// A check suite alone is not a workflow identity: ready_for_review can start a
+// new suite on the same commit while filter=latest still returns the old suite.
+// Only discard runs with a proven replacement in the same native context.
+async fn github_workflows(
+    reader: &ForgeRead,
+    base: &str,
+    head: &str,
+    checks: &[Value],
+) -> Result<(BTreeSet<u64>, Vec<Check>), Diagnostic> {
+    let runs = counted(
+        reader,
+        &format!("{base}/actions/runs?head_sha={head}"),
+        "workflow_runs",
+    )
+    .await?;
+    let mut contexts = BTreeMap::new();
+    let mut suites = BTreeSet::new();
+    for run in runs {
+        if text(&run, "head_sha")? != head {
+            return Err(malformed());
+        }
+        let suite = number(&run, "check_suite_id")?;
+        if !suites.insert(suite) {
+            return Err(malformed());
+        }
+        let mut prs = run
+            .get("pull_requests")
+            .and_then(Value::as_array)
+            .ok_or_else(malformed)?
+            .iter()
+            .map(|pr| number(pr, "number"))
+            .collect::<Result<Vec<_>, _>>()?;
+        prs.sort_unstable();
+        prs.dedup();
+        let key = (
+            number(&run, "workflow_id")?,
+            text(&run, "event")?.to_owned(),
+            text(&run, "head_branch")?.to_owned(),
+            prs,
+        );
+        let id = number(&run, "id")?;
+        number(&run, "run_attempt")?;
+        github_result(&run)?;
+        match contexts.get(&key) {
+            Some(old) if number(old, "id")? > id => {}
+            _ => {
+                contexts.insert(key, run);
+            }
+        }
+    }
+    let mut pending = Vec::new();
+    for run in contexts.into_values() {
+        let suite = number(&run, "check_suite_id")?;
+        suites.remove(&suite);
+        // Missing checks are not a successful empty observation. This also
+        // fences a queued replacement before its first check run is visible.
+        if !checks
+            .iter()
+            .any(|check| check["check_suite"]["id"].as_u64() == Some(suite))
+        {
+            return Err(malformed());
+        }
+        let (status, conclusion) = github_result(&run)?;
+        if status != "completed" || conclusion.as_deref() != Some("success") {
+            pending.push(Check {
+                name: text(&run, "name")?.to_owned(),
+                source: "workflow".into(),
+                head: head.into(),
+                tested_head: head.into(),
+                id: number(&run, "id")?,
+                app: None,
+                workflow: None,
+                workflow_attempt: None,
+                pipeline: None,
+                project: None,
+                status,
+                conclusion,
+                started_at: timestamp(&run, "run_started_at")?,
+                completed_at: None,
+                allow_failure: false,
+            });
+        }
+    }
+    Ok((suites, pending))
+}
 pub async fn github(
     reader: &ForgeRead,
     repo: &Repository,
@@ -136,17 +221,13 @@ pub async fn github(
         return Err(malformed());
     }
     let base = prefix(repo);
-    // GitHub can return older runs from another suite for the same head even
-    // with filter=latest. A suite identifies the workflow execution context;
-    // keep different suites separate because same-named jobs across workflows
-    // are independent required checks. Within one suite, the native run ID
-    // selects the newest retry.
     let rows = counted(
         reader,
         &format!("{base}/commits/{head}/check-runs?filter=latest"),
         "check_runs",
     )
     .await?;
+    let (superseded_suites, workflow_checks) = github_workflows(reader, &base, head, &rows).await?;
     let mut latest_runs = BTreeMap::new();
     for row in rows {
         if text(&row, "head_sha")? != head {
@@ -156,6 +237,9 @@ pub async fn github(
         let name = text(&row, "name")?.to_owned();
         let app = number(&row["app"], "id")?;
         let suite = number(&row["check_suite"], "id")?;
+        if superseded_suites.contains(&suite) {
+            continue;
+        }
         latest(
             &mut latest_runs,
             (app, name.clone(), suite),
@@ -222,6 +306,7 @@ pub async fn github(
     }
     let mut checks: Vec<_> = latest_runs.into_values().collect();
     checks.extend(latest_statuses.into_values());
+    checks.extend(workflow_checks);
     Ok(checks)
 }
 fn gitlab_result(value: &str) -> Result<(String, Option<String>), Diagnostic> {

@@ -429,7 +429,14 @@ Creation and draft-to-ready operations remain available.
 
 Current-head checks are reread at the observation boundary; changed execution
 identities or results invalidate the observation. Every result remains a dated
-snapshot, not a promise about future reruns. Async hooks deliver actionable check
+snapshot, not a promise about future reruns. GitHub observations also read the
+bounded native workflow-run list for this head (Actions read access is required).
+Only suites superseded within the same workflow, event, branch and associated PR
+set are discarded. Independent check suites remain distinct. A replacement with
+no visible checks is unknown, and a running workflow cannot inherit old success.
+Unavailable or incomplete run identities never fall back to old green checks.
+This reads execution identities, not workflow jobs or dependency graphs.
+Async hooks deliver actionable check
 results before lifecycle completion and preserve the subscription for resumption.
 
 GitLab merged-results pipelines retain both `head` (source) and `tested_head`.
