@@ -1,21 +1,21 @@
 # Native GitHub releases
 
 GitHub Release is the permanent publication channel. npm publication, promotion,
-registry checks and partial-publication recovery have been removed.
+registry checks and npm-specific recovery have been removed. Interrupted GitHub
+publication still has the recovery procedure below.
 
 ## Release
 
 After the intended changes are merged, dispatch the workflow on `main`:
 
 ```sh
-gh workflow run release-prepare.yml --ref main -f release_version=2.2.0
+gh workflow run release-prepare.yml --ref main -f release_version=2.2.1
 ```
 
 The version must match Cargo and the private development workspace. The workflow
 builds on GitHub-hosted standard runners: Linux x64 glibc on `ubuntu-24.04`,
 macOS arm64 on `macos-15`, and Windows x64 on `windows-2025`, with pinned Rust.
-These standard runners are free and unlimited for public repositories. The macOS
-job verifies the hosted environment, ARM64 architecture and the image-provided
+The macOS job verifies the hosted environment, ARM64 architecture and the image-provided
 compiler without changing system Xcode selection. Missing tools fail the job.
 Each compiled binary runs three simple smoke checks:
 `--human --version`, `--help` and `--schema`. Release does not repeat full source,
@@ -61,7 +61,7 @@ through the existing authenticated `gh` session:
 ```sh
 node runtime/distribution/publish.mjs \
   --directory /absolute/native-bundle \
-  --version 2.2.0 --source <current-main-sha> --build-run <qualified-run-id> \
+  --version 2.2.1 --source <current-main-sha> --build-run <qualified-run-id> \
   --github
 ```
 
@@ -72,7 +72,7 @@ the publisher verifies provenance and current main but performs no publication.
 Retired `--npm` and npm recovery flags are rejected. Existing public npm versions
 are historical; this workflow does not change or delete them.
 
-See [manual installation](../../README.md#install) and
+See [manual installation](../../docs/installation.md) and
 [v2 migration](../../docs/migration-v2.md).
 
 ## Private engineering compatibility

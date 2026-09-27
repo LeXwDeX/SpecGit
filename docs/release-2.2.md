@@ -17,10 +17,13 @@ declaration grants mutation permission.
 | [#641](https://github.com/LeXwDeX/SpecGit/issues/641) | Validate GitLab merged-result commit parents and expose the actual tested SHA | `design_regressions::gitlab_merged_result_requires_both_current_parents_and_retains_tested_sha` |
 
 Publication and artifact qualification are tracked in
-[#642](https://github.com/LeXwDeX/SpecGit/issues/642). This source document lists
-the changes and regression entrypoints; it does not certify an unpublished build.
-Current-head CI, merge, Issue closure and signed Release asset readback are
-separate delivery gates.
+[#642](https://github.com/LeXwDeX/SpecGit/issues/642), now closed after publication.
+[PR #643](https://github.com/LeXwDeX/SpecGit/pull/643) merged at
+`ce54ea6f6c047f5a422225312bc132283866cb17`; [main CI](https://github.com/LeXwDeX/SpecGit/actions/runs/36313672563)
+and [signed release build](https://github.com/LeXwDeX/SpecGit/actions/runs/36314760042)
+passed for [v2.2.0](https://github.com/LeXwDeX/SpecGit/releases/tag/v2.2.0).
+Downloaded ZIP digests/signature and the macOS installed regression were verified.
+These are 2.2.0 facts, not qualification for a later source revision.
 
 ## Migration notes
 

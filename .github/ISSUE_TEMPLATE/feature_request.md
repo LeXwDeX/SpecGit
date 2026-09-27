@@ -5,33 +5,26 @@ title: 'feat: <english title>'
 labels: kind::feat
 ---
 
-## The WHY
+## Why
 
-One independently verifiable need, stated as a sentence. What becomes
-possible that is not possible (or not verifiable) today?
+Describe one independently verifiable need, the current behavior and its user
+impact. Search existing Issues for the same WHY and continue one when appropriate.
 
-## The WHY NOT (current behavior)
+## Scope
 
-What SpecGit does today instead, and why that falls short. Cite the
-[Native contract](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
-if the request touches the public contract (commands, exit codes, JSON
-envelope, state/assets, supported platforms).
+State the supported scenario and affected public contract; identify exclusions.
+Split independently verifiable needs into separate Issues.
 
-## What would count as done
+## Approach
 
-The evidence that proves it: which command exits what, which gate reports
-what, what a user can verify that they could not before.
+Explain the proposed behavior, alternatives and important compatibility choices.
+Use the [native reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
+when discussing commands, JSON, exits, assets or platform support.
 
-## Alternatives considered
+## Acceptance
 
-Workarounds today, and why they are not enough.
+State how a user or maintainer will verify the result, including concrete command
+outcomes and applicable runtime/platform evidence. Source code presence alone is
+not proof of the requested behavior.
 
-## Scope check
-
-- [ ] Searched open issues for the same WHY (continue that issue if it exists)
-- [ ] This is one need — if it splits into independently verifiable parts,
-      those become their own issues
-- [ ] If this changes platform support, it states the gap against the current
-      [platform contract](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
-- [ ] Not a security vulnerability (those go privately via
-      [GitHub vulnerability reporting](https://github.com/LeXwDeX/SpecGit/security/advisories/new))
+Security vulnerabilities belong in [private reporting](https://github.com/LeXwDeX/SpecGit/security/advisories/new).

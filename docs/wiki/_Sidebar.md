@@ -2,6 +2,7 @@
 
 - [Home](Home)
 - [Getting Started](Getting-Started)
+- [Upgrading Existing Projects](Upgrading-Existing-Projects)
 - [CLI Reference](CLI-Reference)
 - [Concepts](Concepts)
 - [Team Workflow](Team-Workflow)
@@ -12,6 +13,7 @@
 
 - [首页](Home-zh)
 - [快速开始](Getting-Started-zh)
+- [老项目升级](Upgrading-Existing-Projects-zh)
 - [CLI 参考](CLI-Reference-zh)
 - [核心概念](Concepts-zh)
 - [团队工作流](Team-Workflow-zh)
