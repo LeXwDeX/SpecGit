@@ -5,7 +5,7 @@
 
 ## 审阅范围与依据
 
-盘点仓库全部 Markdown、两份版本化 guidance 文本夹具、内嵌指导与 CLI
+盘点仓库全部 Markdown、LICENSE、两份版本化 guidance 文本夹具、内嵌指导与 CLI
 help/schema，以及真实 GitHub Wiki 的全部 17 页。Wiki 初始提交为
 `8c393a1ef5407641bf6c777c7c662588f12d0b5e`；其中两份升级指南原来没有仓库副本，
 现纳入 `docs/wiki`。本轮没有删除 Wiki 页面。
@@ -22,7 +22,7 @@ help/schema，以及真实 GitHub Wiki 的全部 17 页。Wiki 初始提交为
 
 1. AGENTS/README 的自有 Linux/Windows runner 说法与当前托管矩阵冲突。
 2. CONTEXT 仍将 v1 绑定、批准策略、验收引擎和 registry 描述为当前模型。
-3. 安装说明和内嵌 skill 要求隐藏/排除生成指导，与 2.2 跨 worktree 行为冲突。
+3. 安装说明和内嵌 skill 要求隐藏/排除生成指导，与 2.2 跨 worktree 行为冲突；同时说明仓库/用户原有 ignore 规则仍有效，不能因此擅自取消用户排除规则。
 4. Wiki 快速开始只有 check/dry-run，缺少实际 init；升级页停留在 2.1.x 并要求手工移植未经验证的 OpenCode hooks。
 5. ready 示例缺少写入预览，当前正文修改、Actions 读取和 GitLab merged-results 限制未在 Wiki 说明。
 6. 工程 schema 生成物被描述为公共包内容；CI phase 恢复与独立 Release 构建混淆；npm 恢复退役与 GitHub 中断恢复相互矛盾。
@@ -32,7 +32,7 @@ help/schema，以及真实 GitHub Wiki 的全部 17 页。Wiki 初始提交为
 
 ## 逐文件处置
 
-共 48 个文档/文本文件（含新增文档与 Wiki 源文件）。
+共 49 个文档/文本文件（含新增文档与 Wiki 源文件）。
 
 | 文件 | 处置 |
 | --- | --- |
@@ -45,6 +45,7 @@ help/schema，以及真实 GitHub Wiki 的全部 17 页。Wiki 初始提交为
 | [CHANGELOG.md](../CHANGELOG.md) | 按原生 Release/PR 补齐 2.0.1、2.2.0 与本轮 2.2.1；历史条目按版本保留。 |
 | [CONTEXT.md](../CONTEXT.md) | 移除 v1 binding/policy/acceptance 术语，重写为 v2 术语。 |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 核对规格、文档短路径、当前 head 与发布授权；保留。 |
+| [LICENSE](../LICENSE) | MIT 原文与 Cargo 元数据一致；保留，不改变许可。 |
 | [README.md](../README.md) | runner、ready 预览、当前文档入口对齐。 |
 | [docs/agent-install.md](agent-install.md) | 共享用户级二进制、指导可见性、安装证据边界。 |
 | [docs/ci-scope.md](ci-scope.md) | 对齐当前 Rust 主版本；去除固定费用承诺。 |
