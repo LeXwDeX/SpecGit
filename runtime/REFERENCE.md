@@ -169,9 +169,12 @@ because init has no declared
 policy making that check mandatory.
 When initialization reaches the native probe stage but cannot read the selected
 CLI, project, default branch or current request, the failure report keeps this
-same typed check list and the facts collected before the failure. Failures before
-the repository context can be resolved remain diagnostic-only because no scoped
-native facts exist.
+same typed check list and the facts collected before the failure. Local context
+alone does not verify native project identity. A failed request read remains
+unknown, including when request eligibility is required; only a successful
+request resolution with no applicable request yields `not_applicable`. The
+affected check preserves the native failure diagnostic. During inspection, a
+context-resolution failure also emits checks with explicit null scope fields.
 
 `evidence.availability` reports three ordered, independent layers:
 `specification_development`, `protected_delivery` and `delivery_completion`.

@@ -110,6 +110,10 @@ impl Fixture {
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("SPECGIT_FIXTURE_API_FILE", &self.state)
+            .env(
+                "SPECGIT_FIXTURE_FORWARD_GIT",
+                specgit::process::resolve_executable("git").unwrap(),
+            )
             .args(args)
             .arg("--json")
             .output()
@@ -120,9 +124,12 @@ impl Fixture {
         v
     }
     fn run_without_forge_cli(&self, args: &[&str]) -> Value {
-        let git = specgit::process::resolve_executable("git").unwrap();
-        let git_dir = git.parent().unwrap().to_owned();
-        self.run_raw_with_paths(args, vec![self.bin.clone(), git_dir])
+        fs::copy(
+            env!("CARGO_BIN_EXE_specgit-process-fixture"),
+            self.bin.join(if cfg!(windows) { "git.exe" } else { "git" }),
+        )
+        .unwrap();
+        self.run_raw_with_paths(args, vec![self.bin.clone()])
     }
     fn run_human(&self, args: &[&str]) -> Value {
         let mut paths = vec![self.bin.clone()];
@@ -282,9 +289,78 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
 }
 
 #[test]
+fn failed_native_identity_preserves_scope_without_claiming_verification() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["project"]["full_name"] = json!("other/repo");
+        state["project"]["path_with_namespace"] = json!("other/repo");
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
+        assert_init_evidence_matches_schema(&report["evidence"]);
+        assert_eq!(report["diagnostics"][0]["code"], "identity_mismatch");
+        let identity = &report["evidence"]["checks"][0];
+        assert_eq!(identity["status"], "unknown");
+        assert_eq!(identity["presentation"], "blocking");
+        assert_eq!(identity["diagnostic"]["code"], "identity_mismatch");
+        assert_eq!(identity["scope"]["repository"]["path"], "fixture/repo");
+        assert_eq!(
+            report["evidence"]["availability"]["layers"][0]["status"],
+            "blocked"
+        );
+        assert!(!f.root.join(".specgit.yaml").exists());
+    }
+}
+
+#[test]
+fn failed_request_read_keeps_required_eligibility_unknown_and_blocking() {
+    for (provider, route) in [
+        (
+            "github",
+            "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1",
+        ),
+        (
+            "gitlab",
+            "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1",
+        ),
+    ] {
+        let f = Fixture::new();
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            "version: 2\ninit_policy: {required_checks: [request.eligibility]}\n",
+        )
+        .unwrap();
+        let mut state = f.state();
+        state["request_fixture"] = json!(true);
+        state["read_routes"] = json!({route: {"__fixture_error": "HTTP 403"}});
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
+        assert_init_evidence_matches_schema(&report["evidence"]);
+        assert_eq!(report["diagnostics"][0]["code"], "permission_denied");
+        let eligibility = report["evidence"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["id"] == "request.eligibility")
+            .unwrap();
+        assert_eq!(eligibility["status"], "unknown");
+        assert_eq!(eligibility["presentation"], "blocking");
+        assert_eq!(eligibility["diagnostic"]["code"], "permission_denied");
+        let merge = report["evidence"]["operation_assessments"]["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|op| op["operation"] == "request_merge")
+            .unwrap();
+        assert_eq!(merge["assessment"], "blocked");
+        assert!(!f.root.join("AGENTS.md").exists());
+    }
+}
+
+#[test]
 fn init_keeps_structured_diagnostics_when_native_cli_is_missing() {
     let f = Fixture::new();
-    fs::remove_file(f.bin.join("gh")).unwrap();
+    fs::remove_file(f.bin.join(if cfg!(windows) { "gh.exe" } else { "gh" })).unwrap();
 
     let report = f.run_without_forge_cli(&["init", "--provider", "github"]);
     assert_report_matches_schema(&report);
