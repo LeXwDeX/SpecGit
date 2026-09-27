@@ -9,7 +9,7 @@ export function headingIds(markdown) {
   for (const line of prose(markdown).split('\n')) {
     const match = line.match(/^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
     if (!match) continue;
-    const slug = match[1].replace(/<[^>]*>/g, '').toLowerCase()
+    const slug = match[1].toLowerCase()
       .replace(/[^\p{L}\p{N}\p{M}_\-\s]/gu, '').replace(/ /g, '-');
     const count = seen.get(slug) ?? 0;
     seen.set(slug, count + 1);
