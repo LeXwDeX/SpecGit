@@ -396,8 +396,10 @@ Installation does not authorize publication or native administration.
 
 `init` and v2 migration maintain one owned block in Git's local `info/exclude`,
 resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
-`.specgit.yaml`. Project `AGENTS.md` / `CLAUDE.md` remains visible: one worktree
-cannot establish ownership of another worktree's guidance. Repeated initialization
+`.specgit.yaml`. SpecGit does not add exclusions for project `AGENTS.md` /
+`CLAUDE.md`: one worktree cannot establish ownership of another worktree's guidance.
+Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
+identify them and review their purpose before changing them. Repeated initialization
 refreshes the block without duplicating it and preserves surrounding user rules.
 Preview and rollback include this file; damaged markers require reconciliation.
 

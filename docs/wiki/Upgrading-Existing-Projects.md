@@ -11,7 +11,7 @@ specgit init --json
 specgit status --json
 ```
 
-Resolve reported capability choices explicitly; do not ignore diagnostics. Since 2.2 only local `.specgit.yaml` is excluded. AGENTS/CLAUDE remains visible for repository review. Select native Issues again on the original branch for older adoption-only checkpoints; do not delete or rewrite another branch's checkpoint.
+Resolve reported capability choices explicitly; do not ignore diagnostics. Since 2.2 the SpecGit-owned exclusion block contains only `.specgit.yaml`; other repository/user ignore rules still apply. Review AGENTS/CLAUDE under repository policy. Select native Issues again on the original branch for older adoption-only checkpoints; do not delete or rewrite another branch's checkpoint.
 
 For v1 use the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), not retired `init --force`, `finish` or `bind`. Replacing the binary does not migrate the project.
 
