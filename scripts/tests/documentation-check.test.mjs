@@ -26,3 +26,10 @@ test('checks repository and extensionless Wiki targets and real anchors', () => 
 test('heading anchors ignore fenced examples and preserve Unicode', () => {
   assert.deepEqual([...headingIds('# Real\n```md\n# Example\n```\n# 中文 `CLI`\n# Real\n')], ['real', '中文-cli', 'real-1']);
 });
+
+
+test('code headings retain generic type names and IDs cannot contain HTML delimiters', () => {
+  const ids = [...headingIds('# `Option<T>`\n# <scr<script>ipt>\n')];
+  assert.deepEqual(ids, ['optiont', 'scrscriptipt']);
+  assert(ids.every(id => !/[<>]/.test(id)));
+});
