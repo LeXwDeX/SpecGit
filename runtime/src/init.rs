@@ -332,6 +332,12 @@ fn failure_report_with_checks(
     policy: &InitPolicy,
     scope: InitCheckScope,
 ) -> Report {
+    if evidence["project"] == "unknown" {
+        evidence["project_diagnostic"] = json!(diagnostic);
+    }
+    if evidence["request_read"] == "failed" {
+        evidence["request_diagnostic"] = json!(diagnostic);
+    }
     append_check_report(&mut evidence, policy, scope);
     let mut report = Report::failure("init", diagnostic);
     report.evidence = evidence;
@@ -348,7 +354,9 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
     };
     let project_context = &evidence["context"];
     let has_identity = project_context["repository"]["path"].as_str().is_some()
-        && project_context["head"].as_str().is_some();
+        && project_context["head"].as_str().is_some()
+        && evidence["project"]["id"].as_u64().is_some_and(|id| id > 0)
+        && evidence["project"]["repository"] == project_context["repository"];
     checks.push(InitCheck {
         id: "project.identity",
         requirement: CheckRequirement::Required,
@@ -359,7 +367,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
         scope: scope.clone(),
         source: "resolved Git root, remote, forge project identity, branch and HEAD".into(),
         observed_at: Some(crate::probe::now()),
-        diagnostic: None,
+        diagnostic: serde_json::from_value(evidence["project_diagnostic"].clone()).ok(),
         reason: if has_identity {
             "The repository and current revision were resolved; native project identity was matched.".into()
         } else {
@@ -509,7 +517,10 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
     ] {
         let capability = &capabilities[key];
         let native_status = capability["status"].as_str().unwrap_or("unknown");
-        let status = if id == "request.eligibility" && evidence["request"].is_null() {
+        let status = if id == "request.eligibility"
+            && evidence["request_read"] == "verified"
+            && evidence["request"].is_null()
+        {
             CheckFactStatus::NotApplicable
         } else {
             match native_status {
@@ -562,7 +573,11 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
             scope: scope.clone(),
             source: source.into(),
             observed_at: Some(crate::probe::now()),
-            diagnostic: None,
+            diagnostic: if id == "request.eligibility" {
+                serde_json::from_value(evidence["request_diagnostic"].clone()).ok()
+            } else {
+                None
+            },
             reason: format!("{reason} {detail}"),
             next_step: next_step.into(),
         });
@@ -834,6 +849,7 @@ async fn prepare_and_run(
                     "flow": native_flow,
                     "capabilities": null,
                     "request": null,
+                    "request_read": "failed",
                     "written": false,
                 }),
                 &declaration.init_policy,
@@ -866,6 +882,7 @@ async fn prepare_and_run(
     let confirmation = capabilities.needs_choice() && !manual_choice;
     let failed = probes.iter().any(|p| p.status != Capability::Available);
     let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"capabilities":capabilities,"request":request,"templates":{"issue":{"source":issue.source,"required_sections":issue.required_sections},"pr":{"source":pr.source,"required_sections":pr.required_sections},"local_candidates":candidates,"inherited_native_templates":"not_checked"},"declaration":declaration,"written":false,"initial_adoption":existing.is_none()});
+    evidence["request_read"] = json!("verified");
     if options.inspect_only {
         append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());
     }
