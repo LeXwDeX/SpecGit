@@ -137,7 +137,10 @@ pub async fn github(
     }
     let base = prefix(repo);
     // GitHub can return older runs from another suite for the same head even
-    // with filter=latest. Resolve each App/name context by native run ID.
+    // with filter=latest. A suite identifies the workflow execution context;
+    // keep different suites separate because same-named jobs across workflows
+    // are independent required checks. Within one suite, the native run ID
+    // selects the newest retry.
     let rows = counted(
         reader,
         &format!("{base}/commits/{head}/check-runs?filter=latest"),
@@ -152,9 +155,10 @@ pub async fn github(
         let (status, conclusion) = github_result(&row)?;
         let name = text(&row, "name")?.to_owned();
         let app = number(&row["app"], "id")?;
+        let suite = number(&row["check_suite"], "id")?;
         latest(
             &mut latest_runs,
-            (app, name.clone()),
+            (app, name.clone(), suite),
             Check {
                 name,
                 source: "check".into(),

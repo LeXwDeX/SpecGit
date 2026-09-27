@@ -6,6 +6,18 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(real_git) = std::env::var_os("SPECGIT_FIXTURE_FORWARD_GIT")
+        && std::env::current_exe()
+            .unwrap()
+            .file_stem()
+            .is_some_and(|n| n == "git")
+    {
+        let status = std::process::Command::new(real_git)
+            .args(&args)
+            .status()
+            .unwrap();
+        std::process::exit(status.code().unwrap_or(1));
+    }
     #[cfg(windows)]
     if args.first().map(String::as_str) == Some("console-interrupt") {
         console_interrupt(&args[1..]);

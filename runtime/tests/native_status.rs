@@ -333,6 +333,28 @@ fn github_same_named_checks_from_different_apps_remain_distinct() {
     assert_ne!(checks[0]["app"], checks[1]["app"], "{result}");
 }
 #[test]
+fn github_same_named_checks_from_different_suites_remain_distinct() {
+    let f = fixture("github");
+    f.edit(|s| {
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if !route.contains("/check-runs?filter=latest") {
+                continue;
+            }
+            let mut other = value["check_runs"][0].clone();
+            other["id"] = json!(82);
+            other["check_suite"]["id"] = json!(102);
+            other["status"] = json!("completed");
+            other["conclusion"] = json!("failure");
+            value["check_runs"].as_array_mut().unwrap().push(other);
+            value["total_count"] = json!(2);
+        }
+    });
+    let result = f.run(&["pr", "--status"]);
+    let checks = result["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 2, "{result}");
+    assert!(checks.iter().any(|check| check["conclusion"] == "failure"));
+}
+#[test]
 fn complete_requires_native_merge_and_every_referenced_issue_closed() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
