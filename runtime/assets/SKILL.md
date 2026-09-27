@@ -102,11 +102,14 @@ to its user scripts. Unsupported non-shell hooks are preserved and reported.
 Use `specgit guard --uninstall` to remove only the recorded SpecGit blocks.
 
 Initialization maintains one Git-local `info/exclude` block for `.specgit.yaml`.
-Guidance stays visible because linked worktrees share this exclusion file. Read `local_exclusion` in its result:
+SpecGit does not exclude guidance because linked worktrees share this file.
+Repository/user ignore rules still apply; inspect them before changing their scope.
+Read `local_exclusion` in its result:
 ignore rules do not untrack existing files, and mixed user/generated guidance
-stays visible. Keep generated assets and generated guidance hunks out of commits;
-preserve manual content. Repeat init/setup to refresh owned blocks, not append
-another manual copy.
+stays visible. Review project guidance changes under the repository documentation
+policy; preserve manual content and owned markers. Do not hide or untrack guidance
+just because part was generated. Global host assets belong outside the project.
+Repeat init/setup to refresh owned blocks, not append another manual copy.
 
 Hooks deliver changes only through demonstrated host capabilities. Registration
 is not verified delivery. Keep pending notices until transport receipt is

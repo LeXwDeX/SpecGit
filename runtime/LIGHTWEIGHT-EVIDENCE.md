@@ -1,4 +1,8 @@
-> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+> **Historical qualification snapshot, 2026-09-10.** All statuses, authorizations,
+> local paths and blockers below belong to that snapshot. They are not current
+> release status or permission for another task. npm and the old controller
+> workflows are retired. Use the [current native reference](REFERENCE.md),
+> [CI scope](../docs/ci-scope.md) and [release procedure](distribution/README.md).
 
 # Lightweight Rust implementation evidence
 

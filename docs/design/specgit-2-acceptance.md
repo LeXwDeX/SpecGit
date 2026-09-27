@@ -1,3 +1,10 @@
+> **Historical archive — not current operating instructions.** This document
+> preserves its dated design or qualification snapshot. Its commands, npm packaging,
+> runner policy, authorization and pending/completed statements apply only to that
+> snapshot; they do not authorize or qualify current work. Current behavior is in
+> the [native reference](../../runtime/REFERENCE.md), [CI scope](../ci-scope.md),
+> [installation](../installation.md) and [release procedure](../../runtime/distribution/README.md).
+
 # SpecGit 2.0 feature acceptance matrix
 
 > Historical F01–F48 baseline. The 2026-09-10 user simplification supersedes this
@@ -8,7 +15,7 @@
 > Preserve required behavior and evidence, but do not build the retired local
 > finish/merge/promotion/programme engines merely to satisfy an old row.
 
-Status: required acceptance plan, not executed results. This matrix covers the
+Original status: proposed acceptance plan, not executed results (superseded). This matrix covers the
 [architecture](specgit-2.md), [harness contract](specgit-2-contract.md) and the
 296 entries in the [history ledger](https://github.com/LeXwDeX/SpecGit/blob/d22b8cdbf8d05d0bc7e2ffdbacf0f676beeaf907/docs/design/specgit-2-history.md). Each implementation
 issue must link its relevant rows and supply evidence at its final revision.
@@ -45,6 +52,9 @@ support matrix. A defect gets an ordinary explicitly bound repair issue, followe
 by targeted regression and fresh current-head verification. Do not change the
 requirement simply to obtain a green matrix. A proposed contract change needs an
 explicitly reviewed document/issue amendment and its own evidence.
+
+The original F01–F48 sequence is retained. F43a is a later Git-checkpoint
+addendum (formerly a second F43), not a renumbering of the original release row.
 
 ## Feature inventory
 
@@ -92,7 +102,7 @@ explicitly reviewed document/issue amendment and its own evidence.
 | F40 | Major-version authority and removed flags | Regression + Smoke: one active integration per project, v1 old draft preserved, obsolete closure/scope/reuse flags actionable, no silent reinterpretation | #513 |
 | F41 | Real Windows performance and coverage | Smoke + CI: green same-workload baseline/candidate per-file/process timings, complete applicable test accounting, no timeout/skip trick | #474 |
 | F42 | Public precompiled distribution | Smoke: credential-free public-registry install on target matrix, no Rust/private GitHub requirement, libc/architecture errors, disabled scripts where supported | #514 |
-| F43 | Local Git checkpoint backstop | Regression + installed Smoke: staged changes, multi-ref branch pushes, deletion/tag policy, malformed and mirror refs, native/custom hooksPath plus Husky/Lefthook coexistence | #593 |
+| F43a (later addendum) | Local Git checkpoint backstop | Regression + installed Smoke: staged changes, multi-ref branch pushes, deletion/tag policy, malformed and mirror refs, native/custom hooksPath plus Husky/Lefthook coexistence | #593 |
 | F43 | Release integrity/recovery/privacy | Code + Regression + qualification Smoke: wrapper/binary versions/checksums, partial platform publish/tag/registry lag, no private paths/source; explicit authorized publication separately Live | #514 |
 | F44 | Private-source publishing capability | Code + qualification evidence: actual configured OIDC path and private-repo provenance limitation; no fake provenance or source-visibility change | #514 |
 | F45 | All shipped surfaces agree | Code + Smoke: help/schema/skills/generated guidance/README/reference/migration/install/release docs match actual 2.0 artifact; historical prose marked | #513 |

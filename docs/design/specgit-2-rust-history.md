@@ -1,14 +1,19 @@
+> **Historical archive — not current operating instructions.** This document
+> preserves its dated design or qualification snapshot. Its commands, npm packaging,
+> runner policy, authorization and pending/completed statements apply only to that
+> snapshot; they do not authorize or qualify current work. Current behavior is in
+> the [native reference](../../runtime/REFERENCE.md), [CI scope](../ci-scope.md),
+> [installation](../installation.md) and [release procedure](../../runtime/distribution/README.md).
+
 # SpecGit 2.0 Rust 历史映射与需求处置
 
-> **2026-09-10 正式发行更新：** 用户已明确授权从 `main` 发布稳定版 `v2.0.0`，并要求 Action 构建 macOS、Linux、Windows 三个版本。本次已选目标为 macOS arm64、Linux x64 glibc、Windows x64；不是五架构。原先“不合并、不发布、保持草稿”的阶段限制由后续发布授权取代，实际合并/发布仍由总管完成适用验收后统一执行。源码可见性、自有 runner 和不削弱检查的约束继续有效。
->
-> 本文中的早期候选状态、路径和未完成记录属于设计整理时的历史快照，不是当前发行完成声明。以下轻量级职责边界、318 条历史处置及 CLI 可选原则继续有效。实际发行入口与恢复步骤见 [原生分发说明](../../runtime/distribution/README.md)，现有工程门槛继续使用保留的开发工具；公开 npm 包只来自 Rust 分发目录。
+> **2026-09-10 发行阶段记录（已归档）：** 当时选定三个原生目标，并记录了阶段授权。该授权及当时 npm、自有 runner、源码可见性等安排不是当前操作要求；以本文顶部所链当前指南为准。
 
 状态：2026-09-10 整理快照；配套 [轻量级设计](specgit-2-rust-design.md)。这是历史完整性与实现要求的映射，不是测试通过报告。
 
 本次在旧台账的 296 条 Issue 基础上，核对原生 tracker 中后续 22 条 Issue（#509–#536 中的实际 Issue，PR 不混入计数），共 **318 条**。本次文档 Issue #537 不计入自身历史。旧台账源自提交 `b3bf9c07b2f79e9fccecca6805d23f80b2ff3c1d`，它记录此前读取了 296 个 Issue 完整正文及 34 条实质评论；本次复用其逐项台账，并读取后续 Issue 正文、核对原生对象。没有声称重新审计全部历史 PR diff，也没有把旧运行结果视作本版已验证。
 
-旧台账的 retain/adapt/retire/historical 分类与当时要求保留在下表，用于还原为何曾这样设计；其中“Assessment、finish、native-only 禁止任何补关”等旧措辞已被新设计覆盖。**当前义务由新处置、H 组说明、L 验收项和逐条澄清共同确定，不能从旧要求列恢复已经退役的控制器。**
+旧台账的 retain/adapt/retire/historical 分类与当时要求保留在下表，用于还原为何曾这样设计；其中“Assessment、finish、native-only 禁止任何补关”等旧措辞已被新设计覆盖。**以下“新处置”、H 组和 L 项均指 2026-09-10 的设计快照；当前契约以顶部参考为准，不能从历史列恢复已退役控制器。**
 
 新处置计数：交回平台/Agent 47，仅历史 45，保留 139，调整 85，退役 2。保留不表示照搬代码；交回平台/Agent 不表示删除必要观察和身份保护；仅历史不要求重开已关闭 Issue。
 

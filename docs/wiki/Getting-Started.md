@@ -1,27 +1,20 @@
 # Getting Started
 
-Download the native ZIP for macOS arm64, Linux x64 glibc or Windows x64 from
-[GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest), together with
-`SHA256SUMS` and `SHA256SUMS.sigstore.json`. Follow the
-[signature verification and installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md).
-Verify the signature and ZIP hash before extracting `specgit` (`specgit.exe` on Windows)
-and putting it on PATH. Unix platforms also need `chmod +x specgit`. No Node.js, npm or Rust
-compiler is needed. Repository operations need Git and an authenticated `gh` / `glab`.
+Follow the [installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md) to download one stable Release's native ZIP, SHA256SUMS and signature. Verify the signer and ZIP hash before installing on the shared user PATH. Supported targets are macOS arm64, Linux x64 glibc and Windows x64. No Node.js, npm or Rust is needed at runtime; repository work requires Git and authenticated gh/glab.
+
+Run this GitHub example in the target repository; use `--provider gitlab` for GitLab and the actual `--api-host` when needed. Migrate v1 projects first.
 
 ```sh
 specgit --human --version
 specgit --help
 specgit --schema
-specgit init --check --json
-specgit setup --dry-run --json
+specgit init --provider github --check --json
+specgit init --provider github --dry-run --json
+specgit init --provider github --json
+specgit status --json
+specgit doctor --provider github --json
 ```
 
-Preview Issue and PR changes with `specgit issue <number> --dry-run --json` and
-`specgit pr --dry-run --json`. The Agent implements and repairs; the forge owns
-checks, merge and ordinary Issue closure. Preview does not authorize a later write.
+`--check` and `--dry-run` do not initialize anything. Apply within authorized local setup only after an applicable conflict-free preview. If unknown capability requires a choice, explicitly select `--manual-observe` in both preview and apply. The declaration grants no remote permission.
 
-After CLI upgrades, confirm PATH selects the new binary. Migrate v1 projects
-explicitly before using v2; old `finish` and `init --force` instructions are retired.
-See the [installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md),
-[migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), and
-[native reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md).
+See [Upgrading Existing Projects](Upgrading-Existing-Projects) for host integration and [Team Workflow](Team-Workflow) for delivery. For agent-led installation, use the [agent guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md).

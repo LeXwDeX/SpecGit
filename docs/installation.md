@@ -62,10 +62,14 @@ In a v2 project, inspect the current declaration and preview entry-point changes
 
 ```sh
 specgit init --check --json
+specgit init --dry-run --json
+specgit init --json
 specgit setup --dry-run --json
 specgit status --json
 ```
 
+Apply project changes only after an applicable conflict-free preview. Resolve any
+required manual-observation choice explicitly in both preview and apply.
 Apply the intended `setup` selection from its help after reviewing the preview.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.
 For a v1 project, follow the [migration guide](migration-v2.md): prepare a complete
@@ -80,15 +84,37 @@ existing v1 project, follow the migration guide above.
 
 ### Local generated files
 
-`init` and v2 migration maintain one owned block in Git's local `info/exclude`
-(resolved by Git, including linked worktrees). It excludes `.specgit.yaml` and
-wholly generated `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
-the block without duplication and preserves surrounding user rules. Preview
-and rollback include this file. Damaged or duplicated markers require reconciliation.
+`init` and v2 migration maintain one owned block in Git's local `info/exclude`,
+resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
+`.specgit.yaml`. SpecGit does not add exclusions for project `AGENTS.md` /
+`CLAUDE.md`: one worktree cannot establish ownership of another worktree's guidance.
+Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
+identify them and review their purpose before changing them. Repeated initialization
+refreshes the block without duplicating it and preserves surrounding user rules.
+Preview and rollback include this file; damaged markers require reconciliation.
 
-The JSON `local_exclusion` result lists exclusions, mixed guidance and already
-tracked generated files. Git ignore rules do not remove tracked files from the
-index. Review and explicitly untrack whole generated files with `git rm --cached`
-when authorized; keep local copies. Preserve manually maintained guidance and
-omit generated hunks from commits. Global `setup` assets live under the selected
-host/install roots, outside the project by default; do not commit them either.
+The JSON `local_exclusion` result reports exclusions and already tracked files.
+Ignore rules never untrack a file. Review project guidance changes under the
+repository's normal documentation policy; preserve manual content and owned
+markers. Do not hide or untrack guidance merely because SpecGit generated part
+of it. Untracking an already committed local declaration requires an explicit,
+reviewed repository change. Global `setup` assets belong under the selected
+user/host roots, outside the project by default.
+
+## Removal and rollback
+
+Use one shared user-level executable for operational work across repositories and
+worktrees. Each participating project has its own initialization. Isolated test
+installations used by maintainers do not replace that shared PATH entry.
+
+SpecGit 2.2 has no general project `remove` command. `init --rollback <transaction>`
+undoes only the recorded local transaction when ownership still matches; it is not
+a full project uninstall. `guard --uninstall` removes recorded Git-hook blocks.
+`setup --uninstall --dry-run` previews removal of the selected global setup's
+owned host assets; applying it affects that user integration across projects, not
+just the current repository. Preserve recovery records and foreign content.
+
+A binary rollback restores the previously backed-up executable. It does not undo
+project migration or host asset refreshes; assess those recorded transactions
+separately. Follow reported ownership conflicts rather than deleting state to
+force an uninstall or upgrade.
