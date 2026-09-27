@@ -326,6 +326,24 @@ fn append_check_report(evidence: &mut Value, policy: &InitPolicy, scope: InitChe
         .expect("typed initialization availability serializes");
 }
 
+fn failure_report_with_checks(
+    diagnostic: Diagnostic,
+    mut evidence: Value,
+    policy: &InitPolicy,
+    scope: InitCheckScope,
+) -> Report {
+    if evidence["project"] == "unknown" {
+        evidence["project_diagnostic"] = json!(diagnostic);
+    }
+    if evidence["request_read"] == "failed" {
+        evidence["request_diagnostic"] = json!(diagnostic);
+    }
+    append_check_report(&mut evidence, policy, scope);
+    let mut report = Report::failure("init", diagnostic);
+    report.evidence = evidence;
+    report
+}
+
 fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) -> Vec<InitCheck> {
     let mut checks = Vec::new();
     let probes = evidence["probes"].as_array().cloned().unwrap_or_default();
@@ -336,7 +354,9 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
     };
     let project_context = &evidence["context"];
     let has_identity = project_context["repository"]["path"].as_str().is_some()
-        && project_context["head"].as_str().is_some();
+        && project_context["head"].as_str().is_some()
+        && evidence["project"]["id"].as_u64().is_some_and(|id| id > 0)
+        && evidence["project"]["repository"] == project_context["repository"];
     checks.push(InitCheck {
         id: "project.identity",
         requirement: CheckRequirement::Required,
@@ -347,7 +367,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
         scope: scope.clone(),
         source: "resolved Git root, remote, forge project identity, branch and HEAD".into(),
         observed_at: Some(crate::probe::now()),
-        diagnostic: None,
+        diagnostic: serde_json::from_value(evidence["project_diagnostic"].clone()).ok(),
         reason: if has_identity {
             "The repository and current revision were resolved; native project identity was matched.".into()
         } else {
@@ -359,7 +379,9 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
             "Resolve the intended Git repository and forge project, then rerun init --inspect.".into()
         },
     });
-    let cli_probe = find_probe("gh_version").or_else(|| find_probe("glab_version"));
+    let cli_probe = ["gh_version", "gh", "glab_version", "glab"]
+        .into_iter()
+        .find_map(find_probe);
     let cli_available = cli_probe.is_some_and(|probe| probe["status"] == "available");
     let cli_status = cli_probe.and_then(|probe| probe["status"].as_str());
     checks.push(InitCheck {
@@ -495,7 +517,10 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
     ] {
         let capability = &capabilities[key];
         let native_status = capability["status"].as_str().unwrap_or("unknown");
-        let status = if id == "request.eligibility" && evidence["request"].is_null() {
+        let status = if id == "request.eligibility"
+            && evidence["request_read"] == "verified"
+            && evidence["request"].is_null()
+        {
             CheckFactStatus::NotApplicable
         } else {
             match native_status {
@@ -548,7 +573,11 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
             scope: scope.clone(),
             source: source.into(),
             observed_at: Some(crate::probe::now()),
-            diagnostic: None,
+            diagnostic: if id == "request.eligibility" {
+                serde_json::from_value(evidence["request_diagnostic"].clone()).ok()
+            } else {
+                None
+            },
             reason: format!("{reason} {detail}"),
             next_step: next_step.into(),
         });
@@ -745,36 +774,89 @@ async fn prepare_and_run(
         &values,
     )?;
     let mut probes = probe::commands(&process, &root, context.repository.provider).await;
-    let reader = ForgeRead::new(
+    let reader = match ForgeRead::new(
         process.clone(),
         &root,
         context.repository.provider,
         &context.repository.host,
-    )?;
+    ) {
+        Ok(reader) => reader,
+        Err(diagnostic) => {
+            return Ok(failure_report_with_checks(
+                diagnostic,
+                json!({
+                    "context": context,
+                    "probes": probes,
+                    "written": false,
+                    "project": "unknown",
+                    "request": null,
+                }),
+                &declaration.init_policy,
+                check_scope,
+            ));
+        }
+    };
     probes.push(probe::account(&reader).await);
     let facts = match reader.project(&context.repository).await {
         Ok(f) => f,
         Err(d) => {
-            let mut report = Report::failure("init", d);
-            report.evidence =
-                json!({"probes":probes,"written":false,"project":"unknown","request":null});
-            append_check_report(
-                &mut report.evidence,
+            return Ok(failure_report_with_checks(
+                d,
+                json!({
+                    "context": context,
+                    "probes": probes,
+                    "written": false,
+                    "project": "unknown",
+                    "request": null,
+                }),
                 &declaration.init_policy,
-                InitCheckScope::from_context(Some(&context)),
-            );
-            return Ok(report);
+                check_scope.clone(),
+            ));
         }
     };
     if !config::valid_branch(&facts.default_branch) {
-        return Err(Diagnostic::new(
+        let diagnostic = Diagnostic::new(
             Code::MalformedResponse,
             "init",
             "Native default branch is invalid.",
             "Inspect the project through the authenticated CLI.",
+        );
+        return Ok(failure_report_with_checks(
+            diagnostic,
+            json!({
+                "context": context,
+                "probes": probes,
+                "written": false,
+                "project": facts,
+                "request": null,
+            }),
+            &declaration.init_policy,
+            check_scope.clone(),
         ));
     }
-    let request = crate::forge::capabilities::request_target(&reader, &context, &facts).await?;
+    let request = match crate::forge::capabilities::request_target(&reader, &context, &facts).await
+    {
+        Ok(request) => request,
+        Err(diagnostic) => {
+            let target = declaration.target.as_deref();
+            let native_flow = flow(&facts, target);
+            return Ok(failure_report_with_checks(
+                diagnostic,
+                json!({
+                    "context": context,
+                    "probes": probes,
+                    "project": facts,
+                    "flow": native_flow,
+                    "capabilities": null,
+                    "request": null,
+                    "request_read": "failed",
+                    "written": false,
+                }),
+                &declaration.init_policy,
+                check_scope.clone(),
+            ));
+        }
+    };
     let effective_target = request
         .as_ref()
         .map(|(_, target)| target.as_str())
@@ -800,6 +882,7 @@ async fn prepare_and_run(
     let confirmation = capabilities.needs_choice() && !manual_choice;
     let failed = probes.iter().any(|p| p.status != Capability::Available);
     let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"capabilities":capabilities,"request":request,"templates":{"issue":{"source":issue.source,"required_sections":issue.required_sections},"pr":{"source":pr.source,"required_sections":pr.required_sections},"local_candidates":candidates,"inherited_native_templates":"not_checked"},"declaration":declaration,"written":false,"initial_adoption":existing.is_none()});
+    evidence["request_read"] = json!("verified");
     if options.inspect_only {
         append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());
     }
