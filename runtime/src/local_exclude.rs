@@ -107,7 +107,8 @@ pub async fn plan(
     exclude: &Path,
     changes: &mut Vec<Change>,
 ) -> Result<Value, Diagnostic> {
-    let mut names = vec![".specgit.yaml"];
+    // info/exclude is shared by linked worktrees. Guidance ownership is not.
+    let names = vec![".specgit.yaml"];
     let mut mixed = vec![];
     for name in ["AGENTS.md", "CLAUDE.md"] {
         if let Some(c) = changes.iter().find(|c| c.path == root.join(name)) {
@@ -115,12 +116,9 @@ pub async fn plan(
                 .map_err(|_| conflict())?;
             if let Some((prefix, rest)) = text.split_once("<!-- specgit:v2:start -->")
                 && let Some((_, suffix)) = rest.split_once("<!-- specgit:v2:end -->")
+                && (!prefix.trim().is_empty() || !suffix.trim().is_empty())
             {
-                if prefix.trim().is_empty() && suffix.trim().is_empty() {
-                    names.push(name);
-                } else {
-                    mixed.push(name);
-                }
+                mixed.push(name);
             }
         }
     }

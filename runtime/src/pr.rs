@@ -24,10 +24,10 @@ pub struct Options {
     pub body_file: Option<PathBuf>,
     #[arg(long, value_delimiter = ',')]
     pub tags: Option<Vec<String>>,
-    /// Explicitly update the current request body, preserving every existing deliberate reference.
+    /// Preview a body replacement with --dry-run; differing bodies require native editing.
     #[arg(long, requires = "body_file", conflicts_with = "update_references")]
     pub update_body: bool,
-    /// Append missing selected references to a freshly read native body.
+    /// Preview missing closing references with --dry-run; apply through native editing.
     #[arg(long, conflicts_with = "body_file")]
     pub update_references: bool,
     #[arg(long)]
@@ -108,6 +108,7 @@ async fn execute(
         target: w.target.clone(),
         issues: vec![],
         intents: vec![],
+        adopted: vec![],
         request: None,
         request_write_started: false,
         request_intent: None,
@@ -134,7 +135,7 @@ async fn execute(
         ));
     }
     let mut issues = vec![];
-    for id in &selected.issues {
+    for id in &selected.issues.clone() {
         let issue = native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?;
         validate(
             w.specification(),
@@ -143,6 +144,7 @@ async fn execute(
             &issue.body,
             &issue.labels,
         )?;
+        selected.record_adopted(issue.clone());
         issues.push(issue);
     }
     let pool = native_delivery::label_pool(&w.reader, repo).await?;
@@ -150,7 +152,7 @@ async fn execute(
     let intended = if let Some(r) = &request {
         if o.title.is_some() || o.tags.is_some() || (o.body_file.is_some() && !o.update_body) {
             return Err(Diagnostic::input(
-                "Existing request content is preserved. Use --update-body with a final body file; native title/label edits remain explicit native operations.",
+                "Existing request content is preserved. Use --update-body with a final body file and --dry-run to preview; edit existing content on the native platform.",
             ));
         }
         let mut ids: BTreeSet<_> = selected.issues.iter().copied().collect();
@@ -166,6 +168,7 @@ async fn execute(
                     &issue.labels,
                 )?;
                 selected.issues.push(*id);
+                selected.record_adopted(issue.clone());
                 issues.push(issue);
             }
         }
@@ -185,7 +188,7 @@ async fn execute(
             .all(|id| spec::references(&r.body).is_ok_and(|refs| refs.contains(id)))
         {
             return Err(Diagnostic::input(
-                "The native request lacks selected closing references; explicitly use --update-references after reviewing its body.",
+                "The native request lacks selected closing references; use --update-references --dry-run to preview, then reconcile its body on the native platform.",
             ));
         }
         // Resume adds only pending labels, so validate the complete resulting set
@@ -332,6 +335,18 @@ async fn execute(
             "pr",
             "Selected request labels are missing from the native project.",
             "Inspect --dry-run and explicitly request --create-labels, or use existing labels.",
+        ));
+    }
+    if replacement.as_ref().is_some_and(|body| {
+        request
+            .as_ref()
+            .is_some_and(|r| !native_delivery::written_body_matches(repo.provider, body, &r.body))
+    }) {
+        return Err(Diagnostic::new(
+            Code::UnsupportedOperation,
+            "update_request_body",
+            "Atomic conditional body updates are unavailable; the native body was preserved.",
+            "Use --dry-run to review the proposed body and all closing references, edit in the native UI with conflict review, then run pr --status before resuming.",
         ));
     }
     let mut lock = Locked::acquire(&w.context)?;

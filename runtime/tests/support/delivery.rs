@@ -120,6 +120,9 @@ impl Fixture {
         command
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("HOME", self.root.parent().unwrap())
+            .env("LOCALAPPDATA", self.root.parent().unwrap())
+            .env("XDG_DATA_HOME", self.root.parent().unwrap())
             .env("SPECGIT_FIXTURE_API_FILE", &self.state)
             .args(args);
         command.arg(if json { "--json" } else { "--human" });

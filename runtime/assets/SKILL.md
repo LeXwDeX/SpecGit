@@ -27,8 +27,9 @@ maintenance, not delivery; they do not create an Issue or authorize forge writes
 
 After implementation and authorized commit/push, aggregate the selected Issues
 with `pr`; creation requires real pushed changes and produces a draft. Preserve
-user-authored bodies and every closing reference. Updating existing bodies or
-references requires the corresponding explicit update option. Mark a reviewed
+user-authored bodies and every closing reference. Existing-body and reference update options are preview-only when content differs:
+use --dry-run, edit on the native platform with conflict review, then refresh
+pr --status. The adapters reject unsafe unconditional body replacement. Mark a reviewed
 request ready with `pr --ready` within existing authorization.
 Preview Issue/PR mutations with `--dry-run`; a preview grants no write permission.
 
@@ -100,8 +101,8 @@ replays stdin to existing shell hooks. Husky's `.husky/_` dispatcher is mapped
 to its user scripts. Unsupported non-shell hooks are preserved and reported.
 Use `specgit guard --uninstall` to remove only the recorded SpecGit blocks.
 
-Initialization maintains one Git-local `info/exclude` block for `.specgit.yaml`
-and wholly generated project guidance. Read `local_exclusion` in its result:
+Initialization maintains one Git-local `info/exclude` block for `.specgit.yaml`.
+Guidance stays visible because linked worktrees share this exclusion file. Read `local_exclusion` in its result:
 ignore rules do not untrack existing files, and mixed user/generated guidance
 stays visible. Keep generated assets and generated guidance hunks out of commits;
 preserve manual content. Repeat init/setup to refresh owned blocks, not append

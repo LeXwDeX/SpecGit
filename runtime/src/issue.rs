@@ -82,9 +82,14 @@ async fn execute(
             .map_err(|_| Diagnostic::input("Invalid Git root."))?
             .trim_end_matches(['\r', '\n']),
     );
-    let d = config::read(&root)?.ok_or_else(|| {
-        Diagnostic::input("Initialize the v2 project declaration before selecting a delivery.")
-    })?;
+    let declaration_bytes = config::snapshot(&root)?.bytes;
+    let d = declaration_bytes
+        .as_deref()
+        .map(config::Declaration::parse)
+        .transpose()?
+        .ok_or_else(|| {
+            Diagnostic::input("Initialize the v2 project declaration before selecting a delivery.")
+        })?;
     let mut context =
         config::resolve(&process, &root, d.remote.as_deref(), d.provider, None).await?;
     let reader = ForgeRead::new(
@@ -139,6 +144,7 @@ async fn execute(
         target: target.clone(),
         issues: vec![],
         intents: vec![],
+        adopted: vec![],
         request: None,
         request_write_started: false,
         request_intent: None,
@@ -252,6 +258,7 @@ async fn execute(
         if !selection.issues.contains(&issue.id) {
             selection.issues.push(issue.id);
         }
+        selection.record_adopted(issue);
     }
     for intent in prepared {
         if selection.intents.iter().any(|i| {
@@ -281,6 +288,35 @@ async fn execute(
     }
     // Every persisted intent is subject to today's declaration and fresh native
     // duplicate evidence, even when this invocation supplied only adopted IDs.
+    // Native project identity defines the same-user/host creation domain.
+    // Hold this lock from candidate reads through native creation and readback.
+    let _creation_lock = if !options.inspect
+        && !options.dry_run
+        && selection
+            .intents
+            .iter()
+            .any(|i| i.issue.is_none() && !i.write_started)
+    {
+        let key = crate::assets::hash(
+            &serde_json::to_vec(&(
+                context.repository.provider,
+                context.repository.host.to_lowercase(),
+                project_facts.id,
+            ))
+            .map_err(|_| Diagnostic::input("Cannot encode issue creation identity."))?,
+        );
+        let base = crate::setup::default_root()?
+            .join("issue-creation")
+            .join(key);
+        Some(crate::assets::AssetStore::lock(
+            &base,
+            &[],
+            std::time::Duration::from_secs(2),
+        )?)
+    } else {
+        None
+    };
+
     let mut matched_reviews = BTreeSet::new();
     for intent in selection.intents.iter().filter(|i| i.issue.is_none()) {
         validate(&d, &intent.title, &intent.body, &intent.labels)?;
@@ -370,6 +406,15 @@ async fn execute(
             "Inspect --dry-run and explicitly request --create-labels, or choose existing labels.",
         ));
     }
+    unchanged(
+        &process,
+        &context,
+        &d,
+        &declaration_bytes,
+        &reader,
+        &project_facts,
+    )
+    .await?;
     let mut lock = Locked::acquire(&context)?;
     if serde_json::to_value(selection::read(&context)?)
         .map_err(|_| Diagnostic::input("Cannot compare selection."))?
@@ -410,7 +455,7 @@ async fn execute(
     );
     lock.save(&selection)?;
     effects.applied(local_effect);
-    let writer = native_delivery::IssueWrite::new(process, &root, &context.repository)?;
+    let writer = native_delivery::IssueWrite::new(process.clone(), &root, &context.repository)?;
     let catalog = spec::catalog(&d);
     for index in 0..selection.intents.len() {
         let intent = selection.intents[index].clone();
@@ -441,6 +486,15 @@ async fn execute(
                     "create_label",
                     serde_json::json!({"label":label,"repository":context.repository}),
                 );
+                unchanged(
+                    &process,
+                    &context,
+                    &d,
+                    &declaration_bytes,
+                    &reader,
+                    &project_facts,
+                )
+                .await?;
                 writer.create_label(tag).await?;
                 if !native_delivery::label_pool(&reader, &context.repository)
                     .await?
@@ -456,6 +510,15 @@ async fn execute(
                 effects.applied(label_effect);
             }
         }
+        unchanged(
+            &process,
+            &context,
+            &d,
+            &declaration_bytes,
+            &reader,
+            &project_facts,
+        )
+        .await?;
         selection.intents[index].write_started = true;
         let local_effect = effects.begin(
             "local",
@@ -566,4 +629,41 @@ fn uncertain(evidence: serde_json::Value) -> Report {
     );
     report.evidence = evidence;
     report
+}
+
+async fn unchanged(
+    process: &Process,
+    expected: &project::Context,
+    declaration: &config::Declaration,
+    bytes: &Option<Vec<u8>>,
+    reader: &ForgeRead,
+    facts: &crate::probe::ProjectFacts,
+) -> Result<(), Diagnostic> {
+    let current = config::resolve(
+        process,
+        &expected.root,
+        declaration.remote.as_deref(),
+        declaration.provider,
+        None,
+    )
+    .await?;
+    let actual = reader.project(&expected.repository).await?;
+    if current.repository != expected.repository
+        || current.branch != expected.branch
+        || current.head != expected.head
+        || current.git_dir != expected.git_dir
+        || current.remote != expected.remote
+        || current.dirty != expected.dirty
+        || config::snapshot(&expected.root)?.bytes != *bytes
+        || actual.id != facts.id
+        || actual.default_branch != facts.default_branch
+    {
+        return Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "issue_workspace",
+            "Git, declaration or native project identity changed during Issue preparation.",
+            "Inspect the current branch and retained write intents before retrying.",
+        ));
+    }
+    Ok(())
 }

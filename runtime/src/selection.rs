@@ -29,6 +29,9 @@ pub struct Selection {
     pub target: String,
     pub issues: Vec<u64>,
     pub intents: Vec<IssueIntent>,
+    /// Validated native specs adopted independently of creation/recovery intents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adopted: Vec<crate::delivery_model::Issue>,
     pub request: Option<u64>,
     pub request_write_started: bool,
     #[serde(default)]
@@ -72,6 +75,20 @@ fn invalid() -> Diagnostic {
         "Inspect the checkpoint and adopt explicit native IDs in the correct worktree; do not discard an unresolved write intent.",
     )
 }
+impl Selection {
+    pub fn checkpoint_valid(&self, target: Option<&str>) -> bool {
+        !self.issues.is_empty()
+            && target.is_none_or(|target| target == self.target)
+            && self.issues.iter().all(|id| {
+                self.intents.iter().any(|intent| intent.issue == Some(*id))
+                    || self.adopted.iter().any(|issue| issue.id == *id)
+            })
+    }
+    pub fn record_adopted(&mut self, issue: crate::delivery_model::Issue) {
+        self.adopted.retain(|old| old.id != issue.id);
+        self.adopted.push(issue);
+    }
+}
 pub fn path(context: &Context) -> PathBuf {
     context.git_dir.join("specgit-v2/selection.json")
 }
@@ -88,6 +105,10 @@ pub fn read_path(path: &Path) -> Result<Option<Selection>, Diagnostic> {
         || !crate::config::valid_branch(&s.target)
         || s.issues.len() > 100
         || s.issues.contains(&0)
+        || s.adopted.len() > 100
+        || s.adopted
+            .iter()
+            .any(|i| i.id == 0 || !s.issues.contains(&i.id) || i.title.trim().is_empty())
         || s.intents.len() > 100
         || s.request == Some(0)
         || s.issues

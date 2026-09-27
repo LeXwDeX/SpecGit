@@ -597,6 +597,21 @@ pub async fn observe_subscription(
     process: Process,
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
+    observe_subscription_mode(o, process, cwd, false).await
+}
+pub async fn observe_until_attention(
+    o: Options,
+    process: Process,
+    cwd: &Path,
+) -> Result<ObservedEvents, Diagnostic> {
+    observe_subscription_mode(o, process, cwd, true).await
+}
+async fn observe_subscription_mode(
+    o: Options,
+    process: Process,
+    cwd: &Path,
+    stop_on_attention: bool,
+) -> Result<ObservedEvents, Diagnostic> {
     let (initial, configured) = local_with_observation(&process, cwd).await?;
     let timing = timing(&o, &configured)?;
     let identity = Identity::new(&initial, &o.session, o.request, o.goal)?;
@@ -745,7 +760,15 @@ pub async fn observe_subscription(
             observation.next_step,
             watch_store::now(),
         )?;
-        if o.once || observation.terminal {
+        if o.once
+            || observation.terminal
+            || (stop_on_attention
+                && configured.notify.contains(&config::Notification::Attention)
+                && matches!(
+                    observation.state,
+                    EventState::ChecksPassed | EventState::ChecksCompleted
+                ))
+        {
             break ObservedEvents {
                 state,
                 event_state: observation.state,
