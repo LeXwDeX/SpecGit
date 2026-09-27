@@ -416,18 +416,9 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
     let context_id = &context_id[..16];
     let selection = crate::selection::read(&context);
     let checkpoint_valid = selection.as_ref().is_ok_and(|selected| {
-        selected.as_ref().is_some_and(|selected| {
-            !selected.issues.is_empty()
-                && selected.issues.iter().all(|issue| {
-                    selected
-                        .intents
-                        .iter()
-                        .any(|intent| intent.issue == Some(*issue))
-                })
-                && target
-                    .as_ref()
-                    .is_none_or(|target| target == &selected.target)
-        })
+        selected
+            .as_ref()
+            .is_some_and(|selected| selected.checkpoint_valid(target.as_deref()))
     });
     if event == "PreToolUse" && !checkpoint_valid {
         let reason = if language == Language::Zh {
@@ -556,7 +547,7 @@ pub async fn observe_handle(
         }
     };
     let notifications = prepared.observation.notify;
-    let observation = crate::watch::observe_subscription(
+    let observation = crate::watch::observe_until_attention(
         crate::watch::Options {
             request,
             session: prepared.session,

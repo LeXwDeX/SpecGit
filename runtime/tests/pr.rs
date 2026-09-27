@@ -137,43 +137,33 @@ fn uncertain_creation_recovers_exact_native_request_without_duplicate_and_preser
     }
 }
 #[test]
-fn explicit_body_update_preserves_all_refs_and_conflicting_native_edit_stops_before_write() {
+fn explicit_body_update_previews_all_refs_but_never_overwrites_native_content() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider, 2);
         assert_eq!(f.run(&["pr"])["exit"], 0);
-        let body = f.root.join("prepared.md");
-        fs::write(&body, "Prepared replacement\r\n").unwrap();
-        let r = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
-        assert_eq!(r["exit"], 0, "{r}");
-        let b = r["evidence"]["request"]["body"].as_str().unwrap();
-        assert!(b.starts_with(if provider == "github" {
-            "Prepared replacement\r\n"
-        } else {
-            "Prepared replacement\n"
-        }));
-        assert!(b.contains("Closes #1") && b.contains("Closes #2"));
+        fs::write(f.root.join("prepared.md"), "Prepared replacement").unwrap();
+        let before = f.state()["requests"].clone();
         let writes = f.writes();
-        let repeated = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
-        assert_eq!(repeated["exit"], 0, "{repeated}");
-        assert_eq!(f.writes(), writes);
-        f.edit(|s| {
-            s["request_reads"] = json!(0);
-            s["edit_request_on_read"] = json!(2);
-        });
-        let writes = f.writes();
-        let r = f.run(&["pr", "--update-body", "--body-file", body.to_str().unwrap()]);
-        assert_eq!(r["exit"], 3, "{r}");
-        assert_eq!(f.writes(), writes);
+        let preview = f.run(&[
+            "pr",
+            "--update-body",
+            "--body-file",
+            "prepared.md",
+            "--dry-run",
+        ]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        let body = preview["evidence"]["intent"]["body"].as_str().unwrap();
+        assert!(body.contains("Closes #1") && body.contains("Closes #2"));
+        let rejected = f.run(&["pr", "--update-body", "--body-file", "prepared.md"]);
         assert_eq!(
-            f.state()["requests"][0][if provider == "github" {
-                "body"
-            } else {
-                "description"
-            }],
-            "Concurrent user edit\n\nCloses #1"
+            rejected["diagnostics"][0]["code"], "unsupported_operation",
+            "{rejected}"
         );
+        assert_eq!(f.writes(), writes);
+        assert_eq!(f.state()["requests"], before);
     }
 }
+
 #[test]
 fn fork_identity_and_removed_associations_require_reconciliation() {
     let f = fixture("github", 1);
@@ -190,10 +180,10 @@ fn fork_identity_and_removed_associations_require_reconciliation() {
     let r = f.run(&["pr"]);
     assert_eq!(r["exit"], 2, "{r}");
     assert_eq!(f.writes(), writes);
-    let r = f.run(&["pr", "--update-references"]);
+    let r = f.run(&["pr", "--update-references", "--dry-run"]);
     assert_eq!(r["exit"], 0, "{r}");
     assert_eq!(
-        r["evidence"]["request"]["body"],
+        r["evidence"]["intent"]["body"],
         "User removed reference\n\nCloses #1"
     );
 }
@@ -237,6 +227,10 @@ fn alternate_native_closing_keywords_survive_body_replacement() {
         let mut saved: serde_json::Value =
             serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
         saved["issues"] = json!([1]);
+        saved["adopted"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|issue| issue["id"] == 1);
         saved["intents"]
             .as_array_mut()
             .unwrap()
@@ -250,9 +244,15 @@ fn alternate_native_closing_keywords_survive_body_replacement() {
             }] = json!("closes #1\nFixes #2\n```\nResolves other/repo#9\n```\n<!-- Fixes #10 -->");
         });
         fs::write(f.root.join("replacement.md"), "New body").unwrap();
-        let result = f.run(&["pr", "--update-body", "--body-file", "replacement.md"]);
+        let result = f.run(&[
+            "pr",
+            "--update-body",
+            "--body-file",
+            "replacement.md",
+            "--dry-run",
+        ]);
         assert_eq!(result["exit"], 0, "{result}");
-        let body = result["evidence"]["request"]["body"].as_str().unwrap();
+        let body = result["evidence"]["intent"]["body"].as_str().unwrap();
         assert!(
             body.contains("Closes #1") && body.contains("Closes #2"),
             "{body}"

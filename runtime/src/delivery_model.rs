@@ -29,6 +29,8 @@ pub struct PullRequest {
 pub struct Check {
     pub name: String,
     pub source: String,
+    /// Actual tested commit; merged-result pipelines can differ from source head.
+    pub tested_head: String,
     pub head: String,
     pub id: u64,
     pub app: Option<u64>,
@@ -48,6 +50,8 @@ impl Check {
         let positive = |n: Option<u64>| n.is_none_or(|n| n > 0);
         let valid_ids = self.id > 0
             && crate::project::valid_oid(&self.head)
+            && crate::project::valid_oid(&self.tested_head)
+            && (self.source == "pipeline" || self.tested_head == self.head)
             && [
                 self.app,
                 self.workflow,

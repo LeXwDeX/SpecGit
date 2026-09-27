@@ -236,3 +236,31 @@ fn install_uses_husky_user_scripts_and_rejects_non_shell_hooks() {
     );
     assert!(!temp.path().join(".python-hooks/pre-push").exists());
 }
+
+#[test]
+fn deletion_only_requires_a_checkpoint() {
+    let temp = fixture();
+    let root = temp.path();
+    fs::write(root.join("tracked.txt"), "tracked").unwrap();
+    git(root, &["add", "tracked.txt"]);
+    git(root, &["commit", "-m", "tracked"]);
+    git(root, &["rm", "tracked.txt"]);
+    assert!(!guard(root, "pre-commit", "").status.success());
+    checkpoint(root, "feature");
+    assert!(guard(root, "pre-commit", "").status.success());
+}
+#[cfg(unix)]
+#[test]
+fn type_change_only_requires_a_checkpoint() {
+    let temp = fixture();
+    let root = temp.path();
+    fs::write(root.join("tracked.txt"), "tracked").unwrap();
+    git(root, &["add", "tracked.txt"]);
+    git(root, &["commit", "-m", "tracked"]);
+    fs::remove_file(root.join("tracked.txt")).unwrap();
+    std::os::unix::fs::symlink("target.txt", root.join("tracked.txt")).unwrap();
+    git(root, &["add", "tracked.txt"]);
+    assert!(!guard(root, "pre-commit", "").status.success());
+    checkpoint(root, "feature");
+    assert!(guard(root, "pre-commit", "").status.success());
+}
