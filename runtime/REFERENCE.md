@@ -1,6 +1,6 @@
 # SpecGit 2 native command reference
 
-This reference describes the SpecGit 2.0 native CLI. Installing it does not
+This reference describes the SpecGit 2 native CLI. Installing it does not
 migrate a project or authorize native mutations. GitHub Releases contain the native
 executables. The v1 implementation and its engineering gates are retired.
 
@@ -66,8 +66,9 @@ explicitly reviewed migration; platform protection rules remain on the forge.
 Git, forge executables or credentials. `specgit <command> --schema` narrows the
 contract. `-h` and `-V` are short help/version forms. The schema comes from the
 same command definitions as argv and includes types, choices, bounds, defaults,
-conflicts and side-effect classification. Packaged `schemas/` are generated from
-the executable's contract and checked against the installed native binary.
+conflicts and side-effect classification. Engineering qualification generates
+`schemas/` from this contract and compares them with the installed executable.
+Public ZIPs contain only the executable; use its embedded offline `--schema`.
 
 Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
@@ -241,6 +242,7 @@ Unicode whitespace and other content changes are not treated as equivalent.
 Comparisons between two native snapshots remain exact.
 
 ```sh
+specgit init --provider github --manual-observe --dry-run --json
 specgit init --provider github --manual-observe --json
 specgit issue 21 22 --dry-run --json
 specgit issue 21 22 --json
@@ -251,6 +253,7 @@ After committing and pushing actual implementation through Git:
 ```sh
 specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --dry-run --json
 specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --json
+specgit pr --ready --dry-run --json
 specgit pr --ready --json
 specgit pr --status --json
 specgit watch --request 42 --session task-42 --goal lifecycle --json
@@ -391,19 +394,20 @@ Installation does not authorize publication or native administration.
 
 ### Local generated files
 
-`init` and v2 migration maintain one owned block in Git's local `info/exclude`
-(resolved by Git, including linked worktrees). It excludes only `.specgit.yaml`. Guidance remains visible because one worktree
-cannot establish ownership of another worktree's `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
-the block without duplication and preserves surrounding user rules. Preview
-and rollback include this file. Damaged or duplicated markers require reconciliation.
+`init` and v2 migration maintain one owned block in Git's local `info/exclude`,
+resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
+`.specgit.yaml`. Project `AGENTS.md` / `CLAUDE.md` remains visible: one worktree
+cannot establish ownership of another worktree's guidance. Repeated initialization
+refreshes the block without duplicating it and preserves surrounding user rules.
+Preview and rollback include this file; damaged markers require reconciliation.
 
-The JSON `local_exclusion` result lists exclusions, mixed guidance and already
-tracked generated files. Git ignore rules do not remove tracked files from the
-index. Review and explicitly untrack whole generated files with `git rm --cached`
-when authorized; keep local copies. Preserve manually maintained guidance and
-omit generated hunks from commits. Global `setup` assets live under the selected
-host/install roots, outside the project by default; do not commit them either.
-
+The JSON `local_exclusion` result reports exclusions and already tracked files.
+Ignore rules never untrack a file. Review project guidance changes under the
+repository's normal documentation policy; preserve manual content and owned
+markers. Do not hide or untrack guidance merely because SpecGit generated part
+of it. Untracking an already committed local declaration requires an explicit,
+reviewed repository change. Global `setup` assets belong under the selected
+user/host roots, outside the project by default.
 
 ### 2.2 consistency boundaries
 

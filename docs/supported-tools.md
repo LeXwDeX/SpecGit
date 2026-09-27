@@ -2,7 +2,9 @@
 
 SpecGit 2 provides a native CLI and managed agent integrations. `specgit setup`
 supports Codex, Claude Code, and OpenCode; other agents can use the CLI and the
-project guidance directly. Follow the [installation guide](agent-install.md) for
+project guidance directly. Codex/Claude have managed hook registration; OpenCode
+receives skill and guidance only. Written registration is not proof of host import
+or notification delivery. Follow the [installation guide](agent-install.md) for
 the matching host registration option and verification steps.
 
 Use the installed executable's `specgit --help` and `specgit --schema` as the
@@ -17,7 +19,9 @@ complete relevant Issues before tracked product edits, then implement, verify,
 commit, and push the actual changes. Create or adopt a draft PR/MR with
 `specgit pr`, preserving every closing reference.
 
-When review preparation is complete, `specgit pr --ready --request <id>` marks
+When review preparation is complete, preview with
+`specgit pr --ready --request <id> --dry-run --json`, then
+`specgit pr --ready --request <id> --json` marks
 the request ready within existing user authorization. Review and merge happen
 on GitHub or GitLab; `specgit watch` only observes current evidence. After the
 platform reports a merge, use `specgit pr --status --request <id>` to read back

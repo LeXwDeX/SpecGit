@@ -1,4 +1,4 @@
-# Migrating a SpecGit 1.x project to 2.0
+# Migrating a SpecGit 1.x project to 2.x
 
 Installing the native executable does not migrate a repository. Keep the known
 working v1 package and an explicit backup until the project cutover is verified.
@@ -9,7 +9,7 @@ project assets so it can preserve user files and retire owned v1 hooks safely.
 
 ## Changed responsibilities
 
-| SpecGit 1.x | SpecGit 2.0 |
+| SpecGit 1.x | SpecGit 2 |
 | --- | --- |
 | Committed delivery record and dummy binding commits | Local v2 declaration; local recovery state under Git; real changes create the request |
 | `finish` / `accept`, merge and promotion controllers | Native observation with truthful unknowns; no SpecGit-owned eligibility engine |
@@ -25,8 +25,9 @@ from ordinary CLI JSON. Unknown/failed API reads never become green/no-CI result
 ## Preview the specific project
 
 Prepare a complete v2 declaration in a separate file. Do not mechanically translate
-old automation fields into new Agent authorization. For an explicitly selected
-manual-observation configuration:
+old automation fields into new Agent authorization. This minimal example keeps
+Agent merge/closure preferences disabled; it does not select the separate
+`init --manual-observe` fallback:
 
 ```yaml
 version: 2

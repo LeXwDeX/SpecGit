@@ -1,5 +1,7 @@
 # SpecGit Wiki
 
-SpecGit 2 gives coding agents a shared workflow for specification Issues, implementation, native PR/MR aggregation and observation. The agent repairs failures; GitHub/GitLab owns checks, protection and merge. Completion requires the confirmed merge and associated Issue closures.
+SpecGit 2 manages specification Issues, native PR/MR associations and observation. The Agent implements and repairs; GitHub/GitLab owns CI, protection, review and merge. Completion requires the intended merge and closure of every associated Issue.
 
-Start with [Getting Started](Getting-Started), then the [CLI Reference](CLI-Reference) and [Team Workflow](Team-Workflow).
+Start with [Getting Started](Getting-Started), or [Upgrading Existing Projects](Upgrading-Existing-Projects) for an existing installation. [Team Workflow](Team-Workflow) covers delivery; [CLI Reference](CLI-Reference) covers status and write boundaries.
+
+Reviewed source for these pages lives in [docs/wiki](https://github.com/LeXwDeX/SpecGit/tree/main/docs/wiki).

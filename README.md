@@ -61,6 +61,7 @@ specgit issue 21 22 --json
 specgit pr --title 'feat: implement selected specs' --body-file request.md --dry-run --json
 specgit pr --title 'feat: implement selected specs' --body-file request.md --json
 specgit pr --status --json
+specgit pr --ready --request 42 --dry-run --json
 specgit pr --ready --request 42 --json
 specgit watch --request 42 --session task-42 --goal lifecycle --json
 # After platform review and merge, re-read the native request and Issues:
@@ -123,6 +124,9 @@ repository-specific cutover; retired v1 command workflows are no longer maintain
 - [Migration from v1](docs/migration-v2.md)
 - [Release procedure and recovery](runtime/distribution/README.md)
 - [Runtime development](runtime/README.md)
+- [Current glossary](CONTEXT.md)
+- [English / 中文 Wiki](https://github.com/LeXwDeX/SpecGit/wiki)
+- [Documentation audit and source inventory](docs/documentation-audit-2.2.1.md)
 
 ## Development and releases
 
@@ -141,8 +145,8 @@ cargo test --locked --all-targets --features test-fixtures
 ```
 
 The [Release workflow](.github/workflows/release-prepare.yml) runs from `main` after
-an explicit dispatch with a stable version. GitHub-hosted macOS ARM64 and owner-provided
-Linux/Windows x64 runners compile and smoke-test the native binaries. The final job creates ZIPs and signs `SHA256SUMS`
+an explicit dispatch with a stable version. GitHub-hosted standard Linux/Windows x64
+and macOS ARM64 runners compile and smoke-test the native binaries. The final job creates ZIPs and signs `SHA256SUMS`
 using the main Release workflow identity. Publication verifies source identity, signature, SHA-256 and
 uploaded bytes, and preserves existing immutable releases. Full source and
 installed-binary regressions run in ordinary CI.

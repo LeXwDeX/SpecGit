@@ -5,41 +5,34 @@ title: 'fix: <english title>'
 labels: kind::fix
 ---
 
-## What happened
+## Why
 
-A clear description of the defect.
+Describe the defect, user impact and expected behavior. Cite the current
+[native reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
+where applicable. Search existing Issues for the same cause before creating another.
 
-## What I expected
+## Scope
 
-The behavior the docs promise (cite the page if you can: README,
-docs/installation.md, docs/migration-v2.md, docs/ci-scope.md, or
-runtime/REFERENCE.md).
+Identify the affected command, platform and scenario, plus any important boundary.
+
+## Approach
+
+Describe the smallest reproduction and proposed investigation or repair. If the
+cause is unknown, say so; do not invent a fix to complete the specification.
+
+## Acceptance
+
+Describe the observable behavior and regression evidence that will prove this
+specific defect is fixed, including applicable installed/runtime verification.
 
 ## Evidence
 
-- SpecGit version: `specgit --version` →
-- OS:
-- The command run (with `--json` if possible) and its **exit code**
-  (include the exact number):
+- SpecGit version: `specgit --human --version`
+- OS and architecture:
+- Exact command and exit code:
+- Sanitized `--json` report and diagnostic code:
+- Reproduction steps, expected result and actual result:
+- Recovery suggested by the diagnostic, and why it did not resolve the issue:
 
-```
-<paste the --json envelope or the human output>
-```
-
-- The diagnostic `code` from `diagnostics[]` (if any):
-
-## Reproduction
-
-The smallest sequence of commands that reproduces the defect:
-
-```bash
-git clone …
-specgit init …
-specgit issue …
-specgit pr --status --json
-```
-
-## Notes
-
-Did you check [Native reference](https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md)
-for the code first? What did it suggest, and why didn't it fix it?
+Do not include credentials, private source or personal data. Report security
+vulnerabilities through [private vulnerability reporting](https://github.com/LeXwDeX/SpecGit/security/advisories/new).

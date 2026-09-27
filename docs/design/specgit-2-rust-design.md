@@ -1,10 +1,13 @@
-> **Historical design/evidence.** npm wrapper and registry distribution described below have been retired. Current distribution uses native [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest) only.
+> **Historical archive — not current operating instructions.** This document
+> preserves its dated design or qualification snapshot. Its commands, npm packaging,
+> runner policy, authorization and pending/completed statements apply only to that
+> snapshot; they do not authorize or qualify current work. Current behavior is in
+> the [native reference](../../runtime/REFERENCE.md), [CI scope](../ci-scope.md),
+> [installation](../installation.md) and [release procedure](../../runtime/distribution/README.md).
 
 # SpecGit 2.0 轻量级 Rust 设计
 
-> **2026-09-10 正式发行更新：** 用户已明确授权从 `main` 发布稳定版 `v2.0.0`，并要求 Action 构建 macOS、Linux、Windows 三个版本。本次已选目标为 macOS arm64、Linux x64 glibc、Windows x64；不是五架构。原先“不合并、不发布、保持草稿”的阶段限制由后续发布授权取代，实际合并/发布仍由总管完成适用验收后统一执行。源码可见性、自有 runner 和不削弱检查的约束继续有效。
->
-> 本文中的早期候选状态、路径和未完成记录属于设计整理时的历史快照，不是当前发行完成声明。以下轻量级职责边界、318 条历史处置及 CLI 可选原则继续有效。实际发行入口与恢复步骤见 [原生分发说明](../../runtime/distribution/README.md)，现有工程门槛继续使用保留的开发工具；公开 npm 包只来自 Rust 分发目录。
+> **2026-09-10 发行阶段记录（已归档）：** 当时选定三个原生目标，并记录了阶段授权。该授权及当时 npm、自有 runner、源码可见性等安排不是当前操作要求；以本文顶部所链当前指南为准。
 
 状态：2026-09-10 的实现目标，关联 [#537](https://github.com/LeXwDeX/SpecGit/issues/537)。这是设计与交接文档，不代表这些行为已经发布或验收通过。
 

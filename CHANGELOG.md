@@ -1,3 +1,29 @@
+# Changelog
+
+Entries describe their named versions. Historical commands, packaging and runner
+choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
+and [release procedure](runtime/distribution/README.md).
+
+# 2.2.1
+
+- Reconcile AGENTS, terminology, installation, command examples and release guidance with the native 2.2 contract.
+- Keep generated project guidance visible under repository review; distinguish it from the excluded local declaration and global host assets.
+- Bring all 17 English/Chinese Wiki pages under repository review, including existing-project upgrades; remove unsupported manual host-hook installation advice.
+- Mark historical plans and evidence as dated archives, disambiguate the later F43 addendum, and check documentation links, anchors and version references.
+
+# 2.2.0
+
+- Preserve adopted Issue snapshots and validate deletion/type-change edits against checkpoints.
+- Serialize same-project Issue creation on the same host/user data root and recheck repository/declaration identity before writes.
+- Reject unconditional existing PR/MR body replacement; retain previews and native editing recovery.
+- Revalidate observation snapshots; distinguish replacement GitHub workflow runs and validate GitLab merged-results pipeline ancestry.
+- Deliver actionable asynchronous check notices without losing resumable subscriptions.
+- Exclude only the local declaration so one worktree cannot hide another worktree's guidance.
+- Validate source and installed native regressions on standard GitHub-hosted Linux, macOS ARM64 and Windows runners.
+
+Implementation and acceptance: [PR #643](https://github.com/LeXwDeX/SpecGit/pull/643),
+[2.2 audit ledger](docs/release-2.2.md).
+
 # 2.1.2
 
 - Report typed initialization checks, project-specific requirements, scoped diagnostics and independent availability layers.
@@ -42,6 +68,17 @@
 - Make delivery actions independently reviewable with existing authorization, exact targets and verification context in the installed Agent skill.
 - Distinguish deployment from cross-environment credential authorization; preserve explicit approval rejections and continue independent authorized work.
 - Clarify that disabling platform auto-merge does not revoke authorized Agent delivery. Approval outcomes remain controlled by the host.
+
+# 2.0.1
+
+- Move public distribution to signed native ZIPs on GitHub Releases and retire npm packaging and the v1 runtime.
+- Maintain a Git-local exclusion block for configuration and wholly generated guidance (the guidance exclusion is superseded in 2.2.0).
+- Align English/Chinese guidance with specification selection, draft/ready requests and native completion evidence.
+- Record migrated guidance ownership; preserve edited content and permit receipt-free upgrades only for pristine 2.0.0 templates.
+
+Sources: [Release 2.0.1](https://github.com/LeXwDeX/SpecGit/releases/tag/v2.0.1),
+[distribution PR #566](https://github.com/LeXwDeX/SpecGit/pull/566),
+[guidance PR #576](https://github.com/LeXwDeX/SpecGit/pull/576).
 
 # 2.0.0
 
