@@ -1,3 +1,12 @@
+# 2.1.2
+
+- Report typed initialization checks, project-specific requirements, scoped diagnostics and independent availability layers.
+- Preserve initialization failure evidence; distinguish verified native identity from local context and failed request reads from confirmed absence.
+- Keep independent same-named GitHub check suites separate while selecting the latest retry within each suite.
+- Allow direct Issue lifecycle commands to establish their first checkpoint without a PreToolUse deadlock.
+- Recognize supported GitHub-managed dynamic workflows during v1 migration and improve workflow-read failure diagnostics.
+- Remove retired v1 documentation and cover asset crash recovery and cross-platform initialization failures.
+
 # 2.1.1
 
 - Apply configured polling, wait budgets and notification filters consistently across watch, inbox and Hook delivery.
