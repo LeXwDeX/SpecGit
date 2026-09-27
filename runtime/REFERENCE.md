@@ -167,6 +167,11 @@ nor request write access or merge eligibility. Unknown facts only affect the
 operation that depends on them; target-protection uncertainty is a warning
 because init has no declared
 policy making that check mandatory.
+When initialization reaches the native probe stage but cannot read the selected
+CLI, project, default branch or current request, the failure report keeps this
+same typed check list and the facts collected before the failure. Failures before
+the repository context can be resolved remain diagnostic-only because no scoped
+native facts exist.
 
 `evidence.availability` reports three ordered, independent layers:
 `specification_development`, `protected_delivery` and `delivery_completion`.
@@ -293,11 +298,12 @@ is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
 
 For GitHub, the complete current-head check-run pages are validated before
-selecting the highest native run ID for each `(app ID, check name)` context.
-Older attempts on the same head do not determine `pr --status`, `watch` or
-`inbox` outcomes; distinct Apps with the same check name remain separate.
-Incomplete pages, repeated IDs and mismatched heads remain unavailable evidence.
-The native check-run ID lets an operator inspect a superseded attempt on GitHub.
+selecting the highest native run ID for each `(app ID, check name, check suite)`
+context. Older attempts in one suite do not determine `pr --status`, `watch` or
+`inbox` outcomes. Same-named jobs from different Apps or suites remain separate,
+because the forge treats those as independent or ambiguous checks. Incomplete
+pages, repeated IDs and mismatched heads remain unavailable evidence. The native
+check-run ID lets an operator inspect a superseded attempt on GitHub.
 
 With an explicit `--request`, `pr --status` reads the exact request from the
 configured repository even on another branch, detached HEAD, or after its source
