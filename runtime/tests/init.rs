@@ -103,6 +103,9 @@ impl Fixture {
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
+        self.run_raw_with_paths(args, paths)
+    }
+    fn run_raw_with_paths(&self, args: &[&str], paths: Vec<PathBuf>) -> Value {
         let out = executable::command()
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())
@@ -115,6 +118,11 @@ impl Fixture {
             .unwrap_or_else(|_| panic!("stdout={:?}, stderr={:?}", out.stdout, out.stderr));
         assert_eq!(v["exit"].as_i64(), out.status.code().map(i64::from));
         v
+    }
+    fn run_without_forge_cli(&self, args: &[&str]) -> Value {
+        let git = specgit::process::resolve_executable("git").unwrap();
+        let git_dir = git.parent().unwrap().to_owned();
+        self.run_raw_with_paths(args, vec![self.bin.clone(), git_dir])
     }
     fn run_human(&self, args: &[&str]) -> Value {
         let mut paths = vec![self.bin.clone()];
@@ -270,6 +278,37 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
             .count(),
         0,
         "inspection must not probe native write permissions"
+    );
+}
+
+#[test]
+fn init_keeps_structured_diagnostics_when_native_cli_is_missing() {
+    let f = Fixture::new();
+    fs::remove_file(f.bin.join("gh")).unwrap();
+
+    let report = f.run_without_forge_cli(&["init", "--provider", "github"]);
+    assert_report_matches_schema(&report);
+    assert_eq!(report["exit"], 3);
+    assert_eq!(report["evidence"]["written"], false);
+    assert_eq!(
+        report["evidence"]["context"]["repository"]["path"],
+        "fixture/repo"
+    );
+    assert_eq!(report["evidence"]["checks"].as_array().unwrap().len(), 10);
+    let cli = report["evidence"]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "forge.cli")
+        .unwrap();
+    assert_eq!(cli["status"], "failed");
+    assert_eq!(cli["presentation"], "blocking");
+    assert_eq!(
+        report["evidence"]["availability"]["layers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
     );
 }
 
