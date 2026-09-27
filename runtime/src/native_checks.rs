@@ -163,6 +163,7 @@ pub async fn github(
                 name,
                 source: "check".into(),
                 head: head.into(),
+                tested_head: head.into(),
                 id: number(&row, "id")?,
                 app: Some(app),
                 workflow: None,
@@ -199,6 +200,7 @@ pub async fn github(
                 name,
                 source: "status".into(),
                 head: head.into(),
+                tested_head: head.into(),
                 id,
                 app: None,
                 workflow: None,
@@ -251,7 +253,8 @@ pub async fn gitlab(
     if pointer.is_null() {
         return Ok(vec![]);
     }
-    if text(pointer, "sha")? != head {
+    let tested = text(pointer, "sha")?;
+    if !crate::project::valid_oid(tested) {
         return Err(malformed());
     }
     let project = number(pointer, "project_id")?;
@@ -266,15 +269,46 @@ pub async fn gitlab(
         .await?;
     if number(&value, "id")? != pipeline
         || number(&value, "project_id")? != project
-        || text(&value, "sha")? != head
+        || text(&value, "sha")? != tested
     {
         return Err(malformed());
+    }
+    if tested != head {
+        let iid = number(request, "iid")?;
+        if text(&value, "source")? != "merge_request_event"
+            || text(&value, "ref")? != format!("refs/merge-requests/{iid}/merge")
+        {
+            return Err(malformed());
+        }
+        let commit = reader
+            .get(&format!("projects/{project}/repository/commits/{tested}"))
+            .await?;
+        let target_project = number(request, "target_project_id")?;
+        let branch = text(request, "target_branch")?;
+        let branch: String = url::form_urlencoded::byte_serialize(branch.as_bytes()).collect();
+        let target = reader
+            .get(&format!(
+                "projects/{target_project}/repository/branches/{branch}"
+            ))
+            .await?;
+        let target_head = text(&target["commit"], "id")?;
+        let parents = commit["parent_ids"].as_array().ok_or_else(malformed)?;
+        if text(&commit, "id")? != tested
+            || !crate::project::valid_oid(target_head)
+            || parents.len() != 2
+            || head == target_head
+            || !parents.iter().any(|p| p.as_str() == Some(head))
+            || !parents.iter().any(|p| p.as_str() == Some(target_head))
+        {
+            return Err(malformed());
+        }
     }
     let (status, conclusion) = gitlab_result(text(&value, "status")?)?;
     Ok(vec![Check {
         name: "pipeline".into(),
         source: "pipeline".into(),
         head: head.into(),
+        tested_head: tested.into(),
         id: pipeline,
         app: None,
         workflow: None,

@@ -35,6 +35,7 @@ fn evidence() -> Evidence {
             name: "Build".into(),
             source: "check_run".into(),
             head: "a".repeat(40),
+            tested_head: "a".repeat(40),
             id: 3,
             app: Some(8),
             workflow: Some(4),

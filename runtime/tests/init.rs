@@ -1380,9 +1380,18 @@ fn local_exclusions_are_idempotent_and_preserve_user_rules() {
     assert_eq!(first["exit"], 0, "{first}");
     let bytes = fs::read(&exclude).unwrap();
     assert!(bytes.starts_with(original));
-    for name in [".specgit.yaml", "AGENTS.md", "CLAUDE.md"] {
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["check-ignore", ".specgit.yaml"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    for name in ["AGENTS.md", "CLAUDE.md"] {
         assert!(
-            Command::new("git")
+            !Command::new("git")
                 .current_dir(&f.root)
                 .args(["check-ignore", name])
                 .output()

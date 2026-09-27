@@ -256,20 +256,6 @@ pub(crate) async fn has_changes(
     }
     Ok(!files.is_empty())
 }
-pub(crate) async fn update_request_body(
-    writer: &WriteTransport,
-    number: u64,
-    body: &str,
-) -> Result<(), Diagnostic> {
-    writer
-        .write(
-            "PATCH",
-            &request_route(&writer.repo, number),
-            json!({"body":body}),
-        )
-        .await?;
-    Ok(())
-}
 pub(crate) async fn add_request_labels(
     writer: &WriteTransport,
     number: u64,
