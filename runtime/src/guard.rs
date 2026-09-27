@@ -264,15 +264,7 @@ fn checkpoint_valid(
 ) -> Result<selection::Selection, Diagnostic> {
     let selected = selection::read(context)?
         .ok_or_else(|| rejected("No Issue checkpoint is selected for this project and branch."))?;
-    if selected.issues.is_empty()
-        || !selected.issues.iter().all(|issue| {
-            selected
-                .intents
-                .iter()
-                .any(|intent| intent.issue == Some(*issue))
-        })
-        || target.is_some_and(|target| target != selected.target)
-    {
+    if !selected.checkpoint_valid(target) {
         return Err(rejected(
             "The selected checkpoint is incomplete or targets another delivery branch.",
         ));
@@ -363,19 +355,9 @@ pub async fn check(
         return Ok(());
     }
     if matches!(stage, Stage::PreCommit)
-        && project::git(
-            process,
-            &root,
-            &[
-                "diff",
-                "--cached",
-                "--name-only",
-                "-z",
-                "--diff-filter=ACMR",
-            ],
-        )
-        .await?
-        .is_empty()
+        && project::git(process, &root, &["diff", "--cached", "--name-only", "-z"])
+            .await?
+            .is_empty()
     {
         return Ok(());
     }

@@ -240,7 +240,7 @@ fn native_latest_pending_check_is_not_replaced_by_old_actions_green() {
             .unwrap()
             .iter()
             .filter_map(|c| c["endpoint"].as_str())
-            .all(|route| !route.contains("/actions/"))
+            .all(|route| !route.contains("/actions/") || route.contains("/actions/runs?head_sha="))
     );
     assert_eq!(f.writes(), writes);
 }
@@ -825,4 +825,112 @@ fn malformed_body_references_keep_native_observation_evidence_and_diagnostics() 
             assert_eq!(f.writes(), writes);
         }
     }
+}
+
+fn replacement_workflow(
+    f: &delivery::Fixture,
+    context: Option<(&str, Value)>,
+    with_checks: bool,
+    running: bool,
+) {
+    f.edit(|s| {
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/actions/runs?head_sha=") {
+                let mut next = value["workflow_runs"][0].clone();
+                next["id"] = json!(72);
+                next["check_suite_id"] = json!(102);
+                if let Some((field, replacement)) = &context {
+                    next[*field] = replacement.clone();
+                }
+                if running {
+                    next["status"] = json!("in_progress");
+                    next["conclusion"] = Value::Null;
+                }
+                value["workflow_runs"][0]["conclusion"] = json!("cancelled");
+                value["workflow_runs"].as_array_mut().unwrap().push(next);
+                value["total_count"] = json!(2);
+            } else if route.contains("/check-runs?filter=latest") {
+                let mut next = value["check_runs"][0].clone();
+                next["id"] = json!(82);
+                next["check_suite"]["id"] = json!(102);
+                value["check_runs"][0]["conclusion"] = json!("failure");
+                if with_checks {
+                    value["check_runs"].as_array_mut().unwrap().push(next);
+                    value["total_count"] = json!(2);
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn github_superseded_workflow_suite_cannot_poison_current_results() {
+    let f = fixture("github");
+    replacement_workflow(&f, None, true, false);
+    let r = f.run(&["pr", "--status"]);
+    assert_eq!(r["exit"], 0, "{r}");
+    let checks = r["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1, "{r}");
+    assert_eq!(checks[0]["id"], 82);
+    assert_eq!(checks[0]["conclusion"], "success");
+}
+
+#[test]
+fn github_workflow_supersession_preserves_independent_contexts() {
+    for context in [
+        ("workflow_id", json!(2)),
+        ("event", json!("push")),
+        ("head_branch", json!("another-feature")),
+        ("pull_requests", json!([{ "number": 42 }])),
+    ] {
+        let f = fixture("github");
+        replacement_workflow(&f, Some(context), true, false);
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 0, "{r}");
+        let checks = r["evidence"]["checks"].as_array().unwrap();
+        assert!(
+            checks
+                .iter()
+                .any(|c| c["id"] == 81 && c["conclusion"] == "failure"),
+            "{r}"
+        );
+        assert!(checks.iter().any(|c| c["id"] == 82), "{r}");
+    }
+}
+
+#[test]
+fn github_running_replacement_cannot_reuse_old_success() {
+    for with_checks in [false, true] {
+        let f = fixture("github");
+        replacement_workflow(&f, None, with_checks, true);
+        let r = f.run(&["pr", "--status"]);
+        if with_checks {
+            assert_eq!(r["exit"], 0, "{r}");
+            assert!(
+                r["evidence"]["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["source"] == "workflow" && c["status"] == "in_progress"),
+                "{r}"
+            );
+        } else {
+            assert_eq!(r["exit"], 3, "{r}");
+            assert!(r["evidence"]["checks"].is_null(), "{r}");
+        }
+    }
+}
+
+#[test]
+fn github_missing_workflow_identity_is_unknown_instead_of_old_green() {
+    let f = fixture("github");
+    f.edit(|s| {
+        s["read_routes"]
+            .as_object_mut()
+            .unwrap()
+            .retain(|route, _| !route.contains("/actions/runs?head_sha="));
+    });
+    let r = f.run(&["pr", "--status"]);
+    assert_eq!(r["exit"], 3, "{r}");
+    assert!(r["evidence"]["checks"].is_null(), "{r}");
 }

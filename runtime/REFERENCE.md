@@ -123,7 +123,7 @@ commands use the global input/output contract above.
 | `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` register Claude hooks. `--register-codex` registers Codex hooks and installs its native skill and managed global instructions. `--register-opencode` installs OpenCode guidance and skill until that host exposes the same blocking protocol. `--codex-root` / `--opencode-root` select explicit host configuration directories. Existing registered roots persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes only registrations owned by the selected setup root. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
-| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready`, `--update-body` or `--update-references` preserves deliberate associations. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
+| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. |
 | `hook` | Codex/Claude event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. |
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
@@ -392,8 +392,8 @@ Installation does not authorize publication or native administration.
 ### Local generated files
 
 `init` and v2 migration maintain one owned block in Git's local `info/exclude`
-(resolved by Git, including linked worktrees). It excludes `.specgit.yaml` and
-wholly generated `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
+(resolved by Git, including linked worktrees). It excludes only `.specgit.yaml`. Guidance remains visible because one worktree
+cannot establish ownership of another worktree's `AGENTS.md` / `CLAUDE.md`. Repeated initialization refreshes
 the block without duplication and preserves surrounding user rules. Preview
 and rollback include this file. Damaged or duplicated markers require reconciliation.
 
@@ -403,3 +403,44 @@ index. Review and explicitly untrack whole generated files with `git rm --cached
 when authorized; keep local copies. Preserve manually maintained guidance and
 omit generated hunks from commits. Global `setup` assets live under the selected
 host/install roots, outside the project by default; do not commit them either.
+
+
+### 2.2 consistency boundaries
+
+Adopted specifications are saved independently of native creation intents. Guard
+and Agent edit hooks accept both validated adoption and resolved creation records.
+Older adoption-only checkpoints must be selected once again to obtain the native
+snapshot. Deletion and type-change commits also require a checkpoint.
+
+Issue creation is serialized per native project for the same OS user and host,
+using the shared SpecGit data root. The lock covers candidate reads through
+creation/readback; independent configured data roots and other hosts are outside
+this guarantee. Native search can also lag server writes. If duplicate specs appear,
+inspect their WHYs and select one exact native ID; reconcile duplicate Issues on
+the platform within existing authorization. There is no distributed uniqueness
+claim. Worktree, declaration and project identity are rechecked before writes.
+
+Existing PR/MR bodies are never automatically overwritten by 2.2 adapters.
+`pr --update-body --body-file <file> --dry-run` and
+`pr --update-references --dry-run` retain previews with all parsed closing references.
+A differing body without dry-run returns `unsupported_operation` before mutations.
+Review and edit the current body on the native platform, then refresh `pr --status`.
+Creation and draft-to-ready operations remain available.
+
+Current-head checks are reread at the observation boundary; changed execution
+identities or results invalidate the observation. Every result remains a dated
+snapshot, not a promise about future reruns. GitHub observations also read the
+bounded native workflow-run list for this head (Actions read access is required).
+Only suites superseded within the same workflow, event, branch and associated PR
+set are discarded. Independent check suites remain distinct. A replacement with
+no visible checks is unknown, and a running workflow cannot inherit old success.
+Unavailable or incomplete run identities never fall back to old green checks.
+This reads execution identities, not workflow jobs or dependency graphs.
+Async hooks deliver actionable check
+results before lifecycle completion and preserve the subscription for resumption.
+
+GitLab merged-results pipelines retain both `head` (source) and `tested_head`.
+A differing tested SHA must be the MR's head pipeline on its merge ref, and the
+native commit must have exactly the current source and target commits as parents.
+Unknown ancestry, stale source/target results and merge-train ancestry that cannot
+meet this proof are rejected; no SHA comparison is simply disabled.

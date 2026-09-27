@@ -1,7 +1,7 @@
 //! Delivery operations dispatch to concrete native protocols; observers receive only ForgeRead.
 pub use crate::delivery_model::{Issue, PullRequest};
 use crate::{
-    diagnostic::Diagnostic,
+    diagnostic::{Code, Diagnostic},
     forge::{github, gitlab, protocol::WriteTransport},
     probe::ForgeRead,
     process::Process,
@@ -108,11 +108,13 @@ impl RequestWrite {
             provider: repo.provider,
         })
     }
-    pub async fn update_request_body(&self, number: u64, body: &str) -> Result<(), Diagnostic> {
-        match self.provider {
-            Provider::Github => github::update_request_body(&self.transport, number, body).await,
-            Provider::Gitlab => gitlab::update_request_body(&self.transport, number, body).await,
-        }
+    pub async fn update_request_body(&self, _number: u64, _body: &str) -> Result<(), Diagnostic> {
+        Err(Diagnostic::new(
+            Code::UnsupportedOperation,
+            "update_request_body",
+            "Native adapters do not provide atomic conditional body updates.",
+            "Preview the complete body and edit on the native platform with conflict review.",
+        ))
     }
     pub async fn add_request_labels(
         &self,

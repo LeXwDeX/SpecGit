@@ -420,6 +420,11 @@ async fn execute(
         return Err(changed());
     }
     w.unchanged().await?;
+    if let Some(checks) = &evidence.checks
+        && forge::checks(&w.reader, repo, &observed).await? != *checks
+    {
+        return Err(changed());
+    }
     let mut result = describe(evidence);
     result.diagnostics = diagnostics;
     Ok(result)

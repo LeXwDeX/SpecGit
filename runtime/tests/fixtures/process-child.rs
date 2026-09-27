@@ -417,6 +417,41 @@ fn native_api(args: &[String], path: &std::path::Path) {
         .as_array_mut()
         .unwrap()
         .push(json!({"method":method,"endpoint":endpoint,"body":input}));
+    if method == "GET" && (endpoint.starts_with("search/issues?") || endpoint.contains("/issues?"))
+    {
+        if state["edit_declaration_on_search"].as_bool() == Some(true) {
+            state
+                .as_object_mut()
+                .unwrap()
+                .remove("edit_declaration_on_search");
+            std::fs::write(
+                ".specgit.yaml",
+                "version: 2\nremote: origin\ntarget: changed-target\n",
+            )
+            .unwrap();
+        }
+        if let Some(branch) = state["switch_branch_on_search"].as_str().map(str::to_owned) {
+            state
+                .as_object_mut()
+                .unwrap()
+                .remove("switch_branch_on_search");
+            assert!(
+                std::process::Command::new("git")
+                    .args(["switch", "-c", &branch])
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+    }
+    if method == "POST"
+        && endpoint.ends_with("/issues")
+        && let Some(ms) = state["create_issue_delay_ms"].as_u64()
+    {
+        snapshot::write(path, &state);
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
     // glab --input forwards raw bytes without adding a JSON media type.
     // The real GitLab API rejects these writes with HTTP 415 before parsing.
     if method != "GET"
@@ -457,6 +492,14 @@ fn native_api(args: &[String], path: &std::path::Path) {
     if state["deny"].as_bool() == Some(true) {
         eprintln!("HTTP 403");
         std::process::exit(1);
+    }
+    if method == "GET" && state["after_read"]["endpoint"].as_str() == Some(endpoint) {
+        let old = state["read_routes"][endpoint].clone();
+        state["read_routes"][endpoint] = state["after_read"]["replacement"].clone();
+        state.as_object_mut().unwrap().remove("after_read");
+        snapshot::write(path, &state);
+        println!("{old}");
+        return;
     }
     if method == "GET" {
         if let Some(value) = state.get("read_routes").and_then(|r| r.get(endpoint)) {
