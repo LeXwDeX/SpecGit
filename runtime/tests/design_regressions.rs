@@ -18,7 +18,11 @@ fn git(root: &Path, args: &[&str]) -> String {
         .args(args)
         .output()
         .unwrap();
-    assert!(out.status.success(), "git {args:?}: {:?}", out.stderr);
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap().trim().into()
 }
 
@@ -172,10 +176,7 @@ fn shared_exclusion_does_not_hide_another_worktrees_manual_guidance() {
         let f = delivery::Fixture::new("github");
         fs::write(f.root.join("AGENTS.md"), "# Manual team policy\n").unwrap();
         let linked = f.root.parent().unwrap().join("linked");
-        git(
-            &f.root,
-            &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
-        );
+        git(&f.root, &["worktree", "add", "-b", "linked", "../linked"]);
         let init_linked = || {
             let out = f
                 .command(&["init", "--manual-observe"])
