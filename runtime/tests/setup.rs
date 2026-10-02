@@ -449,3 +449,151 @@ fn dry_run_can_preview_while_another_operation_holds_the_asset_lock() {
     options.dry_run = true;
     assert_eq!(setup::install(&options, &source).unwrap()["written"], false);
 }
+
+#[test]
+fn cross_host_conflicts_name_recorded_assets_without_dry_run_writes() {
+    for (host, asset) in [
+        ("codex", "skills/specgit-native/SKILL.md"),
+        ("codex", "AGENTS.md"),
+        ("opencode", "skills/specgit-native/SKILL.md"),
+        ("opencode", "AGENTS.md"),
+        ("claude", "skills/specgit-native/SKILL.md"),
+    ] {
+        for missing in [true, false] {
+            let (temp, mut options, source) = fixture();
+            let recorded = temp.path().canonicalize().unwrap().join(host);
+            if host != "claude" {
+                options.claude_settings = None;
+                options.host_roots.insert(host.into(), recorded.clone());
+            }
+            setup::install(&options, &source).unwrap();
+            let path = recorded.join(asset);
+            if missing {
+                fs::remove_file(&path).unwrap();
+            } else {
+                fs::write(&path, "private edited content").unwrap();
+            }
+            options.host_roots.clear();
+            let selected = if host == "opencode" {
+                "codex"
+            } else {
+                "opencode"
+            };
+            let opencode = temp.path().canonicalize().unwrap().join(selected);
+            options.host_roots.insert(selected.into(), opencode.clone());
+            options.dry_run = true;
+            let before = files(temp.path());
+            let error = setup::install(&options, &source).unwrap_err();
+            assert_eq!(error.code, Code::OwnershipConflict);
+            assert_eq!(error.exit(), 3);
+            assert!(error.message.contains(host), "{error}");
+            assert!(
+                error
+                    .message
+                    .contains(&serde_json::to_string(&path).unwrap()),
+                "{error}"
+            );
+            assert!(!error.message.contains("private edited content"));
+            assert!(error.remedy.contains("Restore"));
+            assert!(error.remedy.contains("uninstall"));
+            assert_eq!(files(temp.path()), before);
+            assert!(!opencode.exists());
+        }
+    }
+}
+
+#[test]
+fn hook_conflicts_name_host_settings_and_event_without_private_arguments() {
+    for host in ["claude", "codex"] {
+        for fault in ["missing event", "edited", "duplicated"] {
+            let (temp, mut options, source) = fixture();
+            let settings = if host == "codex" {
+                options.claude_settings = None;
+                let root = temp.path().canonicalize().unwrap().join("codex");
+                options.host_roots.insert(host.into(), root.clone());
+                root.join("hooks.json")
+            } else {
+                options.claude_settings.clone().unwrap()
+            };
+            setup::install(&options, &source).unwrap();
+            let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+            let event = "SessionStart";
+            match fault {
+                "missing event" => {
+                    value["hooks"].as_object_mut().unwrap().remove(event);
+                }
+                "edited" => {
+                    value["hooks"][event][0]["hooks"][0]["command"] = json!("private-hook-command");
+                }
+                _ => {
+                    let entry = value["hooks"][event][0].clone();
+                    value["hooks"][event].as_array_mut().unwrap().push(entry);
+                }
+            }
+            fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+            options.host_roots.clear();
+            options.dry_run = true;
+            let before = files(temp.path());
+            let error = setup::install(&options, &source).unwrap_err();
+            assert_eq!(error.code, Code::OwnershipConflict);
+            assert!(error.message.contains(host), "{error}");
+            assert!(
+                error
+                    .message
+                    .contains(&serde_json::to_string(&settings).unwrap()),
+                "{error}"
+            );
+            assert!(error.message.contains(event), "{error}");
+            assert!(
+                error.message.contains(if fault == "duplicated" {
+                    "duplicated"
+                } else if fault == "edited" {
+                    "edited"
+                } else {
+                    "missing"
+                }),
+                "{error}"
+            );
+            assert!(!error.message.contains("private-hook-command"));
+            assert!(!error.message.contains("--state-root"));
+            assert!(!error.message.contains("versions/"));
+            assert_eq!(files(temp.path()), before);
+        }
+    }
+}
+
+#[test]
+fn cli_opencode_refresh_reports_codex_conflict_with_exit_three() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let run = |host: &str, dry_run: bool| {
+        let mut command = executable::command();
+        command
+            .current_dir(&root)
+            .env("PATH", &root)
+            .args(["setup", "--provider", "github", "--json", "--root"])
+            .arg(root.join("assets"))
+            .arg(format!("--register-{host}"))
+            .arg(format!("--{host}-root"))
+            .arg(root.join(host));
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    assert_eq!(run("codex", false)["status"], "installed");
+    let path = root.join("codex/skills/specgit-native/SKILL.md");
+    fs::remove_file(&path).unwrap();
+    let before = files(&root);
+    let rejected = run("opencode", true);
+    assert_eq!(rejected["ok"], false);
+    let diagnostic = &rejected["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "ownership_conflict");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.contains("codex"));
+    assert!(message.contains(&serde_json::to_string(&path).unwrap()));
+    assert_eq!(files(&root), before);
+    assert!(!root.join("opencode").exists());
+}

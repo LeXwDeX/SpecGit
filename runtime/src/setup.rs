@@ -77,7 +77,10 @@ fn host_changes(
     uninstall: bool,
 ) -> Result<(Vec<Change>, Option<HostRegistration>), Diagnostic> {
     if !["codex", "opencode"].contains(&host) || old.is_some_and(|r| r.root != root) {
-        return Err(conflict(
+        return Err(conflict_at(
+            host,
+            root,
+            None,
             "Uninstall the recorded host root before selecting another root.",
         ));
     }
@@ -88,13 +91,21 @@ fn host_changes(
             .bytes
             .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
     {
-        return Err(conflict(
+        return Err(conflict_at(
+            host,
+            &root.join("AGENTS.override.md"),
+            None,
             "A new Codex override shadows the registered instructions; reconcile the host guidance first.",
         ));
     }
     let instructions = if let Some(old) = old {
         if !["AGENTS.md", "AGENTS.override.md"].contains(&old.instructions.as_str()) {
-            return Err(conflict("The host instruction receipt is unsafe."));
+            return Err(conflict_at(
+                host,
+                root,
+                None,
+                "The host instruction receipt is unsafe.",
+            ));
         }
         old.instructions.clone()
     } else if host == "codex"
@@ -112,16 +123,31 @@ fn host_changes(
     )?;
     if let Some(old) = old {
         if skill.before.digest().as_ref() != Some(&old.skill_hash) {
-            return Err(conflict("The registered host skill was edited or removed."));
+            return Err(conflict_at(
+                host,
+                &skill.path,
+                None,
+                "The registered host skill was edited or removed.",
+            ));
         }
     } else if skill.before.bytes.is_some() || uninstall {
-        return Err(conflict(
+        return Err(conflict_at(
+            host,
+            &skill.path,
+            None,
             "The host skill is unowned; reconcile that existing installation first.",
         ));
     }
     let mut guidance = Change::new(root.join(&instructions), None)?;
     let before = std::str::from_utf8(guidance.before.bytes.as_deref().unwrap_or_default())
-        .map_err(|_| conflict("Host instructions must be UTF-8."))?;
+        .map_err(|_| {
+            conflict_at(
+                host,
+                &guidance.path,
+                None,
+                "Host instructions must be UTF-8.",
+            )
+        })?;
     let generated = format!(
         "{HOST_START}\n## SpecGit 2\n\nFor Issue and PR/MR delivery work, load the specgit-native skill and use the installed SpecGit 2 command contract (`specgit --help`, `specgit --schema`). Read the project's AGENTS.md and .specgit.yaml before changes. Before tracked product edits, inspect for duplicate work with `specgit issue --inspect` and select a complete relevant Issue. Read-only research and review need no delivery Issue. Follow repository guidance for pure documentation changes and any Issue checkpoint required by an installed host hook. Local init/setup is maintenance, not delivery. Existing session authorization remains valid within its scope; do not ask again merely because delivery advances. Declarations and `--dry-run` previews grant no permission. Native gh/glab Issue/PR writes require existing user authorization. If project guidance still requires retired v1 commands such as finish or bind, resolve the project migration before using the v2 workflow.\n{HOST_END}"
     );
@@ -132,7 +158,10 @@ fn host_changes(
             || !old.block.contains(HOST_END)
             || before.matches(&old.block).count() != 1
         {
-            return Err(conflict(
+            return Err(conflict_at(
+                host,
+                &guidance.path,
+                None,
                 "The managed host instruction block was edited or removed.",
             ));
         }
@@ -147,7 +176,10 @@ fn host_changes(
         )
     } else {
         if before.contains(HOST_START) || before.contains(HOST_END) {
-            return Err(conflict(
+            return Err(conflict_at(
+                host,
+                &guidance.path,
+                None,
                 "An unowned SpecGit instruction marker already exists.",
             ));
         }
@@ -204,6 +236,31 @@ fn conflict(message: &str) -> Diagnostic {
         "setup",
         message,
         "Preserve existing content and explicitly reconcile ownership before retrying.",
+    )
+}
+fn conflict_at(host: &str, path: &Path, event: Option<&str>, message: &str) -> Diagnostic {
+    // Quote and bound local identifiers; never render settings values or hook arguments.
+    let quote = |value: &str, limit| {
+        let mut bounded: String = value.chars().take(limit).collect();
+        if value.chars().count() > limit {
+            bounded.push_str("...[truncated]");
+        }
+        serde_json::to_string(&bounded).expect("strings are JSON serializable")
+    };
+    let context = format!(
+        "Host {host}, asset {}",
+        quote(&path.to_string_lossy(), 4096)
+    );
+    let context = if let Some(event) = event {
+        format!("{context}, event {}", quote(event, 64))
+    } else {
+        context
+    };
+    Diagnostic::new(
+        Code::OwnershipConflict,
+        "setup",
+        &format!("{context}: {message}"),
+        "Preserve user edits. Restore the exact recorded owned content before retrying; if the integration is stale, restore it first and explicitly uninstall it. Do not overwrite or adopt foreign content.",
     )
 }
 pub fn default_root() -> Result<PathBuf, Diagnostic> {
@@ -297,6 +354,7 @@ fn manifest(binary: &Path, root: &Path) -> BTreeMap<String, Value> {
 /// Merge/remove only exact recorded groups. Unknown top-level and hook fields
 /// remain values from the just-read settings; matching a name is not ownership.
 fn registration_change(
+    host: &str,
     path: &Path,
     old: Option<&Registration>,
     new: Option<&BTreeMap<String, Value>>,
@@ -308,22 +366,39 @@ fn registration_change(
     };
     let map = settings
         .as_object_mut()
-        .ok_or_else(|| conflict("Claude settings must be a JSON object."))?;
+        .ok_or_else(|| conflict_at(host, path, None, "Host settings must be a JSON object."))?;
     if let Some(old) = old {
         if old.settings != path {
-            return Err(conflict(
+            return Err(conflict_at(
+                host,
+                &old.settings,
+                None,
                 "Registration targets another settings path; uninstall it explicitly first.",
             ));
         }
         let hooks = map
             .get_mut("hooks")
             .and_then(Value::as_object_mut)
-            .ok_or_else(|| conflict("Recorded host hooks were removed or changed."))?;
+            .ok_or_else(|| {
+                conflict_at(
+                    host,
+                    path,
+                    None,
+                    "Recorded host hooks were removed or changed.",
+                )
+            })?;
         for (event, entry) in &old.entries {
             let array = hooks
                 .get_mut(event)
                 .and_then(Value::as_array_mut)
-                .ok_or_else(|| conflict("Recorded host event is missing."))?;
+                .ok_or_else(|| {
+                    conflict_at(
+                        host,
+                        path,
+                        Some(event),
+                        "Recorded host event is missing or is not an array.",
+                    )
+                })?;
             let positions: Vec<_> = array
                 .iter()
                 .enumerate()
@@ -331,8 +406,15 @@ fn registration_change(
                 .map(|(i, _)| i)
                 .collect();
             if positions.len() != 1 {
-                return Err(conflict(
-                    "Owned host registration is edited, missing, or duplicated.",
+                return Err(conflict_at(
+                    host,
+                    path,
+                    Some(event),
+                    if positions.is_empty() {
+                        "Owned host registration was edited or removed."
+                    } else {
+                        "Owned host registration is duplicated."
+                    },
                 ));
             }
             if let Some(replacement) = new.and_then(|entries| entries.get(event)) {
@@ -353,7 +435,7 @@ fn registration_change(
             .entry("hooks")
             .or_insert_with(|| json!({}))
             .as_object_mut()
-            .ok_or_else(|| conflict("Claude hooks is not an object."))?;
+            .ok_or_else(|| conflict_at(host, path, None, "Host hooks is not an object."))?;
         for (event, entry) in new {
             if old.is_some_and(|old| old.entries.contains_key(event)) {
                 continue;
@@ -362,9 +444,14 @@ fn registration_change(
                 .entry(event)
                 .or_insert_with(|| json!([]))
                 .as_array_mut()
-                .ok_or_else(|| conflict("Claude hook event is not an array."))?;
+                .ok_or_else(|| {
+                    conflict_at(host, path, Some(event), "Host hook event is not an array.")
+                })?;
             if array.contains(entry) {
-                return Err(conflict(
+                return Err(conflict_at(
+                    host,
+                    path,
+                    Some(event),
                     "An identical unowned host hook already exists; explicit adoption is required.",
                 ));
             }
@@ -422,8 +509,13 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         .map(|(host, registration)| (host.clone(), registration.root.clone()))
         .collect();
     for (host, root) in &options.host_roots {
-        if selected_hosts.get(host).is_some_and(|old| old != root) {
-            return Err(conflict(
+        if let Some(old) = selected_hosts.get(host)
+            && old != root
+        {
+            return Err(conflict_at(
+                host,
+                old,
+                None,
                 "Uninstall the recorded host root before selecting another root.",
             ));
         }
@@ -527,7 +619,12 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
             .as_ref()
             .and_then(|r| r.skill.as_ref());
         if prior_skill.is_some_and(|s| s.path != host_skill_path) {
-            return Err(conflict("Recorded host skill has an unexpected path."));
+            return Err(conflict_at(
+                "claude",
+                &host_skill_path,
+                None,
+                "Recorded host skill has an unexpected path.",
+            ));
         }
         let host_skill = Change::new(
             host_skill_path.clone(),
@@ -539,18 +636,28 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         )?;
         if let Some(old) = prior_skill {
             if host_skill.before.digest().as_ref() != Some(&old.hash) {
-                return Err(conflict(
+                return Err(conflict_at(
+                    "claude",
+                    &host_skill.path,
+                    None,
                     "The owned native host skill was edited or removed.",
                 ));
             }
         } else if host_skill.before.bytes.is_some() {
-            return Err(conflict(
+            return Err(conflict_at(
+                "claude",
+                &host_skill.path,
+                None,
                 "The native host skill path is already owned by another installation.",
             ));
         }
         changes.push(host_skill);
-        let change =
-            registration_change(settings, previous.registration.as_ref(), entries.as_ref())?;
+        let change = registration_change(
+            "claude",
+            settings,
+            previous.registration.as_ref(),
+            entries.as_ref(),
+        )?;
         if let Some(entries) = &entries {
             let mut registration = if let Some(old) = &previous.registration {
                 old.clone()
@@ -591,7 +698,8 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         if host == "codex" {
             let hooks_path = root.join("hooks.json");
             let previous_hooks = previous.host_hooks.get(host);
-            let hook_change = registration_change(&hooks_path, previous_hooks, entries.as_ref())?;
+            let hook_change =
+                registration_change(host, &hooks_path, previous_hooks, entries.as_ref())?;
             if let Some(entries) = &entries {
                 let mut registration = if let Some(old) = previous_hooks {
                     old.clone()
@@ -742,5 +850,23 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
             report
         }
         Err(d) => Report::failure("setup", d),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflict_context_is_bounded_and_escaped() {
+        let path = format!("/local/\n{}", "p".repeat(5000));
+        let event = format!("\n{}", "e".repeat(100));
+        let diagnostic = conflict_at("codex", Path::new(&path), Some(&event), "Missing asset.");
+        assert_eq!(diagnostic.code, Code::OwnershipConflict);
+        assert_eq!(diagnostic.exit(), 3);
+        assert!(diagnostic.message.contains("\\n"));
+        assert!(!diagnostic.message.contains('\n'));
+        assert_eq!(diagnostic.message.matches("...[truncated]").count(), 2);
+        assert!(diagnostic.message.len() < 4300);
     }
 }
