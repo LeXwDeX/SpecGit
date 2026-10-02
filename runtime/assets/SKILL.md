@@ -25,6 +25,16 @@ repository's documentation route for pure documentation work, including any
 Issue checkpoint required by an installed host hook. Local `init` and `setup` are
 maintenance, not delivery; they do not create an Issue or authorize forge writes.
 
+Try normal SpecGit inspect/dry-run first. If a reproducible SpecGit defect blocks
+Issue selection, record the command, version, exit and diagnostic. Under existing
+user authorization, use authenticated native gh/glab to search duplicate WHYs,
+create or adopt a complete Issue with Why / Scope / Approach / Acceptance, and
+read back its native ID and body. Resume SpecGit with that exact native ID when
+possible. Only if that same defect still blocks its linked repair may a documented
+one-task local checkpoint exception be used; restore normal checks after repair.
+This does not bypass user authorization, forge protection, CI, review, merge,
+Issue closure or publication, and never permits global guard disablement.
+
 After implementation and authorized commit/push, aggregate the selected Issues
 with `pr`; creation requires real pushed changes and produces a draft. Preserve
 user-authored bodies and every closing reference. Existing-body and reference update options are preview-only when content differs:
