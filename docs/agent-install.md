@@ -138,33 +138,87 @@ reported state. Do not create a test Issue or PR to demonstrate installation.
 ## 4. Register the active agent
 
 Select the host running this task; multiple installed host directories do not mean
-the user wants all of them configured. Inspect `specgit setup --help` and preview
-with the same provider/API host chosen for the repository:
+the user wants all of them configured, and noninteractive operation never guesses
+a host. Inspect `specgit setup --help` and preview with the same provider/API host
+chosen for the repository, passing the host explicitly and repeatably through
+`--agent`:
 
-| Active host | Registration option |
+| Active host | Setup selection |
 | --- | --- |
-| Codex | `--register-codex` |
-| Claude Code | `--register-claude` |
-| OpenCode | `--register-opencode` |
+| Codex | `--agent codex` |
+| Claude Code | `--agent claude` |
+| OpenCode | `--agent opencode` |
+| Host that documents `.agents/skills` discovery | `--agent generic` |
 
 For example, in Codex with a GitHub repository:
 
 ```sh
-specgit setup --provider github --register-codex --dry-run --json
-specgit setup --provider github --register-codex --json
+specgit setup --provider github --agent codex --dry-run --json
+specgit setup --provider github --agent codex --json
 ```
 
-Use the environment's real configuration root; respect `CODEX_HOME`, XDG settings
-and any explicitly selected custom roots. Preserve foreign skills, hooks and
-instructions. Ownership conflicts require reconciliation, not overwriting.
+Global setup is the default scope and remains supported on its own. The legacy
+`--register-claude`, `--register-codex` and `--register-opencode` flags stay
+usable on refresh and select the same agents as the matching `--agent` values;
+do not combine one host's legacy flag with its `--agent` choice — that
+combination fails before any write. Generic integration owns only the
+`~/.agents/skills` skill, with no guidance block or hooks. Custom roots are
+global-only: `--claude-settings`, `--codex-root` and `--opencode-root` select
+explicit user-level configuration roots. Use the environment's real
+configuration root; respect `CODEX_HOME`, XDG settings and any explicitly
+selected custom roots. Preserve foreign skills, hooks and instructions.
+Ownership conflicts require reconciliation, not overwriting.
+
+### Optional project-scoped integration
+
+`specgit init` stays unchanged and project-scoped; agent integration is
+optional and separate. When the user selects project-scoped integration, run
+global setup first — project hooks invoke the shared verified executable under
+the global setup root (`--root`), never a copy inside the checkout — and then,
+inside the actual target repository:
+
+```sh
+specgit setup --scope project --agent codex --dry-run --json
+specgit setup --scope project --agent codex --json
+```
+
+Project scope resolves the Git checkout and private absolute Git directory,
+writes only documented checkout assets (the canonical `.agents/skills` skill
+plus each selected host's skill copy, guidance and hook files), and records its
+receipt and journal under `<git_dir>/specgit-v2/agent-assets/`, so each linked
+worktree integrates independently. It rejects custom host roots, custom
+settings paths and `--api-host`. Selection is additive: refresh preserves
+previously recorded agents and explicit choices, and a new project integration
+fails unless at least one `--agent` is selected. Project uninstall removes
+every recorded project asset of the current worktree and must omit `--agent`;
+`--rollback` restores from the project journal only:
+
+```sh
+specgit setup --scope project --uninstall --dry-run --json
+specgit setup --scope project --uninstall --json
+specgit setup --scope project --rollback <transaction>
+```
+
+Coordinated removal of a whole
+project's SpecGit integration (declaration, guidance blocks, guard hooks) is
+separate future work and is not part of `setup`.
+
+When Codex is selected, project hooks live in `<repo>/.codex/hooks.json`, and
+Codex runs them only after the user reviews and trusts the project `.codex/`
+layer in the host's `/hooks` menu. Setup reports
+`codex_trust: review_in_host_required`; never mark that review as done, and do
+not automate, bypass or assume host trust.
+
 For other hosts, report CLI/project setup separately and use the native reference
 rather than inventing an unsupported registration flag.
 
 Verify that the active host discovers the installed `specgit-native` entry point
 and project guidance. If discovery requires a reload or next turn, report
 registration as written but not yet verified and name that remaining action.
-File existence alone does not prove host import, hook delivery or idle wake.
-After CLI upgrades, repeat the binary checks and preview the existing project/host
+File existence alone does not prove host import, hook delivery or idle wake;
+the setup report itself lists registration as `written_not_verified` and host
+delivery facts as `not_checked`. After CLI upgrades, repeat the binary checks
+and preview the existing project/host
 refresh; do not replace their settings with fresh defaults.
 
 ## Completion report
