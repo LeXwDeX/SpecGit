@@ -275,7 +275,9 @@ fn a_user_only_repository_is_not_adopted_and_preview_never_creates_private_state
             "user content",
         ],
     );
-    fs::File::open(tracked)
+    fs::File::options()
+        .write(true)
+        .open(tracked)
         .unwrap()
         .set_times(
             fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)),
@@ -502,7 +504,9 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
                 .unwrap();
             serde_json::from_slice::<Value>(&out.stdout).unwrap()
         };
-        fs::File::open(&tracked)
+        fs::File::options()
+            .write(true)
+            .open(&tracked)
             .unwrap()
             .set_times(
                 fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)),
@@ -523,7 +527,9 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
         });
         assert_ne!(f.run(&["remove"])["exit"], 0);
         f.edit(|s| s["issues"][0]["state"] = json!("closed"));
-        fs::File::open(&tracked)
+        fs::File::options()
+            .write(true)
+            .open(&tracked)
             .unwrap()
             .set_times(
                 fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(2)),
