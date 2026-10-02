@@ -336,36 +336,25 @@ fn stalled_stdin_cannot_hold_runtime_shutdown() {
     assert!(v.get("systemMessage").is_some());
 }
 #[test]
-fn setup_installs_native_adapter_even_when_readiness_is_unavailable() {
-    let t = tempfile::tempdir().unwrap();
-    let root = t
-        .path()
-        .canonicalize()
-        .unwrap()
-        .join("installed 中文 $ literal");
+fn project_setup_registers_a_working_native_hook_adapter() {
+    let t = fixture();
     let out = executable::command()
         .current_dir(t.path())
-        .env("PATH", t.path())
-        .args([
-            "setup",
-            "--provider",
-            "github",
-            "--root",
-            root.to_str().unwrap(),
-            "--json",
-        ])
+        .args(["setup", "--agent", "claude", "--json"])
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(out.status.code(), Some(0));
     let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["status"], "installed");
-    assert_eq!(value["evidence"]["readiness"], "unknown");
-    assert!(root.join("manifest.json").exists());
-    let m: Value = serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
-    let h = &m["hooks"]["SessionStart"][0]["hooks"][0];
-    let mut child = Command::new(h["command"].as_str().unwrap())
+    assert_eq!(value["status"], "installed", "{value}");
+    assert_eq!(value["evidence"]["scope"], "project", "{value}");
+    let text = fs::read_to_string(t.path().join(".claude/settings.json")).unwrap();
+    assert!(!text.contains("--state-root"), "{text}");
+    let settings: Value = serde_json::from_str(&text).unwrap();
+    let entry = &settings["hooks"]["SessionStart"][0]["hooks"][0];
+    // The registered adapter runs the native CLI: silent outside initialized projects.
+    let mut child = Command::new(entry["command"].as_str().unwrap())
         .args(
-            h["args"]
+            entry["args"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -379,6 +368,18 @@ fn setup_installs_native_adapter_even_when_readiness_is_unavailable() {
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn state_root_is_not_a_supported_hook_argument() {
+    let out = executable::command()
+        .args(["hook", "--event", "SessionStart", "--state-root", "x"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["exit"], 2, "{value}");
 }
 
 #[test]

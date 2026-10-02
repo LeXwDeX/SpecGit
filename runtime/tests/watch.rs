@@ -55,7 +55,7 @@ impl WatchProcess {
             "scenario": self.scenario,
             "elapsed_ms": self.started.elapsed().as_millis(),
             "child_status": self.child.try_wait().unwrap().map(|s| s.to_string()),
-            "state": watch_store::read(&self.identity, None).unwrap(),
+            "state": watch_store::read(&self.identity).unwrap(),
             "stdout": stdout,
             "stderr": stderr,
         })
@@ -307,7 +307,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         "poll_seconds was not applied"
     );
     assert_eq!(
-        watch_store::read(&identity, None)
+        watch_store::read(&identity)
             .unwrap()
             .unwrap()
             .events
@@ -854,7 +854,7 @@ fn lifecycle_timeout_preserves_resumable_intent_and_never_closes_issues() {
     assert_eq!(r["exit"], 3);
     let identity: Identity = serde_json::from_value(r["evidence"]["subscription"].clone()).unwrap();
     assert!(
-        watch_store::read(&identity, None)
+        watch_store::read(&identity)
             .unwrap()
             .unwrap()
             .lease
@@ -873,9 +873,14 @@ fn retention_expiry_and_full_outbox_preserve_explicit_receipt_semantics() {
     let initial = f.run(&watch("checks"));
     let identity: Identity =
         serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
-    let t = tempfile::tempdir().unwrap();
-    let root = t.path().canonicalize().unwrap();
-    let store = Store::new(identity.clone(), Some(&root)).unwrap();
+    // A dedicated session keeps the synthetic retention ledger isolated from the
+    // live watch run while still using the identity's real Git-dir state path.
+    let identity = Identity {
+        session: "retention-fixture".into(),
+        ..identity.clone()
+    };
+    // Observer state lives only under this identity's Git dir; no override root exists.
+    let store = Store::new(identity.clone()).unwrap();
     let revision = Revision {
         head: "a".repeat(40),
         local_head: "a".repeat(40),
@@ -925,12 +930,14 @@ fn retention_expiry_and_full_outbox_preserve_explicit_receipt_semantics() {
             )
             .is_err()
     );
+    let state_path = identity
+        .git_dir
+        .join("specgit-v2/subscriptions")
+        .join(identity.key())
+        .join("state.json");
+    assert!(state_path.exists());
     assert_eq!(
-        watch_store::read(&identity, Some(&root))
-            .unwrap()
-            .unwrap()
-            .events
-            .len(),
+        watch_store::read(&identity).unwrap().unwrap().events.len(),
         64
     );
 }
@@ -962,7 +969,7 @@ fn process_death_releases_lease_and_resume_rereads_before_delivery() {
         .unwrap();
     let start = Instant::now();
     loop {
-        if watch_store::read(&identity, None)
+        if watch_store::read(&identity)
             .unwrap()
             .unwrap()
             .lease
@@ -1060,9 +1067,9 @@ fn unicode_failure_reasons_remain_readable_and_invalid_writes_preserve_the_check
     assert!(event["reason"].as_str().unwrap().contains("检查"));
     let identity: Identity =
         serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
-    let before = watch_store::read(&identity, None).unwrap().unwrap();
+    let before = watch_store::read(&identity).unwrap().unwrap();
     assert!(before.lease.is_none());
-    let store = Store::new(identity.clone(), None).unwrap();
+    let store = Store::new(identity.clone()).unwrap();
     assert!(
         store
             .publish(
@@ -1075,10 +1082,7 @@ fn unicode_failure_reasons_remain_readable_and_invalid_writes_preserve_the_check
             .is_err()
     );
     assert_eq!(
-        watch_store::read(&identity, None)
-            .unwrap()
-            .unwrap()
-            .sequence,
+        watch_store::read(&identity).unwrap().unwrap().sequence,
         before.sequence
     );
     assert_eq!(f.run(&inbox())["evidence"]["events"][0]["id"], event["id"]);
@@ -1211,7 +1215,7 @@ fn final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt() {
     let identity: Identity =
         serde_json::from_value(result["evidence"]["subscription"].clone()).unwrap();
     assert!(
-        watch_store::read(&identity, None)
+        watch_store::read(&identity)
             .unwrap()
             .unwrap()
             .lease
@@ -1348,7 +1352,7 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
     );
     let started = Instant::now();
     loop {
-        let state = watch_store::read(&identity, None).unwrap().unwrap();
+        let state = watch_store::read(&identity).unwrap().unwrap();
         if state
             .lease
             .is_some_and(|l| l.pid == child.id() && l.polls_completed > 0)
@@ -1365,7 +1369,7 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
     fs::write(f.root.join("new-file"), "ordinary local edit").unwrap();
     let started = Instant::now();
     loop {
-        let state = watch_store::read(&identity, None).unwrap().unwrap();
+        let state = watch_store::read(&identity).unwrap().unwrap();
         if state.events.iter().any(|e| {
             e.state == EventState::Pending && e.reason.contains("Local changes superseded")
         }) {
@@ -1421,7 +1425,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
     );
     let started = Instant::now();
     loop {
-        let state = watch_store::read(&identity, None).unwrap().unwrap();
+        let state = watch_store::read(&identity).unwrap().unwrap();
         if state
             .lease
             .is_some_and(|l| l.pid == child.id() && l.polls_completed > 0)
@@ -1457,7 +1461,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
     .to_owned();
     let started = Instant::now();
     loop {
-        let state = watch_store::read(&identity, None).unwrap().unwrap();
+        let state = watch_store::read(&identity).unwrap().unwrap();
         if state
             .lease
             .is_some_and(|l| l.pid == child.id() && l.polls_completed >= 4)
@@ -1622,5 +1626,40 @@ fn incomplete_native_association_evidence_never_becomes_cli_or_watch_completion(
         let r = f.run(&watch("lifecycle"));
         assert_eq!(r["status"], "unknown", "{provider}: {r}");
         assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn state_root_is_not_a_supported_watch_or_inbox_argument() {
+    let f = fixture("github");
+    for args in [
+        vec![
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "checks",
+            "--state-root",
+            "x",
+        ],
+        vec![
+            "inbox",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "checks",
+            "--state-root",
+            "x",
+        ],
+    ] {
+        let writes = f.writes();
+        let calls = f.state()["calls"].as_array().unwrap().len();
+        assert_eq!(f.run(&args)["exit"], 2, "{args:?}");
+        assert_eq!(f.state()["calls"].as_array().unwrap().len(), calls);
+        assert_eq!(f.writes(), writes, "{args:?}");
     }
 }

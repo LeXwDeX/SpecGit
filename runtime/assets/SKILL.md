@@ -100,7 +100,7 @@ intended Issue association and actual closure. Publication requires release inte
 
 Use `init --check` to inspect native capabilities. Unsupported or unknown support
 requires an explicit manual-observation choice or authorized platform setup and
-recheck. Preview project and global asset writes with `init --dry-run` and
+recheck. Integration is permanently project-only. Preview project asset writes with `init --dry-run` and
 `setup --dry-run`; ownership conflicts preserve user files for reconciliation.
 Local init/setup refresh needs no delivery Issue.
 
@@ -118,8 +118,17 @@ Read `local_exclusion` in its result:
 ignore rules do not untrack existing files, and mixed user/generated guidance
 stays visible. Review project guidance changes under the repository documentation
 policy; preserve manual content and owned markers. Do not hide or untrack guidance
-just because part was generated. Global host assets belong outside the project.
+just because part was generated. Install the shared user-level CLI separately;
+setup never copies a project executable or installs global host assets/state.
 Repeat init/setup to refresh owned blocks, not append another manual copy.
+
+`setup --agent opencode` installs only project guidance and Skill for official
+OpenCode. Only on a custom host supporting Claude-compatible command hooks, use
+`setup --agent opencode --opencode-claude-hooks --dry-run` before installation.
+It owns project `.opencode/hooks.json` entries with `inputFormat: claude-code`;
+do not duplicate these using an interactive Claude-hook importer. Registration
+still requires actual allow/deny and context-delivery verification. Observer
+state is always worktree Git-private; use explicit bounded watch on this host.
 
 Hooks deliver changes only through demonstrated host capabilities. Registration
 is not verified delivery. Keep pending notices until transport receipt is

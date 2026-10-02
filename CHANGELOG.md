@@ -4,6 +4,18 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.4.0
+
+- Make agent integration permanently project-only; remove global setup, host-root overrides and global registration aliases rather than retaining dormant installation paths.
+- Invoke the separately installed shared CLI directly from project hooks, and keep integration receipts, transactions and observation state in project Git metadata. Project setup never installs an executable or requires a global runtime root.
+- Refresh, remove and recover existing 2.3 project integrations without accessing their former global root; preserve legacy global data and foreign content.
+- Add explicit custom OpenCode Claude-compatible command hooks in project `.opencode/hooks.json`, while keeping official OpenCode on Skill and guidance only.
+- Resolve native `patchText`, supported patch-tool aliases and rename destinations to their actual repositories before checkpoint decisions.
+- Serialize Issue creation across linked worktrees using common Git metadata; independent clones no longer share a user-global creation lock.
+
+Scope and pending delivery/publication gates: [2.4 preparation ledger](docs/release-2.4.md),
+[#660](https://github.com/LeXwDeX/SpecGit/issues/660).
+
 # 2.3.0
 
 - Add explicit agent selection and project-scoped integration assets with private ownership receipts, while keeping one shared user-level executable.

@@ -8,7 +8,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 pub const RETENTION: u64 = 7 * 24 * 60 * 60;
@@ -170,18 +170,16 @@ fn invalid() -> Diagnostic {
         "Preserve the state and inspect the exact subscription; pending events were not acknowledged.",
     )
 }
-fn root(identity: &Identity, state_root: Option<&Path>) -> Result<PathBuf, Diagnostic> {
-    let base = state_root
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| identity.git_dir.join("specgit-v2"));
+fn root(identity: &Identity) -> Result<PathBuf, Diagnostic> {
+    let base = identity.git_dir.join("specgit-v2");
     if !base.is_absolute() {
         return Err(Diagnostic::input("Observer state root must be absolute."));
     }
     assets::safe_path(&base)?;
     Ok(base.join("subscriptions").join(identity.key()))
 }
-pub fn read(identity: &Identity, state_root: Option<&Path>) -> Result<Option<State>, Diagnostic> {
-    let path = root(identity, state_root)?.join("state.json");
+pub fn read(identity: &Identity) -> Result<Option<State>, Diagnostic> {
+    let path = root(identity)?.join("state.json");
     let snapshot = Snapshot::read(&path)?;
     let Some(bytes) = snapshot.bytes else {
         return Ok(None);
@@ -214,12 +212,11 @@ fn validate(state: &State, identity: &Identity) -> Result<(), Diagnostic> {
 }
 pub struct Store {
     root: PathBuf,
-    state_root: Option<PathBuf>,
     identity: Identity,
 }
 impl Store {
-    pub fn new(identity: Identity, state_root: Option<&Path>) -> Result<Self, Diagnostic> {
-        let root = root(&identity, state_root)?;
+    pub fn new(identity: Identity) -> Result<Self, Diagnostic> {
+        let root = root(&identity)?;
         let parent = root.parent().ok_or_else(invalid)?;
         let _registry = AssetStore::lock(&parent.join("registry"), &[], Duration::from_secs(1))?;
         if !root.exists() {
@@ -233,7 +230,7 @@ impl Store {
                         Code::OutputLimit,
                         "watch_state",
                         "This state root reached its 128-subscription limit.",
-                        "Inspect retained subscriptions and select a separate explicit state root; existing pending events were preserved.",
+                        "Inspect and explicitly reconcile retained project subscriptions; existing pending events were preserved.",
                     ));
                 }
             }
@@ -243,11 +240,7 @@ impl Store {
             std::slice::from_ref(&root),
             Duration::from_secs(1),
         )?);
-        Ok(Self {
-            root,
-            state_root: state_root.map(Path::to_path_buf),
-            identity,
-        })
+        Ok(Self { root, identity })
     }
     /// The stable OS lock verifies ownership, including after PID reuse. A saved
     /// PID/deadline is informational and never permission to steal a live lock.
@@ -291,15 +284,14 @@ impl Store {
         )?;
         let path = self.root.join("state.json");
         let expected = Snapshot::read(&path)?;
-        let mut state =
-            read(&self.identity, self.state_root.as_deref())?.unwrap_or_else(|| State {
-                version: 2,
-                identity: self.identity.clone(),
-                sequence: 0,
-                lease: None,
-                events: vec![],
-                expired_unacknowledged: 0,
-            });
+        let mut state = read(&self.identity)?.unwrap_or_else(|| State {
+            version: 2,
+            identity: self.identity.clone(),
+            sequence: 0,
+            lease: None,
+            events: vec![],
+            expired_unacknowledged: 0,
+        });
         mutate(&mut state)?;
         let bytes = serde_json::to_vec(&state).map_err(|_| invalid())?;
         if bytes.len() > crate::config::MAX_BYTES || state.events.len() > MAX_EVENTS {

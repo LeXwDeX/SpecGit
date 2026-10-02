@@ -310,7 +310,7 @@ async fn execute(
     }
     // Every persisted intent is subject to today's declaration and fresh native
     // duplicate evidence, even when this invocation supplied only adopted IDs.
-    // Native project identity defines the same-user/host creation domain.
+    // Serialize linked worktrees of this project, never create global user state.
     // Hold this lock from candidate reads through native creation and readback.
     let _creation_lock = if !options.inspect
         && !options.dry_run
@@ -327,7 +327,9 @@ async fn execute(
             ))
             .map_err(|_| Diagnostic::input("Cannot encode issue creation identity."))?,
         );
-        let base = crate::setup::default_root()?
+        let base = context
+            .common_dir
+            .join("specgit-v2")
             .join("issue-creation")
             .join(key);
         Some(crate::assets::AssetStore::lock(

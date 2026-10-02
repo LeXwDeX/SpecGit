@@ -26,8 +26,6 @@ pub struct Options {
     pub session: String,
     #[arg(long, value_enum)]
     pub goal: Goal,
-    #[arg(long)]
-    pub state_root: Option<PathBuf>,
     #[arg(long, value_parser=clap::value_parser!(u64).range(1..=86400))]
     pub timeout_seconds: Option<u64>,
     #[arg(long, value_parser=clap::value_parser!(u64).range(1..=3600))]
@@ -44,8 +42,6 @@ pub struct InboxOptions {
     pub session: String,
     #[arg(long, value_enum)]
     pub goal: Goal,
-    #[arg(long)]
-    pub state_root: Option<PathBuf>,
     /// Show receipt IDs only; cached terminal results are never current evidence.
     #[arg(long, conflicts_with = "ack")]
     pub no_refresh: bool,
@@ -615,7 +611,7 @@ async fn observe_subscription_mode(
     let (initial, configured) = local_with_observation(&process, cwd).await?;
     let timing = timing(&o, &configured)?;
     let identity = Identity::new(&initial, &o.session, o.request, o.goal)?;
-    let store = Store::new(identity.clone(), o.state_root.as_deref())?;
+    let store = Store::new(identity.clone())?;
     let (_lock, lease) = store.lease(watch_store::now().saturating_add(timing.max_wait_seconds))?;
     let deadline = Instant::now() + Duration::from_secs(timing.max_wait_seconds);
     let mut failures = 0_u32;
@@ -807,8 +803,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
     let (context, configured) = local_with_observation(&process, cwd).await?;
     let identity = Identity::new(&context, &o.session, o.request, o.goal)?;
     if let Some(id) = o.ack {
-        let state =
-            Store::new(identity, o.state_root.as_deref())?.acknowledge(&id, watch_store::now())?;
+        let state = Store::new(identity)?.acknowledge(&id, watch_store::now())?;
         return Ok(Report::success(
             "inbox",
             "acknowledged",
@@ -816,7 +811,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
         ));
     }
     if o.no_refresh {
-        let state = watch_store::read(&identity, o.state_root.as_deref())?;
+        let state = watch_store::read(&identity)?;
         let ids: Vec<_> = state
             .as_ref()
             .into_iter()
@@ -835,7 +830,6 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
             request: o.request,
             session: o.session,
             goal: o.goal,
-            state_root: o.state_root,
             timeout_seconds: Some(configured.max_wait_seconds.min(90)),
             poll_seconds: Some(configured.poll_seconds),
             once: true,
