@@ -114,6 +114,72 @@ pub fn has_block(path: &Path) -> Result<bool, Diagnostic> {
     Ok(text.contains(START) || text.contains(END))
 }
 
+pub(crate) fn removal(
+    root: &Path,
+    private: &Path,
+    declaration: &Declaration,
+) -> Result<Vec<Change>, Diagnostic> {
+    let receipt = Change::new(private.join("guidance.json"), None)?;
+    let state: Option<Receipt> = receipt
+        .before
+        .bytes
+        .as_deref()
+        .map(|bytes| {
+            let parsed: Receipt = serde_json::from_value(crate::input::json(bytes, 1_048_576, 16)?)
+                .map_err(|_| conflict())?;
+            if parsed.version != 1
+                || parsed
+                    .blocks
+                    .keys()
+                    .any(|name| !["AGENTS.md", "CLAUDE.md"].contains(&name.as_str()))
+            {
+                return Err(conflict());
+            }
+            Ok(parsed)
+        })
+        .transpose()?;
+    let mut changes = vec![];
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let path = root.join(name);
+        if !has_block(&path)? {
+            if state.as_ref().is_some_and(|s| s.blocks.contains_key(name)) {
+                return Err(conflict());
+            }
+            continue;
+        }
+        // Reuse refresh validation without using its replacement content.
+        let mut c = change(
+            &path,
+            declaration,
+            declaration,
+            state
+                .as_ref()
+                .and_then(|s| s.blocks.get(name))
+                .map(String::as_str),
+        )?;
+        let text = std::str::from_utf8(c.before.bytes.as_deref().unwrap_or_default())
+            .map_err(|_| conflict())?;
+        let start = text.find(START).ok_or_else(conflict)?;
+        let end = text.find(END).ok_or_else(conflict)? + END.len();
+        let suffix = &text[end..];
+        let suffix = suffix
+            .strip_prefix("\r\n")
+            .or_else(|| suffix.strip_prefix('\n'))
+            .unwrap_or(suffix);
+        let after = format!("{}{suffix}", &text[..start]);
+        c.after = if after.is_empty() {
+            None
+        } else {
+            Some(after.into_bytes())
+        };
+        changes.push(c);
+    }
+    if receipt.before.bytes.is_some() {
+        changes.push(receipt);
+    }
+    Ok(changes)
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
