@@ -203,12 +203,23 @@ fn custom_opencode_claude_hooks_are_top_level_native_quoted_commands() {
     let text = fs::read_to_string(&path).unwrap();
     let hooks: Value = serde_json::from_str(&text).unwrap();
     assert!(hooks.get("hooks").is_none(), "{hooks}");
+    let executable = f.source.to_string_lossy();
+    #[cfg(windows)]
+    let executable = if let Some(unc) = executable.strip_prefix("\\\\?\\UNC\\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else {
+        executable
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(&executable)
+            .replace('\\', "/")
+    };
+    let quoted = executable.replace('\'', "'\\''");
     for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
         let entry = &hooks[event][0]["hooks"][0];
         assert_eq!(entry["shell"], "bash", "{event}: {hooks}");
         assert_eq!(
             entry["command"],
-            json!(format!("'{}' hook --event {event}", f.source.display())),
+            json!(format!("'{quoted}' hook --event {event}")),
             "{event}: {hooks}"
         );
         assert_eq!(entry["inputFormat"], "claude-code", "{event}: {hooks}");
@@ -474,7 +485,11 @@ fn project_conflicts_preserve_edited_duplicate_and_foreign_assets() {
             "{fault}: {error}"
         );
         assert!(
-            error.message.contains(f.root.to_string_lossy().as_ref()),
+            error.message.contains(
+                serde_json::to_string(f.root.to_string_lossy().as_ref())
+                    .unwrap()
+                    .trim_matches('"')
+            ),
             "{fault}: {error}"
         );
         assert!(error.remedy.contains("Restore"), "{fault}: {error}");

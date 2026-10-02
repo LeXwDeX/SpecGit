@@ -9,7 +9,10 @@ import { assertProjectOnlySurface, checkSurfaces, writeSchemas } from './check-s
 const staticSchemas = fileURLToPath(new URL('../schemas', import.meta.url));
 // Windows cannot exec a shebang script without a shell; the .cmd launcher plus
 // shell spawn option keeps the same stub executable on all three CI platforms.
-const spawnOptions = process.platform === 'win32' ? { shell: true } : {};
+const spawnOptions = {
+  ...(process.platform === 'win32' ? { shell: true } : {}),
+  env: { ...process.env, SPECGIT_SURFACE_TEST_OPTIONS: 'propagated' },
+};
 
 const argument = (long, extra = {}) => ({ accepts_array: false, action: 'Set', conflicts: [], defaults: [], global: false, help: null,
   id: long.replaceAll('-', '_'), input_type: 'string', long, maximum_values: 1, minimum_values: 1, position: null, possible_values: [], required: false, short: null, ...extra });
@@ -45,6 +48,7 @@ function surfaceContract({ legacy }) {
 }
 
 const stubLogic = contract => `const contract=${JSON.stringify(contract)};
+if(process.env.SPECGIT_SURFACE_TEST_OPTIONS!=='propagated')process.exit(3);
 const frame=command=>JSON.stringify({schema_version:2,version:'2.4.0',operation:'schema',exit:0,ok:true,
   evidence:{schema_version:2,cli_version:'2.4.0',command,input:{},output:{}}});
 const[, ,first,second]=process.argv;
