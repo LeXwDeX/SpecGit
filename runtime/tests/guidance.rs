@@ -188,3 +188,62 @@ fn receiptless_2_0_0_migration_upgrades_only_the_exact_released_templates() {
         assert!(guidance::changes(&root, &root.join("private"), &d, &d, false).is_err());
     }
 }
+
+#[test]
+fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content() {
+    for (language, clauses) in [
+        (
+            Language::En,
+            vec![
+                "Try normal SpecGit inspect/dry-run first",
+                "reproducible SpecGit defect blocks Issue selection",
+                "command, version, exit and diagnostic",
+                "Under existing user authorization",
+                "authenticated native gh/glab",
+                "search duplicate WHYs",
+                "Why / Scope / Approach / Acceptance",
+                "read back its native ID and body",
+                "Only if that same defect still blocks its linked repair",
+                "documented one-task local checkpoint exception",
+                "restore normal checks after repair",
+                "does not bypass user authorization, forge protection, CI, review, merge, Issue closure or publication",
+            ],
+        ),
+        (
+            Language::Zh,
+            vec![
+                "先正常尝试 SpecGit inspect/dry-run",
+                "可复现的 SpecGit 缺陷阻碍 Issue 选择",
+                "命令、版本、退出码与诊断",
+                "已有用户授权",
+                "已认证的原生 gh/glab",
+                "查重 WHY",
+                "原因、范围、方案和验收要求",
+                "回读其原生 ID 和正文",
+                "只有同一缺陷仍阻碍其关联修复",
+                "有文档记录的单任务本地 checkpoint 例外",
+                "修复后恢复正常检查",
+                "不会绕过用户授权、forge 保护、CI、评审、合并、Issue 关闭或发布",
+            ],
+        ),
+    ] {
+        let declaration = Declaration {
+            language,
+            ..Declaration::default()
+        };
+        let prose = guidance::render(&declaration);
+        for clause in clauses {
+            assert!(prose.contains(clause), "missing {clause}");
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap().join("AGENTS.md");
+        let user = "User rules\r\nkeep exact\n";
+        std::fs::write(&path, user).unwrap();
+        let initial = guidance::change(&path, &declaration, &declaration, None).unwrap();
+        let bytes = initial.after.unwrap();
+        assert!(bytes.starts_with(user.as_bytes()));
+        std::fs::write(&path, &bytes).unwrap();
+        let refresh = guidance::change(&path, &declaration, &declaration, None).unwrap();
+        assert_eq!(refresh.after.unwrap(), bytes);
+    }
+}
