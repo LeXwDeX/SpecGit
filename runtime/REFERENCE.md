@@ -439,8 +439,8 @@ assumes or automates that trust.
 
 ### Whole-project removal
 
-`remove` retires one project's owned local SpecGit integration. It is a newer
-runtime command than the released 2.2.1; confirm `specgit remove --help` on the
+`remove` retires one project's owned local SpecGit integration. It is introduced
+in the 2.3 runtime contract; confirm `specgit remove --help` on the
 installed executable before using it. Without `--apply`, or with `--dry-run`, it
 prepares a read-only preview whose evidence carries a `preview_sha256`.
 `--apply --expect <digest>` applies exactly that inspected preview as one
