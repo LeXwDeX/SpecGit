@@ -64,6 +64,6 @@ specgit doctor --provider github --remote origin --json
 
 ## 3. 按需注册宿主
 
-项目初始化**不等于** Codex 注册。只有决定给当前宿主安装集成时，才单独查看 `specgit setup --help` 并预览相应的 `--register-codex`、`--register-claude` 或 `--register-opencode` 选项。只安装二进制并初始化项目时，无需运行 `setup`，也不会配置 Codex 的用户级 hooks 或 skill。
+项目初始化**不等于**宿主注册。只有决定给当前宿主安装集成时，才单独查看 `specgit setup --help` 并预览相应的 `--agent codex`、`--agent claude`、`--agent opencode` 或 `--agent generic` 选择。自 2.4 起 setup 永久只支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，资产写入检出目录并使用 worktree 私有收据，hooks 直接调用已安装的共享二进制（无需先做全局 setup），已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。只安装二进制并初始化项目时，无需运行 `setup`。
 
 参阅[老项目升级](Upgrading-Existing-Projects-zh)、[团队工作流](Team-Workflow-zh)和[CLI 参考](CLI-Reference-zh)。

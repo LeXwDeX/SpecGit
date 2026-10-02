@@ -1,39 +1,43 @@
 # Supported coding agents
 
-SpecGit 2 provides a native CLI and managed agent integrations. One shared
+SpecGit 2.4 provides a native CLI and managed agent integrations. One shared
 user-level `specgit` executable serves every repository and worktree.
 `specgit setup` writes integration assets only for explicitly selected
-agents (`--agent generic|claude|codex|opencode`, repeatable) in an explicit
-scope: `--scope global` (the default) writes versioned assets under the
-selected user-level setup root, and `--scope project` writes documented
-checkout assets with a worktree-private receipt. `specgit init` remains
-project-scoped and unchanged; agent integration stays optional and separate.
-Written registration is not proof of host import or notification delivery.
-Follow the [installation guide](agent-install.md) for the matching host
-registration option and verification steps.
+agents (`--agent generic|claude|codex|opencode`, repeatable) and is
+permanently project-only: `--scope project` is the default and the only scope
+value, writing documented checkout assets with a worktree-private receipt.
+Setup never copies the runtime binary into a project and never installs user-global
+host integration assets or state; project hooks invoke the installed executable
+directly, so there is no global setup prerequisite.
+`specgit init` remains project-scoped and unchanged; agent integration stays
+optional and separate. Written registration is not proof of host import or
+notification delivery. Follow the [installation guide](agent-install.md) for
+the matching host registration option and verification steps.
 
-## Integration scopes and agents
+## Project integration assets
 
-| Agent | Global scope (default) | Project scope (`--scope project`) |
-| --- | --- | --- |
-| `generic` | Skill only at `~/.agents/skills/specgit-native/`; no guidance block, no hooks | `.agents/skills/specgit-native/` plus root `AGENTS.md` guidance; no hooks |
-| `claude` | Skill beside the settings file plus hook entries in `~/.claude/settings.json` (custom `--claude-settings`) | `.claude/skills/specgit-native/` copy, root `CLAUDE.md` guidance, `.claude/settings.json` hooks |
-| `codex` | Skill, managed `AGENTS.md` (or existing nonempty `AGENTS.override.md`) block and `hooks.json` entries under `~/.codex` (`CODEX_HOME` / `--codex-root`) | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) guidance plus `.codex/hooks.json` |
-| `opencode` | Skill and `AGENTS.md` guidance under `~/.config/opencode` (`XDG_CONFIG_HOME` / `--opencode-root`); no hooks | `.agents` skill and root `AGENTS.md` guidance only; no hooks |
+| Agent | Project assets (the only scope) |
+| --- | --- |
+| `generic` | `.agents/skills/specgit-native/` plus root `AGENTS.md` guidance; no hooks |
+| `claude` | `.claude/skills/specgit-native/` copy, root `CLAUDE.md` guidance, `.claude/settings.json` hooks |
+| `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) guidance plus `.codex/hooks.json` |
+| `opencode` (official) | `.agents` skill and root `AGENTS.md` guidance only; no hooks |
+| `opencode` custom fork with `--opencode-claude-hooks` | Adds `.opencode/hooks.json` with top-level event entries, one single-quoted command string (`<executable> hook --event <event>`, no separate args entries) and `inputFormat: claude-code`; no asynchronous observer — observe manually with bounded `watch` |
 
-Global scope remains the existing default and can run before any project
-exists. Every project agent selection writes the canonical
-`.agents/skills/specgit-native/SKILL.md`; Claude additionally receives its native
-skill copy. Project scope resolves the Git checkout and the private absolute Git
-directory, records its receipt and journal under
+Every project agent selection writes the canonical
+`.agents/skills/specgit-native/SKILL.md`; Claude additionally receives its
+native skill copy. Project scope resolves the Git checkout and the private
+absolute Git directory, records its receipt and journal under
 `<git_dir>/specgit-v2/agent-assets/`, and therefore integrates each linked
-worktree independently. Project scope never installs a runtime binary in the
-checkout and never edits global agent settings; Claude and Codex project
-hooks invoke the shared verified executable under the global setup root, so
-global setup must succeed first and be refreshed after CLI upgrades.
+worktree independently. The 2.4 receipt omits `shared_root`; a 2.3-era project
+receipt is refreshed, removed or recovered locally with foreign content and
+manual edits preserved, and setup never reads or writes the retired 2.3 global
+root. Existing 2.3 global data stays preserved — 2.4 ships no global cleanup
+command, so back up first and use the 2.3 CLI's exact owned cleanup before
+upgrading if it must go; never blind-delete.
 Selection is additive on refresh, a new project integration requires an
-explicit `--agent`, and project `--uninstall` (without `--agent`) removes
-exactly the recorded project assets of that worktree.
+explicit `--agent`, and `--uninstall` (without `--agent`) removes exactly the
+recorded project assets of that worktree.
 
 ## Discovery boundaries
 
@@ -58,12 +62,42 @@ Codex requires the user to review and trust non-managed hooks, and
 project-local hooks load only when the project `.codex/` layer is trusted in
 the host's `/hooks` review. SpecGit reports this as
 `codex_trust: review_in_host_required` and never performs, assumes or
-automates that trust. OpenCode has no hook registration in this integration;
-it receives the skill and guidance only. In every case setup reports
+automates that trust. The official OpenCode build has no hook registration in
+this integration; it receives the skill and guidance only. The
+`--opencode-claude-hooks` opt-in targets a custom OpenCode fork with
+claude-compatible hooks. Qualification is specific to the installed build,
+not a guarantee of complete semantics or compatibility with every fork. The
+generated hooks never launch an asynchronous observer, so observe manually
+with bounded `watch`. The fork's `/import-claude-hooks` command is an
+interactive LLM prompt that reads the project's Claude settings and asks about
+each entry individually — it is not an automatic read, and entries that native
+setup already owns must not be imported again as unmanaged duplicates. In every case setup reports
 registration as `written_not_verified` with host delivery facts
 (`imported_event`, `context_injection`, `visible_message`, `next_turn`) as
 `not_checked`; a reload, trust review or later turn may be needed before the
 host actually consumes the assets.
+
+Custom hooks use Bash. On Windows, the host's `bash` must resolve to Git for
+Windows Bash, not the Windows WSL launcher. Put Git's `bin` directory before
+the WSL launcher in the host's PATH and qualify the generated command in that
+same environment; merely having Git available does not select its Bash.
+
+### Observed custom-host behavior
+
+An isolated qualification on 2026-10-03 used custom OpenCode `1.0.57`
+(binary SHA-256 `7db7cb2cd1ba69d7ece113023c2e5aba0f572f9e1d225fece429f295b376d7db`)
+with a loopback fixture model. The actual host imported project hooks, denied a
+tracked `write` without a checkpoint, permitted it with a valid fixture
+checkpoint, and delivered PreToolUse/PostToolUse context to the model.
+
+In that build's `opencode run` mode, SessionStart executed but its
+`additionalContext` did not reach the model, including on a continued session.
+Do not depend on startup context or notices there; use project guidance,
+tool-event context and explicit bounded `watch`/`inbox`. TUI and serve modes
+were not qualified. The host offered no `apply_patch` tool: patch aliases are
+verified at the SpecGit adapter/subprocess boundary, not by that live-host run.
+Registration still reports `written_not_verified`; local qualification does
+not automatically certify another installation or human reading.
 
 Use the installed executable's `specgit --help` and `specgit --schema` as the
 command contract. The maintained command, configuration, and JSON reference is

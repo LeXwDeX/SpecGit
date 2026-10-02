@@ -93,20 +93,33 @@ Auto-merge preferences do not grant permission to change native protections.
 
 ## Agent integration and upgrades
 
-`specgit setup` installs owned entry points for the explicitly selected agents
-(`--agent generic|claude|codex|opencode`, repeatable). Global setup remains the
-default; `--scope project` instead writes documented checkout assets with a
-worktree-private receipt and references the one shared global executable.
+SpecGit 2.4 is permanently **project-only**: `specgit setup` writes owned
+project entry points for the explicitly selected agents
+(`--agent generic|claude|codex|opencode`, repeatable), and `--scope project` is
+the default and only scope. It never copies the runtime binary into a project
+and never installs global or host-level integration state; project hooks invoke
+the one shared user-installed executable directly, so no global setup
+prerequisite exists. The 2.3 global integration scope and its `--root`,
+`--provider`, `--api-host`, `--register-*` and per-host root/settings options
+are removed; `watch`, `hook` and `inbox` state is always Git-private. A custom
+OpenCode fork can opt in to claude-code-format project hooks with the explicit
+`--opencode-claude-hooks` choice (requires `--agent opencode`); official
+OpenCode keeps the skill and guidance only.
 `specgit init` stays unchanged and project-scoped — agent integration is
 optional and separate. Setup preserves unrelated guidance, reports ownership
-conflicts, and never installs a second runtime binary inside a project.
-Written registration is
-reported separately from actual host discovery or event delivery; a reload, a
+conflicts, and preserves manual edits and foreign hooks. Written registration
+is reported separately from actual host discovery or event delivery; a reload, a
 host trust review (Codex `/hooks`), or another turn may be needed to verify the
 host. Coordinated removal of a whole
 project's SpecGit integration is the separate `specgit remove` command (preview,
 digest-bound apply, offline rollback), introduced in the 2.3 runtime contract;
 project-scope `--uninstall` covers only the recorded agent assets.
+
+Upgrading from 2.3 refreshes existing project receipts in place (the 2.4
+receipt omits `shared_root`) without reading or writing the retired global
+root. Existing 2.3 global data is preserved; 2.4 ships no global cleanup
+command — back up first and use the 2.3 CLI's exact owned cleanup before
+upgrading if that data must go, never a blind delete.
 
 Codex and Claude PreToolUse hooks reject tracked edits in an initialized v2
 project until the current repository and branch have a complete selected-Issue

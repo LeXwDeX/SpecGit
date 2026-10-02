@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 #[derive(Clone)]
 pub struct Options {
-    pub shared_root: PathBuf,
     pub agents: Vec<Agent>,
+    pub opencode_claude_hooks: bool,
     pub uninstall: bool,
     pub dry_run: bool,
     pub rollback: Option<String>,
@@ -17,29 +17,27 @@ struct ProjectReceipt {
     version: u8,
     owner: String,
     root: PathBuf,
-    shared_root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shared_root: Option<PathBuf>,
     agents: BTreeSet<Agent>,
     skills: BTreeMap<String, String>,
     instructions: BTreeMap<String, HostRegistration>,
     hooks: BTreeMap<String, Registration>,
 }
 
-fn read(
-    root: &Path,
-    private: &Path,
-    shared: &Path,
-) -> Result<(Snapshot, ProjectReceipt), Diagnostic> {
+fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagnostic> {
     let snapshot = Snapshot::read(&private.join("ownership.json"))?;
     let receipt = if let Some(bytes) = &snapshot.bytes {
         let r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
             .map_err(|_| conflict("The project integration receipt is malformed."))?;
-        if r.version != 1
+        if ![1, 2].contains(&r.version)
+            || (r.version == 1) != r.shared_root.is_some()
             || r.owner != "specgit"
             || r.root != root
             || r.agents.is_empty()
             || r.skills.len() > 2
             || r.instructions.len() > 3
-            || r.hooks.len() > 2
+            || r.hooks.len() > 3
             || r.skills.keys().any(|p| {
                 ![
                     ".agents/skills/specgit-native/SKILL.md",
@@ -61,6 +59,9 @@ fn read(
                     || match host.as_str() {
                         "claude" => h.settings != root.join(".claude/settings.json"),
                         "codex" => h.settings != root.join(".codex/hooks.json"),
+                        "opencode" => {
+                            h.settings != root.join(".opencode/hooks.json") || h.created_hook_map
+                        }
                         _ => true,
                     }
             })
@@ -82,6 +83,7 @@ fn read(
             || r.hooks.contains_key("claude") != r.agents.contains(&Agent::Claude)
             || r.hooks.contains_key("codex") != r.agents.contains(&Agent::Codex)
             || r.instructions.contains_key("claude") != r.agents.contains(&Agent::Claude)
+            || (r.hooks.contains_key("opencode") && !r.agents.contains(&Agent::Opencode))
             || (r.agents.contains(&Agent::Codex)
                 && !shared_guidance
                 && !r.instructions.contains_key("codex"))
@@ -95,10 +97,10 @@ fn read(
         r
     } else {
         ProjectReceipt {
-            version: 1,
+            version: 2,
             owner: "specgit".into(),
             root: root.into(),
-            shared_root: shared.into(),
+            shared_root: None,
             agents: BTreeSet::new(),
             skills: BTreeMap::new(),
             instructions: BTreeMap::new(),
@@ -108,26 +110,20 @@ fn read(
     Ok((snapshot, receipt))
 }
 
-fn shared_binary(root: &Path, project: &Path) -> Result<PathBuf, Diagnostic> {
-    assets::safe_path(root)?;
-    if root.starts_with(project) {
+fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnostic> {
+    assets::safe_path(source)?;
+    if !source.is_absolute() || source.starts_with(project) {
         return Err(Diagnostic::input(
-            "Project hooks require a shared setup root outside this checkout.",
+            "Project hooks require the installed shared CLI outside this checkout; setup never installs a project executable.",
         ));
     }
-    let (_, receipt) = read_receipt(root)?;
-    let relative = format!(
-        "versions/{VERSION}/bin/specgit{}",
-        if cfg!(windows) { ".exe" } else { "" }
-    );
-    let binary = root.join(&relative);
-    let snapshot = Snapshot::read(&binary)?;
-    if snapshot.bytes.is_none() || snapshot.digest().as_ref() != receipt.files.get(&relative) {
+    let snapshot = Snapshot::read(source)?;
+    if snapshot.bytes.as_ref().is_none_or(Vec::is_empty) {
         return Err(conflict_at(
             "shared",
-            &binary,
+            source,
             None,
-            "Install or refresh the shared global executable first; its recorded hash must match.",
+            "The installed shared executable is unavailable.",
         ));
     }
     #[cfg(unix)]
@@ -140,17 +136,17 @@ fn shared_binary(root: &Path, project: &Path) -> Result<PathBuf, Diagnostic> {
         {
             return Err(conflict_at(
                 "shared",
-                &binary,
+                source,
                 None,
                 "The shared executable lost execute permission.",
             ));
         }
     }
-    Ok(binary)
+    Ok(snapshot)
 }
 
 pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagnostic> {
-    let (snapshot, receipt) = read(root, private, Path::new(""))?;
+    let (snapshot, receipt) = read(root, private)?;
     if snapshot.bytes.is_none() {
         return Ok(vec![]);
     }
@@ -186,12 +182,22 @@ pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagno
     Ok(changes)
 }
 
-pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, Diagnostic> {
+pub fn install(
+    options: &Options,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Value, Diagnostic> {
     if options.dry_run && options.rollback.is_some()
         || options.uninstall && options.rollback.is_some()
     {
         return Err(Diagnostic::input(
             "Rollback cannot be combined with dry-run or uninstall.",
+        ));
+    }
+    if options.rollback.is_some() && (!options.agents.is_empty() || options.opencode_claude_hooks) {
+        return Err(Diagnostic::input(
+            "Rollback restores a recorded transaction; omit agent and host-hook choices.",
         ));
     }
     assets::safe_path(root)?;
@@ -202,7 +208,7 @@ pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, 
             json!({"scope":"project","root":root,"private":private,"rolled_back":AssetStore::lock(private, &allowed, Duration::from_secs(2))?.rollback(id)?}),
         );
     }
-    let (snapshot, previous) = read(root, private, &options.shared_root)?;
+    let (snapshot, previous) = read(root, private)?;
     let mut selected = previous.agents.clone();
     for agent in &options.agents {
         if options.agents.iter().filter(|a| *a == agent).count() != 1 {
@@ -215,34 +221,36 @@ pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, 
             "Select at least one --agent for a new project integration; no host is guessed.",
         ));
     }
-    if options.uninstall && !options.agents.is_empty() {
+    if options.uninstall && (!options.agents.is_empty() || options.opencode_claude_hooks) {
         return Err(Diagnostic::input(
             "Project uninstall removes this worktree's recorded integrations; omit --agent.",
         ));
     }
-    if snapshot.bytes.is_some() && previous.shared_root != options.shared_root && !options.uninstall
-    {
-        return Err(conflict(
-            "Uninstall the project integration before changing its shared setup root.",
+    if options.opencode_claude_hooks && !selected.contains(&Agent::Opencode) {
+        return Err(Diagnostic::input(
+            "Custom OpenCode Claude-compatible hooks require --agent opencode.",
         ));
     }
-    let entries = if !options.uninstall
-        && selected
-            .iter()
-            .any(|a| matches!(a, Agent::Claude | Agent::Codex))
-    {
-        Some(manifest(
-            &shared_binary(&options.shared_root, root)?,
-            &options.shared_root,
-        ))
+    let custom_opencode = options.opencode_claude_hooks || previous.hooks.contains_key("opencode");
+    let needs_executable = !options.uninstall
+        && (custom_opencode
+            || selected
+                .iter()
+                .any(|a| matches!(a, Agent::Claude | Agent::Codex)));
+    let executable = needs_executable
+        .then(|| shared_executable(source, root))
+        .transpose()?;
+    let entries = executable.as_ref().map(|_| manifest(source));
+    let opencode_entries = if needs_executable && custom_opencode {
+        Some(opencode_manifest(source)?)
     } else {
         None
     };
     let mut receipt = ProjectReceipt {
-        version: 1,
+        version: 2,
         owner: "specgit".into(),
         root: root.into(),
-        shared_root: options.shared_root.clone(),
+        shared_root: None,
         agents: selected.clone(),
         skills: BTreeMap::new(),
         instructions: BTreeMap::new(),
@@ -341,12 +349,18 @@ pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, 
     for (agent, host, relative) in [
         (Agent::Claude, "claude", ".claude/settings.json"),
         (Agent::Codex, "codex", ".codex/hooks.json"),
+        (Agent::Opencode, "opencode", ".opencode/hooks.json"),
     ] {
-        if !selected.contains(&agent) {
+        if !selected.contains(&agent) || (host == "opencode" && !custom_opencode) {
             continue;
         }
         let path = root.join(relative);
         let old = previous.hooks.get(host);
+        let entries = if host == "opencode" {
+            &opencode_entries
+        } else {
+            &entries
+        };
         let change = registration_change(host, &path, old, entries.as_ref())?;
         if let Some(entries) = &entries {
             let mut registration = if let Some(old) = old {
@@ -360,14 +374,17 @@ pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, 
                     settings: path,
                     entries: BTreeMap::new(),
                     created_file: change.before.bytes.is_none(),
-                    created_hook_map: before.get("hooks").is_none(),
+                    created_hook_map: host != "opencode" && before.get("hooks").is_none(),
                     created_event_keys: entries
                         .keys()
                         .filter(|event| {
-                            before
-                                .get("hooks")
-                                .and_then(|hooks| hooks.get(*event))
-                                .is_none()
+                            (if host == "opencode" {
+                                Some(&before)
+                            } else {
+                                before.get("hooks")
+                            })
+                            .and_then(|hooks| hooks.get(*event))
+                            .is_none()
                         })
                         .cloned()
                         .collect(),
@@ -393,7 +410,7 @@ pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, 
         },
     });
     let summary: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
-    let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
+    let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"opencode_claude_hooks":custom_opencode,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
     if options.dry_run {
         return Ok(evidence);
     }
@@ -411,8 +428,23 @@ pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, 
             "Preview again after the other operation completes.",
         ));
     }
-    if entries.is_some() {
-        shared_binary(&options.shared_root, root)?;
+    if let Some(executable) = executable {
+        let current = shared_executable(source, root)?;
+        if !(Change {
+            path: source.to_owned(),
+            before: executable,
+            after: current.bytes,
+            permissions: current.permissions,
+        })
+        .unchanged()
+        {
+            return Err(Diagnostic::new(
+                Code::ConcurrentEdit,
+                "setup",
+                "The installed executable changed while acquiring the project lock.",
+                "Preview setup again with the current installed shared CLI.",
+            ));
+        }
     }
     // apply filters unchanged entries; they still need fresh ownership evidence.
     for change in &changes {
@@ -455,7 +487,14 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
             path(crate::project::git(&process, cwd, &["rev-parse", "--show-toplevel"]).await?)?;
         let git_dir =
             path(crate::project::git(&process, cwd, &["rev-parse", "--absolute-git-dir"]).await?)?;
-        install(&options, &root, &git_dir.join("specgit-v2/agent-assets"))
+        let source = std::env::current_exe()
+            .map_err(|_| Diagnostic::input("Current executable is unavailable."))?;
+        install(
+            &options,
+            &root,
+            &git_dir.join("specgit-v2/agent-assets"),
+            &source,
+        )
     }
     .await;
     match result {

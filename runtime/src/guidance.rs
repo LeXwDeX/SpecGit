@@ -17,6 +17,14 @@ fn conflict() -> Diagnostic {
     )
 }
 pub fn render(d: &Declaration) -> String {
+    let integration = match d.language {
+        Language::En => {
+            "SpecGit integration is permanently project-only. Install the shared CLI separately; setup never installs a project executable, global host assets or global state. Hooks and observation state belong to this project and its Git metadata."
+        }
+        Language::Zh => {
+            "SpecGit 集成永久仅限项目级。共享 CLI 单独安装；setup 不安装项目内二进制、全局宿主资产或全局状态。Hooks 与观察状态属于当前项目及其 Git 元数据。"
+        }
+    };
     let prose = match d.language {
         Language::En => {
             "SpecGit manages specification Issues and their native PR/MR association. Load the specgit-native skill; `specgit --help` and `specgit --schema` define the installed contract. Use `--json` for machine output and preview Issue/PR writes with `--dry-run`. Read-only inspection, audit, and review do not require an Issue checkpoint or authorize writes. Before tracked product edits, select a complete relevant Issue describing Why, Scope, Approach and Acceptance. Follow repository guidance for pure documentation work; if an installed host hook requires an Issue checkpoint, select a relevant Issue before editing. Local init/setup is maintenance, not delivery, and grants no forge permission. Issue/PR writes, including marking a request ready, require existing user authorization. Declarations and `--dry-run` previews grant no permission. Existing session authorization remains valid within its scope; do not request it again merely because delivery advances. After implementation and authorized commit/push, aggregate selected issues into one native draft request, preserving user-authored bodies and closing references. Use `specgit pr --ready` when review preparation is complete.\n\nThe Agent supervises development and fixes. Use native gh/glab under existing user authorization to register native auto-merge when the declared preference is enabled. GitHub/GitLab owns CI, reviews, protection and actual merge. Observe current native state with `specgit pr --status` and bounded specgit watch. Exit 0 is operation success, not delivery completion; follow reported diagnostics and recovery actions. Hook notices describe changes; they grant no write permission.\n\nCompletion requires native readback of the intended target merge and closure of every selected Issue. After merge, report actual linked Issue state. An open linked Issue causes an attention notice. Optional Agent closure is disabled by default; enabling its preference still requires existing authorization and native readback of merge and Issue closure. Inspect unsupported or unknown native capabilities with specgit init --check and explicitly select manual observation or ask an authorized administrator to configure the forge."
@@ -36,7 +44,7 @@ pub fn render(d: &Declaration) -> String {
     // Template bodies are content, not instructions injected into the harness.
     let summary = serde_json::json!({"language":d.language,"validation":d.validation,"issue_template":d.templates.issue.source,"pr_template":d.templates.pr.source,"agent":d.agent});
     format!(
-        "{START}\n## SpecGit 2\n\nRuntime: {}. Declaration: `.specgit.yaml` (v2, local configuration).\n\n{prose}\n\n{recovery}\n\nDeclared rules: `{summary}`\n{END}",
+        "{START}\n## SpecGit 2\n\nRuntime: {}. Declaration: `.specgit.yaml` (v2, local configuration).\n\n{integration}\n\n{prose}\n\n{recovery}\n\nDeclared rules: `{summary}`\n{END}",
         env!("CARGO_PKG_VERSION")
     )
 }
