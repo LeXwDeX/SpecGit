@@ -38,6 +38,8 @@ struct Cli {
 enum Commands {
     /// Preview, retire or explicitly migrate v1 integration with restorable local transactions.
     Migrate(specgit::migrate::Options),
+    /// Preview or reversibly remove only this project's proven owned integrations.
+    Remove(specgit::remove::Options),
     /// Prepare, create or adopt complete specs using native issues and a local checkpoint.
     Issue(specgit::issue::Options),
     /// Create or adopt a native request after real pushed changes, preserving issue references.
@@ -345,6 +347,7 @@ async fn main() {
             Commands::Migrate(options) => {
                 Box::pin(specgit::migrate::run(options, process, &cwd)).await
             }
+            Commands::Remove(options) => specgit::remove::run(options, process, &cwd).await,
             Commands::Issue(options) => specgit::issue::run(options, process, &cwd).await,
             Commands::Pr(options) => Box::pin(specgit::pr::run(options, process, &cwd)).await,
             Commands::Watch(options) => Box::pin(specgit::watch::run(options, process, &cwd)).await,

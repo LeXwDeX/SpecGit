@@ -315,7 +315,11 @@ impl AssetStore {
         Ok(())
     }
     pub fn pending_transactions(&self) -> Result<Vec<String>, Diagnostic> {
-        let directory = self.root.join("transactions");
+        Self::pending_at(&self.root)
+    }
+    /// Read-only inspection must not create the store or its lock file.
+    pub(crate) fn pending_at(root: &Path) -> Result<Vec<String>, Diagnostic> {
+        let directory = root.join("transactions");
         safe_path(&directory)?;
         if !directory.exists() {
             return Ok(vec![]);
@@ -355,6 +359,72 @@ impl AssetStore {
         }
         pending.sort();
         Ok(pending)
+    }
+    /// Existing init/migrate journals prove the exact bytes and permissions of
+    /// declarations written before a separate removal command was shipped.
+    pub(crate) fn owned_at(
+        root: &Path,
+        path: &Path,
+        snapshot: &Snapshot,
+    ) -> Result<Option<Change>, Diagnostic> {
+        let directory = root.join("transactions");
+        safe_path(&directory)?;
+        if !directory.exists() {
+            return Ok(None);
+        }
+        let mut paths = Vec::new();
+        for (i, entry) in fs::read_dir(directory).map_err(|_| io_error())?.enumerate() {
+            if i >= 1000 {
+                return Err(error(
+                    Code::OutputLimit,
+                    "Transaction inventory exceeds its bound.",
+                ));
+            }
+            paths.push(entry.map_err(|_| io_error())?.path());
+        }
+        paths.sort();
+        let expected_path = path.canonicalize().map_err(|_| io_error())?;
+        for entry in paths {
+            if !entry
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("tx-"))
+            {
+                continue;
+            }
+            let journal_path = entry.join("journal.json");
+            let before = Snapshot::read(&journal_path)?;
+            let Some(bytes) = &before.bytes else { continue };
+            let journal: Journal =
+                serde_json::from_value(crate::input::json(bytes, JOURNAL_LIMIT, 20)?).map_err(
+                    |_| {
+                        error(
+                            Code::RollbackConflict,
+                            "A retained transaction journal is damaged.",
+                        )
+                    },
+                )?;
+            if journal.version != 2 || journal.entries.len() > 100 {
+                return Err(error(
+                    Code::RollbackConflict,
+                    "A retained transaction journal is unsupported.",
+                ));
+            }
+            if journal.state == "committed"
+                && journal.entries.iter().any(|entry| {
+                    safe_path(&entry.path).is_ok()
+                        && entry.path.canonicalize().ok().as_ref() == Some(&expected_path)
+                        && entry.matches(snapshot, true)
+                })
+            {
+                return Ok(Some(Change {
+                    path: journal_path,
+                    after: before.bytes.clone(),
+                    permissions: before.permissions.clone(),
+                    before,
+                }));
+            }
+        }
+        Ok(None)
     }
     pub fn apply(&self, changes: Vec<Change>) -> Result<Applied, Diagnostic> {
         self.apply_checked(changes, |_| Ok(()))

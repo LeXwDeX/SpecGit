@@ -132,6 +132,7 @@ commands use the global input/output contract above.
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
 | `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
+| `remove` | Preview or reversibly remove this project's proven owned local integration. The default and `--dry-run` prepare a read-only preview whose evidence carries a `preview_sha256`; `--apply --expect <digest>` applies exactly that inspected preview as one recoverable transaction; `--rollback <transaction>` restores it offline without configuration or forge access. See [whole-project removal](#whole-project-removal). |
 
 `inbox`, `status`, `doctor` and `migrate` remain auxiliary entrypoints in this
 native CLI. Core project operations are setup, init, issue, pr, watch
@@ -424,8 +425,9 @@ recorded hash and execute permission, with a root outside the checkout; run
 global setup first and refresh it after CLI upgrades. Refresh is additive and
 keeps previously recorded agents and explicit choices. Project `--uninstall`
 requires no `--agent` and removes exactly that worktree's recorded project
-assets; `--rollback` uses the project journal. Coordinated removal of a whole
-project's SpecGit integration remains separate future work (#630).
+assets; `--rollback` uses the project journal. Whole-project removal is a
+separate `remove` command, not part of `setup`; see
+[whole-project removal](#whole-project-removal).
 
 Registration is reported as `written_not_verified`, with
 `host_delivery.imported_event`, `context_injection`, `visible_message` and
@@ -434,6 +436,33 @@ selection reports `codex_trust: review_in_host_required`: Codex loads
 `<repo>/.codex/hooks.json` only after the user reviews and trusts the project
 `.codex/` layer in the host's `/hooks` menu, and SpecGit never performs,
 assumes or automates that trust.
+
+### Whole-project removal
+
+`remove` retires one project's owned local SpecGit integration. It is a newer
+runtime command than the released 2.2.1; confirm `specgit remove --help` on the
+installed executable before using it. Without `--apply`, or with `--dry-run`, it
+prepares a read-only preview whose evidence carries a `preview_sha256`.
+`--apply --expect <digest>` applies exactly that inspected preview as one
+recoverable transaction, and `--rollback <transaction>` restores the transaction
+offline without configuration or forge access.
+
+Removal covers the untracked local declaration and `local-routing.json` only
+when a committed init or migration journal proves their exact bytes and
+permissions; a tracked `.specgit.yaml` blocks removal because removal never
+changes the Git index. Init guidance blocks and recorded project agent skills,
+guidance, settings (#652) and receipt-owned guard hooks join the same transaction.
+An existing delivery checkpoint permits removal only after the native request is verified merged into
+the recorded target with every selected Issue closed. The shared
+`info/exclude` block is removed only when no sibling initialized worktree
+still consumes it.
+
+An edited or damaged owned asset, a pending transaction, and an undelivered or
+foreign checkpoint block the preview: its evidence lists the conflicts and
+applies nothing. Unknown private evidence, journals, locks and backups are
+retained rather than recursively deleted; global agent assets, the shared
+executable and remote data are untouched. Rollback restores the exact recorded
+bytes and permissions and refuses to overwrite later user edits.
 
 Migration defaults to a preview. Supply the complete new declaration explicitly;
 no old automation or orchestration policy is silently reinterpreted. Exact owned
