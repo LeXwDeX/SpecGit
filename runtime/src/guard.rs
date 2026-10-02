@@ -80,7 +80,11 @@ fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic>
     Ok(format!("#!/bin/sh\n{block}{before}"))
 }
 
-pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
+pub(crate) async fn plan(
+    process: &Process,
+    cwd: &Path,
+    uninstall: bool,
+) -> Result<(Vec<Change>, PathBuf, PathBuf), Diagnostic> {
     let Some(root) = root(process, cwd).await? else {
         return Err(Diagnostic::new(
             Code::MissingProject,
@@ -235,16 +239,22 @@ pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<V
     });
     let receipt_parent = receipt_path
         .parent()
-        .ok_or_else(|| Diagnostic::input("Invalid Git-hook receipt path."))?;
+        .ok_or_else(|| Diagnostic::input("Invalid Git-hook receipt path."))?
+        .to_owned();
+    Ok((changes, hook_root, receipt_parent))
+}
+
+pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
+    let (changes, hook_root, receipt_parent) = plan(process, cwd, uninstall).await?;
     let store = AssetStore::lock(
         &receipt_parent.join("transactions"),
-        &[hook_root, receipt_parent.to_owned()],
+        &[hook_root, receipt_parent],
         Duration::from_secs(2),
     )?;
     let applied = store.apply(changes)?;
     Ok(json!({
         "installed": !uninstall,
-        "hooks": receipt.map(|receipt| receipt.hooks.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        "hooks": if uninstall { vec![] } else { vec!["pre-commit", "pre-push"] },
         "transaction": applied
     }))
 }

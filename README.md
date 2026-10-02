@@ -103,9 +103,10 @@ conflicts, and never installs a second runtime binary inside a project.
 Written registration is
 reported separately from actual host discovery or event delivery; a reload, a
 host trust review (Codex `/hooks`), or another turn may be needed to verify the
-host. Coordinated removal of a whole project's SpecGit integration remains
-separate future work; project-scope `--uninstall` covers only the recorded
-agent assets.
+host. Coordinated removal of a whole
+project's SpecGit integration is the separate `specgit remove` command (preview,
+digest-bound apply, offline rollback), newer than the released 2.2.1 runtime;
+project-scope `--uninstall` covers only the recorded agent assets.
 
 Codex and Claude PreToolUse hooks reject tracked edits in an initialized v2
 project until the current repository and branch have a complete selected-Issue

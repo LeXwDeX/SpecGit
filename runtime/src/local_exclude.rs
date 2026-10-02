@@ -101,6 +101,27 @@ pub fn change(path: &Path, names: &[&str]) -> Result<Change, Diagnostic> {
     Ok(change)
 }
 
+pub(crate) fn removal(path: &Path) -> Result<Change, Diagnostic> {
+    let mut c = Change::new(path.to_owned(), None)?;
+    let text = std::str::from_utf8(c.before.bytes.as_deref().unwrap_or_default())
+        .map_err(|_| conflict())?;
+    if !text.contains(START) && !text.contains(END) {
+        c.after = c.before.bytes.clone();
+        return Ok(c);
+    }
+    // Refresh already checks marker count, line boundaries and the rule whitelist.
+    change(path, &[".specgit.yaml"])?;
+    let start = text.find(START).ok_or_else(conflict)?;
+    let end = text.find(END).ok_or_else(conflict)? + END.len();
+    let suffix = &text[end..];
+    let suffix = suffix
+        .strip_prefix("\r\n")
+        .or_else(|| suffix.strip_prefix('\n'))
+        .unwrap_or(suffix);
+    c.after = Some(format!("{}{suffix}", &text[..start]).into_bytes());
+    Ok(c)
+}
+
 pub async fn plan(
     process: &Process,
     root: &Path,

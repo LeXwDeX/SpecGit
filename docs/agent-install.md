@@ -199,9 +199,27 @@ specgit setup --scope project --uninstall --json
 specgit setup --scope project --rollback <transaction>
 ```
 
-Coordinated removal of a whole
-project's SpecGit integration (declaration, guidance blocks, guard hooks) is
-separate future work and is not part of `setup`.
+`--scope project --uninstall` is deliberately narrow: it removes only this
+worktree's recorded agent assets and keeps the declaration, guidance blocks,
+guard hooks and local routing. Removing a whole project's SpecGit integration
+is the separate `specgit remove` command, not part of `setup`. That command is
+newer than the released 2.2.1 runtime; confirm `specgit remove --help` on the
+installed executable before offering it. It previews first, applies only the
+exact inspected preview digest, and rolls back a transaction offline:
+
+```sh
+specgit remove --dry-run --json
+specgit remove --apply --expect <preview_sha256> --json
+specgit remove --rollback <transaction>
+```
+
+Declaration and local-routing removal requires exact bytes and permissions
+proven by a committed init or migration journal; an unowned or edited declaration, a tracked
+`.specgit.yaml` (removal never changes the Git index), a pending transaction or
+an unfinished delivery blocks the preview with listed conflicts and no writes.
+An existing delivery checkpoint additionally requires the verified native
+target merge with every selected Issue closed before any removal can proceed. Sibling initialized worktrees
+keep shared exclude and hook blocks they still consume.
 
 When Codex is selected, project hooks live in `<repo>/.codex/hooks.json`, and
 Codex runs them only after the user reviews and trusts the project `.codex/`
