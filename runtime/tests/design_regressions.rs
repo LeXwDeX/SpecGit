@@ -203,9 +203,11 @@ fn shared_exclusion_does_not_hide_another_worktrees_manual_guidance() {
 }
 
 #[test]
-fn concurrent_checkouts_share_issue_creation_lock() {
+fn linked_worktrees_share_issue_creation_lock() {
     let a = delivery::Fixture::new("github");
-    let b = delivery::Fixture::new("github");
+    let linked = a.root.parent().unwrap().join("linked");
+    git(&a.root, &["worktree", "add", "-b", "linked", "../linked"]);
+    fs::copy(a.root.join(".specgit.yaml"), linked.join(".specgit.yaml")).unwrap();
     a.edit(|s| s["create_issue_delay_ms"] = json!(800));
     let args = ["issue", "--create-labels", "feat: identical concurrent WHY"];
     let first = a.command(&args).stdout(Stdio::piped()).spawn().unwrap();
@@ -222,15 +224,7 @@ fn concurrent_checkouts_share_issue_creation_lock() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    let shared = a.root.parent().unwrap();
-    let second = b
-        .command(&args)
-        .env("HOME", shared)
-        .env("LOCALAPPDATA", shared)
-        .env("XDG_DATA_HOME", shared)
-        .env("SPECGIT_FIXTURE_API_FILE", shared.join("api.json"))
-        .output()
-        .unwrap();
+    let second = a.command(&args).current_dir(&linked).output().unwrap();
     let first = first.wait_with_output().unwrap();
     assert!(first.status.success(), "{:?}", first.stdout);
     let report: Value = serde_json::from_slice(&second.stdout).unwrap();

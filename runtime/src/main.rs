@@ -77,34 +77,17 @@ enum Commands {
         #[arg(long)]
         rollback: Option<String>,
     },
-    /// Install owned global or project agent assets; registration is not host verification.
+    /// Install only project-owned agent assets; registration is not host verification.
     Setup {
-        /// Global setup remains the default; project never installs a runtime binary.
-        #[arg(long, value_enum, default_value = "global")]
+        /// Project is the only supported scope, permanently; the shared CLI is installed separately.
+        #[arg(long, value_enum, default_value = "project")]
         scope: specgit::setup::Scope,
         /// Select an integration explicitly; repeat for multiple agents.
         #[arg(long, value_enum, action = clap::ArgAction::Append)]
         agent: Vec<specgit::setup::Agent>,
-        #[arg(long)]
-        root: Option<PathBuf>,
-        #[arg(long, value_enum)]
-        provider: Option<Provider>,
-        #[arg(long)]
-        api_host: Option<String>,
-        #[arg(long)]
-        register_claude: bool,
-        #[arg(long)]
-        claude_settings: Option<PathBuf>,
-        /// Register Codex hooks and install its native skill and managed global instructions.
-        #[arg(long)]
-        register_codex: bool,
-        #[arg(long)]
-        codex_root: Option<PathBuf>,
-        /// Install OpenCode's native skill and managed global instructions.
-        #[arg(long)]
-        register_opencode: bool,
-        #[arg(long)]
-        opencode_root: Option<PathBuf>,
+        /// Opt in only on a custom OpenCode supporting Claude-compatible command hooks.
+        #[arg(long, conflicts_with_all = ["uninstall", "rollback"])]
+        opencode_claude_hooks: bool,
         #[arg(long, conflicts_with = "rollback")]
         uninstall: bool,
         #[arg(long, conflicts_with = "rollback")]
@@ -119,8 +102,6 @@ enum Commands {
         /// Bounded native observation for the host's asynchronous PostToolUse hook.
         #[arg(long)]
         observe: bool,
-        #[arg(long)]
-        state_root: Option<PathBuf>,
     },
     /// Enforce the local Issue checkpoint from a Git pre-commit or pre-push hook.
     Guard {
@@ -152,6 +133,30 @@ enum Commands {
     },
 }
 fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
+    if raw.iter().any(|arg| arg == "setup")
+        && raw.iter().filter_map(|arg| arg.to_str()).any(|arg| {
+            [
+                "--root",
+                "--provider",
+                "--api-host",
+                "--register-claude",
+                "--claude-settings",
+                "--register-codex",
+                "--codex-root",
+                "--register-opencode",
+                "--opencode-root",
+            ]
+            .contains(&arg.split('=').next().unwrap_or(arg))
+                || matches!(arg, "global" | "--scope=global")
+        })
+    {
+        return Diagnostic::new(
+            Code::InvalidInput,
+            "setup",
+            "SpecGit integration is permanently project-only; global setup and external host roots are unsupported.",
+            "Install the shared CLI separately, initialize the project, then preview specgit setup --agent <agent> --dry-run.",
+        );
+    }
     const RETIRED: &[&str] = &[
         "--automation",
         "--merge-target",
@@ -287,13 +292,8 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    if let Commands::Hook {
-        event,
-        state_root,
-        observe,
-    } = &cli.command
-    {
-        let output = specgit::hook::stdin(event, state_root.as_deref(), *observe).await;
+    if let Commands::Hook { event, observe } = &cli.command {
+        let output = specgit::hook::stdin(event, *observe).await;
         if let Some(value) = output.json {
             println!("{}", value);
         }
@@ -394,128 +394,17 @@ async fn main() {
                 unreachable!("hook and guard have their own framing")
             }
             Commands::Setup {
-                scope,
-                mut agent,
-                root,
-                provider,
-                api_host,
-                register_claude,
-                claude_settings,
-                register_codex,
-                codex_root,
-                register_opencode,
-                opencode_root,
+                scope: _,
+                agent,
+                opencode_claude_hooks,
                 uninstall,
                 dry_run,
                 rollback,
             } => {
-                let root = match root.map(Ok).unwrap_or_else(specgit::setup::default_root) {
-                    Ok(p) => p,
-                    Err(d) => return Report::failure("setup", d),
-                };
-                for (selected, host) in [
-                    (register_claude, specgit::setup::Agent::Claude),
-                    (register_codex, specgit::setup::Agent::Codex),
-                    (register_opencode, specgit::setup::Agent::Opencode),
-                ] {
-                    if selected {
-                        agent.push(host);
-                    }
-                }
-                if agent
-                    .iter()
-                    .any(|host| agent.iter().filter(|other| *other == host).count() > 1)
-                {
-                    return Report::failure(
-                        "setup",
-                        Diagnostic::input(
-                            "Select each agent once; do not combine its --agent choice and legacy registration flag.",
-                        ),
-                    );
-                }
-                if scope == specgit::setup::Scope::Project {
-                    if claude_settings.is_some()
-                        || codex_root.is_some()
-                        || opencode_root.is_some()
-                        || api_host.is_some()
-                    {
-                        return Report::failure(
-                            "setup",
-                            Diagnostic::input(
-                                "Project scope uses documented checkout paths; custom host roots/settings and --api-host are global-only.",
-                            ),
-                        );
-                    }
-                    return specgit::setup::project::run(
-                        specgit::setup::project::Options {
-                            shared_root: root,
-                            agents: agent,
-                            uninstall,
-                            dry_run,
-                            rollback,
-                        },
-                        process,
-                        &cwd,
-                    )
-                    .await;
-                }
-                let register_claude = agent.contains(&specgit::setup::Agent::Claude);
-                let register_codex = agent.contains(&specgit::setup::Agent::Codex);
-                let register_opencode = agent.contains(&specgit::setup::Agent::Opencode);
-                if (claude_settings.is_some() && !register_claude)
-                    || (codex_root.is_some() && !register_codex)
-                    || (opencode_root.is_some() && !register_opencode)
-                {
-                    return Report::failure(
-                        "setup",
-                        Diagnostic::input(
-                            "Custom host settings/root requires its explicit --agent or legacy registration choice.",
-                        ),
-                    );
-                }
-                let settings = if register_claude {
-                    match claude_settings
-                        .map(Ok)
-                        .unwrap_or_else(specgit::setup::claude_settings)
-                    {
-                        Ok(p) => Some(p),
-                        Err(d) => return Report::failure("setup", d),
-                    }
-                } else {
-                    None
-                };
-                let mut host_roots = std::collections::BTreeMap::new();
-                if agent.contains(&specgit::setup::Agent::Generic) {
-                    match specgit::setup::host_root("generic") {
-                        Ok(root) => {
-                            host_roots.insert("generic".into(), root);
-                        }
-                        Err(d) => return Report::failure("setup", d),
-                    }
-                }
-                for (host, register, path) in [
-                    ("codex", register_codex, codex_root),
-                    ("opencode", register_opencode, opencode_root),
-                ] {
-                    if register {
-                        match path
-                            .map(Ok)
-                            .unwrap_or_else(|| specgit::setup::host_root(host))
-                        {
-                            Ok(root) => {
-                                host_roots.insert(host.to_owned(), root);
-                            }
-                            Err(d) => return Report::failure("setup", d),
-                        }
-                    }
-                }
-                specgit::setup::run(
-                    specgit::setup::Options {
-                        root,
-                        provider,
-                        api_host,
-                        claude_settings: settings,
-                        host_roots,
+                specgit::setup::project::run(
+                    specgit::setup::project::Options {
+                        agents: agent,
+                        opencode_claude_hooks,
                         uninstall,
                         dry_run,
                         rollback,

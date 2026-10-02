@@ -124,11 +124,15 @@ impl Fixture {
         v
     }
     fn run_without_forge_cli(&self, args: &[&str]) -> Value {
-        fs::copy(
-            env!("CARGO_BIN_EXE_specgit-process-fixture"),
-            self.bin.join(if cfg!(windows) { "git.exe" } else { "git" }),
-        )
-        .unwrap();
+        let git = self.bin.join(if cfg!(windows) { "git.exe" } else { "git" });
+        if !git.exists() {
+            // Only the forge CLI is missing; keep real Git without an extra Unix proxy process.
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(specgit::process::resolve_executable("git").unwrap(), &git)
+                .unwrap();
+            #[cfg(windows)]
+            fs::copy(env!("CARGO_BIN_EXE_specgit-process-fixture"), &git).unwrap();
+        }
         self.run_raw_with_paths(args, vec![self.bin.clone()])
     }
     fn run_raw_with_budget(&self, args: &[&str], budget_ms: u64) -> Value {
@@ -534,7 +538,10 @@ fn init_keeps_structured_diagnostics_when_native_cli_is_missing() {
     );
     let report = f.run_without_forge_cli(&["init", "--provider", "github", "--inspect"]);
     assert_report_matches_schema(&report);
-    assert_eq!(report["diagnostics"][0]["code"], "missing_executable");
+    assert_eq!(
+        report["diagnostics"][0]["code"], "missing_executable",
+        "{report}"
+    );
     assert_eq!(report["evidence"]["inspection"]["complete"], false);
     assert_eq!(report["evidence"]["inspection"]["status"], "incomplete");
 }

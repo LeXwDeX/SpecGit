@@ -902,7 +902,16 @@ fn missing_labels_need_explicit_choice_and_dry_run_leaves_no_local_state() {
         assert_eq!(r["exit"], 2, "{r}");
         assert_eq!(r["effects"]["outcome"], "not_applied");
         assert_eq!(f.writes(), 0);
-        assert!(!f.root.join(".git/specgit-v2").exists());
+        // A real-write attempt may acquire the Git-private coordination lock,
+        // but must not save a business checkpoint before label confirmation.
+        let private = f.root.join(".git/specgit-v2");
+        let entries: Vec<_> = fs::read_dir(&private)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("issue-creation")]);
+        assert!(!private.join("selection.json").exists());
+        let f = Fixture::new(provider);
         let r = f.run(&["issue", "feat: preview", "--dry-run", "--create-labels"]);
         assert_eq!(r["exit"], 0, "{r}");
         assert_eq!(r["effects"]["outcome"], "not_applied");

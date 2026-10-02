@@ -38,6 +38,12 @@ do not install an operational CLI copy inside a project. Isolated build and
 installed-runtime qualification artifacts are test outputs, not PATH replacements.
 Initialize each participating project with `specgit init`.
 
+SpecGit integration is permanently project-only. No global agent setup, host
+assets or observation state is supported. Project hooks reference the shared
+installed CLI directly. Official OpenCode gets only project guidance and Skill;
+use `--opencode-claude-hooks` only on a custom OpenCode supporting that protocol,
+and verify real blocking/context delivery after installation.
+
 Read-only audits need no Issue checkpoint. Product edits need a complete selected
 Issue; documentation follows the short path below and any installed hook's
 checkpoint requirement. Codex/Claude hooks and `specgit guard --install` enforce
@@ -86,7 +92,9 @@ missing. Use current-head and installed/runtime evidence for claims.
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.3.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.4.0. Declaration: `.specgit.yaml` (v2, local configuration).
+
+SpecGit 集成永久仅限项目级。共享 CLI 单独安装；setup 不安装项目内二进制、全局宿主资产或全局状态。Hooks 与观察状态属于当前项目及其 Git 元数据。
 
 SpecGit 管理规格 Issue 与原生 PR/MR 关联。加载 specgit-native skill；以 `specgit --help` 和 `specgit --schema` 为已安装命令契约，机器输出用 `--json`，Issue/PR 写入先用 `--dry-run` 预览。只读检查、审计和评审不需要 Issue checkpoint，也不会授权写入。修改已跟踪的产品代码前，选择一个包含原因、范围、方案和验收要求且与工作相关的完整 Issue。纯文档工作按仓库自己的文档流程处理；如果已安装的 host hook 要求 Issue checkpoint，编辑前选择相关 Issue。本地 init/setup 属于维护，不是交付，也不会获得 forge 写入权限。Issue/PR 写入（包括将请求标记为 ready）需要已有用户授权。声明和 `--dry-run` 预览都不产生授权；会话已有授权在其范围内持续有效，不要仅因交付进入下一步而重复请求。完成实施并按授权提交、推送后，将选定 Issue 汇聚到一个原生草稿请求，保留用户正文与关闭引用。准备好评审后使用 `specgit pr --ready`。
 

@@ -71,6 +71,10 @@ specgit status --json
 Apply project changes only after an applicable conflict-free preview. Resolve any
 required manual-observation choice explicitly in both preview and apply.
 Apply the intended `setup` selection from its help after reviewing the preview.
+From 2.4 on, setup is permanently project-only (`--scope project` is the
+default and only scope): refreshing a 2.3-era project receipt rewrites it into
+the 2.4 format locally without `shared_root` and without reading or writing the
+retired global root.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.
 For a v1 project, follow the [migration guide](migration-v2.md): prepare a complete
 v2 declaration, inspect `specgit migrate --config-file <file> --json`, resolve old
@@ -98,8 +102,9 @@ Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
 of it. Untracking an already committed local declaration requires an explicit,
-reviewed repository change. Global `setup` assets belong under the selected
-user/host roots, outside the project by default.
+reviewed repository change. Project `setup` writes documented checkout assets
+and keeps its receipt under that worktree's Git directory; 2.4 has no global
+setup assets.
 
 ## Removal and rollback
 
@@ -120,9 +125,12 @@ and an unfinished native delivery blocks removal. Confirm
 `init --rollback <transaction>` undoes only its recorded local transaction when
 ownership still matches; it is not a full project uninstall. `guard --uninstall`
 removes recorded Git-hook blocks.
-`setup --uninstall --dry-run` previews removal of the selected global setup's
-owned host assets; applying it affects that user integration across projects, not
-just the current repository. Preserve recovery records and foreign content.
+SpecGit 2.4 is permanently project-only: `setup --uninstall` removes only the
+current worktree's recorded project agent assets and never touches global or
+host-level integration state. Existing 2.3 global data is preserved; 2.4 ships
+no global cleanup command. If that data must be removed, back it up first and
+use the 2.3 CLI's exact owned cleanup before upgrading — never a blind delete.
+Preserve recovery records and foreign content.
 
 A binary rollback restores the previously backed-up executable. It does not undo
 project migration or host asset refreshes; assess those recorded transactions

@@ -24,7 +24,7 @@ fn info(message: &str) -> Output {
         diagnostic: None,
     }
 }
-pub async fn stdin(event: &str, state_root: Option<&Path>, observe: bool) -> Output {
+pub async fn stdin(event: &str, observe: bool) -> Output {
     let read = async {
         let mut bytes = vec![];
         tokio::io::stdin()
@@ -37,19 +37,18 @@ pub async fn stdin(event: &str, state_root: Option<&Path>, observe: bool) -> Out
         Ok(Ok(bytes)) if observe => {
             let process = Process::default();
             let cancel = process.cancellation.clone();
-            let task = observe_handle(event, &bytes, state_root, process);
+            let task = observe_handle(event, &bytes, process);
             tokio::pin!(task);
             tokio::select! {
                 output = &mut task => output,
                 _ = termination() => { cancel.cancel(); task.await }
             }
         }
-        Ok(Ok(bytes)) => tokio::time::timeout(
-            Duration::from_millis(2500),
-            handle(event, &bytes, state_root),
-        )
-        .await
-        .unwrap_or_else(|_| info("SpecGit context deadline expired; use explicit diagnostics.")),
+        Ok(Ok(bytes)) => tokio::time::timeout(Duration::from_millis(2500), handle(event, &bytes))
+            .await
+            .unwrap_or_else(|_| {
+                info("SpecGit context deadline expired; use explicit diagnostics.")
+            }),
         _ => info(
             "SpecGit could not read bounded hook input; ordinary tool execution remains unchanged.",
         ),
@@ -60,7 +59,7 @@ fn relevant(event: &str, payload: &Value) -> bool {
         .get("tool_name")
         .and_then(Value::as_str)
         .unwrap_or("");
-    if ["Write", "Edit", "MultiEdit", "apply_patch"].contains(&tool) {
+    if ["Write", "Edit", "MultiEdit"].contains(&tool) || patch_tool(tool) {
         return true;
     }
     if !["Bash", "PowerShell"].contains(&tool) {
@@ -207,6 +206,12 @@ struct Prepared {
     target: Option<String>,
     observation: config::Observation,
 }
+fn patch_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "apply_patch" | "functions.apply_patch" | "mcp__functions__apply_patch"
+    )
+}
 fn deny(message: &str) -> Output {
     Output {
         json: Some(json!({
@@ -226,19 +231,25 @@ fn requested_paths(payload: &Value, cwd: &Path) -> Vec<PathBuf> {
         .unwrap_or("");
     let input = payload.get("tool_input").unwrap_or(&Value::Null);
     let mut values = vec![];
-    for key in ["file_path", "path"] {
+    for key in ["file_path", "filePath", "path"] {
         if let Some(path) = input.get(key).and_then(Value::as_str) {
             values.push(path.to_owned());
         }
     }
-    if tool == "apply_patch" {
+    if patch_tool(tool) {
         let patch = input
             .get("patch")
+            .or_else(|| input.get("patchText"))
             .or_else(|| input.get("command"))
             .and_then(Value::as_str)
             .unwrap_or("");
         for line in patch.lines() {
-            for marker in ["*** Add File: ", "*** Update File: ", "*** Delete File: "] {
+            for marker in [
+                "*** Add File: ",
+                "*** Update File: ",
+                "*** Delete File: ",
+                "*** Move to: ",
+            ] {
                 if let Some(path) = line.strip_prefix(marker) {
                     values.push(path.trim().to_owned());
                 }
@@ -393,7 +404,7 @@ async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> 
         observation: marker.observation,
     }))
 }
-pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Output {
+pub async fn handle(event: &str, bytes: &[u8]) -> Output {
     let Prepared {
         context,
         language,
@@ -444,7 +455,7 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
         )
     };
     if ["SessionStart", "PostToolUse"].contains(&event) {
-        match pending_notice(&context, &session, state_root, &observation.notify) {
+        match pending_notice(&context, &session, &observation.notify) {
             Ok(Some(notice)) => { text.push('\n'); text.push_str(&notice); },
             Ok(None) => {},
             Err(_) => text.push_str("\nSpecGit has unreadable local observation state; inspect it with explicit diagnostics."),
@@ -481,7 +492,6 @@ pub async fn handle(event: &str, bytes: &[u8], state_root: Option<&Path>) -> Out
 fn pending_notice(
     context: &project::Context,
     session: &str,
-    state_root: Option<&Path>,
     notifications: &[config::Notification],
 ) -> Result<Option<String>, crate::diagnostic::Diagnostic> {
     let Some(request) = crate::selection::read(context)?.and_then(|s| s.request) else {
@@ -493,7 +503,7 @@ fn pending_notice(
         request,
         crate::watch_store::Goal::Lifecycle,
     )?;
-    let Some(state) = crate::watch_store::read(&identity, state_root)? else {
+    let Some(state) = crate::watch_store::read(&identity)? else {
         return Ok(None);
     };
     let ids: Vec<_> = state
@@ -510,19 +520,11 @@ fn pending_notice(
         return Ok(None);
     }
     Ok(Some(format!(
-        "SpecGit unverified event receipts: {}. Refresh with specgit inbox --request {request} --session {session} --goal lifecycle{} before using their status. Receipt acknowledgement is explicit; these IDs are not current acceptance evidence.",
+        "SpecGit unverified event receipts: {}. Refresh with specgit inbox --request {request} --session {session} --goal lifecycle before using their status. Receipt acknowledgement is explicit; these IDs are not current acceptance evidence.",
         ids.join(", "),
-        state_root
-            .map(|_| " --state-root <registered-state-root>")
-            .unwrap_or("")
     )))
 }
-pub async fn observe_handle(
-    event: &str,
-    bytes: &[u8],
-    state_root: Option<&Path>,
-    process: Process,
-) -> Output {
+pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Output {
     if event != "PostToolUse" {
         return info("SpecGit asynchronous observation requires PostToolUse.");
     }
@@ -552,7 +554,6 @@ pub async fn observe_handle(
             request,
             session: prepared.session,
             goal: crate::watch_store::Goal::Lifecycle,
-            state_root: state_root.map(Path::to_path_buf),
             timeout_seconds: None,
             poll_seconds: None,
             once: false,

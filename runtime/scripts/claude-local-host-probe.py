@@ -23,10 +23,22 @@ if not args.project:
  subprocess.run(['git','commit','-m','fixture'],cwd=project,check=True,capture_output=True)
  (project/'.specgit.yaml').write_text('version: 2\nprovider: github\nremote: origin\nlanguage: en\n')
 (root/'mcp.json').write_text('{"mcpServers":{}}')
-setup=subprocess.run([str(binary),'setup','--provider','github','--root',str(root/'assets'),'--register-claude','--claude-settings',str(config/'settings.json'),'--json'],cwd=project,env={'PATH':'','HOME':str(root)},capture_output=True,timeout=30)
-report=json.loads(setup.stdout)
+# Permanent project-only setup: no --root/--provider/--register-* flags exist.
+# Hooks are registered into this checkout's .claude/settings.json and reference
+# the already-installed shared binary; transactions stay in the private Git dir.
+setup_env={'PATH':str(binary.parent)+os.pathsep+os.environ.get('PATH',''),'HOME':str(root)}
+setup=subprocess.run([str(binary),'setup','--agent','claude','--json'],cwd=project,env=setup_env,capture_output=True,timeout=30)
+try:report=json.loads(setup.stdout)
+except ValueError:report={}
 if setup.returncode not in (0,3) or report.get('status')!='installed':
- raise RuntimeError('Isolated native installation failed')
+ raise RuntimeError('Isolated project setup failed: '+setup.stderr.decode('utf8','replace')[-2000:])
+git_dir=project/'.git'
+if git_dir.is_file():
+ git_dir=git_dir.read_text(errors='replace').strip()
+ if git_dir.startswith('gitdir:'):git_dir=git_dir[len('gitdir:'):].strip()
+ git_dir=Path(git_dir)
+ if not git_dir.is_absolute():git_dir=(project/git_dir).resolve()
+subscriptions=git_dir/'specgit-v2'/'subscriptions'
 version=subprocess.run(['claude','--version'],capture_output=True,text=True,check=True).stdout.strip()
 observed=[]
 def strings(value):
@@ -56,7 +68,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
   serialized=json.dumps(body,ensure_ascii=False)
   ids=re.findall(r'SpecGit 2 \[([0-9a-f]{16})\]',serialized)
   event_ids=[]
-  for path in (root/'assets'/'subscriptions').glob('*/state.json'):
+  for path in subscriptions.glob('*/state.json'):
    try:
     state=json.loads(path.read_text())
     event_ids.extend(e['id'] for e in state['events'] if e['id'] in serialized)
@@ -85,7 +97,8 @@ endpoint='http://127.0.0.1:'+str(server.server_port)
 
 env={k:os.environ[k]for k in ['PATH','HOME','USER','TMPDIR','SHELL','LANG','LC_ALL','SPECGIT_FIXTURE_API_FILE']if k in os.environ}
 env.update({'CLAUDE_CONFIG_DIR':str(config),'ANTHROPIC_API_KEY':'sk-ant-fixture-not-a-real-key','ANTHROPIC_BASE_URL':endpoint,'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC':'1','CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL':'1','HTTP_PROXY':endpoint,'HTTPS_PROXY':endpoint,'ALL_PROXY':endpoint,'NO_PROXY':'127.0.0.1,localhost'})
-args=['claude','-p','--settings',str(config/'settings.json'),'--setting-sources','user','--model','sonnet','--tools','Bash' if observe else '','--allowedTools','Bash(git add --dry-run *) Bash(sleep *)','--strict-mcp-config','--mcp-config',str(root/'mcp.json'),'--no-session-persistence','--output-format','stream-json','--include-hook-events','--verbose','Local synthetic transport test. Return the SpecGit hook context identifier.']
+env['PATH']=str(binary.parent)+os.pathsep+env['PATH']
+args=['claude','-p','--setting-sources','project','--model','sonnet','--tools','Bash' if observe else '','--allowedTools','Bash(git add --dry-run *) Bash(sleep *)','--strict-mcp-config','--mcp-config',str(root/'mcp.json'),'--no-session-persistence','--output-format','stream-json','--include-hook-events','--verbose','Local synthetic transport test. Return the SpecGit hook context identifier.']
 p=subprocess.Popen(args,cwd=project,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
 try:out,err=p.communicate(timeout=45)
 except subprocess.TimeoutExpired:

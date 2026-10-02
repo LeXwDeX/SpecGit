@@ -139,67 +139,70 @@ reported state. Do not create a test Issue or PR to demonstrate installation.
 
 Select the host running this task; multiple installed host directories do not mean
 the user wants all of them configured, and noninteractive operation never guesses
-a host. Inspect `specgit setup --help` and preview with the same provider/API host
-chosen for the repository, passing the host explicitly and repeatably through
-`--agent`:
+a host. Inspect `specgit setup --help` and preview the integration, passing the
+host explicitly and repeatably through `--agent`:
 
 | Active host | Setup selection |
 | --- | --- |
 | Codex | `--agent codex` |
 | Claude Code | `--agent claude` |
-| OpenCode | `--agent opencode` |
+| OpenCode (official build) | `--agent opencode` |
+| OpenCode custom fork with claude-compatible hooks | `--agent opencode --opencode-claude-hooks` |
 | Host that documents `.agents/skills` discovery | `--agent generic` |
 
-For example, in Codex with a GitHub repository:
+For example, in Codex:
 
 ```sh
-specgit setup --provider github --agent codex --dry-run --json
-specgit setup --provider github --agent codex --json
+specgit setup --agent codex --dry-run --json
+specgit setup --agent codex --json
 ```
 
-Global setup is the default scope and remains supported on its own. The legacy
-`--register-claude`, `--register-codex` and `--register-opencode` flags stay
-usable on refresh and select the same agents as the matching `--agent` values;
-do not combine one host's legacy flag with its `--agent` choice — that
-combination fails before any write. Generic integration owns only the
-`~/.agents/skills` skill, with no guidance block or hooks. Custom roots are
-global-only: `--claude-settings`, `--codex-root` and `--opencode-root` select
-explicit user-level configuration roots. Use the environment's real
-configuration root; respect `CODEX_HOME`, XDG settings and any explicitly
-selected custom roots. Preserve foreign skills, hooks and instructions.
-Ownership conflicts require reconciliation, not overwriting.
+SpecGit 2.4 is permanently project-only: `--scope project` is the default and
+the only scope value. Setup writes documented checkout assets with a
+worktree-private receipt, never copies the runtime binary into a project, and
+never installs user-global host assets or state. Project hooks invoke the
+currently installed shared user executable directly, so there is no global setup
+prerequisite. The retired global integration scope and its selectors —
+`--root`, `--provider`, `--api-host`, `--register-claude`,
+`--register-codex`, `--register-opencode`, `--claude-settings`, `--codex-root`
+and `--opencode-root` — are rejected input, not deprecated aliases. Preserve
+foreign skills, hooks and instructions; ownership conflicts require
+reconciliation, not overwriting. `watch`, `hook` and `inbox` always use
+Git-private state; their retired `--state-root` option is rejected.
 
-### Optional project-scoped integration
+### Project agent integration
 
 `specgit init` stays unchanged and project-scoped; agent integration is
-optional and separate. When the user selects project-scoped integration, run
-global setup first — project hooks invoke the shared verified executable under
-the global setup root (`--root`), never a copy inside the checkout — and then,
-inside the actual target repository:
+optional and separate. Inside the actual target repository:
 
 ```sh
-specgit setup --scope project --agent codex --dry-run --json
-specgit setup --scope project --agent codex --json
+specgit setup --agent codex --dry-run --json
+specgit setup --agent codex --json
 ```
 
 Project scope resolves the Git checkout and private absolute Git directory,
 writes only documented checkout assets (the canonical `.agents/skills` skill
 plus each selected host's skill copy, guidance and hook files), and records its
 receipt and journal under `<git_dir>/specgit-v2/agent-assets/`, so each linked
-worktree integrates independently. It rejects custom host roots, custom
-settings paths and `--api-host`. Selection is additive: refresh preserves
-previously recorded agents and explicit choices, and a new project integration
-fails unless at least one `--agent` is selected. Project uninstall removes
-every recorded project asset of the current worktree and must omit `--agent`;
-`--rollback` restores from the project journal only:
+worktree integrates independently. The 2.4 receipt format omits `shared_root`.
+A 2.3-era project receipt is refreshed, removed or recovered locally with
+foreign content and manual edits preserved, and setup never reads or writes the
+retired 2.3 global root. That global 2.3 data stays preserved: 2.4 ships no
+global cleanup command. If it must be removed, back it up first and use the 2.3
+CLI's exact owned cleanup before upgrading; never blind-delete.
+Selection is additive: refresh preserves previously recorded agents and
+explicit choices, and a new project integration fails unless at least one
+`--agent` is selected. Project uninstall removes every recorded project asset
+of the current worktree and must omit `--agent`; `--rollback` restores from the
+project journal only:
 
 ```sh
-specgit setup --scope project --uninstall --dry-run --json
-specgit setup --scope project --uninstall --json
-specgit setup --scope project --rollback <transaction>
+specgit setup --uninstall --dry-run --json
+specgit setup --uninstall --json
+specgit setup --rollback <transaction>
 ```
 
-`--scope project --uninstall` is deliberately narrow: it removes only this
+`setup --uninstall` is deliberately narrow: it removes only this
 worktree's recorded agent assets and keeps the declaration, guidance blocks,
 guard hooks and local routing. Removing a whole project's SpecGit integration
 is the separate `specgit remove` command, not part of `setup`. That command is
@@ -226,6 +229,26 @@ Codex runs them only after the user reviews and trusts the project `.codex/`
 layer in the host's `/hooks` menu. Setup reports
 `codex_trust: review_in_host_required`; never mark that review as done, and do
 not automate, bypass or assume host trust.
+
+### OpenCode integration boundaries
+
+The official OpenCode build receives the `.agents` skill and `AGENTS.md`
+guidance only — no hooks. Only a custom OpenCode fork with claude-compatible
+hook support can opt in through `--opencode-claude-hooks` (requires
+`--agent opencode`): setup then generates project `.opencode/hooks.json` with
+top-level event entries, one single-quoted command string
+(`<executable> hook --event <event>`, no separate args entries) and
+`inputFormat: claude-code`, without an asynchronous observer. Observe
+pending events manually with bounded `specgit watch`. Verify actual
+deny/allow/context behavior on the installed fork before relying on it. The
+[observed custom-host behavior](supported-tools.md#observed-custom-host-behavior)
+records working tool-event context and the SessionStart delivery gap in
+`opencode run` on the qualified build; registration is not a compatibility guarantee.
+The fork's
+`/import-claude-hooks` command is an interactive LLM prompt that reads the
+project's Claude settings and asks about each entry individually — it is not an
+automatic read. Do not import hook entries that native setup already owns as
+unmanaged duplicates.
 
 For other hosts, report CLI/project setup separately and use the native reference
 rather than inventing an unsupported registration flag.
@@ -265,5 +288,6 @@ Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
 of it. Untracking an already committed local declaration requires an explicit,
-reviewed repository change. Global `setup` assets belong under the selected
-user/host roots, outside the project by default.
+reviewed repository change. Project `setup` writes documented checkout assets
+and keeps its receipt under that worktree's Git directory; 2.4 has no global
+setup assets.
