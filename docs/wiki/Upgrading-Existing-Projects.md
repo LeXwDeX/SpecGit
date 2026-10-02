@@ -26,4 +26,4 @@ Preserve existing settings and actual host roots. Codex/Claude have managed hook
 
 When repository policy requires Git enforcement, `specgit guard --install --json` installs both owned blocks while preserving existing hooks. `guard --uninstall` removes only those blocks.
 
-`setup --uninstall` removes selected user-level assets; `init --rollback <transaction>` undoes only that project transaction. There is no general project remove command in 2.2. See [removal boundaries](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback).
+`setup --uninstall` removes the selected global user-level assets, affecting that user integration across projects; `setup --scope project --uninstall` removes only the current worktree's recorded project agent assets; `init --rollback <transaction>` undoes only that project transaction. 2.2 had no general project remove command; 2.3 introduces `specgit remove` (preview, digest-bound apply, offline rollback) to retire one project's whole local integration. See [removal boundaries](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback).
