@@ -107,9 +107,19 @@ Use one shared user-level executable for operational work across repositories an
 worktrees. Each participating project has its own initialization. Isolated test
 installations used by maintainers do not replace that shared PATH entry.
 
-SpecGit 2.2 has no general project `remove` command. `init --rollback <transaction>`
-undoes only the recorded local transaction when ownership still matches; it is not
-a full project uninstall. `guard --uninstall` removes recorded Git-hook blocks.
+SpecGit 2.3 introduces the `specgit remove` command for coordinated removal of
+one project's owned local integration: it previews by default (`--dry-run`),
+`--apply --expect <preview_sha256>` applies exactly the inspected digest, and
+`--rollback <transaction>` restores that transaction offline. Removal never
+changes the Git index (a tracked `.specgit.yaml` blocks removal) and preserves
+user edits, global assets, the shared executable and remote data; shared exclude
+and hook blocks remain while sibling initialized worktrees still consume them,
+and an unfinished native delivery blocks removal. Confirm
+`specgit remove --help` on the installed executable before offering the command.
+
+`init --rollback <transaction>` undoes only its recorded local transaction when
+ownership still matches; it is not a full project uninstall. `guard --uninstall`
+removes recorded Git-hook blocks.
 `setup --uninstall --dry-run` previews removal of the selected global setup's
 owned host assets; applying it affects that user integration across projects, not
 just the current repository. Preserve recovery records and foreign content.

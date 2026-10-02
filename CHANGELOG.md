@@ -4,6 +4,19 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.3.0
+
+- Add explicit agent selection and project-scoped integration assets with private ownership receipts, while keeping one shared user-level executable.
+- Add reversible whole-project removal with a read-only preview, digest-bound apply and offline rollback; preserve user assets, sibling-worktree shared hooks and remote data.
+- Bound native inspection time, account for partial reads and process descendants, and reject unverified prewrite evidence.
+- Report setup ownership-conflict host, event and path context without exposing secrets; include bounded self-hosted recovery in the shipped skill and bilingual guidance.
+- Keep checkpoint inspection read-only, including Git index stat drift, and cover project setup/removal through native source and installed regression journeys.
+- Update installation, upgrade and release guidance for the 2.3 command contract.
+
+Scope and delivery evidence: [2.3 preparation ledger](docs/release-2.3.md).
+Signed publication and final readback are tracked separately in
+[#651](https://github.com/LeXwDeX/SpecGit/issues/651).
+
 # 2.2.1
 
 - Reconcile AGENTS, terminology, installation, command examples and release guidance with the native 2.2 contract.

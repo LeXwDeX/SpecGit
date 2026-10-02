@@ -203,7 +203,7 @@ specgit setup --scope project --rollback <transaction>
 worktree's recorded agent assets and keeps the declaration, guidance blocks,
 guard hooks and local routing. Removing a whole project's SpecGit integration
 is the separate `specgit remove` command, not part of `setup`. That command is
-newer than the released 2.2.1 runtime; confirm `specgit remove --help` on the
+introduced in the 2.3 runtime contract; confirm `specgit remove --help` on the
 installed executable before offering it. It previews first, applies only the
 exact inspected preview digest, and rolls back a transaction offline:
 

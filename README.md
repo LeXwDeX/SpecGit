@@ -105,7 +105,7 @@ reported separately from actual host discovery or event delivery; a reload, a
 host trust review (Codex `/hooks`), or another turn may be needed to verify the
 host. Coordinated removal of a whole
 project's SpecGit integration is the separate `specgit remove` command (preview,
-digest-bound apply, offline rollback), newer than the released 2.2.1 runtime;
+digest-bound apply, offline rollback), introduced in the 2.3 runtime contract;
 project-scope `--uninstall` covers only the recorded agent assets.
 
 Codex and Claude PreToolUse hooks reject tracked edits in an initialized v2
