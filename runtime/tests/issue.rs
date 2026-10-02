@@ -382,8 +382,202 @@ fn preflight_invalid_later_spec_or_incomplete_search_writes_nothing() {
     f.edit(|s| s["search_incomplete"] = json!(true));
     let r = f.run(&["issue", "--create-labels", "feat: valid first"]);
     assert_eq!(r["exit"], 3, "{r}");
+    assert_eq!(r["evidence"]["inspection"]["complete"], false, "{r}");
+    assert_eq!(
+        r["evidence"]["inspection"]["pagination"]["status"], "incomplete",
+        "{r}"
+    );
+    assert_eq!(
+        r["evidence"]["inspection"]["pagination"]["pages_fetched"], 2,
+        "includes the label-list page and incomplete candidate page: {r}"
+    );
+    assert_eq!(
+        r["evidence"]["inspection"]["pagination"]["page_limit"], 20,
+        "includes the label-list and candidate-search page limits: {r}"
+    );
     assert_eq!(f.writes(), 0);
 }
+
+#[test]
+fn candidate_cap_and_malformed_pages_keep_statistics_without_writes() {
+    for provider in ["github", "gitlab"] {
+        for capped in [true, false] {
+            let f = Fixture::new(provider);
+            f.edit(|state| {
+                state["issues"] = if capped {
+                    json!(vec![json!({"number":1,"iid":1}); 100])
+                } else {
+                    json!({})
+                };
+            });
+            let report = f.run(&["issue", "--create-labels", "feat: bounded candidate pages"]);
+            assert_eq!(report["exit"], 3, "{report}");
+            assert_eq!(
+                report["diagnostics"][0]["code"],
+                if capped {
+                    "output_limit"
+                } else {
+                    "malformed_response"
+                }
+            );
+            let inspection = &report["evidence"]["inspection"];
+            assert_eq!(inspection["complete"], false);
+            assert_eq!(inspection["pagination"]["status"], "incomplete");
+            assert_eq!(
+                inspection["pagination"]["pages_fetched"],
+                if capped { 11 } else { 2 }
+            );
+            assert_eq!(
+                inspection["pagination"]["items_seen"],
+                if capped { 1000 } else { 0 }
+            );
+            assert_eq!(inspection["pagination"]["page_limit"], 20);
+            assert_eq!(f.writes(), 0);
+            assert!(!checkpoint_path(&f).exists());
+            let schema: serde_json::Value =
+                serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+            jsonschema::draft202012::validate(&schema, &report).unwrap();
+        }
+    }
+}
+
+#[test]
+fn issue_inspection_reports_candidate_timing_and_pagination_for_each_forge() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|state| state["api_delay_ms"] = json!(35));
+        let report = f.run(&["issue", "feat: timed duplicate inspection", "--inspect"]);
+        let human_output = f.run_human(&["issue", "feat: timed duplicate inspection", "--inspect"]);
+        assert_eq!(human_output.status.code(), Some(0), "{human_output:?}");
+        let human_text = String::from_utf8(human_output.stdout).unwrap();
+        let json_start = human_text
+            .find('{')
+            .expect("human output includes evidence JSON");
+        let human: serde_json::Value = serde_json::from_str(&human_text[json_start..]).unwrap();
+        assert_eq!(report["exit"], 0, "{report}");
+        assert_eq!(
+            report["evidence"]["inspection"]["budget_ms"], 120_000,
+            "{report}"
+        );
+        assert_eq!(
+            report["evidence"]["inspection"]["complete"], true,
+            "{report}"
+        );
+        let candidate = &report["evidence"]["candidates"][0];
+        assert!(
+            candidate["elapsed_ms"].as_u64().is_some_and(|ms| ms >= 30),
+            "{report}"
+        );
+        assert_eq!(candidate["pagination"]["pages_fetched"], 1, "{report}");
+        assert_eq!(candidate["pagination"]["items_seen"], 0, "{report}");
+        assert_eq!(candidate["pagination"]["page_limit"], 10, "{report}");
+        assert_eq!(candidate["pagination"]["complete"], true, "{report}");
+        assert_eq!(candidate["requests_executed"], 1, "{report}");
+        let human_candidate = &human["candidates"][0];
+        assert_eq!(human["inspection"]["budget_ms"], 120_000);
+        assert_eq!(human["inspection"]["complete"], true);
+        assert!(human_candidate["elapsed_ms"].as_u64().is_some());
+        assert_eq!(
+            human_candidate["requests_executed"],
+            candidate["requests_executed"]
+        );
+        assert_eq!(human_candidate["pagination"], candidate["pagination"]);
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+        jsonschema::draft202012::validate(&schema, &report)
+            .unwrap_or_else(|error| panic!("issue report violates schema: {error}; {report}"));
+    }
+}
+
+#[test]
+fn issue_candidate_budget_timeout_prevents_local_and_native_writes() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|state| state["api_delay_ms"] = json!(100));
+        let output = f
+            .feature_command(&["issue", "--create-labels", "feat: bounded preflight"])
+            .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", "20")
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|_| panic!("stdout={:?}, stderr={:?}", output.stdout, output.stderr));
+        assert_eq!(report["exit"], 3, "{report}");
+        assert_eq!(report["diagnostics"][0]["code"], "timeout", "{report}");
+        assert_eq!(
+            report["evidence"]["inspection"]["budget_ms"], 20,
+            "{report}"
+        );
+        assert_eq!(
+            report["evidence"]["inspection"]["complete"], false,
+            "{report}"
+        );
+        assert_eq!(
+            f.writes(),
+            0,
+            "preflight timeout must happen before native writes"
+        );
+        assert!(
+            !f.root.join(".git/specgit-v2/selection.json").exists(),
+            "preflight timeout must happen before local selection writes"
+        );
+    }
+}
+
+#[test]
+fn final_issue_revalidation_shares_budget_before_any_write() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|state| state["second_project_read_delay_ms"] = json!(6000));
+        let output = f
+            .feature_command(&[
+                "issue",
+                "--create-labels",
+                "feat: bounded final revalidation",
+                "--branch",
+                "new-delivery",
+            ])
+            .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", "5000")
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["exit"], 3, "{report}");
+        assert_eq!(report["diagnostics"][0]["code"], "timeout", "{report}");
+        assert_eq!(
+            report["evidence"]["inspection"]["status"],
+            "budget_exhausted"
+        );
+        assert_eq!(report["evidence"]["inspection"]["complete"], false);
+        assert_eq!(
+            report["evidence"]["inspection"]["pagination"]["pages_fetched"],
+            2
+        );
+        let endpoint = if provider == "github" {
+            "repos/fixture/repo"
+        } else {
+            "projects/fixture%2Frepo"
+        };
+        assert_eq!(
+            f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|call| call["endpoint"] == endpoint)
+                .count(),
+            2
+        );
+        assert_eq!(f.writes(), 0);
+        assert!(!checkpoint_path(&f).exists());
+        let branch = Command::new("git")
+            .current_dir(&f.root)
+            .args(["branch", "--list", "new-delivery"])
+            .output()
+            .unwrap();
+        assert!(branch.status.success());
+        assert!(branch.stdout.is_empty());
+        assert_eq!(report["effects"]["operations"], json!([]));
+    }
+}
+
 #[test]
 fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
     for provider in ["github", "gitlab"] {
@@ -457,6 +651,12 @@ fn reviewed_distinct_specs_can_be_created_without_adopting_similar_issues() {
             "--create-labels",
         ]);
         assert_eq!(blocked["status"], "candidate_review_required", "{blocked}");
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+        jsonschema::draft202012::validate(&schema, &blocked).unwrap();
+        let mut invalid = blocked.clone();
+        invalid["evidence"]["elapsed_ms"] = json!(-1);
+        assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
         assert_eq!(f.writes(), writes);
         let preview = f.run(&[
             "issue",

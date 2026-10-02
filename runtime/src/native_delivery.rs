@@ -3,12 +3,16 @@ pub use crate::delivery_model::{Issue, PullRequest};
 use crate::{
     diagnostic::{Code, Diagnostic},
     forge::{github, gitlab, protocol::WriteTransport},
-    probe::ForgeRead,
+    probe::{ForgeRead, Pagination},
     process::Process,
     project::{Provider, Repository},
 };
 use serde_json::Value;
 use std::path::Path;
+pub struct CandidateRead {
+    pub issues: Vec<Issue>,
+    pub pagination: Pagination,
+}
 pub(crate) fn written_body_matches(provider: Provider, submitted: &str, observed: &str) -> bool {
     match provider {
         Provider::Github => submitted == observed,
@@ -37,7 +41,7 @@ pub async fn candidates(
     repo: &Repository,
     project_id: u64,
     query: &str,
-) -> Result<Vec<Issue>, Diagnostic> {
+) -> Result<CandidateRead, Diagnostic> {
     match repo.provider {
         Provider::Github => github::candidates(reader, repo, project_id, query).await,
         Provider::Gitlab => gitlab::candidates(reader, repo, project_id, query).await,

@@ -89,6 +89,38 @@ async fn deadline_covers_stalled_stdin_and_process_wait() {
     assert_eq!(runner.run(r).await.unwrap_err().code, Code::Timeout);
     assert!(start.elapsed() < Duration::from_secs(5));
 }
+
+#[tokio::test]
+async fn invocation_budget_stops_descendants_and_records_exhaustion() {
+    let root = tempfile::tempdir().unwrap();
+    let heartbeat = root.path().join("invocation-heartbeat");
+    let runner = process().with_inspection_budget(Duration::from_millis(900));
+    let started = std::time::Instant::now();
+    let result = runner
+        .run(request(&["spawn", heartbeat.to_str().unwrap()]))
+        .await;
+    assert_eq!(result.unwrap_err().code, Code::Timeout);
+    let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_millis(850));
+    assert!(elapsed < Duration::from_secs(5));
+    let state = std::fs::read(&heartbeat).unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        std::fs::read(&heartbeat).unwrap(),
+        state,
+        "invocation timeout must stop the owned descendant"
+    );
+    let summary = runner.inspection_summary().unwrap();
+    assert_eq!(summary.status, "budget_exhausted");
+    assert!(summary.budget_exhausted);
+    assert!(!summary.complete);
+    assert!(
+        summary
+            .activities
+            .iter()
+            .any(|activity| { activity.outcome == "timed_out" && activity.elapsed_ms >= 850 })
+    );
+}
 #[tokio::test]
 async fn cancellation_and_deadline_stop_descendants_after_parent_exits() {
     for cancel in [false, true] {
