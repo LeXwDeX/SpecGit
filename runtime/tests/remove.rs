@@ -488,11 +488,29 @@ fn rollback_does_not_overwrite_later_user_edits_and_invalid_modes_are_zero_write
 fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
     for provider in ["github", "gitlab"] {
         let f = acceptance::fixture(provider);
+        let tracked = f.root.join("notes.txt");
+        fs::write(&tracked, "unchanged user content").unwrap();
+        git(&f.root, &["add", "notes.txt"]);
+        git(&f.root, &["commit", "-m", "user content"]);
         git(&f.root, &["rm", "--cached", ".specgit.yaml"]);
         initialize(&f.root);
+        let inspect = || {
+            let out = f
+                .command(&["remove"])
+                .env_remove("GIT_OPTIONAL_LOCKS")
+                .output()
+                .unwrap();
+            serde_json::from_slice::<Value>(&out.stdout).unwrap()
+        };
+        fs::File::open(&tracked)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+            )
+            .unwrap();
         let before = inventory(&f.root);
         let writes = f.writes();
-        let rejected = f.run(&["remove"]);
+        let rejected = inspect();
         assert_ne!(rejected["exit"], 0, "{provider}: {rejected}");
         assert_eq!(inventory(&f.root), before);
         f.edit(|s| {
@@ -505,8 +523,16 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
         });
         assert_ne!(f.run(&["remove"])["exit"], 0);
         f.edit(|s| s["issues"][0]["state"] = json!("closed"));
-        let preview = f.run(&["remove"]);
+        fs::File::open(&tracked)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(2)),
+            )
+            .unwrap();
+        let before = inventory(&f.root);
+        let preview = inspect();
         assert_eq!(preview["status"], "prepared", "{provider}: {preview}");
+        assert_eq!(inventory(&f.root), before);
         let digest = preview["evidence"]["preview_sha256"].as_str().unwrap();
         f.edit(|s| s["issues"][0]["state"] = json!("open"));
         let local = inventory(&f.root);
