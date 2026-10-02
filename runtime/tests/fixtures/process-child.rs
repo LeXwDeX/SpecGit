@@ -86,7 +86,10 @@ fn main() {
             "stderr": &output.stderr,
             "code": code,
         });
-        if args.first().is_some_and(|a| a == "status") {
+        if args.first().is_some_and(|a| a == "status")
+            || args.first().is_some_and(|a| a == "--no-optional-locks")
+                && args.get(1).is_some_and(|a| a == "status")
+        {
             state["initial_git_complete"] = serde_json::json!(true);
         }
         snapshot::write(&path, &state);

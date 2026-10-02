@@ -220,9 +220,13 @@ pub async fn resolve(
         )
         .await?,
     )?);
-    let dirty = !git(process, &root, &["status", "--porcelain=v1", "-z"])
-        .await?
-        .is_empty();
+    let dirty = !git(
+        process,
+        &root,
+        &["--no-optional-locks", "status", "--porcelain=v1", "-z"],
+    )
+    .await?
+    .is_empty();
     Ok(Context {
         root,
         git_dir,

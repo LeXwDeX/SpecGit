@@ -20,6 +20,7 @@ pub mod pr;
 pub mod probe;
 pub mod process;
 pub mod project;
+pub mod remove;
 pub mod report;
 pub mod selection;
 pub mod setup;

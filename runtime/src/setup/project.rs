@@ -149,6 +149,43 @@ fn shared_binary(root: &Path, project: &Path) -> Result<PathBuf, Diagnostic> {
     Ok(binary)
 }
 
+pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagnostic> {
+    let (snapshot, receipt) = read(root, private, Path::new(""))?;
+    if snapshot.bytes.is_none() {
+        return Ok(vec![]);
+    }
+    let mut changes = vec![];
+    for (relative, digest) in &receipt.skills {
+        let c = Change::new(root.join(relative), None)?;
+        if c.before.digest().as_ref() != Some(digest) {
+            return Err(conflict_at(
+                "project",
+                &c.path,
+                None,
+                "The owned project skill was edited or removed.",
+            ));
+        }
+        let proof = AssetStore::owned_at(private, &c.path, &c.before)?.ok_or_else(|| {
+            conflict_at("project", &c.path, None, "The project skill permissions or transaction ownership changed; retain it for reconciliation.")
+        })?;
+        changes.push(c);
+        changes.push(proof);
+    }
+    for (host, old) in &receipt.instructions {
+        changes.push(instruction_change(host, root, Some(old), true)?.0);
+    }
+    for (host, old) in &receipt.hooks {
+        changes.push(registration_change(host, &old.settings, Some(old), None)?);
+    }
+    changes.push(Change {
+        path: private.join("ownership.json"),
+        permissions: snapshot.permissions.clone(),
+        before: snapshot,
+        after: None,
+    });
+    Ok(changes)
+}
+
 pub fn install(options: &Options, root: &Path, private: &Path) -> Result<Value, Diagnostic> {
     if options.dry_run && options.rollback.is_some()
         || options.uninstall && options.rollback.is_some()
