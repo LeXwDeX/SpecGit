@@ -29,6 +29,34 @@ export function readContract(executable, prefix = [], options = {}) {
   return contract;
 }
 
+/** Permanent 2.4 project-only surface: setup registers hosts only inside the
+ *  checkout and observer state stays in the worktree-private Git directory. */
+export function assertProjectOnlySurface(contract) {
+  const commands = new Map(contract.command.commands.filter(c => c.name !== 'help').map(c => [c.name, c]));
+  const absent = (command, flags, reason) => {
+    for (const flag of flags) assert(!command.arguments.some(a => a.long === flag),
+      `Retired ${command.name} --${flag} remains in the packaged surface; ${reason}.`);
+  };
+  const setup = commands.get('setup');
+  assert(setup, 'The packaged surface omits setup.');
+  absent(setup, ['root', 'provider', 'api-host', 'register-claude', 'claude-settings', 'register-codex', 'codex-root', 'register-opencode', 'opencode-root'],
+    'setup is permanently project-only and references the already-installed shared binary');
+  const scope = setup.arguments.find(a => a.long === 'scope');
+  assert(scope && JSON.stringify(scope.possible_values) === JSON.stringify(['project']) &&
+    JSON.stringify(scope.defaults) === JSON.stringify(['project']),
+    'setup scope must be project with project as the only default.');
+  const agent = setup.arguments.find(a => a.long === 'agent');
+  assert(agent && JSON.stringify(agent.possible_values) === JSON.stringify(['generic', 'claude', 'codex', 'opencode']),
+    'setup must select agents explicitly through --agent.');
+  assert(setup.arguments.some(a => a.long === 'opencode-claude-hooks'),
+    'OpenCode claude-compatible hooks require the explicit --opencode-claude-hooks opt-in.');
+  for (const name of ['watch', 'hook', 'inbox']) {
+    const command = commands.get(name);
+    assert(command, `The packaged surface omits ${name}.`);
+    absent(command, ['state-root'], `${name} state is kept in the project's private Git directory`);
+  }
+}
+
 function optionSchema(command) {
   const properties = {};
   const required = [];
@@ -92,6 +120,7 @@ export function checkSurfaces(binary, packageRoot, options = {}) {
   const schemas = new Map(readdirSync(schemaRoot).filter(name => name.endsWith('.schema.json'))
     .map(name => [name, JSON.parse(readFileSync(path.join(schemaRoot, name), 'utf8'))]));
   const contract = readContract(binary, [], options);
+  assertProjectOnlySurface(contract);
   const generated = generatedSchemas(contract);
   assert.deepEqual([...schemas.keys()].sort(), [...generated.keys(), ...staticNames].sort(), 'Installed schema inventory differs from executable.');
   for (const [name, schema] of generated) assert.deepEqual(schemas.get(name), schema, `${name} differs from installed clap contract.`);
@@ -120,5 +149,5 @@ export function checkSurfaces(binary, packageRoot, options = {}) {
   assert.equal(declaration.properties.agent.properties.close_issues_after_merge.default, false);
   const report = schemas.get('report.schema.json');
   for (const field of ['schema_version', 'version', 'operation', 'ok', 'status', 'exit', 'evidence', 'diagnostics', 'next_actions']) assert(report.required.includes(field), `Report schema omits ${field}.`);
-  return { commands: commands.map(c => c.name).sort(), schemas: schemas.size, checks: ['installed_offline_schema', 'complete_command_option_type_effect_contract', 'scoped_schema', 'machine_help', 'reference_commands', 'declaration_and_report_schema'] };
+  return { commands: commands.map(c => c.name).sort(), schemas: schemas.size, checks: ['installed_offline_schema', 'permanent_project_only_surface', 'complete_command_option_type_effect_contract', 'scoped_schema', 'machine_help', 'reference_commands', 'declaration_and_report_schema'] };
 }

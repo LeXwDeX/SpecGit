@@ -4,7 +4,7 @@ Use `specgit --help` and offline `specgit --schema` for the installed contract, 
 
 | Commands | Purpose |
 | --- | --- |
-| `setup` / `init` | User-level host integration / project initialization; preview separately from apply |
+| `setup` / `init` | Project agent integration (project-only since 2.4; hooks use the installed executable) / project initialization; preview separately from apply |
 | `issue` / `pr` | Select complete specifications / aggregate a native draft; writes require existing authorization |
 | `pr --status` / `watch` | Current native facts / bounded observation; neither merges nor closes Issues |
 | `status` / `doctor` | Offline local evidence / native capability diagnosis |

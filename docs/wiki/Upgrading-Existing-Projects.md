@@ -15,15 +15,39 @@ Resolve reported capability choices explicitly; do not ignore diagnostics. Since
 
 For v1 use the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), not retired `init --force`, `finish` or `bind`. Replacing the binary does not migrate the project.
 
-Register only the active host. This Codex example uses `--register-codex`; Claude uses `--register-claude`, OpenCode `--register-opencode`:
+Register only the active host. Since 2.4 setup is permanently project-only:
+`--scope project` is the default and the only scope value, hooks invoke the
+installed shared executable directly with no global setup prerequisite, and the
+retired global options (`--root`, `--provider`, `--api-host`, `--register-*`,
+per-host roots) are rejected. This Codex example uses `--agent codex`; Claude
+uses `--agent claude`, OpenCode `--agent opencode`, generic `.agents` hosts
+`--agent generic`:
 
 ```sh
-specgit setup --provider github --register-codex --dry-run --json
-specgit setup --provider github --register-codex --json
+specgit setup --agent codex --dry-run --json
+specgit setup --agent codex --json
 ```
 
-Preserve existing settings and actual host roots. Codex/Claude have managed hooks; OpenCode here receives skill/guidance only. Do not copy Claude settings hooks into an unverified OpenCode integration. Written registration is not proof of import, event triggering or notification delivery; reload and verify where needed.
+Preserve existing settings, actual host guidance, manual edits and foreign
+hooks. Codex/Claude have managed hooks; the official OpenCode build receives
+skill/guidance only — a custom OpenCode fork can opt in to claude-code-format
+project hooks with `--opencode-claude-hooks` (requires `--agent opencode`); the
+generated hooks have no asynchronous observer, so observe manually with bounded
+`watch`. Do not copy Claude settings hooks into an unverified OpenCode
+integration. Written registration is not proof of import, event triggering or
+notification delivery; reload and verify where needed.
+
+Upgrading from 2.3: existing project receipts are refreshed into the 2.4
+format (which omits `shared_root`) locally, preserving foreign content and
+without reading or writing the retired global root. 2.3 global data stays
+preserved; 2.4 ships no global cleanup command — back up first and use the 2.3
+CLI's exact owned cleanup before upgrading if it must go, never a blind delete.
 
 When repository policy requires Git enforcement, `specgit guard --install --json` installs both owned blocks while preserving existing hooks. `guard --uninstall` removes only those blocks.
 
-`setup --uninstall` removes the selected global user-level assets, affecting that user integration across projects; `setup --scope project --uninstall` removes only the current worktree's recorded project agent assets; `init --rollback <transaction>` undoes only that project transaction. 2.2 had no general project remove command; 2.3 introduces `specgit remove` (preview, digest-bound apply, offline rollback) to retire one project's whole local integration. See [removal boundaries](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback).
+`setup --uninstall` removes only the current worktree's recorded project agent
+assets (2.4 has no global user-level setup to uninstall); `init --rollback
+<transaction>` undoes only that project transaction. 2.2 had no general project
+remove command; 2.3 introduces `specgit remove` (preview, digest-bound apply,
+offline rollback) to retire one project's whole local integration. See
+[removal boundaries](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback).

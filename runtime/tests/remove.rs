@@ -146,35 +146,20 @@ impl Fixture {
             preview["evidence"]["preview_sha256"].as_str().unwrap(),
         ])
     }
-    fn agents(&self) -> PathBuf {
-        let shared = self.base.join("shared");
-        specgit::setup::install(
-            &specgit::setup::Options {
-                root: shared.clone(),
-                provider: None,
-                api_host: None,
-                claude_settings: None,
-                host_roots: Default::default(),
-                uninstall: false,
-                dry_run: false,
-                rollback: None,
-            },
-            &executable::binary().canonicalize().unwrap(),
-        )
-        .unwrap();
+    fn agents(&self) {
         specgit::setup::project::install(
             &specgit::setup::project::Options {
-                shared_root: shared.clone(),
                 agents: vec![specgit::setup::Agent::Claude, specgit::setup::Agent::Codex],
+                opencode_claude_hooks: false,
                 uninstall: false,
                 dry_run: false,
                 rollback: None,
             },
             &self.root,
             &self.private.join("agent-assets"),
+            &executable::binary().canonicalize().unwrap(),
         )
         .unwrap();
-        shared
     }
 }
 
@@ -209,8 +194,7 @@ fn default_preview_is_read_only_and_removal_rollback_preserve_mixed_owned_assets
             .status
             .success()
     );
-    let shared = f.agents();
-    let global = inventory(&shared);
+    f.agents();
     let before = inventory(&f.base);
     let preview = f.run(&["remove"]);
     assert_eq!(preview["status"], "prepared", "{preview}");
@@ -238,7 +222,6 @@ fn default_preview_is_read_only_and_removal_rollback_preserve_mixed_owned_assets
             .join(".agents/skills/specgit-native/SKILL.md")
             .exists()
     );
-    assert_eq!(inventory(&shared), global);
     assert_eq!(f.run(&["remove"])["status"], "prepared");
     let id = applied["evidence"]["transaction"]["transaction"]
         .as_str()
@@ -375,7 +358,7 @@ fn edited_unowned_or_tracked_assets_are_conflicts_and_stale_previews_never_write
 fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
     for husky in [false, true] {
         let f = Fixture::new(true);
-        let shared = f.agents();
+        f.agents();
         if husky {
             fs::create_dir_all(f.root.join(".husky/_")).unwrap();
             git(
@@ -406,14 +389,15 @@ fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
             .join("specgit-v2/agent-assets");
         specgit::setup::project::install(
             &specgit::setup::project::Options {
-                shared_root: shared,
                 agents: vec![specgit::setup::Agent::Opencode],
+                opencode_claude_hooks: false,
                 uninstall: false,
                 dry_run: false,
                 rollback: None,
             },
             &sibling,
             &sibling_private,
+            &executable::binary().canonicalize().unwrap(),
         )
         .unwrap();
         let sibling_before = inventory(&sibling);

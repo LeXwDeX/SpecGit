@@ -97,18 +97,23 @@ authorized Agent action outside the runtime.
 Events carry stable IDs and are superseded by changed evidence. Branch or
 configuration identity changes stop the subscription with a resumable notice.
 
-`setup --dry-run` previews install, update or uninstall assets without creating
-directories or taking the asset lock. Real apply rechecks file content and
-permissions after locking. Exact ownership receipts, atomic replacements and
-restorable preimages preserve foreign content. An interrupted transaction or
-edited owned file needs explicit recovery. Uninstall retains recovery backups.
+`setup` is permanently project-only: it writes documented checkout assets with
+a worktree-private receipt and never installs user-global host integration
+assets or state. `setup --dry-run` previews install, update or uninstall assets without
+creating directories or taking the asset lock. Real apply rechecks file content
+and permissions after locking. Exact ownership receipts, atomic replacements
+and restorable preimages preserve foreign content and manual edits. An
+interrupted transaction or edited owned file needs explicit recovery. Uninstall
+retains recovery backups.
 On Windows, a blocked atomic replacement retries the same staged file for up to
 one second. Content or permission changes stop the retry; a persistent failure
 keeps the destination intact and returns an error.
 
 Claude registration exports SessionStart, PreToolUse, PostToolUse and Stop;
-relevant PostToolUse can start a bounded asynchronous observer. The host adapter
-uses its own event framing, not the ordinary report envelope. Registration reports
+relevant PostToolUse can start a bounded asynchronous observer. Project hooks
+invoke the currently installed shared user executable directly, with no global
+setup prerequisite. The host adapter uses its own event framing, not the
+ordinary report envelope. Registration reports
 `written_not_verified`. Import, context injection, visible messages, next-turn
 delivery and human reading are distinct evidence. Immediate idle wake is not
 supported; pending notices remain available through explicit observation.

@@ -64,6 +64,6 @@ For an existing **v2** project, retain its declaration and use the same inspect,
 
 ## 3. Register a host only when needed
 
-Project initialization **does not register Codex**. Only when you decide to integrate the active host should you separately inspect `specgit setup --help` and preview the relevant `--register-codex`, `--register-claude`, or `--register-opencode` option. Installing the executable and initializing a project does not require `setup` and does not configure Codex's user-level hooks or skill.
+Project initialization **does not register any host**. Only when you decide to integrate the active host should you separately inspect `specgit setup --help` and preview the relevant `--agent codex`, `--agent claude`, `--agent opencode`, or `--agent generic` selection. Since 2.4, setup is permanently project-only: `--scope project` is the default and the only scope value, assets live in the checkout with a worktree-private receipt, hooks invoke the installed shared executable directly (no global setup prerequisite), and the retired global options (`--root`, `--provider`, `--api-host`, `--register-*`, per-host roots) are rejected. Installing the executable and initializing a project does not require `setup`.
 
 See [Upgrading Existing Projects](Upgrading-Existing-Projects), [Team Workflow](Team-Workflow), and [CLI Reference](CLI-Reference).

@@ -121,14 +121,14 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Install/update versioned global or project agent assets for explicitly selected agents. `--scope global\|project` defaults to global. `--agent generic\|claude\|codex\|opencode` repeats; legacy `--register-claude` (optional `--claude-settings`), `--register-codex` (optional `--codex-root`) and `--register-opencode` (optional `--opencode-root`) select the same agents, and one host selected through both forms is invalid. Global scope uses `--root`, `--provider`, `--api-host` and per-host user roots; project scope resolves the Git checkout and private Git directory, uses only documented checkout paths, and rejects custom host roots/settings and `--api-host`. Existing registered roots and explicit project choices persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes only registrations owned by the selected scope/root; project uninstall omits `--agent` and removes that worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the matching scope's journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; project hooks reference the shared verified global executable, and Codex trust review remains a user action. |
+| `setup` | Install/update versioned project agent assets for explicitly selected agents. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--agent generic|claude|codex|opencode` repeats, and a new project integration requires at least one explicit `--agent`. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
-| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--state-root`, `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. |
-| `hook` | Codex/Claude event adapter with `--event`; optional `--state-root` and asynchronous PostToolUse `--observe`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. |
+| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. |
+| `hook` | Host event adapter with `--event`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. Optional asynchronous PostToolUse `--observe` remains available to Claude/Codex integrations; hooks generated for the OpenCode claude-compatible opt-in never use it. State is always Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
-| `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`, optional `--state-root`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. |
+| `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
 | `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
@@ -361,14 +361,72 @@ those IDs; a merged request without verified closing facts remains unknown.
 Watch, inbox and Hook actions are advisory and never ready, merge or close
 anything automatically.
 
-Codex and Claude registration include SessionStart, PreToolUse, PostToolUse and Stop.
-Relevant PostToolUse may launch a bounded asynchronous observer. Registration is
-`written_not_verified`; import, context injection, visible messages and later-turn
-delivery require separate host evidence. Immediate idle wake is not supported.
-Stop requests at most one recovery turn when a dirty initialized project lacks a
-valid checkpoint; the host's repeated-event flag makes the next Stop silent.
-Hooks never acknowledge themselves.
-Use explicit watch/inbox when automatic delivery is unavailable.
+Project setup-managed hooks exist only in project scope. Claude and Codex
+integrations register SessionStart, PreToolUse, PostToolUse and Stop; their
+PreToolUse/PostToolUse entries match the managed tool names
+(`Write`, `Edit`, `MultiEdit`, `Bash`, `PowerShell`, `apply_patch`, including
+the fork spellings `functions.apply_patch` and
+`mcp__functions__apply_patch`), and relevant PostToolUse events may launch a
+bounded asynchronous observer. The `--opencode-claude-hooks` opt-in generates
+project `.opencode/hooks.json` for a custom OpenCode fork with claude-code
+input: top-level event entries, one single-quoted command string
+(`<executable> hook --event <event>`) with no separate args entries,
+`inputFormat: claude-code`, and no asynchronous observer — observe manually
+with bounded `watch`. Live qualification of custom OpenCode `1.0.57` confirmed
+project import, tracked-write deny/allow and model-visible PreToolUse/PostToolUse
+context, but `opencode run` lost SessionStart context even on continuation.
+TUI/serve modes and live patch-tool delivery were not verified; that build
+offered no `apply_patch` tool. See the [host evidence boundaries](../docs/supported-tools.md#observed-custom-host-behavior).
+Official OpenCode keeps the skill and
+guidance only. Registration is `written_not_verified`; import, context
+injection, visible messages and later-turn delivery require separate host
+evidence. Immediate idle wake is not supported. Stop requests at most one
+recovery turn when a dirty initialized project lacks a valid checkpoint; the
+host's repeated-event flag makes the next Stop silent. Hooks never acknowledge
+themselves. Use explicit watch/inbox when automatic delivery is unavailable.
+
+Custom OpenCode hook executable paths must not contain the reserved
+`${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_DATA}` placeholders: the host expands
+them before shell quoting. Setup rejects these paths before writing assets.
+
+### Hook input and decisions
+
+Each host event posts one JSON object. The adapter reads the native input keys
+`hook_event_name`, `session_id`, `cwd`, `tool_name`, `tool_input` (with the
+`file_path`, native `filePath`, `path`, `patch`, native `patchText` and `command`
+keys actually present for the tool)
+and `stop_hook_active`. The managed matcher routes file tools and
+Bash/PowerShell calls to the adapter; state-changing shell commands (Git
+history/branch mutations, file mutations and SpecGit write commands) fall
+under the same checkpoint rule as file edits. PreToolUse decisions are
+explicit:
+
+- Deny: a tracked-edit tool (`Write`, `Edit`, `MultiEdit`, `apply_patch`) or a
+  state-changing shell command targets a repository or branch without a
+  complete selected-Issue checkpoint.
+  The decision is `hookSpecificOutput.permissionDecision: "deny"` plus a
+  `permissionDecisionReason`. Editing another repository in one call is denied
+  with its own reason; the call is never silently split.
+- Allow/pass-through: every other event and every verified call. The adapter
+  emits no blocking decision and the host proceeds. A direct, non-compound
+  `specgit issue ...` call is exempt on PreToolUse so the first checkpoint can
+  be created; compound shell input is still inspected.
+
+`apply_patch` calls are verified, not exempt: the adapter parses
+`*** Add File: `, `*** Update File: `, `*** Delete File: ` and `*** Move to: `
+markers from the patch payload (or the wrapped command), resolves relative paths against the
+reported `cwd`, and checks each actual target through Git before deciding.
+SessionStart and PostToolUse add managed guidance with `additionalContext`;
+Stop uses a block decision for its single recovery turn. Verification is of the
+actual edit target resolved on disk, not of the event's claimed path alone.
+
+### Manual OpenCode imports
+
+`/import-claude-hooks` in the custom fork is an interactive LLM prompt: it
+reads the project's Claude settings and asks about each entry individually; it
+is not an automatic read. When native `setup` already owns those hook entries,
+do not import them again as unmanaged duplicates; preserve or reconcile
+manually edited hooks and foreign content instead.
 
 ## Assets, migration and installation
 
@@ -378,30 +436,20 @@ mkdir, asset lock or write. Real apply rechecks content/permissions after lockin
 uses atomic replacement and saves restorable private preimages. Edited ownership
 or interrupted transactions require explicit recovery. Rollback refuses later
 conflicting edits; uninstall retains backups and unrelated directories.
-Installation can succeed while account readiness is unknown: inspect `readiness`
-and exit 3 separately from written assets and unverified host registration.
+Project setup is local and does not probe account readiness or forge write
+permissions. Use explicit `doctor` and native delivery inspection for those
+facts; successful setup is not verified host registration or delivery.
 
 ### Agent integration scopes
 
-`setup` records typed choices: `--scope global|project` (default global) and
-repeatable `--agent generic|claude|codex|opencode`. Unsupported or duplicated
+`setup` records repeatable `--agent generic|claude|codex|opencode` under
+`--scope project` (the default and only scope value). Unsupported or duplicated
 choices fail before any write, noninteractive operation never guesses a host,
-and a new project integration requires at least one explicit `--agent`.
-Legacy `--register-claude`, `--register-codex` and `--register-opencode`
-select the same agents as the matching `--agent` values; selecting one host
-through both forms is invalid. Custom `--claude-settings`, `--codex-root`,
-`--opencode-root` and `--api-host` selectors are global-only; project scope
-uses only documented checkout paths.
-
-Global scope keeps the versioned layout under the selected root:
-`versions/<version>/bin/specgit[.exe]`, the versioned skill, `manifest.json`
-and the `ownership.json` receipt. `--agent generic` installs only
-`~/.agents/skills/specgit-native/SKILL.md`: generic integration owns no
-guidance block and no hooks. Claude registers its skill beside the selected
-settings file plus hook entries in that settings file. Codex installs its
-skill, a managed `AGENTS.md` block (or an existing nonempty
-`AGENTS.override.md`) and `hooks.json` entries under its root. OpenCode
-installs its skill and `AGENTS.md` guidance with no hooks.
+and a new project integration requires at least one explicit `--agent`. The
+retired global integration scope and its selectors — `--root`, `--provider`,
+`--api-host`, `--register-claude`, `--register-codex`, `--register-opencode`,
+`--claude-settings`, `--codex-root` and `--opencode-root` — are rejected input,
+not deprecated aliases.
 
 Project scope resolves the Git checkout root and the private absolute Git
 directory and records its receipt and journal under
@@ -411,21 +459,32 @@ independently. It writes the canonical
 `.claude/skills/specgit-native/SKILL.md`, root `CLAUDE.md` guidance and
 `.claude/settings.json` hooks; Codex adds root `AGENTS.md` guidance (or an
 existing nonempty `AGENTS.override.md`) plus `.codex/hooks.json`; generic and
-OpenCode add only the `.agents` skill and root `AGENTS.md` guidance, with no
-hooks. When selected hosts share `AGENTS.md`, one receipt owns the merged
-block. Setup-managed instruction blocks use the
-`<!-- specgit:global:v2:start -->` / `<!-- specgit:global:v2:end -->` markers
-in both scopes; they stay separate from init's `<!-- specgit:v2 -->` project
-guidance blocks, and `init` itself remains unchanged.
+official OpenCode add only the `.agents` skill and root `AGENTS.md` guidance,
+with no hooks. With `--opencode-claude-hooks` (requires `--agent opencode`),
+setup additionally generates project `.opencode/hooks.json` for a custom fork
+as described under [hook input and decisions](#hook-input-and-decisions). When
+selected hosts share `AGENTS.md`, one receipt owns the merged block.
+Setup-managed project instruction blocks use the
+`<!-- specgit:project:v2:start -->` / `<!-- specgit:project:v2:end -->`
+markers; a 2.3-era receipt whose block still carries the old
+`specgit:global:v2` labels is refreshed in place to the project labels, and an
+unowned marker is an ownership conflict, not a target. These blocks stay
+separate from init's `<!-- specgit:v2 -->` project guidance blocks, and
+`init` itself remains unchanged.
 
 Project scope never installs a runtime binary inside the checkout and never
-edits global agent settings. Claude and Codex project hooks invoke the shared
-executable under the global `--root`, verified against the global receipt's
-recorded hash and execute permission, with a root outside the checkout; run
-global setup first and refresh it after CLI upgrades. Refresh is additive and
-keeps previously recorded agents and explicit choices. Project `--uninstall`
-requires no `--agent` and removes exactly that worktree's recorded project
-assets; `--rollback` uses the project journal. Whole-project removal is a
+edits global agent settings. Project hooks invoke the currently installed
+shared user executable directly — there is no global setup prerequisite — and
+refresh after CLI upgrades re-records the selected executable. The 2.4 receipt
+format omits `shared_root`. A 2.3-era project receipt is refreshed, removed or
+recovered locally with foreign content and manual edits preserved; setup never
+reads or writes the retired 2.3 global root. That global 2.3 data stays
+preserved and untouched: 2.4 ships no global cleanup command. Operators who
+want it gone must back up first and use the 2.3 CLI's exact owned cleanup
+before upgrading; never blind-delete. Refresh is additive and keeps previously
+recorded agents and explicit choices. Project `--uninstall` requires no
+`--agent` and removes exactly that worktree's recorded project assets;
+`--rollback` uses the project journal. Whole-project removal is a
 separate `remove` command, not part of `setup`; see
 [whole-project removal](#whole-project-removal).
 
@@ -504,10 +563,9 @@ Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
 of it. Untracking an already committed local declaration requires an explicit,
-reviewed repository change. Global `setup` assets belong under the selected
-user/host roots, outside the project by default; project-scoped `setup`
-instead writes documented checkout assets and keeps its receipt under that
-worktree's Git directory.
+reviewed repository change. Project `setup` writes documented checkout assets
+and keeps its receipt under that worktree's Git directory; 2.4 has no global
+setup assets.
 
 ### 2.2 consistency boundaries
 
@@ -516,10 +574,13 @@ and Agent edit hooks accept both validated adoption and resolved creation record
 Older adoption-only checkpoints must be selected once again to obtain the native
 snapshot. Deletion and type-change commits also require a checkpoint.
 
-Issue creation is serialized per native project for the same OS user and host,
-using the shared SpecGit data root. The lock covers candidate reads through
-creation/readback; independent configured data roots and other hosts are outside
-this guarantee. Native search can also lag server writes. If duplicate specs appear,
+Issue creation is serialized for a native project across linked worktrees
+sharing the same common Git directory. The lock lives under
+`<common_git_dir>/specgit-v2/issue-creation/` and covers candidate reads through
+creation/readback. Independent clones and other hosts do not share this lock;
+there is no user-global coordination directory. Use linked worktrees of one
+checkout for concurrent work on the same WHY. Native search can also lag server
+writes. If duplicate specs appear,
 inspect their WHYs and select one exact native ID; reconcile duplicate Issues on
 the platform within existing authorization. There is no distributed uniqueness
 claim. Worktree, declaration and project identity are rechecked before writes.
