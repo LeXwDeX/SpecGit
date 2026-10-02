@@ -92,7 +92,17 @@ fn checkpoint(root: &Path) {
 }
 fn invoke(entry: &Value, payload: Value) -> Value {
     let hook = &entry["hooks"][0];
-    let mut child = Command::new(hook["shell"].as_str().unwrap())
+    let shell = PathBuf::from(hook["shell"].as_str().unwrap());
+    #[cfg(windows)]
+    let shell = {
+        // Windows also ships a WSL bash launcher; qualify the documented Git Bash host.
+        assert_eq!(shell, PathBuf::from("bash"));
+        let git = specgit::process::resolve_executable("git").unwrap();
+        let bash = git.parent().unwrap().parent().unwrap().join("bin/bash.exe");
+        assert!(bash.is_file(), "Git Bash is required: {}", bash.display());
+        bash
+    };
+    let mut child = Command::new(&shell)
         .args(["-c", hook["command"].as_str().unwrap()])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -108,7 +118,11 @@ fn invoke(entry: &Value, payload: Value) -> Value {
     let out = child.wait_with_output().unwrap();
     assert!(
         out.status.success(),
-        "{}",
+        "shell={} command={} status={} stdout={} stderr={}",
+        shell.display(),
+        hook["command"],
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
     if out.stdout.is_empty() {

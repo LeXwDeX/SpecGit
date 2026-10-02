@@ -77,6 +77,11 @@ registration as `written_not_verified` with host delivery facts
 `not_checked`; a reload, trust review or later turn may be needed before the
 host actually consumes the assets.
 
+Custom hooks use Bash. On Windows, the host's `bash` must resolve to Git for
+Windows Bash, not the Windows WSL launcher. Put Git's `bin` directory before
+the WSL launcher in the host's PATH and qualify the generated command in that
+same environment; merely having Git available does not select its Bash.
+
 ### Observed custom-host behavior
 
 An isolated qualification on 2026-10-03 used custom OpenCode `1.0.57`
