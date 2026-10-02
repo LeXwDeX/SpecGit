@@ -15,6 +15,23 @@ use std::{
     time::Duration,
 };
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub mod project;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    Global,
+    Project,
+}
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Agent {
+    Generic,
+    Claude,
+    Codex,
+    Opencode,
+}
 #[derive(Clone)]
 pub struct Options {
     pub root: PathBuf,
@@ -66,7 +83,8 @@ pub fn host_root(host: &str) -> Result<PathBuf, Diagnostic> {
     match host {
         "codex" => Ok(PathBuf::from(home).join(".codex")),
         "opencode" => Ok(PathBuf::from(home).join(".config/opencode")),
-        _ => Err(Diagnostic::input("Select codex or opencode.")),
+        "generic" => Ok(PathBuf::from(home).join(".agents")),
+        _ => Err(Diagnostic::input("Select generic, codex or opencode.")),
     }
 }
 
@@ -76,7 +94,7 @@ fn host_changes(
     old: Option<&HostRegistration>,
     uninstall: bool,
 ) -> Result<(Vec<Change>, Option<HostRegistration>), Diagnostic> {
-    if !["codex", "opencode"].contains(&host) || old.is_some_and(|r| r.root != root) {
+    if !["generic", "codex", "opencode"].contains(&host) || old.is_some_and(|r| r.root != root) {
         return Err(conflict_at(
             host,
             root,
@@ -85,38 +103,6 @@ fn host_changes(
         ));
     }
     assets::safe_path(root)?;
-    if host == "codex"
-        && old.is_some_and(|r| r.instructions == "AGENTS.md")
-        && Snapshot::read(&root.join("AGENTS.override.md"))?
-            .bytes
-            .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
-    {
-        return Err(conflict_at(
-            host,
-            &root.join("AGENTS.override.md"),
-            None,
-            "A new Codex override shadows the registered instructions; reconcile the host guidance first.",
-        ));
-    }
-    let instructions = if let Some(old) = old {
-        if !["AGENTS.md", "AGENTS.override.md"].contains(&old.instructions.as_str()) {
-            return Err(conflict_at(
-                host,
-                root,
-                None,
-                "The host instruction receipt is unsafe.",
-            ));
-        }
-        old.instructions.clone()
-    } else if host == "codex"
-        && Snapshot::read(&root.join("AGENTS.override.md"))?
-            .bytes
-            .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
-    {
-        "AGENTS.override.md".into()
-    } else {
-        "AGENTS.md".into()
-    };
     let skill = Change::new(
         root.join("skills/specgit-native/SKILL.md"),
         (!uninstall).then(skill_bytes),
@@ -138,6 +124,87 @@ fn host_changes(
             "The host skill is unowned; reconcile that existing installation first.",
         ));
     }
+    if host == "generic" {
+        if old.is_some_and(|r| !r.instructions.is_empty() || !r.block.is_empty()) {
+            return Err(conflict_at(
+                host,
+                root,
+                None,
+                "Generic integration owns only its skill.",
+            ));
+        }
+        return Ok((
+            vec![skill],
+            (!uninstall).then(|| HostRegistration {
+                root: root.into(),
+                skill_hash: assets::hash(&skill_bytes()),
+                instructions: String::new(),
+                block: String::new(),
+                created_instructions: false,
+            }),
+        ));
+    }
+    if old.is_some_and(|r| !["AGENTS.md", "AGENTS.override.md"].contains(&r.instructions.as_str()))
+    {
+        return Err(conflict_at(
+            host,
+            root,
+            None,
+            "The host instruction receipt is unsafe.",
+        ));
+    }
+    let (guidance, registration) = instruction_change(host, root, old, uninstall)?;
+    Ok((vec![skill, guidance], registration))
+}
+
+fn instruction_change(
+    host: &str,
+    root: &Path,
+    old: Option<&HostRegistration>,
+    uninstall: bool,
+) -> Result<(Change, Option<HostRegistration>), Diagnostic> {
+    if old.is_some_and(|r| r.root != root) {
+        return Err(conflict_at(
+            host,
+            root,
+            None,
+            "The recorded guidance belongs to another root.",
+        ));
+    }
+    if host == "codex"
+        && old.is_some_and(|r| r.instructions == "AGENTS.md")
+        && Snapshot::read(&root.join("AGENTS.override.md"))?
+            .bytes
+            .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
+    {
+        return Err(conflict_at(
+            host,
+            &root.join("AGENTS.override.md"),
+            None,
+            "A new Codex override shadows the registered instructions; reconcile the host guidance first.",
+        ));
+    }
+    let instructions = if let Some(old) = old {
+        if !["AGENTS.md", "AGENTS.override.md", "CLAUDE.md"].contains(&old.instructions.as_str()) {
+            return Err(conflict_at(
+                host,
+                root,
+                None,
+                "The host instruction receipt is unsafe.",
+            ));
+        }
+        old.instructions.clone()
+    } else if host == "codex"
+        && Snapshot::read(&root.join("AGENTS.override.md"))?
+            .bytes
+            .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace))
+    {
+        "AGENTS.override.md".into()
+    } else if host == "claude" {
+        "CLAUDE.md".into()
+    } else {
+        "AGENTS.md".into()
+    };
     let mut guidance = Change::new(root.join(&instructions), None)?;
     let before = std::str::from_utf8(guidance.before.bytes.as_deref().unwrap_or_default())
         .map_err(|_| {
@@ -203,7 +270,7 @@ fn host_changes(
         block,
         created_instructions,
     });
-    Ok((vec![skill, guidance], registration))
+    Ok((guidance, registration))
 }
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -322,11 +389,11 @@ fn read_receipt(root: &Path) -> Result<(Snapshot, Receipt), Diagnostic> {
         if r.version != 2
             || r.owner != "specgit"
             || r.files.len() > 30
-            || r.hosts.len() > 2
+            || r.hosts.len() > 3
             || r.host_hooks.len() > 1
             || r.hosts
                 .keys()
-                .any(|host| !["codex", "opencode"].contains(&host.as_str()))
+                .any(|host| !["generic", "codex", "opencode"].contains(&host.as_str()))
             || r.host_hooks.keys().any(|host| host != "codex")
             || r.files.keys().any(|p| !owned_relative(p))
         {
@@ -733,6 +800,10 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
         }
     }
     let has_registration = selected_settings.is_some() || !selected_hosts.is_empty();
+    let mut agents: Vec<_> = selected_hosts.keys().cloned().collect();
+    if selected_settings.is_some() {
+        agents.push("claude".into());
+    }
     let after = if options.uninstall {
         None
     } else {
@@ -750,7 +821,7 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
     let summary:Vec<_>=changes.iter().map(|c|json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     if options.dry_run {
         return Ok(
-            json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"written":false,"operation":if options.uninstall {"uninstall"} else if planned_snapshot.bytes.is_some() {"update"} else {"install"},"manifest_exported":false,"registration":if has_registration{if options.uninstall {"removal_planned"} else {"write_planned"}}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
+            json!({"schema_version":2,"version":VERSION,"scope":"global","agents":agents,"root":options.root,"assets":summary,"written":false,"operation":if options.uninstall {"uninstall"} else if planned_snapshot.bytes.is_some() {"update"} else {"install"},"manifest_exported":false,"registration":if has_registration{if options.uninstall {"removal_planned"} else {"write_planned"}}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
         );
     }
     // Planning is read-only. Recheck ownership after acquiring the lock; apply
@@ -784,7 +855,7 @@ pub fn install(options: &Options, source: &Path) -> Result<Value, Diagnostic> {
     }
     let applied = store.apply(changes)?;
     Ok(
-        json!({"schema_version":2,"version":VERSION,"root":options.root,"assets":summary,"transaction":applied,"manifest_exported":!options.uninstall,"registration":if has_registration&&!options.uninstall{"written_not_verified"}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
+        json!({"schema_version":2,"version":VERSION,"scope":"global","agents":agents,"root":options.root,"assets":summary,"transaction":applied,"manifest_exported":!options.uninstall,"registration":if has_registration&&!options.uninstall{"written_not_verified"}else{"not_registered"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}}),
     )
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {

@@ -75,8 +75,14 @@ enum Commands {
         #[arg(long)]
         rollback: Option<String>,
     },
-    /// Install global owned assets; explicit registration is separate from host verification.
+    /// Install owned global or project agent assets; registration is not host verification.
     Setup {
+        /// Global setup remains the default; project never installs a runtime binary.
+        #[arg(long, value_enum, default_value = "global")]
+        scope: specgit::setup::Scope,
+        /// Select an integration explicitly; repeat for multiple agents.
+        #[arg(long, value_enum, action = clap::ArgAction::Append)]
+        agent: Vec<specgit::setup::Agent>,
         #[arg(long)]
         root: Option<PathBuf>,
         #[arg(long, value_enum)]
@@ -85,17 +91,17 @@ enum Commands {
         api_host: Option<String>,
         #[arg(long)]
         register_claude: bool,
-        #[arg(long, requires = "register_claude")]
+        #[arg(long)]
         claude_settings: Option<PathBuf>,
         /// Register Codex hooks and install its native skill and managed global instructions.
         #[arg(long)]
         register_codex: bool,
-        #[arg(long, requires = "register_codex")]
+        #[arg(long)]
         codex_root: Option<PathBuf>,
         /// Install OpenCode's native skill and managed global instructions.
         #[arg(long)]
         register_opencode: bool,
-        #[arg(long, requires = "register_opencode")]
+        #[arg(long)]
         opencode_root: Option<PathBuf>,
         #[arg(long, conflicts_with = "rollback")]
         uninstall: bool,
@@ -157,7 +163,9 @@ fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
         "--force",
     ];
     if raw.iter().skip(1).filter_map(|v| v.to_str()).any(|value| {
-        RETIRED.contains(&value.split('=').next().unwrap_or(value))
+        (RETIRED.contains(&value.split('=').next().unwrap_or(value))
+            && !(value.split('=').next() == Some("--scope")
+                && raw.iter().any(|arg| arg == "setup")))
             || ["bind", "unbind", "accept", "finish", "merge", "promotion"].contains(&value)
             || value == "--merge"
     }) {
@@ -383,6 +391,8 @@ async fn main() {
                 unreachable!("hook and guard have their own framing")
             }
             Commands::Setup {
+                scope,
+                mut agent,
                 root,
                 provider,
                 api_host,
@@ -400,6 +410,66 @@ async fn main() {
                     Ok(p) => p,
                     Err(d) => return Report::failure("setup", d),
                 };
+                for (selected, host) in [
+                    (register_claude, specgit::setup::Agent::Claude),
+                    (register_codex, specgit::setup::Agent::Codex),
+                    (register_opencode, specgit::setup::Agent::Opencode),
+                ] {
+                    if selected {
+                        agent.push(host);
+                    }
+                }
+                if agent
+                    .iter()
+                    .any(|host| agent.iter().filter(|other| *other == host).count() > 1)
+                {
+                    return Report::failure(
+                        "setup",
+                        Diagnostic::input(
+                            "Select each agent once; do not combine its --agent choice and legacy registration flag.",
+                        ),
+                    );
+                }
+                if scope == specgit::setup::Scope::Project {
+                    if claude_settings.is_some()
+                        || codex_root.is_some()
+                        || opencode_root.is_some()
+                        || api_host.is_some()
+                    {
+                        return Report::failure(
+                            "setup",
+                            Diagnostic::input(
+                                "Project scope uses documented checkout paths; custom host roots/settings and --api-host are global-only.",
+                            ),
+                        );
+                    }
+                    return specgit::setup::project::run(
+                        specgit::setup::project::Options {
+                            shared_root: root,
+                            agents: agent,
+                            uninstall,
+                            dry_run,
+                            rollback,
+                        },
+                        process,
+                        &cwd,
+                    )
+                    .await;
+                }
+                let register_claude = agent.contains(&specgit::setup::Agent::Claude);
+                let register_codex = agent.contains(&specgit::setup::Agent::Codex);
+                let register_opencode = agent.contains(&specgit::setup::Agent::Opencode);
+                if (claude_settings.is_some() && !register_claude)
+                    || (codex_root.is_some() && !register_codex)
+                    || (opencode_root.is_some() && !register_opencode)
+                {
+                    return Report::failure(
+                        "setup",
+                        Diagnostic::input(
+                            "Custom host settings/root requires its explicit --agent or legacy registration choice.",
+                        ),
+                    );
+                }
                 let settings = if register_claude {
                     match claude_settings
                         .map(Ok)
@@ -412,6 +482,14 @@ async fn main() {
                     None
                 };
                 let mut host_roots = std::collections::BTreeMap::new();
+                if agent.contains(&specgit::setup::Agent::Generic) {
+                    match specgit::setup::host_root("generic") {
+                        Ok(root) => {
+                            host_roots.insert("generic".into(), root);
+                        }
+                        Err(d) => return Report::failure("setup", d),
+                    }
+                }
                 for (host, register, path) in [
                     ("codex", register_codex, codex_root),
                     ("opencode", register_opencode, opencode_root),
