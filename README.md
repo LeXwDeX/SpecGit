@@ -93,10 +93,19 @@ Auto-merge preferences do not grant permission to change native protections.
 
 ## Agent integration and upgrades
 
-`specgit setup` installs owned entry points for the selected host. It preserves
-unrelated guidance and reports ownership conflicts. Written registration is
-reported separately from actual host discovery or event delivery; a reload or
-another turn may be needed to verify the host.
+`specgit setup` installs owned entry points for the explicitly selected agents
+(`--agent generic|claude|codex|opencode`, repeatable). Global setup remains the
+default; `--scope project` instead writes documented checkout assets with a
+worktree-private receipt and references the one shared global executable.
+`specgit init` stays unchanged and project-scoped — agent integration is
+optional and separate. Setup preserves unrelated guidance, reports ownership
+conflicts, and never installs a second runtime binary inside a project.
+Written registration is
+reported separately from actual host discovery or event delivery; a reload, a
+host trust review (Codex `/hooks`), or another turn may be needed to verify the
+host. Coordinated removal of a whole project's SpecGit integration remains
+separate future work; project-scope `--uninstall` covers only the recorded
+agent assets.
 
 Codex and Claude PreToolUse hooks reject tracked edits in an initialized v2
 project until the current repository and branch have a complete selected-Issue

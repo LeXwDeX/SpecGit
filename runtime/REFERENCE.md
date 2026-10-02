@@ -121,7 +121,7 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Install/update versioned global assets; select `--root`, `--provider`, `--api-host`. `--register-claude` and optional `--claude-settings` register Claude hooks. `--register-codex` registers Codex hooks and installs its native skill and managed global instructions. `--register-opencode` installs OpenCode guidance and skill until that host exposes the same blocking protocol. `--codex-root` / `--opencode-root` select explicit host configuration directories. Existing registered roots persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes only registrations owned by the selected setup root. `--rollback <transaction>` restores owned local assets and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery. |
+| `setup` | Install/update versioned global or project agent assets for explicitly selected agents. `--scope global\|project` defaults to global. `--agent generic\|claude\|codex\|opencode` repeats; legacy `--register-claude` (optional `--claude-settings`), `--register-codex` (optional `--codex-root`) and `--register-opencode` (optional `--opencode-root`) select the same agents, and one host selected through both forms is invalid. Global scope uses `--root`, `--provider`, `--api-host` and per-host user roots; project scope resolves the Git checkout and private Git directory, uses only documented checkout paths, and rejects custom host roots/settings and `--api-host`. Existing registered roots and explicit project choices persist during refresh. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall removes only registrations owned by the selected scope/root; project uninstall omits `--agent` and removes that worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the matching scope's journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; project hooks reference the shared verified global executable, and Codex trust review remains a user action. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
@@ -380,6 +380,61 @@ conflicting edits; uninstall retains backups and unrelated directories.
 Installation can succeed while account readiness is unknown: inspect `readiness`
 and exit 3 separately from written assets and unverified host registration.
 
+### Agent integration scopes
+
+`setup` records typed choices: `--scope global|project` (default global) and
+repeatable `--agent generic|claude|codex|opencode`. Unsupported or duplicated
+choices fail before any write, noninteractive operation never guesses a host,
+and a new project integration requires at least one explicit `--agent`.
+Legacy `--register-claude`, `--register-codex` and `--register-opencode`
+select the same agents as the matching `--agent` values; selecting one host
+through both forms is invalid. Custom `--claude-settings`, `--codex-root`,
+`--opencode-root` and `--api-host` selectors are global-only; project scope
+uses only documented checkout paths.
+
+Global scope keeps the versioned layout under the selected root:
+`versions/<version>/bin/specgit[.exe]`, the versioned skill, `manifest.json`
+and the `ownership.json` receipt. `--agent generic` installs only
+`~/.agents/skills/specgit-native/SKILL.md`: generic integration owns no
+guidance block and no hooks. Claude registers its skill beside the selected
+settings file plus hook entries in that settings file. Codex installs its
+skill, a managed `AGENTS.md` block (or an existing nonempty
+`AGENTS.override.md`) and `hooks.json` entries under its root. OpenCode
+installs its skill and `AGENTS.md` guidance with no hooks.
+
+Project scope resolves the Git checkout root and the private absolute Git
+directory and records its receipt and journal under
+`<git_dir>/specgit-v2/agent-assets/`, so linked worktrees integrate
+independently. It writes the canonical
+`.agents/skills/specgit-native/SKILL.md`; Claude adds a managed
+`.claude/skills/specgit-native/SKILL.md`, root `CLAUDE.md` guidance and
+`.claude/settings.json` hooks; Codex adds root `AGENTS.md` guidance (or an
+existing nonempty `AGENTS.override.md`) plus `.codex/hooks.json`; generic and
+OpenCode add only the `.agents` skill and root `AGENTS.md` guidance, with no
+hooks. When selected hosts share `AGENTS.md`, one receipt owns the merged
+block. Setup-managed instruction blocks use the
+`<!-- specgit:global:v2:start -->` / `<!-- specgit:global:v2:end -->` markers
+in both scopes; they stay separate from init's `<!-- specgit:v2 -->` project
+guidance blocks, and `init` itself remains unchanged.
+
+Project scope never installs a runtime binary inside the checkout and never
+edits global agent settings. Claude and Codex project hooks invoke the shared
+executable under the global `--root`, verified against the global receipt's
+recorded hash and execute permission, with a root outside the checkout; run
+global setup first and refresh it after CLI upgrades. Refresh is additive and
+keeps previously recorded agents and explicit choices. Project `--uninstall`
+requires no `--agent` and removes exactly that worktree's recorded project
+assets; `--rollback` uses the project journal. Coordinated removal of a whole
+project's SpecGit integration remains separate future work (#630).
+
+Registration is reported as `written_not_verified`, with
+`host_delivery.imported_event`, `context_injection`, `visible_message` and
+`next_turn` as `not_checked` and `idle_wake` as `not_supported`. Project Codex
+selection reports `codex_trust: review_in_host_required`: Codex loads
+`<repo>/.codex/hooks.json` only after the user reviews and trusts the project
+`.codex/` layer in the host's `/hooks` menu, and SpecGit never performs,
+assumes or automates that trust.
+
 Migration defaults to a preview. Supply the complete new declaration explicitly;
 no old automation or orchestration policy is silently reinterpreted. Exact owned
 local assets and native retirement evidence bound activation. Unknown writers,
@@ -421,7 +476,9 @@ repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
 of it. Untracking an already committed local declaration requires an explicit,
 reviewed repository change. Global `setup` assets belong under the selected
-user/host roots, outside the project by default.
+user/host roots, outside the project by default; project-scoped `setup`
+instead writes documented checkout assets and keeps its receipt under that
+worktree's Git directory.
 
 ### 2.2 consistency boundaries
 

@@ -401,9 +401,10 @@ fn watch_preserves_documented_cli_upper_bounds_and_rejects_inconsistent_timing()
 
 #[test]
 fn configured_notification_filters_do_not_filter_direct_watch_evidence() {
+    // Content assertions must allow the sequential native reads on Windows.
     let f = acceptance::fixture_with_observation(
         "github",
-        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 5\n  notify: []\n",
+        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 30\n  notify: []\n",
     );
     f.edit(|s| {
         s["requests"][0]["state"] = json!("closed");
@@ -420,7 +421,7 @@ fn configured_notification_filters_do_not_filter_direct_watch_evidence() {
     assert!(!resumed_context.contains("unverified event receipts"));
 
     let direct = f.run(&watch("lifecycle"));
-    assert_eq!(direct["status"], "completed");
+    assert_eq!(direct["status"], "completed", "{direct}");
     assert_eq!(direct["evidence"]["events"][0]["state"], "completed");
     let direct_inbox = f.run(&[
         "inbox",
@@ -431,7 +432,7 @@ fn configured_notification_filters_do_not_filter_direct_watch_evidence() {
         "--goal",
         "lifecycle",
     ]);
-    assert_eq!(direct_inbox["status"], "completed");
+    assert_eq!(direct_inbox["status"], "completed", "{direct_inbox}");
     assert_eq!(direct_inbox["evidence"]["events"][0]["state"], "completed");
 }
 
