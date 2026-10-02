@@ -103,8 +103,8 @@ export function generatedSchemas(contract) {
 }
 
 /** Stage on a host that can execute this actual target binary. */
-export function writeSchemas(binary, schemaRoot, staticSchemaRoot) {
-  const contract = readContract(binary);
+export function writeSchemas(binary, schemaRoot, staticSchemaRoot, options = {}) {
+  const contract = readContract(binary, [], options);
   mkdirSync(schemaRoot, { recursive: true });
   assert.equal(readdirSync(schemaRoot).length, 0, 'Schema destination must be empty.');
   for (const [name, schema] of generatedSchemas(contract)) writeFileSync(path.join(schemaRoot, name), JSON.stringify(schema, null, 2) + '\n');
