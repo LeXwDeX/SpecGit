@@ -420,13 +420,8 @@ fn cli_linked_worktrees_have_separate_receipts_and_removal_is_local() {
     let other = root.parent().unwrap().join("linked");
     git(
         &root,
-        &[
-            "worktree",
-            "add",
-            "--detach",
-            other.to_str().unwrap(),
-            "HEAD",
-        ],
+        // Git for Windows does not accept Rust's canonical verbatim path here.
+        &["worktree", "add", "--detach", "../linked", "HEAD"],
     );
     for checkout in [&root, &other] {
         assert_eq!(
