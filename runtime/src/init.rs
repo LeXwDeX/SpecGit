@@ -600,12 +600,47 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
 
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     let mut language = options.language.unwrap_or_default();
+    let inspect_only = options.inspect_only;
+    let process = if inspect_only {
+        process.with_inspection_budget(crate::process::configured_inspection_budget())
+    } else {
+        process
+    };
+    let summary_process = process.clone();
     let mut report = match prepare_and_run(options, process, cwd, &mut language).await {
         Ok(r) => r,
-        Err(d) => Report::failure("init", d),
+        Err(d) => {
+            if inspect_only {
+                summary_process.mark_inspection_incomplete();
+            }
+            Report::failure("init", d)
+        }
     };
+    if inspect_only {
+        if let Err(diagnostic) = summary_process.ensure_inspection_budget("init_inspection") {
+            let evidence = report.evidence;
+            report = Report::failure("init", diagnostic);
+            report.evidence = evidence;
+        }
+        attach_inspection(&mut report, &summary_process);
+    }
     crate::i18n::report(&mut report, language);
     report
+}
+
+fn attach_inspection(report: &mut Report, process: &Process) {
+    let Some(summary) = process.inspection_summary() else {
+        return;
+    };
+    if !report.evidence.is_object() {
+        report.evidence = json!({});
+    }
+    if let Some(evidence) = report.evidence.as_object_mut() {
+        evidence.insert(
+            "inspection".into(),
+            serde_json::to_value(summary).expect("inspection summary serializes"),
+        );
+    }
 }
 
 async fn prepare_and_run(
@@ -732,6 +767,7 @@ async fn prepare_and_run(
     {
         Ok(context) => context,
         Err(diagnostic) if options.inspect_only => {
+            process.mark_inspection_incomplete();
             let mut report = Report::failure("init", diagnostic);
             report.evidence =
                 json!({"probes":[],"written":false,"project":"unknown","request":null});
@@ -782,6 +818,7 @@ async fn prepare_and_run(
     ) {
         Ok(reader) => reader,
         Err(diagnostic) => {
+            process.mark_inspection_incomplete();
             return Ok(failure_report_with_checks(
                 diagnostic,
                 json!({
@@ -800,6 +837,7 @@ async fn prepare_and_run(
     let facts = match reader.project(&context.repository).await {
         Ok(f) => f,
         Err(d) => {
+            process.mark_inspection_incomplete();
             return Ok(failure_report_with_checks(
                 d,
                 json!({
@@ -815,6 +853,7 @@ async fn prepare_and_run(
         }
     };
     if !config::valid_branch(&facts.default_branch) {
+        process.mark_inspection_incomplete();
         let diagnostic = Diagnostic::new(
             Code::MalformedResponse,
             "init",
@@ -838,6 +877,7 @@ async fn prepare_and_run(
     {
         Ok(request) => request,
         Err(diagnostic) => {
+            process.mark_inspection_incomplete();
             let target = declaration.target.as_deref();
             let native_flow = flow(&facts, target);
             return Ok(failure_report_with_checks(
@@ -887,6 +927,7 @@ async fn prepare_and_run(
         append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());
     }
     if failed {
+        process.mark_inspection_incomplete();
         let mut report = Report::success("init", "unknown", evidence);
         report.exit = 3;
         return Ok(report);

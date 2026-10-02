@@ -452,6 +452,25 @@ fn native_api(args: &[String], path: &std::path::Path) {
         snapshot::write(path, &state);
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
+    if method == "GET"
+        && let Some(delay_ms) = state["api_delay_ms"].as_u64()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(60_000)));
+    }
+    if method == "GET"
+        && (endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo")
+        && state["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["endpoint"] == *endpoint)
+            .count()
+            == 2
+        && let Some(delay_ms) = state["second_project_read_delay_ms"].as_u64()
+    {
+        snapshot::write(path, &state);
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(60_000)));
+    }
     // glab --input forwards raw bytes without adding a JSON media type.
     // The real GitLab API rejects these writes with HTTP 415 before parsing.
     if method != "GET"
