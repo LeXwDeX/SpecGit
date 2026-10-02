@@ -1,6 +1,6 @@
 [package]
 name = "specgit-runtime"
-version = "2.2.1"
+version = "2.3.0"
 edition = "2024"
 rust-version = "1.97"
 publish = false

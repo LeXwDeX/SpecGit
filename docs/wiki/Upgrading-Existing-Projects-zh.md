@@ -26,4 +26,4 @@ specgit setup --provider github --register-codex --json
 
 仓库要求 Git 门禁时用 `specgit guard --install --json`，一次安装两个受管理区块并保留现有 hooks；`guard --uninstall` 只移除这些区块。
 
-`setup --uninstall` 清理选定用户级资产，`init --rollback <transaction>` 只回滚该项目事务；2.2 没有通用的项目 remove 命令。见[移除边界](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback)。
+`setup --uninstall` 清理选定的全局用户级资产，会影响该用户集成在所有项目中的使用；`setup --scope project --uninstall` 只移除当前 worktree 记录的项目级 agent 资产；`init --rollback <transaction>` 只回滚该项目事务。2.2 没有通用的项目 remove 命令；2.3 引入 `specgit remove`（预览、按摘要应用、离线回滚），用于整体移除一个项目的本地集成。见[移除边界](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback)。
