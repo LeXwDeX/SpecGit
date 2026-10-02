@@ -2,7 +2,7 @@
 #[path = "support/executable.rs"]
 mod executable;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf, process::Command, time::Instant};
 struct Fixture {
     _temp: tempfile::TempDir,
     root: PathBuf,
@@ -130,6 +130,26 @@ impl Fixture {
         )
         .unwrap();
         self.run_raw_with_paths(args, vec![self.bin.clone()])
+    }
+    fn run_raw_with_budget(&self, args: &[&str], budget_ms: u64) -> Value {
+        let mut paths = vec![self.bin.clone()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        // Short budgets require the feature-enabled fixture binary, not the installed release.
+        let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
+            .current_dir(&self.root)
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("SPECGIT_FIXTURE_API_FILE", &self.state)
+            .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", budget_ms.to_string())
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        let value: Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("stdout={:?}, stderr={:?}", out.stdout, out.stderr));
+        assert_eq!(value["exit"].as_i64(), out.status.code().map(i64::from));
+        value
     }
     fn run_human(&self, args: &[&str]) -> Value {
         let mut paths = vec![self.bin.clone()];
@@ -299,6 +319,8 @@ fn failed_native_identity_preserves_scope_without_claiming_verification() {
         let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
         assert_init_evidence_matches_schema(&report["evidence"]);
         assert_eq!(report["diagnostics"][0]["code"], "identity_mismatch");
+        assert_eq!(report["evidence"]["inspection"]["complete"], false);
+        assert_eq!(report["evidence"]["inspection"]["status"], "incomplete");
         let identity = &report["evidence"]["checks"][0];
         assert_eq!(identity["status"], "unknown");
         assert_eq!(identity["presentation"], "blocking");
@@ -308,6 +330,128 @@ fn failed_native_identity_preserves_scope_without_claiming_verification() {
             report["evidence"]["availability"]["layers"][0]["status"],
             "blocked"
         );
+        assert!(!f.root.join(".specgit.yaml").exists());
+    }
+}
+
+#[test]
+fn account_only_failures_keep_inspection_incomplete() {
+    for provider in ["github", "gitlab"] {
+        for error in ["HTTP 403", "network connection failed"] {
+            let f = Fixture::new();
+            let mut state = f.state();
+            state["account_failure"] = json!(error);
+            fs::write(&f.state, state.to_string()).unwrap();
+            let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
+            assert_report_matches_schema(&report);
+            assert_eq!(report["exit"], 3);
+            assert_eq!(
+                report["evidence"]["inspection"]["complete"], false,
+                "{report}"
+            );
+            assert_eq!(report["evidence"]["inspection"]["status"], "incomplete");
+            assert_eq!(report["evidence"]["project"]["id"], 7);
+            let account = report["evidence"]["probes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|probe| probe["operation"] == "account_api")
+                .unwrap();
+            assert_eq!(
+                account["diagnostic"]["code"],
+                if error == "HTTP 403" {
+                    "permission_denied"
+                } else {
+                    "network_failed"
+                }
+            );
+            assert!(!f.root.join(".specgit.yaml").exists());
+        }
+    }
+}
+
+#[test]
+fn protection_read_failures_keep_inspection_incomplete_with_manual_observation() {
+    for provider in ["github", "gitlab"] {
+        for error in ["network connection failed", "HTTP 403"] {
+            let f = Fixture::new();
+            let mut state = f.state();
+            state["project"]["default_branch"] = json!("main");
+            let endpoint = if provider == "github" {
+                "repos/fixture/repo/branches/main/protection"
+            } else {
+                "projects/7/protected_branches/main"
+            };
+            state["read_routes"] = json!({
+                "user": {"id":1,"login":"fixture","username":"fixture"},
+                "repos/fixture/repo": state["project"].clone(),
+                "projects/fixture%2Frepo": state["project"].clone(),
+                "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+                "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1": [],
+                endpoint: {"__fixture_error": error}
+            });
+            fs::write(&f.state, state.to_string()).unwrap();
+            let args = [
+                "init",
+                "--provider",
+                provider,
+                "--inspect",
+                "--manual-observe",
+            ];
+            let report = f.run_raw(&args);
+            assert_report_matches_schema(&report);
+            assert_eq!(report["status"], "inspected", "{report}");
+            assert!(
+                report["evidence"]["probes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|probe| probe["status"] == "available")
+            );
+            let evidence = &report["evidence"];
+            let protection = &evidence["capabilities"]["target_protection"];
+            assert_eq!(protection["status"], "unknown");
+            assert_eq!(
+                protection["diagnostic"]["code"],
+                if error == "HTTP 403" {
+                    "permission_denied"
+                } else {
+                    "network_failed"
+                }
+            );
+            assert_eq!(evidence["inspection"]["complete"], false, "{report}");
+            assert_eq!(evidence["inspection"]["status"], "incomplete");
+            assert_eq!(evidence["written"], false);
+            let human = f.run_human(&args);
+            assert_init_evidence_matches_schema(&human);
+            assert_eq!(human["capabilities"]["target_protection"], *protection);
+            assert_eq!(human["inspection"]["complete"], false);
+            assert_eq!(human["inspection"]["status"], "incomplete");
+            assert!(
+                f.state()["calls"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|call| call["method"] == "GET")
+            );
+            assert!(!f.root.join(".specgit.yaml").exists());
+            assert!(!f.root.join(".git/specgit-v2").exists());
+        }
+    }
+}
+
+#[test]
+fn invalid_native_default_branch_keeps_inspection_incomplete() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["project"]["default_branch"] = json!("invalid..branch");
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
+        assert_report_matches_schema(&report);
+        assert_eq!(report["diagnostics"][0]["code"], "malformed_response");
+        assert_eq!(report["evidence"]["inspection"]["complete"], false);
+        assert_eq!(report["evidence"]["inspection"]["status"], "incomplete");
         assert!(!f.root.join(".specgit.yaml").exists());
     }
 }
@@ -337,6 +481,8 @@ fn failed_request_read_keeps_required_eligibility_unknown_and_blocking() {
         let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
         assert_init_evidence_matches_schema(&report["evidence"]);
         assert_eq!(report["diagnostics"][0]["code"], "permission_denied");
+        assert_eq!(report["evidence"]["inspection"]["complete"], false);
+        assert_eq!(report["evidence"]["inspection"]["status"], "incomplete");
         let eligibility = report["evidence"]["checks"]
             .as_array()
             .unwrap()
@@ -386,6 +532,11 @@ fn init_keeps_structured_diagnostics_when_native_cli_is_missing() {
             .len(),
         3
     );
+    let report = f.run_without_forge_cli(&["init", "--provider", "github", "--inspect"]);
+    assert_report_matches_schema(&report);
+    assert_eq!(report["diagnostics"][0]["code"], "missing_executable");
+    assert_eq!(report["evidence"]["inspection"]["complete"], false);
+    assert_eq!(report["evidence"]["inspection"]["status"], "incomplete");
 }
 
 #[test]
@@ -497,6 +648,92 @@ fn init_inspection_reports_three_independent_availability_layers() {
     let mut wrong_order = json_report.clone();
     wrong_order["evidence"]["availability"]["layers"][0]["id"] = json!("protected_delivery");
     assert!(jsonschema::draft202012::validate(&report_schema(), &wrong_order).is_err());
+}
+
+#[test]
+fn init_inspection_reports_monotonic_activity_and_total_timing() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["api_delay_ms"] = json!(35);
+    state["read_routes"] = json!({
+        "user": {"id":1,"login":"fixture"},
+        "repos/fixture/repo": state["project"].clone(),
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+        "repos/fixture/repo/branches/preview/protection": {}
+    });
+    fs::write(&f.state, serde_json::to_vec(&state).unwrap()).unwrap();
+
+    let wall_started = Instant::now();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let wall_ms = wall_started.elapsed().as_millis() as u64;
+    let human = f.run_human(&["init", "--provider", "github", "--inspect"]);
+    let timing = &report["evidence"]["inspection"];
+    assert_eq!(timing["budget_ms"], 120_000, "{report}");
+    assert!(
+        timing["elapsed_ms"]
+            .as_u64()
+            .is_some_and(|elapsed| (30..=wall_ms).contains(&elapsed)),
+        "reported monotonic elapsed time must include the delayed native response: {report}"
+    );
+    assert!(
+        timing["requests_executed"].as_u64().unwrap_or_default() > 0,
+        "{report}"
+    );
+    assert_eq!(timing["complete"], true, "{report}");
+    assert_eq!(
+        report["evidence"]["capabilities"]["target_protection"]["status"],
+        "unknown"
+    );
+    assert_eq!(
+        report["evidence"]["capabilities"]["target_protection"]["diagnostic"],
+        Value::Null
+    );
+    assert!(
+        timing["activities"].as_array().is_some_and(|activities| {
+            activities.iter().any(|activity| {
+                activity["operation"] == "github_api_read"
+                    && activity["elapsed_ms"]
+                        .as_u64()
+                        .is_some_and(|elapsed| elapsed >= 30)
+            })
+        }),
+        "every executed native probe must include its measured duration: {report}"
+    );
+    let human_timing = &human["inspection"];
+    assert_eq!(human_timing["budget_ms"], timing["budget_ms"]);
+    assert_eq!(
+        human_timing["requests_executed"],
+        timing["requests_executed"]
+    );
+    assert_eq!(human_timing["complete"], timing["complete"]);
+    assert!(human_timing["elapsed_ms"].as_u64().is_some());
+    assert!(
+        human_timing["activities"]
+            .as_array()
+            .is_some_and(|activities| {
+                activities
+                    .iter()
+                    .all(|activity| activity["elapsed_ms"].as_u64().is_some())
+            })
+    );
+}
+
+#[test]
+fn init_inspection_budget_exhaustion_keeps_elapsed_failure_evidence() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["api_delay_ms"] = json!(100);
+    fs::write(&f.state, serde_json::to_vec(&state).unwrap()).unwrap();
+    let report = f.run_raw_with_budget(&["init", "--provider", "github", "--inspect"], 20);
+    let timing = &report["evidence"]["inspection"];
+    assert_eq!(report["exit"], 3, "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], "timeout", "{report}");
+    assert_eq!(timing["budget_ms"], 20, "{report}");
+    assert_eq!(timing["complete"], false, "{report}");
+    assert!(
+        timing["elapsed_ms"].as_u64().unwrap_or_default() >= 20,
+        "{report}"
+    );
 }
 
 #[test]

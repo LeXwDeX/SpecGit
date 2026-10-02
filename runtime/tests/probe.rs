@@ -132,3 +132,28 @@ async fn pagination_cap_and_malformed_pages_never_become_complete() {
         );
     }
 }
+
+#[tokio::test]
+async fn paginated_read_reports_consumed_pages_and_items_at_the_cap() {
+    for provider in [Provider::Github, Provider::Gitlab] {
+        let full = serde_json::to_string(&vec![json!({"id":1}); 100]).unwrap();
+        let report = reader(provider, &full)
+            .list_report("items", None, 2)
+            .await
+            .unwrap();
+        assert_eq!(report.pagination.pages_fetched, 2);
+        assert_eq!(report.pagination.items_seen, 200);
+        assert_eq!(report.pagination.page_limit, 2);
+        assert!(!report.pagination.complete);
+        assert_eq!(report.rows.len(), 200);
+
+        let complete = reader(provider, "[]")
+            .list_report("items", None, 2)
+            .await
+            .unwrap();
+        assert_eq!(complete.pagination.pages_fetched, 1);
+        assert_eq!(complete.pagination.items_seen, 0);
+        assert_eq!(complete.pagination.page_limit, 2);
+        assert!(complete.pagination.complete);
+    }
+}

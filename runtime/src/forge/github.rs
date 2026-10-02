@@ -2,7 +2,8 @@ use super::protocol::{WriteTransport, id, malformed, text};
 use crate::{
     delivery_model::{Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
-    probe::{ForgeRead, encode},
+    native_delivery::CandidateRead,
+    probe::{ForgeRead, Pagination, encode},
     project::Repository,
 };
 use serde_json::{Value, json};
@@ -87,17 +88,38 @@ pub(crate) async fn candidates(
     repo: &Repository,
     project_id: u64,
     query: &str,
-) -> Result<Vec<Issue>, Diagnostic> {
+) -> Result<CandidateRead, Diagnostic> {
     let route = format!(
         "search/issues?q={}",
         encode(&format!("repo:{} is:issue is:open {query}", repo.path))
     );
+    const PAGE_LIMIT: usize = 10;
+    reader.pagination_started(PAGE_LIMIT);
     let mut rows = vec![];
-    for page in 1..=10 {
+    let mut pages_fetched = 0;
+    let mut items_seen = 0;
+    let mut complete = false;
+    for page in 1..=PAGE_LIMIT {
         let value = reader
             .get(&format!("{route}&per_page=100&page={page}"))
             .await?;
+        pages_fetched += 1;
+        reader.page_fetched();
+        let items = value
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                reader.mark_inspection_incomplete();
+                malformed()
+            })?;
+        if items.len() > 100 {
+            reader.mark_inspection_incomplete();
+            return Err(malformed());
+        }
+        items_seen += items.len();
+        reader.page_items_seen(items.len());
         if value.get("incomplete_results").and_then(Value::as_bool) != Some(false) {
+            reader.mark_inspection_incomplete();
             return Err(Diagnostic::new(
                 Code::OutputLimit,
                 "issue_search",
@@ -105,31 +127,34 @@ pub(crate) async fn candidates(
                 "Narrow the specification query or adopt exact issue IDs.",
             ));
         }
-        let items = value
-            .get("items")
-            .and_then(Value::as_array)
-            .ok_or_else(malformed)?;
-        if items.len() > 100 {
-            return Err(malformed());
-        }
         rows.extend(items.iter().cloned());
         if items.len() < 100 {
+            complete = true;
             break;
         }
-        if page == 10 {
-            return Err(Diagnostic::new(
-                Code::OutputLimit,
-                "issue_search",
-                "Issue candidates exceed the complete search budget.",
-                "Narrow the query or select exact IDs.",
-            ));
-        }
+    }
+    if !complete {
+        reader.mark_inspection_incomplete();
+        return Err(Diagnostic::new(
+            Code::OutputLimit,
+            "issue_search",
+            "Issue candidates exceed the complete search budget.",
+            "Narrow the query or select exact IDs.",
+        ));
     }
     let mut out = vec![];
     for row in rows {
         out.push(issue(reader, repo, project_id, id(&row, "number")?).await?);
     }
-    Ok(out)
+    Ok(CandidateRead {
+        issues: out,
+        pagination: Pagination {
+            pages_fetched,
+            items_seen,
+            page_limit: PAGE_LIMIT,
+            complete,
+        },
+    })
 }
 pub(crate) async fn label_pool(
     reader: &ForgeRead,

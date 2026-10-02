@@ -2,6 +2,7 @@ use super::protocol::{WriteTransport, id, malformed, text};
 use crate::{
     delivery_model::{Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
+    native_delivery::CandidateRead,
     probe::{ForgeRead, encode},
     project::Repository,
 };
@@ -90,18 +91,31 @@ pub(crate) async fn candidates(
     repo: &Repository,
     project_id: u64,
     query: &str,
-) -> Result<Vec<Issue>, Diagnostic> {
+) -> Result<CandidateRead, Diagnostic> {
     let route = format!(
         "{}/issues?state=opened&search={}&in=title",
         prefix(repo),
         encode(query)
     );
-    let rows = reader.list(&route, None, 10).await?;
+    let page_result = reader.list_report(&route, None, 10).await?;
+    if !page_result.pagination.complete {
+        reader.mark_inspection_incomplete();
+        return Err(Diagnostic::new(
+            Code::OutputLimit,
+            "issue_search",
+            "Issue candidates exceed the complete search budget.",
+            "Narrow the query or select exact IDs.",
+        ));
+    }
+    let rows = page_result.rows;
     let mut out = vec![];
     for row in rows {
         out.push(issue(reader, repo, project_id, id(&row, "iid")?).await?);
     }
-    Ok(out)
+    Ok(CandidateRead {
+        issues: out,
+        pagination: page_result.pagination,
+    })
 }
 pub(crate) async fn label_pool(
     reader: &ForgeRead,

@@ -160,6 +160,18 @@ impact remains represented by requirement, status, presentation and applicable
 operations, with `evidence.operation_assessments` listing reported blockers,
 unverified requirements and warnings. Scope does not imply authorization or
 readiness for an operation.
+
+`init --inspect`, `issue --inspect` and Issue creation duplicate preflight share
+a 120-second monotonic invocation budget. Each executed `init` probe reports
+`elapsed_ms`; `evidence.inspection` reports total elapsed time, executed native
+read requests, per-process activities, and whether the inspection completed or
+exhausted its budget. Candidate reports add their elapsed time and pagination
+counts (`pages_fetched`, `items_seen`, `page_limit`, `complete`). `not_run` and
+`not_applicable` are explicit states. An incomplete or timed-out Issue search
+cannot supply candidates to a create operation, and no Issue, label or local
+selection write begins before preflight completes. The short budget override is
+available only in test-fixture builds.
+
 This first-stage list maps facts already collected by init; it does not perform
 Issue duplicate searches or permission writes. `issue.duplicate_read`, `issue.write_permission` and
 `request.write_permission` therefore remain `not_checked` until the relevant

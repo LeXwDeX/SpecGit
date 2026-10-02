@@ -4,6 +4,89 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "inspection_activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "elapsed_ms", "outcome"],
+      "properties": {
+        "operation": {"type": "string", "minLength": 1},
+        "elapsed_ms": {"type": "integer", "minimum": 0},
+        "outcome": {"enum": ["finished", "failed", "timed_out"]}
+      }
+    },
+    "pagination_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "pages_fetched", "items_seen", "page_limit"],
+      "properties": {
+        "status": {"enum": ["complete", "incomplete", "not_applicable", "budget_exhausted"]},
+        "pages_fetched": {"type": "integer", "minimum": 0},
+        "items_seen": {"type": "integer", "minimum": 0},
+        "page_limit": {"type": "integer", "minimum": 0}
+      }
+    },
+    "inspection_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "budget_ms", "elapsed_ms", "requests_executed", "complete", "budget_exhausted", "pagination", "activities"],
+      "properties": {
+        "status": {"enum": ["complete", "incomplete", "not_run", "budget_exhausted"]},
+        "budget_ms": {"type": "integer", "minimum": 1},
+        "elapsed_ms": {"type": "integer", "minimum": 0},
+        "requests_executed": {"type": "integer", "minimum": 0},
+        "complete": {"type": "boolean"},
+        "budget_exhausted": {"type": "boolean"},
+        "pagination": {"$ref": "#/$defs/pagination_summary"},
+        "activities": {"type": "array", "items": {"$ref": "#/$defs/inspection_activity"}}
+      }
+    },
+    "candidate_pagination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pages_fetched", "items_seen", "page_limit", "complete"],
+      "properties": {
+        "pages_fetched": {"type": "integer", "minimum": 0},
+        "items_seen": {"type": "integer", "minimum": 0},
+        "page_limit": {"type": "integer", "minimum": 1},
+        "complete": {"type": "boolean"}
+      }
+    },
+    "candidate_preflight": {
+      "type": "object",
+      "required": ["title", "issues", "review_digest", "elapsed_ms", "requests_executed", "pagination"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "issues": {"type": "array", "items": {"type": "object"}},
+        "review_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "elapsed_ms": {"type": "integer", "minimum": 0},
+        "requests_executed": {"type": "integer", "minimum": 0},
+        "pagination": {"$ref": "#/$defs/candidate_pagination"}
+      },
+      "additionalProperties": true
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "status", "observed_at", "elapsed_ms", "diagnostic", "evidence"],
+      "properties": {
+        "operation": {"type": "string", "minLength": 1},
+        "status": {"enum": ["available", "unavailable", "forbidden", "unknown", "not_checked"]},
+        "observed_at": {"type": "integer", "minimum": 0},
+        "elapsed_ms": {"type": ["integer", "null"], "minimum": 0},
+        "diagnostic": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["code", "operation", "message", "remedy"], "properties": {
+              "code": {"type": "string", "minLength": 1},
+              "operation": {"type": "string", "minLength": 1},
+              "message": {"type": "string", "minLength": 1},
+              "remedy": {"type": "string", "minLength": 1}
+            }}
+          ]
+        },
+        "evidence": {}
+      }
+    },
     "watch_action_kind": {
       "enum": [
         "wait_for_checks",
@@ -424,12 +507,35 @@
           "evidence": {
             "properties": {
               "availability": {"$ref": "#/$defs/init_availability"},
+              "inspection": {"$ref": "#/$defs/inspection_summary"},
               "operation_assessments": {"$ref": "#/$defs/init_operation_assessments"},
+              "probes": {"type": "array", "items": {"$ref": "#/$defs/probe"}},
               "checks": {
                 "type": "array",
                 "items": {"$ref": "#/$defs/init_check"}
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {"const": "issue"},
+          "evidence": {"type": "object"}
+        },
+        "required": ["operation", "evidence"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "inspection": {"$ref": "#/$defs/inspection_summary"},
+              "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate_preflight"}}
+            },
+            "if": {"required": ["review_digest"]},
+            "then": {"$ref": "#/$defs/candidate_preflight"}
           }
         }
       }
