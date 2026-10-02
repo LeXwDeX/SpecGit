@@ -90,6 +90,26 @@ fn checkpoint(root: &Path) {
         "request":null,"request_intent":null,"request_write_started":false
     })).unwrap()).unwrap();
 }
+#[cfg(any(windows, test))]
+fn git_bash(git: &Path) -> Option<PathBuf> {
+    git.ancestors()
+        .map(|root| root.join("bin/bash.exe"))
+        .find(|bash| bash.is_file())
+}
+
+#[test]
+fn git_bash_discovery_supports_launcher_and_native_git_layouts() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("Git");
+    let bash = root.join("bin/bash.exe");
+    assert!(git_bash(&root.join("cmd/git.exe")).is_none());
+    fs::create_dir_all(bash.parent().unwrap()).unwrap();
+    fs::write(&bash, b"fixture").unwrap();
+    for layout in ["cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"] {
+        assert_eq!(git_bash(&root.join(layout)), Some(bash.clone()), "{layout}");
+    }
+}
+
 fn invoke(entry: &Value, payload: Value) -> Value {
     let hook = &entry["hooks"][0];
     let shell = PathBuf::from(hook["shell"].as_str().unwrap());
@@ -98,9 +118,7 @@ fn invoke(entry: &Value, payload: Value) -> Value {
         // Windows also ships a WSL bash launcher; qualify the documented Git Bash host.
         assert_eq!(shell, PathBuf::from("bash"));
         let git = specgit::process::resolve_executable("git").unwrap();
-        let bash = git.parent().unwrap().parent().unwrap().join("bin/bash.exe");
-        assert!(bash.is_file(), "Git Bash is required: {}", bash.display());
-        bash
+        git_bash(&git).unwrap_or_else(|| panic!("Git Bash is required beside {}", git.display()))
     };
     let mut child = Command::new(&shell)
         .args(["-c", hook["command"].as_str().unwrap()])
