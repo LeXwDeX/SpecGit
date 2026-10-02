@@ -50,6 +50,14 @@ fn codex_and_opencode_preserve_user_guidance_across_refresh_and_uninstall() {
         assert!(skill.contains("Read-only inspection, audits, and reviews need no delivery Issue"));
         assert!(skill.contains("Existing session authorization remains valid within its scope"));
         assert!(skill.replace("\r\n", "\n").replace('\n', " ").contains("Native Issue/PR writes, including marking a request ready, require existing scope-specific user authorization"));
+        let skill = skill.replace('\n', " ");
+        assert!(skill.contains("Try normal SpecGit inspect/dry-run first"));
+        assert!(skill.contains("reproducible SpecGit defect blocks Issue selection"));
+        assert!(skill.contains("read back its native ID and body"));
+        assert!(skill.contains("Only if that same defect still blocks its linked repair"));
+        assert!(skill.contains("documented one-task local checkpoint exception"));
+        assert!(skill.contains("restore normal checks after repair"));
+        assert!(skill.contains("does not bypass user authorization, forge protection, CI, review, merge, Issue closure or publication"));
         fs::write(&path, format!("{text}user appended\n")).unwrap();
     }
     setup::install(&o, &binary).unwrap();
