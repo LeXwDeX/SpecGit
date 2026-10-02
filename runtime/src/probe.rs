@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub struct Probe {
     pub operation: String,
     pub status: Capability,
     pub observed_at: u64,
+    pub elapsed_ms: Option<u64>,
     pub diagnostic: Option<Diagnostic>,
     pub evidence: Value,
 }
@@ -34,6 +35,7 @@ impl Probe {
             operation: operation.into(),
             status: Capability::Available,
             observed_at: now(),
+            elapsed_ms: None,
             diagnostic: None,
             evidence,
         }
@@ -48,6 +50,7 @@ impl Probe {
             operation: operation.into(),
             status,
             observed_at: now(),
+            elapsed_ms: None,
             diagnostic: Some(diagnostic),
             evidence: Value::Null,
         }
@@ -57,10 +60,30 @@ impl Probe {
             operation: operation.into(),
             status: Capability::NotChecked,
             observed_at: now(),
+            elapsed_ms: None,
             diagnostic: None,
             evidence: Value::Null,
         }
     }
+
+    fn measured(mut self, started: Instant) -> Self {
+        self.elapsed_ms = Some(started.elapsed().as_millis().min(u64::MAX as u128) as u64);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Pagination {
+    pub pages_fetched: usize,
+    pub items_seen: usize,
+    pub page_limit: usize,
+    pub complete: bool,
+}
+
+#[derive(Debug)]
+pub struct PaginatedRows {
+    pub rows: Vec<Value>,
+    pub pagination: Pagination,
 }
 pub fn now() -> u64 {
     SystemTime::now()
@@ -139,9 +162,29 @@ impl ForgeRead {
             ]))
             .await?;
         if output.code != 0 {
+            self.process.mark_inspection_incomplete();
             return Err(classify_failure(operation, &output.stderr));
         }
-        serde_json::from_slice(&output.stdout).map_err(|_| Diagnostic::new(Code::MalformedResponse, operation, "The native API returned malformed JSON.", "Inspect the selected CLI/API version; partial or malformed evidence cannot be accepted."))
+        serde_json::from_slice(&output.stdout).map_err(|_| {
+            self.process.mark_inspection_incomplete();
+            Diagnostic::new(Code::MalformedResponse, operation, "The native API returned malformed JSON.", "Inspect the selected CLI/API version; partial or malformed evidence cannot be accepted.")
+        })
+    }
+
+    pub(crate) fn pagination_started(&self, page_limit: usize) {
+        self.process.record_page_limit(page_limit);
+    }
+
+    pub(crate) fn page_fetched(&self) {
+        self.process.record_page_fetched();
+    }
+
+    pub(crate) fn page_items_seen(&self, items: usize) {
+        self.process.record_page_items(items);
+    }
+
+    pub(crate) fn mark_inspection_incomplete(&self) {
+        self.process.mark_inspection_incomplete();
     }
     /// GitHub queries use POST on the wire, but this method accepts no operation,
     /// query document or endpoint from its caller. It can only read closing refs.
@@ -213,36 +256,73 @@ impl ForgeRead {
         key: Option<&str>,
         max_pages: usize,
     ) -> Result<Vec<Value>, Diagnostic> {
+        let result = self.list_report(endpoint, key, max_pages).await?;
+        if result.pagination.complete {
+            Ok(result.rows)
+        } else {
+            self.process.mark_inspection_incomplete();
+            Err(pagination_limit())
+        }
+    }
+
+    pub async fn list_report(
+        &self,
+        endpoint: &str,
+        key: Option<&str>,
+        max_pages: usize,
+    ) -> Result<PaginatedRows, Diagnostic> {
         if !(1..=100).contains(&max_pages) {
             return Err(Diagnostic::input(
                 "Pagination budget must be between 1 and 100 pages.",
             ));
         }
+        self.pagination_started(max_pages);
         let mut rows = vec![];
+        let mut pages_fetched = 0;
+        let mut items_seen = 0;
         for page in 1..=max_pages {
             let separator = if endpoint.contains('?') { '&' } else { '?' };
             let body = self
                 .get(&format!("{endpoint}{separator}per_page=100&page={page}"))
                 .await?;
+            pages_fetched += 1;
+            self.page_fetched();
             let values = key
                 .map(|key| body.get(key).unwrap_or(&Value::Null))
                 .unwrap_or(&body)
                 .as_array()
-                .ok_or_else(malformed)?;
+                .ok_or_else(|| {
+                    self.mark_inspection_incomplete();
+                    malformed()
+                })?;
             if values.len() > 100 {
+                self.mark_inspection_incomplete();
                 return Err(malformed());
             }
+            items_seen += values.len();
+            self.page_items_seen(values.len());
             rows.extend(values.iter().cloned());
             if values.len() < 100 {
-                return Ok(rows);
+                return Ok(PaginatedRows {
+                    rows,
+                    pagination: Pagination {
+                        pages_fetched,
+                        items_seen,
+                        page_limit: max_pages,
+                        complete: true,
+                    },
+                });
             }
         }
-        Err(Diagnostic::new(
-            Code::OutputLimit,
-            "pagination",
-            "The complete list exceeds the declared read budget.",
-            "Narrow the native query; uninspected pages cannot establish absence or acceptance.",
-        ))
+        Ok(PaginatedRows {
+            rows,
+            pagination: Pagination {
+                pages_fetched,
+                items_seen,
+                page_limit: max_pages,
+                complete: false,
+            },
+        })
     }
     pub async fn project(&self, repo: &Repository) -> Result<ProjectFacts, Diagnostic> {
         if self.provider != repo.provider || self.host != repo.host {
@@ -321,10 +401,11 @@ pub use crate::delivery_model::ProjectFacts;
 pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<Probe> {
     let mut results = vec![];
     for name in ["git", provider.executable()] {
+        let probe_started = Instant::now();
         let path = match resolve_executable(name) {
             Ok(path) => path,
             Err(d) => {
-                results.push(Probe::failed(name, d));
+                results.push(Probe::failed(name, d).measured(probe_started));
                 continue;
             }
         };
@@ -348,17 +429,17 @@ pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<
                     .filter(|c| !c.is_control())
                     .take(200)
                     .collect();
-                results.push(Probe::available(&operation, serde_json::json!({"version":version,"executable":path,"identity":crate::assets::hash(identity.as_bytes())})));
+                results.push(Probe::available(&operation, serde_json::json!({"version":version,"executable":path,"identity":crate::assets::hash(identity.as_bytes())})).measured(probe_started));
             }
             Ok(out) => {
-                results.push(Probe::failed(
-                    &operation,
-                    classify_failure(&operation, &out.stderr),
-                ));
+                results.push(
+                    Probe::failed(&operation, classify_failure(&operation, &out.stderr))
+                        .measured(probe_started),
+                );
                 continue;
             }
             Err(d) => {
-                results.push(Probe::failed(&operation, d));
+                results.push(Probe::failed(&operation, d).measured(probe_started));
                 continue;
             }
         }
@@ -386,6 +467,7 @@ pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<
             ]
         };
         for args in commands {
+            let probe_started = Instant::now();
             let operation = format!("{name} {}", args.join(" "));
             match process
                 .run(Request::new(&path, cwd, &operation).args(args))
@@ -395,19 +477,20 @@ pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<
                     if (out.code == 0 || (name == "git" && out.code == 129))
                         && (!out.stdout.is_empty() || !out.stderr.is_empty()) =>
                 {
-                    results.push(Probe::available(&operation, Value::Null))
+                    results.push(Probe::available(&operation, Value::Null).measured(probe_started))
                 }
-                Ok(out) => results.push(Probe::failed(
-                    &operation,
-                    classify_failure(&operation, &out.stderr),
-                )),
-                Err(d) => results.push(Probe::failed(&operation, d)),
+                Ok(out) => results.push(
+                    Probe::failed(&operation, classify_failure(&operation, &out.stderr))
+                        .measured(probe_started),
+                ),
+                Err(d) => results.push(Probe::failed(&operation, d).measured(probe_started)),
             }
         }
     }
     results
 }
 pub async fn account(reader: &ForgeRead) -> Probe {
+    let started = Instant::now();
     match reader.get("user").await {
         Ok(value)
             if value
@@ -426,18 +509,37 @@ pub async fn account(reader: &ForgeRead) -> Probe {
             Probe::available(
                 "account_api",
                 serde_json::json!({"host":reader.host,"authenticated":true,"write_permissions":"not_checked"}),
-            )
+            ).measured(started)
         }
-        Ok(_) => Probe::failed("account_api", malformed()),
-        Err(d) => Probe::failed("account_api", d),
+        Ok(_) => {
+            reader.mark_inspection_incomplete();
+            Probe::failed("account_api", malformed()).measured(started)
+        }
+        Err(d) => Probe::failed("account_api", d).measured(started),
     }
 }
 pub async fn inspect(reader: &ForgeRead, context: &Context) -> Probe {
+    let started = Instant::now();
     match reader.project(&context.repository).await {
         Ok(facts) => Probe::available(
             "project_api",
             serde_json::to_value(facts).expect("facts serialize"),
-        ),
-        Err(d) => Probe::failed("project_api", d),
+        )
+        .measured(started),
+        Err(d) => {
+            if d.code == Code::MalformedResponse || d.code == Code::OutputLimit {
+                reader.mark_inspection_incomplete();
+            }
+            Probe::failed("project_api", d).measured(started)
+        }
     }
+}
+
+fn pagination_limit() -> Diagnostic {
+    Diagnostic::new(
+        Code::OutputLimit,
+        "pagination",
+        "The complete list exceeds the declared read budget.",
+        "Narrow the native query; uninspected pages cannot establish absence or acceptance.",
+    )
 }

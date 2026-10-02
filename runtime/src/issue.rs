@@ -13,6 +13,7 @@ use crate::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 #[derive(Debug, clap::Args)]
@@ -43,16 +44,37 @@ pub struct Options {
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     let mut effects = Effects::default();
-    let mut report = match execute(options, process, cwd, &mut effects).await {
+    let preflight = process.with_inspection_budget(crate::process::configured_inspection_budget());
+    let mut report = match execute(options, preflight.clone(), process, cwd, &mut effects).await {
         Ok(report) => report,
-        Err(d) => Report::failure("issue", d),
+        Err(d) => {
+            preflight.mark_inspection_incomplete();
+            Report::failure("issue", d)
+        }
     };
     report.effects = Some(effects);
+    attach_inspection(&mut report, &preflight);
     report
+}
+
+fn attach_inspection(report: &mut Report, process: &Process) {
+    let Some(summary) = process.inspection_summary() else {
+        return;
+    };
+    if !report.evidence.is_object() {
+        report.evidence = serde_json::json!({});
+    }
+    if let Some(evidence) = report.evidence.as_object_mut() {
+        evidence.insert(
+            "inspection".into(),
+            serde_json::to_value(summary).expect("inspection summary serializes"),
+        );
+    }
 }
 async fn execute(
     mut options: Options,
     process: Process,
+    write_process: Process,
     cwd: &Path,
     effects: &mut Effects,
 ) -> Result<Report, Diagnostic> {
@@ -324,13 +346,21 @@ async fn execute(
         if context.repository.provider == project::Provider::Gitlab {
             templates::reject_quick_actions(&intent.body)?;
         }
-        let mut candidates = native_delivery::candidates(
+        let started = Instant::now();
+        let requests_before = process.inspection_requests_executed();
+        let candidate_read = native_delivery::candidates(
             &reader,
             &context.repository,
             project_facts.id,
             &intent.title,
         )
         .await?;
+        process.ensure_inspection_budget("issue_preflight")?;
+        let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        let requests_executed = process
+            .inspection_requests_executed()
+            .saturating_sub(requests_before);
+        let mut candidates = candidate_read.issues;
         candidates.sort_by_key(|issue| issue.id);
         let review_digest = candidate_review_digest(
             &context.repository,
@@ -344,21 +374,24 @@ async fn execute(
         if reviewed {
             matched_reviews.insert(review_digest.clone());
         }
-        let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"review_digest":review_digest});
+        let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.pagination});
         if options.inspect || options.dry_run {
             candidate_reports.push(evidence);
             continue;
         }
         if intent.write_started {
+            process.mark_inspection_incomplete();
             return Ok(uncertain(evidence));
         }
         if !candidates.is_empty() && !reviewed {
+            process.mark_inspection_incomplete();
             let mut report = Report::success("issue", "candidate_review_required", evidence);
             report.exit = 3;
             report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID for the same WHY. For a distinct WHY, pass --reviewed-candidates with this exact review_digest; changed evidence requires a new review. Uncertain writes still require exact adoption."));
             return Ok(report);
         }
     }
+    process.ensure_inspection_budget("issue_preflight")?;
     if !options.inspect
         && !options.dry_run
         && options
@@ -382,6 +415,8 @@ async fn execute(
         .cloned()
         .collect();
     if options.inspect || options.dry_run {
+        process.ensure_inspection_budget("issue_preflight")?;
+        process.finish_inspection();
         if let Some(checkpoint) = foreign_checkpoint {
             let mut report = Report::success(
                 "issue",
@@ -428,7 +463,7 @@ async fn execute(
             "Read the current selection and retry.",
         ));
     }
-    if let Some(branch) = &options.branch {
+    if options.branch.is_some() {
         // Recheck dirty state at the actual checkout boundary.
         if !project::git(&process, &root, &["status", "--porcelain=v1", "-z"])
             .await?
@@ -438,12 +473,16 @@ async fn execute(
                 "The worktree changed before branch creation.",
             ));
         }
+    }
+    process.ensure_inspection_budget("issue_preflight")?;
+    process.finish_inspection();
+    if let Some(branch) = &options.branch {
         let branch_effect = effects.begin(
             "local",
             "create_branch",
             serde_json::json!({"branch":branch,"repository":context.repository}),
         );
-        project::git(&process, &root, &["switch", "-c", branch]).await?;
+        project::git(&write_process, &root, &["switch", "-c", branch]).await?;
         effects.applied(branch_effect);
         context.branch = Some(branch.clone());
         selection.branch = branch.clone();
@@ -455,7 +494,7 @@ async fn execute(
     );
     lock.save(&selection)?;
     effects.applied(local_effect);
-    let writer = native_delivery::IssueWrite::new(process.clone(), &root, &context.repository)?;
+    let writer = native_delivery::IssueWrite::new(write_process, &root, &context.repository)?;
     let catalog = spec::catalog(&d);
     for index in 0..selection.intents.len() {
         let intent = selection.intents[index].clone();
