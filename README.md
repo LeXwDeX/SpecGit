@@ -7,6 +7,9 @@ Issues hold the specification. A PR or MR gathers the selected Issues and the
 implementation. SpecGit reads the forge's current state so the agent can repair
 failures and distinguish pending work from completed delivery.
 
+The [runtime architecture](docs/architecture.md) describes module ownership,
+program checks and agent guidance.
+
 ## Install
 
 Open your coding agent in the repository you want to use with SpecGit, then paste:

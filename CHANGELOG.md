@@ -4,6 +4,17 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.5.0
+
+- Separate pure declaration, identity, specification vocabulary and observation models from file, Git and forge operations. Preserve public library paths through aliases.
+- Remove runtime component cycles and enforce dependency layers with a Rust syntax-tree test over every production source file, including all platform branches and macro expressions.
+- Split CLI framing, Issue/PR preparation and write recovery, initialization checks and bounded observation into modules with clear responsibilities.
+- Share Issue/PR identity revalidation and separate read-only forge transport from platform decoding and explicit writes.
+- Embed short bilingual project guidance and host entry points. Keep the complete operational workflow in the shipped skill, with explicit program-check and agent-judgment boundaries.
+- Preserve native CLI/schema/JSON contracts, local asset receipts, write journals, checkpoint ownership and publication protections.
+
+Architecture and acceptance scope: [runtime architecture](docs/architecture.md).
+
 # 2.4.0
 
 - Make agent integration permanently project-only; remove global setup, host-root overrides and global registration aliases rather than retaining dormant installation paths.

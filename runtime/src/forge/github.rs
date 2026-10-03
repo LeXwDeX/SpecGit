@@ -1,10 +1,9 @@
 use super::protocol::{WriteTransport, id, malformed, text};
 use crate::{
-    delivery_model::{Issue, PullRequest},
+    delivery_model::{CandidateRead, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
-    native_delivery::CandidateRead,
-    probe::{ForgeRead, Pagination, encode},
-    project::Repository,
+    forge_read::{ForgeRead, Pagination, encode},
+    identity::Repository,
 };
 use serde_json::{Value, json};
 pub(super) fn request_route(repo: &Repository, id: u64) -> String {
@@ -28,9 +27,7 @@ pub(super) fn auto_merge(raw: &Value) -> crate::delivery_model::AutoMerge {
     }
 }
 
-pub(crate) fn prefix(repo: &Repository) -> String {
-    format!("repos/{}", repo.path)
-}
+pub(crate) use crate::forge_routes::github_prefix as prefix;
 fn labels(v: &Value) -> Result<Vec<String>, Diagnostic> {
     v.get("labels")
         .and_then(Value::as_array)
@@ -192,7 +189,7 @@ pub(crate) fn request_value(v: &Value, number: u64) -> Result<PullRequest, Diagn
     {
         state = "merged".into();
     }
-    if !crate::project::valid_oid(&head)
+    if !crate::identity::valid_oid(&head)
         || !["open", "opened", "closed", "merged"].contains(&state.as_str())
     {
         return Err(malformed());
@@ -249,7 +246,7 @@ pub(crate) async fn branch_head(
         return Err(malformed());
     }
     let sha = text(value.get("commit").ok_or_else(malformed)?, "sha")?;
-    if !crate::project::valid_oid(&sha) {
+    if !crate::identity::valid_oid(&sha) {
         return Err(malformed());
     }
     Ok(sha)
@@ -261,7 +258,7 @@ pub(crate) async fn has_changes(
     base: &str,
     head: &str,
 ) -> Result<bool, Diagnostic> {
-    if !crate::project::valid_oid(base) || !crate::project::valid_oid(head) {
+    if !crate::identity::valid_oid(base) || !crate::identity::valid_oid(head) {
         return Err(malformed());
     }
     let value = reader
@@ -308,7 +305,7 @@ pub(crate) async fn ready(writer: &WriteTransport, number: u64) -> Result<(), Di
 }
 pub(crate) async fn create_label(
     writer: &WriteTransport,
-    tag: &crate::config::Tag,
+    tag: &crate::declaration::Tag,
 ) -> Result<(), Diagnostic> {
     writer
         .write(
@@ -355,22 +352,7 @@ fn branches_route(repo: &Repository) -> String {
     format!("{}/branches", prefix(repo))
 }
 
-/// Fixed query shared with the read transport and protocol fixtures. Callers can
-/// provide only typed variables; no arbitrary GraphQL document is executable.
-/// https://docs.github.com/en/graphql/reference/pulls#pullrequest
-pub const CLOSING_ISSUES_QUERY: &str = r#"query SpecGitClosingIssues($owner: String!, $name: String!, $number: Int!, $after: String) {
-  repository(owner: $owner, name: $name) {
-    databaseId
-    nameWithOwner
-    pullRequest(number: $number) {
-      number
-      closingIssuesReferences(first: 100, after: $after) {
-        nodes { number repository { databaseId nameWithOwner } }
-        pageInfo { hasNextPage endCursor }
-      }
-    }
-  }
-}"#;
+pub use crate::forge_read::CLOSING_ISSUES_QUERY;
 
 pub(super) async fn closing_issues(
     reader: &ForgeRead,

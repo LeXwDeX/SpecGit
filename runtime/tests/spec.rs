@@ -20,6 +20,42 @@ fn native_input_bounds_apply_even_when_optional_conventions_are_off() {
 }
 
 #[test]
+fn declaration_and_label_selection_share_portable_grammar() {
+    for (name, accepted) in [
+        ("area::cli-tools".to_owned(), true),
+        ("1".to_owned(), true),
+        ("a".repeat(64), true),
+        ("a".repeat(65), false),
+        ("area::cli::tools".to_owned(), false),
+        ("area::".to_owned(), false),
+        ("area::cli--tools".to_owned(), false),
+        ("area::CLI".to_owned(), false),
+        ("area::命令".to_owned(), false),
+        ("area::cli,tools".to_owned(), false),
+    ] {
+        let mut declaration = Declaration::default();
+        declaration.tags.push(Tag {
+            name: name.clone(),
+            color: "112233".into(),
+            description: String::new(),
+        });
+        assert_eq!(spec::label_name(&name), accepted, "{name}");
+        assert_eq!(declaration.validate().is_ok(), accepted, "{name}");
+        assert_eq!(
+            spec::selected_labels(
+                &declaration,
+                "fix: grammar",
+                Some(std::slice::from_ref(&name)),
+                &[]
+            )
+            .is_ok(),
+            accepted,
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn language_rules_preserve_unicode_han_semantics_and_are_opt_in() {
     let mut d = Declaration::default();
     assert!(spec::check_labels(&d, &["native::one".into(), "native::two".into()]).is_none());

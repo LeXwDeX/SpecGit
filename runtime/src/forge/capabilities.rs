@@ -1,8 +1,9 @@
 //! Read-only native capability facts. Settings are observations, never authority.
 use crate::{
+    delivery_model::ProjectFacts,
     diagnostic::{Code, Diagnostic},
-    probe::{ForgeRead, ProjectFacts, encode},
-    project::Provider,
+    forge_read::{ForgeRead, encode},
+    identity::Provider,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -226,7 +227,7 @@ pub async fn request_target(
             continue;
         }
         if target_id != Some(facts.id)
-            || target.is_none_or(|s| !crate::config::valid_branch(s))
+            || target.is_none_or(|s| !crate::declaration::valid_branch(s))
             || number.is_none_or(|n| n == 0)
         {
             return Err(Diagnostic::new(

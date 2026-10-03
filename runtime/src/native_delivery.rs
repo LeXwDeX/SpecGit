@@ -1,28 +1,19 @@
 //! Delivery operations dispatch to concrete native protocols; observers receive only ForgeRead.
-pub use crate::delivery_model::{Issue, PullRequest};
+pub use crate::delivery_model::{CandidateRead, Issue, PullRequest};
+pub use crate::forge_routes::prefix;
 use crate::{
     diagnostic::{Code, Diagnostic},
     forge::{github, gitlab, protocol::WriteTransport},
-    probe::{ForgeRead, Pagination},
+    forge_read::ForgeRead,
+    identity::{Provider, Repository},
     process::Process,
-    project::{Provider, Repository},
 };
 use serde_json::Value;
 use std::path::Path;
-pub struct CandidateRead {
-    pub issues: Vec<Issue>,
-    pub pagination: Pagination,
-}
 pub(crate) fn written_body_matches(provider: Provider, submitted: &str, observed: &str) -> bool {
     match provider {
         Provider::Github => submitted == observed,
         Provider::Gitlab => gitlab::written_body_matches(submitted, observed),
-    }
-}
-pub fn prefix(repo: &Repository) -> String {
-    match repo.provider {
-        Provider::Github => github::prefix(repo),
-        Provider::Gitlab => gitlab::prefix(repo),
     }
 }
 pub async fn issue(
@@ -136,7 +127,7 @@ impl RequestWrite {
             Provider::Gitlab => gitlab::ready(&self.transport, number).await,
         }
     }
-    pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
+    pub async fn create_label(&self, tag: &crate::declaration::Tag) -> Result<(), Diagnostic> {
         create_label(&self.transport, self.provider, tag).await
     }
     pub async fn create_request(
@@ -169,7 +160,7 @@ impl IssueWrite {
             provider: repo.provider,
         })
     }
-    pub async fn create_label(&self, tag: &crate::config::Tag) -> Result<(), Diagnostic> {
+    pub async fn create_label(&self, tag: &crate::declaration::Tag) -> Result<(), Diagnostic> {
         create_label(&self.transport, self.provider, tag).await
     }
     pub async fn create_issue(
@@ -187,7 +178,7 @@ impl IssueWrite {
 async fn create_label(
     transport: &WriteTransport,
     provider: Provider,
-    tag: &crate::config::Tag,
+    tag: &crate::declaration::Tag,
 ) -> Result<(), Diagnostic> {
     match provider {
         Provider::Github => github::create_label(transport, tag).await,

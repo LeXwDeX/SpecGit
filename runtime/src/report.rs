@@ -15,13 +15,13 @@ pub struct Report {
     pub next_actions: Vec<Value>,
 }
 impl Report {
-    pub fn observation(operation: &str, a: crate::observation::Observation) -> Self {
+    pub fn observation(operation: &str, a: crate::observation_model::Observation) -> Self {
         let exit = a.exit();
         let mut next_actions = vec![];
-        if a.checks_outcome() == crate::observation::CheckOutcome::Failed {
+        if a.checks_outcome() == crate::observation_model::CheckOutcome::Failed {
             next_actions.push(serde_json::json!({"kind":"inspect_native_failure","remedy":"Inspect the native failure and repair within existing authorization; observe again after push."}));
         }
-        if a.status == crate::observation::Status::MergedIssuesOpen {
+        if a.status == crate::observation_model::Status::MergedIssuesOpen {
             next_actions.push(serde_json::json!({"kind":"inspect_open_issues","agent_close_preference":a.evidence.close_issues_after_merge,"remedy":"Check native closing eligibility and issue identity. Agent closure requires explicit session authorization, confirmed merge and native readback; this command never closes issues."}));
         }
 
