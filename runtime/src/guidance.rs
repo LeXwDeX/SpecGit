@@ -17,7 +17,8 @@ fn conflict() -> Diagnostic {
     )
 }
 pub fn render(d: &Declaration) -> String {
-    let prose = crate::prompts::project(d.language).trim_end();
+    let prompt = crate::prompts::project(d.language);
+    let prose = prompt.trim_end();
     // Template bodies are content, not instructions injected into the harness.
     let summary = serde_json::json!({"language":d.language,"validation":d.validation,"issue_template":d.templates.issue.source,"pr_template":d.templates.pr.source,"agent":d.agent});
     format!(
