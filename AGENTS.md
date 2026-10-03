@@ -92,7 +92,7 @@ missing. Use current-head and installed/runtime evidence for claims.
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.4.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.5.0. Declaration: `.specgit.yaml` (v2, local configuration).
 
 SpecGit 集成永久仅限项目级。共享 CLI 单独安装；setup 不安装项目内二进制、全局宿主资产或全局状态。Hooks 与观察状态属于当前项目及其 Git 元数据。
 

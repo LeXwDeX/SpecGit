@@ -1,7 +1,9 @@
+pub use crate::template_rules::sections;
 use crate::{
     assets::safe_path,
-    config::{Language, MAX_BYTES, Source, Template, relative_path},
+    declaration::{Language, MAX_BYTES, Source, Template, relative_path},
     diagnostic::{Code, Diagnostic},
+    label_rules::label_name,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, io::Read, path::Path};
@@ -38,17 +40,6 @@ pub fn read_text(path: &Path) -> Result<String, Diagnostic> {
         ));
     }
     String::from_utf8(bytes).map_err(|_| invalid("Selected content must be UTF-8."))
-}
-pub fn sections(language: Language, issue: bool) -> Vec<String> {
-    (match (language, issue) {
-        (Language::En, true) => vec!["Why", "Scope", "Approach", "Acceptance"],
-        (Language::En, false) => vec!["Why", "What changed", "Evidence", "Checklist"],
-        (Language::Zh, true) => vec!["原因", "范围", "方案", "验收"],
-        (Language::Zh, false) => vec!["原因", "变更", "证据", "检查清单"],
-    })
-    .into_iter()
-    .map(String::from)
-    .collect()
 }
 pub fn substitute(template: &str, values: &BTreeMap<&str, String>) -> Result<String, Diagnostic> {
     let mut result = String::new();
@@ -207,7 +198,7 @@ fn markdown_metadata(raw: &str) -> Result<(NativeMetadata, String), Diagnostic> 
                     "Template assignees require an explicit assignment operation.",
                 ));
             }
-            if meta.labels.len() > 100 || meta.labels.iter().any(|s| !crate::spec::label_name(s)) {
+            if meta.labels.len() > 100 || meta.labels.iter().any(|s| !label_name(s)) {
                 return Err(invalid(
                     "Native template labels must follow portable label grammar.",
                 ));

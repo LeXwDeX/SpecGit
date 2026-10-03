@@ -1,6 +1,6 @@
 [package]
 name = "specgit-runtime"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -29,6 +29,8 @@ base64 = "0.23.1"
 
 [dev-dependencies]
 jsonschema = { version = "0.58.0", default-features = false }
+syn = { version = "2.0.119", features = ["full", "visit"] }
+proc-macro2 = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

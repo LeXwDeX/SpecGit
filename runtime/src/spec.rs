@@ -1,6 +1,7 @@
 //! Pure specification rules and explicit same-repository associations.
+pub use crate::label_rules::label_name;
 use crate::{
-    config::{Declaration, Labels, Language, Tag},
+    declaration::{Declaration, Labels, Language, MAX_BYTES, Tag, Template},
     diagnostic::Diagnostic,
 };
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,10 @@ impl<'a> Specification<'a> {
     ) -> Result<Vec<String>, Diagnostic> {
         selected_labels(self.declaration, title, explicit, pool)
     }
-    pub fn request_template(self) -> &'a crate::config::Template {
+    pub fn issue_template(self) -> &'a Template {
+        &self.declaration.templates.issue
+    }
+    pub fn request_template(self) -> &'a Template {
         &self.declaration.templates.pr
     }
     pub fn language(self) -> Language {
@@ -92,21 +96,6 @@ pub fn catalog(d: &Declaration) -> BTreeMap<String, Tag> {
         .collect();
     tags.extend(d.tags.iter().cloned().map(|t| (t.name.clone(), t)));
     tags
-}
-/// Bounds/grammar are portable across both forge APIs, including comma-separated inputs.
-pub fn label_name(s: &str) -> bool {
-    let parts: Vec<_> = s.split("::").collect();
-    !s.is_empty()
-        && s.len() <= 64
-        && parts.len() <= 2
-        && parts.iter().all(|part| {
-            part.split('-').all(|word| {
-                !word.is_empty()
-                    && word
-                        .bytes()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-            })
-        })
 }
 pub fn selected_labels(
     d: &Declaration,
@@ -243,7 +232,7 @@ pub fn check_body(d: &Declaration, issue: bool, body: &str) -> Option<Violation>
     let headings = template
         .required_sections
         .clone()
-        .unwrap_or_else(|| crate::templates::sections(d.language, issue));
+        .unwrap_or_else(|| crate::template_rules::sections(d.language, issue));
     let mut sections: BTreeMap<String, String> = BTreeMap::new();
     let mut section: Option<String> = None;
     for line in text.lines() {
@@ -310,7 +299,7 @@ pub fn check(
     [
         (title.trim().is_empty() || title.len() > 255 || title.chars().any(char::is_control))
             .then(|| violation("title_invalid", "A native title must be nonempty, at most 255 UTF-8 bytes, without control characters.")),
-        (body.len() > crate::config::MAX_BYTES).then(|| violation("body_too_large", "Native spec content exceeds 1 MiB.")),
+        (body.len() > MAX_BYTES).then(|| violation("body_too_large", "Native spec content exceeds 1 MiB.")),
         check_title(d, title),
         check_body(d, issue, body),
         check_labels(d, labels),
@@ -365,7 +354,7 @@ pub fn with_references(body: &str, issues: &[u64]) -> Result<String, Diagnostic>
             result.push_str(&format!("\n\nCloses #{id}"));
         }
     }
-    if result.len() > crate::config::MAX_BYTES {
+    if result.len() > MAX_BYTES {
         return Err(Diagnostic::input("Request body exceeds 1 MiB."));
     }
     let actual = references(&result)?;
