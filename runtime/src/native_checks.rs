@@ -2,9 +2,9 @@
 pub use crate::delivery_model::Check;
 use crate::{
     diagnostic::{Code, Diagnostic},
-    native_delivery::prefix,
-    probe::ForgeRead,
-    project::Repository,
+    forge_read::ForgeRead,
+    forge_routes::prefix,
+    identity::Repository,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -217,7 +217,7 @@ pub async fn github(
     repo: &Repository,
     head: &str,
 ) -> Result<Vec<Check>, Diagnostic> {
-    if !crate::project::valid_oid(head) {
+    if !crate::identity::valid_oid(head) {
         return Err(malformed());
     }
     let base = prefix(repo);
@@ -331,7 +331,7 @@ pub async fn gitlab(
     request: &Value,
     head: &str,
 ) -> Result<Vec<Check>, Diagnostic> {
-    if !crate::project::valid_oid(head) || text(request, "sha")? != head {
+    if !crate::identity::valid_oid(head) || text(request, "sha")? != head {
         return Err(malformed());
     }
     let pointer = request.get("head_pipeline").ok_or_else(malformed)?;
@@ -339,7 +339,7 @@ pub async fn gitlab(
         return Ok(vec![]);
     }
     let tested = text(pointer, "sha")?;
-    if !crate::project::valid_oid(tested) {
+    if !crate::identity::valid_oid(tested) {
         return Err(malformed());
     }
     let project = number(pointer, "project_id")?;
@@ -379,7 +379,7 @@ pub async fn gitlab(
         let target_head = text(&target["commit"], "id")?;
         let parents = commit["parent_ids"].as_array().ok_or_else(malformed)?;
         if text(&commit, "id")? != tested
-            || !crate::project::valid_oid(target_head)
+            || !crate::identity::valid_oid(target_head)
             || parents.len() != 2
             || head == target_head
             || !parents.iter().any(|p| p.as_str() == Some(head))

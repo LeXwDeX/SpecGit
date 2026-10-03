@@ -2,7 +2,8 @@
 use crate::{
     assets::{AssetStore, Snapshot},
     diagnostic::{Code, Diagnostic},
-    project::{Context, Repository},
+    identity::Repository,
+    project::Context,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -97,12 +98,12 @@ pub fn read_path(path: &Path) -> Result<Option<Selection>, Diagnostic> {
     let Some(bytes) = snapshot.bytes else {
         return Ok(None);
     };
-    let value = crate::input::json(&bytes, crate::config::MAX_BYTES, 16)?;
+    let value = crate::input::json(&bytes, crate::declaration::MAX_BYTES, 16)?;
     let s: Selection = serde_json::from_value(value).map_err(|_| invalid())?;
     if s.version != 2
         || s.project_id == 0
-        || !crate::config::valid_branch(&s.branch)
-        || !crate::config::valid_branch(&s.target)
+        || !crate::declaration::valid_branch(&s.branch)
+        || !crate::declaration::valid_branch(&s.target)
         || s.issues.len() > 100
         || s.issues.contains(&0)
         || s.adopted.len() > 100
@@ -206,7 +207,7 @@ impl Locked {
     }
     pub fn save(&mut self, selection: &Selection) -> Result<(), Diagnostic> {
         let bytes = serde_json::to_vec_pretty(selection).map_err(|_| invalid())?;
-        if bytes.len() > crate::config::MAX_BYTES {
+        if bytes.len() > crate::declaration::MAX_BYTES {
             return Err(Diagnostic::input(
                 "Delivery checkpoint exceeds 1 MiB; use smaller independently verifiable specs.",
             ));

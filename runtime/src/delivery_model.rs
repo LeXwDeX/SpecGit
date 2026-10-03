@@ -1,5 +1,19 @@
 //! Typed native facts shared by concrete adapters and read-only observation.
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Pagination {
+    pub pages_fetched: usize,
+    pub items_seen: usize,
+    pub page_limit: usize,
+    pub complete: bool,
+}
+
+pub struct CandidateRead {
+    pub issues: Vec<Issue>,
+    pub pagination: Pagination,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Issue {
     pub id: u64,
@@ -49,8 +63,8 @@ impl Check {
     pub fn valid_for(&self, request: &PullRequest, checks: &[Check]) -> bool {
         let positive = |n: Option<u64>| n.is_none_or(|n| n > 0);
         let valid_ids = self.id > 0
-            && crate::project::valid_oid(&self.head)
-            && crate::project::valid_oid(&self.tested_head)
+            && crate::identity::valid_oid(&self.head)
+            && crate::identity::valid_oid(&self.tested_head)
             && (self.source == "pipeline" || self.tested_head == self.head)
             && [
                 self.app,
@@ -118,7 +132,7 @@ pub fn flow(facts: &ProjectFacts, target: Option<&str>) -> Flow {
     }
     let issue_closing = if !default {
         "unsupported_target"
-    } else if facts.repository.provider == crate::project::Provider::Github {
+    } else if facts.repository.provider == crate::identity::Provider::Github {
         "default_target_references_supported"
     } else {
         match facts.native_issue_closing {
@@ -147,7 +161,7 @@ pub fn flow(facts: &ProjectFacts, target: Option<&str>) -> Flow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFacts {
     pub id: u64,
-    pub repository: crate::project::Repository,
+    pub repository: crate::identity::Repository,
     pub default_branch: String,
     pub native_source_cleanup: Option<bool>,
     pub native_issue_closing: Option<bool>,

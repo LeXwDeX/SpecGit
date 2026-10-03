@@ -106,9 +106,8 @@ fn instruction_change(
                 "Host instructions must be UTF-8.",
             )
         })?;
-    let generated = format!(
-        "{HOST_START}\n## SpecGit 2\n\nSpecGit integration is permanently project-only. For Issue and PR/MR delivery work, load the specgit-native skill and use the installed shared CLI contract (`specgit --help`, `specgit --schema`). Read this project's AGENTS.md and .specgit.yaml before changes. Before tracked product edits, inspect duplicate work with `specgit issue --inspect` and select a complete relevant Issue. Read-only research and review need no delivery Issue. Follow repository guidance for documentation and any installed hook checkpoint requirement. Local init/setup is maintenance, not delivery. Existing session authorization remains valid within its scope. Declarations and `--dry-run` previews grant no permission. Native Issue/PR writes require existing authorization.\n{HOST_END}"
-    );
+    let entry = crate::prompts::HOST_ENTRY.trim_end();
+    let generated = format!("{HOST_START}\n## SpecGit 2\n\n{entry}\n{HOST_END}");
     let (after, block) = if let Some(old) = old {
         // 2.3 used a global-labelled marker even in proven project receipts.
         let (start, end, other_start, other_end) = if old.block.contains(HOST_START) {

@@ -2,9 +2,9 @@
 use crate::{
     delivery_model::{Check, PullRequest},
     diagnostic::{Code, Diagnostic},
-    native_checks, native_delivery,
-    probe::ForgeRead,
-    project::{Provider, Repository},
+    forge_read::ForgeRead,
+    identity::{Provider, Repository},
+    native_checks,
 };
 use serde_json::Value;
 pub mod github;
@@ -36,7 +36,10 @@ pub async fn request(
 ) -> Result<RequestObservation, Diagnostic> {
     let raw = reader.get(&route(repo, id)).await?;
     Ok(RequestObservation {
-        facts: native_delivery::request_value(&raw, repo, id)?,
+        facts: match repo.provider {
+            Provider::Github => github::request_value(&raw, id)?,
+            Provider::Gitlab => gitlab::request_value(&raw, id)?,
+        },
         raw,
         provider: repo.provider,
     })
