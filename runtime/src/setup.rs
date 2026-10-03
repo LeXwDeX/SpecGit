@@ -106,9 +106,9 @@ fn instruction_change(
                 "Host instructions must be UTF-8.",
             )
         })?;
-    let generated = format!(
-        "{HOST_START}\n## SpecGit 2\n\nSpecGit integration is permanently project-only. For Issue and PR/MR delivery work, load the specgit-native skill and use the installed shared CLI contract (`specgit --help`, `specgit --schema`). Read this project's AGENTS.md and .specgit.yaml before changes. Before tracked product edits, inspect duplicate work with `specgit issue --inspect` and select a complete relevant Issue. Read-only research and review need no delivery Issue. Follow repository guidance for documentation and any installed hook checkpoint requirement. Local init/setup is maintenance, not delivery. Existing session authorization remains valid within its scope. Declarations and `--dry-run` previews grant no permission. Native Issue/PR writes require existing authorization.\n{HOST_END}"
-    );
+    let prompt = crate::prompts::host_entry();
+    let entry = prompt.trim_end();
+    let generated = format!("{HOST_START}\n## SpecGit 2\n\n{entry}\n{HOST_END}");
     let (after, block) = if let Some(old) = old {
         // 2.3 used a global-labelled marker even in proven project receipts.
         let (start, end, other_start, other_end) = if old.block.contains(HOST_START) {
@@ -425,6 +425,35 @@ fn registration_change(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn host_prompt_refresh_is_canonical_and_preserves_foreign_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = root.join("AGENTS.md");
+        let foreign = b"User CRLF\r\nUser LF\n";
+        std::fs::write(&path, foreign).unwrap();
+        let (first, registration) = instruction_change("codex", &root, None, false).unwrap();
+        let registration = registration.unwrap();
+        assert!(!registration.block.contains('\r'));
+        let first = first.after.unwrap();
+        assert!(first.starts_with(foreign));
+        std::fs::write(&path, &first).unwrap();
+        let (refreshed, _) =
+            instruction_change("codex", &root, Some(&registration), false).unwrap();
+        assert_eq!(refreshed.after.unwrap(), first);
+        let edited = String::from_utf8(first)
+            .unwrap()
+            .replace("permanently project-only", "User edit");
+        std::fs::write(&path, edited).unwrap();
+        assert_eq!(
+            instruction_change("codex", &root, Some(&registration), false)
+                .err()
+                .unwrap()
+                .code,
+            Code::OwnershipConflict,
+        );
+    }
+
     #[test]
     fn conflict_context_is_bounded_and_escaped() {
         let diagnostic = conflict_at(

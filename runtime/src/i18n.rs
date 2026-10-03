@@ -1,6 +1,6 @@
 //! Presentation changes prose only; machine codes, identifiers and keys are stable.
 use crate::{
-    config::Language,
+    declaration::Language,
     diagnostic::{Code, Diagnostic},
     report::Report,
 };

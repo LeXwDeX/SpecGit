@@ -3,8 +3,9 @@ use crate::{
     assets::{self, AssetStore, Snapshot},
     delivery_model::AutoMerge,
     diagnostic::{Code, Diagnostic},
-    observation::CheckOutcome,
-    project::{Context, Repository},
+    identity::Repository,
+    observation_model::CheckOutcome,
+    project::Context,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -184,9 +185,12 @@ pub fn read(identity: &Identity) -> Result<Option<State>, Diagnostic> {
     let Some(bytes) = snapshot.bytes else {
         return Ok(None);
     };
-    let state: State =
-        serde_json::from_value(crate::input::json(&bytes, crate::config::MAX_BYTES, 24)?)
-            .map_err(|_| invalid())?;
+    let state: State = serde_json::from_value(crate::input::json(
+        &bytes,
+        crate::declaration::MAX_BYTES,
+        24,
+    )?)
+    .map_err(|_| invalid())?;
     validate(&state, identity)?;
     Ok(Some(state))
 }
@@ -294,7 +298,7 @@ impl Store {
         });
         mutate(&mut state)?;
         let bytes = serde_json::to_vec(&state).map_err(|_| invalid())?;
-        if bytes.len() > crate::config::MAX_BYTES || state.events.len() > MAX_EVENTS {
+        if bytes.len() > crate::declaration::MAX_BYTES || state.events.len() > MAX_EVENTS {
             return Err(Diagnostic::new(
                 Code::OutputLimit,
                 "watch_state",

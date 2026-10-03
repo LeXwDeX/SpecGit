@@ -109,6 +109,44 @@ fn crlf_owned_block_refresh_preserves_line_endings_and_exact_foreign_bytes() {
 }
 
 #[test]
+fn canonical_prompts_allow_receiptless_language_changes_for_lf_and_crlf_blocks() {
+    for (from, to) in [(Language::En, Language::Zh), (Language::Zh, Language::En)] {
+        let previous = Declaration {
+            language: from,
+            ..Declaration::default()
+        };
+        let next = Declaration {
+            language: to,
+            ..Declaration::default()
+        };
+        let previous_block = guidance::render(&previous);
+        assert!(!previous_block.contains('\r'));
+        for crlf in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().canonicalize().unwrap().join("AGENTS.md");
+            let prefix = "Foreign CRLF\r\nForeign LF\n";
+            let suffix = "\r\nTail stays exact\n";
+            let block = if crlf {
+                previous_block.replace('\n', "\r\n")
+            } else {
+                previous_block.clone()
+            };
+            std::fs::write(&path, format!("{prefix}{block}{suffix}")).unwrap();
+            let after = guidance::change(&path, &previous, &next, None)
+                .unwrap()
+                .after
+                .unwrap();
+            let expected = if crlf {
+                guidance::render(&next).replace('\n', "\r\n")
+            } else {
+                guidance::render(&next)
+            };
+            assert_eq!(after, format!("{prefix}{expected}{suffix}").into_bytes());
+        }
+    }
+}
+
+#[test]
 fn generated_guidance_uses_native_observation_and_preferences_are_not_authority() {
     let d = Declaration::default();
     let prose = guidance::render(&d);

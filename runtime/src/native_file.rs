@@ -1,10 +1,10 @@
 //! Immutable native repository files. A complete tree proves absence; a failed GET does not.
 use crate::{
-    config::MAX_BYTES,
+    declaration::MAX_BYTES,
     diagnostic::{Code, Diagnostic},
-    native_delivery::prefix,
-    probe::{ForgeRead, encode},
-    project::{Provider, Repository},
+    forge_read::ForgeRead,
+    forge_routes::{encode, prefix},
+    identity::{Provider, Repository},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
@@ -26,9 +26,7 @@ fn malformed() -> Diagnostic {
         "Verify the exact commit, full tree and regular-file blob through the selected native CLI.",
     )
 }
-pub fn object_id(value: &str) -> bool {
-    [40, 64].contains(&value.len()) && value.bytes().all(|c| c.is_ascii_hexdigit())
-}
+pub use crate::identity::valid_oid as object_id;
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, Diagnostic> {
     value.get(key).and_then(Value::as_str).ok_or_else(malformed)
 }

@@ -1,8 +1,8 @@
 //! Private bounded transport and primitive decoding shared by concrete protocols.
 use crate::{
     diagnostic::{Code, Diagnostic, classify_failure},
+    identity::Repository,
     process::{Process, Request, resolve_executable},
-    project::Repository,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};

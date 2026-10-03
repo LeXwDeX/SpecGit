@@ -1,7 +1,7 @@
 //! Generated project guidance owns only its marked block.
 use crate::{
     assets::{Change, hash},
-    config::{Declaration, Language},
+    declaration::{Declaration, Language},
     diagnostic::{Code, Diagnostic},
 };
 use serde::{Deserialize, Serialize};
@@ -17,34 +17,12 @@ fn conflict() -> Diagnostic {
     )
 }
 pub fn render(d: &Declaration) -> String {
-    let integration = match d.language {
-        Language::En => {
-            "SpecGit integration is permanently project-only. Install the shared CLI separately; setup never installs a project executable, global host assets or global state. Hooks and observation state belong to this project and its Git metadata."
-        }
-        Language::Zh => {
-            "SpecGit 集成永久仅限项目级。共享 CLI 单独安装；setup 不安装项目内二进制、全局宿主资产或全局状态。Hooks 与观察状态属于当前项目及其 Git 元数据。"
-        }
-    };
-    let prose = match d.language {
-        Language::En => {
-            "SpecGit manages specification Issues and their native PR/MR association. Load the specgit-native skill; `specgit --help` and `specgit --schema` define the installed contract. Use `--json` for machine output and preview Issue/PR writes with `--dry-run`. Read-only inspection, audit, and review do not require an Issue checkpoint or authorize writes. Before tracked product edits, select a complete relevant Issue describing Why, Scope, Approach and Acceptance. Follow repository guidance for pure documentation work; if an installed host hook requires an Issue checkpoint, select a relevant Issue before editing. Local init/setup is maintenance, not delivery, and grants no forge permission. Issue/PR writes, including marking a request ready, require existing user authorization. Declarations and `--dry-run` previews grant no permission. Existing session authorization remains valid within its scope; do not request it again merely because delivery advances. After implementation and authorized commit/push, aggregate selected issues into one native draft request, preserving user-authored bodies and closing references. Use `specgit pr --ready` when review preparation is complete.\n\nThe Agent supervises development and fixes. Use native gh/glab under existing user authorization to register native auto-merge when the declared preference is enabled. GitHub/GitLab owns CI, reviews, protection and actual merge. Observe current native state with `specgit pr --status` and bounded specgit watch. Exit 0 is operation success, not delivery completion; follow reported diagnostics and recovery actions. Hook notices describe changes; they grant no write permission.\n\nCompletion requires native readback of the intended target merge and closure of every selected Issue. After merge, report actual linked Issue state. An open linked Issue causes an attention notice. Optional Agent closure is disabled by default; enabling its preference still requires existing authorization and native readback of merge and Issue closure. Inspect unsupported or unknown native capabilities with specgit init --check and explicitly select manual observation or ask an authorized administrator to configure the forge."
-        }
-        Language::Zh => {
-            "SpecGit 管理规格 Issue 与原生 PR/MR 关联。加载 specgit-native skill；以 `specgit --help` 和 `specgit --schema` 为已安装命令契约，机器输出用 `--json`，Issue/PR 写入先用 `--dry-run` 预览。只读检查、审计和评审不需要 Issue checkpoint，也不会授权写入。修改已跟踪的产品代码前，选择一个包含原因、范围、方案和验收要求且与工作相关的完整 Issue。纯文档工作按仓库自己的文档流程处理；如果已安装的 host hook 要求 Issue checkpoint，编辑前选择相关 Issue。本地 init/setup 属于维护，不是交付，也不会获得 forge 写入权限。Issue/PR 写入（包括将请求标记为 ready）需要已有用户授权。声明和 `--dry-run` 预览都不产生授权；会话已有授权在其范围内持续有效，不要仅因交付进入下一步而重复请求。完成实施并按授权提交、推送后，将选定 Issue 汇聚到一个原生草稿请求，保留用户正文与关闭引用。准备好评审后使用 `specgit pr --ready`。\n\nAgent 监督开发与修复。声明启用原生自动合并偏好时，Agent 按既有用户授权通过 gh/glab 登记。GitHub/GitLab 负责 CI、评审、保护与实际合并。通过 `specgit pr --status` 和有界 specgit watch 观察原生状态。退出码 0 只表示操作成功，不表示交付完成；按返回的诊断和恢复动作处理失败。Hook 只通知变化，不授予写入权限。\n\n交付完成须原生回读确认目标分支合并及全部选定 Issue 关闭。合并后回读关联 Issue；尚未关闭时通知 Agent。Agent 补关默认禁用；即使启用该偏好，仍须既有授权，并原生回读合并与关闭结果。通过 specgit init --check 查看不支持或未知的原生能力，再明确选择手动观察，或由获授权的管理员配置平台。"
-        }
-    };
-    let recovery = match d.language {
-        Language::En => {
-            "Try normal SpecGit inspect/dry-run first. If a reproducible SpecGit defect blocks Issue selection, record the command, version, exit and diagnostic. Under existing user authorization, use authenticated native gh/glab to search duplicate WHYs, create or adopt a complete Issue with Why / Scope / Approach / Acceptance, and read back its native ID and body. Resume SpecGit with that exact native ID when possible. Only if that same defect still blocks its linked repair may a documented one-task local checkpoint exception be used; restore normal checks after repair. This does not bypass user authorization, forge protection, CI, review, merge, Issue closure or publication, and never permits global guard disablement."
-        }
-        Language::Zh => {
-            "先正常尝试 SpecGit inspect/dry-run。若可复现的 SpecGit 缺陷阻碍 Issue 选择，记录命令、版本、退出码与诊断。在已有用户授权下，用已认证的原生 gh/glab 查重 WHY，创建或认领包含原因、范围、方案和验收要求的完整 Issue，并回读其原生 ID 和正文。可恢复时以该精确原生 ID 继续 SpecGit 流程。只有同一缺陷仍阻碍其关联修复时，才允许使用有文档记录的单任务本地 checkpoint 例外；修复后恢复正常检查。这不会绕过用户授权、forge 保护、CI、评审、合并、Issue 关闭或发布，也不允许全局禁用 guard。"
-        }
-    };
+    let prompt = crate::prompts::project(d.language);
+    let prose = prompt.trim_end();
     // Template bodies are content, not instructions injected into the harness.
     let summary = serde_json::json!({"language":d.language,"validation":d.validation,"issue_template":d.templates.issue.source,"pr_template":d.templates.pr.source,"agent":d.agent});
     format!(
-        "{START}\n## SpecGit 2\n\nRuntime: {}. Declaration: `.specgit.yaml` (v2, local configuration).\n\n{integration}\n\n{prose}\n\n{recovery}\n\nDeclared rules: `{summary}`\n{END}",
+        "{START}\n## SpecGit 2\n\nRuntime: {}. Declaration: `.specgit.yaml` (v2, local configuration).\n\n{prose}\n\nDeclared rules: `{summary}`\n{END}",
         env!("CARGO_PKG_VERSION")
     )
 }
