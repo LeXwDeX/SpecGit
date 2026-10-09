@@ -75,7 +75,7 @@ impl Fixture {
         fs::create_dir_all(root.join("assets")).unwrap();
         let bin = base.join("bin");
         fs::create_dir(&bin).unwrap();
-        for name in ["gh", "cosign"] {
+        for name in ["gh", "cosign", "specgit"] {
             fs::copy(FIXTURE, bin.join(executable_file(name))).unwrap();
         }
         let install = base.join("install");
@@ -95,6 +95,17 @@ impl Fixture {
         fixture
     }
 
+    // Linux debug fixtures embed debug info beyond the release size bound, so Unix
+    // archives carry a small launcher for the `specgit` role copy instead.
+    fn release_executable(&self) -> Vec<u8> {
+        let fixture = self.bin.join(executable_file("specgit"));
+        if cfg!(unix) {
+            format!("#!/bin/sh\nexec '{}' \"$@\"\n", fixture.display()).into_bytes()
+        } else {
+            fs::read(fixture).unwrap()
+        }
+    }
+
     fn state(&self) -> Value {
         serde_json::from_slice(&fs::read(self.root.join("state.json")).unwrap()).unwrap()
     }
@@ -108,7 +119,7 @@ impl Fixture {
         let archive_name = format!("specgit-{version}-{}.zip", self.platform);
         let archive = zip_bytes(
             self_update::executable_name(self.platform),
-            &fs::read(FIXTURE).unwrap(),
+            &self.release_executable(),
         );
         let digest = if tamper == Tamper::WrongHash {
             "0".repeat(64)
@@ -312,7 +323,7 @@ fn dry_run_verifies_everything_without_replacing() {
     assert_eq!(verification["extracted_version"], NEXT);
     assert_eq!(
         verification["executable_sha256"],
-        hex(&fs::read(FIXTURE).unwrap())
+        hex(&fixture.release_executable())
     );
     assert_eq!(
         fixture.roles(),
@@ -336,7 +347,7 @@ fn apply_replaces_the_target_and_keeps_a_restorable_backup() {
     assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
     assert_eq!(
         fs::read(&fixture.target).unwrap(),
-        fs::read(FIXTURE).unwrap()
+        fixture.release_executable()
     );
     assert_eq!(report["effects"]["outcome"], "applied");
     assert_eq!(
