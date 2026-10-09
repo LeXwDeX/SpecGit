@@ -415,7 +415,15 @@ fn shared_hooks_stay_installed_for_sibling_worktrees_and_name_their_owner() {
     let denied = manage(&sibling, "--install");
     assert_eq!(denied.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&denied.stderr);
-    assert!(stderr.contains(&root.display().to_string()), "{stderr}");
+    // Git reports worktree paths with forward slashes; canonical Windows paths are verbatim.
+    let comparable = |text: &str| {
+        let text = text.replace('\\', "/");
+        text.strip_prefix("//?/").map(str::to_owned).unwrap_or(text)
+    };
+    assert!(
+        comparable(&stderr).contains(&comparable(&root.display().to_string())),
+        "{stderr}"
+    );
     assert!(stderr.contains("owns it"), "{stderr}");
     assert!(!stderr.contains("unowned"), "{stderr}");
 
