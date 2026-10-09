@@ -60,7 +60,7 @@ impl Layout {
         )
         .await?;
         let exclude = local_exclude::path(process, &root).await?;
-        let hooks = hooks_root(
+        let hooks = config::worktree::hook_root(
             git_path(
                 process,
                 &root,
@@ -99,18 +99,6 @@ impl Layout {
         .iter()
         .map(|name| self.private.join(name))
         .collect()
-    }
-}
-fn hooks_root(path: PathBuf) -> PathBuf {
-    if path.file_name().is_some_and(|n| n == "_")
-        && path
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|n| n == ".husky")
-    {
-        path.parent().expect("Husky parent was verified").into()
-    } else {
-        path
     }
 }
 async fn git_path(process: &Process, root: &Path, args: &[&str]) -> Result<PathBuf, Diagnostic> {
@@ -246,41 +234,13 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             );
         }
     }
-    let list = project::git(
-        process,
-        &layout.root,
-        &["worktree", "list", "--porcelain", "-z"],
-    )
-    .await?;
-    let mut count = 0;
-    for field in list.split(|b| *b == 0) {
-        let Some(raw) = field.strip_prefix(b"worktree ") else {
-            continue;
-        };
-        count += 1;
-        if count > 64 {
-            return Err(Diagnostic::input("Removal discovery exceeds 64 worktrees."));
-        }
-        let sibling = PathBuf::from(
-            std::str::from_utf8(raw).map_err(|_| Diagnostic::input("Invalid worktree path."))?,
-        );
-        assets::safe_path(&sibling)?;
-        if sibling.canonicalize().ok() == layout.root.canonicalize().ok() {
-            continue;
-        }
-        let pointer = config::snapshot(&sibling)?;
-        // Even invalid/legacy sibling declarations remain consumers, not permission to delete.
-        if pointer.bytes.is_some() {
-            let hook = hooks_root(
-                git_path(
-                    process,
-                    &sibling,
-                    &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
-                )
-                .await?,
-            );
-            plan.consumers.push(json!({"root":sibling,"declaration_sha256":pointer.digest(),"shares_hooks":hook==layout.hooks}));
-        }
+    // Declarations (even invalid/legacy) and initialized private state both mark
+    // consumers of shared assets, never permission to delete them.
+    for consumer in config::worktree::sibling_consumers(process, &layout.root).await? {
+        let shares_hooks = config::worktree::shares_hooks(&consumer, &layout.hooks);
+        let mut value = json!(consumer);
+        value["shares_hooks"] = json!(shares_hooks);
+        plan.consumers.push(value);
     }
     let config_path = layout.root.join(".specgit.yaml");
     let declaration = match config::read(&layout.root) {

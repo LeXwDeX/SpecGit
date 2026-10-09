@@ -1797,3 +1797,174 @@ fn linked_worktree_uses_common_git_exclude() {
     assert_eq!(rollback["exit"], 0, "{rollback}");
     assert_eq!(fs::read(common).unwrap(), original);
 }
+
+fn git_ok(root: &std::path::Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+#[test]
+fn init_check_reports_exclusion_state_and_lost_declarations_without_writing() {
+    let f = Fixture::new();
+    let fresh = f.run(&["init", "--provider", "github", "--check"]);
+    assert_eq!(fresh["exit"], 0, "{fresh}");
+    assert_report_matches_schema(&fresh);
+    assert_eq!(fresh["evidence"]["initial_adoption"], true);
+    assert_eq!(
+        fresh["evidence"]["local_exclusion"]["block_state"],
+        "absent"
+    );
+    assert_eq!(
+        fresh["evidence"]["local_exclusion"]["already_tracked"],
+        json!([])
+    );
+    assert!(!f.root.join(".git/specgit-v2").exists());
+
+    fs::write(f.root.join("AGENTS.md"), "User rules\n").unwrap();
+    let first = f.run(&["init", "--provider", "github"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    assert!(git_ok(&f.root, &["add", "-f", ".specgit.yaml"]));
+    let tracked = f.run(&["init", "--check"]);
+    assert_eq!(tracked["exit"], 0, "{tracked}");
+    let exclusion = &tracked["evidence"]["local_exclusion"];
+    assert_eq!(exclusion["already_tracked"], json!([".specgit.yaml"]));
+    assert_eq!(exclusion["mixed_guidance_paths"], json!(["AGENTS.md"]));
+    assert_eq!(exclusion["block_state"], "current");
+    assert_eq!(exclusion["index_changed"], false);
+    assert!(
+        exclusion["tracked_remedy"]
+            .as_str()
+            .unwrap()
+            .contains("every other clone or worktree")
+    );
+    assert_eq!(tracked["evidence"]["initial_adoption"], false);
+
+    // A damaged block is reported, not repaired, by the read-only check.
+    assert!(git_ok(&f.root, &["rm", "--cached", "-q", ".specgit.yaml"]));
+    let exclude = f.root.join(".git/info/exclude");
+    let intact = fs::read_to_string(&exclude).unwrap();
+    let damaged = format!("{intact}# specgit:local:v2:start\n");
+    fs::write(&exclude, &damaged).unwrap();
+    let report = f.run(&["init", "--check"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(
+        report["evidence"]["local_exclusion"]["block_state"],
+        "damaged"
+    );
+    assert_eq!(
+        report["evidence"]["local_exclusion"]["diagnostic"]["code"],
+        "ownership_conflict"
+    );
+    assert_eq!(fs::read_to_string(&exclude).unwrap(), damaged);
+    fs::write(&exclude, &intact).unwrap();
+
+    // The declaration disappears (for example after a pulled untrack commit) while
+    // the worktree's private receipts remain: this is not an initial adoption.
+    let private = fs::read_dir(f.root.join(".git/specgit-v2"))
+        .unwrap()
+        .count();
+    fs::remove_file(f.root.join(".specgit.yaml")).unwrap();
+    let lost = f.run(&["init", "--provider", "github", "--check"]);
+    assert_eq!(lost["exit"], 0, "{lost}");
+    assert_eq!(lost["evidence"]["initial_adoption"], false);
+    assert_eq!(
+        lost["evidence"]["private_state"]["initialized"],
+        json!(["guidance.json"])
+    );
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert_eq!(
+        fs::read_dir(f.root.join(".git/specgit-v2"))
+            .unwrap()
+            .count(),
+        private
+    );
+}
+
+fn linked(f: &Fixture) -> PathBuf {
+    // Resolve the sibling from cwd; Windows verbatim paths are not Git arguments.
+    assert!(git_ok(
+        &f.root,
+        &["worktree", "add", "-b", "linked", "../linked"]
+    ));
+    f.root
+        .parent()
+        .unwrap()
+        .join("linked")
+        .canonicalize()
+        .unwrap()
+}
+
+#[test]
+fn rollback_keeps_the_shared_exclusion_block_while_a_sibling_is_initialized() {
+    for sibling_initialized in [true, false] {
+        let mut f = Fixture::new();
+        let main = f.root.clone();
+        let exclude = main.join(".git/info/exclude");
+        fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+        fs::write(&exclude, b"# original\n").unwrap();
+        let sibling = linked(&f);
+        let first = f.run(&["init", "--provider", "github"]);
+        assert_eq!(first["exit"], 0, "{first}");
+        let transaction = first["evidence"]["transaction"]["transaction"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        if sibling_initialized {
+            f.root = sibling.clone();
+            let second = f.run(&["init", "--provider", "github"]);
+            assert_eq!(second["exit"], 0, "{second}");
+            f.root = main.clone();
+        }
+        let rollback = f.run(&["init", "--rollback", &transaction]);
+        assert_eq!(rollback["exit"], 0, "{rollback}");
+        assert!(!main.join(".specgit.yaml").exists());
+        let retained = rollback["evidence"]["retained"].as_array().unwrap();
+        if sibling_initialized {
+            assert_eq!(retained.len(), 1, "{rollback}");
+            assert_eq!(retained[0]["reason"], "shared_initialized_worktree");
+            assert_eq!(
+                PathBuf::from(retained[0]["shared_consumers"][0]["root"].as_str().unwrap())
+                    .canonicalize()
+                    .unwrap(),
+                sibling
+            );
+            assert!(
+                fs::read_to_string(&exclude)
+                    .unwrap()
+                    .contains("/.specgit.yaml")
+            );
+            assert!(git_ok(&sibling, &["check-ignore", "-q", ".specgit.yaml"]));
+        } else {
+            assert!(retained.is_empty(), "{rollback}");
+            assert_eq!(fs::read(&exclude).unwrap(), b"# original\n");
+        }
+    }
+}
+
+#[test]
+fn rollback_counts_a_sibling_with_private_state_but_no_declaration() {
+    let mut f = Fixture::new();
+    let main = f.root.clone();
+    let sibling = linked(&f);
+    let first = f.run(&["init", "--provider", "github"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    let transaction = first["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    f.root = sibling.clone();
+    assert_eq!(f.run(&["init", "--provider", "github"])["exit"], 0);
+    fs::remove_file(sibling.join(".specgit.yaml")).unwrap();
+    f.root = main;
+    let rollback = f.run(&["init", "--rollback", &transaction]);
+    assert_eq!(rollback["exit"], 0, "{rollback}");
+    let consumer = &rollback["evidence"]["retained"][0]["shared_consumers"][0];
+    assert_eq!(consumer["declaration_sha256"], Value::Null, "{rollback}");
+    assert_eq!(consumer["private_state"], json!(["guidance.json"]));
+    assert!(git_ok(&sibling, &["check-ignore", "-q", ".specgit.yaml"]));
+}

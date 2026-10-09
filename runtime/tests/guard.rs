@@ -264,3 +264,186 @@ fn type_change_only_requires_a_checkpoint() {
     checkpoint(root, "feature");
     assert!(guard(root, "pre-commit", "").status.success());
 }
+
+/// Git with the tested `specgit` first on PATH, so installed hook blocks run it.
+#[cfg(unix)]
+fn hooked_git(root: &Path, args: &[&str]) -> std::process::Output {
+    let mut paths = vec![
+        executable::binary()
+            .canonicalize()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_owned(),
+    ];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    Command::new("git")
+        .current_dir(root)
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+const OID: &str = "1111111111111111111111111111111111111111";
+const ZERO: &str = "0000000000000000000000000000000000000000";
+
+#[test]
+fn installed_guard_fails_closed_when_an_initialized_declaration_is_lost() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    checkpoint(&root, "feature");
+    assert!(manage(&root, "--install").status.success());
+    fs::write(root.join("kept.txt"), "kept").unwrap();
+    git(&root, &["add", "kept.txt"]);
+    assert!(guard(&root, "pre-commit", "").status.success());
+    git(&root, &["commit", "--no-verify", "-m", "kept"]);
+
+    // A pulled commit that untracked the declaration deletes it here; the
+    // checkpoint and guard receipt remain.
+    fs::remove_file(root.join(".specgit.yaml")).unwrap();
+    fs::write(root.join("source.rs"), "change").unwrap();
+    git(&root, &["add", "source.rs"]);
+    let denied = guard(&root, "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(stderr.contains("no .specgit.yaml"), "{stderr}");
+    assert!(stderr.contains("selection.json"), "{stderr}");
+    assert!(stderr.contains("specgit init"), "{stderr}");
+    let pushed = format!("refs/heads/feature {OID} refs/heads/feature {ZERO}\n");
+    let denied = guard(&root, "pre-push", &pushed);
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("private state"));
+    // Ref updates outside the checkpoint rule keep their existing behavior.
+    assert!(
+        guard(
+            &root,
+            "pre-push",
+            &format!("refs/tags/v1 {OID} refs/tags/v1 {ZERO}\n")
+        )
+        .status
+        .success()
+    );
+
+    #[cfg(unix)]
+    {
+        let commit = hooked_git(&root, &["commit", "-m", "blocked"]);
+        assert!(!commit.status.success());
+        assert!(String::from_utf8_lossy(&commit.stderr).contains("private state"));
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-q"]);
+        git(
+            &root,
+            &["remote", "add", "local", remote.path().to_str().unwrap()],
+        );
+        let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+        assert!(!push.status.success());
+        assert!(String::from_utf8_lossy(&push.stderr).contains("private state"));
+    }
+}
+
+#[test]
+fn never_initialized_repositories_with_installed_hooks_are_unaffected() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    fs::remove_file(root.join(".specgit.yaml")).unwrap();
+    // A lone guard receipt does not prove initialization.
+    assert!(manage(&root, "--install").status.success());
+    fs::write(root.join("source.rs"), "change").unwrap();
+    git(&root, &["add", "source.rs"]);
+    assert!(guard(&root, "pre-commit", "").status.success());
+    assert!(
+        guard(
+            &root,
+            "pre-push",
+            &format!("refs/heads/feature {OID} refs/heads/feature {ZERO}\n")
+        )
+        .status
+        .success()
+    );
+    #[cfg(unix)]
+    assert!(
+        hooked_git(&root, &["commit", "-m", "plain"])
+            .status
+            .success()
+    );
+}
+
+fn hook_path(root: &Path, stage: &str) -> std::path::PathBuf {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            &format!("hooks/{stage}"),
+        ])
+        .output()
+        .unwrap();
+    Path::new(std::str::from_utf8(&output.stdout).unwrap().trim()).to_owned()
+}
+
+#[test]
+fn shared_hooks_stay_installed_for_sibling_worktrees_and_name_their_owner() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    // Resolve the sibling from cwd; Windows verbatim paths are not Git arguments.
+    let parent = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+    let name = format!(
+        "../{}/linked",
+        parent.path().file_name().unwrap().to_str().unwrap()
+    );
+    git(&root, &["worktree", "add", "-b", "linked", &name]);
+    let sibling = parent.path().join("linked").canonicalize().unwrap();
+    fs::write(
+        sibling.join(".specgit.yaml"),
+        "version: 2\nremote: origin\ntarget: main\n",
+    )
+    .unwrap();
+
+    assert!(manage(&root, "--install").status.success());
+    let hooks: Vec<_> = ["pre-commit", "pre-push"]
+        .iter()
+        .map(|stage| hook_path(&root, stage))
+        .collect();
+    assert_eq!(hooks[0], hook_path(&sibling, "pre-commit"));
+    let installed: Vec<_> = hooks.iter().map(|h| fs::read(h).unwrap()).collect();
+
+    // The sibling sees the owner's shared hooks and gets an actionable diagnostic.
+    let denied = manage(&sibling, "--install");
+    assert_eq!(denied.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(stderr.contains(&root.display().to_string()), "{stderr}");
+    assert!(stderr.contains("owns it"), "{stderr}");
+    assert!(!stderr.contains("unowned"), "{stderr}");
+
+    // Uninstall in the owner keeps the blocks the initialized sibling relies on.
+    let kept = manage(&root, "--uninstall");
+    assert!(kept.status.success(), "{kept:?}");
+    let report: serde_json::Value = serde_json::from_slice(&kept.stdout).unwrap();
+    assert_eq!(report["installed"], true);
+    assert_eq!(report["retained"]["reason"], "shared_initialized_worktree");
+    assert_eq!(
+        Path::new(
+            report["retained"]["shared_consumers"][0]["root"]
+                .as_str()
+                .unwrap()
+        )
+        .canonicalize()
+        .unwrap(),
+        sibling
+    );
+    for (hook, before) in hooks.iter().zip(&installed) {
+        assert_eq!(&fs::read(hook).unwrap(), before);
+    }
+
+    // Once the sibling no longer relies on SpecGit, uninstall proceeds as before.
+    fs::remove_file(sibling.join(".specgit.yaml")).unwrap();
+    let removed = manage(&root, "--uninstall");
+    assert!(removed.status.success(), "{removed:?}");
+    let report: serde_json::Value = serde_json::from_slice(&removed.stdout).unwrap();
+    assert_eq!(report["installed"], false);
+    assert!(hooks.iter().all(|hook| !hook.exists()));
+}

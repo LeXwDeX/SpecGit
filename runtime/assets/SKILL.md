@@ -132,7 +132,10 @@ Read `local_exclusion` in its result:
 ignore rules do not untrack existing files, and mixed user/generated guidance
 stays visible. Review project guidance changes under the repository documentation
 policy; preserve manual content and owned markers. Do not hide or untrack guidance
-just because part was generated. Install the shared user-level CLI separately;
+just because part was generated. A committed untrack of `.specgit.yaml` deletes it
+in other checkouts that cross that commit; back it up first, then restore it and
+rerun `specgit init`. If guard or hooks report a lost declaration, do the same or
+retire with `specgit remove`. Install the shared user-level CLI separately;
 setup never copies a project executable or installs global host assets/state.
 Repeat init/setup to refresh owned blocks, not append another manual copy.
 
