@@ -92,7 +92,7 @@ missing. Use current-head and installed/runtime evidence for claims.
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.6.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.6.1. Declaration: `.specgit.yaml` (v2, local configuration).
 
 SpecGit 管理规格 Issue 与原生 PR/MR 关联。
 加载 specgit-native skill，读取完整流程和恢复步骤。
@@ -130,5 +130,5 @@ Hooks 与观察状态属于当前项目及其 Git 元数据。
 已安装 hook 检查本地 checkpoint。它不是通用的文件写入沙箱。
 
 Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
-<!-- specgit:v2:sha256 dd9bcb3847eaa1e75c7b58d6f3fb32645fe3531ffd4ca1b4f43f2253859bfc65 -->
+<!-- specgit:v2:sha256 8ca28b06dfa2b8c6b1b33787d87f3a2681486dcbb5630e6055f02cc79f9e75e6 -->
 <!-- specgit:v2:end -->
