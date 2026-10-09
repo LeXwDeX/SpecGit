@@ -77,6 +77,7 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             api_host,
             account_only,
         } => inspection::doctor(process, &cwd, provider, remote, api_host, account_only).await,
+        Commands::Update(options) => specgit::self_update::run(options, process).await,
         Commands::Status { remote, provider } => {
             inspection::status(process, &cwd, remote, provider).await
         }

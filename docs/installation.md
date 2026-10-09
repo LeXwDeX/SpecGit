@@ -53,10 +53,28 @@ read-only native capabilities and authentication in the target repository. Use
 
 ## Upgrade and refresh
 
-After CLI upgrades, verify the downloaded executable and its selected PATH first:
+From 2.6 on, prefer the built-in update. It needs an authenticated `gh` session
+and Cosign, and enforces the verification above:
+
+```sh
+specgit update --check --json
+specgit update --dry-run --json
+specgit update --json
+```
+
+`--check` only reads release metadata. `--dry-run` downloads and verifies the
+release without replacement. The default replaces only the running executable,
+keeps `specgit.backup-<previous-version>` beside it and reports that path; move
+the backup back to roll back. Use `--version <x.y.z>` for an exact release,
+including a deliberate downgrade. See [self-update](../runtime/REFERENCE.md#self-update).
+The manual download, verification and replacement above remain the fallback,
+for example for 2.5 and older executables or a directory you cannot write.
+
+After CLI upgrades, verify the executable and its selected PATH first:
 `command -v specgit` on Unix or `Get-Command specgit` in PowerShell. An older npm
-shim can otherwise continue selecting the retired CLI. Back up the previous
-executable before replacing it; restore that file to roll back the local upgrade.
+shim can otherwise continue selecting the retired CLI. For a manual upgrade, back
+up the previous executable before replacing it; restore that file to roll back
+the local upgrade.
 
 In a v2 project, inspect the current declaration and preview entry-point changes:
 

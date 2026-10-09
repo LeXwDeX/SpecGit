@@ -15,6 +15,7 @@ conforms to it.
 | Agent integration | `setup`, `guidance`, `prompts`, `assets` | Builds and writes project-scoped skills, marked instruction blocks, host hook entries, and ownership receipts. It does not install global host state or a project executable. |
 | Native platform | `forge_read`, `forge_routes`, `forge`, `native_delivery` | Separates read transport, route construction, response decoding, and explicit mutation. The forge owns CI, protection, review, and merge. |
 | Observation | `observation_model`, `watch_store`, `watch`, `observation`, `report` | Stores scoped event facts and presents them. An observation is not authorization or proof of completion. |
+| Self-update | `self_update` | Reads signed GitHub Releases through `gh`, verifies Cosign, the manifest row, the ZIP entry and its version, then replaces only the running executable with a backup. It does not touch project state. |
 | Command line | `cli`, `main` | Parses and dispatches commands, then formats output. `main` is only the process entry point. |
 | Delivery context | `delivery_context::Workspace` | Loads and rechecks Git, declaration, and native project identity. It does not own Issue or PR write transactions. |
 
@@ -43,6 +44,9 @@ flowchart TD
   cli --> pr
   cli --> probe
   cli --> watch
+  cli --> self_update
+  self_update --> process
+  self_update --> report
 
   issue --> workspace[delivery_context::Workspace]
   pr --> workspace
@@ -118,6 +122,9 @@ The intended boundaries are:
   its transaction, journal, and locking behavior.
 - `observation_model` contains fact classification. `watch_store` and
   `report` depend on that model, not on the `observation` use case.
+- `self_update` depends only on `process`, `diagnostic` and `report`. It owns
+  release selection, verification and executable replacement. Tests may
+  redirect the install target only in `test-fixtures` builds.
 - `cli` separates argument parsing, host behavior, dispatch, inspection, and
   output. `main` only starts the CLI.
 - `prompts` embeds short English and Chinese guidance and host entry points.

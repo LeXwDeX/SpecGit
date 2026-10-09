@@ -38,6 +38,8 @@ Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and it
 Sigstore signature bundle. End-user installation needs no Node.js,
 npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `glab`.
 For installation without an agent, see the [manual guide](docs/installation.md).
+From 2.6 on, `specgit update` upgrades the shared executable from GitHub Releases
+with the same signature and checksum verification and keeps a backup.
 
 ## How delivery works
 
