@@ -897,11 +897,14 @@ async fn update(
     );
     journal.applied(replaced);
     *effects = Some(journal);
+    // A cancelled or failed readback after replacement restores the backup like a mismatch.
     let installed_matches = fs::read(&target)
         .map(|bytes| sha256_hex(&bytes) == executable_sha256)
         .unwrap_or(false)
-        && reported_version(process, &target, &cwd, "update_readback").await?
-            == Some(release.version);
+        && matches!(
+            reported_version(process, &target, &cwd, "update_readback").await,
+            Ok(version) if version == Some(release.version)
+        );
     if !installed_matches {
         let restored = fs::rename(&backup, &target).is_ok();
         if let Some(journal) = effects.as_mut()

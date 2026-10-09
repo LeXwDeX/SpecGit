@@ -127,7 +127,7 @@ pub fn lost_declaration(root: &Path, state: &PrivateState) -> Diagnostic {
             root.display(),
             state.markers().join(", ")
         ),
-        "Restore .specgit.yaml from a backup (outside the agent edit hook) or run specgit init to recreate it, then retry; to retire this worktree's integration run specgit remove.",
+        "Restore .specgit.yaml from a backup (outside the agent edit hook), or recreate it with specgit init --config-file <original declaration> so its rules are unchanged, then retry. To retire this worktree's integration, restore the declaration first and then run specgit remove.",
     )
 }
 
