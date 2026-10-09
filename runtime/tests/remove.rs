@@ -355,6 +355,40 @@ fn edited_unowned_or_tracked_assets_are_conflicts_and_stale_previews_never_write
 }
 
 #[test]
+fn receiptless_worktree_removes_only_unmodified_earlier_release_guidance() {
+    let old = include_str!("fixtures/guidance-2.4.0-en.txt");
+    for block in [old.to_owned(), old.replacen("SpecGit", "Spec Git", 2)] {
+        let f = Fixture::new(true);
+        for name in ["AGENTS.md", "CLAUDE.md"] {
+            fs::write(f.root.join(name), format!("user rules\n\n{block}\n")).unwrap();
+        }
+        // A fresh clone or linked worktree has the committed block but no receipt.
+        fs::remove_file(f.private.join("guidance.json")).unwrap();
+        let before = inventory(&f.base);
+        let preview = f.run(&["remove"]);
+        if block != old {
+            assert_ne!(preview["exit"], 0, "{preview}");
+            assert!(
+                preview["evidence"]["assets"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a["state"] == "conflict"),
+                "{preview}"
+            );
+            assert_eq!(inventory(&f.base), before);
+            continue;
+        }
+        assert_eq!(preview["status"], "prepared", "{preview}");
+        let applied = f.apply(&preview);
+        assert_eq!(applied["status"], "removed", "{applied}");
+        for name in ["AGENTS.md", "CLAUDE.md"] {
+            assert_eq!(fs::read(f.root.join(name)).unwrap(), b"user rules\n\n");
+        }
+    }
+}
+
+#[test]
 fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
     for husky in [false, true] {
         let f = Fixture::new(true);
@@ -440,6 +474,59 @@ fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
         assert_eq!(fs::read(hook).unwrap(), hook_before);
         assert!(f.private.join("guard-hooks.json").exists());
     }
+}
+
+#[test]
+fn a_sibling_with_private_state_but_no_declaration_still_consumes_shared_assets() {
+    let f = Fixture::new(true);
+    assert!(
+        executable::command()
+            .current_dir(&f.root)
+            .args(["guard", "--install"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    git(
+        &f.root,
+        &["worktree", "add", "-b", "sibling", "../linked", "HEAD"],
+    );
+    let sibling = f.root.parent().unwrap().join("linked");
+    initialize(&sibling);
+    // The sibling crossed a commit that untracked its declaration.
+    fs::remove_file(sibling.join(".specgit.yaml")).unwrap();
+    let exclude = PathBuf::from(git(
+        &f.root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ],
+    ));
+    let hook = PathBuf::from(git(
+        &f.root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "hooks/pre-commit",
+        ],
+    ));
+    let exclude_before = fs::read(&exclude).unwrap();
+    let hook_before = fs::read(&hook).unwrap();
+    let preview = f.run(&["remove"]);
+    assert_eq!(preview["status"], "prepared", "{preview}");
+    let consumers = preview["evidence"]["shared_consumers"].as_array().unwrap();
+    assert_eq!(consumers.len(), 1, "{preview}");
+    assert_eq!(consumers[0]["declaration_sha256"], Value::Null);
+    assert_eq!(consumers[0]["private_state"], json!(["guidance.json"]));
+    assert_eq!(consumers[0]["shares_hooks"], true);
+    assert_eq!(f.apply(&preview)["status"], "removed");
+    assert_eq!(fs::read(&exclude).unwrap(), exclude_before);
+    assert_eq!(fs::read(&hook).unwrap(), hook_before);
+    assert!(!f.root.join(".specgit.yaml").exists());
 }
 
 #[test]

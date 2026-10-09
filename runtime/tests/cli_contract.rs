@@ -336,6 +336,21 @@ fn repeated_input_sources_and_recursive_transport_are_rejected() {
     }
 }
 #[test]
+fn command_owned_version_option_is_not_discovery_transport() {
+    let mut owned = Command::new("fixture")
+        .version("2.1")
+        .subcommand(Command::new("update").arg(Arg::new("target_version").long("version")));
+    let output = normalize_input(
+        &mut owned,
+        &argv(),
+        br#"{"command":"update","options":{"version":"1.2.3"}}"#,
+    )
+    .unwrap();
+    assert!(output.iter().any(|arg| arg == "--version=1.2.3"));
+    let root = br#"{"command":"issue","options":{"title":"x","version":true}}"#;
+    assert!(normalize_input(&mut command(), &argv(), root).is_err());
+}
+#[test]
 fn count_and_inverse_boolean_keep_their_typed_meaning() {
     let input=br#"{"command":"issue","options":{"title":"x","verbose":3,"retain":false,"dry-run":false}}"#;
     let output = normalize_input(&mut command(), &argv(), input).unwrap();

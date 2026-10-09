@@ -285,3 +285,194 @@ fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content(
         assert_eq!(refresh.after.unwrap(), bytes);
     }
 }
+
+/// Frozen default renders of every released v2 runtime, built from each tag.
+fn released_fixtures() -> Vec<(String, Language, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut fixtures: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            let name = path.file_name()?.to_str()?.to_owned();
+            let rest = name.strip_prefix("guidance-")?.strip_suffix(".txt")?;
+            let (version, language) = rest.rsplit_once('-')?;
+            let language = match language {
+                "en" => Language::En,
+                "zh" => Language::Zh,
+                _ => return None,
+            };
+            let text = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("\r\n", "\n");
+            Some((version.to_owned(), language, text))
+        })
+        .collect();
+    fixtures.sort_by(|a, b| a.0.cmp(&b.0));
+    fixtures
+}
+
+fn conflict(result: Result<Vec<specgit::assets::Change>, specgit::diagnostic::Diagnostic>) {
+    let error = result.expect_err("edited block must conflict");
+    assert_eq!(error.code, specgit::diagnostic::Code::OwnershipConflict);
+}
+
+#[test]
+fn receiptless_refresh_recognizes_every_exact_released_render_and_rejects_edits() {
+    let fixtures = released_fixtures();
+    let versions: std::collections::BTreeSet<_> = fixtures.iter().map(|f| f.0.as_str()).collect();
+    assert_eq!(
+        versions.into_iter().collect::<Vec<_>>(),
+        [
+            "2.0.0", "2.0.1", "2.0.2", "2.0.3", "2.0.4", "2.1.0", "2.1.1", "2.1.2", "2.2.0",
+            "2.2.1", "2.3.0", "2.4.0", "2.5.0"
+        ]
+    );
+    assert_eq!(fixtures.len(), 26);
+    for (version, language, old) in &fixtures {
+        assert!(old.contains(&format!("Runtime: {version}.")));
+        assert!(!old.contains("specgit:v2:sha256"));
+        let d = Declaration {
+            language: *language,
+            ..Declaration::default()
+        };
+        let (own, swapped, other) = match language {
+            Language::En => ("\"language\":\"en\"", "\"language\":\"zh\"", Language::Zh),
+            Language::Zh => ("\"language\":\"zh\"", "\"language\":\"en\"", Language::En),
+        };
+        let other = Declaration {
+            language: other,
+            ..Declaration::default()
+        };
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().canonicalize().unwrap();
+        let private = root.join("private");
+        let path = root.join("AGENTS.md");
+        // `other` does not describe the block; its exact embedded rules do.
+        for (previous, crlf) in [(&d, false), (&d, true), (&other, false)] {
+            let block = if crlf {
+                old.replace('\n', "\r\n")
+            } else {
+                old.clone()
+            };
+            std::fs::write(&path, format!("User rules\n{block}\nTail\n")).unwrap();
+            let changes = guidance::changes(&root, &private, previous, &d, false)
+                .unwrap_or_else(|e| panic!("{version} {language:?}: {e:?}"));
+            let updated = String::from_utf8(changes[0].after.clone().unwrap()).unwrap();
+            assert!(updated.starts_with("User rules\n"));
+            assert!(updated.ends_with("\nTail\n"));
+            assert!(
+                updated
+                    .replace("\r\n", "\n")
+                    .contains(&guidance::render(&d))
+            );
+        }
+        for edited in [
+            old.replace("## SpecGit 2", "## Edited"),
+            old.replacen("SpecGit", "Spec Git", 2),
+            old.replacen("\n\n", "\n\nUser line\n\n", 2),
+            // Rules no release produced: wrong language, unknown field, reordered keys.
+            old.replace(own, swapped),
+            old.replace("{\"agent\"", "{\"user\":1,\"agent\""),
+            old.replace(
+                "\"bodies\":false,\"labels\":\"off\"",
+                "\"labels\":\"off\",\"bodies\":false",
+            ),
+        ] {
+            assert_ne!(&edited, old);
+            let file = format!("User rules\n{edited}\n");
+            std::fs::write(&path, &file).unwrap();
+            conflict(guidance::changes(&root, &private, &d, &d, false));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
+        }
+    }
+}
+
+#[test]
+fn released_render_with_non_default_rules_is_recognized_from_its_exact_rules() {
+    let (_, _, old) = released_fixtures()
+        .into_iter()
+        .find(|(v, l, _)| v == "2.4.0" && *l == Language::En)
+        .unwrap();
+    let mut d = Declaration::default();
+    d.validation.titles = true;
+    let block = old.replace("\"titles\":false", "\"titles\":true");
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().canonicalize().unwrap().join("AGENTS.md");
+    std::fs::write(&path, &block).unwrap();
+    for previous in [&d, &Declaration::default()] {
+        let after = guidance::change(&path, previous, &d, None)
+            .unwrap()
+            .after
+            .unwrap();
+        assert_eq!(after, guidance::render(&d).into_bytes());
+    }
+}
+
+#[test]
+fn generated_block_carries_a_digest_of_its_canonical_content() {
+    let block = guidance::render(&Declaration::default());
+    let (body, digest) = block
+        .strip_suffix(" -->\n<!-- specgit:v2:end -->")
+        .unwrap()
+        .rsplit_once("<!-- specgit:v2:sha256 ")
+        .unwrap();
+    assert!(body.starts_with("<!-- specgit:v2:start -->\n## SpecGit 2\n"));
+    assert!(body.ends_with("`\n"));
+    assert_eq!(digest, specgit::assets::hash(body.as_bytes()));
+    assert_eq!(block.lines().count(), body.lines().count() + 2);
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn digest_verifies_blocks_generated_by_another_runtime_version_without_a_receipt() {
+    let en = Declaration::default();
+    let zh = Declaration {
+        language: Language::Zh,
+        ..Declaration::default()
+    };
+    for (generated, next) in [(&en, &zh), (&zh, &en)] {
+        let old = guidance::render_for_version(generated, "9.8.7-other");
+        assert!(old.contains("Runtime: 9.8.7-other."));
+        assert_ne!(old, guidance::render(generated));
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().canonicalize().unwrap();
+        let private = root.join("private");
+        let path = root.join("AGENTS.md");
+        // Neither a receipt nor the previous declaration vouches for the block.
+        for crlf in [false, true] {
+            let block = if crlf {
+                old.replace('\n', "\r\n")
+            } else {
+                old.clone()
+            };
+            std::fs::write(&path, format!("Prefix\r\n{block}\nTail")).unwrap();
+            let changes = guidance::changes(&root, &private, next, next, false).unwrap();
+            let expected = if crlf {
+                guidance::render(next).replace('\n', "\r\n")
+            } else {
+                guidance::render(next)
+            };
+            assert_eq!(
+                changes[0].after.clone().unwrap(),
+                format!("Prefix\r\n{expected}\nTail").into_bytes()
+            );
+        }
+        let digest = old
+            .lines()
+            .find(|line| line.starts_with("<!-- specgit:v2:sha256 "))
+            .unwrap()
+            .to_owned();
+        for edited in [
+            old.replace("Runtime: 9.8.7-other.", "Runtime: 9.8.8."),
+            old.replacen("SpecGit", "Spec Git", 2),
+            old.replace(&digest, &digest.replace("sha256 ", "sha256 0")),
+            old.replace(&format!("{digest}\n"), ""),
+        ] {
+            assert_ne!(edited, old);
+            let file = format!("User\n{edited}\n");
+            std::fs::write(&path, &file).unwrap();
+            conflict(guidance::changes(&root, &private, generated, next, false));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
+        }
+    }
+}

@@ -179,10 +179,12 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
             &[root.clone(), private.clone(), exclude_parent.clone()],
             Duration::from_secs(2),
         )?;
+        let (transaction, retained) =
+            config::worktree::rollback(&store, &process, &root, &exclude, id).await?;
         return Ok(Report::success(
             "migrate",
             "rolled_back",
-            json!({"transaction":store.rollback(id)?,"native_writes":false,"native_configuration":"unchanged_by_migration"}),
+            json!({"transaction":transaction,"retained":retained,"native_writes":false,"native_configuration":"unchanged_by_migration"}),
         ));
     }
     let selected = options.config_file.as_ref().ok_or_else(|| Diagnostic::input("Migration requires --config-file with a complete v2 declaration; no legacy flags are reinterpreted."))?;

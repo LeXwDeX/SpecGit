@@ -40,7 +40,7 @@ pub async fn run() {
         let root_name = command.get_name().to_owned();
         let mut contract = specgit::cli_contract::schema_with_effects(&mut command, |path| {
             let name = path.last().map(String::as_str).unwrap_or(&root_name);
-            serde_json::json!({"authorization":"existing_session_only","remote_writes":match name {"issue"|"pr"=>"explicit_issue_or_request_content_only",_=>"none"},"local_writes":"mode_dependent_see_options","forbidden":["merge","close_issue","delete_branch","administer_settings"],"framing":if name=="hook" {"host_event_protocol"} else if name=="guard" {"git_hook_protocol"} else {"single_json_document"}})
+            serde_json::json!({"authorization":"existing_session_only","remote_writes":match name {"issue"|"pr"=>"explicit_issue_or_request_content_only",_=>"none"},"local_writes":if name=="update" {"running_executable_and_backup_on_apply_only"} else {"mode_dependent_see_options"},"forbidden":["merge","close_issue","delete_branch","administer_settings"],"framing":if name=="hook" {"host_event_protocol"} else if name=="guard" {"git_hook_protocol"} else {"single_json_document"}})
         });
         contract["cli_version"] = env!("CARGO_PKG_VERSION").into();
         emit(Report::success("schema", "ok", contract), true);

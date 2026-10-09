@@ -193,6 +193,50 @@ fn pre_tool_use_denies_tracked_edits_without_a_current_issue_checkpoint() {
 }
 
 #[test]
+fn a_lost_declaration_with_private_state_fails_closed_but_new_repositories_stay_silent() {
+    let t = fixture();
+    let edit = |event: &str| json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}});
+    // Never initialized: no declaration and no private state.
+    for event in ["SessionStart", "PreToolUse"] {
+        assert!(
+            run(event, &serde_json::to_vec(&edit(event)).unwrap())
+                .stdout
+                .is_empty()
+        );
+    }
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\nlanguage: en\n",
+    )
+    .unwrap();
+    checkpoint(t.path(), "master");
+    fs::remove_file(t.path().join(".specgit.yaml")).unwrap();
+    let out = run(
+        "PreToolUse",
+        &serde_json::to_vec(&edit("PreToolUse")).unwrap(),
+    );
+    assert!(out.status.success());
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+    let reason = value["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    assert!(reason.contains("no .specgit.yaml"), "{reason}");
+    assert!(reason.contains("specgit init"), "{reason}");
+    for event in ["SessionStart", "PostToolUse", "Stop"] {
+        let out = run(event, &serde_json::to_vec(&edit(event)).unwrap());
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(
+            value["systemMessage"]
+                .as_str()
+                .unwrap()
+                .contains("private state"),
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn pre_tool_use_allows_issue_lifecycle_commands_without_a_current_checkpoint() {
     let t = fixture();
     fs::write(
