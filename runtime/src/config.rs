@@ -12,6 +12,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+pub mod worktree;
 
 pub fn snapshot(root: &Path) -> Result<crate::assets::Snapshot, Diagnostic> {
     bounded_snapshot(&root.join(".specgit.yaml"), MAX_BYTES)

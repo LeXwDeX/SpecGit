@@ -114,13 +114,25 @@ Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
 identify them and review their purpose before changing them. Repeated initialization
 refreshes the block without duplicating it and preserves surrounding user rules.
 Preview and rollback include this file; damaged markers require reconciliation.
+`init --check` reports the block state (`absent`, `current`, `refresh` or
+`damaged`) and already tracked files without writing. `init --rollback` and
+`migrate --rollback` keep the shared file, and report it under `retained`, while
+another linked worktree still has a declaration or SpecGit private state.
 
 The JSON `local_exclusion` result reports exclusions and already tracked files.
 Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
 of it. Untracking an already committed local declaration requires an explicit,
-reviewed repository change. Project `setup` writes documented checkout assets
+reviewed repository change. Committing `git rm --cached .specgit.yaml` deletes
+the local declaration in every other clone or worktree that later fast-forwards,
+pulls or switches across that commit. Back up `.specgit.yaml` in those checkouts
+first; afterwards restore it and rerun `specgit init` there. A worktree whose
+declaration is missing while its SpecGit private state (guidance receipt, routing
+or checkpoint) remains is not treated as uninitialized: Git guard and agent edit
+hooks fail closed with this remedy, `init --check` reports its `private_state`
+without claiming `initial_adoption`, and `remove` in a sibling still counts it as
+a consumer of shared assets. Project `setup` writes documented checkout assets
 and keeps its receipt under that worktree's Git directory; 2.4 has no global
 setup assets.
 
@@ -142,7 +154,10 @@ and an unfinished native delivery blocks removal. Confirm
 
 `init --rollback <transaction>` undoes only its recorded local transaction when
 ownership still matches; it is not a full project uninstall. `guard --uninstall`
-removes recorded Git-hook blocks.
+removes recorded Git-hook blocks unless a sibling initialized worktree shares
+the same hook directory; then it keeps the blocks and its receipt and reports
+them under `retained`. `guard --install` in a worktree whose shared hooks
+another worktree owns names that owner instead of changing the hooks.
 SpecGit 2.4 is permanently project-only: `setup --uninstall` removes only the
 current worktree's recorded project agent assets and never touches global or
 host-level integration state. Existing 2.3 global data is preserved; 2.4 ships

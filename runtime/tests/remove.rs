@@ -477,6 +477,59 @@ fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
 }
 
 #[test]
+fn a_sibling_with_private_state_but_no_declaration_still_consumes_shared_assets() {
+    let f = Fixture::new(true);
+    assert!(
+        executable::command()
+            .current_dir(&f.root)
+            .args(["guard", "--install"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    git(
+        &f.root,
+        &["worktree", "add", "-b", "sibling", "../linked", "HEAD"],
+    );
+    let sibling = f.root.parent().unwrap().join("linked");
+    initialize(&sibling);
+    // The sibling crossed a commit that untracked its declaration.
+    fs::remove_file(sibling.join(".specgit.yaml")).unwrap();
+    let exclude = PathBuf::from(git(
+        &f.root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ],
+    ));
+    let hook = PathBuf::from(git(
+        &f.root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "hooks/pre-commit",
+        ],
+    ));
+    let exclude_before = fs::read(&exclude).unwrap();
+    let hook_before = fs::read(&hook).unwrap();
+    let preview = f.run(&["remove"]);
+    assert_eq!(preview["status"], "prepared", "{preview}");
+    let consumers = preview["evidence"]["shared_consumers"].as_array().unwrap();
+    assert_eq!(consumers.len(), 1, "{preview}");
+    assert_eq!(consumers[0]["declaration_sha256"], Value::Null);
+    assert_eq!(consumers[0]["private_state"], json!(["guidance.json"]));
+    assert_eq!(consumers[0]["shares_hooks"], true);
+    assert_eq!(f.apply(&preview)["status"], "removed");
+    assert_eq!(fs::read(&exclude).unwrap(), exclude_before);
+    assert_eq!(fs::read(&hook).unwrap(), hook_before);
+    assert!(!f.root.join(".specgit.yaml").exists());
+}
+
+#[test]
 fn rollback_does_not_overwrite_later_user_edits_and_invalid_modes_are_zero_write() {
     let f = Fixture::new(true);
     for args in [

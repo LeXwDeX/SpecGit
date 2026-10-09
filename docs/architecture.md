@@ -11,7 +11,7 @@ conforms to it.
 | --- | --- | --- |
 | Declaration | `declaration` | Parses and validates `.specgit.yaml`. It owns schema rules, not file access or Git lookup. |
 | Repository identity | `identity` | Defines repository, host, and object-ID rules. It does not call Git or a forge. |
-| Local project state | `config`, `project`, `selection` | Reads project configuration and Git context. State belongs to the repository or its Git metadata. |
+| Local project state | `config`, `project`, `selection` | Reads project configuration and Git context. State belongs to the repository or its Git metadata. `config::worktree` owns the read-only private-state probe and sibling-consumer discovery for worktree-shared assets. |
 | Agent integration | `setup`, `guidance`, `prompts`, `assets` | Builds and writes project-scoped skills, marked instruction blocks, host hook entries, and ownership receipts. It does not install global host state or a project executable. |
 | Native platform | `forge_read`, `forge_routes`, `forge`, `native_delivery` | Separates read transport, route construction, response decoding, and explicit mutation. The forge owns CI, protection, review, and merge. |
 | Observation | `observation_model`, `watch_store`, `watch`, `observation`, `report` | Stores scoped event facts and presents them. An observation is not authorization or proof of completion. |
@@ -147,6 +147,10 @@ An edited or ambiguous owned asset is preserved for reconciliation. Foreign
 instruction text, hook entries, and shell-hook content must remain intact.
 Rollback restores a recorded transaction in its original Git metadata scope.
 It must not widen asset ownership or move state to a global directory.
+Linked worktrees share `info/exclude` and the common hooks directory while
+receipts stay per worktree. Removal, init/migrate rollback and guard uninstall
+use the same `config::worktree` consumer check and keep shared blocks that a
+sibling with a declaration or initialized private state still relies on.
 
 Observation notices describe evidence at a recorded time. A notice is not a
 fresh read. Refresh native evidence before acting on it. Acknowledging an exact

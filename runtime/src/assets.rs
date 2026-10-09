@@ -642,6 +642,16 @@ impl AssetStore {
         Ok(())
     }
     pub fn rollback(&self, id: &str) -> Result<Applied, Diagnostic> {
+        self.rollback_retaining(id, &[]).map(|(applied, _)| applied)
+    }
+    /// Roll back a transaction but keep the current content of `retain` paths,
+    /// such as worktree-shared files still used by another worktree.
+    /// Returns the retained paths that the journal would otherwise have restored.
+    pub fn rollback_retaining(
+        &self,
+        id: &str,
+        retain: &[PathBuf],
+    ) -> Result<(Applied, Vec<PathBuf>), Diagnostic> {
         if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
             return Err(Diagnostic::input("Use an exact reported transaction id."));
         }
@@ -659,13 +669,22 @@ impl AssetStore {
         if journal.version != 2 || journal.entries.len() > 100 {
             return Err(Diagnostic::input("Unsupported transaction journal."));
         }
-        self.restore(&directory, &journal.entries)?;
+        let (retained, restored): (Vec<_>, Vec<_>) = journal
+            .entries
+            .iter()
+            .partition(|entry| retain.contains(&entry.path));
+        let restored: Vec<Entry> = restored.into_iter().cloned().collect();
+        let retained: Vec<PathBuf> = retained.into_iter().map(|e| e.path.clone()).collect();
+        self.restore(&directory, &restored)?;
         journal.state = "rolled_back".into();
         self.save_journal(&directory, &journal)?;
-        Ok(Applied {
-            transaction: id.into(),
-            changes: journal.entries.len(),
-        })
+        Ok((
+            Applied {
+                transaction: id.into(),
+                changes: restored.len(),
+            },
+            retained,
+        ))
     }
 }
 
@@ -676,7 +695,7 @@ struct Journal {
     state: String,
     entries: Vec<Entry>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
     path: PathBuf,
@@ -698,7 +717,7 @@ impl Entry {
             && permissions == Some(&PermissionRecord::capture(snapshot.permissions.as_ref()))
     }
 }
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct PermissionRecord {
     readonly: Option<bool>,
     unix_mode: Option<u32>,

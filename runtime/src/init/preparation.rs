@@ -25,7 +25,7 @@ pub(super) async fn prepare_and_run(
 ) -> Result<Report, Diagnostic> {
     let paths = Paths::load(&options, &process, cwd).await?;
     if let Some(id) = &options.rollback {
-        return paths.rollback(&options, id);
+        return paths.rollback(&options, &process, id).await;
     }
     let root = paths.root.clone();
     let declaration::Prepared {
@@ -34,6 +34,23 @@ pub(super) async fn prepare_and_run(
         previous,
         mut declaration,
     } = declaration::prepare(&options, &root, language)?;
+    // Private state survives a lost declaration; such a worktree is not a new adoption.
+    let private_state = config::worktree::private_state(&paths.private_root)?;
+    let initial_adoption = existing.is_none() && !private_state.is_initialized();
+    let local_exclusion = if options.inspect_only {
+        // Inspection plans guidance only to classify mixed files; nothing is recorded.
+        let guidance = crate::guidance::changes(
+            &root,
+            &paths.private_root,
+            &previous,
+            &declaration,
+            options.mirror_claude,
+        )
+        .unwrap_or_default();
+        Some(crate::local_exclude::inspect(&process, &root, &paths.exclude, &guidance).await?)
+    } else {
+        None
+    };
     let context = match config::resolve(
         &process,
         &root,
@@ -47,8 +64,7 @@ pub(super) async fn prepare_and_run(
         Err(diagnostic) if options.inspect_only => {
             process.mark_inspection_incomplete();
             let mut report = Report::failure("init", diagnostic);
-            report.evidence =
-                json!({"probes":[],"written":false,"project":"unknown","request":null});
+            report.evidence = json!({"probes":[],"written":false,"project":"unknown","request":null,"initial_adoption":initial_adoption,"private_state":private_state,"local_exclusion":local_exclusion});
             append_check_report(
                 &mut report.evidence,
                 &declaration.init_policy,
@@ -90,7 +106,10 @@ pub(super) async fn prepare_and_run(
             && !declaration.agent.native_auto_merge);
     let confirmation = capabilities.needs_choice() && !manual_choice;
     let failed = probes.iter().any(|p| p.status != Capability::Available);
-    let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"capabilities":capabilities,"request":request,"templates":template_evidence,"declaration":declaration,"written":false,"initial_adoption":existing.is_none()});
+    let mut evidence = json!({"context":context,"probes":probes,"project":facts,"flow":native_flow,"capabilities":capabilities,"request":request,"templates":template_evidence,"declaration":declaration,"written":false,"initial_adoption":initial_adoption,"private_state":private_state});
+    if let Some(local_exclusion) = local_exclusion {
+        evidence["local_exclusion"] = local_exclusion;
+    }
     evidence["request_read"] = json!("verified");
     if options.inspect_only {
         append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());

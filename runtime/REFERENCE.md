@@ -127,7 +127,7 @@ commands use the global input/output contract above.
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. |
 | `hook` | Host event adapter with `--event`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. Optional asynchronous PostToolUse `--observe` remains available to Claude/Codex integrations; hooks generated for the OpenCode claude-compatible opt-in never use it. State is always Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
-| `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
+| `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while a sibling initialized worktree shares the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
 | `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
@@ -542,7 +542,8 @@ guidance, settings (#652) and receipt-owned guard hooks join the same transactio
 An existing delivery checkpoint permits removal only after the native request is verified merged into
 the recorded target with every selected Issue closed. The shared
 `info/exclude` block is removed only when no sibling initialized worktree
-still consumes it.
+still consumes it. A sibling with a declaration, or with SpecGit private state
+whose declaration is missing, counts as a consumer.
 
 An edited or damaged owned asset, a pending transaction, and an undelivered or
 foreign checkpoint block the preview: its evidence lists the conflicts and
@@ -585,6 +586,10 @@ Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
 identify them and review their purpose before changing them. Repeated initialization
 refreshes the block without duplicating it and preserves surrounding user rules.
 Preview and rollback include this file; damaged markers require reconciliation.
+`init --check` reports the block state (`absent`, `current`, `refresh` or
+`damaged`) and already tracked files without writing. `init --rollback` and
+`migrate --rollback` keep the shared file, and report it under `retained`, while
+another linked worktree still has a declaration or SpecGit private state.
 
 Init guidance owns one marked block in `AGENTS.md` (and mirrored `CLAUDE.md`).
 A generated block ends with a `<!-- specgit:v2:sha256 <digest> -->` line over its
@@ -599,7 +604,15 @@ Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
 of it. Untracking an already committed local declaration requires an explicit,
-reviewed repository change. Project `setup` writes documented checkout assets
+reviewed repository change. Committing `git rm --cached .specgit.yaml` deletes
+the local declaration in every other clone or worktree that later fast-forwards,
+pulls or switches across that commit. Back up `.specgit.yaml` in those checkouts
+first; afterwards restore it and rerun `specgit init` there. A worktree whose
+declaration is missing while its SpecGit private state (guidance receipt, routing
+or checkpoint) remains is not treated as uninitialized: Git guard and agent edit
+hooks fail closed with this remedy, `init --check` reports its `private_state`
+without claiming `initial_adoption`, and `remove` in a sibling still counts it as
+a consumer of shared assets. Project `setup` writes documented checkout assets
 and keeps its receipt under that worktree's Git directory; 2.4 has no global
 setup assets.
 
