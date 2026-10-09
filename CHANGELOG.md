@@ -4,6 +4,14 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.6.1
+
+- Update the `libc` runtime dependency to 0.2.190.
+- Update the `jsonschema` and `syn` test dependencies, and the release workflow's pinned `sigstore/cosign-installer` action. Cosign 3.1.3 and the signing identity are unchanged.
+- No command, schema or behavior changes.
+
+Scope: [#672](https://github.com/LeXwDeX/SpecGit/issues/672).
+
 # 2.6.0
 
 - Add `specgit update`: discover GitHub Releases through the authenticated `gh` API, require Cosign verification of `SHA256SUMS` and the exact archive hash, smoke-check the extracted version, and replace the running executable with a restorable backup. `--check` is read-only; `--dry-run` verifies without replacement.
