@@ -558,6 +558,14 @@ identify them and review their purpose before changing them. Repeated initializa
 refreshes the block without duplicating it and preserves surrounding user rules.
 Preview and rollback include this file; damaged markers require reconciliation.
 
+Init guidance owns one marked block in `AGENTS.md` (and mirrored `CLAUDE.md`).
+A generated block ends with a `<!-- specgit:v2:sha256 <digest> -->` line over its
+LF-normalized content, so any later runtime can refresh or remove an unmodified
+block without this worktree's receipt. A block without a digest is owned only when
+it exactly matches a released v2 render or the worktree receipt. An edited block is
+an ownership conflict and stays unchanged. When `.specgit.yaml` is missing,
+`init --config-file` also uses that declaration to recognize the existing block.
+
 The JSON `local_exclusion` result reports exclusions and already tracked files.
 Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
