@@ -41,12 +41,17 @@ pub(super) fn prepare(
             "Preview specgit migrate --config-file <v2.yaml>; preserve orphaned configuration and old work instead of enabling a competing integration.",
         ));
     }
-    let previous = existing.clone().unwrap_or_default();
-    let mut declaration = if let Some(path) = &options.config_file {
-        Declaration::parse(templates::read_text(path)?.as_bytes())?
-    } else {
-        previous.clone()
-    };
+    let supplied = options
+        .config_file
+        .as_ref()
+        .map(|path| Declaration::parse(templates::read_text(path)?.as_bytes()))
+        .transpose()?;
+    // Without a local declaration, a supplied one can prove existing guidance ownership.
+    let previous = existing
+        .clone()
+        .or_else(|| supplied.clone())
+        .unwrap_or_default();
+    let mut declaration = supplied.unwrap_or_else(|| previous.clone());
     if let Some(remote) = &options.remote {
         declaration.remote = Some(remote.clone());
     }

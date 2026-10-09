@@ -119,6 +119,8 @@ pub(super) enum Commands {
         #[arg(long)]
         account_only: bool,
     },
+    /// Check, verify or apply a signed GitHub Release to the running shared executable.
+    Update(specgit::self_update::Options),
     /// Show offline Git/project identity; no forge or network child is invoked.
     Status {
         #[arg(long)]

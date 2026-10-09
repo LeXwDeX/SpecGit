@@ -220,6 +220,64 @@ fn native_cutover_and_rollback_preserve_old_work_and_foreign_bytes_on_both_forge
     }
 }
 #[test]
+fn migration_rollback_keeps_the_shared_exclusion_block_for_an_initialized_sibling() {
+    let (f, path) = fixture("github");
+    let p = preview(&f, &path, &[]);
+    let a = apply(&f, &path, &p, &[]);
+    assert_eq!(a["exit"], 0, "{a}");
+    let exclude = PathBuf::from(git(
+        &f.root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ],
+    ));
+    git(&f.root, &["worktree", "add", "-b", "sibling", "../sibling"]);
+    let sibling = f.root.parent().unwrap().join("sibling");
+    fs::write(
+        sibling.join(".specgit.yaml"),
+        "version: 2\nremote: origin\nprovider: github\n",
+    )
+    .unwrap();
+    let r = f.run(&[
+        "migrate",
+        "--rollback",
+        a["evidence"]["transaction"].as_str().unwrap(),
+    ]);
+    assert_eq!(r["exit"], 0, "{r}");
+    assert_eq!(
+        r["evidence"]["retained"].as_array().unwrap().len(),
+        1,
+        "{r}"
+    );
+    assert_eq!(
+        r["evidence"]["retained"][0]["reason"],
+        "shared_initialized_worktree"
+    );
+    assert!(
+        fs::read_to_string(&exclude)
+            .unwrap()
+            .contains("/.specgit.yaml")
+    );
+    assert!(
+        Command::new("git")
+            .current_dir(&sibling)
+            .args(["check-ignore", "-q", "--no-index", ".specgit.yaml"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    // The rest of the journal is restored as before.
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .contains("version: 1")
+    );
+}
+#[test]
 fn changed_preview_and_foreign_writers_never_activate_v2() {
     let (f, path) = fixture("github");
     let p = preview(&f, &path, &[]);

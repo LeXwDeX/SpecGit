@@ -61,7 +61,9 @@ function optionSchema(command) {
   const properties = {};
   const required = [];
   for (const argument of command.arguments) {
-    if (!argument.long || ['help', 'version', 'schema', 'input-file'].includes(argument.long)) continue;
+    // `update --version <x.y.z>` is a request option; only clap's generated
+    // help/version flags are discovery transport.
+    if (!argument.long || ['help', 'schema', 'input-file'].includes(argument.long) || ['Help', 'Version'].includes(argument.action)) continue;
     const scalar = { type: argument.input_type };
     if (argument.possible_values.length && argument.input_type === 'string') scalar.enum = argument.possible_values;
     let shape = scalar;

@@ -61,12 +61,17 @@ impl Paths {
             exclude_parent,
         })
     }
-    pub fn rollback(&self, options: &Options, id: &str) -> Result<Report, Diagnostic> {
+    pub async fn rollback(
+        &self,
+        options: &Options,
+        process: &Process,
+        id: &str,
+    ) -> Result<Report, Diagnostic> {
         let Self {
             root,
             private_root,
+            exclude,
             exclude_parent,
-            ..
         } = self;
         if options.inspect_only
             || options.remote.is_some()
@@ -90,10 +95,12 @@ impl Paths {
             &[root.clone(), private_root.clone(), exclude_parent.clone()],
             Duration::from_secs(2),
         )?;
+        let (transaction, retained) =
+            config::worktree::rollback(&store, process, root, exclude, id).await?;
         Ok(Report::success(
             "init",
             "rolled_back",
-            json!({"transaction":store.rollback(id)?,"remote_state":"not_checked"}),
+            json!({"transaction":transaction,"retained":retained,"remote_state":"not_checked"}),
         ))
     }
 }

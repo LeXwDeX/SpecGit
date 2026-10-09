@@ -203,6 +203,60 @@
         }
       }
     },
+    "update_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "repository", "platform", "executable", "current_version", "target_source", "target_version", "release_tag", "direction", "update_available", "asset", "verification", "installation"],
+      "properties": {
+        "mode": {"enum": ["check", "dry_run", "apply"]},
+        "repository": {"const": "LeXwDeX/SpecGit"},
+        "platform": {"enum": ["darwin-arm64", "linux-x64-gnu", "win32-x64", null]},
+        "executable": {"type": ["string", "null"], "minLength": 1},
+        "current_version": {"type": "string", "minLength": 1},
+        "target_source": {"enum": ["latest", "requested"]},
+        "target_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "release_tag": {"type": ["string", "null"], "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "direction": {"enum": ["same", "upgrade", "downgrade", "current_newer", null]},
+        "update_available": {"type": "boolean"},
+        "asset": {"type": ["string", "null"], "pattern": "^specgit-[0-9]+\\.[0-9]+\\.[0-9]+-(darwin-arm64|linux-x64-gnu|win32-x64)\\.zip$"},
+        "verification": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["signature", "certificate_identity", "certificate_oidc_issuer", "manifest_row", "archive_sha256", "executable_sha256", "extracted_version"],
+              "properties": {
+                "signature": {"const": "verified"},
+                "certificate_identity": {"const": "https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main"},
+                "certificate_oidc_issuer": {"const": "https://token.actions.githubusercontent.com"},
+                "manifest_row": {"const": "matched"},
+                "archive_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "executable_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "extracted_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+              }
+            }
+          ]
+        },
+        "installation": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["executable", "backup", "previous_version", "installed_version", "executable_sha256"],
+              "properties": {
+                "executable": {"type": "string", "minLength": 1},
+                "backup": {"type": "string", "minLength": 1},
+                "previous_version": {"type": "string", "minLength": 1},
+                "installed_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+                "executable_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            }
+          ]
+        }
+      }
+    },
     "init_check": {
       "type": "object",
       "additionalProperties": false,
@@ -537,6 +591,20 @@
             "if": {"required": ["review_digest"]},
             "then": {"$ref": "#/$defs/candidate_preflight"}
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {"const": "update"},
+          "evidence": {"type": "object"}
+        },
+        "required": ["operation", "evidence"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {"$ref": "#/$defs/update_evidence"}
         }
       }
     },

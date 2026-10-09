@@ -122,14 +122,10 @@ pub(crate) fn removal(path: &Path) -> Result<Change, Diagnostic> {
     Ok(c)
 }
 
-pub async fn plan(
-    process: &Process,
-    root: &Path,
-    exclude: &Path,
-    changes: &mut Vec<Change>,
-) -> Result<Value, Diagnostic> {
-    // info/exclude is shared by linked worktrees. Guidance ownership is not.
-    let names = vec![".specgit.yaml"];
+/// Committing an untrack deletes the file in other checkouts that cross the commit.
+const TRACKED_REMEDY: &str = "Ignore rules do not untrack existing files. Review generated assets and use authorized git rm --cached for whole generated files; preserve manual guidance and omit generated hunks from commits. Warning: committing git rm --cached .specgit.yaml deletes the local declaration in every other clone or worktree that later fast-forwards, pulls or switches across that commit. Back up .specgit.yaml in those checkouts first; afterwards restore it and rerun specgit init there.";
+
+fn mixed_guidance(root: &Path, changes: &[Change]) -> Result<Vec<&'static str>, Diagnostic> {
     let mut mixed = vec![];
     for name in ["AGENTS.md", "CLAUDE.md"] {
         if let Some(c) = changes.iter().find(|c| c.path == root.join(name)) {
@@ -143,20 +139,86 @@ pub async fn plan(
             }
         }
     }
+    Ok(mixed)
+}
+
+async fn tracked(
+    process: &Process,
+    root: &Path,
+    names: &[&str],
+) -> Result<Vec<String>, Diagnostic> {
     let mut args = vec!["ls-files", "-z", "--"];
     args.extend(names.iter().copied());
     let tracked = project::git(process, root, &args).await?;
-    let tracked: Vec<_> = tracked
+    Ok(tracked
         .split(|b| *b == 0)
         .filter(|b| !b.is_empty())
         .map(|b| String::from_utf8_lossy(b).into_owned())
-        .collect();
+        .collect())
+}
+
+/// Classify the owned block from a planned refresh: absent, current, refresh or damaged.
+fn block_state(planned: &Result<Change, Diagnostic>) -> &'static str {
+    match planned {
+        Err(_) => "damaged",
+        Ok(c) if c.unchanged() => "current",
+        Ok(c)
+            if c.before
+                .bytes
+                .as_deref()
+                .is_some_and(|b| std::str::from_utf8(b).is_ok_and(|text| text.contains(START))) =>
+        {
+            "refresh"
+        }
+        Ok(_) => "absent",
+    }
+}
+
+fn report(
+    exclude: &Path,
+    names: &[&str],
+    mixed: &[&str],
+    tracked: &[String],
+    state: &str,
+) -> Value {
+    json!({"path":exclude,"excluded_paths":names,"mixed_guidance_paths":mixed,"already_tracked":tracked,"block_state":state,"index_changed":false,"tracked_remedy":TRACKED_REMEDY})
+}
+
+pub async fn plan(
+    process: &Process,
+    root: &Path,
+    exclude: &Path,
+    changes: &mut Vec<Change>,
+) -> Result<Value, Diagnostic> {
+    // info/exclude is shared by linked worktrees. Guidance ownership is not.
+    let names = vec![".specgit.yaml"];
+    let mixed = mixed_guidance(root, changes)?;
+    let tracked = tracked(process, root, &names).await?;
     let index = changes
         .iter()
         .position(|c| c.path == root.join(".specgit.yaml"))
         .unwrap_or(changes.len());
-    changes.insert(index, change(exclude, &names)?);
-    Ok(
-        json!({"path":exclude,"excluded_paths":names,"mixed_guidance_paths":mixed,"already_tracked":tracked,"index_changed":false,"tracked_remedy":"Ignore rules do not untrack existing files. Review generated assets and use authorized git rm --cached for whole generated files; preserve manual guidance and omit generated hunks from commits."}),
-    )
+    let planned = change(exclude, &names);
+    let state = block_state(&planned);
+    changes.insert(index, planned?);
+    Ok(report(exclude, &names, &mixed, &tracked, state))
+}
+
+/// Read-only form of [`plan`] for `init --check`: it reports a damaged block
+/// with its diagnostic instead of failing, and never records a change.
+pub async fn inspect(
+    process: &Process,
+    root: &Path,
+    exclude: &Path,
+    guidance: &[Change],
+) -> Result<Value, Diagnostic> {
+    let names = vec![".specgit.yaml"];
+    let mixed = mixed_guidance(root, guidance)?;
+    let tracked = tracked(process, root, &names).await?;
+    let planned = change(exclude, &names);
+    let mut value = report(exclude, &names, &mixed, &tracked, block_state(&planned));
+    if let Err(d) = planned {
+        value["diagnostic"] = json!(d);
+    }
+    Ok(value)
 }

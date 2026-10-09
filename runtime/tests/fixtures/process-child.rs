@@ -6,6 +6,18 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(directory) = std::env::var_os("SPECGIT_FIXTURE_UPDATE_DIR") {
+        let role = std::env::current_exe()
+            .unwrap()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        if matches!(role.as_str(), "gh" | "cosign" | "specgit") {
+            update_release(&role, &args, std::path::Path::new(&directory));
+            return;
+        }
+    }
     if let Some(real_git) = std::env::var_os("SPECGIT_FIXTURE_FORWARD_GIT")
         && std::env::current_exe()
             .unwrap()
@@ -304,6 +316,105 @@ fn console_interrupt(args: &[String]) {
     std::io::stdout().write_all(&out.stdout).unwrap();
     std::io::stderr().write_all(&out.stderr).unwrap();
     std::process::exit(out.status.code().unwrap_or(1));
+}
+
+/// Release transport (`gh`), signature verifier (`cosign`) and packaged
+/// executable (`specgit`) for `specgit update`, selected by executable name.
+/// The fake signature binds the bundle to the exact manifest bytes.
+fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
+    use sha2::{Digest, Sha256};
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("state.json")).unwrap()).unwrap();
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("calls.log"))
+        .unwrap();
+    writeln!(log, "{}", serde_json::json!({"role":role,"args":args})).unwrap();
+    drop(log);
+    let not_found = || -> ! {
+        eprintln!("gh: Not Found (HTTP 404)");
+        std::process::exit(1)
+    };
+    match role {
+        "gh" => {
+            let read = ["api", "--hostname", "github.com", "--method", "GET"];
+            let download = [&read[..], &["-H", "Accept: application/octet-stream"]].concat();
+            let is_read = args.len() == read.len() + 1 && args[..read.len()] == read;
+            let is_download =
+                args.len() == download.len() + 1 && args[..download.len()] == download;
+            if !is_read && !is_download {
+                eprintln!("unknown flag: unexpected gh arguments");
+                std::process::exit(2);
+            }
+            let Some(route) = args
+                .last()
+                .and_then(|route| route.strip_prefix("repos/LeXwDeX/SpecGit/releases/"))
+            else {
+                not_found()
+            };
+            if is_read {
+                let tag = if route == "latest" {
+                    state["latest"].as_str()
+                } else {
+                    route.strip_prefix("tags/")
+                };
+                match tag.and_then(|tag| state["releases"].get(tag)) {
+                    Some(release) => print!("{release}"),
+                    None => not_found(),
+                }
+                return;
+            }
+            let Some(id) = route.strip_prefix("assets/") else {
+                not_found()
+            };
+            let mut stdout = std::io::stdout().lock();
+            if state["oversize_asset"].as_str() == Some(id) {
+                let chunk = vec![0u8; 1024 * 1024];
+                for _ in 0..33 {
+                    if stdout.write_all(&chunk).is_err() {
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            match std::fs::read(directory.join("assets").join(id)) {
+                Ok(bytes) => stdout.write_all(&bytes).unwrap(),
+                Err(_) => not_found(),
+            }
+        }
+        "cosign" => {
+            let valid = args.len() == 8
+                && args[0] == "verify-blob"
+                && args[1] == "--bundle"
+                && args[3] == "--certificate-identity"
+                && args[4]
+                    == "https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main"
+                && args[5] == "--certificate-oidc-issuer"
+                && args[6] == "https://token.actions.githubusercontent.com";
+            if !valid {
+                eprintln!("Error: unexpected cosign arguments");
+                std::process::exit(2);
+            }
+            let blob = std::fs::read(&args[7]).unwrap();
+            let digest: String = Sha256::digest(&blob)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            if std::fs::read(&args[2]).unwrap() != format!("fixture-signature:{digest}").as_bytes()
+            {
+                eprintln!("Error: none of the expected identities matched");
+                std::process::exit(1);
+            }
+            eprintln!("Verified OK");
+        }
+        _ => {
+            if args != ["--human", "--version"] {
+                std::process::exit(2);
+            }
+            println!("specgit {}", state["binary_version"].as_str().unwrap());
+        }
+    }
 }
 
 fn native_api(args: &[String], path: &std::path::Path) {

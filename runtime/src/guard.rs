@@ -97,16 +97,7 @@ pub(crate) async fn plan(
         project::git(process, &root, &["rev-parse", "--absolute-git-dir"]).await?,
     )
     .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 metadata path."))?;
-    let hooks = String::from_utf8(
-        project::git(
-            process,
-            &root,
-            &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
-        )
-        .await?,
-    )
-    .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 hooks path."))?;
-    let effective = PathBuf::from(hooks.trim_end_matches(['\r', '\n']));
+    let hook_root = config::worktree::hooks(process, &root).await?;
     let common_dir = String::from_utf8(
         project::git(
             process,
@@ -117,19 +108,6 @@ pub(crate) async fn plan(
     )
     .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 common metadata path."))?;
     let common_dir = PathBuf::from(common_dir.trim_end_matches(['\r', '\n']));
-    let hook_root = if effective.file_name().is_some_and(|name| name == "_")
-        && effective
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|name| name == ".husky")
-    {
-        effective
-            .parent()
-            .ok_or_else(|| Diagnostic::input("Invalid Husky hooks path."))?
-            .to_owned()
-    } else {
-        effective
-    };
     if !hook_root.starts_with(&root) && !hook_root.starts_with(&common_dir) {
         return Err(rejected(
             "The effective Git hooks path is external to this repository and its common Git directory.",
@@ -189,6 +167,11 @@ pub(crate) async fn plan(
                 old.created,
             )
         } else {
+            if before.contains("specgit-v2:pre-")
+                && let Some(owner) = owner(process, &root, &path).await?
+            {
+                return Err(owned_elsewhere(&path, &owner));
+            }
             (
                 insert_after_shebang(before, &next_block)?,
                 change.before.bytes.is_none(),
@@ -244,8 +227,74 @@ pub(crate) async fn plan(
     Ok((changes, hook_root, receipt_parent))
 }
 
+/// The sibling worktree whose guard receipt records this shared hook file.
+async fn owner(process: &Process, root: &Path, hook: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+    for sibling in config::worktree::siblings(process, root).await? {
+        let Some(bytes) = Snapshot::read(&sibling.private_root.join("guard-hooks.json"))?.bytes
+        else {
+            continue;
+        };
+        // A malformed sibling receipt names no owner; the generic conflict still applies.
+        let Some(receipt) = crate::input::json(&bytes, 1_048_576, 16)
+            .ok()
+            .and_then(|value| serde_json::from_value::<Receipt>(value).ok())
+        else {
+            continue;
+        };
+        if receipt.hooks.values().any(|recorded| {
+            recorded.path == hook
+                || matches!((recorded.path.canonicalize(), hook.canonicalize()), (Ok(a), Ok(b)) if a == b)
+        }) {
+            return Ok(Some(sibling.root));
+        }
+    }
+    Ok(None)
+}
+
+fn owned_elsewhere(hook: &Path, owner: &Path) -> Diagnostic {
+    Diagnostic::new(
+        Code::OwnershipConflict,
+        "git_guard",
+        &format!(
+            "The shared Git hook {} already runs the SpecGit guard; linked worktree {} owns it.",
+            hook.display(),
+            owner.display()
+        ),
+        &format!(
+            "No hook was changed. Linked worktrees share this hook, so it already checks this worktree once it is initialized. Manage it from {} with specgit guard --install or --uninstall.",
+            owner.display()
+        ),
+    )
+}
+
 pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
     let (changes, hook_root, receipt_parent) = plan(process, cwd, uninstall).await?;
+    if uninstall && let Some(root) = root(process, cwd).await? {
+        // Hooks live in the shared directory, but the receipt is per worktree.
+        let consumers: Vec<_> = config::worktree::sibling_consumers(process, &root)
+            .await?
+            .into_iter()
+            .filter(|consumer| config::worktree::shares_hooks(consumer, &hook_root))
+            .collect();
+        if !consumers.is_empty() {
+            let retained: Vec<_> = changes
+                .iter()
+                .filter(|c| c.path.starts_with(&hook_root))
+                .map(|c| &c.path)
+                .collect();
+            return Ok(json!({
+                "installed": true,
+                "hooks": ["pre-commit", "pre-push"],
+                "retained": {
+                    "reason": "shared_initialized_worktree",
+                    "paths": retained,
+                    "shared_consumers": consumers,
+                    "remedy": "Sibling worktrees still rely on these shared hook blocks; the blocks and this worktree's receipt were kept. Retire those worktrees first, then uninstall again."
+                },
+                "transaction": null
+            }));
+        }
+    }
     let store = AssetStore::lock(
         &receipt_parent.join("transactions"),
         &[hook_root, receipt_parent],
@@ -357,9 +406,14 @@ pub async fn check(
     let Some(root) = root(process, cwd).await? else {
         return Ok(());
     };
+    // A missing declaration means "never initialized" only without private state.
+    // A lost one fails closed wherever the checkpoint rule would apply.
     let declaration = match config::read(&root)? {
-        Some(declaration) => declaration,
-        None => return Ok(()),
+        Some(declaration) => Ok(declaration),
+        None => match config::worktree::declaration_lost(process, &root).await? {
+            Some(lost) => Err(lost),
+            None => return Ok(()),
+        },
     };
     if matches!(stage, Stage::PrePush) && pushed.is_empty() {
         return Ok(());
@@ -371,6 +425,7 @@ pub async fn check(
     {
         return Ok(());
     }
+    let declaration = declaration?;
     let context = config::resolve(
         process,
         &root,

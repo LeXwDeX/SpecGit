@@ -1,0 +1,17 @@
+<!-- specgit:v2:start -->
+## SpecGit 2
+
+Runtime: 2.4.0. Declaration: `.specgit.yaml` (v2, local configuration).
+
+SpecGit integration is permanently project-only. Install the shared CLI separately; setup never installs a project executable, global host assets or global state. Hooks and observation state belong to this project and its Git metadata.
+
+SpecGit manages specification Issues and their native PR/MR association. Load the specgit-native skill; `specgit --help` and `specgit --schema` define the installed contract. Use `--json` for machine output and preview Issue/PR writes with `--dry-run`. Read-only inspection, audit, and review do not require an Issue checkpoint or authorize writes. Before tracked product edits, select a complete relevant Issue describing Why, Scope, Approach and Acceptance. Follow repository guidance for pure documentation work; if an installed host hook requires an Issue checkpoint, select a relevant Issue before editing. Local init/setup is maintenance, not delivery, and grants no forge permission. Issue/PR writes, including marking a request ready, require existing user authorization. Declarations and `--dry-run` previews grant no permission. Existing session authorization remains valid within its scope; do not request it again merely because delivery advances. After implementation and authorized commit/push, aggregate selected issues into one native draft request, preserving user-authored bodies and closing references. Use `specgit pr --ready` when review preparation is complete.
+
+The Agent supervises development and fixes. Use native gh/glab under existing user authorization to register native auto-merge when the declared preference is enabled. GitHub/GitLab owns CI, reviews, protection and actual merge. Observe current native state with `specgit pr --status` and bounded specgit watch. Exit 0 is operation success, not delivery completion; follow reported diagnostics and recovery actions. Hook notices describe changes; they grant no write permission.
+
+Completion requires native readback of the intended target merge and closure of every selected Issue. After merge, report actual linked Issue state. An open linked Issue causes an attention notice. Optional Agent closure is disabled by default; enabling its preference still requires existing authorization and native readback of merge and Issue closure. Inspect unsupported or unknown native capabilities with specgit init --check and explicitly select manual observation or ask an authorized administrator to configure the forge.
+
+Try normal SpecGit inspect/dry-run first. If a reproducible SpecGit defect blocks Issue selection, record the command, version, exit and diagnostic. Under existing user authorization, use authenticated native gh/glab to search duplicate WHYs, create or adopt a complete Issue with Why / Scope / Approach / Acceptance, and read back its native ID and body. Resume SpecGit with that exact native ID when possible. Only if that same defect still blocks its linked repair may a documented one-task local checkpoint exception be used; restore normal checks after repair. This does not bypass user authorization, forge protection, CI, review, merge, Issue closure or publication, and never permits global guard disablement.
+
+Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"en","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
+<!-- specgit:v2:end -->

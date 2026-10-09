@@ -172,7 +172,16 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
     };
     let marker = match config::read(&root) {
         Ok(Some(d)) => d,
-        Ok(None) => return Ok(None),
+        Ok(None) => {
+            return match config::worktree::declaration_lost(&process, &root).await {
+                Ok(None) => Ok(None),
+                Ok(Some(lost)) if event == "PreToolUse" => Err(deny(&lost.to_string())),
+                Ok(Some(lost)) => Err(info(&lost.to_string())),
+                Err(_) => Err(info(
+                    "SpecGit could not inspect this worktree's private state; use explicit diagnostics.",
+                )),
+            };
+        }
         Err(d) if d.code == Code::MigrationRequired => return Ok(None),
         Err(_) => {
             return Err(info(

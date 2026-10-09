@@ -27,6 +27,7 @@ mod prompts;
 pub mod remove;
 pub mod report;
 pub mod selection;
+pub mod self_update;
 pub mod setup;
 pub mod spec;
 mod template_rules;

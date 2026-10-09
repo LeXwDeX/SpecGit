@@ -4,6 +4,15 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.6.0
+
+- Add `specgit update`: discover GitHub Releases through the authenticated `gh` API, require Cosign verification of `SHA256SUMS` and the exact archive hash, smoke-check the extracted version, and replace the running executable with a restorable backup. `--check` is read-only; `--dry-run` verifies without replacement.
+- Fail closed when `.specgit.yaml` is missing but SpecGit-owned worktree state remains, instead of silently skipping Git guard and host checkpoint checks. `init --check` reports tracked and exclusion state, and the untracking remedy warns that other checkouts lose their local declaration when they cross that commit.
+- Keep the shared `info/exclude` block and Git hooks during rollback and guard uninstall while another linked worktree still uses them.
+- Make generated guidance blocks self-certifying with an embedded digest, and recognize unmodified blocks from every released v2 version without a local receipt.
+
+Scope: [#667](https://github.com/LeXwDeX/SpecGit/issues/667), [#668](https://github.com/LeXwDeX/SpecGit/issues/668), [#669](https://github.com/LeXwDeX/SpecGit/issues/669), [#670](https://github.com/LeXwDeX/SpecGit/issues/670).
+
 # 2.5.0
 
 - Separate pure declaration, identity, specification vocabulary and observation models from file, Git and forge operations. Preserve public library paths through aliases.
