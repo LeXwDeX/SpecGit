@@ -26,6 +26,7 @@ tempfile = "3"
 serde_yaml_ng = "0.10"
 regex = "1"
 base64 = "0.23.1"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 jsonschema = { version = "0.58.0", default-features = false }

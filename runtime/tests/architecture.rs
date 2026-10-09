@@ -18,7 +18,7 @@ fn layer(module: &str) -> u8 {
         | "report" | "i18n" => 0,
         "assets" | "process" | "cli_contract" => 1,
         "project" | "config" | "templates" | "selection" | "watch_store" | "migration_assets"
-        | "local_exclude" | "guidance" => 2,
+        | "local_exclude" | "guidance" | "self_update" => 2,
         "forge_read" => 3,
         "probe" | "native_checks" | "native_file" => 4,
         "forge" => 5,

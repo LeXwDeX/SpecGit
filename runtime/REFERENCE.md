@@ -133,8 +133,9 @@ commands use the global input/output contract above.
 | `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
 | `remove` | Preview or reversibly remove this project's proven owned local integration. The default and `--dry-run` prepare a read-only preview whose evidence carries a `preview_sha256`; `--apply --expect <digest>` applies exactly that inspected preview as one recoverable transaction; `--rollback <transaction>` restores it offline without configuration or forge access. See [whole-project removal](#whole-project-removal). |
+| `update` | Update the running shared executable from a signed GitHub Release. `--check` only reads release metadata; `--dry-run` downloads and verifies without replacement; the default applies. `--version <x.y.z>` selects an exact release; an older one is a downgrade. Requires an authenticated `gh` and Cosign. See [self-update](#self-update). |
 
-`inbox`, `status`, `doctor` and `migrate` remain auxiliary entrypoints in this
+`inbox`, `status`, `doctor`, `migrate` and `update` remain auxiliary entrypoints in this
 native CLI. Core project operations are setup, init, issue, pr, watch
 and hook. No separate server is required for ordinary Agent use.
 
@@ -439,6 +440,33 @@ conflicting edits; uninstall retains backups and unrelated directories.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
 facts; successful setup is not verified host registration or delivery.
+
+### Self-update
+
+`update` reads `LeXwDeX/SpecGit` releases on github.com through the
+authenticated `gh` CLI only. Without `--version` it selects the latest stable
+Release; drafts are never used. The same version is a no-op (`up_to_date`), and
+a running version newer than the latest Release reports `current_newer`.
+Unsupported platforms fail; Releases exist for macOS arm64, Linux x64 glibc and
+Windows x64.
+
+`--dry-run` and apply download the platform ZIP, `SHA256SUMS` and
+`SHA256SUMS.sigstore.json` into a fresh temporary directory with bounded sizes.
+Cosign `verify-blob` must accept the manifest for the release workflow identity
+and GitHub OIDC issuer shown in the [installation guide](../docs/installation.md).
+The ZIP must match its single manifest row. It must contain exactly one regular
+`specgit` (`specgit.exe`) entry, and that executable must report the target
+version with `--human --version`. Missing Cosign, any mismatch, a missing asset
+or an oversized file stops with no replacement; there is no skip option.
+
+Apply replaces only the executable that is running, never a project copy. An
+unwritable directory fails before download. The previous executable is kept
+beside it as `specgit.backup-<previous-version>` (before `.exe` on Windows).
+Unix renames the new file over the executable atomically; Windows renames the
+running file aside first and restores it if the move fails. The installed file
+is read back by hash and version. Evidence reports the backup path. To roll
+back, move the backup over the executable path. Project configuration is not
+changed; refresh projects as described in the installation guide.
 
 ### Agent integration scopes
 

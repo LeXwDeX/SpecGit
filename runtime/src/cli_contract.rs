@@ -284,7 +284,9 @@ pub fn normalize_input(
             .as_object()
             .ok_or_else(|| invalid("options must be an object"))?;
         for (name, value) in options {
-            if ["input-file", "schema", "help", "version"].contains(&name.as_str()) {
+            // A command may own a value option named `version`; only clap's
+            // generated version and help flags are discovery transport.
+            if ["input-file", "schema", "help"].contains(&name.as_str()) {
                 return Err(invalid(
                     "discovery/input transport options cannot be nested in JSON",
                 ));
@@ -300,6 +302,11 @@ pub fn normalize_input(
                 .chain(inherited.iter().copied())
                 .find(|a| a.get_long() == Some(name))
                 .ok_or_else(|| invalid("unknown option"))?;
+            if matches!(arg.get_action(), ArgAction::Version | ArgAction::Help) {
+                return Err(invalid(
+                    "discovery/input transport options cannot be nested in JSON",
+                ));
+            }
             match arg.get_action() {
                 ArgAction::SetTrue | ArgAction::SetFalse => {
                     let b = value
