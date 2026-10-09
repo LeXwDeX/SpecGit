@@ -1459,6 +1459,53 @@ fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration()
 }
 
 #[test]
+fn receiptless_worktree_refreshes_unmodified_earlier_release_guidance_only() {
+    let f = Fixture::new();
+    assert_eq!(f.run(&["init", "--provider", "github"])["exit"], 0);
+    let receipt = f.root.join(".git/specgit-v2/guidance.json");
+    let agents = f.root.join("AGENTS.md");
+    let old = include_str!("fixtures/guidance-2.4.0-en.txt");
+    // A fresh clone or linked worktree has the committed block but no receipt.
+    fs::write(&agents, format!("User rules\n\n{old}\n")).unwrap();
+    fs::remove_file(&receipt).unwrap();
+    let r = f.run(&["init"]);
+    assert_eq!(r["exit"], 0, "{r}");
+    let text = fs::read_to_string(&agents).unwrap();
+    assert!(text.starts_with("User rules\n\n<!-- specgit:v2:start -->"));
+    assert!(text.contains(&format!("Runtime: {}.", env!("CARGO_PKG_VERSION"))));
+    assert!(text.contains("<!-- specgit:v2:sha256 "));
+    let edited = format!("User rules\n\n{}\n", old.replacen("SpecGit", "Spec Git", 2));
+    fs::write(&agents, &edited).unwrap();
+    fs::remove_file(&receipt).unwrap();
+    let r = f.run(&["init"]);
+    assert_eq!(r["exit"], 3, "{r}");
+    assert_eq!(r["diagnostics"][0]["code"], "ownership_conflict", "{r}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), edited);
+}
+
+#[test]
+fn missing_declaration_uses_the_supplied_config_file_as_previous_declaration() {
+    let f = Fixture::new();
+    let r = f.run(&["init", "--provider", "github", "--language", "zh"]);
+    assert_eq!(r["exit"], 0, "{r}");
+    let config = f.root.parent().unwrap().join("original.yaml");
+    fs::rename(f.root.join(".specgit.yaml"), &config).unwrap();
+    fs::remove_file(f.root.join(".git/specgit-v2/guidance.json")).unwrap();
+    let agents = f.root.join("AGENTS.md");
+    let old = include_str!("fixtures/guidance-2.5.0-zh.txt");
+    fs::write(&agents, format!("{old}\n")).unwrap();
+    let r = f.run(&["init", "--config-file", config.to_str().unwrap()]);
+    assert_eq!(r["exit"], 0, "{r}");
+    let text = fs::read_to_string(&agents).unwrap();
+    assert!(text.contains("<!-- specgit:v2:sha256 "));
+    assert!(text.contains("\"language\":\"zh\""));
+    assert_eq!(
+        fs::read(f.root.join(".specgit.yaml")).unwrap(),
+        fs::read(&config).unwrap()
+    );
+}
+
+#[test]
 fn unknown_capabilities_require_choice_and_inspection_has_no_local_writes() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new();
