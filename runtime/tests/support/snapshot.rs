@@ -28,3 +28,34 @@ pub fn write(path: impl AsRef<Path>, value: &Value) {
         }
     }
 }
+#[allow(dead_code)]
+pub fn read(path: impl AsRef<Path>) -> Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+/// Exclusive cross-process guard for one snapshot's read-modify-write. It locks
+/// a stable sidecar file because every write replaces the snapshot itself.
+/// Holders reread the snapshot after acquiring it; process exit releases it.
+#[allow(dead_code)]
+pub struct Lock(std::fs::File);
+#[allow(dead_code)]
+impl Lock {
+    pub fn acquire(path: impl AsRef<Path>) -> Self {
+        let mut sidecar = path.as_ref().as_os_str().to_owned();
+        sidecar.push(".lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(sidecar)
+            .unwrap();
+        file.lock().unwrap();
+        Self(file)
+    }
+    /// Runs a wait without the lock. Callers persist before and reread after it.
+    pub fn released<T>(&self, wait: impl FnOnce() -> T) -> T {
+        self.0.unlock().unwrap();
+        let value = wait();
+        self.0.lock().unwrap();
+        value
+    }
+}

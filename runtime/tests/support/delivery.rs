@@ -129,9 +129,11 @@ impl Fixture {
         command
     }
     pub fn state(&self) -> Value {
-        serde_json::from_slice(&fs::read(&self.state).unwrap()).unwrap()
+        snapshot::read(&self.state)
     }
+    /// Serialized with concurrently running fake forge processes.
     pub fn edit(&self, f: impl FnOnce(&mut Value)) {
+        let _lock = snapshot::Lock::acquire(&self.state);
         let mut s = self.state();
         f(&mut s);
         snapshot::write(&self.state, &s);
