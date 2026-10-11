@@ -17,5 +17,10 @@ pub(super) fn emit(report: Report, json: bool) {
             "{}",
             serde_json::to_string_pretty(&report.evidence).unwrap_or_default()
         );
+        for action in &report.next_actions {
+            if let Some(remedy) = action.get("remedy").and_then(serde_json::Value::as_str) {
+                println!("{remedy}");
+            }
+        }
     }
 }

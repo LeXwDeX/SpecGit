@@ -201,6 +201,16 @@ impl Fixture {
         jsonschema::draft202012::validate(&schema, &report).unwrap_or_else(|error| {
             panic!("report violates report.schema.json: {error}\n{report}")
         });
+        if report["evidence"]["installation"].is_null() {
+            assert!(
+                report["next_actions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|action| action["kind"] != "refresh_project_skills"),
+                "no successful replacement means no skill refresh notice: {report}"
+            );
+        }
         report
     }
 
@@ -377,6 +387,125 @@ fn apply_replaces_the_target_and_keeps_a_restorable_backup() {
         2,
         "target and backup only"
     );
+}
+
+#[test]
+fn successful_replacement_reminds_each_project_in_json_and_human_output() {
+    for version in [NEXT, "1.0.0"] {
+        for machine in [true, false] {
+            let fixture = Fixture::new();
+            fixture.publish(version, Tamper::None);
+            let mut state = fixture.state();
+            state["binary_version"] = json!(version);
+            fixture.write_state(&state);
+            let project = fixture._temp.path().join("project");
+            fs::create_dir_all(project.join(".agents/skills/specgit-native")).unwrap();
+            let files = [
+                ("AGENTS.md", "User project guidance\n"),
+                (
+                    ".specgit.yaml",
+                    "version: 2\nprovider: github\nremote: origin\ntarget: main\n",
+                ),
+                (
+                    ".agents/skills/specgit-native/SKILL.md",
+                    "Manually edited Skill\n",
+                ),
+            ];
+            for (path, content) in files {
+                fs::write(project.join(path), content).unwrap();
+            }
+            let output = fixture
+                .command(Path::new(env!("CARGO_BIN_EXE_specgit")))
+                .current_dir(&project)
+                .args([
+                    "update",
+                    "--version",
+                    version,
+                    if machine { "--json" } else { "--human" },
+                ])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let notice = if machine {
+                let report: Value = serde_json::from_str(&stdout).unwrap();
+                let schema: Value =
+                    serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+                jsonschema::draft202012::validate(&schema, &report).unwrap();
+                assert_eq!(
+                    report["status"],
+                    if version == NEXT {
+                        "updated"
+                    } else {
+                        "downgraded"
+                    }
+                );
+                let actions = report["next_actions"].as_array().unwrap();
+                let action = actions
+                    .iter()
+                    .find(|action| action["kind"] == "refresh_project_skills")
+                    .expect("successful replacement must suggest refreshing project Skills");
+                assert_eq!(action["command"], "specgit setup");
+                assert_eq!(report["effects"]["operations"].as_array().unwrap().len(), 1);
+                action["remedy"].as_str().unwrap().to_owned()
+            } else {
+                stdout
+            };
+            assert!(notice.contains("specgit setup"), "{notice}");
+            assert!(notice.contains("may need"), "not confirmed stale: {notice}");
+            for (path, content) in files {
+                assert_eq!(fs::read_to_string(project.join(path)).unwrap(), content);
+            }
+            assert_eq!(fs::read_dir(&project).unwrap().count(), 3);
+            assert_eq!(fs::read_dir(project.join(".agents")).unwrap().count(), 1);
+            assert_eq!(
+                fs::read_dir(project.join(".agents/skills"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+            assert_eq!(
+                fs::read_dir(project.join(".agents/skills/specgit-native"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+            assert_eq!(
+                fixture.roles(),
+                ["gh", "gh", "gh", "gh", "cosign", "specgit", "specgit"],
+                "only release reads, signature verification, smoke and readback"
+            );
+        }
+    }
+}
+
+#[test]
+fn human_output_does_not_suggest_skill_refresh_without_replacement() {
+    for (args, version, tamper) in [
+        (&["update", "--check"][..], NEXT, Tamper::None),
+        (&["update", "--dry-run"][..], NEXT, Tamper::None),
+        (&["update"][..], CURRENT, Tamper::None),
+        (&["update"][..], "1.0.0", Tamper::None),
+        (&["update"][..], NEXT, Tamper::ManifestAfterSigning),
+    ] {
+        let fixture = Fixture::new();
+        fixture.publish(version, tamper);
+        let output = fixture
+            .command(Path::new(env!("CARGO_BIN_EXE_specgit")))
+            .args(args)
+            .arg("--human")
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            tamper == Tamper::None,
+            "{output:?}"
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains("specgit setup"), "{stdout}");
+        assert!(!stdout.contains("The CLI was replaced"), "{stdout}");
+        fixture.assert_unchanged();
+    }
 }
 
 #[test]
