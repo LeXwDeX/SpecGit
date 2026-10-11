@@ -41,16 +41,17 @@ fn main() {
             .file_stem()
             .is_some_and(|n| n == "git")
     {
-        let path = std::env::var_os("SPECGIT_FIXTURE_API_FILE").unwrap();
-        let mut state: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let path = std::path::PathBuf::from(std::env::var_os("SPECGIT_FIXTURE_API_FILE").unwrap());
+        let lock = snapshot::Lock::acquire(&path);
+        let mut state = snapshot::read(&path);
         if args.first().is_some_and(|a| a == "rev-parse")
             && args.get(1).is_some_and(|a| a == "--show-toplevel")
             && state["observation_discovery_failed"] == true
         {
             state["hanging_git_pid"] = serde_json::json!(std::process::id());
-            snapshot::write(&path, &state);
-            std::thread::sleep(Duration::from_secs(120));
+            pause(&path, &lock, &mut state, || {
+                std::thread::sleep(Duration::from_secs(120))
+            });
         }
         if args.first().is_some_and(|a| a == "rev-parse")
             && args.get(1).is_some_and(|a| a == "--show-toplevel")
@@ -73,6 +74,7 @@ fn main() {
             state["git_proxy_hits"] =
                 serde_json::json!(state["git_proxy_hits"].as_u64().unwrap_or(0) + 1);
             snapshot::write(&path, &state);
+            drop(lock);
             if state["initial_git_complete"] == true {
                 std::thread::sleep(Duration::from_millis(150));
             }
@@ -82,13 +84,16 @@ fn main() {
             std::io::stderr().write_all(&stderr).unwrap();
             std::process::exit(cached["code"].as_i64().unwrap() as i32);
         }
-        if let Some(delay) = state["git_proxy_delay_ms"].as_u64() {
-            std::thread::sleep(Duration::from_millis(delay));
-        }
-        let output = std::process::Command::new(real_git)
-            .args(&args)
-            .output()
-            .unwrap();
+        let delay = state["git_proxy_delay_ms"].as_u64();
+        let output = pause(&path, &lock, &mut state, || {
+            if let Some(delay) = delay {
+                std::thread::sleep(Duration::from_millis(delay));
+            }
+            std::process::Command::new(real_git)
+                .args(&args)
+                .output()
+                .unwrap()
+        });
         if !state["git_proxy_cache"].is_object() {
             state["git_proxy_cache"] = serde_json::json!({});
         }
@@ -417,8 +422,43 @@ fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
     }
 }
 
+/// Persists `state`, waits without the fixture lock, then rereads the snapshot.
+/// A resumed process thus never rewrites a stale copy over concurrent updates.
+fn pause<T>(
+    path: &std::path::Path,
+    lock: &snapshot::Lock,
+    state: &mut serde_json::Value,
+    wait: impl FnOnce() -> T,
+) -> T {
+    snapshot::write(path, state);
+    let value = lock.released(wait);
+    *state = snapshot::read(path);
+    value
+}
+
+fn wait_for_gate(gate: &serde_json::Value) -> bool {
+    let parked = std::path::Path::new(gate["parked"].as_str().unwrap());
+    let release = std::path::Path::new(gate["release"].as_str().unwrap());
+    std::fs::write(parked, b"").unwrap();
+    // The CLI deadline is shorter; this bound only ends an orphaned gate.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !release.exists() {
+        if matches!(parked.try_exists(), Ok(false)) {
+            std::process::exit(1);
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
 fn native_api(args: &[String], path: &std::path::Path) {
     use serde_json::{Value, json};
+    // Concurrent CLI processes share one snapshot. Hold its lock from the read
+    // through the last write, except while pausing, so no update is lost.
+    let lock = snapshot::Lock::acquire(path);
     if args.first().is_some_and(|a| a == "pr" || a == "mr") {
         let mut state: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         if state["request_fixture"].as_bool() == Some(true) {
@@ -549,27 +589,69 @@ fn native_api(args: &[String], path: &std::path::Path) {
                 .as_object_mut()
                 .unwrap()
                 .remove("switch_branch_on_search");
-            assert!(
+            // Git on PATH may be the locking proxy, so run it without the lock.
+            let switched = pause(path, &lock, &mut state, || {
                 std::process::Command::new("git")
                     .args(["switch", "-c", &branch])
                     .output()
                     .unwrap()
                     .status
                     .success()
-            );
+            });
+            assert!(switched);
         }
+    }
+    if method == "GET"
+        && endpoint
+            .split('?')
+            .next()
+            .is_some_and(|route| route.ends_with("/labels"))
+    {
+        let cwd = std::env::current_dir().unwrap();
+        let worktree = cwd.file_name().unwrap().to_string_lossy();
+        let gate = state["issue_preflight_gates"][worktree.as_ref()].clone();
+        if gate.is_object() && !pause(path, &lock, &mut state, || wait_for_gate(&gate)) {
+            eprintln!("fixture issue preflight gate was not released");
+            std::process::exit(1);
+        }
+    }
+    // The test-controlled gate parks one issue creation after persisting its
+    // call. The parked marker follows that write and only the release marker
+    // resumes it, so ordering never depends on how long preflight takes.
+    if method == "POST"
+        && endpoint.ends_with("/issues")
+        && state["issue_create_gate"].is_object()
+        && state["issue_create_gate"]["parked_calls"].is_null()
+    {
+        state["issue_create_gate"]["parked_calls"] =
+            json!(state["calls"].as_array().unwrap().len());
+        // gh runs in its writer's worktree, which tells the test who parked.
+        state["issue_create_gate"]["worktree"] = json!(std::env::current_dir().unwrap());
+        let gate = state["issue_create_gate"].clone();
+        let released = pause(path, &lock, &mut state, || wait_for_gate(&gate));
+        if !released {
+            state["issue_create_gate"]["expired"] = json!(true);
+            snapshot::write(path, &state);
+            eprintln!("fixture issue creation gate was not released");
+            std::process::exit(1);
+        }
+        state["issue_create_gate"]["resumed_calls"] =
+            json!(state["calls"].as_array().unwrap().len());
     }
     if method == "POST"
         && endpoint.ends_with("/issues")
-        && let Some(ms) = state["create_issue_delay_ms"].as_u64()
+        && let Some(delay_ms) = state["create_issue_delay_ms"].as_u64()
     {
-        snapshot::write(path, &state);
-        std::thread::sleep(std::time::Duration::from_millis(ms));
+        pause(path, &lock, &mut state, || {
+            std::thread::sleep(Duration::from_millis(delay_ms.min(60_000)))
+        });
     }
     if method == "GET"
         && let Some(delay_ms) = state["api_delay_ms"].as_u64()
     {
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(60_000)));
+        pause(path, &lock, &mut state, || {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(60_000)))
+        });
     }
     if method == "GET"
         && (endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo")
@@ -582,8 +664,9 @@ fn native_api(args: &[String], path: &std::path::Path) {
             == 2
         && let Some(delay_ms) = state["second_project_read_delay_ms"].as_u64()
     {
-        snapshot::write(path, &state);
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(60_000)));
+        pause(path, &lock, &mut state, || {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(60_000)))
+        });
     }
     // glab --input forwards raw bytes without adding a JSON media type.
     // The real GitLab API rejects these writes with HTTP 415 before parsing.
@@ -604,6 +687,8 @@ fn native_api(args: &[String], path: &std::path::Path) {
         state["hanging_reader_pid"] = json!(std::process::id());
         snapshot::write(path, &state);
         if state["read_failure"] == "hang" {
+            // A hanging reader must not block the other fixture processes.
+            drop(lock);
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
