@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use std::{
     fs,
     io::Write,
-    path::Path,
-    process::{Command, Stdio},
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -202,32 +202,170 @@ fn shared_exclusion_does_not_hide_another_worktrees_manual_guidance() {
     }
 }
 
+/// Product deadlines bound every writer; this guard only reports a hang.
+const HANG_GUARD: Duration = Duration::from_secs(180);
+/// Owns concurrently running writers. Dropping it releases the fixture gate and
+/// reaps every child; after a failure it prints their output and forge calls.
+struct Writers<'a> {
+    fixture: &'a delivery::Fixture,
+    releases: Vec<PathBuf>,
+    children: Vec<(&'static str, Child)>,
+}
+impl Writers<'_> {
+    fn output(&self, name: &str, stream: &str) -> PathBuf {
+        self.fixture
+            .root
+            .parent()
+            .unwrap()
+            .join(format!("{name}.{stream}"))
+    }
+    fn spawn(&mut self, name: &'static str, mut command: Command) {
+        // Files cannot fill up and stall a writer the way an unread pipe can.
+        let child = command
+            .stdout(fs::File::create(self.output(name, "stdout")).unwrap())
+            .stderr(fs::File::create(self.output(name, "stderr")).unwrap())
+            .spawn()
+            .unwrap();
+        self.children.push((name, child));
+    }
+    fn exited(&mut self, name: &str) -> bool {
+        let (_, child) = self.children.iter_mut().find(|(n, _)| *n == name).unwrap();
+        child.try_wait().unwrap().is_some()
+    }
+    fn report(&mut self, name: &str) -> Value {
+        let exited = wait_for(HANG_GUARD, || self.exited(name));
+        assert!(exited, "{name} writer did not exit");
+        serde_json::from_slice(&fs::read(self.output(name, "stdout")).unwrap())
+            .unwrap_or_else(|_| panic!("{name} writer did not print one JSON report"))
+    }
+}
+impl Drop for Writers<'_> {
+    fn drop(&mut self) {
+        // Release first so a parked writer can finish and print its report.
+        for release in &self.releases {
+            let _ = fs::write(release, b"");
+        }
+        for (_, child) in &mut self.children {
+            wait_for(Duration::from_secs(5), || {
+                !matches!(child.try_wait(), Ok(None))
+            });
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if std::thread::panicking() {
+            // Never panic again here: a second panic would abort without evidence.
+            let read = |path: PathBuf| {
+                String::from_utf8_lossy(&fs::read(path).unwrap_or_default()).into_owned()
+            };
+            for (name, _) in &self.children {
+                for stream in ["stdout", "stderr"] {
+                    eprintln!(
+                        "{name} writer {stream}: {}",
+                        read(self.output(name, stream))
+                    );
+                }
+            }
+            let api = self.fixture.root.parent().unwrap().join("api.json");
+            eprintln!("fixture state with calls: {}", read(api));
+        }
+    }
+}
+fn wait_for(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + limit;
+    while !done() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
 #[test]
 fn linked_worktrees_share_issue_creation_lock() {
     let a = delivery::Fixture::new("github");
-    let linked = a.root.parent().unwrap().join("linked");
+    let base = a.root.parent().unwrap().to_owned();
+    let linked = base.join("linked");
     git(&a.root, &["worktree", "add", "-b", "linked", "../linked"]);
     fs::copy(a.root.join(".specgit.yaml"), linked.join(".specgit.yaml")).unwrap();
-    a.edit(|s| s["create_issue_delay_ms"] = json!(800));
+    let parked = base.join("issue-create.parked");
+    let release = base.join("issue-create.release");
+    let main_ready = base.join("main-preflight.ready");
+    let main_release = base.join("main-preflight.release");
+    let linked_ready = base.join("linked-preflight.ready");
+    let linked_release = base.join("linked-preflight.release");
+    a.edit(|s| {
+        s["issue_create_gate"] = json!({"parked":parked,"release":release});
+        s["issue_preflight_gates"] = json!({
+            "project":{"parked":main_ready,"release":main_release},
+            "linked":{"parked":linked_ready,"release":linked_release},
+        });
+    });
     let args = ["issue", "--create-labels", "feat: identical concurrent WHY"];
-    let first = a.command(&args).stdout(Stdio::piped()).spawn().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !a.state()["calls"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|c| c["method"] == "POST" && c["endpoint"].as_str().unwrap().ends_with("/issues"))
-    {
-        assert!(
-            Instant::now() < deadline,
-            "first writer did not reach creation"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let second = a.command(&args).current_dir(&linked).output().unwrap();
-    let first = first.wait_with_output().unwrap();
-    assert!(first.status.success(), "{:?}", first.stdout);
-    let report: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let mut writers = Writers {
+        fixture: &a,
+        releases: vec![
+            main_release.clone(),
+            linked_release.clone(),
+            release.clone(),
+        ],
+        children: vec![],
+    };
+    // Both writers finish external preflight before either can acquire the lock.
+    writers.spawn("main", a.command(&args));
+    let mut command = a.command(&args);
+    command.current_dir(&linked);
+    writers.spawn("linked", command);
+    wait_for(HANG_GUARD, || {
+        (main_ready.exists() && linked_ready.exists())
+            || writers.exited("main")
+            || writers.exited("linked")
+    });
+    assert!(
+        main_ready.exists() && linked_ready.exists(),
+        "both writers must reach the last external preflight read"
+    );
+    fs::write(&main_release, b"").unwrap();
+    wait_for(HANG_GUARD, || {
+        parked.exists() || writers.exited("main") || writers.exited("linked")
+    });
+    assert!(
+        parked.exists(),
+        "main writer did not park at issue creation"
+    );
+    let parked_in = PathBuf::from(a.state()["issue_create_gate"]["worktree"].as_str().unwrap());
+    assert!(
+        parked_in.ends_with(a.root.file_name().unwrap()),
+        "{parked_in:?}"
+    );
+    fs::write(&linked_release, b"").unwrap();
+    let refused = writers.report("linked");
+    assert_eq!(refused["diagnostics"][0]["code"], "lock_busy", "{refused}");
+    fs::write(&release, b"").unwrap();
+    let created = writers.report("main");
+    assert_eq!(created["exit"], 0, "{created}");
+    let state = a.state();
+    let gate = &state["issue_create_gate"];
+    let calls = state["calls"].as_array().unwrap();
+    let creates =
+        |c: &Value| c["method"] == "POST" && c["endpoint"].as_str().unwrap().ends_with("/issues");
+    let searches = |c: &Value| {
+        let endpoint = c["endpoint"].as_str().unwrap();
+        c["method"] == "GET" && (endpoint.starts_with("search/") || endpoint.contains("/issues?"))
+    };
+    // Only the other writer ran while the creator was parked. The shared lock
+    // must keep it from candidate search and creation in that whole window.
+    let parked_window = &calls[gate["parked_calls"].as_u64().unwrap() as usize
+        ..gate["resumed_calls"].as_u64().unwrap() as usize];
+    assert!(
+        !parked_window.iter().any(|c| creates(c) || searches(c)),
+        "{parked_window:?}"
+    );
+    assert_eq!(calls.iter().filter(|c| creates(c)).count(), 1);
+    assert_eq!(state["issues"].as_array().unwrap().len(), 1);
+    // After the release, the other worktree reviews the one created Issue.
+    let out = a.command(&args).current_dir(&linked).output().unwrap();
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["status"], "candidate_review_required", "{report}");
     assert_eq!(a.state()["issues"].as_array().unwrap().len(), 1);
 }
