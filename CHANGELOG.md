@@ -4,6 +4,16 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.6.2
+
+- Expand the shipped specification Skill to cover new tasks, existing PR/MR CI and review repair, waiting, and scope-specific completion. Keep project integration and authorization boundaries unchanged.
+- Display next-action remedies in human output. After a verified executable replacement, suggest previewing project Skill refresh without inspecting or changing project assets.
+- Serialize shared forge-fixture snapshots and make linked-worktree Issue creation regression ordering explicit.
+- Accept supported v2 OpenCode project hooks in repository metadata checks while retaining detection of retired v1 integration commands.
+- Verify repeated pending watch observations after real local Git commits with calibrated, capped progress bounds. Simulated platform head, merge and Issue updates complete the same live subscription; this regression does not perform a real Git push.
+
+Scope: [#674](https://github.com/LeXwDeX/SpecGit/issues/674), [#675](https://github.com/LeXwDeX/SpecGit/issues/675), [#676](https://github.com/LeXwDeX/SpecGit/issues/676), [#677](https://github.com/LeXwDeX/SpecGit/issues/677), [#681](https://github.com/LeXwDeX/SpecGit/issues/681), [#682](https://github.com/LeXwDeX/SpecGit/issues/682), [#683](https://github.com/LeXwDeX/SpecGit/issues/683).
+
 # 2.6.1
 
 - Update the `libc` runtime dependency to 0.2.190.
