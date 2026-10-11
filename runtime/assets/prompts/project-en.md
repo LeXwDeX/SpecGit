@@ -1,7 +1,8 @@
 SpecGit manages specification Issues and their native PR/MR association.
-Load the specgit-native skill for the full workflow and recovery steps.
-Use the installed shared CLI contract: `specgit --help` and `specgit --schema`.
-Use `--json` for machine output. Preview Issue/PR writes with `--dry-run`.
+Load the same specgit-native Skill for new tasks and existing PR/MR CI/review repair.
+The Skill defines the full workflow, tool choice, waiting and recovery. The binary is optional, not a waiver of installed guard/checkpoint or project constraints.
+When using the shared CLI, follow its installed contract: `specgit --help` and `specgit --schema`.
+Use `--json` for CLI machine output. Preview Issue/PR writes with `--dry-run`.
 
 Inspect duplicate work before Issue selection.
 Before tracked product edits, select a complete relevant Issue with Why, Scope, Approach and Acceptance.
@@ -17,8 +18,9 @@ The agent handles judgment, repairs and authorized native gh/glab operations.
 GitHub/GitLab owns CI, review, protection and actual merge.
 Keep each user-authored body and every closing reference.
 
-Use `specgit pr --status` and bounded `specgit watch` for current evidence.
-Exit 0 means operation success. Completion requires native readback of the intended target merge and every selected Issue closure.
+Use current-head CI and review evidence; CLI observation uses `specgit pr --status` and bounded `specgit watch`.
+Finish against the user's scope: review, repair or tracking delivers its result and limits; platform delivery requires native readback of the intended target merge and closure of every associated Issue that should close.
+Exit 0 means operation success, not acceptance or delivery completion.
 Optional Agent closure is disabled by default. It requires existing authorization and confirmed native identity.
 For missing capabilities or a SpecGit defect, follow the skill's explicit recovery steps.
 
@@ -32,3 +34,4 @@ SpecGit integration is permanently project-only.
 Install the shared CLI separately. Setup installs no project executable, global host assets or global state.
 Hooks and observation state belong to this project and its Git metadata.
 Installed hooks check local checkpoints. They are not a general file-write sandbox.
+Refresh only owned, unedited assets and marked blocks; preserve manual text outside blocks and other tools' content. Keep existing conflict and recovery protection.
