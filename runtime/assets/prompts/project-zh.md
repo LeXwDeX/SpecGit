@@ -1,7 +1,8 @@
 SpecGit 管理规格 Issue 与原生 PR/MR 关联。
-加载 specgit-native skill，读取完整流程和恢复步骤。
-以共享 CLI 的 `specgit --help` 和 `specgit --schema` 为已安装命令契约。
-机器输出用 `--json`。Issue/PR 写入先用 `--dry-run` 预览。
+新任务和接手已有 PR/MR 的 CI/评审修复都加载同一个 specgit-native Skill。
+完整业务流程、工具选择、等待与恢复方式见 Skill。二进制可选，但不得绕过已有 guard/checkpoint 和项目约束。
+使用共享 CLI 时，以 `specgit --help` 和 `specgit --schema` 为已安装命令契约。
+CLI 机器输出用 `--json`。Issue/PR 写入先用 `--dry-run` 预览。
 
 选择 Issue 前先查重。
 修改已跟踪的产品代码前，选择一个包含原因、范围、方案和验收要求的相关完整 Issue。
@@ -17,8 +18,9 @@ Agent 负责判断、修复和已授权的原生 gh/glab 操作。
 GitHub/GitLab 负责 CI、评审、保护和实际合并。
 保留用户正文和全部关闭引用。
 
-通过 `specgit pr --status` 和有界 `specgit watch` 获取当前证据。
-退出码 0 表示操作成功。交付完成须原生回读确认目标分支合并及全部选定 Issue 关闭。
+使用当前提交的 CI 和评审证据；使用 CLI 时通过 `specgit pr --status` 和有界 `specgit watch` 观察。
+按用户本次目标收尾：仅评审、修复或跟踪时交付相应结果及限制；包含平台交付时，须原生回读确认目标分支合并及全部应关闭的关联 Issue 关闭。
+退出码 0 只表示操作成功，不证明验收或交付完成。
 Agent 补关默认禁用，执行时仍需已有授权和已确认的原生身份。
 能力缺失或 SpecGit 故障时，按 skill 的明确恢复步骤处理。
 
@@ -32,3 +34,4 @@ SpecGit 集成永久仅限项目级。
 共享 CLI 单独安装。Setup 不安装项目内二进制、全局宿主资产或全局状态。
 Hooks 与观察状态属于当前项目及其 Git 元数据。
 已安装 hook 检查本地 checkpoint。它不是通用的文件写入沙箱。
+刷新只更新受管且未被人工修改的资产与标记块；保留块外正文和其他工具内容，冲突按原恢复规则处理。

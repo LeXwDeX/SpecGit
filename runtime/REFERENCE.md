@@ -101,6 +101,9 @@ operation, message and remedy. Raw provider stderr is classified locally rather
 than copied into the report. Business code consumes typed library values, not
 its own serialized reports.
 
+Human output also displays the remedies in `next_actions`. These are guidance,
+not automatically executed operations or new authorization.
+
 | Exit | Meaning |
 | --- | --- |
 | 0 | The operation or observation succeeded. Inspect native state separately. |
@@ -468,7 +471,27 @@ is read back by hash and version. Evidence reports the backup path. To roll
 back, move the backup over the executable path. Project configuration is not
 changed; refresh projects as described in the installation guide.
 
+After successful replacement and readback, both `updated` and `downgraded`
+reports add `next_actions` with `kind: "refresh_project_skills"`,
+`command: "specgit setup"` and a `remedy`. Human output displays the same remedy.
+It says existing project Skills **may need** refreshing, not that a specific
+Skill was checked or is stale. Run setup in each relevant project, previewing
+with `specgit setup --dry-run`. Setup refreshes only recorded, owned assets
+whose current content matches the record; manual edits, foreign files and missing
+recorded assets keep their existing conflict protection. Update does not invoke
+setup, scan projects or refresh any project asset. Checks, previews, no-op and
+failed updates do not report this successful-replacement guidance.
+
 ### Agent integration scopes
+
+The single `specgit-native` Skill covers new specification tasks and taking over
+existing PR/MR CI and review repair. It defines tool choice, testing, feedback,
+waiting and completion against the user's scope. Native tools can carry out the
+workflow without the optional binary; installed declarations, guards and
+checkpoints still apply. Project entry prompts point to this Skill rather than
+duplicate its workflow. A review or local repair is not a platform-delivery
+claim; a platform-delivery goal requires current evidence and native readback
+of merge and closure of the associated Issues that should close.
 
 `setup` records repeatable `--agent generic|claude|codex|opencode` under
 `--scope project` (the default and only scope value). Unsupported or duplicated
