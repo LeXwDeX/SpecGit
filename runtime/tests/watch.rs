@@ -1393,6 +1393,69 @@ fn ordinary_local_edits_supersede_the_assessment_without_losing_the_live_subscri
     assert_eq!(f.run(&watch("checks"))["status"], "checks_passed");
 }
 
+fn repeated_pending_poll(
+    lease: Option<&watch_store::Lease>,
+    event: Option<&watch_store::Event>,
+    pid: u32,
+    head: &str,
+    minimum: u64,
+) -> bool {
+    lease.is_some_and(|l| l.pid == pid && l.polls_completed >= minimum.max(4))
+        && event.is_some_and(|e| {
+            e.state == EventState::Pending
+                && !e.superseded
+                && e.reason.contains("Local commits are ahead")
+                && e.revision.local_head == head
+                && e.validated_at > e.observed_at
+        })
+}
+
+#[test]
+fn repeated_pending_requires_live_revalidation_not_early_completion() {
+    let mut lease = watch_store::Lease {
+        owner: "test".into(),
+        pid: 42,
+        started_at: 1,
+        deadline: 100,
+        polls_completed: 5,
+    };
+    let mut event = watch_store::Event {
+        id: "event".into(),
+        fingerprint: "fingerprint".into(),
+        revision: Revision {
+            head: "old".into(),
+            local_head: "new".into(),
+            target: "main".into(),
+            declaration: "declaration".into(),
+            evidence_digest: "evidence".into(),
+        },
+        state: EventState::Pending,
+        reason: "Local commits are ahead".into(),
+        next_action: "push".into(),
+        next_step: None,
+        observed_at: 2,
+        validated_at: 4,
+        acknowledged_at: None,
+        superseded: false,
+    };
+    let ready = |lease: &watch_store::Lease, event: &watch_store::Event| {
+        repeated_pending_poll(Some(lease), Some(event), 42, "new", 5)
+    };
+    assert!(ready(&lease, &event));
+    lease.polls_completed = 4;
+    assert!(!ready(&lease, &event), "missing a repeated pending poll");
+    lease.polls_completed = 5;
+    event.state = EventState::Completed;
+    assert!(!ready(&lease, &event), "premature completion must fail");
+    event.state = EventState::Pending;
+    event.validated_at = event.observed_at;
+    assert!(!ready(&lease, &event), "one event is not revalidation");
+    event.validated_at = 4;
+    event.revision.local_head = "old".into();
+    assert!(!ready(&lease, &event), "stale local head must fail");
+    assert!(!repeated_pending_poll(None, Some(&event), 42, "new", 5));
+}
+
 #[test]
 fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes() {
     use std::{
@@ -1400,7 +1463,16 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         time::{Duration, Instant},
     };
     let f = fixture("github");
+    let calibration = Instant::now();
     let first = f.run(&watch("lifecycle"));
+    // A poll includes native reads and Git revalidation, not only its sleep.
+    // Calibrate before spawning; lack of progress still has a capped watchdog.
+    let poll_budget = Duration::from_secs(calibration.elapsed().as_secs().max(1) * 2 + 2);
+    assert!(
+        poll_budget <= Duration::from_secs(30),
+        "slow fixture calibration"
+    );
+    let subscription_seconds = (poll_budget * 6).as_secs().to_string();
     let identity: Identity =
         serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
     let old_head = first["evidence"]["events"][0]["revision"]["local_head"]
@@ -1418,7 +1490,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             "--poll-seconds",
             "1",
             "--timeout-seconds",
-            "30",
+            &subscription_seconds,
         ]),
         &identity,
         "unpushed-commits",
@@ -1433,7 +1505,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             break;
         }
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            child.try_wait().unwrap().is_none() && started.elapsed() < poll_budget * 2,
             "{}",
             child.diagnostic()
         );
@@ -1459,17 +1531,39 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
     .unwrap()
     .trim()
     .to_owned();
-    let started = Instant::now();
+    let mut progressed = Instant::now();
+    let mut polls = 0;
+    let mut first_pending = None;
     loop {
         let state = watch_store::read(&identity).unwrap().unwrap();
-        if state
-            .lease
-            .is_some_and(|l| l.pid == child.id() && l.polls_completed >= 4)
-            && state.events.last().is_some_and(|e| {
-                e.state == EventState::Pending && e.reason.contains("Local commits are ahead")
-            })
+        if let Some(lease) = &state.lease
+            && lease.pid == child.id()
+            && lease.polls_completed > polls
         {
-            break;
+            polls = lease.polls_completed;
+            progressed = Instant::now();
+            if state.events.last().is_some_and(|e| {
+                e.state == EventState::Pending
+                    && e.reason.contains("Local commits are ahead")
+                    && e.revision.local_head == new_head
+            }) {
+                let first_poll = *first_pending.get_or_insert(polls);
+                if repeated_pending_poll(
+                    state.lease.as_ref(),
+                    state.events.last(),
+                    child.id(),
+                    &new_head,
+                    first_poll + 2,
+                ) {
+                    assert!(
+                        state
+                            .events
+                            .iter()
+                            .any(|e| { e.state == EventState::ChecksPassed && e.superseded })
+                    );
+                    break;
+                }
+            }
         }
         assert!(
             child.try_wait().unwrap().is_none(),
@@ -1477,7 +1571,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             child.diagnostic()
         );
         assert!(
-            started.elapsed() < Duration::from_secs(15),
+            progressed.elapsed() < poll_budget,
             "No multi-poll pending state: {}",
             child.diagnostic()
         );
@@ -1490,7 +1584,18 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
     });
-    let status = child.wait().unwrap();
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            started.elapsed() < poll_budget * 2,
+            "Native push did not resume completion: {}",
+            child.diagnostic()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let (stdout, _) = child.output();
     let result: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(result["status"], "completed", "{result}");
