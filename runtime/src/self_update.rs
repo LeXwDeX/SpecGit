@@ -733,6 +733,7 @@ pub async fn run(options: Options, process: Process) -> Report {
     };
     if let Some(installation) = &evidence.installation {
         report.next_actions.push(json!({"kind":"rollback_available","executable":installation.executable,"backup":installation.backup,"remedy":"To roll back, stop running specgit processes and move the backup over the executable path. Project configuration is unchanged."}));
+        report.next_actions.push(json!({"kind":"refresh_project_skills","command":"specgit setup","remedy":"The CLI was replaced. Existing project Skills may need refreshing; run specgit setup in each relevant project (preview with specgit setup --dry-run). Setup refreshes only recorded, owned assets whose content is unchanged; manual edits are preserved and reported as conflicts. No project Skills were inspected or updated by this command."}));
     } else if report.exit == 0 && evidence.update_available {
         report.next_actions.push(json!({"kind":"apply_update","remedy":"Preview with specgit update --dry-run, then apply with specgit update (add the same --version selection)."}));
     }
