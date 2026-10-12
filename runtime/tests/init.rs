@@ -220,8 +220,8 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
     assert_eq!(by_id("forge.read_access")["diagnostic"], Value::Null);
     assert_eq!(by_id("issue.duplicate_read")["status"], "not_checked");
     assert_eq!(by_id("issue.duplicate_read")["presentation"], "blocking");
-    assert_eq!(by_id("issue.write_permission")["status"], "not_checked");
-    assert_eq!(by_id("request.write_permission")["status"], "not_checked");
+    assert_eq!(by_id("issue.write_permission")["status"], "unknown");
+    assert_eq!(by_id("request.write_permission")["status"], "unknown");
     assert_eq!(by_id("target.protection")["status"], "unknown");
     assert_eq!(by_id("target.protection")["presentation"], "warning");
     assert_eq!(by_id("request.eligibility")["requirement"], "optional");
@@ -313,6 +313,130 @@ fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
 }
 
 #[test]
+fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/write-permissions.json")).unwrap();
+    for case in cases {
+        let provider = case["provider"].as_str().unwrap();
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["project"]
+            .as_object_mut()
+            .unwrap()
+            .extend(case["fields"].as_object().unwrap().clone());
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&[
+            "init",
+            "--provider",
+            provider,
+            "--inspect",
+            "--manual-observe",
+        ]);
+        assert_report_matches_schema(&report);
+        assert_eq!(report["status"], "inspected", "{case}: {report}");
+        assert_eq!(report["exit"], 0);
+        let checks = report["evidence"]["checks"].as_array().unwrap();
+        let account = report["evidence"]["probes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|probe| probe["operation"] == "account_api")
+            .unwrap();
+        let permissions = &account["evidence"]["write_permissions"];
+        for (kind, id) in [
+            ("issue", "issue.write_permission"),
+            ("request", "request.write_permission"),
+        ] {
+            let check = checks.iter().find(|check| check["id"] == id).unwrap();
+            let (status, presentation) = match case[kind].as_str().unwrap() {
+                "supported" => ("verified", "pass"),
+                "unsupported" => ("not_configured", "blocking"),
+                _ => ("unknown", "hint"),
+            };
+            assert_eq!(permissions[kind]["status"], case[kind], "{case}: {report}");
+            assert_eq!(check["status"], status, "{case}: {check}");
+            assert_eq!(check["presentation"], presentation);
+            assert_eq!(check["source"], permissions[kind]["source"]);
+            assert!(check["source"].as_str().unwrap().contains("permissions"));
+            let reason = check["reason"].as_str().unwrap();
+            assert!(reason.contains("role"));
+            assert!(reason.contains("fine-grained token"));
+            assert!(reason.contains("branch protection"));
+            assert!(!check["next_step"].as_str().unwrap().is_empty());
+        }
+        if provider == "github" {
+            assert!(
+                permissions["issue"]["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("triage")
+            );
+        }
+        let layers = report["evidence"]["availability"]["layers"]
+            .as_array()
+            .unwrap();
+        assert_eq!(layers[0]["status"], "ready");
+        assert_eq!(
+            layers[1]["status"],
+            if case["request"] == "unsupported" {
+                "blocked"
+            } else {
+                "unverified"
+            }
+        );
+        assert_eq!(layers[2]["status"], "unverified");
+        let expected_routes = if provider == "github" {
+            vec![
+                "user",
+                "repos/fixture/repo",
+                "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1",
+                "repos/fixture/repo",
+                "repos/fixture/repo/branches/preview/protection",
+            ]
+        } else {
+            vec![
+                "user",
+                "projects/fixture%2Frepo",
+                "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1",
+                "projects/7/protected_branches/preview",
+            ]
+        };
+        let calls = f.state()["calls"].as_array().unwrap().clone();
+        assert_eq!(
+            calls
+                .iter()
+                .map(|call| call["endpoint"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected_routes,
+            "{case}"
+        );
+        assert!(calls.iter().all(|call| call["method"] == "GET"));
+
+        state = f.state();
+        state["calls"] = json!([]);
+        fs::write(&f.state, state.to_string()).unwrap();
+        let doctor = f.run_raw(&["doctor", "--provider", provider]);
+        assert_eq!(doctor["exit"], 0, "{case}: {doctor}");
+        assert_eq!(doctor["evidence"]["write_permissions"], *permissions);
+        let probes = doctor["evidence"]["probes"].as_array().unwrap();
+        for operation in ["project_api", "account_api"] {
+            assert_eq!(
+                probes
+                    .iter()
+                    .find(|probe| probe["operation"] == operation)
+                    .unwrap()["evidence"]["write_permissions"],
+                *permissions
+            );
+        }
+        let calls = f.state()["calls"].as_array().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["endpoint"], "user");
+        assert_eq!(calls[1]["endpoint"], expected_routes[1]);
+        assert!(calls.iter().all(|call| call["method"] == "GET"));
+    }
+}
+
+#[test]
 fn failed_native_identity_preserves_scope_without_claiming_verification() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new();
@@ -335,6 +459,129 @@ fn failed_native_identity_preserves_scope_without_claiming_verification() {
             "blocked"
         );
         assert!(!f.root.join(".specgit.yaml").exists());
+    }
+}
+
+#[test]
+fn unknown_or_insufficient_roles_do_not_prevent_local_initialization() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/write-permissions.json")).unwrap();
+    for case in cases.iter().filter(|case| {
+        case["name"] == "missing" || case["name"] == "read_only" || case["name"] == "guest"
+    }) {
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["project"]
+            .as_object_mut()
+            .unwrap()
+            .extend(case["fields"].as_object().unwrap().clone());
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run(&["init", "--provider", case["provider"].as_str().unwrap()]);
+        assert_eq!(report["exit"], 0, "{case}: {report}");
+        assert_eq!(report["evidence"]["written"], true);
+        assert!(f.root.join(".specgit.yaml").exists());
+        assert!(f.root.join("AGENTS.md").exists());
+        let report = f.run(&["init", "--inspect"]);
+        assert_eq!(report["exit"], 0, "{case}: {report}");
+        let check = report["evidence"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["id"] == "request.write_permission")
+            .unwrap();
+        assert_eq!(
+            check["status"],
+            if case["request"] == "unknown" {
+                "unknown"
+            } else {
+                "not_configured"
+            }
+        );
+        assert!(
+            f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|call| call["method"] == "GET")
+        );
+    }
+}
+
+#[test]
+fn role_permissions_survive_later_init_read_failures() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/write-permissions.json")).unwrap();
+    for case in cases
+        .iter()
+        .filter(|case| case["name"] == "push" || case["name"] == "developer")
+    {
+        for invalid_branch in [false, true] {
+            let f = Fixture::new();
+            let provider = case["provider"].as_str().unwrap();
+            let mut state = f.state();
+            state["project"]
+                .as_object_mut()
+                .unwrap()
+                .extend(case["fields"].as_object().unwrap().clone());
+            if invalid_branch {
+                state["project"]["default_branch"] = json!("invalid..branch");
+            } else {
+                let route = if provider == "github" {
+                    "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1"
+                } else {
+                    "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1"
+                };
+                state["request_fixture"] = json!(true);
+                state["read_routes"] = json!({route: {"__fixture_error":"HTTP 403"}});
+            }
+            fs::write(&f.state, state.to_string()).unwrap();
+            let report = f.run_raw(&["init", "--provider", provider, "--inspect"]);
+            assert_report_matches_schema(&report);
+            assert_eq!(report["exit"], 3);
+            for check in report["evidence"]["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|check| {
+                    check["id"] == "issue.write_permission"
+                        || check["id"] == "request.write_permission"
+                })
+            {
+                assert_eq!(check["status"], "verified", "{case}: {report}");
+                assert_eq!(check["presentation"], "pass");
+            }
+            assert!(!f.root.join(".specgit.yaml").exists());
+        }
+    }
+}
+
+#[test]
+fn doctor_project_read_failure_reports_unknown_roles_and_only_two_reads() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new();
+        let route = if provider == "github" {
+            "repos/fixture/repo"
+        } else {
+            "projects/fixture%2Frepo"
+        };
+        let mut state = f.state();
+        state["read_routes"] = json!({
+            "user": {"id":1,"login":"fixture","username":"fixture"},
+            route: {"__fixture_error":"HTTP 403"},
+        });
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&["doctor", "--provider", provider]);
+        assert_report_matches_schema(&report);
+        assert_eq!(report["exit"], 3);
+        for kind in ["issue", "request"] {
+            assert_eq!(
+                report["evidence"]["write_permissions"][kind]["status"],
+                "unknown"
+            );
+        }
+        let calls = f.state()["calls"].as_array().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|call| call["method"] == "GET"));
     }
 }
 

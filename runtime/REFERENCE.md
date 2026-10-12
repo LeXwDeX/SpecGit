@@ -133,7 +133,7 @@ commands use the global input/output contract above.
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while a sibling initialized worktree shares the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
-| `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
+| `doctor` | Read tool/account/project capability and derive basic Issue/request role permissions from the same project response. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
 | `remove` | Preview or reversibly remove this project's proven owned local integration. The default and `--dry-run` prepare a read-only preview whose evidence carries a `preview_sha256`; `--apply --expect <digest>` applies exactly that inspected preview as one recoverable transaction; `--rollback <transaction>` restores it offline without configuration or forge access. See [whole-project removal](#whole-project-removal). |
 | `update` | Update the running shared executable from a signed GitHub Release. `--check` only reads release metadata; `--dry-run` downloads and verifies without replacement; the default applies. `--version <x.y.z>` selects an exact release; an older one is a downgrade. Requires an authenticated `gh` and Cosign. See [self-update](#self-update). |
@@ -178,13 +178,36 @@ selection write begins before preflight completes. The short budget override is
 available only in test-fixture builds.
 
 This first-stage list maps facts already collected by init; it does not perform
-Issue duplicate searches or permission writes. `issue.duplicate_read`, `issue.write_permission` and
-`request.write_permission` therefore remain `not_checked` until the relevant
-Issue or request operation. A readable account endpoint proves neither Issue
-nor request write access or merge eligibility. Unknown facts only affect the
-operation that depends on them; target-protection uncertainty is a warning
-because init has no declared
-policy making that check mandatory.
+Issue duplicate searches or permission writes. `issue.duplicate_read` remains
+`not_checked`. Basic Issue/request role permissions come from the existing
+project GET response. GitHub Issue writes need `has_issues` and at least one true
+`permissions.pull`, `triage`, `push`, `maintain` or `admin`; applying labels needs
+triage or higher. Request writes need `permissions.push`, `permissions.maintain`
+or `permissions.admin`. GitLab uses the
+maximum of `permissions.project_access.access_level` and
+`permissions.group_access.access_level`. Issue writes need `issues_enabled` and
+level >= 10; MR writes need `merge_requests_enabled` and level >= 30. An explicit
+null GitLab membership is absent (level 0), not a missing permission field.
+
+The project probe and account probe (when project data was read), plus doctor's
+`evidence.write_permissions`, contain `issue` and `request` records with
+`status`, `source`, `reason` and `remedy`. Status is `supported`, `unsupported`
+or `unknown`. Account-only doctor keeps `not_checked`. No extra API call, write
+probe, token-scope check or cross-invocation cache is used. Missing or malformed
+fields remain unknown unless a known sufficient role proves the threshold or a
+known disabled feature/insufficient role proves lack of support. Source names
+the role-permission fields. Role support is not authorization; fine-grained
+token scopes and branch protection can still reject writes.
+Doctor's `ready` status describes successful read probes, not write readiness.
+
+`issue.write_permission` and `request.write_permission` map supported roles to
+`verified` / `pass`, insufficient roles or disabled features to
+`not_configured` / `blocking`, and unknown facts to `unknown` / `hint`.
+The blocking presentation affects only the dependent operation or availability
+layer, not the init exit status or unrelated local development. Unknown role
+facts also do not stop local initialization. A readable account endpoint alone
+proves neither write access nor merge eligibility. Target-protection uncertainty
+is a warning unless project policy makes that check mandatory.
 When initialization reaches the native probe stage but cannot read the selected
 CLI, project, default branch or current request, the failure report keeps this
 same typed check list and the facts collected before the failure. Local context
@@ -221,9 +244,9 @@ unverified, and nonblocking recommended warnings. `blocked`, `unverified` and
 `no_reported_blocker` apply only to the
 listed init checks; a clear entry is not a claim of write permission, complete
 CI readiness, or completed delivery. A recommended or optional warning cannot
-block unrelated local diagnosis. `issue.write_permission` remains unverified
-until the authorized write and native readback, rather than becoming a guessed
-permission failure.
+block unrelated local diagnosis. Supported role permissions establish only the
+basic role threshold. Actual authorized writes and uncertain results still
+require current native evidence and readback.
 
 Capability records use `supported`, `unsupported` or `unknown` with source and
 reason. Unsupported/unknown native flow returns `confirmation_required` before
