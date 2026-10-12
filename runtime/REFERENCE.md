@@ -253,6 +253,24 @@ the proposed content, project, source/target and current native candidate conten
 changed evidence requires another review. It does not override uncertain prior
 writes, which still require exact native adoption.
 
+Each title's `evidence.candidates[]` entry keeps open candidates in `issues` and
+adds a separate `history` list. History is the first native closed-Issue search
+page in the selected repository, with at most 20 rows in platform search order.
+Each row has `id` (GitHub number or GitLab IID), `title`, `state: "closed"` and
+`updated_at`. `url` is included when available; GitHub `state_reason` is included
+when present. No history row enters `review_digest`, gates creation or serves as
+an adoptable open candidate. GitHub open candidates retain authoritative per-Issue
+reads; GitLab open candidates use the authoritative list rows and validate their
+project ID.
+
+`history_diagnostics` is an array of `{code, operation, message, remedy}`. A failed
+or malformed history read leaves `history` empty and records its diagnostic,
+without failing the open-candidate result. History reads count in
+`requests_executed` and `elapsed_ms`; `pagination` describes only the complete open
+search, not the bounded history sample. The invocation budget and cancellation
+still apply. History is reference evidence, not a complete or authoritative
+record of all closed Issues.
+
 GitLab description readback permits its CRLF-to-LF conversion and removal of
 trailing ASCII spaces, tabs and line endings after a write. Leading indentation,
 Unicode whitespace and other content changes are not treated as equivalent.

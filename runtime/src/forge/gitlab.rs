@@ -1,6 +1,6 @@
 use super::protocol::{WriteTransport, id, malformed, text};
 use crate::{
-    delivery_model::{CandidateRead, Issue, PullRequest},
+    delivery_model::{CandidateRead, HistoryIssue, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
     forge_read::{ForgeRead, encode},
     identity::Repository,
@@ -107,12 +107,70 @@ pub(crate) async fn candidates(
     let rows = page_result.rows;
     let mut out = vec![];
     for row in rows {
-        out.push(issue(reader, repo, project_id, id(&row, "iid")?).await?);
+        let candidate = issue_value(&row, project_id)?;
+        if candidate.state != "closed" {
+            out.push(candidate);
+        }
     }
+    let (history, history_diagnostics) = match history(reader, repo, project_id, query).await {
+        Ok(history) => (history, vec![]),
+        Err(d) if d.code == Code::Cancelled => return Err(d),
+        Err(d) => (vec![], vec![d]),
+    };
     Ok(CandidateRead {
         issues: out,
+        history,
+        history_diagnostics,
         pagination: page_result.pagination,
     })
+}
+
+async fn history(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    query: &str,
+) -> Result<Vec<HistoryIssue>, Diagnostic> {
+    // get reads one page. list_report would force per_page=100 and paginate.
+    let value = reader
+        .get(&format!(
+            "{}/issues?state=closed&search={}&in=title&per_page=20",
+            prefix(repo),
+            encode(query)
+        ))
+        .await?;
+    let rows = value.as_array().ok_or_else(malformed)?;
+    if rows.len() > 20 {
+        return Err(malformed());
+    }
+    rows.iter()
+        .map(|row| {
+            if row.get("pull_request").is_some() || id(row, "project_id")? != project_id {
+                return Err(Diagnostic::new(
+                    Code::IdentityMismatch,
+                    "issue_history",
+                    "The closed issue is not in the selected project.",
+                    "Inspect same-project closed issues on the native platform.",
+                ));
+            }
+            if text(row, "state")? != "closed" {
+                return Err(malformed());
+            }
+            let url = match row.get("web_url") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) => Some(value.clone()),
+                _ => return Err(malformed()),
+            };
+            Ok(HistoryIssue {
+                id: id(row, "iid")?,
+                title: text(row, "title")?,
+                state: "closed".into(),
+                state_reason: None,
+                updated_at: text(row, "updated_at")?,
+                url,
+            })
+        })
+        .collect()
 }
 pub(crate) async fn label_pool(
     reader: &ForgeRead,
