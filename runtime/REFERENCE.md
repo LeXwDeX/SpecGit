@@ -137,6 +137,7 @@ commands use the global input/output contract above.
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
 | `remove` | Preview or reversibly remove this project's proven owned local integration. The default and `--dry-run` prepare a read-only preview whose evidence carries a `preview_sha256`; `--apply --expect <digest>` applies exactly that inspected preview as one recoverable transaction; `--rollback <transaction>` restores it offline without configuration or forge access. See [whole-project removal](#whole-project-removal). |
 | `update` | Update the running shared executable from a signed GitHub Release. `--check` only reads release metadata; `--dry-run` downloads and verifies without replacement; the default applies. `--version <x.y.z>` selects an exact release; an older one is a downgrade. Requires an authenticated `gh` and Cosign. See [self-update](#self-update). |
+| `skill` | Explicit user Skill only: `--user` is mandatory. `--dry-run` previews without writes; `--remove` removes only managed, unedited content; `--refresh-only` skips absent or foreign files and conflicts with `--remove`. See [user Skill](#user-skill). |
 
 `inbox`, `status`, `doctor`, `migrate` and `update` remain auxiliary entrypoints in this
 native CLI. Core project operations are setup, init, issue, pr, watch
@@ -543,6 +544,62 @@ whose current content matches the record; manual edits, foreign files and missin
 recorded assets keep their existing conflict protection. Update does not invoke
 setup, scan projects or refresh any project asset. Checks, previews, no-op and
 failed updates do not report this successful-replacement guidance.
+
+After successful installation, update checks only whether the user Skill has a
+valid managed marker. If it does, the **new executable at its installed path**
+runs `skill --user --refresh-only --json` through bounded, shell-free process
+transport (20-second timeout, bounded input/output). Absent or foreign files are
+skipped without spawning a refresh. The new CLI rechecks ownership and uses its
+own embedded Skill bytes. `evidence.user_skill` reports `refreshed`, `skipped` or
+`failed` and the parsed child report; `effects` records the attempted refresh and
+its reported writes/backups. `next_actions` includes `user_skill_refresh`.
+Refresh failure keeps the verified new executable, reports a diagnostic and gives
+`specgit skill --user` as the remedy. Update still succeeds as a binary install;
+that does not claim the Skill refresh succeeded. Check, dry-run, no-op and failed
+installs never refresh the user Skill. A downgrade to a CLI without `skill` can
+therefore install successfully while reporting a refresh failure.
+
+### User Skill
+
+Project integration remains project-only. The only user-level asset is the
+explicitly installed Skill file; no global hooks, state or receipts.
+`init`, `setup`, hooks and other project commands never install it.
+
+```sh
+specgit skill --user --dry-run --json
+specgit skill --user --json
+specgit skill --user --refresh-only --json
+specgit skill --user --remove --dry-run --json
+specgit skill --user --remove --json
+```
+
+The fixed target is `$HOME/.agents/skills/specgit-native/SKILL.md` on Unix and
+`%USERPROFILE%\.agents\skills\specgit-native\SKILL.md` on Windows. A missing,
+relative or unavailable home is invalid input with no writes. Symbolic links
+anywhere below the resolved home are refused, including a dangling file link.
+No Git repository or declaration is required.
+
+Installation uses the same embedded Skill as project setup. Its final line is
+`<!-- specgit:managed sha256=<64 lowercase hex digits> -->`; the digest covers
+every byte before that line, including the preceding newline. A valid marker
+line establishes ownership. A foreign file (no valid marker) is a conflict and
+is never adopted. A managed file is refreshed to the current embedded content.
+If its body hash differs, or content was appended after the marker, refresh first
+preserves the exact old bytes and permissions in a sibling
+`SKILL.md.specgit-backup-<unix-seconds>` file, with a unique numeric suffix when
+needed. The backup path is in `evidence.backup` and `effects`. Backups are never
+silently replaced or removed.
+
+Writes are staged and synced in the same directory, then atomically published.
+New-file publication never clobbers a concurrently created file. Existing-file
+replacement preserves permissions and rechecks current content after locking
+the Skill file itself; it creates no global lock file or receipt. Dry-run reports
+`prepared` with the planned `action` and `edited` flag, but creates nothing.
+Refresh-only reports `skipped` for absent or foreign content. Remove preserves
+foreign or edited files as conflicts; it deletes only managed, unedited content
+and its empty leaf Skill directory, never unrelated files or parent directories.
+Successful actions report `installed`, `refreshed`, `removed` or `skipped` under
+operation `skill`. Every invocation emits one ordinary report with `effects`.
 
 ### Agent integration scopes
 

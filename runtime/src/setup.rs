@@ -194,9 +194,7 @@ struct Registration {
     skill: Option<Value>,
 }
 fn skill_bytes() -> Vec<u8> {
-    include_str!("../assets/SKILL.md")
-        .replace("{{version}}", VERSION)
-        .into_bytes()
+    crate::skill::bytes()
 }
 fn conflict(message: &str) -> Diagnostic {
     Diagnostic::new(
