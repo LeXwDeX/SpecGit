@@ -353,6 +353,14 @@ notices are refreshed before delivery and superseded by changed evidence.
 `--goal checks` observes checks without claiming lifecycle completion. `--once`
 performs one read and retains pending intent. Explicit inbox acknowledgment is a
 transport receipt, not human reading, approval or permission to mutate.
+Within one polling process, an unchanged complete collection may reuse the
+previous poll's verified fingerprint. Changed evidence and terminal states still
+require full readback before publication. This fingerprint includes private native
+facts, not only the durable event projection, and is never restored from disk.
+`pr --status`, `watch --once` and one-shot inbox refresh always perform full
+readback. The polling transport reuses one declaration snapshot per cycle for
+its digest, local context and event projection; native consistency checks retain
+their independent workspace revalidation.
 Each watch event includes the legacy `next_action` text and a typed `next_step`;
 the report-level `next_actions` repeats those same typed steps for direct
 consumers. The action records the goal, check outcome, draft state, auto-merge

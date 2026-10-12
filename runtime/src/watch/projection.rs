@@ -1,18 +1,18 @@
 //! A stable typed projection omits private native descriptions from durable transport.
 use crate::{
-    config, diagnostic::Code, observation::Observation as NativeObservation, project::Context,
+    diagnostic::Code, observation::Observation as NativeObservation, project::Context,
     watch_store::Revision,
 };
 
-pub(super) fn revision(assessment: &NativeObservation, context: &Context) -> Revision {
+pub(super) fn revision(
+    assessment: &NativeObservation,
+    context: &Context,
+    declaration: Option<&str>,
+) -> Revision {
     let evidence = &assessment.evidence;
     let request = evidence.request.as_ref();
     let head = request.map_or_else(|| context.head.clone(), |r| r.head.clone());
     let target = request.map_or_else(String::new, |r| r.target.clone());
-    let declaration_digest = config::snapshot(&context.root)
-        .ok()
-        .and_then(|s| s.digest())
-        .unwrap_or_default();
     #[derive(serde::Serialize)]
     struct IssueState<'a> {
         id: u64,
@@ -52,7 +52,7 @@ pub(super) fn revision(assessment: &NativeObservation, context: &Context) -> Rev
         head,
         local_head: context.head.clone(),
         target,
-        declaration: declaration_digest,
+        declaration: declaration.unwrap_or_default().into(),
         evidence_digest: crate::assets::hash(
             &serde_json::to_vec(&serde_json::to_value(&projection).expect("projection serializes"))
                 .expect("canonical projection serializes"),
