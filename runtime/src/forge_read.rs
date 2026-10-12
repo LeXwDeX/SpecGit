@@ -307,13 +307,44 @@ impl ForgeRead {
         } else {
             None
         };
+        let role_permissions = match self.provider {
+            Provider::Github => crate::delivery_model::ProjectRolePermissions::Github {
+                has_issues: value.get("has_issues").and_then(Value::as_bool),
+                admin: value.pointer("/permissions/admin").and_then(Value::as_bool),
+                maintain: value
+                    .pointer("/permissions/maintain")
+                    .and_then(Value::as_bool),
+                push: value.pointer("/permissions/push").and_then(Value::as_bool),
+                triage: value
+                    .pointer("/permissions/triage")
+                    .and_then(Value::as_bool),
+                pull: value.pointer("/permissions/pull").and_then(Value::as_bool),
+            },
+            Provider::Gitlab => crate::delivery_model::ProjectRolePermissions::Gitlab {
+                issues_enabled: value.get("issues_enabled").and_then(Value::as_bool),
+                merge_requests_enabled: value
+                    .get("merge_requests_enabled")
+                    .and_then(Value::as_bool),
+                project_access_level: access_level(value.pointer("/permissions/project_access")),
+                group_access_level: access_level(value.pointer("/permissions/group_access")),
+            },
+        };
         Ok(ProjectFacts {
             id,
             repository: repo.clone(),
             default_branch: default.into(),
             native_source_cleanup: cleanup,
             native_issue_closing: closing,
+            role_permissions: Some(role_permissions),
         })
+    }
+}
+fn access_level(access: Option<&Value>) -> Option<u64> {
+    match access {
+        // GitLab explicitly returns null when this membership does not exist.
+        Some(Value::Null) => Some(0),
+        Some(value) => value.get("access_level").and_then(Value::as_u64),
+        None => None,
     }
 }
 pub(crate) fn malformed() -> Diagnostic {

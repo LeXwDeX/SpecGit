@@ -58,7 +58,7 @@ pub(super) async fn inspect(
         context,
         declaration,
         &reader,
-        &probes,
+        &mut probes,
         &check_scope,
     )
     .await?;
@@ -104,7 +104,7 @@ async fn project_facts(
     context: &Context,
     declaration: &Declaration,
     reader: &ForgeRead,
-    probes: &[Probe],
+    probes: &mut [Probe],
     check_scope: &InitCheckScope,
 ) -> Result<ProjectFacts, Box<Report>> {
     let facts = match reader.project(&context.repository).await {
@@ -125,6 +125,7 @@ async fn project_facts(
             )));
         }
     };
+    probe::record_project_permissions(probes, &facts);
     if !config::valid_branch(&facts.default_branch) {
         process.mark_inspection_incomplete();
         let diagnostic = Diagnostic::new(
