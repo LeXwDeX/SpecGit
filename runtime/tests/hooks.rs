@@ -563,6 +563,8 @@ fn shell_segments_and_leading_wrappers_cannot_hide_tracked_writes() {
         "gh pr view `touch x`",
         "glab mr view \"$(rm y)\"",
         "specgit pr --status --request \"$(touch x)\"",
+        "specgit status \"$(touch x)\"",
+        "specgit watch --session `rm y`",
         "glab mr approve 41",
         "glab issue close 41",
         "specgit pr --ready",
