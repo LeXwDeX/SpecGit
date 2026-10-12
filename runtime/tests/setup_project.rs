@@ -265,6 +265,43 @@ fn skill_text() -> String {
 }
 
 #[test]
+fn guidance_slimming_refreshes_recorded_2_6_2_setup_without_overwriting_manual_text() {
+    for edited in [false, true] {
+        let (f, mut options) = fixture(vec![Agent::Generic]);
+        install(&options, &f).unwrap();
+        let receipt_path = f.private.join("ownership.json");
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        let old = include_str!("fixtures/managed-setup-2.6.2.txt");
+        receipt["instructions"]["generic"]["block"] = json!(old);
+        fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+        let old = if edited {
+            old.replace("Read this project's", "User changed project's")
+        } else {
+            old.to_owned()
+        };
+        let path = f.root.join("AGENTS.md");
+        let before = format!("Manual rules\r\n{old}\nManual tail\r\n");
+        fs::write(&path, &before).unwrap();
+        options.agents.clear();
+        if edited {
+            let error = install(&options, &f).unwrap_err();
+            assert_eq!(error.code, Code::OwnershipConflict);
+            assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        } else {
+            assert!(install(&options, &f).is_ok());
+            let after = fs::read_to_string(&path).unwrap();
+            assert!(after.starts_with("Manual rules\r\n"));
+            assert!(after.ends_with("\nManual tail\r\n"));
+            assert!(after.contains("Project integration (setup, hooks, observation state and guidance) stays project-only"));
+            assert!(after.contains("not a general file-write sandbox"));
+            assert!(after.contains("Refresh preserves manual text and other tools' content"));
+            assert!(!after.contains("Before tracked product edits"));
+            assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+        }
+    }
+}
+
+#[test]
 fn project_receipt_v2_is_written_and_legacy_v1_receipts_stay_readable() {
     // New integrations record a version 2 receipt with no shared root at all.
     let (f, options) = fixture(vec![Agent::Generic]);
