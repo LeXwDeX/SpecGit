@@ -20,6 +20,72 @@ fn reader(provider: Provider, response: &str) -> ForgeRead {
     )
     .unwrap()
 }
+
+#[tokio::test]
+async fn project_probe_reports_role_permissions_from_its_only_read() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/write-permissions.json")).unwrap();
+    for case in cases {
+        let provider = if case["provider"] == "github" {
+            Provider::Github
+        } else {
+            Provider::Gitlab
+        };
+        let mut project = json!({"id":7,"full_name":"fixture/repo","path_with_namespace":"fixture/repo","default_branch":"trunk"});
+        project
+            .as_object_mut()
+            .unwrap()
+            .extend(case["fields"].as_object().unwrap().clone());
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("api.json");
+        std::fs::write(
+            &state_path,
+            json!({"calls":[],"project":project}).to_string(),
+        )
+        .unwrap();
+        let mut process = Process::default();
+        process.environment.insert(
+            "SPECGIT_FIXTURE_API_FILE".into(),
+            state_path.clone().into_os_string(),
+        );
+        let reader = ForgeRead::with_executable(
+            process,
+            temp.path(),
+            provider,
+            "forge.example",
+            env!("CARGO_BIN_EXE_specgit-process-fixture").into(),
+        )
+        .unwrap();
+        let context = specgit::project::Context {
+            root: temp.path().into(),
+            git_dir: temp.path().into(),
+            common_dir: temp.path().into(),
+            head: "a".repeat(40),
+            branch: Some("feature".into()),
+            dirty: false,
+            remote: "origin".into(),
+            repository: Repository {
+                provider,
+                host: "forge.example".into(),
+                path: "fixture/repo".into(),
+            },
+        };
+        let probe = specgit::probe::inspect(&reader, &context).await;
+        assert_eq!(probe.status, Capability::Available);
+        for kind in ["issue", "request"] {
+            assert_eq!(
+                probe.evidence["write_permissions"][kind]["status"], case[kind],
+                "{case}: {probe:?}"
+            );
+        }
+        let state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(state_path).unwrap()).unwrap();
+        assert_eq!(
+            state["calls"],
+            json!([{"method":"GET","endpoint":if provider == Provider::Github {"repos/fixture/repo"} else {"projects/fixture%2Frepo"},"body":null}])
+        );
+    }
+}
 #[tokio::test]
 async fn api_classification_is_specific_and_does_not_leak_stderr() {
     for provider in [Provider::Github, Provider::Gitlab] {
