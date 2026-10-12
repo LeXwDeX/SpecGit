@@ -414,6 +414,27 @@ fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
             eprintln!("Verified OK");
         }
         _ => {
+            if args == ["skill", "--user", "--refresh-only", "--json"] {
+                match state["skill_failure"].as_str() {
+                    Some("malformed") => {
+                        print!("not json");
+                        return;
+                    }
+                    Some("exit") => std::process::exit(1),
+                    Some("timeout") => std::thread::sleep(Duration::from_secs(60)),
+                    _ => {}
+                }
+                let report = specgit::skill::run(specgit::skill::Options {
+                    user: true,
+                    refresh_only: true,
+                    ..Default::default()
+                });
+                let exit = report.exit;
+                let mut report = serde_json::to_value(report).unwrap();
+                report["version"] = state["binary_version"].clone();
+                println!("{report}");
+                std::process::exit(i32::from(exit));
+            }
             if args != ["--human", "--version"] {
                 std::process::exit(2);
             }

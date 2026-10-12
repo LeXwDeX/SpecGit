@@ -29,6 +29,7 @@ pub mod report;
 pub mod selection;
 pub mod self_update;
 pub mod setup;
+pub mod skill;
 pub mod spec;
 mod template_rules;
 pub mod templates;

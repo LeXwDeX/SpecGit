@@ -157,7 +157,7 @@ specgit setup --agent codex --dry-run --json
 specgit setup --agent codex --json
 ```
 
-SpecGit 2.4 is permanently project-only: `--scope project` is the default and
+Project integration remains project-only: `--scope project` is the default and
 the only scope value. Setup writes documented checkout assets with a
 worktree-private receipt, never copies the runtime binary into a project, and
 never installs user-global host assets or state. Project hooks invoke the
@@ -169,6 +169,32 @@ and `--opencode-root` — are rejected input, not deprecated aliases. Preserve
 foreign skills, hooks and instructions; ownership conflicts require
 reconciliation, not overwriting. `watch`, `hook` and `inbox` always use
 Git-private state; their retired `--state-root` option is rejected.
+
+### Optional user Skill
+
+Project integration remains project-only. The only user-level asset is the
+explicitly installed Skill file; no global hooks, state or receipts.
+Do not install it by default as part of this guide. Only when the user explicitly
+chooses a shared Skill, preview and install:
+
+```sh
+specgit skill --user --dry-run --json
+specgit skill --user --json
+```
+
+This writes only `~/.agents/skills/specgit-native/SKILL.md` (Windows uses
+`%USERPROFILE%`). The embedded Skill ends with a SHA-256 managed marker. Foreign
+files conflict; edited managed files are backed up beside the Skill before
+refresh, and the report lists the backup. Symlink paths below home are refused.
+`--remove` removes only managed, unedited content; preview it with `--dry-run`.
+`--refresh-only` never creates or adopts a missing or foreign Skill.
+
+After a successful `specgit update`, an already managed user Skill is refreshed
+through the newly installed executable. No user Skill means no automatic install.
+Refresh failure does not roll back the binary; inspect the update report and run
+`specgit skill --user` to recover. Existing project Skills still need a separate
+`specgit setup` refresh in each project. See the
+[native reference](../runtime/REFERENCE.md#user-skill) for ownership and reports.
 
 ### Project agent integration
 
