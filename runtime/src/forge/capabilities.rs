@@ -8,13 +8,7 @@ use crate::{
 use serde::Serialize;
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Support {
-    Supported,
-    Unsupported,
-    Unknown,
-}
+pub use crate::delivery_model::{Support, WritePermission, WritePermissions, write_permissions};
 #[derive(Debug, Serialize)]
 pub struct Capability {
     pub status: Support,

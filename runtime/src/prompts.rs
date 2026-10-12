@@ -41,4 +41,20 @@ mod tests {
         }
         assert!(!host_entry().contains('\r'));
     }
+
+    #[test]
+    fn entry_points_stay_short_and_do_not_duplicate_project_rules() {
+        let host = host_entry();
+        assert!(host.lines().count() <= 6, "setup is a Skill entry point");
+        for language in [Language::En, Language::Zh] {
+            let text = project(language);
+            assert!(text.lines().count() <= 14, "init is a Skill entry point");
+            for line in host.lines().filter(|line| !line.trim().is_empty()) {
+                assert!(!text.lines().any(|project_line| project_line == line));
+            }
+        }
+        let skill = canonical(include_str!("../assets/SKILL.md"));
+        assert!(skill.lines().count() <= 198, "keep one full workflow");
+        assert!(skill.contains("Contract version: {{version}}."));
+    }
 }

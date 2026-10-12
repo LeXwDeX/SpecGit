@@ -14,6 +14,53 @@ use std::{
 #[path = "support/executable.rs"]
 mod executable;
 
+#[test]
+fn project_commands_leave_home_untouched_user_skill_is_the_explicit_exception() {
+    let (temp, root, _private, _source) = fixture();
+    let home = temp.path().canonicalize().unwrap().join("home");
+    fs::create_dir(&home).unwrap();
+    for args in [
+        &["setup", "--agent", "generic"][..],
+        &["status"],
+        &["hook", "--event", "SessionStart"],
+    ] {
+        let mut command = executable::command();
+        command
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .args(args);
+        if args[0] == "hook" {
+            command.stdin(Stdio::null());
+        } else {
+            command.arg("--json");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{args:?}: {:?}", output.stdout);
+        assert_eq!(
+            fs::read_dir(&home).unwrap().count(),
+            0,
+            "{args:?} wrote user assets"
+        );
+    }
+    assert!(
+        root.join(".agents/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    let output = executable::command()
+        .current_dir(&root)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .args(["skill", "--user", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stdout);
+    assert!(
+        home.join(".agents/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+}
+
 fn git(root: &Path, args: &[&str]) {
     let out = Command::new("git")
         .current_dir(root)
@@ -265,7 +312,7 @@ fn custom_host_protocol_denies_patch_aliases_and_accepts_only_current_checkpoint
             .get("permissionDecision")
             .is_none()
     );
-    assert!(result["hookSpecificOutput"]["additionalContext"].is_string());
+    assert!(result.is_null());
     git(&root, &["checkout", "-b", "other"]);
     assert_eq!(
         invoke(entry, allowed)["hookSpecificOutput"]["permissionDecision"],

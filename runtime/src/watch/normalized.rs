@@ -21,10 +21,11 @@ pub(super) fn normalized(
     context: &Context,
     goal: Goal,
     request_id: u64,
+    declaration: Option<&str>,
 ) -> Observation {
     let evidence = &assessment.evidence;
     let request = evidence.request.as_ref();
-    let revision = projection::revision(assessment, context);
+    let revision = projection::revision(assessment, context, declaration);
     let classification::Classified {
         state,
         reason,

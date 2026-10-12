@@ -13,6 +13,7 @@ use crate::{
 };
 use serde_json::Value;
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -84,7 +85,7 @@ async fn target_root(
     process: &Process,
     payload: &Value,
     cwd: &Path,
-) -> Result<Option<PathBuf>, Output> {
+) -> Result<Option<project::GitState>, Output> {
     let paths = requested_paths(payload, cwd);
     let anchors = if paths.is_empty() {
         vec![cwd.to_owned()]
@@ -94,22 +95,25 @@ async fn target_root(
             .filter_map(|path| existing_anchor(path))
             .collect()
     };
-    let mut selected: Option<PathBuf> = None;
+    let mut selected: Option<project::GitState> = None;
+    let mut seen = BTreeSet::new();
     for anchor in anchors {
-        let bytes = match project::git(process, &anchor, &["rev-parse", "--show-toplevel"]).await {
-            Ok(bytes) => bytes,
+        if !seen.insert(anchor.clone()) {
+            continue;
+        }
+        let state = match project::git_state(process, &anchor).await {
+            Ok(state) => state,
             Err(_) => continue,
         };
-        let root = match String::from_utf8(bytes) {
-            Ok(value) => PathBuf::from(value.trim_end_matches(['\r', '\n'])),
-            Err(_) => continue,
-        };
-        if selected.as_ref().is_some_and(|existing| existing != &root) {
+        if selected
+            .as_ref()
+            .is_some_and(|existing| existing.root != state.root)
+        {
             return Err(deny(
                 "SpecGit cannot authorize one tool call that edits multiple repositories; split the edit by repository.",
             ));
         }
-        selected = Some(root);
+        selected.get_or_insert(state);
     }
     Ok(selected)
 }
@@ -167,13 +171,14 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         },
         ..Process::default()
     };
-    let Some(root) = target_root(&process, &payload, &cwd).await? else {
+    let Some(state) = target_root(&process, &payload, &cwd).await? else {
         return Ok(None);
     };
-    let marker = match config::read(&root) {
+    let root = &state.root;
+    let marker = match config::read(root) {
         Ok(Some(d)) => d,
         Ok(None) => {
-            return match config::worktree::declaration_lost(&process, &root).await {
+            return match config::worktree::declaration_lost(&process, root).await {
                 Ok(None) => Ok(None),
                 Ok(Some(lost)) if event == "PreToolUse" => Err(deny(&lost.to_string())),
                 Ok(Some(lost)) => Err(info(&lost.to_string())),
@@ -189,16 +194,29 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
             ));
         }
     };
-    let context = match config::resolve(
+    let context = match project::resolve_git_state(
         &process,
-        &root,
+        state,
         marker.remote.as_deref(),
         marker.provider,
         None,
     )
     .await
     {
-        Ok(c) => c,
+        Ok(mut c) => {
+            // Keep config::resolve's repository-scoped API routing semantics
+            // while reusing the Git probe that selected the actual edit target.
+            match config::read_routing(&c) {
+                Ok(Some(routing)) => c.repository.host = routing.api_host,
+                Ok(None) => {}
+                Err(_) => {
+                    return Err(info(
+                        "SpecGit local identity is unavailable; remote state remains unknown.",
+                    ));
+                }
+            }
+            c
+        }
         Err(_) => {
             return Err(info(
                 "SpecGit local identity is unavailable; remote state remains unknown.",

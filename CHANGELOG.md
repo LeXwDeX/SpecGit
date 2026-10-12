@@ -4,6 +4,17 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# Unreleased
+
+- Hooks classify shell input per segment, allow common read-only `gh`/`glab`/`specgit` reads and descriptor or `/dev/null` redirects, and catch writes after `&&`, assignments and wrappers. Allowed PreToolUse calls emit no context; PostToolUse emits only pending notices. Git identity resolution uses fewer processes.
+- `issue --inspect` adds a bounded closed-history list per title, outside `review_digest`. GitLab candidates no longer re-read each row.
+- `init`, `doctor` and the account probe derive Issue and request write permission from the existing read-only project response; no write probe or extra request.
+- Polling `watch` skips the same-cycle verification reads when collected evidence matches the previous verified cycle. Changed, terminal and one-shot observations still verify fully.
+- New explicit `specgit skill --user` installs, refreshes or removes one managed user-level Skill file. `update` refreshes it only when it is already managed. Project integration stays project-only; no global hooks, state or receipts.
+- Shorten generated init and setup guidance and remove repetition from the shipped Skill.
+
+Scope: [#685](https://github.com/LeXwDeX/SpecGit/issues/685), [#686](https://github.com/LeXwDeX/SpecGit/issues/686), [#687](https://github.com/LeXwDeX/SpecGit/issues/687), [#688](https://github.com/LeXwDeX/SpecGit/issues/688), [#689](https://github.com/LeXwDeX/SpecGit/issues/689).
+
 # 2.6.2
 
 - Expand the shipped specification Skill to cover new tasks, existing PR/MR CI and review repair, waiting, and scope-specific completion. Keep project integration and authorization boundaries unchanged.

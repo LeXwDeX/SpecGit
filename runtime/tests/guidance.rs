@@ -150,10 +150,16 @@ fn canonical_prompts_allow_receiptless_language_changes_for_lf_and_crlf_blocks()
 fn generated_guidance_uses_native_observation_and_preferences_are_not_authority() {
     let d = Declaration::default();
     let prose = guidance::render(&d);
+    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
     assert!(!prose.contains("specgit finish"));
-    assert!(prose.contains("specgit watch"));
+    assert!(prose.contains("specgit-native Skill"));
+    assert!(skill.contains("Use bounded\n`watch`"));
     assert!(prose.contains("existing user authorization"));
-    assert!(prose.contains("disabled by default"));
+    assert!(skill.contains("Supplementary Agent closure defaults off"));
+    assert!(skill.contains("enabling it grants no permission"));
+    assert!(skill.contains(
+        "existing authorization and readback of merge, intended association and actual closure"
+    ));
     assert!(prose.contains("native readback"));
     assert!(prose.contains("\"native_auto_merge\":false"));
     assert!(prose.contains("\"close_issues_after_merge\":false"));
@@ -169,31 +175,122 @@ fn generated_guidance_states_issue_scope_and_authorization_contract_in_both_lang
         let prose = guidance::render(&declaration);
         match language {
             Language::En => {
+                assert!(
+                    prose.contains(
+                        "Read-only inspection, audit and review need no Issue checkpoint"
+                    )
+                );
+                assert!(prose.contains("Before tracked product edits, inspect duplicate work and select a complete relevant Issue"));
+                assert!(
+                    prose.contains(
+                        "pure documentation follows repository policy and installed hooks"
+                    )
+                );
                 assert!(prose.contains(
-                    "Read-only inspection, audit, and review do not require an Issue checkpoint"
+                    "Writes, including marking a request ready, need existing user authorization"
+                ));
+                assert!(prose.contains("it remains valid within its scope"));
+                assert!(prose.contains(
+                    "Declarations, `--dry-run` previews and Hook notices grant no permission"
                 ));
                 assert!(
-                    prose
-                        .contains("Before tracked product edits, select a complete relevant Issue")
+                    prose.contains("GitHub/GitLab owns CI, review, protection and actual merge")
                 );
-                assert!(prose.contains("pure documentation work"));
-                assert!(prose.contains("Local init/setup is maintenance, not delivery"));
-                assert!(prose.contains("Issue/PR writes, including marking a request ready, require existing user authorization"));
-                assert!(
-                    prose.contains("Existing session authorization remains valid within its scope")
-                );
-                assert!(prose.contains("`--dry-run` previews grant no permission"));
+                assert!(prose.contains(
+                    "intended target merge and closure of every associated Issue that should close"
+                ));
             }
             Language::Zh => {
                 assert!(prose.contains("只读检查、审计和评审不需要 Issue checkpoint"));
-                assert!(prose.contains("修改已跟踪的产品代码前，选择一个包含"));
-                assert!(prose.contains("纯文档工作按仓库自己的文档流程处理"));
-                assert!(prose.contains("本地 init/setup 属于维护，不是交付"));
-                assert!(prose.contains("Issue/PR 写入（包括将请求标记为 ready）需要已有用户授权"));
-                assert!(prose.contains("会话已有授权在其范围内持续有效"));
-                assert!(prose.contains("`--dry-run` 预览都不产生授权"));
+                assert!(prose.contains("修改已跟踪的产品输入前，先查重并选择完整相关 Issue"));
+                assert!(prose.contains("纯文档遵循仓库规则及已安装 hooks"));
+                assert!(prose.contains("写入（包括将请求标记为 ready）需要已有用户授权"));
+                assert!(prose.contains("授权在其范围内持续有效"));
+                assert!(prose.contains("声明、`--dry-run` 预览和 Hook 通知都不产生授权"));
+                assert!(prose.contains("GitHub/GitLab 负责 CI、评审、保护和实际合并"));
+                assert!(prose.contains("原生回读确认目标分支合并及全部应关闭的关联 Issue 关闭"));
             }
         }
+        assert!(prose.contains("Why / Scope / Approach / Acceptance"));
+        assert!(prose.contains("specgit --help"));
+        assert!(prose.contains("specgit --schema"));
+    }
+    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
+    assert!(skill.contains(
+        "Local init/setup is maintenance, not delivery; it creates no Issue or forge permission"
+    ));
+}
+
+#[test]
+fn skill_retains_distinct_safety_rules_and_the_explicit_user_asset_exception() {
+    let skill = include_str!("../assets/SKILL.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for clause in [
+        "name: specgit-native",
+        "Project integration (setup, hooks, observation state and guidance) remains project-only",
+        "The only user-level asset is the Skill explicitly installed with `specgit skill --user`",
+        "`~/.agents/skills/specgit-native/SKILL.md` (`%USERPROFILE%` on Windows)",
+        "`specgit update` refreshes it only when managed; it does not install it by default",
+        "There are no global hooks or state",
+        "Absence alone is not a checkpoint exception",
+        "previews, notifications and preferences grant no permission",
+        "Never silently weaken tests or protection",
+        "A checks goal does not prove merge/closure",
+        "Recover uncertain writes through native readback and exact IDs, not blind retries",
+        "Publication requires separate release intent and authorization",
+        "host tool classification is a heuristic, not a file-write sandbox",
+        "registration is not verified delivery",
+        "acknowledgment proves neither human reading nor completion",
+        "Project refresh changes only recorded, owned assets whose current content matches the receipt",
+        "Foreign files, edited managed assets and missing recorded assets retain conflict protection",
+        "Contract version: {{version}}.",
+    ] {
+        assert!(skill.contains(clause), "missing Skill rule: {clause}");
+    }
+    assert!(!skill.contains("Integration is permanently project-only"));
+    assert_eq!(skill.matches("## Wait, observe and finish").count(), 1);
+    assert!(!skill.contains("## Observe and complete"));
+}
+
+#[test]
+fn guidance_slimming_refreshes_the_unedited_2_6_2_block_but_preserves_user_edits() {
+    // Windows checkouts can use CRLF; the recorded 2.6.2 block was LF.
+    let old = include_str!("fixtures/managed-init-2.6.2-zh.txt").replace("\r\n", "\n");
+    let old = old.trim_end();
+    let d = Declaration {
+        language: Language::Zh,
+        ..Declaration::default()
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let path = root.join("AGENTS.md");
+    let private = root.join("private");
+    for recorded in [false, true] {
+        if recorded {
+            std::fs::create_dir_all(&private).unwrap();
+            std::fs::write(
+                private.join("guidance.json"),
+                serde_json::json!({
+                    "version": 1, "generator": "2.6.2",
+                    "blocks": {"AGENTS.md": specgit::assets::hash(old.as_bytes())}
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::write(&path, format!("Manual rules\r\n{old}\nTail\r\n")).unwrap();
+        let changes = guidance::changes(&root, &private, &d, &d, false).unwrap();
+        assert_eq!(
+            changes[0].after.as_ref().unwrap(),
+            format!("Manual rules\r\n{}\nTail\r\n", guidance::render(&d)).as_bytes()
+        );
+        let edited = old.replace("Hook 通知", "人工修改");
+        let file = format!("Manual rules\r\n{edited}\nTail\r\n");
+        std::fs::write(&path, &file).unwrap();
+        conflict(guidance::changes(&root, &private, &d, &d, false));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
     }
 }
 
@@ -229,40 +326,34 @@ fn receiptless_2_0_0_migration_upgrades_only_the_exact_released_templates() {
 
 #[test]
 fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content() {
-    for (language, clauses) in [
+    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
+    for clause in [
+        "Try normal SpecGit inspect/dry-run first",
+        "reproducible SpecGit defect blocks\nIssue selection",
+        "record command, version, exit and diagnostic",
+        "Under existing user\nauthorization",
+        "authenticated native gh/glab to search duplicate WHYs",
+        "Why / Scope / Approach / Acceptance",
+        "read back its native ID/body",
+        "Resume SpecGit with that exact ID",
+        "Only if the same defect still blocks its linked repair",
+        "documented one-task\nlocal checkpoint exception",
+        "restore normal checks after repair",
+        "Never disable\nguards globally or bypass authorization, forge protection, CI, review, merge, closure or release",
+    ] {
+        assert!(
+            skill.contains(clause),
+            "missing Skill recovery rule: {clause}"
+        );
+    }
+    for (language, pointer) in [
         (
             Language::En,
-            vec![
-                "Try normal SpecGit inspect/dry-run first",
-                "reproducible SpecGit defect blocks Issue selection",
-                "command, version, exit and diagnostic",
-                "Under existing user authorization",
-                "authenticated native gh/glab",
-                "search duplicate WHYs",
-                "Why / Scope / Approach / Acceptance",
-                "read back its native ID and body",
-                "Only if that same defect still blocks its linked repair",
-                "documented one-task local checkpoint exception",
-                "restore normal checks after repair",
-                "does not bypass user authorization, forge protection, CI, review, merge, Issue closure or publication",
-            ],
+            "For missing capabilities or a SpecGit defect, follow the Skill's recovery steps",
         ),
         (
             Language::Zh,
-            vec![
-                "先正常尝试 SpecGit inspect/dry-run",
-                "可复现的 SpecGit 缺陷阻碍 Issue 选择",
-                "命令、版本、退出码与诊断",
-                "已有用户授权",
-                "已认证的原生 gh/glab",
-                "查重 WHY",
-                "原因、范围、方案和验收要求",
-                "回读其原生 ID 和正文",
-                "只有同一缺陷仍阻碍其关联修复",
-                "有文档记录的单任务本地 checkpoint 例外",
-                "修复后恢复正常检查",
-                "不会绕过用户授权、forge 保护、CI、评审、合并、Issue 关闭或发布",
-            ],
+            "能力缺失或 SpecGit 故障时，按 Skill 的恢复步骤处理",
         ),
     ] {
         let declaration = Declaration {
@@ -270,9 +361,7 @@ fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content(
             ..Declaration::default()
         };
         let prose = guidance::render(&declaration);
-        for clause in clauses {
-            assert!(prose.contains(clause), "missing {clause}");
-        }
+        assert!(prose.contains(pointer), "missing {pointer}");
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().canonicalize().unwrap().join("AGENTS.md");
         let user = "User rules\r\nkeep exact\n";

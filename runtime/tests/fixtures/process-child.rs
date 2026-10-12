@@ -45,7 +45,7 @@ fn main() {
         let lock = snapshot::Lock::acquire(&path);
         let mut state = snapshot::read(&path);
         if args.first().is_some_and(|a| a == "rev-parse")
-            && args.get(1).is_some_and(|a| a == "--show-toplevel")
+            && args.iter().any(|a| a == "--show-toplevel")
             && state["observation_discovery_failed"] == true
         {
             state["hanging_git_pid"] = serde_json::json!(std::process::id());
@@ -54,7 +54,7 @@ fn main() {
             });
         }
         if args.first().is_some_and(|a| a == "rev-parse")
-            && args.get(1).is_some_and(|a| a == "--show-toplevel")
+            && args.iter().any(|a| a == "--show-toplevel")
             && state["initial_git_complete"] == true
         {
             // End observation at its first discovery read. The next local read
@@ -127,7 +127,7 @@ fn main() {
     }
     if std::env::var_os("SPECGIT_FIXTURE_GIT_TIMEOUT").is_some() {
         if args.first().map(String::as_str) == Some("rev-parse")
-            && args.get(1).map(String::as_str) == Some("--show-toplevel")
+            && args.iter().any(|a| a == "--show-toplevel")
         {
             if let Some(path) = std::env::var_os("SPECGIT_FIXTURE_READY_PID") {
                 snapshot::write(path, &serde_json::json!(std::process::id()));
@@ -414,6 +414,27 @@ fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
             eprintln!("Verified OK");
         }
         _ => {
+            if args == ["skill", "--user", "--refresh-only", "--json"] {
+                match state["skill_failure"].as_str() {
+                    Some("malformed") => {
+                        print!("not json");
+                        return;
+                    }
+                    Some("exit") => std::process::exit(1),
+                    Some("timeout") => std::thread::sleep(Duration::from_secs(60)),
+                    _ => {}
+                }
+                let report = specgit::skill::run(specgit::skill::Options {
+                    user: true,
+                    refresh_only: true,
+                    ..Default::default()
+                });
+                let exit = report.exit;
+                let mut report = serde_json::to_value(report).unwrap();
+                report["version"] = state["binary_version"].clone();
+                println!("{report}");
+                std::process::exit(i32::from(exit));
+            }
             if args != ["--human", "--version"] {
                 std::process::exit(2);
             }
@@ -1040,10 +1061,23 @@ fn delivery_api(
     use serde_json::{Value, json};
     let gh = endpoint.starts_with("repos/") || endpoint.starts_with("search/");
     let route = endpoint.split('?').next().unwrap();
+    let issue_rows = || {
+        let closed = endpoint.contains("is%3Aclosed") || endpoint.contains("state=closed");
+        match state["issues"].as_array() {
+            Some(issues) => json!(
+                issues
+                    .iter()
+                    .filter(|issue| { (issue["state"] == "closed") == closed })
+                    .take(if closed { 20 } else { usize::MAX })
+                    .collect::<Vec<_>>()
+            ),
+            None => state["issues"].clone(),
+        }
+    };
     let response = if method == "GET" && endpoint.starts_with("search/issues?") {
-        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":state["issues"]})
+        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":issue_rows()})
     } else if method == "GET" && route.ends_with("/issues") {
-        state["issues"].clone()
+        issue_rows()
     } else if method == "GET" && route.contains("/issues/") {
         let number: u64 = route.rsplit('/').next().unwrap().parse().unwrap();
         let found = state["issues"]

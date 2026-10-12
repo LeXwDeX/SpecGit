@@ -1,5 +1,5 @@
 //! Delivery operations dispatch to concrete native protocols; observers receive only ForgeRead.
-pub use crate::delivery_model::{CandidateRead, Issue, PullRequest};
+pub use crate::delivery_model::{CandidateRead, CandidateSearch, Issue, PullRequest};
 pub use crate::forge_routes::prefix;
 use crate::{
     diagnostic::{Code, Diagnostic},
@@ -27,12 +27,24 @@ pub async fn issue(
         Provider::Gitlab => gitlab::issue(reader, repo, project_id, number).await,
     }
 }
+/// Open duplicate candidates only; kept for existing callers.
 pub async fn candidates(
     reader: &ForgeRead,
     repo: &Repository,
     project_id: u64,
     query: &str,
 ) -> Result<CandidateRead, Diagnostic> {
+    Ok(candidate_search(reader, repo, project_id, query)
+        .await?
+        .read)
+}
+/// Open duplicate candidates plus bounded closed history for reference.
+pub async fn candidate_search(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    query: &str,
+) -> Result<CandidateSearch, Diagnostic> {
     match repo.provider {
         Provider::Github => github::candidates(reader, repo, project_id, query).await,
         Provider::Gitlab => gitlab::candidates(reader, repo, project_id, query).await,

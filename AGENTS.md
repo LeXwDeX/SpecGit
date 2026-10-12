@@ -113,7 +113,7 @@ astra 只做交付前终审，审查最终方案和最终代码；纯文档任�
 不得安装项目内的操作用 CLI。隔离构建和安装验证产物仅用于测试，不替换共享 PATH 入口。
 每个参与项目使用 `specgit init` 初始化。
 
-集成永久仅限项目级。setup 不安装全局宿主资产或全局观察状态。
+项目集成仅限项目级。setup 不安装全局宿主资产或全局观察状态。唯一的用户级资产是用户显式运行 `specgit skill --user` 安装的 Skill 文件，`specgit update` 只刷新已受管的该文件。
 项目 hooks 直接引用共享 CLI。官方 OpenCode 只安装项目指导和 Skill。
 `--opencode-claude-hooks` 仅用于支持该协议的自定义 OpenCode。
 安装记录不证明生效；须验证真实阻止行为与上下文交付。

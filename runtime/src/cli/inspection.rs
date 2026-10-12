@@ -56,13 +56,35 @@ pub(super) async fn doctor(
     } else {
         probe::Probe::not_checked("project_api")
     });
+    let write_permissions = if let Some(context) = &context {
+        let project_probe = probes.last().expect("project probe was appended");
+        project_probe
+            .evidence
+            .get("write_permissions")
+            .cloned()
+            .unwrap_or_else(|| {
+                serde_json::to_value(specgit::forge::capabilities::write_permissions(
+                    &context.repository,
+                    None,
+                ))
+                .expect("permissions serialize")
+            })
+    } else {
+        serde_json::json!("not_checked")
+    };
+    if let Some(account) = probes
+        .iter_mut()
+        .find(|probe| probe.operation == "account_api" && probe.status == Capability::Available)
+    {
+        account.evidence["write_permissions"] = write_permissions.clone();
+    }
     let failed = probes
         .iter()
         .any(|p| !matches!(p.status, Capability::Available | Capability::NotChecked));
     let mut report = Report::success(
         "doctor",
         if failed { "unknown" } else { "ready" },
-        serde_json::json!({"probes":probes,"write_permissions":"not_checked"}),
+        serde_json::json!({"probes":probes,"write_permissions":write_permissions}),
     );
     if failed {
         report.exit = 3;
