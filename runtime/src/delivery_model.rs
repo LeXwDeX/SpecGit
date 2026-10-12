@@ -12,6 +12,21 @@ pub struct Pagination {
 pub struct CandidateRead {
     pub issues: Vec<Issue>,
     pub pagination: Pagination,
+    pub history: Vec<HistoryIssue>,
+    pub history_diagnostics: Vec<crate::diagnostic::Diagnostic>,
+}
+
+/// Closed search rows are reference evidence, never adoptable open candidates.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryIssue {
+    pub id: u64,
+    pub title: String,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

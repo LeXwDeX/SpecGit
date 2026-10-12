@@ -1040,10 +1040,23 @@ fn delivery_api(
     use serde_json::{Value, json};
     let gh = endpoint.starts_with("repos/") || endpoint.starts_with("search/");
     let route = endpoint.split('?').next().unwrap();
+    let issue_rows = || {
+        let closed = endpoint.contains("is%3Aclosed") || endpoint.contains("state=closed");
+        match state["issues"].as_array() {
+            Some(issues) => json!(
+                issues
+                    .iter()
+                    .filter(|issue| { (issue["state"] == "closed") == closed })
+                    .take(if closed { 20 } else { usize::MAX })
+                    .collect::<Vec<_>>()
+            ),
+            None => state["issues"].clone(),
+        }
+    };
     let response = if method == "GET" && endpoint.starts_with("search/issues?") {
-        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":state["issues"]})
+        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":issue_rows()})
     } else if method == "GET" && route.ends_with("/issues") {
-        state["issues"].clone()
+        issue_rows()
     } else if method == "GET" && route.contains("/issues/") {
         let number: u64 = route.rsplit('/').next().unwrap().parse().unwrap();
         let found = state["issues"]

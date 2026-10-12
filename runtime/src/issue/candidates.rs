@@ -173,7 +173,7 @@ async fn review(
         intent,
         &candidates,
     );
-    let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.pagination});
+    let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"history":candidate_read.history,"history_diagnostics":candidate_read.history_diagnostics,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.pagination});
     Ok(CandidateReview {
         evidence,
         review_digest,
