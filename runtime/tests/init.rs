@@ -1066,7 +1066,7 @@ fn both_forges_init_refresh_reject_settings_writes_and_preserve_user_content() {
         assert!(
             fs::read_to_string(f.root.join("CLAUDE.md"))
                 .unwrap()
-                .contains("specification Issues")
+                .contains("select a complete relevant Issue")
         );
         let state = f.state();
         assert_eq!(state["project"]["unrelated"], "keep");

@@ -441,9 +441,9 @@ mod tests {
         let (refreshed, _) =
             instruction_change("codex", &root, Some(&registration), false).unwrap();
         assert_eq!(refreshed.after.unwrap(), first);
-        let edited = String::from_utf8(first)
-            .unwrap()
-            .replace("permanently project-only", "User edit");
+        let original = String::from_utf8(first).unwrap();
+        let edited = original.replace("stays project-only", "User edit");
+        assert_ne!(edited, original);
         std::fs::write(&path, edited).unwrap();
         assert_eq!(
             instruction_change("codex", &root, Some(&registration), false)
