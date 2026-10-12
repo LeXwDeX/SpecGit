@@ -76,15 +76,6 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
         Ok(None) => return Output::default(),
         Err(output) => return output,
     };
-    let branch = context.branch.as_deref().unwrap_or("detached");
-    let context_id = crate::assets::hash(
-        format!(
-            "{session}\0{:?}\0{}\0{event}\0{}",
-            context.root, context.head, context.dirty
-        )
-        .as_bytes(),
-    );
-    let context_id = &context_id[..16];
     let selection = crate::selection::read(&context);
     let checkpoint_valid = selection.as_ref().is_ok_and(|selected| {
         selected
@@ -99,6 +90,33 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
         };
         return deny(reason);
     }
+    if event == "PreToolUse" {
+        // A successful checkpoint check never repeats the session guidance.
+        return Output::default();
+    }
+    if event == "PostToolUse" {
+        return match pending_notice(&context, &session, &observation.notify) {
+            Ok(Some(text)) => Output {
+                json: Some(
+                    json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":text}}),
+                ),
+                diagnostic: None,
+            },
+            Ok(None) => Output::default(),
+            Err(_) => info(
+                "SpecGit has unreadable local observation state; inspect it with explicit diagnostics.",
+            ),
+        };
+    }
+    let branch = context.branch.as_deref().unwrap_or("detached");
+    let context_id = crate::assets::hash(
+        format!(
+            "{session}\0{:?}\0{}\0{event}\0{}",
+            context.root, context.head, context.dirty
+        )
+        .as_bytes(),
+    );
+    let context_id = &context_id[..16];
     let mut text = if language == Language::Zh {
         format!(
             "SpecGit 2 [{context_id}]：当前分支 {branch}，本地{}。远端状态尚未检查；开始受跟踪的修改前先选择原生 issue，完成须确认目标分支已合并、全部选定 issue 已关闭。",
@@ -114,7 +132,7 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
             }
         )
     };
-    if ["SessionStart", "PostToolUse"].contains(&event) {
+    if event == "SessionStart" {
         match pending_notice(&context, &session, &observation.notify) {
             Ok(Some(notice)) => { text.push('\n'); text.push_str(&notice); },
             Ok(None) => {},
