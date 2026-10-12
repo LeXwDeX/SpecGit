@@ -265,7 +265,7 @@ fn custom_host_protocol_denies_patch_aliases_and_accepts_only_current_checkpoint
             .get("permissionDecision")
             .is_none()
     );
-    assert!(result["hookSpecificOutput"]["additionalContext"].is_string());
+    assert!(result.is_null());
     git(&root, &["checkout", "-b", "other"]);
     assert_eq!(
         invoke(entry, allowed)["hookSpecificOutput"]["permissionDecision"],
