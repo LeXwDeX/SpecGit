@@ -513,6 +513,7 @@ fn readonly_commands_and_non_repository_redirects_do_not_need_checkpoint() {
         "printf git push",
         "env FOO=1 gh pr checks 41",
         "sudo command gh issue view 41",
+        "gh pr view 41 --json body -q '.body | $(x)'",
     ] {
         let out = run(
             "PreToolUse",
@@ -558,6 +559,10 @@ fn shell_segments_and_leading_wrappers_cannot_hide_tracked_writes() {
         "gh pr create",
         "gh pr merge",
         "gh issue edit 41",
+        "gh pr view \"$(touch x)\"",
+        "gh pr view `touch x`",
+        "glab mr view \"$(rm y)\"",
+        "specgit pr --status --request \"$(touch x)\"",
         "glab mr approve 41",
         "glab issue close 41",
         "specgit pr --ready",

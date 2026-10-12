@@ -264,6 +264,14 @@ impl ForgeRead {
         })
     }
     pub async fn project(&self, repo: &Repository) -> Result<ProjectFacts, Diagnostic> {
+        Ok(self.project_with_roles(repo).await?.0)
+    }
+    /// The same single project read, plus role facts decoded from that response.
+    /// Role facts are evidence only; they never authorize a write.
+    pub async fn project_with_roles(
+        &self,
+        repo: &Repository,
+    ) -> Result<(ProjectFacts, crate::delivery_model::ProjectRolePermissions), Diagnostic> {
         if self.provider != repo.provider || self.host != repo.host {
             return Err(identity_error());
         }
@@ -329,14 +337,16 @@ impl ForgeRead {
                 group_access_level: access_level(value.pointer("/permissions/group_access")),
             },
         };
-        Ok(ProjectFacts {
-            id,
-            repository: repo.clone(),
-            default_branch: default.into(),
-            native_source_cleanup: cleanup,
-            native_issue_closing: closing,
-            role_permissions: Some(role_permissions),
-        })
+        Ok((
+            ProjectFacts {
+                id,
+                repository: repo.clone(),
+                default_branch: default.into(),
+                native_source_cleanup: cleanup,
+                native_issue_closing: closing,
+            },
+            role_permissions,
+        ))
     }
 }
 fn access_level(access: Option<&Value>) -> Option<u64> {
