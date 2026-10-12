@@ -1,6 +1,6 @@
 use super::protocol::{WriteTransport, id, malformed, text};
 use crate::{
-    delivery_model::{CandidateRead, Issue, PullRequest},
+    delivery_model::{CandidateRead, HistoryIssue, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
     forge_read::{ForgeRead, Pagination, encode},
     identity::Repository,
@@ -141,10 +141,21 @@ pub(crate) async fn candidates(
     }
     let mut out = vec![];
     for row in rows {
-        out.push(issue(reader, repo, project_id, id(&row, "number")?).await?);
+        let candidate = issue(reader, repo, project_id, id(&row, "number")?).await?;
+        // Search rows can lag behind an issue being closed.
+        if candidate.state != "closed" {
+            out.push(candidate);
+        }
     }
+    let (history, history_diagnostics) = match history(reader, repo, query).await {
+        Ok(history) => (history, vec![]),
+        Err(d) if d.code == Code::Cancelled => return Err(d),
+        Err(d) => (vec![], vec![d]),
+    };
     Ok(CandidateRead {
         issues: out,
+        history,
+        history_diagnostics,
         pagination: Pagination {
             pages_fetched,
             items_seen,
@@ -152,6 +163,57 @@ pub(crate) async fn candidates(
             complete,
         },
     })
+}
+
+async fn history(
+    reader: &ForgeRead,
+    repo: &Repository,
+    query: &str,
+) -> Result<Vec<HistoryIssue>, Diagnostic> {
+    let value = reader
+        .get(&format!(
+            "search/issues?q={}&per_page=20&page=1",
+            encode(&format!("repo:{} is:issue is:closed {query}", repo.path))
+        ))
+        .await?;
+    if value.get("incomplete_results").and_then(Value::as_bool) != Some(false) {
+        return Err(Diagnostic::new(
+            Code::OutputLimit,
+            "issue_history",
+            "Native closed issue search is incomplete.",
+            "Inspect closed issues on the native platform; history is reference evidence only.",
+        ));
+    }
+    let rows = value
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(malformed)?;
+    if rows.len() > 20 {
+        return Err(malformed());
+    }
+    rows.iter()
+        .map(|row| {
+            if row.get("pull_request").is_some() || text(row, "state")? != "closed" {
+                return Err(malformed());
+            }
+            Ok(HistoryIssue {
+                id: id(row, "number")?,
+                title: text(row, "title")?,
+                state: "closed".into(),
+                state_reason: optional_history_text(row, "state_reason")?,
+                updated_at: text(row, "updated_at")?,
+                url: optional_history_text(row, "html_url")?,
+            })
+        })
+        .collect()
+}
+
+fn optional_history_text(row: &Value, key: &str) -> Result<Option<String>, Diagnostic> {
+    match row.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(malformed()),
+    }
 }
 pub(crate) async fn label_pool(
     reader: &ForgeRead,

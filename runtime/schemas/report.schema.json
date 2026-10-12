@@ -51,12 +51,27 @@
         "complete": {"type": "boolean"}
       }
     },
+    "history_issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "state", "updated_at"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 1},
+        "title": {"type": "string"},
+        "state": {"const": "closed"},
+        "state_reason": {"type": "string"},
+        "updated_at": {"type": "string"},
+        "url": {"type": "string"}
+      }
+    },
     "candidate_preflight": {
       "type": "object",
-      "required": ["title", "issues", "review_digest", "elapsed_ms", "requests_executed", "pagination"],
+      "required": ["title", "issues", "history", "history_diagnostics", "review_digest", "elapsed_ms", "requests_executed", "pagination"],
       "properties": {
         "title": {"type": "string", "minLength": 1},
         "issues": {"type": "array", "items": {"type": "object"}},
+        "history": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/history_issue"}},
+        "history_diagnostics": {"$ref": "#/properties/diagnostics"},
         "review_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "elapsed_ms": {"type": "integer", "minimum": 0},
         "requests_executed": {"type": "integer", "minimum": 0},
