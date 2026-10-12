@@ -412,15 +412,28 @@ explicit:
   `permissionDecisionReason`. Editing another repository in one call is denied
   with its own reason; the call is never silently split.
 - Allow/pass-through: every other event and every verified call. The adapter
-  emits no blocking decision and the host proceeds. A direct, non-compound
+  emits no blocking decision and the host proceeds. Allowed PreToolUse calls
+  emit no output. A direct, non-compound
   `specgit issue ...` call is exempt on PreToolUse so the first checkpoint can
   be created; compound shell input is still inspected.
+
+Shell classification checks each segment separated outside quotes by `;`,
+`&&`, `||`, `|`, `&` or a newline. Leading assignments and `sudo`, `env`,
+`command`, `nohup` and `time` do not hide file mutations. Descriptor redirects
+(`2>&1`, `>&2`) and redirects to `/dev/null` do not count as repository writes;
+other unquoted output redirects do. Read-only `gh pr view|list|checks|diff|status`,
+`gh issue view|list`, `glab mr view|list|diff`, `glab issue view|list`,
+`specgit pr --status` and `specgit status|doctor|watch|inbox` need no checkpoint.
+This classification is best effort, not a general shell or file-write sandbox.
 
 `apply_patch` calls are verified, not exempt: the adapter parses
 `*** Add File: `, `*** Update File: `, `*** Delete File: ` and `*** Move to: `
 markers from the patch payload (or the wrapped command), resolves relative paths against the
 reported `cwd`, and checks each actual target through Git before deciding.
-SessionStart and PostToolUse add managed guidance with `additionalContext`;
+SessionStart adds managed guidance and any pending notice with `additionalContext`.
+Synchronous PostToolUse emits only pending notice text in `additionalContext`;
+without a pending notice it is silent. Unreadable observation state produces a
+diagnostic `systemMessage`, not repeated guidance.
 Stop uses a block decision for its single recovery turn. Verification is of the
 actual edit target resolved on disk, not of the event's claimed path alone.
 

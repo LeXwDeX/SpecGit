@@ -1209,7 +1209,10 @@ fn final_local_revalidation_is_bounded_and_leaves_a_resumable_receipt() {
         f.state(),
         start.elapsed()
     );
-    assert!(f.state()["git_proxy_hits"].as_u64().unwrap() > 0);
+    // Batched discovery reaches the injected failure without replaying separate
+    // rev-parse queries. Require the warm snapshot, not redundant cache hits.
+    assert_eq!(f.state()["initial_git_complete"], true);
+    assert!(!f.state()["git_proxy_cache"].as_object().unwrap().is_empty());
     assert_eq!(f.state()["observation_discovery_failed"], true);
     assert!(f.state()["calls"].as_array().unwrap().is_empty());
     let identity: Identity =

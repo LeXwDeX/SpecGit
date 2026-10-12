@@ -75,7 +75,10 @@ fn checkpoint(root: &std::path::Path, branch: &str) {
     .unwrap();
 }
 fn run(event: &str, bytes: &[u8]) -> std::process::Output {
-    let mut child = executable::command()
+    run_command(executable::command(), event, bytes)
+}
+fn run_command(mut command: Command, event: &str, bytes: &[u8]) -> std::process::Output {
+    let mut child = command
         .args(["hook", "--event", event])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -137,6 +140,11 @@ fn event_context_keeps_unknown_input_and_never_grants_permission_or_loops_stop()
         let original = p.clone();
         let out = run(event, &serde_json::to_vec(&p).unwrap());
         assert!(out.status.success());
+        if matches!(event, "PreToolUse" | "PostToolUse") {
+            assert!(out.stdout.is_empty(), "{event}: {:?}", out.stdout);
+            assert_eq!(p, original);
+            continue;
+        }
         let v: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(p, original);
         assert!(v.get("continue").is_none());
@@ -302,13 +310,10 @@ fn pre_tool_use_accepts_only_the_checkpoint_branch_and_rejects_cross_repository_
     .unwrap();
     checkpoint(t.path(), "master");
     let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}});
-    let value: Value =
-        serde_json::from_slice(&run("PreToolUse", &serde_json::to_vec(&payload).unwrap()).stdout)
-            .unwrap();
     assert!(
-        value["hookSpecificOutput"]
-            .get("permissionDecision")
-            .is_none()
+        run("PreToolUse", &serde_json::to_vec(&payload).unwrap())
+            .stdout
+            .is_empty()
     );
     git(t.path(), &["checkout", "-b", "other"]);
     let value: Value =
@@ -427,7 +432,7 @@ fn state_root_is_not_a_supported_hook_argument() {
 }
 
 #[test]
-fn native_write_commands_trigger_observation_context_but_observer_commands_do_not_recurse() {
+fn native_write_commands_require_checkpoint_but_observer_commands_do_not_recurse() {
     let t = fixture();
     fs::write(
         t.path().join(".specgit.yaml"),
@@ -442,7 +447,7 @@ fn native_write_commands_trigger_observation_context_but_observer_commands_do_no
         ("specgit pr --ready", true),
         ("specgit --json pr --ready", true),
         ("specgit --cwd '/tmp/project space' --json pr --ready", true),
-        ("specgit --cwd=\"/tmp/project space\" --json issue 1", true),
+        ("specgit --cwd=\"/tmp/project space\" --json issue 1", false),
         ("specgit --json --cwd /tmp/project finish", false),
         (
             "specgit merge --request 41 --mode now --strategy squash",
@@ -453,13 +458,390 @@ fn native_write_commands_trigger_observation_context_but_observer_commands_do_no
         ("specgit inbox --request 41", false),
         ("specgit finish", false),
     ] {
-        let payload = json!({"session_id":"fixture-session","hook_event_name":"PostToolUse","cwd":t.path(),"tool_name":"Bash","tool_input":{"command":command}});
+        let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Bash","tool_input":{"command":command}});
         assert_eq!(
-            !run("PostToolUse", &serde_json::to_vec(&payload).unwrap())
+            !run("PreToolUse", &serde_json::to_vec(&payload).unwrap())
                 .stdout
                 .is_empty(),
             relevant,
             "{command}"
         );
     }
+}
+
+fn shell_payload(root: &std::path::Path, command: &str) -> Value {
+    json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":root,"tool_name":"Bash","tool_input":{"command":command}})
+}
+
+#[test]
+fn readonly_commands_and_non_repository_redirects_do_not_need_checkpoint() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\n",
+    )
+    .unwrap();
+    for command in [
+        "gh pr view 41",
+        "gh pr list",
+        "gh pr checks 41",
+        "gh pr diff 41",
+        "gh pr status",
+        "gh issue view 41",
+        "gh issue list",
+        "glab mr view 41",
+        "glab mr list",
+        "glab mr diff 41",
+        "glab issue view 41",
+        "glab issue list",
+        "specgit pr --status",
+        "specgit --json pr --status --request 41",
+        "specgit status",
+        "specgit doctor",
+        "specgit watch",
+        "specgit inbox",
+        "cmd 2>&1",
+        "cmd >&2",
+        "cmd &>/dev/null",
+        "cmd 2>/dev/null",
+        "cmd >/dev/null",
+        "cmd 2> /dev/null",
+        "cmd >>/dev/null 2>&1",
+        "cmd 2>&1 | gh pr view 41",
+        "printf 'rm x; touch y && cp z q | mv a b & mkdir c\n git push'",
+        "printf \"a > b\"",
+        "printf git push",
+        "env FOO=1 gh pr checks 41",
+        "sudo command gh issue view 41",
+    ] {
+        let out = run(
+            "PreToolUse",
+            &serde_json::to_vec(&shell_payload(t.path(), command)).unwrap(),
+        );
+        assert!(out.status.success());
+        assert!(
+            out.stdout.is_empty(),
+            "{command}: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+}
+
+#[test]
+fn shell_segments_and_leading_wrappers_cannot_hide_tracked_writes() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\n",
+    )
+    .unwrap();
+    for command in [
+        "cd x && rm y",
+        "cd x;rm y",
+        "cd x || rm y",
+        "pwd | rm y",
+        "pwd & rm y",
+        "pwd\nrm y",
+        "FOO=1 rm y",
+        "sudo rm y",
+        "env rm y",
+        "command rm y",
+        "nohup rm y",
+        "time rm y",
+        "FOO='a b' sudo env BAR=2 command nohup time rm y",
+        "sudo -u root rm y",
+        "env -i FOO=1 rm y",
+        "cmd 2>&1 && rm y",
+        "cmd &>/dev/null; rm y",
+        "gh pr view 41 && git push",
+        "specgit pr --status;touch x",
+        "gh pr create",
+        "gh pr merge",
+        "gh issue edit 41",
+        "glab mr approve 41",
+        "glab issue close 41",
+        "specgit pr --ready",
+        "printf data > output.txt",
+        "cmd 2>&1 >output",
+        "cmd &>output",
+        "cmd >/dev/null.txt",
+        "specgit issue --inspect x && pwd",
+        "FOO=1 specgit issue 41",
+        "sudo specgit issue 41",
+        "specgit issue --inspect \"$(touch x)\"",
+    ] {
+        let out = run(
+            "PreToolUse",
+            &serde_json::to_vec(&shell_payload(t.path(), command)).unwrap(),
+        );
+        assert!(out.status.success());
+        assert!(!out.stdout.is_empty(), "missed write: {command}");
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            value["hookSpecificOutput"]["permissionDecision"], "deny",
+            "{command}: {value}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn batched_project_resolution_preserves_identity_and_reduces_git_processes() {
+    use specgit::{process::Process, project::resolve};
+    let t = fixture();
+    let process = Process::default().with_inspection_budget(Duration::from_secs(30));
+    let context = resolve(&process, t.path(), None, None, None).await.unwrap();
+    assert_eq!(process.inspection_summary().unwrap().activities.len(), 4);
+    let field = |args: &[&str]| {
+        String::from_utf8(
+            Command::new("git")
+                .current_dir(t.path())
+                .args(args)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim_end_matches(['\r', '\n'])
+        .to_owned()
+    };
+    assert_eq!(
+        context.root,
+        std::path::PathBuf::from(field(&["rev-parse", "--show-toplevel"]))
+    );
+    assert_eq!(
+        context.git_dir,
+        std::path::PathBuf::from(field(&["rev-parse", "--absolute-git-dir"]))
+    );
+    assert_eq!(
+        context.common_dir,
+        std::path::PathBuf::from(field(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir"
+        ]))
+    );
+    assert_eq!(context.head, field(&["rev-parse", "--verify", "HEAD"]));
+    assert_eq!(
+        context.branch.as_deref(),
+        Some(field(&["rev-parse", "--abbrev-ref", "HEAD"]).as_str())
+    );
+    assert!(!context.dirty);
+    assert_eq!(context.remote, "origin");
+    assert_eq!(context.repository.path, "owner/repo");
+    git(t.path(), &["checkout", "--detach"]);
+    let detached = resolve(&process, t.path(), None, None, None).await.unwrap();
+    assert_eq!(detached.head, context.head);
+    assert!(detached.branch.is_none());
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn hook_reuses_the_target_probe_instead_of_resolving_toplevel_again() {
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\n",
+    )
+    .unwrap();
+    let proxy = tempfile::tempdir().unwrap();
+    let name = if cfg!(windows) { "git.exe" } else { "git" };
+    let real_git = specgit::process::resolve_executable("git").unwrap();
+    fs::copy(
+        env!("CARGO_BIN_EXE_specgit-process-fixture"),
+        proxy.path().join(name),
+    )
+    .unwrap();
+    let state_path = proxy.path().join("state.json");
+    fs::write(&state_path, b"{}").unwrap();
+    let path = std::env::var_os("PATH").unwrap();
+    let paths = std::iter::once(proxy.path().to_owned()).chain(std::env::split_paths(&path));
+    let mut command = executable::command();
+    command
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("SPECGIT_FIXTURE_REAL_GIT", real_git)
+        .env("SPECGIT_FIXTURE_API_FILE", &state_path);
+    let payload = shell_payload(t.path(), "touch tracked-file");
+    let output = run_command(
+        command,
+        "PreToolUse",
+        &serde_json::to_vec(&payload).unwrap(),
+    );
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+    let state: Value = serde_json::from_slice(&fs::read(state_path).unwrap()).unwrap();
+    let queries = state["git_proxy_cache"].as_object().unwrap();
+    assert_eq!(queries.len(), 4, "{state}");
+    assert_eq!(
+        queries
+            .keys()
+            .filter(|key| key.contains("rev-parse"))
+            .count(),
+        1
+    );
+    assert!(state["observation_discovery_failed"].is_null());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn newline_paths_preserve_the_separate_query_contract() {
+    let t = fixture();
+    let linked = t.path().join("linked 空格\nline");
+    git(
+        t.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let process = specgit::process::Process::default();
+    let context = specgit::project::resolve(&process, &linked, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        context.root.canonicalize().unwrap(),
+        linked.canonicalize().unwrap()
+    );
+    assert!(context.branch.is_none());
+    let field = |args: &[&str]| {
+        String::from_utf8(
+            Command::new("git")
+                .current_dir(&linked)
+                .args(args)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim_end_matches(['\r', '\n'])
+        .to_owned()
+    };
+    assert_eq!(
+        context.git_dir,
+        std::path::PathBuf::from(field(&["rev-parse", "--absolute-git-dir"]))
+    );
+    assert_eq!(
+        context.common_dir,
+        std::path::PathBuf::from(field(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir"
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn batched_project_resolution_keeps_unborn_and_remote_error_categories() {
+    use specgit::{diagnostic::Code, process::Process, project::resolve};
+    let t = tempfile::tempdir().unwrap();
+    let process = Process::default();
+    assert_eq!(
+        resolve(&process, t.path(), None, None, None)
+            .await
+            .unwrap_err()
+            .code,
+        Code::MissingProject
+    );
+    git(t.path(), &["init"]);
+    assert_eq!(
+        resolve(&process, t.path(), None, None, None)
+            .await
+            .unwrap_err()
+            .code,
+        Code::AmbiguousRemote
+    );
+    assert_eq!(
+        resolve(&process, t.path(), Some("origin"), None, None)
+            .await
+            .unwrap_err()
+            .code,
+        Code::InvalidInput
+    );
+    git(
+        t.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/owner/repo.git",
+        ],
+    );
+    assert_eq!(
+        resolve(&process, t.path(), None, None, None)
+            .await
+            .unwrap_err()
+            .code,
+        Code::ProcessFailed
+    );
+}
+
+#[tokio::test]
+async fn post_tool_use_emits_only_pending_receipts_without_acknowledging_them() {
+    use specgit::{
+        process::Process,
+        project, selection,
+        watch_store::{self, EventState, Goal, Identity, Revision, Store},
+    };
+    let t = fixture();
+    fs::write(
+        t.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\nlanguage: en\n",
+    )
+    .unwrap();
+    let context = project::resolve(&Process::default(), t.path(), None, None, None)
+        .await
+        .unwrap();
+    checkpoint(t.path(), context.branch.as_deref().unwrap());
+    let path = selection::path(&context);
+    let mut selected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    selected["request"] = json!(41);
+    fs::write(path, serde_json::to_vec(&selected).unwrap()).unwrap();
+    let identity = Identity::new(&context, "fixture-session", 41, Goal::Lifecycle).unwrap();
+    let state = Store::new(identity.clone())
+        .unwrap()
+        .publish(
+            Revision {
+                head: context.head.clone(),
+                local_head: context.head.clone(),
+                target: "main".into(),
+                declaration: "fixture".into(),
+                evidence_digest: "fixture".into(),
+            },
+            EventState::Completed,
+            "fixture".into(),
+            "Refresh native evidence".into(),
+            watch_store::now(),
+        )
+        .unwrap();
+    let id = &state.events[0].id;
+    for event in ["PostToolUse", "SessionStart", "PreToolUse"] {
+        let payload = json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":"file"}});
+        let out = run(event, &serde_json::to_vec(&payload).unwrap());
+        assert!(out.status.success());
+        if event == "PreToolUse" {
+            assert!(out.stdout.is_empty());
+            continue;
+        }
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let text = value["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            text.contains(id) && text.contains("unverified event receipts"),
+            "{value}"
+        );
+        assert_eq!(
+            text.contains("Remote state is not checked"),
+            event == "SessionStart"
+        );
+        assert_eq!(text.contains("SpecGit 2 ["), event == "SessionStart");
+    }
+    assert!(
+        watch_store::read(&identity).unwrap().unwrap().events[0]
+            .acknowledged_at
+            .is_none()
+    );
 }

@@ -45,7 +45,7 @@ fn main() {
         let lock = snapshot::Lock::acquire(&path);
         let mut state = snapshot::read(&path);
         if args.first().is_some_and(|a| a == "rev-parse")
-            && args.get(1).is_some_and(|a| a == "--show-toplevel")
+            && args.iter().any(|a| a == "--show-toplevel")
             && state["observation_discovery_failed"] == true
         {
             state["hanging_git_pid"] = serde_json::json!(std::process::id());
@@ -54,7 +54,7 @@ fn main() {
             });
         }
         if args.first().is_some_and(|a| a == "rev-parse")
-            && args.get(1).is_some_and(|a| a == "--show-toplevel")
+            && args.iter().any(|a| a == "--show-toplevel")
             && state["initial_git_complete"] == true
         {
             // End observation at its first discovery read. The next local read
@@ -127,7 +127,7 @@ fn main() {
     }
     if std::env::var_os("SPECGIT_FIXTURE_GIT_TIMEOUT").is_some() {
         if args.first().map(String::as_str) == Some("rev-parse")
-            && args.get(1).map(String::as_str) == Some("--show-toplevel")
+            && args.iter().any(|a| a == "--show-toplevel")
         {
             if let Some(path) = std::env::var_os("SPECGIT_FIXTURE_READY_PID") {
                 snapshot::write(path, &serde_json::json!(std::process::id()));
