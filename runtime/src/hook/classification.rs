@@ -125,6 +125,8 @@ fn segment_relevant(event: &str, command: &str, compound: bool) -> bool {
     {
         return true;
     }
+    // A substitution runs arbitrary commands, so no read-only exemption applies.
+    let substituted = has_substitution(command);
     let specgit_index =
         if name.is_some_and(|n| ["specgit", "specgit.exe", "specgit.js"].contains(&n)) {
             Some(index)
@@ -164,6 +166,7 @@ fn segment_relevant(event: &str, command: &str, compound: bool) -> bool {
                 remaining = &remaining[1..];
             } else {
                 return option == "merge"
+                    || (option == "pr" && substituted)
                     || (option == "pr"
                         && !(remaining.contains(&"--status") && !remaining.contains(&"--ready")));
             }
@@ -186,7 +189,7 @@ fn segment_relevant(event: &str, command: &str, compound: bool) -> bool {
                 (_, "issue") => &["view", "list"],
                 _ => return false,
             };
-            !readonly.contains(&subcommand)
+            substituted || !readonly.contains(&subcommand)
         }
         _ => false,
     }
@@ -249,6 +252,25 @@ fn has_unquoted_redirect(command: &str) -> bool {
             '\'' if !double => single = !single,
             '"' if !single => double = !double,
             '>' if !single && !double && !harmless_redirect(&command[index..]) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+fn has_substitution(command: &str) -> bool {
+    let (mut single, mut double, mut escaped) = (false, false, false);
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if !single => escaped = true,
+            '\'' if !double => single = !single,
+            '"' if !single => double = !double,
+            '`' if !single => return true,
+            '$' if !single && characters.peek() == Some(&'(') => return true,
             _ => {}
         }
     }

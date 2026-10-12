@@ -1,6 +1,6 @@
 use super::protocol::{WriteTransport, id, malformed, text};
 use crate::{
-    delivery_model::{CandidateRead, HistoryIssue, Issue, PullRequest},
+    delivery_model::{CandidateRead, CandidateSearch, HistoryIssue, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
     forge_read::{ForgeRead, Pagination, encode},
     identity::Repository,
@@ -85,7 +85,7 @@ pub(crate) async fn candidates(
     repo: &Repository,
     project_id: u64,
     query: &str,
-) -> Result<CandidateRead, Diagnostic> {
+) -> Result<CandidateSearch, Diagnostic> {
     let route = format!(
         "search/issues?q={}",
         encode(&format!("repo:{} is:issue is:open {query}", repo.path))
@@ -152,16 +152,18 @@ pub(crate) async fn candidates(
         Err(d) if d.code == Code::Cancelled => return Err(d),
         Err(d) => (vec![], vec![d]),
     };
-    Ok(CandidateRead {
-        issues: out,
+    Ok(CandidateSearch {
+        read: CandidateRead {
+            issues: out,
+            pagination: Pagination {
+                pages_fetched,
+                items_seen,
+                page_limit: PAGE_LIMIT,
+                complete,
+            },
+        },
         history,
         history_diagnostics,
-        pagination: Pagination {
-            pages_fetched,
-            items_seen,
-            page_limit: PAGE_LIMIT,
-            complete,
-        },
     })
 }
 

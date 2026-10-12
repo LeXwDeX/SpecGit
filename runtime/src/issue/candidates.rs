@@ -154,16 +154,20 @@ async fn review(
     }
     let started = Instant::now();
     let requests_before = w.process.inspection_requests_executed();
-    let candidate_read =
-        native_delivery::candidates(&w.reader, &w.context.repository, w.facts.id, &intent.title)
-            .await?;
+    let candidate_read = native_delivery::candidate_search(
+        &w.reader,
+        &w.context.repository,
+        w.facts.id,
+        &intent.title,
+    )
+    .await?;
     w.process.ensure_inspection_budget("issue_preflight")?;
     let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
     let requests_executed = w
         .process
         .inspection_requests_executed()
         .saturating_sub(requests_before);
-    let mut candidates = candidate_read.issues;
+    let mut candidates = candidate_read.read.issues;
     candidates.sort_by_key(|issue| issue.id);
     let review_digest = candidate_review_digest(
         &w.context.repository,
@@ -173,7 +177,7 @@ async fn review(
         intent,
         &candidates,
     );
-    let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"history":candidate_read.history,"history_diagnostics":candidate_read.history_diagnostics,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.pagination});
+    let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"history":candidate_read.history,"history_diagnostics":candidate_read.history_diagnostics,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.read.pagination});
     Ok(CandidateReview {
         evidence,
         review_digest,

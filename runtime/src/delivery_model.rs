@@ -13,6 +13,12 @@ pub struct Pagination {
 pub struct CandidateRead {
     pub issues: Vec<Issue>,
     pub pagination: Pagination,
+}
+
+/// Open candidates plus bounded closed history. Kept separate so the public
+/// `CandidateRead` construction contract is unchanged.
+pub struct CandidateSearch {
+    pub read: CandidateRead,
     pub history: Vec<HistoryIssue>,
     pub history_diagnostics: Vec<crate::diagnostic::Diagnostic>,
 }
@@ -181,9 +187,6 @@ pub struct ProjectFacts {
     pub default_branch: String,
     pub native_source_cleanup: Option<bool>,
     pub native_issue_closing: Option<bool>,
-    /// Optional role facts from the same project read; never a write authorization.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role_permissions: Option<ProjectRolePermissions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -474,7 +474,10 @@ Shell classification checks each segment separated outside quotes by `;`,
 other unquoted output redirects do. Read-only `gh pr view|list|checks|diff|status`,
 `gh issue view|list`, `glab mr view|list|diff`, `glab issue view|list`,
 `specgit pr --status` and `specgit status|doctor|watch|inbox` need no checkpoint.
-This classification is best effort, not a general shell or file-write sandbox.
+A segment that contains command substitution (`$(...)` or backticks, unless
+single-quoted) loses these read-only exemptions. Commands run through another
+interpreter, such as `bash -c`, `python -c` or PowerShell cmdlets, are not
+parsed. This classification is best effort, not a general shell or file-write sandbox.
 
 `apply_patch` calls are verified, not exempt: the adapter parses
 `*** Add File: `, `*** Update File: `, `*** Delete File: ` and `*** Move to: `

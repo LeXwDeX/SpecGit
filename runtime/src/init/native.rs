@@ -107,7 +107,7 @@ async fn project_facts(
     probes: &mut [Probe],
     check_scope: &InitCheckScope,
 ) -> Result<ProjectFacts, Box<Report>> {
-    let facts = match reader.project(&context.repository).await {
+    let (facts, roles) = match reader.project_with_roles(&context.repository).await {
         Ok(f) => f,
         Err(d) => {
             process.mark_inspection_incomplete();
@@ -125,7 +125,7 @@ async fn project_facts(
             )));
         }
     };
-    probe::record_project_permissions(probes, &facts);
+    probe::record_project_permissions(probes, &facts, Some(&roles));
     if !config::valid_branch(&facts.default_branch) {
         process.mark_inspection_incomplete();
         let diagnostic = Diagnostic::new(

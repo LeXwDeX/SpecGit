@@ -205,15 +205,14 @@ pub async fn account(reader: &ForgeRead) -> Probe {
 }
 pub async fn inspect(reader: &ForgeRead, context: &Context) -> Probe {
     let started = Instant::now();
-    match reader.project(&context.repository).await {
-        Ok(facts) => {
+    match reader.project_with_roles(&context.repository).await {
+        Ok((facts, roles)) => {
             let mut evidence = serde_json::to_value(&facts).expect("facts serialize");
-            evidence["write_permissions"] =
-                serde_json::to_value(crate::delivery_model::write_permissions(
-                    &facts.repository,
-                    facts.role_permissions.as_ref(),
-                ))
-                .expect("permissions serialize");
+            evidence["role_permissions"] = serde_json::to_value(&roles).expect("roles serialize");
+            evidence["write_permissions"] = serde_json::to_value(
+                crate::delivery_model::write_permissions(&facts.repository, Some(&roles)),
+            )
+            .expect("permissions serialize");
             Probe::available("project_api", evidence).measured(started)
         }
         Err(d) => {
@@ -226,11 +225,12 @@ pub async fn inspect(reader: &ForgeRead, context: &Context) -> Probe {
 }
 
 /// Attach facts collected in this invocation without an extra account/project read.
-pub fn record_project_permissions(probes: &mut [Probe], facts: &ProjectFacts) {
-    let permissions = crate::delivery_model::write_permissions(
-        &facts.repository,
-        facts.role_permissions.as_ref(),
-    );
+pub fn record_project_permissions(
+    probes: &mut [Probe],
+    facts: &ProjectFacts,
+    roles: Option<&crate::delivery_model::ProjectRolePermissions>,
+) {
+    let permissions = crate::delivery_model::write_permissions(&facts.repository, roles);
     for probe in probes {
         if probe.operation == "account_api" {
             if !probe.evidence.is_object() {
