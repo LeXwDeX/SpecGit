@@ -13,9 +13,10 @@ conforms to it.
 | Repository identity | `identity` | Defines repository, host, and object-ID rules. It does not call Git or a forge. |
 | Local project state | `config`, `project`, `selection` | Reads project configuration and Git context. State belongs to the repository or its Git metadata. `config::worktree` owns the read-only private-state probe and sibling-consumer discovery for worktree-shared assets. |
 | Agent integration | `setup`, `guidance`, `prompts`, `assets` | Builds and writes project-scoped skills, marked instruction blocks, host hook entries, and ownership receipts. It does not install global host state or a project executable. |
+| User Skill | `skill` | Owns the shared embedded Skill bytes and the explicitly installed user Skill file. A SHA-256 marker establishes ownership; refresh backs up edited content, removal preserves edits. No global hooks, state, lock file or receipts. |
 | Native platform | `forge_read`, `forge_routes`, `forge`, `native_delivery` | Separates read transport, route construction, response decoding, and explicit mutation. The forge owns CI, protection, review, and merge. |
 | Observation | `observation_model`, `watch_store`, `watch`, `observation`, `report` | Stores scoped event facts and presents them. An observation is not authorization or proof of completion. |
-| Self-update | `self_update` | Reads signed GitHub Releases through `gh`, verifies Cosign, the manifest row, the ZIP entry and its version, then replaces only the running executable with a backup. It does not touch project state. |
+| Self-update | `self_update` | Reads signed GitHub Releases through `gh`, verifies Cosign, the manifest row, the ZIP entry and its version, then replaces only the running executable with a backup. After successful install it probes user Skill ownership and invokes the new executable to refresh only an existing managed Skill. It does not touch project state; refresh failure does not roll back the binary. |
 | Command line | `cli`, `main` | Parses and dispatches commands, then formats output. `main` is only the process entry point. |
 | Delivery context | `delivery_context::Workspace` | Loads and rechecks Git, declaration, and native project identity. It does not own Issue or PR write transactions. |
 
@@ -45,8 +46,13 @@ flowchart TD
   cli --> probe
   cli --> watch
   cli --> self_update
+  cli --> skill
   self_update --> process
   self_update --> report
+  self_update --> skill
+  skill --> assets
+  skill --> report
+  setup --> skill
 
   issue --> workspace[delivery_context::Workspace]
   pr --> workspace
@@ -122,9 +128,14 @@ The intended boundaries are:
   its transaction, journal, and locking behavior.
 - `observation_model` contains fact classification. `watch_store` and
   `report` depend on that model, not on the `observation` use case.
-- `self_update` depends only on `process`, `diagnostic` and `report`. It owns
+- `skill` owns the embedded Skill source shared with `setup`, and manages only
+  the explicitly selected user Skill file. It depends on `assets`, `diagnostic`
+  and `report`; no project or host state is loaded.
+- `self_update` depends only on `process`, `diagnostic`, `report` and `skill`. It owns
   release selection, verification and executable replacement. Tests may
   redirect the install target only in `test-fixtures` builds.
+  Its post-install Skill child uses the new executable, bounded argv transport
+  and the child's report; it never performs the refresh with old embedded bytes.
 - `cli` separates argument parsing, host behavior, dispatch, inspection, and
   output. `main` only starts the CLI.
 - `prompts` embeds short English and Chinese guidance and host entry points.
@@ -135,6 +146,13 @@ These edges describe the intended design. Do not treat this page alone as
 evidence that an unfinished extraction or test has passed.
 
 ## Assets, rollback, and notices
+
+Project integration remains project-only. The only user-level asset is the
+explicitly installed Skill file; no global hooks, state or receipts. Its marker
+and sibling edited-content backups are separate from project receipts. It locks
+the existing Skill itself, rechecks ownership/content, and publishes synced
+same-directory temporary files atomically. Absent-file publication cannot clobber
+a concurrent creation. User Skill removal never removes edited files or backups.
 
 Setup owns only the project files and hook entries recorded in its private
 Git-metadata receipt. Guidance owns only its marked block and its separate

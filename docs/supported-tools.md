@@ -16,6 +16,16 @@ the matching host registration option and verification steps.
 
 ## Project integration assets
 
+Project integration remains project-only. The only user-level asset is the
+explicitly installed Skill file; no global hooks, state or receipts.
+`specgit skill --user` is a separate explicit opt-in for
+`~/.agents/skills/specgit-native/SKILL.md` (Windows uses `%USERPROFILE%`). Setup
+does not install it. Use `--dry-run` to preview, `--remove` for managed unedited
+content, or `--refresh-only` to refresh only an existing managed file. A successful
+`update` refreshes that managed user Skill through the new executable; failures
+retain the binary and give `specgit skill --user` as the remedy. Host discovery
+still follows the host's documented paths; installation alone proves no import.
+
 | Agent | Project assets (the only scope) |
 | --- | --- |
 | `generic` | `.agents/skills/specgit-native/` plus root `AGENTS.md` guidance; no hooks |
