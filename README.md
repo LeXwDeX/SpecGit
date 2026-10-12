@@ -98,7 +98,7 @@ Auto-merge preferences do not grant permission to change native protections.
 
 ## Agent integration and upgrades
 
-SpecGit 2.4 is permanently **project-only**: `specgit setup` writes owned
+Project integration remains **project-only**: `specgit setup` writes owned
 project entry points for the explicitly selected agents
 (`--agent generic|claude|codex|opencode`, repeatable), and `--scope project` is
 the default and only scope. It never copies the runtime binary into a project
@@ -119,6 +119,16 @@ host. Coordinated removal of a whole
 project's SpecGit integration is the separate `specgit remove` command (preview,
 digest-bound apply, offline rollback), introduced in the 2.3 runtime contract;
 project-scope `--uninstall` covers only the recorded agent assets.
+
+The only user-level asset is the explicitly installed Skill file; no global
+hooks, state or receipts. To opt in, preview `specgit skill --user --dry-run --json`,
+then run `specgit skill --user --json`. It owns only
+`~/.agents/skills/specgit-native/SKILL.md` (Windows uses `%USERPROFILE%`) and backs
+up edited managed content before refreshing. `--remove` keeps user edits and
+foreign files; `--refresh-only` skips missing or foreign files. After a successful
+`update`, the new executable refreshes an already managed user Skill, never
+installs one by default. Refresh failure retains the binary and reports the
+remedy `specgit skill --user`. Project Skill refresh remains separate.
 
 Upgrading from 2.3 refreshes existing project receipts in place (the 2.4
 receipt omits `shared_root`) without reading or writing the retired global

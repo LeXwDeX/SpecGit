@@ -121,6 +121,8 @@ pub(super) enum Commands {
     },
     /// Check, verify or apply a signed GitHub Release to the running shared executable.
     Update(specgit::self_update::Options),
+    /// Explicitly install, refresh or remove the user Skill; never installs global hooks or state.
+    Skill(specgit::skill::Options),
     /// Show offline Git/project identity; no forge or network child is invoked.
     Status {
         #[arg(long)]

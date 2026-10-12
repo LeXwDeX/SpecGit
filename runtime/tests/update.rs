@@ -64,6 +64,7 @@ struct Fixture {
     root: PathBuf,
     bin: PathBuf,
     target: PathBuf,
+    home: PathBuf,
     platform: &'static str,
 }
 
@@ -82,11 +83,14 @@ impl Fixture {
         fs::create_dir(&install).unwrap();
         let target = install.join(executable_file("specgit"));
         fs::write(&target, OLD_BINARY).unwrap();
+        let home = base.join("home");
+        fs::create_dir(&home).unwrap();
         let fixture = Self {
             _temp: temp,
             root,
             bin,
             target,
+            home,
             platform: self_update::current_platform()
                 .expect("update tests run on a published release platform"),
         };
@@ -173,6 +177,9 @@ impl Fixture {
             .env("PATH", &self.bin)
             .env("SPECGIT_FIXTURE_UPDATE_DIR", &self.root)
             .env("SPECGIT_TEST_UPDATE_TARGET", &self.target);
+        command
+            .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home);
         command
     }
 
@@ -387,6 +394,152 @@ fn apply_replaces_the_target_and_keeps_a_restorable_backup() {
         2,
         "target and backup only"
     );
+}
+
+#[test]
+fn update_refreshes_only_an_already_managed_user_skill_using_the_new_entrypoint() {
+    let fixture = Fixture::new();
+    fixture.publish(NEXT, Tamper::None);
+    let skill = fixture.home.join(".agents/skills/specgit-native/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let old = b"old skill\n";
+    fs::write(
+        &skill,
+        format!("old skill\n<!-- specgit:managed sha256={} -->\n", hex(old)),
+    )
+    .unwrap();
+    let report = fixture.run(&["update"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(
+        report["evidence"]["user_skill"]["status"], "refreshed",
+        "{report}"
+    );
+    assert!(
+        fs::read_to_string(&skill)
+            .unwrap()
+            .contains("name: specgit-native")
+    );
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .any(|call| call["args"] == json!(["skill", "--user", "--refresh-only", "--json"]))
+    );
+    assert!(
+        report["effects"]["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op["action"] == "refresh_user_skill" && op["outcome"] == "applied")
+    );
+}
+
+#[test]
+fn update_skips_uninstalled_and_foreign_user_skill_without_spawning_refresh() {
+    for foreign in [false, true] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let skill = fixture.home.join(".agents/skills/specgit-native/SKILL.md");
+        if foreign {
+            fs::create_dir_all(skill.parent().unwrap()).unwrap();
+            fs::write(&skill, b"foreign\n").unwrap();
+        }
+        let report = fixture.run(&["update"]);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert_eq!(
+            report["evidence"]["user_skill"]["status"], "skipped",
+            "{report}"
+        );
+        assert!(
+            !fixture
+                .calls()
+                .iter()
+                .any(|call| call["args"][0] == "skill")
+        );
+        if foreign {
+            assert_eq!(fs::read(&skill).unwrap(), b"foreign\n");
+        } else {
+            assert!(!fixture.home.join(".agents").exists());
+        }
+    }
+}
+
+#[test]
+fn refresh_failure_never_rolls_back_a_successful_binary_install() {
+    for failure in ["malformed", "exit", "timeout"] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let skill = fixture.home.join(".agents/skills/specgit-native/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        let bytes = format!(
+            "old skill\n<!-- specgit:managed sha256={} -->\n",
+            hex(b"old skill\n")
+        );
+        fs::write(&skill, &bytes).unwrap();
+        let mut state = fixture.state();
+        state["skill_failure"] = json!(failure);
+        fixture.write_state(&state);
+        let report = fixture.run(&["update"]);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert_eq!(report["status"], "updated");
+        assert_eq!(report["evidence"]["user_skill"]["status"], "failed");
+        assert_eq!(
+            report["diagnostics"][0]["operation"],
+            "update_skill_refresh"
+        );
+        assert!(
+            report["diagnostics"][0]["remedy"]
+                .as_str()
+                .unwrap()
+                .contains("specgit skill --user")
+        );
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable()
+        );
+        assert_eq!(fs::read_to_string(&skill).unwrap(), bytes);
+        assert_eq!(report["effects"]["operations"][0]["outcome"], "applied");
+        assert!(
+            report["effects"]["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|op| op["action"] != "restore_executable")
+        );
+    }
+}
+
+#[test]
+fn update_preview_and_noop_never_refresh_even_when_user_skill_is_managed() {
+    for args in [
+        &["update", "--check"][..],
+        &["update", "--dry-run"],
+        &["update", "--version", CURRENT],
+    ] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        fixture.publish(CURRENT, Tamper::None);
+        let mut state = fixture.state();
+        state["latest"] = json!(format!("v{NEXT}"));
+        fixture.write_state(&state);
+        let skill = fixture.home.join(".agents/skills/specgit-native/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        let bytes = format!(
+            "old skill\n<!-- specgit:managed sha256={} -->\n",
+            hex(b"old skill\n")
+        );
+        fs::write(&skill, &bytes).unwrap();
+        let report = fixture.run(args);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert!(report["evidence"]["user_skill"].is_null());
+        assert!(
+            !fixture
+                .calls()
+                .iter()
+                .any(|call| call["args"][0] == "skill")
+        );
+        assert_eq!(fs::read_to_string(&skill).unwrap(), bytes);
+    }
 }
 
 #[test]
