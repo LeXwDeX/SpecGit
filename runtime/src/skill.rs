@@ -363,6 +363,14 @@ fn apply(
     }
     staged.as_file().sync_all().map_err(io_error)?;
     recheck(&path, &before, lock.as_ref())?;
+    // Windows refuses to replace a file while any handle to it is open,
+    // including our own lock handle. Release it and recheck through a fresh
+    // read immediately before the replacement.
+    #[cfg(windows)]
+    {
+        drop(lock);
+        recheck(&path, &before, None)?;
+    }
     if before.bytes.is_none() {
         staged.persist_noclobber(&path).map_err(|e| {
             if e.error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -378,6 +386,7 @@ fn apply(
         staged.persist(&path).map_err(|e| io_error(e.error))?;
     }
     effects.applied(index);
+    #[cfg(not(windows))]
     drop(lock);
     #[cfg(unix)]
     fs::File::open(parent)

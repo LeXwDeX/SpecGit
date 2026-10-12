@@ -150,7 +150,7 @@ fn canonical_prompts_allow_receiptless_language_changes_for_lf_and_crlf_blocks()
 fn generated_guidance_uses_native_observation_and_preferences_are_not_authority() {
     let d = Declaration::default();
     let prose = guidance::render(&d);
-    let skill = include_str!("../assets/SKILL.md");
+    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
     assert!(!prose.contains("specgit finish"));
     assert!(prose.contains("specgit-native Skill"));
     assert!(skill.contains("Use bounded\n`watch`"));
@@ -215,7 +215,7 @@ fn generated_guidance_states_issue_scope_and_authorization_contract_in_both_lang
         assert!(prose.contains("specgit --help"));
         assert!(prose.contains("specgit --schema"));
     }
-    let skill = include_str!("../assets/SKILL.md");
+    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
     assert!(skill.contains(
         "Local init/setup is maintenance, not delivery; it creates no Issue or forge permission"
     ));
@@ -256,7 +256,9 @@ fn skill_retains_distinct_safety_rules_and_the_explicit_user_asset_exception() {
 
 #[test]
 fn guidance_slimming_refreshes_the_unedited_2_6_2_block_but_preserves_user_edits() {
-    let old = include_str!("fixtures/managed-init-2.6.2-zh.txt").trim_end();
+    // Windows checkouts can use CRLF; the recorded 2.6.2 block was LF.
+    let old = include_str!("fixtures/managed-init-2.6.2-zh.txt").replace("\r\n", "\n");
+    let old = old.trim_end();
     let d = Declaration {
         language: Language::Zh,
         ..Declaration::default()
@@ -324,7 +326,7 @@ fn receiptless_2_0_0_migration_upgrades_only_the_exact_released_templates() {
 
 #[test]
 fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content() {
-    let skill = include_str!("../assets/SKILL.md");
+    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
     for clause in [
         "Try normal SpecGit inspect/dry-run first",
         "reproducible SpecGit defect blocks\nIssue selection",
