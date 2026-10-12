@@ -112,7 +112,7 @@ fn init_checks(evidence: &Value, policy: &InitPolicy, scope: &InitCheckScope) ->
         cli_check(&probes, scope),
         account_check(&probes, scope),
     ];
-    checks.extend(delivery_checks(scope));
+    checks.extend(delivery_checks(evidence, scope));
     checks.extend(capability_checks(evidence, scope));
     for check in &mut checks {
         if check.requirement != CheckRequirement::Required
@@ -253,7 +253,7 @@ fn account_check(probes: &[Value], scope: &InitCheckScope) -> InitCheck {
         observed_at: account_observed_at,
         diagnostic: account_diagnostic.clone(),
         reason: if account_available {
-            "The authenticated account endpoint was readable; native write permissions were not checked.".into()
+            "The authenticated account endpoint was readable; project role permissions are assessed separately and no write probe is performed.".into()
         } else if let Some(diagnostic) = account_diagnostic.as_ref() {
             diagnostic.message.clone()
         } else {
@@ -272,8 +272,9 @@ fn account_check(probes: &[Value], scope: &InitCheckScope) -> InitCheck {
     }
 }
 
-fn delivery_checks(scope: &InitCheckScope) -> Vec<InitCheck> {
-    vec![
+fn delivery_checks(evidence: &Value, scope: &InitCheckScope) -> Vec<InitCheck> {
+    let mut checks =
+        vec![
     InitCheck {
         id: "issue.duplicate_read",
         requirement: CheckRequirement::Required,
@@ -291,35 +292,53 @@ fn delivery_checks(scope: &InitCheckScope) -> Vec<InitCheck> {
                 .into(),
         next_step: "Run specgit issue --inspect before selecting or creating an Issue.".into(),
     },
-    InitCheck {
-        id: "issue.write_permission",
-        requirement: CheckRequirement::Required,
-        requirement_source: "builtin",
-        status: CheckFactStatus::NotChecked,
-        presentation: CheckPresentation::Hint,
-        applies_to: &["issue_creation"],
-        scope: scope.clone(),
-        source: "not checked; init never performs a write probe".into(),
-        observed_at: None,
-        diagnostic: None,
-        reason: "Readable account identity does not prove Issue creation permission.".into(),
-        next_step: "Create or adopt an Issue only under existing authorization; reconcile an uncertain result by native readback.".into(),
-    },
-    InitCheck {
-        id: "request.write_permission",
-        requirement: CheckRequirement::Required,
-        requirement_source: "builtin",
-        status: CheckFactStatus::NotChecked,
-        presentation: CheckPresentation::Hint,
-        applies_to: &["request_delivery"],
-        scope: scope.clone(),
-        source: "not checked; init never performs a request write probe".into(),
-        observed_at: None,
-        diagnostic: None,
-        reason: "Readable account identity does not prove request creation or update permission.".into(),
-        next_step: "Create or update a request only under existing authorization; reconcile an uncertain result by native readback.".into(),
-    },
-    ]
+    ];
+    let permissions = evidence["probes"]
+        .as_array()
+        .and_then(|probes| find_probe(probes, "account_api"))
+        .map(|account| &account["evidence"]["write_permissions"])
+        .filter(|permissions| permissions.is_object());
+    for (id, kind, applies_to) in [
+        ("issue.write_permission", "issue", &["issue_creation"][..]),
+        (
+            "request.write_permission",
+            "request",
+            &["request_delivery"][..],
+        ),
+    ] {
+        let fact = permissions
+            .map(|permissions| &permissions[kind])
+            .filter(|fact| fact.is_object());
+        let (status, presentation) = match fact.and_then(|fact| fact["status"].as_str()) {
+            Some("supported") => (CheckFactStatus::Verified, CheckPresentation::Pass),
+            Some("unsupported") => (CheckFactStatus::NotConfigured, CheckPresentation::Blocking),
+            _ => (CheckFactStatus::Unknown, CheckPresentation::Hint),
+        };
+        checks.push(InitCheck {
+            id,
+            requirement: CheckRequirement::Required,
+            requirement_source: "builtin",
+            status,
+            presentation,
+            applies_to,
+            scope: scope.clone(),
+            source: fact.and_then(|fact| fact["source"].as_str())
+                .unwrap_or("project permissions (role permissions unavailable)").into(),
+            observed_at: fact.map(|_| crate::probe::now()),
+            diagnostic: None,
+            reason: fact.and_then(|fact| fact["reason"].as_str()).unwrap_or(
+                "Project role permissions are unknown; fine-grained token scopes and branch protection may still reject writes. No write probe is performed."
+            ).into(),
+            next_step: fact.and_then(|fact| fact["remedy"].as_str()).unwrap_or(
+                if status == CheckFactStatus::Verified {
+                    "Write only under existing authorization; recheck current native state and reconcile uncertain results by native readback."
+                } else {
+                    "Read current project role permissions through the authenticated native CLI; do not infer write access from account identity."
+                }
+            ).into(),
+        });
+    }
+    checks
 }
 
 fn capability_checks(evidence: &Value, scope: &InitCheckScope) -> Vec<InitCheck> {

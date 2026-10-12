@@ -693,6 +693,7 @@ struct Evidence {
     asset: Option<String>,
     verification: Option<Verification>,
     installation: Option<Installation>,
+    user_skill: Option<serde_json::Value>,
 }
 
 pub async fn run(options: Options, process: Process) -> Report {
@@ -720,9 +721,16 @@ pub async fn run(options: Options, process: Process) -> Report {
         asset: None,
         verification: None,
         installation: None,
+        user_skill: None,
     };
     let mut effects = None;
     let result = update(&options, &process, &mut evidence, &mut effects).await;
+    let mut refresh_diagnostic = None;
+    if evidence.installation.is_some() {
+        let (refresh, diagnostic) = refresh_user_skill(&process, &evidence, &mut effects).await;
+        evidence.user_skill = Some(refresh);
+        refresh_diagnostic = diagnostic;
+    }
     let mut report = match result {
         Ok(status) => Report::success(OPERATION, status, &evidence),
         Err(diagnostic) => {
@@ -732,6 +740,12 @@ pub async fn run(options: Options, process: Process) -> Report {
         }
     };
     if let Some(installation) = &evidence.installation {
+        if let Some(diagnostic) = refresh_diagnostic {
+            // The binary is already installed and verified. Skill failure must
+            // not roll it back or turn successful installation into uncertainty.
+            report.diagnostics.push(diagnostic);
+        }
+        report.next_actions.push(json!({"kind":"user_skill_refresh","status":evidence.user_skill.as_ref().and_then(|v|v.get("status")),"command":"specgit skill --user","remedy":if report.diagnostics.is_empty() {"Only an already managed user Skill was eligible for automatic refresh. To explicitly install or refresh it, use specgit skill --user."} else {crate::skill::REMEDY}}));
         report.next_actions.push(json!({"kind":"rollback_available","executable":installation.executable,"backup":installation.backup,"remedy":"To roll back, stop running specgit processes and move the backup over the executable path. Project configuration is unchanged."}));
         report.next_actions.push(json!({"kind":"refresh_project_skills","command":"specgit setup","remedy":"The CLI was replaced. Existing project Skills may need refreshing; run specgit setup in each relevant project (preview with specgit setup --dry-run). Setup refreshes only recorded, owned assets whose content is unchanged; manual edits are preserved and reported as conflicts. No project Skills were inspected or updated by this command."}));
     } else if report.exit == 0 && evidence.update_available {
@@ -739,6 +753,118 @@ pub async fn run(options: Options, process: Process) -> Report {
     }
     report.effects = effects;
     report
+}
+
+#[derive(Deserialize)]
+struct SkillReport {
+    schema_version: u32,
+    operation: String,
+    version: String,
+    ok: bool,
+    status: String,
+    exit: u8,
+    evidence: serde_json::Value,
+    diagnostics: Vec<Diagnostic>,
+    effects: serde_json::Value,
+    next_actions: Vec<serde_json::Value>,
+}
+
+async fn refresh_user_skill(
+    process: &Process,
+    evidence: &Evidence,
+    effects: &mut Option<Effects>,
+) -> (serde_json::Value, Option<Diagnostic>) {
+    let failed = |code, message: &str| {
+        Diagnostic::new(code, "update_skill_refresh", message, crate::skill::REMEDY)
+    };
+    match crate::skill::installed() {
+        Ok(false) => return (json!({"status":"skipped","report":null}), None),
+        Err(error) => {
+            return (
+                json!({"status":"failed","report":null}),
+                Some(failed(error.code, &error.message)),
+            );
+        }
+        Ok(true) => {}
+    }
+    let installation = evidence
+        .installation
+        .as_ref()
+        .expect("successful installation");
+    let executable = Path::new(&installation.executable);
+    let cwd = executable.parent().expect("absolute installed executable");
+    let journal = effects.as_mut().expect("installation effects");
+    let index = journal.begin(
+        "local",
+        "refresh_user_skill",
+        json!({"executable":executable,"command":"specgit skill --user"}),
+    );
+    let result = bounded(process, SMOKE_TIMEOUT, MAX_METADATA_BYTES)
+        .run(Request::new(executable, cwd, "update_skill_refresh").args([
+            "skill",
+            "--user",
+            "--refresh-only",
+            "--json",
+        ]))
+        .await;
+    let output = match result {
+        Ok(output) => output,
+        Err(error) => {
+            return (
+                json!({"status":"failed","report":null}),
+                Some(failed(
+                    error.code,
+                    "The installed CLI's user Skill refresh could not complete; the installed binary is retained.",
+                )),
+            );
+        }
+    };
+    let report = serde_json::from_slice::<SkillReport>(&output.stdout);
+    let report = match report {
+        Ok(report)
+            if report.schema_version == 2
+                && report.operation == "skill"
+                && report.version == installation.installed_version
+                && i32::from(report.exit) == output.code
+                && report.ok == (report.exit == 0)
+                && report
+                    .effects
+                    .get("operations")
+                    .is_some_and(serde_json::Value::is_array)
+                && matches!(
+                    report.effects["outcome"].as_str(),
+                    Some("applied" | "not_applied" | "unknown")
+                ) =>
+        {
+            report
+        }
+        _ => {
+            return (
+                json!({"status":"failed","report":null}),
+                Some(failed(
+                    Code::MalformedResponse,
+                    "The installed CLI returned an invalid user Skill report; the installed binary is retained.",
+                )),
+            );
+        }
+    };
+    let outcome = match report.effects["outcome"].as_str() {
+        Some("applied") => "applied",
+        Some("not_applied") => "not_applied",
+        _ => "unknown",
+    };
+    journal.operations[index].outcome = outcome;
+    journal.operations[index].recovery["effects"] = report.effects.clone();
+    if outcome != "unknown" {
+        journal.outcome = if journal.operations.iter().any(|op| op.outcome == "unknown") {
+            "unknown"
+        } else {
+            "applied"
+        };
+    }
+    let success = report.exit == 0 && matches!(report.status.as_str(), "refreshed" | "skipped");
+    let result = json!({"status":if success {report.status.as_str()} else {"failed"},"report":{"schema_version":report.schema_version,"version":report.version,"operation":report.operation,"status":report.status,"exit":report.exit,"ok":report.ok,"evidence":report.evidence,"diagnostics":report.diagnostics,"effects":report.effects,"next_actions":report.next_actions}});
+    (result, (!success).then(|| failed(Code::ProcessFailed, "The installed CLI did not refresh the user Skill; the installed binary is retained.")))
 }
 
 async fn update(

@@ -133,10 +133,11 @@ commands use the global input/output contract above.
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while a sibling initialized worktree shares the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
-| `doctor` | Read tool/account/project capability. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
+| `doctor` | Read tool/account/project capability and derive basic Issue/request role permissions from the same project response. Select `--provider`; optional `--remote`, `--api-host`, `--account-only`. Help success does not prove API access or mutation permission. |
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` retains the old declaration for staged cutover. `--rollback <transaction>` restores proven local assets. |
 | `remove` | Preview or reversibly remove this project's proven owned local integration. The default and `--dry-run` prepare a read-only preview whose evidence carries a `preview_sha256`; `--apply --expect <digest>` applies exactly that inspected preview as one recoverable transaction; `--rollback <transaction>` restores it offline without configuration or forge access. See [whole-project removal](#whole-project-removal). |
 | `update` | Update the running shared executable from a signed GitHub Release. `--check` only reads release metadata; `--dry-run` downloads and verifies without replacement; the default applies. `--version <x.y.z>` selects an exact release; an older one is a downgrade. Requires an authenticated `gh` and Cosign. See [self-update](#self-update). |
+| `skill` | Explicit user Skill only: `--user` is mandatory. `--dry-run` previews without writes; `--remove` removes only managed, unedited content; `--refresh-only` skips absent or foreign files and conflicts with `--remove`. See [user Skill](#user-skill). |
 
 `inbox`, `status`, `doctor`, `migrate` and `update` remain auxiliary entrypoints in this
 native CLI. Core project operations are setup, init, issue, pr, watch
@@ -178,13 +179,36 @@ selection write begins before preflight completes. The short budget override is
 available only in test-fixture builds.
 
 This first-stage list maps facts already collected by init; it does not perform
-Issue duplicate searches or permission writes. `issue.duplicate_read`, `issue.write_permission` and
-`request.write_permission` therefore remain `not_checked` until the relevant
-Issue or request operation. A readable account endpoint proves neither Issue
-nor request write access or merge eligibility. Unknown facts only affect the
-operation that depends on them; target-protection uncertainty is a warning
-because init has no declared
-policy making that check mandatory.
+Issue duplicate searches or permission writes. `issue.duplicate_read` remains
+`not_checked`. Basic Issue/request role permissions come from the existing
+project GET response. GitHub Issue writes need `has_issues` and at least one true
+`permissions.pull`, `triage`, `push`, `maintain` or `admin`; applying labels needs
+triage or higher. Request writes need `permissions.push`, `permissions.maintain`
+or `permissions.admin`. GitLab uses the
+maximum of `permissions.project_access.access_level` and
+`permissions.group_access.access_level`. Issue writes need `issues_enabled` and
+level >= 10; MR writes need `merge_requests_enabled` and level >= 30. An explicit
+null GitLab membership is absent (level 0), not a missing permission field.
+
+The project probe and account probe (when project data was read), plus doctor's
+`evidence.write_permissions`, contain `issue` and `request` records with
+`status`, `source`, `reason` and `remedy`. Status is `supported`, `unsupported`
+or `unknown`. Account-only doctor keeps `not_checked`. No extra API call, write
+probe, token-scope check or cross-invocation cache is used. Missing or malformed
+fields remain unknown unless a known sufficient role proves the threshold or a
+known disabled feature/insufficient role proves lack of support. Source names
+the role-permission fields. Role support is not authorization; fine-grained
+token scopes and branch protection can still reject writes.
+Doctor's `ready` status describes successful read probes, not write readiness.
+
+`issue.write_permission` and `request.write_permission` map supported roles to
+`verified` / `pass`, insufficient roles or disabled features to
+`not_configured` / `blocking`, and unknown facts to `unknown` / `hint`.
+The blocking presentation affects only the dependent operation or availability
+layer, not the init exit status or unrelated local development. Unknown role
+facts also do not stop local initialization. A readable account endpoint alone
+proves neither write access nor merge eligibility. Target-protection uncertainty
+is a warning unless project policy makes that check mandatory.
 When initialization reaches the native probe stage but cannot read the selected
 CLI, project, default branch or current request, the failure report keeps this
 same typed check list and the facts collected before the failure. Local context
@@ -221,9 +245,9 @@ unverified, and nonblocking recommended warnings. `blocked`, `unverified` and
 `no_reported_blocker` apply only to the
 listed init checks; a clear entry is not a claim of write permission, complete
 CI readiness, or completed delivery. A recommended or optional warning cannot
-block unrelated local diagnosis. `issue.write_permission` remains unverified
-until the authorized write and native readback, rather than becoming a guessed
-permission failure.
+block unrelated local diagnosis. Supported role permissions establish only the
+basic role threshold. Actual authorized writes and uncertain results still
+require current native evidence and readback.
 
 Capability records use `supported`, `unsupported` or `unknown` with source and
 reason. Unsupported/unknown native flow returns `confirmation_required` before
@@ -252,6 +276,24 @@ After comparing their contents, repeat the creation command with
 the proposed content, project, source/target and current native candidate contents;
 changed evidence requires another review. It does not override uncertain prior
 writes, which still require exact native adoption.
+
+Each title's `evidence.candidates[]` entry keeps open candidates in `issues` and
+adds a separate `history` list. History is the first native closed-Issue search
+page in the selected repository, with at most 20 rows in platform search order.
+Each row has `id` (GitHub number or GitLab IID), `title`, `state: "closed"` and
+`updated_at`. `url` is included when available; GitHub `state_reason` is included
+when present. No history row enters `review_digest`, gates creation or serves as
+an adoptable open candidate. GitHub open candidates retain authoritative per-Issue
+reads; GitLab open candidates use the authoritative list rows and validate their
+project ID.
+
+`history_diagnostics` is an array of `{code, operation, message, remedy}`. A failed
+or malformed history read leaves `history` empty and records its diagnostic,
+without failing the open-candidate result. History reads count in
+`requests_executed` and `elapsed_ms`; `pagination` describes only the complete open
+search, not the bounded history sample. The invocation budget and cancellation
+still apply. History is reference evidence, not a complete or authoritative
+record of all closed Issues.
 
 GitLab description readback permits its CRLF-to-LF conversion and removal of
 trailing ASCII spaces, tabs and line endings after a write. Leading indentation,
@@ -353,6 +395,14 @@ notices are refreshed before delivery and superseded by changed evidence.
 `--goal checks` observes checks without claiming lifecycle completion. `--once`
 performs one read and retains pending intent. Explicit inbox acknowledgment is a
 transport receipt, not human reading, approval or permission to mutate.
+Within one polling process, an unchanged complete collection may reuse the
+previous poll's verified fingerprint. Changed evidence and terminal states still
+require full readback before publication. This fingerprint includes private native
+facts, not only the durable event projection, and is never restored from disk.
+`pr --status`, `watch --once` and one-shot inbox refresh always perform full
+readback. The polling transport reuses one declaration snapshot per cycle for
+its digest, local context and event projection; native consistency checks retain
+their independent workspace revalidation.
 Each watch event includes the legacy `next_action` text and a typed `next_step`;
 the report-level `next_actions` repeats those same typed steps for direct
 consumers. The action records the goal, check outcome, draft state, auto-merge
@@ -412,15 +462,31 @@ explicit:
   `permissionDecisionReason`. Editing another repository in one call is denied
   with its own reason; the call is never silently split.
 - Allow/pass-through: every other event and every verified call. The adapter
-  emits no blocking decision and the host proceeds. A direct, non-compound
+  emits no blocking decision and the host proceeds. Allowed PreToolUse calls
+  emit no output. A direct, non-compound
   `specgit issue ...` call is exempt on PreToolUse so the first checkpoint can
   be created; compound shell input is still inspected.
+
+Shell classification checks each segment separated outside quotes by `;`,
+`&&`, `||`, `|`, `&` or a newline. Leading assignments and `sudo`, `env`,
+`command`, `nohup` and `time` do not hide file mutations. Descriptor redirects
+(`2>&1`, `>&2`) and redirects to `/dev/null` do not count as repository writes;
+other unquoted output redirects do. Read-only `gh pr view|list|checks|diff|status`,
+`gh issue view|list`, `glab mr view|list|diff`, `glab issue view|list`,
+`specgit pr --status` and `specgit status|doctor|watch|inbox` need no checkpoint.
+A segment that contains command substitution (`$(...)` or backticks, unless
+single-quoted) loses these read-only exemptions. Commands run through another
+interpreter, such as `bash -c`, `python -c` or PowerShell cmdlets, are not
+parsed. This classification is best effort, not a general shell or file-write sandbox.
 
 `apply_patch` calls are verified, not exempt: the adapter parses
 `*** Add File: `, `*** Update File: `, `*** Delete File: ` and `*** Move to: `
 markers from the patch payload (or the wrapped command), resolves relative paths against the
 reported `cwd`, and checks each actual target through Git before deciding.
-SessionStart and PostToolUse add managed guidance with `additionalContext`;
+SessionStart adds managed guidance and any pending notice with `additionalContext`.
+Synchronous PostToolUse emits only pending notice text in `additionalContext`;
+without a pending notice it is silent. Unreadable observation state produces a
+diagnostic `systemMessage`, not repeated guidance.
 Stop uses a block decision for its single recovery turn. Verification is of the
 actual edit target resolved on disk, not of the event's claimed path alone.
 
@@ -481,6 +547,62 @@ whose current content matches the record; manual edits, foreign files and missin
 recorded assets keep their existing conflict protection. Update does not invoke
 setup, scan projects or refresh any project asset. Checks, previews, no-op and
 failed updates do not report this successful-replacement guidance.
+
+After successful installation, update checks only whether the user Skill has a
+valid managed marker. If it does, the **new executable at its installed path**
+runs `skill --user --refresh-only --json` through bounded, shell-free process
+transport (20-second timeout, bounded input/output). Absent or foreign files are
+skipped without spawning a refresh. The new CLI rechecks ownership and uses its
+own embedded Skill bytes. `evidence.user_skill` reports `refreshed`, `skipped` or
+`failed` and the parsed child report; `effects` records the attempted refresh and
+its reported writes/backups. `next_actions` includes `user_skill_refresh`.
+Refresh failure keeps the verified new executable, reports a diagnostic and gives
+`specgit skill --user` as the remedy. Update still succeeds as a binary install;
+that does not claim the Skill refresh succeeded. Check, dry-run, no-op and failed
+installs never refresh the user Skill. A downgrade to a CLI without `skill` can
+therefore install successfully while reporting a refresh failure.
+
+### User Skill
+
+Project integration remains project-only. The only user-level asset is the
+explicitly installed Skill file; no global hooks, state or receipts.
+`init`, `setup`, hooks and other project commands never install it.
+
+```sh
+specgit skill --user --dry-run --json
+specgit skill --user --json
+specgit skill --user --refresh-only --json
+specgit skill --user --remove --dry-run --json
+specgit skill --user --remove --json
+```
+
+The fixed target is `$HOME/.agents/skills/specgit-native/SKILL.md` on Unix and
+`%USERPROFILE%\.agents\skills\specgit-native\SKILL.md` on Windows. A missing,
+relative or unavailable home is invalid input with no writes. Symbolic links
+anywhere below the resolved home are refused, including a dangling file link.
+No Git repository or declaration is required.
+
+Installation uses the same embedded Skill as project setup. Its final line is
+`<!-- specgit:managed sha256=<64 lowercase hex digits> -->`; the digest covers
+every byte before that line, including the preceding newline. A valid marker
+line establishes ownership. A foreign file (no valid marker) is a conflict and
+is never adopted. A managed file is refreshed to the current embedded content.
+If its body hash differs, or content was appended after the marker, refresh first
+preserves the exact old bytes and permissions in a sibling
+`SKILL.md.specgit-backup-<unix-seconds>` file, with a unique numeric suffix when
+needed. The backup path is in `evidence.backup` and `effects`. Backups are never
+silently replaced or removed.
+
+Writes are staged and synced in the same directory, then atomically published.
+New-file publication never clobbers a concurrently created file. Existing-file
+replacement preserves permissions and rechecks current content after locking
+the Skill file itself; it creates no global lock file or receipt. Dry-run reports
+`prepared` with the planned `action` and `edited` flag, but creates nothing.
+Refresh-only reports `skipped` for absent or foreign content. Remove preserves
+foreign or edited files as conflicts; it deletes only managed, unedited content
+and its empty leaf Skill directory, never unrelated files or parent directories.
+Successful actions report `installed`, `refreshed`, `removed` or `skipped` under
+operation `skill`. Every invocation emits one ordinary report with `effects`.
 
 ### Agent integration scopes
 

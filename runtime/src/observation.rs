@@ -43,7 +43,11 @@ async fn observe_in_scope(
     process: Process,
     cwd: &Path,
 ) -> Observation {
-    match Box::pin(execute(request, scope, process, cwd)).await {
+    let result = async {
+        let collected = collect_in_scope(request, scope, process, cwd).await?;
+        collected.verify().await
+    };
+    match Box::pin(result).await {
         Ok(o) => o,
         Err(d) => Observation::unavailable(d),
     }
@@ -74,12 +78,79 @@ fn local_applicability(
     };
     LocalApplicability { status, reasons }
 }
-async fn execute(
+/// Private, unverified facts. Only the polling transport may compare successive
+/// collections; ordinary callers still use `observe` and receive full readback.
+pub(crate) struct Collected {
+    workspace: Workspace,
+    request: forge::RequestObservation,
+    native_ids: Option<Vec<u64>>,
+    issues: Option<Vec<crate::delivery_model::Issue>>,
+    checks: Option<Vec<crate::delivery_model::Check>>,
+    pub(crate) assessment: Observation,
+}
+impl Collected {
+    /// Unlike the durable presentation projection, this covers private Issue and
+    /// PR content, opaque native request fields, and local/native project identity.
+    /// The opaque request's Debug representation is used only in this process.
+    pub(crate) fn fingerprint(&self, declaration: Option<&str>) -> String {
+        let w = &self.workspace;
+        crate::assets::hash(
+            &serde_json::to_vec(&(
+                &self.assessment.evidence,
+                &self.assessment.diagnostics,
+                &self.native_ids,
+                format!("{:?}", self.request),
+                (&w.context.git_dir, &w.context.remote, w.context.dirty),
+                (w.facts.id, &w.facts.default_branch),
+                declaration,
+            ))
+            .expect("collected facts serialize"),
+        )
+    }
+    pub(crate) fn complete(&self) -> bool {
+        self.assessment.diagnostics.is_empty()
+            && self.assessment.evidence.native_closing_available
+            && self.assessment.evidence.checks.is_some()
+    }
+    pub(crate) async fn verify(self) -> Result<Observation, Diagnostic> {
+        let w = &self.workspace;
+        let repo = &w.context.repository;
+        for issue in self.issues.iter().flatten() {
+            if native_delivery::issue(&w.reader, repo, w.facts.id, issue.id).await? != *issue {
+                return Err(changed());
+            }
+        }
+        if let Some(ids) = self.native_ids
+            && forge::closing_issues(&w.reader, repo, w.facts.id, self.request.facts.id).await?
+                != ids
+        {
+            return Err(changed());
+        }
+        if !forge::unchanged(&w.reader, repo, &self.request).await? {
+            return Err(changed());
+        }
+        w.unchanged().await?;
+        if let Some(checks) = &self.checks
+            && forge::checks(&w.reader, repo, &self.request).await? != *checks
+        {
+            return Err(changed());
+        }
+        Ok(self.assessment)
+    }
+}
+pub(crate) async fn collect(
+    request: u64,
+    process: Process,
+    cwd: &Path,
+) -> Result<Collected, Diagnostic> {
+    collect_in_scope(Some(request), Scope::Worktree, process, cwd).await
+}
+async fn collect_in_scope(
     request: Option<u64>,
     scope: Scope,
     process: Process,
     cwd: &Path,
-) -> Result<Observation, Diagnostic> {
+) -> Result<Collected, Diagnostic> {
     if request == Some(0) {
         return Err(Diagnostic::input("Request IDs must be positive."));
     }
@@ -229,26 +300,18 @@ async fn execute(
             Err(d) => diagnostics.push(d),
         }
     }
-    for issue in evidence.issues.iter().flatten() {
-        if native_delivery::issue(&w.reader, repo, w.facts.id, issue.id).await? != *issue {
-            return Err(changed());
-        }
-    }
-    if let Some(ids) = native_ids
-        && forge::closing_issues(&w.reader, repo, w.facts.id, number).await? != ids
-    {
-        return Err(changed());
-    }
-    if !forge::unchanged(&w.reader, repo, &observed).await? {
-        return Err(changed());
-    }
-    w.unchanged().await?;
-    if let Some(checks) = &evidence.checks
-        && forge::checks(&w.reader, repo, &observed).await? != *checks
-    {
-        return Err(changed());
-    }
+    // `describe` can discard invalid facts. Keep the original readback inputs so
+    // one-shot callers still verify every collected resource before describing it.
+    let issues = evidence.issues.clone();
+    let checks = evidence.checks.clone();
     let mut result = describe(evidence);
     result.diagnostics = diagnostics;
-    Ok(result)
+    Ok(Collected {
+        workspace: w,
+        request: observed,
+        native_ids,
+        issues,
+        checks,
+        assessment: result,
+    })
 }

@@ -4,6 +4,19 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "skill_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "path", "action", "dry_run", "edited", "backup"],
+      "properties": {
+        "scope": {"const": "user"},
+        "path": {"type": ["string", "null"]},
+        "action": {"enum": ["install", "refresh", "remove", "skip"]},
+        "dry_run": {"type": "boolean"},
+        "edited": {"type": "boolean"},
+        "backup": {"type": ["string", "null"]}
+      }
+    },
     "inspection_activity": {
       "type": "object",
       "additionalProperties": false,
@@ -51,12 +64,27 @@
         "complete": {"type": "boolean"}
       }
     },
+    "history_issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "state", "updated_at"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 1},
+        "title": {"type": "string"},
+        "state": {"const": "closed"},
+        "state_reason": {"type": "string"},
+        "updated_at": {"type": "string"},
+        "url": {"type": "string"}
+      }
+    },
     "candidate_preflight": {
       "type": "object",
-      "required": ["title", "issues", "review_digest", "elapsed_ms", "requests_executed", "pagination"],
+      "required": ["title", "issues", "history", "history_diagnostics", "review_digest", "elapsed_ms", "requests_executed", "pagination"],
       "properties": {
         "title": {"type": "string", "minLength": 1},
         "issues": {"type": "array", "items": {"type": "object"}},
+        "history": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/history_issue"}},
+        "history_diagnostics": {"$ref": "#/properties/diagnostics"},
         "review_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "elapsed_ms": {"type": "integer", "minimum": 0},
         "requests_executed": {"type": "integer", "minimum": 0},
@@ -206,7 +234,7 @@
     "update_evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "repository", "platform", "executable", "current_version", "target_source", "target_version", "release_tag", "direction", "update_available", "asset", "verification", "installation"],
+      "required": ["mode", "repository", "platform", "executable", "current_version", "target_source", "target_version", "release_tag", "direction", "update_available", "asset", "verification", "installation", "user_skill"],
       "properties": {
         "mode": {"enum": ["check", "dry_run", "apply"]},
         "repository": {"const": "LeXwDeX/SpecGit"},
@@ -218,6 +246,15 @@
         "release_tag": {"type": ["string", "null"], "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
         "direction": {"enum": ["same", "upgrade", "downgrade", "current_newer", null]},
         "update_available": {"type": "boolean"},
+        "user_skill": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["status", "report"], "properties": {
+              "status": {"enum": ["refreshed", "skipped", "failed"]},
+              "report": {"type": ["object", "null"]}
+            }}
+          ]
+        },
         "asset": {"type": ["string", "null"], "pattern": "^specgit-[0-9]+\\.[0-9]+\\.[0-9]+-(darwin-arm64|linux-x64-gnu|win32-x64)\\.zip$"},
         "verification": {
           "oneOf": [
@@ -548,6 +585,10 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
+    {
+      "if": {"properties": {"operation": {"const": "skill"}}, "required": ["operation"]},
+      "then": {"properties": {"evidence": {"$ref": "#/$defs/skill_evidence"}}, "required": ["effects"]}
+    },
     {
       "if": {
         "properties": {

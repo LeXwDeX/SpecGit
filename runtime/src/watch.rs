@@ -50,14 +50,23 @@ async fn local_with_observation(
     process: &Process,
     cwd: &Path,
 ) -> Result<(Context, config::Observation), Diagnostic> {
+    let (context, declaration, _) = local_snapshot(process, cwd).await?;
+    Ok((context, declaration.observation))
+}
+async fn local_snapshot(
+    process: &Process,
+    cwd: &Path,
+) -> Result<(Context, config::Declaration, Option<String>), Diagnostic> {
     let bytes = project::git(process, cwd, &["rev-parse", "--show-toplevel"]).await?;
     let root = PathBuf::from(
         String::from_utf8(bytes)
             .map_err(|_| Diagnostic::input("Invalid Git root."))?
             .trim_end_matches(['\r', '\n']),
     );
-    let declaration = config::read(&root)?
-        .ok_or_else(|| Diagnostic::input("Initialize a v2 project before observing a delivery."))?;
+    let snapshot = config::snapshot(&root)?;
+    let declaration = config::Declaration::parse(snapshot.bytes.as_deref().ok_or_else(|| {
+        Diagnostic::input("Initialize a v2 project before observing a delivery.")
+    })?)?;
     let context = config::resolve(
         process,
         &root,
@@ -66,7 +75,7 @@ async fn local_with_observation(
         None,
     )
     .await?;
-    Ok((context, declaration.observation))
+    Ok((context, declaration, snapshot.digest()))
 }
 #[derive(Clone, Copy)]
 struct Timing {
