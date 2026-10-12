@@ -4,7 +4,7 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
-# Unreleased
+# 2.7.0
 
 - Hooks classify shell input per segment, allow common read-only `gh`/`glab`/`specgit` reads and descriptor or `/dev/null` redirects, and catch writes after `&&`, assignments and wrappers. Allowed PreToolUse calls emit no context; PostToolUse emits only pending notices. Git identity resolution uses fewer processes.
 - `issue --inspect` adds a bounded closed-history list per title, outside `review_digest`. GitLab candidates no longer re-read each row.
@@ -13,7 +13,7 @@ and [release procedure](runtime/distribution/README.md).
 - New explicit `specgit skill --user` installs, refreshes or removes one managed user-level Skill file. `update` refreshes it only when it is already managed. Project integration stays project-only; no global hooks, state or receipts.
 - Shorten generated init and setup guidance and remove repetition from the shipped Skill.
 
-Scope: [#685](https://github.com/LeXwDeX/SpecGit/issues/685), [#686](https://github.com/LeXwDeX/SpecGit/issues/686), [#687](https://github.com/LeXwDeX/SpecGit/issues/687), [#688](https://github.com/LeXwDeX/SpecGit/issues/688), [#689](https://github.com/LeXwDeX/SpecGit/issues/689).
+Scope: [#685](https://github.com/LeXwDeX/SpecGit/issues/685), [#686](https://github.com/LeXwDeX/SpecGit/issues/686), [#687](https://github.com/LeXwDeX/SpecGit/issues/687), [#688](https://github.com/LeXwDeX/SpecGit/issues/688), [#689](https://github.com/LeXwDeX/SpecGit/issues/689), [#691](https://github.com/LeXwDeX/SpecGit/issues/691).
 
 # 2.6.2
 
