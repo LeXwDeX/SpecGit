@@ -165,8 +165,8 @@ fn segment_relevant(event: &str, command: &str, compound: bool) -> bool {
             } else if option.starts_with("--cwd=") {
                 remaining = &remaining[1..];
             } else {
-                return option == "merge"
-                    || (option == "pr" && substituted)
+                return substituted
+                    || option == "merge"
                     || (option == "pr"
                         && !(remaining.contains(&"--status") && !remaining.contains(&"--ready")));
             }
