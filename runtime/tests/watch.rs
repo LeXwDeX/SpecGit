@@ -122,11 +122,271 @@ fn request_reads(f: &delivery::Fixture) -> usize {
         .iter()
         .filter(|call| {
             call["method"] == "GET"
-                && call["endpoint"]
-                    .as_str()
-                    .is_some_and(|endpoint| endpoint.ends_with("/pulls/41"))
+                && call["endpoint"].as_str().is_some_and(|endpoint| {
+                    endpoint.ends_with("/pulls/41") || endpoint.ends_with("/merge_requests/41")
+                })
         })
         .count()
+}
+
+fn wait_for_poll(f: &delivery::Fixture, child: &mut WatchProcess, polls: u64) -> usize {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let state = watch_store::read(&child.identity).unwrap().unwrap();
+        if state
+            .lease
+            .is_some_and(|l| l.pid == child.id() && l.polls_completed >= polls)
+        {
+            return f.state()["calls"].as_array().unwrap().len();
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "{}",
+            child.diagnostic()
+        );
+        assert!(Instant::now() < deadline, "{}", child.diagnostic());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn polling(f: &delivery::Fixture, scenario: &'static str) -> WatchProcess {
+    let initial = f.run(&watch("lifecycle"));
+    let identity = serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
+    f.edit(|s| s["calls"] = json!([]));
+    WatchProcess::spawn(
+        f.native_command(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+            "--poll-seconds",
+            "2",
+            "--timeout-seconds",
+            "60",
+        ]),
+        &identity,
+        scenario,
+    )
+}
+
+#[test]
+fn unchanged_poll_reuses_only_this_loops_verified_evidence() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        let mut child = polling(&f, "unchanged-request-count");
+        let first = wait_for_poll(&f, &mut child, 1);
+        let second = wait_for_poll(&f, &mut child, 2) - first;
+        println!("{provider}: first poll={first}, unchanged second poll={second}");
+        assert!(
+            second * 3 <= first * 2,
+            "unchanged poll did not skip verification: {first} -> {second}"
+        );
+        assert_eq!(
+            request_reads(&f),
+            3,
+            "first poll verifies; second collects once"
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+        // A new process must not trust the persisted event fingerprint.
+        f.edit(|s| s["calls"] = json!([]));
+        let once = f.run(&watch("lifecycle"));
+        assert_eq!(once["status"], "checks_passed", "{once}");
+        assert_eq!(request_reads(&f), 2);
+    }
+}
+
+#[test]
+fn changed_poll_verifies_checks_and_private_evidence_before_publishing() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        set_check_state(&f, provider, "pending");
+        let mut child = polling(&f, "changed-request-count");
+        let first = wait_for_poll(&f, &mut child, 1);
+        set_check_state(&f, provider, "passed");
+        let second = wait_for_poll(&f, &mut child, 2);
+        assert_eq!(second - first, first, "changed checks must fully verify");
+        assert_eq!(request_reads(&f), 4);
+        // Private Issue text is omitted from the durable projection, but must
+        // still invalidate the polling verification fingerprint.
+        f.edit(|s| {
+            s["issues"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!("private issue edit")
+        });
+        let third = wait_for_poll(&f, &mut child, 3);
+        assert_eq!(
+            third - second,
+            first,
+            "private content changes must fully verify"
+        );
+        // An opaque PR field not present in the presentation is also material.
+        f.edit(|s| s["requests"][0]["opaque_fixture_field"] = json!(true));
+        let fourth = wait_for_poll(&f, &mut child, 4);
+        assert_eq!(
+            fourth - third,
+            first,
+            "opaque request changes must fully verify"
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
+fn finish_watcher(child: &mut WatchProcess) {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while child.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "{}", child.diagnostic());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn terminal_poll_fully_verifies_merged_and_closed_requests() {
+    for provider in ["github", "gitlab"] {
+        for merged in [false, true] {
+            let f = fixture(provider);
+            let mut child = polling(&f, "terminal-request-count");
+            let first = wait_for_poll(&f, &mut child, 1);
+            f.edit(|s| {
+                s["requests"][0]["state"] = json!(if provider == "gitlab" && merged {
+                    "merged"
+                } else {
+                    "closed"
+                });
+                s["requests"][0]["merged"] = json!(merged);
+                s["issues"][0]["state"] = json!("closed");
+            });
+            finish_watcher(&mut child);
+            let terminal = f.state()["calls"].as_array().unwrap().len() - first;
+            println!("{provider}: merged={merged}, terminal poll={terminal}");
+            assert_eq!(
+                terminal, 8,
+                "terminal PR, Issue, closing set and project must each be read twice"
+            );
+            assert_eq!(request_reads(&f), 4);
+            let state = watch_store::read(&child.identity).unwrap().unwrap();
+            assert_eq!(
+                state.events.last().unwrap().state,
+                if merged {
+                    EventState::Completed
+                } else {
+                    EventState::ClosedUnmerged
+                }
+            );
+            assert!(state.lease.is_none());
+        }
+    }
+}
+
+#[test]
+fn inconsistent_changed_poll_does_not_publish_unverified_native_facts() {
+    let f = fixture("github");
+    set_check_state(&f, "github", "pending");
+    let mut child = polling(&f, "inconsistent-collect-verify");
+    let first = wait_for_poll(&f, &mut child, 1);
+    set_check_state(&f, "github", "passed");
+    f.edit(|s| {
+        let route = s["read_routes"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .find(|r| r.contains("/check-runs?"))
+            .unwrap()
+            .clone();
+        let mut replacement = s["read_routes"][&route].clone();
+        replacement["check_runs"][0]["conclusion"] = json!("failure");
+        s["after_read"] = json!({"endpoint":route,"replacement":replacement});
+    });
+    let second = wait_for_poll(&f, &mut child, 2);
+    assert_eq!(
+        second - first,
+        first,
+        "changed collection must reach verification"
+    );
+    let state = watch_store::read(&child.identity).unwrap().unwrap();
+    assert!(
+        !state
+            .events
+            .iter()
+            .any(|e| matches!(e.state, EventState::ChecksPassed | EventState::Failed))
+    );
+    let last = state.events.last().unwrap();
+    assert_eq!(last.state, EventState::Unknown);
+    assert!(last.reason.contains("concurrent_edit"));
+    assert!(last.next_step.as_ref().unwrap().request_state.is_none());
+    // Recovery to the original fingerprint must verify again after an error.
+    set_check_state(&f, "github", "pending");
+    let third = wait_for_poll(&f, &mut child, 3);
+    assert_eq!(
+        third - second,
+        first,
+        "a failed poll must clear the verified fingerprint"
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn declaration_change_reconciles_the_live_subscription() {
+    for change in ["valid", "invalid", "missing"] {
+        let f = fixture("github");
+        let mut child = polling(&f, "declaration-change");
+        wait_for_poll(&f, &mut child, 1);
+        let path = f.root.join(".specgit.yaml");
+        let mut declaration = std::fs::read_to_string(&path).unwrap();
+        match change {
+            "valid" => {
+                declaration.push_str("\nagent:\n  close_issues_after_merge: true\n");
+                std::fs::write(&path, declaration).unwrap();
+            }
+            "invalid" => std::fs::write(&path, "version: invalid\n").unwrap(),
+            "missing" => std::fs::remove_file(&path).unwrap(),
+            _ => unreachable!(),
+        }
+        finish_watcher(&mut child);
+        let state = watch_store::read(&child.identity).unwrap().unwrap();
+        assert_eq!(
+            state.events.last().unwrap().state,
+            EventState::IdentityChanged
+        );
+        assert!(state.lease.is_none());
+        assert_eq!(
+            request_reads(&f),
+            if change == "valid" { 4 } else { 2 },
+            "changed declaration must not reuse native verification"
+        );
+    }
+}
+
+#[test]
+fn one_shot_watch_inbox_and_status_always_fully_verify() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        for args in [
+            watch("lifecycle").to_vec(),
+            inbox_for("lifecycle").to_vec(),
+            vec!["pr", "--status", "--request", "41"],
+        ] {
+            for _ in 0..2 {
+                f.edit(|s| s["calls"] = json!([]));
+                let result = f.run(&args);
+                assert_eq!(result["exit"], 0, "{result}");
+                assert_eq!(request_reads(&f), 2);
+                assert_eq!(
+                    f.state()["calls"].as_array().unwrap().len(),
+                    if provider == "github" { 14 } else { 10 }
+                );
+            }
+        }
+    }
 }
 
 fn set_draft(f: &delivery::Fixture) {
