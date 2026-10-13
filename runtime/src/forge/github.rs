@@ -71,6 +71,15 @@ pub(crate) async fn issue(
     project_id: u64,
     number: u64,
 ) -> Result<Issue, Diagnostic> {
+    Ok(issue_read(reader, repo, project_id, number).await?.issue)
+}
+
+pub(crate) async fn issue_read(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<crate::delivery_model::IssueRead, Diagnostic> {
     let v = reader
         .get(&format!("{}/issues/{number}", prefix(repo)))
         .await?;
@@ -78,7 +87,56 @@ pub(crate) async fn issue(
     if result.id != number {
         return Err(malformed());
     }
-    Ok(result)
+    Ok(crate::delivery_model::IssueRead {
+        issue: result,
+        milestone: milestone_context(&v, repo),
+    })
+}
+
+fn milestone_context(raw: &Value, repo: &Repository) -> crate::delivery_model::MilestoneContext {
+    use crate::delivery_model::{Milestone, MilestoneContext};
+    let unknown = || MilestoneContext::Unknown {
+        reason:
+            "The GitHub milestone is missing, malformed, or has unverified repository identity."
+                .into(),
+    };
+    let Some(value) = raw.get("milestone") else {
+        return unknown();
+    };
+    if value.is_null() {
+        return MilestoneContext::None;
+    }
+    let parsed = (|| {
+        let id = id(value, "id").ok()?;
+        let number = super::protocol::id(value, "number").ok()?;
+        let title = text(value, "title").ok()?;
+        let state = text(value, "state").ok()?;
+        let url = text(value, "html_url").ok()?;
+        // An exact native path proves the repository and number. No query,
+        // credentials, escapes, fragment or parser normalization is accepted.
+        if !["open", "closed"].contains(&state.as_str())
+            || title.trim().is_empty()
+            || !["https://", "http://"].iter().any(|scheme| {
+                url.strip_prefix(scheme)
+                    .and_then(|s| s.strip_suffix(&format!("/milestone/{number}")))
+                    .is_some_and(|s| {
+                        s.eq_ignore_ascii_case(&format!("{}/{}", repo.host, repo.path))
+                    })
+            })
+        {
+            return None;
+        }
+        Some(Milestone::Github {
+            id,
+            number,
+            title,
+            state,
+            url,
+        })
+    })();
+    parsed
+        .map(|milestone| MilestoneContext::Linked { milestone })
+        .unwrap_or_else(unknown)
 }
 pub(crate) async fn candidates(
     reader: &ForgeRead,

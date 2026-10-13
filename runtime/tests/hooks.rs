@@ -1,5 +1,14 @@
+#[cfg(feature = "test-fixtures")]
+#[path = "support/acceptance.rs"]
+mod acceptance;
+#[cfg(feature = "test-fixtures")]
+#[path = "support/delivery.rs"]
+mod delivery;
+#[cfg(not(feature = "test-fixtures"))]
 #[path = "support/executable.rs"]
 mod executable;
+#[cfg(feature = "test-fixtures")]
+use delivery::executable;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -76,6 +85,259 @@ fn checkpoint(root: &std::path::Path, branch: &str) {
 }
 fn run(event: &str, bytes: &[u8]) -> std::process::Output {
     run_command(executable::command(), event, bytes)
+}
+
+#[cfg(feature = "test-fixtures")]
+fn observe(f: &delivery::Fixture, event: &str, repeated: bool) -> std::process::Output {
+    let payload = json!({"session_id":"stop-session","hook_event_name":event,"cwd":f.root,
+        "stop_hook_active":repeated,"tool_name":"Bash","tool_input":{"command":"git add --dry-run .specgit.yaml"}});
+    let mut child = f
+        .command(&["hook", "--observe", "--event", event])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&payload).unwrap())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn stop_observer_offers_bound_fresh_events_without_ack_or_completion_control() {
+    for provider in ["github", "gitlab"] {
+        let f = acceptance::fixture(provider);
+        let writes = f.writes();
+        for event in ["Stop", "PostToolUse"] {
+            let out = observe(&f, event, false);
+            assert!(out.status.success());
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(
+                value["hookSpecificOutput"]["hookEventName"], event,
+                "{value}"
+            );
+            assert!(value.get("decision").is_none());
+            assert!(value.get("continue").is_none());
+            let text = value["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap();
+            let inbox = f.run(&[
+                "inbox",
+                "--request",
+                "41",
+                "--session",
+                "stop-session",
+                "--goal",
+                "lifecycle",
+                "--no-refresh",
+            ]);
+            let id = inbox["evidence"]["pending_event_ids"][0].as_str().unwrap();
+            assert!(text.contains(id), "{text}");
+            assert!(text.contains("\"request\":41") && text.contains("stop-session"));
+            assert!(text.contains("\"head\":") && text.contains("validated_at"));
+            assert!(
+                text.contains("not acknowledged") && text.contains("never grant authorization")
+            );
+        }
+        assert_eq!(f.writes(), writes);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn stop_observer_recursion_and_missing_selection_are_silent_without_remote_reads() {
+    for selected in [false, true] {
+        let f = if selected {
+            acceptance::fixture("github")
+        } else {
+            delivery::Fixture::new("github")
+        };
+        let calls = f.state()["calls"].clone();
+        let out = observe(&f, "Stop", selected);
+        assert!(out.status.success());
+        assert!(
+            out.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert_eq!(f.state()["calls"], calls);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn stop_observer_lease_conflict_is_silent() {
+    let f = acceptance::fixture("github");
+    let first = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "stop-session",
+        "--goal",
+        "lifecycle",
+        "--once",
+    ]);
+    let identity = serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
+    let store = specgit::watch_store::Store::new(identity).unwrap();
+    let (_lock, lease) = store.lease(specgit::watch_store::now() + 60).unwrap();
+    let calls = f.state()["calls"].clone();
+    let out = observe(&f, "Stop", false);
+    assert!(out.status.success());
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(f.state()["calls"], calls);
+    store.release(&lease).unwrap();
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn stop_observer_refresh_supersedes_old_success_on_head_change_or_failed_read() {
+    for changed_head in [false, true] {
+        let f = acceptance::fixture("github");
+        let first = observe(&f, "Stop", false);
+        assert!(first.status.success());
+        let inbox = f.run(&[
+            "inbox",
+            "--request",
+            "41",
+            "--session",
+            "stop-session",
+            "--goal",
+            "lifecycle",
+            "--no-refresh",
+        ]);
+        let old_id = inbox["evidence"]["pending_event_ids"][0].as_str().unwrap();
+        f.edit(|s| {
+            if changed_head {
+                s["requests"][0]["head"]["sha"] = json!("f".repeat(40));
+            } else {
+                s["read_failure"] = json!("auth");
+            }
+        });
+        let current = observe(&f, "Stop", false);
+        assert!(current.status.success());
+        let value: Value = serde_json::from_slice(&current.stdout).unwrap();
+        let text = value["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(!text.contains(old_id), "{text}");
+        assert!(!text.contains("\"state\":\"checks_passed\""), "{text}");
+        assert!(
+            text.contains(if changed_head {
+                "identity_changed"
+            } else {
+                "unknown"
+            }),
+            "{text}"
+        );
+        assert!(text.contains("Re-read current native request, head, CI attempt and review facts"));
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn stop_observer_timeout_keeps_pending_intent_without_a_wake_callback() {
+    let f = acceptance::fixture_with_observation(
+        "github",
+        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 1\n",
+    );
+    f.edit(|s| s["read_failure"] = json!("hang"));
+    let out = observe(&f, "Stop", false);
+    assert!(out.status.success());
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let recovered = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "stop-session",
+        "--goal",
+        "lifecycle",
+        "--no-refresh",
+    ]);
+    assert!(
+        !recovered["evidence"]["pending_event_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[cfg(all(unix, feature = "test-fixtures"))]
+#[test]
+fn cancelled_stop_observer_reaps_child_and_cannot_wake_a_stopped_task() {
+    let f = acceptance::fixture("github");
+    f.edit(|s| s["read_failure"] = json!("hang"));
+    let mut child = f
+        .command(&["hook", "--event", "Stop", "--observe"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            serde_json::to_string(
+                &json!({"session_id":"stop-session","hook_event_name":"Stop","cwd":f.root}),
+            )
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap();
+    let start = Instant::now();
+    let reader = loop {
+        if let Some(pid) = f.state()["hanging_reader_pid"].as_u64() {
+            break pid;
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("Stop observer did not start its owned reader");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // SAFETY: this PID is the observer owned by this test.
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // SAFETY: signal zero only probes the exact recorded fixture reader.
+    assert_ne!(unsafe { libc::kill(reader as i32, 0) }, 0);
+    let recovered = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "stop-session",
+        "--goal",
+        "lifecycle",
+        "--no-refresh",
+    ]);
+    assert!(
+        !recovered["evidence"]["pending_event_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 fn run_command(mut command: Command, event: &str, bytes: &[u8]) -> std::process::Output {
     let mut child = command

@@ -15,6 +15,101 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// Optional descriptive evidence, never an authorization or capability decision.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum EnvironmentFact {
+    Known {
+        value: String,
+        source: &'static str,
+    },
+    Unknown {
+        reason: &'static str,
+        source: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitlabEnvironment {
+    pub host: String,
+    pub metadata_status: &'static str,
+    pub diagnostic: Option<Diagnostic>,
+    pub deployment: EnvironmentFact,
+    pub server_version: EnvironmentFact,
+    pub edition: EnvironmentFact,
+    pub subscription: EnvironmentFact,
+}
+
+/// Read metadata only after required reads. Non-GitLab providers make no request.
+pub async fn environment(reader: &ForgeRead) -> Option<GitlabEnvironment> {
+    if reader.provider != Provider::Gitlab {
+        return None;
+    }
+    let unknown = |reason| EnvironmentFact::Unknown {
+        reason,
+        source: "GET metadata",
+    };
+    let known = |value: &str| EnvironmentFact::Known {
+        value: value.into(),
+        source: "GET metadata",
+    };
+    let mut result = GitlabEnvironment {
+        host: reader.host.clone(),
+        metadata_status: "unknown",
+        diagnostic: None,
+        deployment: if reader.host == "gitlab.com" {
+            EnvironmentFact::Known {
+                value: "official_hosted".into(),
+                source: "host",
+            }
+        } else {
+            EnvironmentFact::Unknown {
+                reason: "Host does not distinguish self-managed from Dedicated or other deployments.",
+                source: "host",
+            }
+        },
+        server_version: unknown("Metadata could not be read."),
+        edition: unknown("Metadata could not be read."),
+        subscription: unknown(
+            "Metadata does not provide subscription tier; edition and version do not establish a tier.",
+        ),
+    };
+    match reader.get("metadata").await {
+        Ok(value) if value.is_object() => {
+            let version = value
+                .get("version")
+                .and_then(Value::as_str)
+                .filter(|version| {
+                    !version.is_empty()
+                        && version.len() <= 128
+                        && version.as_bytes()[0].is_ascii_digit()
+                        && version
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b".+-_".contains(&byte))
+                });
+            let enterprise = value.get("enterprise").and_then(Value::as_bool);
+            result.server_version =
+                version.map_or_else(|| unknown("Metadata version is missing or invalid."), known);
+            result.edition = enterprise.map_or_else(
+                || unknown("Metadata enterprise boolean is missing or invalid."),
+                |ee| known(if ee { "ee" } else { "ce" }),
+            );
+            if version.is_some() && enterprise.is_some() {
+                result.metadata_status = "known";
+            } else {
+                reader.mark_inspection_incomplete();
+                result.diagnostic = Some(malformed());
+            }
+        }
+        Ok(_) => {
+            reader.mark_inspection_incomplete();
+            result.diagnostic = Some(malformed());
+        }
+        Err(diagnostic) => result.diagnostic = Some(diagnostic),
+    }
+    Some(result)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {

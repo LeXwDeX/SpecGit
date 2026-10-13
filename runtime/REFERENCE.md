@@ -129,7 +129,7 @@ commands use the global input/output contract above.
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. |
-| `hook` | Host event adapter with `--event`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Stop may request one recovery turn; `stop_hook_active` prevents repetition. Optional asynchronous PostToolUse `--observe` remains available to Claude/Codex integrations; hooks generated for the OpenCode claude-compatible opt-in never use it. State is always Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
+| `hook` | Host event adapter with `--event`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Synchronous Stop may request one recovery turn; `stop_hook_active` prevents repetition. `--observe` accepts PostToolUse (legacy Claude/Codex notification) or Stop (explicitly capable custom OpenCode). Observation never blocks Stop. State is always Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while a sibling initialized worktree shares the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
@@ -199,7 +199,66 @@ fields remain unknown unless a known sufficient role proves the threshold or a
 known disabled feature/insufficient role proves lack of support. Source names
 the role-permission fields. Role support is not authorization; fine-grained
 token scopes and branch protection can still reject writes.
-Doctor's `ready` status describes successful read probes, not write readiness.
+Doctor's `ready` status describes successful required read probes, not write
+readiness or success of every optional diagnostic.
+
+### Issue Milestone context
+
+`issue <exact-id> --inspect` and `--dry-run` include `evidence.milestones`,
+keyed by each read Issue number (GitHub) or IID (GitLab). This also covers
+Issues read from an existing checkpoint. Each entry has `status: linked`,
+`none`, or `unknown`. Native `milestone: null` means `none`; missing or malformed
+data means `unknown` with a `reason`. Neither state blocks Issue selection.
+
+A linked entry contains `milestone` with `provider`, native `id`, `title`,
+`state`, and `url`. GitHub also supplies its distinct `number`; its native URL
+must match the selected host, repository (case-insensitive), and number.
+GitLab supplies its distinct `iid` and `scope`: either
+`{kind: project, project_id}` or `{kind: group, group_id}`. A project Milestone
+must match the Issue's project. Group Milestones remain group-scoped, not
+project-scoped. GitLab `url` may be null: embedded responses need not supply
+`web_url`, and a group ID alone cannot verify a group URL path. Only exact,
+verified native HTTP(S) resource URLs are exposed, without credentials,
+queries, fragments, or control characters.
+
+This context comes from the existing Issue response. It adds no requests,
+Milestone enumeration, writes, selection fields, or candidate digest inputs.
+It is not persisted in checkpoints. Missing context does not imply lack of
+permission; a Milestone's closed state does not prove delivery completion.
+Milestones are optional. Maintain them explicitly with the native platform
+tools. These fields do not change PR/MR, watch, merge, or release rules.
+
+### GitLab environment context
+
+For GitLab, `doctor` (including `--account-only`) and `init --check` / `--inspect`
+add optional `evidence.environment` after core native reads. This is separate
+from required `probes`, init check IDs, availability and exit decisions. Normal
+init, including dry-run, makes no extra metadata request. GitHub reports null
+and makes no extra read. If core initialization stops before these reads finish,
+the environment field can be absent; absence is not a successful metadata read.
+
+The environment report contains `host`, `metadata_status` (`known` or `unknown`),
+`diagnostic`, and four independent facts: `deployment`, `server_version`,
+`edition` and `subscription`. A fact has `status: known`, `value`, `source`, or
+`status: unknown`, `reason`, `source`. One bounded authenticated `GET metadata`
+uses the existing native read transport and inspection budget. It exports only
+the validated version string (1–128 ASCII version characters, starting with a
+digit) and the explicit `enterprise` boolean as `ee` or `ce`. It does not export
+raw metadata, revision, KAS details or credentials. It never reads admin/license
+endpoints. [GitLab metadata](https://docs.gitlab.com/api/metadata/) does not
+provide a subscription tier, so `subscription` is always unknown with a reason.
+An `-ee` version suffix does not establish edition or a paid tier.
+
+Only the exact host `gitlab.com` establishes `deployment: official_hosted`.
+Other hosts remain unknown; they do not prove self-managed or Dedicated.
+Missing or invalid fields retain unknown facts and a typed malformed-response
+diagnostic; valid sibling fields remain evidence. Unreadable metadata (including
+403/404 and transport failures) remains unknown with the native typed diagnostic,
+never `not_checked`. Failed or incomplete metadata keeps the init inspection
+summary incomplete, but does not change required-probe readiness or exit status.
+Unknown environment information is not evidence of insufficient capability.
+Conversely, a known version or edition grants no feature support, permission or
+authorization; actual capability and role checks remain independent.
 
 `issue.write_permission` and `request.write_permission` map supported roles to
 `verified` / `pass`, insufficient roles or disabled features to
@@ -415,9 +474,9 @@ those IDs; a merged request without verified closing facts remains unknown.
 Watch, inbox and Hook actions are advisory and never ready, merge or close
 anything automatically.
 
-Project setup-managed hooks exist only in project scope. Claude and Codex
-integrations register SessionStart, PreToolUse, PostToolUse and Stop; their
-PreToolUse/PostToolUse entries match the managed tool names
+Project setup-managed hooks exist only in project scope. Legacy Claude/Codex
+defaults register SessionStart, PreToolUse, PostToolUse and Stop; selective
+purposes can install fewer events. PreToolUse/PostToolUse entries match the managed tool names
 (`Write`, `Edit`, `MultiEdit`, `Bash`, `PowerShell`, `apply_patch`, including
 the fork spellings `functions.apply_patch` and
 `mcp__functions__apply_patch`), and relevant PostToolUse events may launch a
@@ -425,8 +484,12 @@ bounded asynchronous observer. The `--opencode-claude-hooks` opt-in generates
 project `.opencode/hooks.json` for a custom OpenCode fork with claude-code
 input: top-level event entries, one single-quoted command string
 (`<executable> hook --event <event>`) with no separate args entries,
-`inputFormat: claude-code`, and no asynchronous observer — observe manually
-with bounded `watch`. Live qualification of custom OpenCode `1.0.57` confirmed
+`inputFormat: claude-code`. This compatibility flag alone adds no idle observer.
+Only the additional `--opencode-async-rewake` opt-in with effective observe/context
+purposes registers `hook --event Stop --observe`, `shell: bash`, `async: true`,
+`asyncRewake: true`, and a 1,830-second host timeout. This declares a custom-host
+capability; it is not inferred from naming compatibility or verified delivery.
+Live qualification of the earlier custom OpenCode `1.0.57` confirmed
 project import, tracked-write deny/allow and model-visible PreToolUse/PostToolUse
 context, but `opencode run` lost SessionStart context even on continuation.
 TUI/serve modes and live patch-tool delivery were not verified; that build
@@ -434,10 +497,35 @@ offered no `apply_patch` tool. See the [host evidence boundaries](../docs/suppor
 Official OpenCode keeps the skill and
 guidance only. Registration is `written_not_verified`; import, context
 injection, visible messages and later-turn delivery require separate host
-evidence. Immediate idle wake is not supported. Stop requests at most one
+evidence. Legacy async notification alone does not prove idle wake. Synchronous Stop requests at most one
 recovery turn when a dirty initialized project lacks a valid checkpoint; the
 host's repeated-event flag makes the next Stop silent. Hooks never acknowledge
 themselves. Use explicit watch/inbox when automatic delivery is unavailable.
+
+The Stop observer reuses the selected request, lifecycle watch, session/worktree
+identity, lease and pending event IDs. A busy lease, no selected request, repeated
+Stop (`stop_hook_active: true`), cancellation received by the adapter or wait
+expiry emits no callback. Adapter cancellation/expiry retain resumable durable
+state; owned children are reaped.
+There is no daemon, webhook service or automatic retry loop. The runtime cannot
+infer the user's task state: the host owns callback admission and stale suppression.
+An admitted callback tells the Agent to honor the current user stop, goal and
+authorization and reread native request/head/attempt/review facts. Old or duplicate
+events never authorize action. PR-only goals stop at the PR; authorized merge
+goals use bounded waiting and native merge/associated Issue closure readback.
+`native_auto_merge=false` does not prohibit an already authorized ordinary merge.
+Release remains separately authorized.
+
+Qualification on 2026-10-13 found a host-side limitation in the tested custom
+OpenCode 1.0.75 build: `/session/:id/abort` returned success while an idle Stop
+observer was pending, but its later callback still started another model request.
+Delivery, non-recursion and newer-prompt suppression passed in that isolated test;
+user-abort suppression did not. Do not enable idle wake on that build until its
+abort path is repaired and requalified. The host fix is tracked separately in
+[OpenCode-GraphAgent #774](https://github.com/LeXwDeX/OpenCode-GraphAgent/issues/774).
+SpecGit delivery assumes correct host cancellation; that assumption is not a
+passing host qualification. Use bounded watch/inbox instead on the affected build.
+Adapter signal-cancellation tests do not prove host API, TUI or desktop stop behavior.
 
 Custom OpenCode hook executable paths must not contain the reserved
 `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_DATA}` placeholders: the host expands
@@ -487,7 +575,14 @@ SessionStart adds managed guidance and any pending notice with `additionalContex
 Synchronous PostToolUse emits only pending notice text in `additionalContext`;
 without a pending notice it is silent. Unreadable observation state produces a
 diagnostic `systemMessage`, not repeated guidance.
-Stop uses a block decision for its single recovery turn. Verification is of the
+Synchronous Stop uses a block decision for its single recovery turn. Stop with
+`--observe` instead returns `hookSpecificOutput.hookEventName: "Stop"` and
+`additionalContext` only for pending enabled notifications; it never emits a
+block, permission or completion-control decision. PostToolUse observation keeps
+its own event tag and existing framing. Neither callback acknowledges events.
+Observation uses configured poll/wait limits (default 15/1,800 seconds); the host
+timeout can end a longer configured wait and does not guarantee later delivery.
+Verification is of the
 actual edit target resolved on disk, not of the event's claimed path alone.
 
 ### Manual OpenCode imports
@@ -645,6 +740,33 @@ unowned marker is an ownership conflict, not a target. These blocks stay
 separate from init's `<!-- specgit:v2 -->` project guidance blocks, and
 `init` itself remains unchanged.
 
+#### Select project hook purposes
+
+Repeat `setup --hook-purpose guard|context|observe|none` with selected `--agent`
+hosts. Guard maps to synchronous PreToolUse/Stop, context to synchronous
+SessionStart/PostToolUse, and observe to bounded asynchronous observation.
+Choose the least purposes justified by actual capabilities and existing
+authorization, preview with `--dry-run`, then apply. Init and setup stay separate.
+`none` cannot combine with other purposes. It adds no hooks and never uninstalls
+recorded hooks or Git guard. On new hosts explicit purposes start empty; on
+existing hosts they add to recorded purposes. Omission preserves exact recorded
+modes, including a no-hook receipt, and retains legacy defaults for new hosts.
+Refreshing never silently enables idle wake.
+
+Official OpenCode and generic hosts keep guidance/Skill only. Custom OpenCode
+guard/context need `--opencode-claude-hooks`; observe additionally needs explicit
+`--opencode-async-rewake` and effective context. The extra opt-in requires the
+custom hook flag and `--agent opencode`. Claude/Codex retain legacy PostToolUse
+async observation without a claim of idle wake. Per-host `hook_purposes` reports
+`requested`, `installed` and `declined` entries with `purpose`, `status` and
+`reason`. Unsupported and unknown remain distinct; use bounded watch/inbox or
+manual continuation for declined capability, not guessed support.
+
+Receipts remain version 2, with selective/no-hook host records. Older 2.7 clients
+may reject a newer selective receipt (fail closed). Preserve the receipt and
+assets; use a supporting CLI's owned uninstall or restore a compatible backup
+before downgrade. Never force-overwrite ownership or delete the receipt to bypass it.
+
 Project scope never installs a runtime binary inside the checkout and never
 edits global agent settings. Project hooks invoke the currently installed
 shared user executable directly — there is no global setup prerequisite — and
@@ -663,7 +785,9 @@ separate `remove` command, not part of `setup`; see
 
 Registration is reported as `written_not_verified`, with
 `host_delivery.imported_event`, `context_injection`, `visible_message` and
-`next_turn` as `not_checked` and `idle_wake` as `not_supported`. Project Codex
+`next_turn` as `not_checked`. `idle_wake: configured_not_verified` means only the
+explicit custom OpenCode wake registration exists; other modes do not claim
+verified idle wake. Actual isolated host event delivery needs separate evidence. Project Codex
 selection reports `codex_trust: review_in_host_required`: Codex loads
 `<repo>/.codex/hooks.json` only after the user reviews and trusts the project
 `.codex/` layer in the host's `/hooks` menu, and SpecGit never performs,
