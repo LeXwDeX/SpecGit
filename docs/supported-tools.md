@@ -2,8 +2,9 @@
 
 SpecGit 2.8 provides a native CLI and managed agent integrations. One shared
 user-level `specgit` executable serves every repository and worktree.
-`specgit setup` writes integration assets only for explicitly selected
-agents (`--agent generic|claude|codex|opencode`, repeatable) and is
+`specgit setup` refreshes all recorded agents plus explicitly selected
+agents (`--agent generic|claude|codex|opencode`, repeatable); the flag does not
+confine refresh to that host. Setup is
 permanently project-only: `--scope project` is the default and the only scope
 value, writing documented checkout assets with a worktree-private receipt.
 Setup never copies the runtime binary into a project and never installs user-global
@@ -37,8 +38,11 @@ still follows the host's documented paths; installation alone proves no import.
 
 In 2.8, select minimal authorized purposes with repeatable `--hook-purpose
 guard|context|observe`, or `none` for no new hooks. Omission preserves exact recorded
-modes on refresh. `none` never uninstalls existing hooks or Git guard; explicit
-purposes add to existing choices. Claude/Codex hook entries in this table depend
+modes on ordinary refresh. Explicit purposes apply to all recorded and newly
+selected hosts; purpose changes need authorization for every affected host.
+`none` preserves existing purposes and never uninstalls hooks or Git guard.
+Review/report all hosts' asset changes, including shared Skill refresh, even with
+`none`. Claude/Codex hook entries in this table depend
 on that selection. Official OpenCode and generic remain guidance/Skill only. See
 the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes)
 for per-host declined reasons and older-client downgrade limits.

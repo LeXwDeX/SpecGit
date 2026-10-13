@@ -93,8 +93,14 @@ specgit status --json
 ```
 
 Apply project changes only after an applicable conflict-free preview. Resolve any
-required manual-observation choice explicitly in both preview and apply.
-Apply the intended `setup` selection from its help after reviewing the preview.
+required manual-observation choice explicitly: `--manual-observe` writes
+`agent.native_auto_merge=false`. An existing true preference needs a specific decision
+before that change; then use consistent options/configuration in check, preview and
+apply and read back the preference. Continue independent reads while blocked.
+Setup refresh includes all recorded hosts plus the `--agent` selection. Omit purposes
+on ordinary refresh; explicit purposes affect the full set and need authorization
+for every affected host. Review all asset changes, including shared Skill refresh,
+before applying. Adding a host with `none` preserves existing purposes, not their asset bytes.
 From 2.4 on, setup is permanently project-only (`--scope project` is the
 default and only scope): refreshing a 2.3-era project receipt rewrites it into
 the 2.4 format locally without `shared_root` and without reading or writing the
