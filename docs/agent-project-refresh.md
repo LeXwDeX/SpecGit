@@ -24,9 +24,14 @@ Do not reinstall a missing CLI or change unrelated projects.
 Classify this project before writing: fresh, existing v2, v1 migration, lost declaration
 with private state, or conflicting leftovers. Preserve configuration, Git/user changes,
 checkpoints, receipts and other tools' assets. Preview and apply only safe owned changes.
-If native capability is unknown or unavailable, I choose manual observation; do not
-change platform settings or protections. For a new host, use guidance/Skill only;
-preserve existing host purposes and preferences on refresh. Do not newly enable custom
+If native capability is unknown or unavailable, I choose manual observation only when
+native_auto_merge is already false or this is new adoption with that default.
+--manual-observe sets it to false; if the existing preference is true, ask for that specific change
+before applying it. Do not change platform settings or protections. Refresh includes
+all recorded hosts, not just the --agent selection. Review and report each host's
+effects, including shared Skill refresh. Omit purposes on ordinary refresh. Use none
+for a new host; this adds no hooks and preserves existing purposes. Any purpose change
+needs my authorization for every affected host. Do not newly enable custom
 OpenCode idle wake without my explicit authorization and confirmation of real capability.
 This request does not authorize Issue/PR writes, commits, pushes, merges, releases,
 foreign cleanup, global hooks or new merge/closure automation. Stop only the blocked
@@ -47,8 +52,11 @@ update --check；需要稳定版更新时，先预览并验证，再应用并核
 CLI 缺失时不要重装，也不要修改其他项目。
 写入前区分全新项目、已有 v2、v1 迁移、声明丢失但私有状态仍在、以及冲突残留。
 保留配置、Git 和用户改动、checkpoint、收据及其他工具资产；只预览和应用安全的受管改动。
-原生能力未知或不可用时，我选择手动观察，不要修改平台设置或保护规则。
-新宿主只安装指导和 Skill；刷新时保留已有宿主用途和偏好。未经我明确授权且确认真实能力，
+原生能力未知或不可用时，仅在 native_auto_merge 已为 false 或全新接入采用该默认值时，
+我选择手动观察。--manual-observe 会将此值设为 false；原有偏好为 true 时，先询问这项具体变更再应用。
+不要修改平台设置或保护规则。刷新会包含所有已记录宿主，不限于 --agent 所选宿主；
+逐一审阅并报告影响，包括共享 Skill 刷新。普通刷新省略用途；添加新宿主时使用 none，不新增 hooks，
+也不改变已有用途。任何用途变更都需要我授权所有受影响宿主。未经我明确授权且确认真实能力，
 不要新增自定义 OpenCode 空闲唤醒。本请求不授权 Issue/PR 写入、提交、推送、合并、发布、
 外部资产清理、全局 hooks 或新增合并/关单自动化。只停止受阻步骤，说明具体冲突或缺失决策。
 最后报告 CLI 实际路径和版本、项目分类和操作、改动资产、实际验证与未知项、备份和恢复方式、
@@ -132,33 +140,47 @@ specgit init --provider github --remote origin --json
 
 Carry selected `--config-file`, `--target`, `--language` and `--api-host` through
 the sequence where needed and supported. Read diagnostics, not just exit status.
-If capability is unknown/unavailable and an operating choice is required, the
-pasted request already chooses `--manual-observe`: repeat the check/preview/apply
-with it. Do not change platform protections to pass a check. Apply only an
-applicable conflict-free preview; re-preview if inputs change.
+If capability is unknown/unavailable and an operating choice is required,
+`--manual-observe` writes `agent.native_auto_merge=false`; it is not a read-only
+fallback. The pasted request permits it directly for new adoption with that default
+or an existing false preference. Inspect the current/restored or supplied config
+first. If its preference is true, explain the true-to-false change and obtain that
+specific decision before proceeding with the changed preview/apply sequence.
+Continue independent read-only checks while waiting. Once authorized, repeat
+check/preview/apply with the same options. Do not change platform protections to
+pass a check. Apply only an applicable conflict-free preview; re-preview if inputs change.
 
-Init and setup are separate. Read back the declaration, managed guidance and
+Init and setup are separate. Read back `agent.native_auto_merge` and the rest of
+the declaration against the approved configuration, plus managed guidance and
 `local_exclusion` result. Ignore rules do not untrack files; do not hide or untrack
 mixed manual/generated guidance. Local maintenance needs no delivery Issue and
 must not create one just to demonstrate success.
 
-## 5. Refresh only the active host
+## 5. Review the full host refresh scope
 
-Inspect `setup --help`. Select the host actually running this task with
+Inspect `setup --help` and the existing receipt. Setup refreshes **all recorded
+hosts plus any explicitly selected hosts**. `--agent` adds a selection; it does
+not restrict refresh to that host. Add only the active host when needed with
 `--agent generic|claude|codex|opencode`; installed directories alone are not a
-selection. Preview with `--dry-run --json`, then apply the identical selection
-without `--dry-run`. Registration remains project-only. Never add global hooks.
+selection. Shared Skill and other owned asset refresh across recorded hosts is
+expected. Preview with `--dry-run --json`, review every host's effects, then apply
+the identical selection without `--dry-run`. Report all affected hosts/assets.
+Registration remains project-only. Never add global hooks.
 
-On 2.8, choose the least hook purposes justified by real capability and authorized
-use: repeat `--hook-purpose guard`, `context` or `observe`. `guard` supplies checks,
+On ordinary refresh, **omit hook purposes** to preserve each recorded mode. On 2.8,
+explicit `--hook-purpose` values apply to every host in the full refresh set, not
+just the host named by `--agent`. Purpose changes require capability checks and
+authorization for every affected recorded host. When authorized, choose the least
+purposes needed: repeat `--hook-purpose guard`, `context` or `observe`. `guard` supplies checks,
 `context` supplies session/tool context, and `observe` requests bounded asynchronous
 observation. For a **new** host, the pasted request selects guidance/Skill only,
 for example `setup --agent codex --hook-purpose none --dry-run --json`, then the
-same command without `--dry-run`. Do not use unsupported flags on older clients.
+same command without `--dry-run`. `none` adds no purposes to existing hosts, so this
+also preserves their purposes when adding a new host. It does not skip their asset
+refresh. Do not use unsupported flags on older clients.
 
-For an existing receipt, omit purposes to preserve its exact recorded mode. Existing
-agents are additive and remain recorded; this is not a request to add other hosts.
-Explicit purposes add to existing choices. `none` cannot combine with other purposes,
+Existing agents are additive and remain in the refresh set. Explicit purposes add
+to their existing choices. `none` cannot combine with other purposes,
 adds no hooks, and **never removes existing hooks or Git guard**. Removing hooks
 needs a separate owned-removal decision. See the [2.8 purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes), including the limitation
 that older 2.7 clients may reject selective/no-hook receipts. Preserve receipts;
@@ -189,7 +211,8 @@ results. No test Issue, PR, commit or platform setting change is needed.
 Report:
 
 - Actual CLI path/version, update outcome and any PATH ambiguity.
-- Target repository/worktree, classification, selected host and completed actions.
+- Target repository/worktree, classification, active host, all affected recorded
+  hosts (including shared Skill refresh) and completed actions.
 - Exact changed assets, retained conflicts, and preserved configuration/preferences.
 - Checks actually run and their results, separately from host delivery not checked
   or blocked. A successful command alone is not successful integration.
