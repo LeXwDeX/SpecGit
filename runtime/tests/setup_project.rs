@@ -594,7 +594,7 @@ fn guidance_slimming_refreshes_recorded_2_6_2_setup_without_overwriting_manual_t
             assert!(after.ends_with("\nManual tail\r\n"));
             assert!(after.contains("Project integration (setup, hooks, observation state and guidance) stays project-only"));
             assert!(after.contains("not a general file-write sandbox"));
-            assert!(after.contains("Refresh preserves manual text and other tools' content"));
+            assert!(after.contains("Refresh replaces recorded assets and complete unique blocks"));
             assert!(!after.contains("Before tracked product edits"));
             assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
         }
@@ -779,13 +779,86 @@ fn additive_selection_coowns_guidance_once_and_preserves_user_content_without_th
 }
 
 #[test]
+fn recorded_project_skill_and_guidance_edits_refresh_without_touching_manual_text() {
+    let (f, mut options) = fixture(vec![Agent::Claude]);
+    fs::write(f.root.join("CLAUDE.md"), "manual prefix\n").unwrap();
+    install(&options, &f).unwrap();
+    // A later host selection advances the receipt without rewriting the
+    // existing Claude assets. Their older journal must remain usable proof.
+    let mut add_codex = options.clone();
+    add_codex.agents = vec![Agent::Codex];
+    install(&add_codex, &f).unwrap();
+    let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+    let guidance = f.root.join("CLAUDE.md");
+    fs::write(&skill, "edited managed Skill\n").unwrap();
+    let before = fs::read_to_string(&guidance).unwrap();
+    fs::write(
+        &guidance,
+        before.replace("SpecGit 2", "edited managed block"),
+    )
+    .unwrap();
+    let edited = files(&f.base);
+    options.dry_run = true;
+    install(&options, &f).unwrap();
+    assert_eq!(files(&f.base), edited);
+    options.dry_run = false;
+    install(&options, &f).unwrap();
+    let skill_text = fs::read_to_string(&skill).unwrap();
+    assert!(skill_text.contains(env!("CARGO_PKG_VERSION")));
+    assert!(!skill_text.contains("edited managed Skill"));
+    let after = fs::read_to_string(&guidance).unwrap();
+    assert!(after.starts_with("manual prefix\n"));
+    assert!(after.contains("## SpecGit 2"));
+    assert!(!after.contains("edited managed block"));
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    fs::write(&skill, "edited again").unwrap();
+    options.uninstall = true;
+    options.agents.clear();
+    assert_eq!(
+        install(&options, &f).unwrap_err().code,
+        Code::OwnershipConflict
+    );
+}
+
+#[test]
+fn edited_guidance_needs_a_matching_receipt_and_unique_markers() {
+    for fault in ["forged receipt", "duplicate marker", "missing marker"] {
+        let (f, options) = fixture(vec![Agent::Generic]);
+        install(&options, &f).unwrap();
+        let path = f.root.join("AGENTS.md");
+        let before = fs::read_to_string(&path).unwrap();
+        let edited = before.replace("SpecGit 2", "edited managed block");
+        match fault {
+            "forged receipt" => {
+                let receipt_path = f.private.join("ownership.json");
+                let mut receipt: Value =
+                    serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+                receipt["instructions"]["generic"]["block"] = json!(
+                    "<!-- specgit:project:v2:start -->\nforged\n<!-- specgit:project:v2:end -->"
+                );
+                fs::write(receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+                fs::write(&path, edited).unwrap();
+            }
+            "duplicate marker" => fs::write(
+                &path,
+                format!("{edited}\n<!-- specgit:project:v2:start -->"),
+            )
+            .unwrap(),
+            _ => fs::write(&path, edited.replace("<!-- specgit:project:v2:end -->", "")).unwrap(),
+        }
+        let state = files(&f.base);
+        assert_eq!(
+            install(&options, &f).unwrap_err().code,
+            Code::OwnershipConflict,
+            "{fault}"
+        );
+        assert_eq!(files(&f.base), state, "{fault}");
+    }
+}
+
+#[test]
 fn project_conflicts_preserve_edited_duplicate_and_foreign_assets() {
-    for fault in [
-        "foreign skill",
-        "edited skill",
-        "edited guidance",
-        "duplicate hooks",
-    ] {
+    for fault in ["foreign skill", "duplicate hooks"] {
         let (f, mut options) = fixture(vec![Agent::Claude]);
         let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
         if fault == "foreign skill" {
@@ -859,6 +932,25 @@ fn codex_override_and_opencode_guidance_remain_independently_discoverable() {
 }
 
 #[test]
+fn first_codex_override_install_ignores_foreign_agents_directory() {
+    let (f, options) = fixture(vec![Agent::Codex]);
+    fs::create_dir(f.root.join("AGENTS.md")).unwrap();
+    fs::write(f.root.join("AGENTS.override.md"), "manual override\n").unwrap();
+    let before = files(&f.base);
+    let mut preview = options.clone();
+    preview.dry_run = true;
+    assert!(install(&preview, &f).is_ok());
+    assert_eq!(files(&f.base), before);
+    assert!(install(&options, &f).is_ok());
+    assert!(f.root.join("AGENTS.md").is_dir());
+    assert!(
+        fs::read_to_string(f.root.join("AGENTS.override.md"))
+            .unwrap()
+            .contains("## SpecGit 2")
+    );
+}
+
+#[test]
 fn additive_guidance_refresh_detects_new_codex_shadow_in_both_selection_orders() {
     for first in [Agent::Generic, Agent::Codex] {
         let (f, mut options) = fixture(vec![first]);
@@ -897,6 +989,30 @@ fn cli(root: &Path, args: &[&str]) -> Value {
         "{value}"
     );
     value
+}
+
+#[test]
+fn cli_setup_refreshes_edited_owned_assets_and_converges() {
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("AGENTS.md"), "manual rules\n").unwrap();
+    let args = ["--agent", "generic", "--hook-purpose", "none"];
+    assert_eq!(cli(&f.root, &args)["ok"], true);
+    let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+    let guidance = f.root.join("AGENTS.md");
+    fs::write(&skill, "edited Skill").unwrap();
+    let text = fs::read_to_string(&guidance).unwrap();
+    fs::write(&guidance, text.replace("SpecGit 2", "edited managed block")).unwrap();
+    let before = files(&f.base);
+    assert_eq!(cli(&f.root, &["--dry-run"])["ok"], true);
+    assert_eq!(files(&f.base), before);
+    assert_eq!(cli(&f.root, &[])["ok"], true);
+    let updated = fs::read_to_string(&guidance).unwrap();
+    assert!(updated.starts_with("manual rules\n"));
+    assert!(updated.contains("## SpecGit 2"));
+    assert!(!updated.contains("edited managed block"));
+    assert!(!fs::read_to_string(&skill).unwrap().contains("edited Skill"));
+    assert_eq!(cli(&f.root, &["--dry-run"])["ok"], true);
+    assert_eq!(cli(&f.root, &[])["evidence"]["transaction"]["changes"], 0);
 }
 
 #[test]

@@ -5,13 +5,13 @@
 在目标仓库打开 Agent，复制其中的
 [中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
 或 [English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)，
-要求实际检查并完成无冲突维护，而不是重做安装。请求单独授权必要的稳定版验证升级，
-能力未知或不可用时，仅对新项目默认 false 或已有 false 的 `native_auto_merge` 选择手动观察。
+要求实际检查并完成所有权边界明确的维护，而不是重做安装。请求单独授权必要的稳定版验证升级；
+可选能力未知不阻止适用的本地维护，init 仅在新项目默认 false 或已有 false 的 `native_auto_merge` 下选择手动观察。
 该参数会设为 false；已有 true 偏好需先取得具体变更决策。请求不授权平台设置、Issue/PR 写入、提交、推送、合并或发布。
 核对 CLI 的实际路径和版本；缺失时不要静默重装。
 
 执行下方简写的 v2 流程前，先按指南分类。声明丢失但私有状态仍在时不是全新项目，
-应恢复原配置或备份。保留收据、checkpoint、手工改动及外部资产，不要删除状态或 hooks 来强行刷新。
+应恢复原配置或备份。保留配置、收据、checkpoint、块外改动及外部资产；边界完整且所有权可信的受管内容即使正文被编辑，也会刷新为当前模板。不要删除状态或 hooks 来强行刷新。
 检查、预览和执行应使用同一套配置、远程和能力选项。
 
 对于 v2 项目，保留现有声明并在目标仓库预览、应用刷新：
@@ -23,7 +23,7 @@ specgit init --json
 specgit status --json
 ```
 
-若报告需要能力选择，先明确选择手动观察或在已有授权内配置平台，不要忽略诊断。2.2 的 SpecGit 排除区块只包含本地 `.specgit.yaml`；仓库/用户自己的 ignore 规则仍有效，AGENTS/CLAUDE 按仓库规则审阅。旧的 adoption-only checkpoint 在原分支重新选择原生 Issue，不能删除或改写其他分支的 checkpoint。
+若报告需要能力选择，先明确选择手动观察或在已有授权内配置平台，不要忽略诊断。2.2 的 SpecGit 排除区块只包含本地 `.specgit.yaml`；仓库/用户自己的 ignore 规则仍有效，AGENTS/CLAUDE 按仓库规则审阅。旧的 adoption-only checkpoint 在原分支重新选择原生 Issue，不能删除或改写其他分支的 checkpoint。全部更新后运行 status/doctor，读回生成指导与 Skill，再次 dry-run；init dry-run 只列计划路径，不表示逐项改变状态。声称 hook 生效前须做无副作用的实际行为/上下文探针。
 
 v1 项目先执行[显式迁移](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md)，不要使用已退役的 `init --force`、`finish`、`bind`。二进制替换不会完成项目迁移。
 
@@ -35,7 +35,7 @@ specgit setup --agent codex --dry-run --json
 specgit setup --agent codex --json
 ```
 
-保留原有设置、宿主指导、手工编辑与外部 hooks。Codex/Claude 支持受管理的 hooks；官方 OpenCode 构建只安装 Skill/指南。自定义 OpenCode fork 可用 `--opencode-claude-hooks`（须搭配 `--agent opencode`）启用兼容的项目 hooks。2.8 的空闲唤醒还需要真实能力确认、用户授权、显式 `--opencode-async-rewake` 和 observe/context 用途。兼容开关本身不启用异步观察；送达不可用时使用有界 `watch` 或手动继续。不要把 Claude settings hooks 复制成未经验证的 OpenCode 集成。写入注册不证明上下文或空闲送达，需实际验证。
+保留原有配置、受管块外手工指导和外部 hooks；所有权可信且边界完整唯一的 SpecGit 标准正文由 CLI 覆盖更新。Codex/Claude 支持受管理的 hooks；官方 OpenCode 构建只安装 Skill/指南。自定义 OpenCode fork 可用 `--opencode-claude-hooks`（须搭配 `--agent opencode`）启用兼容的项目 hooks。2.8 的空闲唤醒还需要真实能力确认、用户授权、显式 `--opencode-async-rewake` 和 observe/context 用途。兼容开关本身不启用异步观察；送达不可用时使用有界 `watch` 或手动继续。不要把 Claude settings hooks 复制成未经验证的 OpenCode 集成。写入注册不证明上下文或空闲送达，需实际验证。
 
 2.8 支持重复指定 `--hook-purpose guard|context|observe`，或用 `none` 不新增 hooks。
 普通刷新省略用途以保留记录的确切模式。显式用途作用于所有已记录及新选宿主，变更需取得每个受影响宿主的授权。

@@ -188,8 +188,10 @@ prerequisite. The retired global integration scope and its selectors —
 `--root`, `--provider`, `--api-host`, `--register-claude`,
 `--register-codex`, `--register-opencode`, `--claude-settings`, `--codex-root`
 and `--opencode-root` — are rejected input, not deprecated aliases. Preserve
-foreign skills, hooks and instructions; ownership conflicts require
-reconciliation, not overwriting. `watch`, `hook` and `inbox` always use
+foreign skills, hooks and instructions. Refresh replaces complete, proven-owned
+assets and unique managed blocks, including edited body text; preserve outside
+content, config, checkpoints and other hooks. Unknown ownership or damaged/duplicate
+markers still require reconciliation. `watch`, `hook` and `inbox` always use
 Git-private state; their retired `--state-root` option is rejected.
 
 ### Optional user Skill
@@ -206,8 +208,8 @@ specgit skill --user --json
 
 This writes only `~/.agents/skills/specgit-native/SKILL.md` (Windows uses
 `%USERPROFILE%`). The embedded Skill ends with a SHA-256 managed marker. Foreign
-files conflict; edited managed files are backed up beside the Skill before
-refresh, and the report lists the backup. Symlink paths below home are refused.
+files conflict; edited managed files are refreshed with a transactional backup
+reported by the CLI. Symlink paths below home are refused.
 `--remove` removes only managed, unedited content; preview it with `--dry-run`.
 `--refresh-only` never creates or adopts a missing or foreign Skill.
 

@@ -1,6 +1,6 @@
 新任务和已有 PR/MR 的 CI/评审修复都加载 specgit-native Skill。
 完整流程和恢复步骤见 Skill；二进制可选，但不得绕过项目 guard/checkpoint 约束。
-在授权范围内主动使用原生 gh/glab；只读环境探查和验证要求见 Skill。
+在授权范围内主动使用原生 gh/glab。GitHub 免费/付费计划、账号类型和仓库可见性，以及 GitLab 社区/商业层级，都是背景信息，不证明项目或当前身份的实际能力；套餐限制、权限不足和未知分开报告；403/404 不足以定因。细节见 Skill。
 Milestone 可选；Issue 承载规格和工作台账；PR/MR 集成变更，不代表版本；Release 需要独立授权。
 使用共享 CLI 时，以已安装的 `specgit --help` 和 `specgit --schema` 为契约。
 修改已跟踪的产品输入前，先查重并选择完整相关 Issue：Why / Scope / Approach / Acceptance（原因、范围、方案、验收要求）。
@@ -10,4 +10,5 @@ Milestone 可选；Issue 承载规格和工作台账；PR/MR 集成变更，不�
 GitHub/GitLab 负责 CI、评审、保护和实际合并。
 按用户目标收尾：评审、修复或跟踪报告已验证结果及限制。
 平台交付须原生回读确认目标分支合并及全部应关闭的关联 Issue 关闭。
-能力缺失或 SpecGit 故障时，按 Skill 的恢复步骤处理。
+全部更新后运行 status/doctor，读回生成的 Skill/指导，再次 dry-run 检查收敛；init dry-run 只列计划路径，不报告逐项是否改变。阻塞恢复见 Skill。
+已授权刷新时，由 CLI 覆盖所有权已核实的受管文件和完整唯一块内的编辑正文；保留块外字节、配置、checkpoint 和其他 hooks。所有权未知或标记损坏/重复仍冲突。不要手写、恢复旧块或额外手工备份；使用 CLI 恢复。卸载/回滚保留后续编辑。

@@ -152,6 +152,16 @@ pub fn change(
     next: &Declaration,
     recorded_hash: Option<&str>,
 ) -> Result<Change, Diagnostic> {
+    change_inner(path, previous, next, recorded_hash, false)
+}
+
+fn change_inner(
+    path: &Path,
+    previous: &Declaration,
+    next: &Declaration,
+    recorded_hash: Option<&str>,
+    refresh_proven: bool,
+) -> Result<Change, Diagnostic> {
     let mut c = Change::new(path.to_path_buf(), None)?;
     let before = std::str::from_utf8(c.before.bytes.as_deref().unwrap_or_default())
         .map_err(|_| conflict())?;
@@ -159,7 +169,7 @@ pub fn change(
     let ends: Vec<_> = before.match_indices(END).collect();
     let block = render(next);
     let after = match (starts.as_slice(), ends.as_slice()) {
-        ([], []) => {
+        ([], []) if recorded_hash.is_none() => {
             let separator = if before.is_empty() || before.ends_with("\n\n") {
                 ""
             } else if before.ends_with('\n') {
@@ -179,6 +189,7 @@ pub fn change(
                 && !released(&canonical, previous)
                 && recorded_hash != Some(hash(current.as_bytes()).as_str())
                 && recorded_hash != Some(hash(canonical.as_bytes()).as_str())
+                && !refresh_proven
             {
                 return Err(conflict());
             }
@@ -288,7 +299,15 @@ pub fn changes(
         Some(bytes) => {
             let parsed: Receipt = serde_json::from_value(crate::input::json(bytes, 1_048_576, 16)?)
                 .map_err(|_| conflict())?;
-            if parsed.version != 1 {
+            if parsed.version != 1
+                || parsed
+                    .blocks
+                    .keys()
+                    .any(|name| !["AGENTS.md", "CLAUDE.md"].contains(&name.as_str()))
+                || parsed.blocks.values().any(|digest| {
+                    digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+                })
+            {
                 return Err(conflict());
             }
             parsed
@@ -305,12 +324,33 @@ pub fn changes(
         if name == "CLAUDE.md" && !mirror && !has_block(&path)? {
             continue;
         }
-        changes.push(change(
-            &path,
-            previous,
-            next,
-            state.blocks.get(name).map(String::as_str),
-        )?);
+        let recorded = state.blocks.get(name).map(String::as_str);
+        let mut pending_proofs = Vec::new();
+        let guidance = match change(&path, previous, next, recorded) {
+            Ok(change) => change,
+            Err(error) if recorded.is_some() => {
+                let snapshot = crate::assets::Snapshot::read(&path)?;
+                let proof = crate::assets::AssetStore::owned_pair_at(
+                    &private.join("assets"),
+                    &receipt.path,
+                    &receipt.before,
+                    &path,
+                    &snapshot,
+                    None,
+                )?
+                .ok_or(error)?;
+                let change = change_inner(&path, previous, next, recorded, true)?;
+                pending_proofs = proof;
+                change
+            }
+            Err(error) => return Err(error),
+        };
+        changes.push(guidance);
+        for journal in pending_proofs {
+            if !changes.iter().any(|c: &Change| c.path == journal.path) {
+                changes.push(journal);
+            }
+        }
         state
             .blocks
             .insert(name.into(), hash(render(next).as_bytes()));
@@ -321,8 +361,8 @@ pub fn changes(
     Ok(changes)
 }
 
-/// Migration writes the same ownership evidence as initialization, so later
-/// versions can refresh a pristine block without adopting arbitrary user edits.
+/// Migration writes the same ownership evidence as initialization. Edited
+/// blocks still require a matching committed transaction before refresh.
 pub fn migration_receipt(
     root: &Path,
     private: &Path,

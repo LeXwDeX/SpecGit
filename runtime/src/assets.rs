@@ -367,6 +367,125 @@ impl AssetStore {
         path: &Path,
         snapshot: &Snapshot,
     ) -> Result<Option<Change>, Diagnostic> {
+        Self::owned_matching_at(root, path, snapshot, None)
+    }
+    /// Follow committed receipt revisions back to the transaction that wrote
+    /// the asset. Every journal in the chain is returned for lock-time recheck.
+    pub(crate) fn owned_pair_at(
+        root: &Path,
+        receipt_path: &Path,
+        receipt: &Snapshot,
+        asset_path: &Path,
+        asset: &Snapshot,
+        asset_digest: Option<&str>,
+    ) -> Result<Option<Vec<Change>>, Diagnostic> {
+        if receipt.bytes.is_none() || asset.bytes.is_none() {
+            return Ok(None);
+        }
+        let directory = root.join("transactions");
+        safe_path(&directory)?;
+        if !directory.exists() {
+            return Ok(None);
+        }
+        let expected_receipt = receipt_path.canonicalize().map_err(|_| io_error())?;
+        let expected_asset = asset_path.canonicalize().map_err(|_| io_error())?;
+        let mut paths = Vec::new();
+        for (i, entry) in fs::read_dir(directory).map_err(|_| io_error())?.enumerate() {
+            if i >= 1000 {
+                return Err(error(
+                    Code::OutputLimit,
+                    "Transaction inventory exceeds its bound.",
+                ));
+            }
+            paths.push(entry.map_err(|_| io_error())?.path());
+        }
+        paths.sort();
+        let mut records = Vec::new();
+        for entry in paths {
+            if !entry
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("tx-"))
+            {
+                continue;
+            }
+            let journal_path = entry.join("journal.json");
+            let before = Snapshot::read(&journal_path)?;
+            let Some(bytes) = &before.bytes else { continue };
+            let journal: Journal =
+                serde_json::from_value(crate::input::json(bytes, JOURNAL_LIMIT, 20)?).map_err(
+                    |_| {
+                        error(
+                            Code::RollbackConflict,
+                            "A retained transaction journal is damaged.",
+                        )
+                    },
+                )?;
+            if journal.version != 2 || journal.entries.len() > 100 {
+                return Err(error(
+                    Code::RollbackConflict,
+                    "A retained transaction journal is unsupported.",
+                ));
+            }
+            if journal.state == "committed" {
+                records.push((journal_path, before, journal));
+            }
+        }
+        let mut queue = std::collections::VecDeque::from([(
+            receipt.digest().expect("present receipt"),
+            Vec::new(),
+        )]);
+        let mut visited = std::collections::HashSet::new();
+        while let Some((current, proofs)) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            for (path, snapshot, journal) in &records {
+                let Some(receipt_entry) = journal.entries.iter().find(|e| {
+                    safe_path(&e.path).is_ok()
+                        && e.path.canonicalize().ok().as_deref() == Some(expected_receipt.as_path())
+                        && e.after.as_deref() == Some(current.as_str())
+                }) else {
+                    continue;
+                };
+                if proofs.is_empty()
+                    && receipt_entry.after_permissions.as_ref()
+                        != Some(&PermissionRecord::capture(receipt.permissions.as_ref()))
+                {
+                    continue;
+                }
+                let mut chain = proofs.clone();
+                chain.push(Change {
+                    path: path.clone(),
+                    before: snapshot.clone(),
+                    after: snapshot.bytes.clone(),
+                    permissions: snapshot.permissions.clone(),
+                });
+                if journal.entries.iter().any(|e| {
+                    safe_path(&e.path).is_ok()
+                        && e.path.canonicalize().ok().as_deref() == Some(expected_asset.as_path())
+                        && e.after.is_some()
+                        && asset_digest.is_none_or(|digest| e.after.as_deref() == Some(digest))
+                        && e.after_permissions.as_ref()
+                            == Some(&PermissionRecord::capture(asset.permissions.as_ref()))
+                }) {
+                    return Ok(Some(chain));
+                }
+                if let Some(previous) = &receipt_entry.before
+                    && previous != &current
+                    && !visited.contains(previous)
+                {
+                    queue.push_back((previous.clone(), chain));
+                }
+            }
+        }
+        Ok(None)
+    }
+    fn owned_matching_at(
+        root: &Path,
+        path: &Path,
+        snapshot: &Snapshot,
+        recorded_digest: Option<&str>,
+    ) -> Result<Option<Change>, Diagnostic> {
         let directory = root.join("transactions");
         safe_path(&directory)?;
         if !directory.exists() {
@@ -413,7 +532,16 @@ impl AssetStore {
                 && journal.entries.iter().any(|entry| {
                     safe_path(&entry.path).is_ok()
                         && entry.path.canonicalize().ok().as_ref() == Some(&expected_path)
-                        && entry.matches(snapshot, true)
+                        && match recorded_digest {
+                            Some(digest) => {
+                                entry.after.as_deref() == Some(digest)
+                                    && entry.after_permissions.as_ref()
+                                        == Some(&PermissionRecord::capture(
+                                            snapshot.permissions.as_ref(),
+                                        ))
+                            }
+                            None => entry.matches(snapshot, true),
+                        }
                 })
             {
                 return Ok(Some(Change {
@@ -446,6 +574,23 @@ impl AssetStore {
                 ),
             ));
         }
+        // Unchanged journal proofs are read dependencies. Validate them under
+        // the lock even though they are not written into a new transaction.
+        let mut paths = std::collections::HashSet::new();
+        for change in &changes {
+            self.validate(&change.path)?;
+            if !paths.insert(&change.path) {
+                return Err(Diagnostic::input(
+                    "An asset path occurs twice in the transaction.",
+                ));
+            }
+            self.expected_snapshot(&change.path, &change.before)?;
+        }
+        let proofs: Vec<_> = changes
+            .iter()
+            .filter(|c| c.unchanged())
+            .map(|c| (c.path.clone(), c.before.clone()))
+            .collect();
         let changes: Vec<_> = changes.into_iter().filter(|c| !c.unchanged()).collect();
         if changes
             .iter()
@@ -473,16 +618,6 @@ impl AssetStore {
                 transaction: String::new(),
                 changes: 0,
             });
-        }
-        let mut paths = std::collections::HashSet::new();
-        for change in &changes {
-            self.validate(&change.path)?;
-            if !paths.insert(&change.path) {
-                return Err(Diagnostic::input(
-                    "An asset path occurs twice in the transaction.",
-                ));
-            }
-            self.expected_snapshot(&change.path, &change.before)?;
         }
         let transactions = self.root.join("transactions");
         ensure_directory(&transactions)?;
@@ -525,6 +660,10 @@ impl AssetStore {
                 #[cfg(feature = "test-fixtures")]
                 fixture_crash(&format!("before-write:{i}"));
                 before_write(i)?;
+                for (path, expected) in &proofs {
+                    self.validate(path)?;
+                    self.expected_snapshot(path, expected)?;
+                }
                 self.validate(&change.path)?;
                 self.expected_snapshot(&change.path, &change.before)?;
                 match &change.after {
