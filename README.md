@@ -41,6 +41,17 @@ For installation without an agent, see the [manual guide](docs/installation.md).
 From 2.6 on, `specgit update` upgrades the shared executable from GitHub Releases
 with the same signature and checksum verification and keeps a backup.
 
+## Already installed? Inspect and refresh your project
+
+Use the [project maintenance guide](docs/agent-project-refresh.md), not the first-install
+procedure. Open your Agent in the target repository and copy its
+[English request](docs/agent-project-refresh.md#english-request) or
+[中文请求](docs/agent-project-refresh.md#中文请求). The request asks the Agent to
+actually inspect and apply safe local maintenance, with a separate verified stable
+CLI update when needed. It preserves project settings and checkpoints and selects
+manual observation when native capability cannot be verified. It does not authorize
+Issue/PR writes, commits, pushes, merges, releases or platform settings changes.
+
 ## How delivery works
 
 | Stage | What happens |
@@ -143,9 +154,11 @@ to the effective native/custom hook path, including Husky user scripts, and
 `--uninstall` removes only those blocks. The installed pre-push block buffers
 and replays Git's standard ref stdin for the existing user hook.
 
-After CLI upgrades, use the [agent installation document](docs/agent-install.md)
-again to verify the executable selected by PATH and refresh the existing project
-and host integration. Existing settings are preserved unless a change is selected.
+After CLI upgrades, use the [project maintenance guide](docs/agent-project-refresh.md)
+to verify the executable selected by PATH and refresh the existing project and host
+integration. Existing settings and recorded hook purposes are preserved. In 2.8,
+new custom OpenCode idle wake requires separate capability confirmation and explicit
+`--opencode-async-rewake` with observe/context; compatibility hooks alone do not enable it.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before
 replacing its declaration or lifecycle workflows. `finish`, `accept`, `bind` and
@@ -156,6 +169,7 @@ repository-specific cutover; retired v1 command workflows are no longer maintain
 ## Documentation
 
 - [Agent installation and initialization](docs/agent-install.md)
+- [Installed-CLI project maintenance — English / 中文 Agent requests](docs/agent-project-refresh.md)
 - [Supported coding agents and delivery flow](docs/supported-tools.md)
 - [Manual installation](docs/installation.md)
 - [Native commands, configuration and JSON contract](runtime/REFERENCE.md)

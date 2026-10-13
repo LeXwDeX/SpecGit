@@ -2,6 +2,15 @@
 
 The shared SpecGit executable, initialization of each project, and registration with a host such as Codex are separate steps. The first two steps are enough to use the CLI in a project.
 
+**Already installed?** Open your Agent in the target repository and copy the
+[English maintenance request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)
+([中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)).
+It asks the Agent to inspect and perform safe project maintenance, including fresh
+adoption, rather than repeat installation or just suggest commands. The guide
+separates an authorized verified stable CLI update from init/setup and preserves
+configuration, checkpoints and receipts. Missing declaration plus private state
+is not a fresh project; restore the original configuration, never delete state.
+
 ## 1. Install the executable
 
 The supported public distribution channel is [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest). Follow the [installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md): download the platform ZIP, `SHA256SUMS`, and `SHA256SUMS.sigstore.json` from the **same stable Release**; verify the signer, check the ZIP SHA-256 against the signed manifest, then extract `specgit` (`specgit.exe` on Windows) into a user-owned PATH directory. Supported targets are macOS arm64, Linux x64 glibc, and Windows x64. Running a release executable requires no Node.js, npm, or Rust compiler.
@@ -63,6 +72,13 @@ specgit doctor --provider github --remote origin --json
 For an existing **v2** project, retain its declaration and use the same inspect, preview, and apply sequence to refresh it; do not overwrite manual configuration. Migrate an existing **v1** project using the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md) first. Replacing the executable does not migrate a project. The old `init --force`, `finish`, and `bind` commands are retired.
 
 ## 3. Register a host only when needed
+
+For 2.8 purpose selection and actual host verification, follow the
+[maintenance guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-refresh-only-the-active-host).
+For a new host, `--hook-purpose none` adds guidance/Skill without new hooks;
+it never removes existing hooks or Git guard. Omitted purposes preserve recorded
+modes on refresh. Official OpenCode gets guidance/Skill only; custom idle wake
+requires separate capability confirmation, authorization and explicit opt-in.
 
 Project initialization **does not register any host**. Only when you decide to integrate the active host should you separately inspect `specgit setup --help` and preview the relevant `--agent codex`, `--agent claude`, `--agent opencode`, or `--agent generic` selection. Since 2.4, setup is permanently project-only: `--scope project` is the default and the only scope value, assets live in the checkout with a worktree-private receipt, hooks invoke the installed shared executable directly (no global setup prerequisite), and the retired global options (`--root`, `--provider`, `--api-host`, `--register-*`, per-host roots) are rejected. Installing the executable and initializing a project does not require `setup`.
 
