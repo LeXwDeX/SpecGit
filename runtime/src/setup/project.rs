@@ -80,8 +80,8 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             || r.skills
                 .contains_key(".claude/skills/specgit-native/SKILL.md")
                 != r.agents.contains(&Agent::Claude)
-            || r.hooks.contains_key("claude") != r.agents.contains(&Agent::Claude)
-            || r.hooks.contains_key("codex") != r.agents.contains(&Agent::Codex)
+            || (r.hooks.contains_key("claude") && !r.agents.contains(&Agent::Claude))
+            || (r.hooks.contains_key("codex") && !r.agents.contains(&Agent::Codex))
             || r.instructions.contains_key("claude") != r.agents.contains(&Agent::Claude)
             || (r.hooks.contains_key("opencode") && !r.agents.contains(&Agent::Opencode))
             || (r.agents.contains(&Agent::Codex)
@@ -188,6 +188,31 @@ pub fn install(
     private: &Path,
     source: &Path,
 ) -> Result<Value, Diagnostic> {
+    install_with_hooks(options, &HookOptions::default(), root, private, source)
+}
+
+pub fn install_with_hooks(
+    options: &Options,
+    hooks: &HookOptions,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Value, Diagnostic> {
+    let requested: BTreeSet<_> = hooks.purposes.iter().copied().collect();
+    if requested.len() != hooks.purposes.len()
+        || (requested.contains(&HookPurpose::None) && requested.len() > 1)
+    {
+        return Err(Diagnostic::input(
+            "Hook purposes must be unique; none cannot be combined with other purposes.",
+        ));
+    }
+    if (options.uninstall || options.rollback.is_some())
+        && (!requested.is_empty() || hooks.opencode_async_rewake)
+    {
+        return Err(Diagnostic::input(
+            "Uninstall and rollback cannot be combined with hook selection.",
+        ));
+    }
     if options.dry_run && options.rollback.is_some()
         || options.uninstall && options.rollback.is_some()
     {
@@ -232,20 +257,88 @@ pub fn install(
         ));
     }
     let custom_opencode = options.opencode_claude_hooks || previous.hooks.contains_key("opencode");
-    let needs_executable = !options.uninstall
-        && (custom_opencode
-            || selected
-                .iter()
-                .any(|a| matches!(a, Agent::Claude | Agent::Codex)));
+    if hooks.opencode_async_rewake && (!selected.contains(&Agent::Opencode) || !custom_opencode) {
+        return Err(Diagnostic::input(
+            "Async rewake requires a selected custom OpenCode Claude-compatible host.",
+        ));
+    }
+    let mut plans = BTreeMap::new();
+    let mut purpose_evidence = serde_json::Map::new();
+    let mut any_wake = false;
+    for (agent, host) in [
+        (Agent::Generic, "generic"),
+        (Agent::Claude, "claude"),
+        (Agent::Codex, "codex"),
+        (Agent::Opencode, "opencode"),
+    ] {
+        if !selected.contains(&agent) {
+            continue;
+        }
+        let (mut effective, old_wake) = recorded_purposes(previous.hooks.get(host));
+        let mut wanted = requested.clone();
+        if wanted.is_empty() && !previous.agents.contains(&agent) {
+            wanted.extend([HookPurpose::Guard, HookPurpose::Context]);
+            if matches!(agent, Agent::Claude | Agent::Codex) {
+                wanted.insert(HookPurpose::Observe);
+            }
+        }
+        effective.extend(wanted.iter().copied().filter(|p| *p != HookPurpose::None));
+        if effective.contains(&HookPurpose::Observe) && !effective.contains(&HookPurpose::Context) {
+            return Err(Diagnostic::input(
+                "Observe requires effective context hooks.",
+            ));
+        }
+        if host == "opencode"
+            && hooks.opencode_async_rewake
+            && (!effective.contains(&HookPurpose::Observe)
+                || !effective.contains(&HookPurpose::Context))
+        {
+            return Err(Diagnostic::input(
+                "Async rewake requires effective observe and context purposes.",
+            ));
+        }
+        let mut declined = vec![];
+        for purpose in effective.clone() {
+            let refusal = if agent == Agent::Generic
+                || (agent == Agent::Opencode && !custom_opencode)
+            {
+                Some((
+                    "unsupported",
+                    "This host integration installs guidance and Skill only.",
+                ))
+            } else if agent == Agent::Opencode
+                && purpose == HookPurpose::Observe
+                && !old_wake
+                && !hooks.opencode_async_rewake
+            {
+                Some((
+                    "unknown",
+                    "Async rewake capability is unknown; explicitly opt in with --opencode-async-rewake or use bounded watch manually.",
+                ))
+            } else {
+                None
+            };
+            if let Some((status, reason)) = refusal {
+                effective.remove(&purpose);
+                declined.push(json!({"purpose":purpose,"status":status,"reason":reason}));
+            }
+        }
+        let wake = host == "opencode"
+            && effective.contains(&HookPurpose::Observe)
+            && (old_wake || hooks.opencode_async_rewake);
+        any_wake |= wake && !options.uninstall;
+        purpose_evidence.insert(host.into(), json!({"requested":wanted,"installed":if options.uninstall { BTreeSet::new() } else { effective.clone() },"declined":declined}));
+        if !options.uninstall && !effective.is_empty() {
+            plans.insert(
+                host,
+                purpose_manifest(source, host == "opencode", &effective, wake)?,
+            );
+        }
+    }
+    let needs_executable = !plans.is_empty();
     let executable = needs_executable
         .then(|| shared_executable(source, root))
         .transpose()?;
-    let entries = executable.as_ref().map(|_| manifest(source));
-    let opencode_entries = if needs_executable && custom_opencode {
-        Some(opencode_manifest(source)?)
-    } else {
-        None
-    };
     let mut receipt = ProjectReceipt {
         version: 2,
         owner: "specgit".into(),
@@ -356,13 +449,12 @@ pub fn install(
         }
         let path = root.join(relative);
         let old = previous.hooks.get(host);
-        let entries = if host == "opencode" {
-            &opencode_entries
-        } else {
-            &entries
-        };
-        let change = registration_change(host, &path, old, entries.as_ref())?;
-        if let Some(entries) = &entries {
+        let entries = plans.get(host);
+        if entries.is_none() && old.is_none() {
+            continue;
+        }
+        let change = registration_change(host, &path, old, entries)?;
+        if let Some(entries) = entries {
             let mut registration = if let Some(old) = old {
                 old.clone()
             } else {
@@ -391,6 +483,23 @@ pub fn install(
                     skill: None,
                 }
             };
+            // Newly introduced events are owned only when no event key existed before.
+            let before = match &change.before.bytes {
+                Some(bytes) => input::json(bytes, 1_048_576, 32)?,
+                None => json!({}),
+            };
+            for event in entries.keys() {
+                let map = if host == "opencode" {
+                    Some(&before)
+                } else {
+                    before.get("hooks")
+                };
+                if map.and_then(|m| m.get(event)).is_none()
+                    && !registration.created_event_keys.contains(event)
+                {
+                    registration.created_event_keys.push(event.clone());
+                }
+            }
             registration.entries = entries.clone();
             receipt.hooks.insert(host.into(), registration);
         }
@@ -411,6 +520,10 @@ pub fn install(
     });
     let summary: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"opencode_claude_hooks":custom_opencode,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
+    evidence["hook_purposes"] = Value::Object(purpose_evidence);
+    if any_wake {
+        evidence["host_delivery"]["idle_wake"] = json!("configured_not_verified");
+    }
     if options.dry_run {
         return Ok(evidence);
     }
@@ -475,6 +588,15 @@ pub fn install(
 }
 
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
+    run_with_hooks(options, HookOptions::default(), process, cwd).await
+}
+
+pub async fn run_with_hooks(
+    options: Options,
+    hooks: HookOptions,
+    process: Process,
+    cwd: &Path,
+) -> Report {
     let result = async {
         let path = |bytes: Vec<u8>| -> Result<PathBuf, Diagnostic> {
             let text = std::str::from_utf8(&bytes)
@@ -489,8 +611,9 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
             path(crate::project::git(&process, cwd, &["rev-parse", "--absolute-git-dir"]).await?)?;
         let source = std::env::current_exe()
             .map_err(|_| Diagnostic::input("Current executable is unavailable."))?;
-        install(
+        install_with_hooks(
             &options,
+            &hooks,
             &root,
             &git_dir.join("specgit-v2/agent-assets"),
             &source,

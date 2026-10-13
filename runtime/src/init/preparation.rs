@@ -9,6 +9,7 @@ use super::{
 use crate::{
     config::{self, Language},
     diagnostic::{Code, Diagnostic},
+    forge_read::ForgeRead,
     probe::Capability,
     process::Process,
     report::Report,
@@ -22,10 +23,13 @@ pub(super) async fn prepare_and_run(
     process: Process,
     cwd: &Path,
     language: &mut Language,
-) -> Result<Report, Diagnostic> {
+) -> Result<(Report, Option<ForgeRead>), Diagnostic> {
     let paths = Paths::load(&options, &process, cwd).await?;
     if let Some(id) = &options.rollback {
-        return paths.rollback(&options, &process, id).await;
+        return paths
+            .rollback(&options, &process, id)
+            .await
+            .map(|report| (report, None));
     }
     let root = paths.root.clone();
     let declaration::Prepared {
@@ -70,7 +74,7 @@ pub(super) async fn prepare_and_run(
                 &declaration.init_policy,
                 InitCheckScope::from_context(None),
             );
-            return Ok(report);
+            return Ok((report, None));
         }
         Err(diagnostic) => return Err(diagnostic),
     };
@@ -89,7 +93,7 @@ pub(super) async fn prepare_and_run(
     let native = match native::inspect(&process, &context, &declaration, check_scope.clone()).await
     {
         Ok(native) => native,
-        Err(report) => return Ok(*report),
+        Err(report) => return Ok((*report, None)),
     };
     let Native {
         probes,
@@ -112,17 +116,16 @@ pub(super) async fn prepare_and_run(
     }
     evidence["request_read"] = json!("verified");
     if options.inspect_only {
-        // Optional metadata runs after core native reads and never enters required probes.
-        evidence["environment"] =
-            serde_json::to_value(crate::probe::environment(&native.reader).await)
-                .expect("environment serializes");
         append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());
     }
+    // Return the optional reader separately so the caller can enforce the core
+    // inspection deadline before collecting descriptive metadata.
+    let environment_reader = options.inspect_only.then(|| native.reader.clone());
     if failed {
         process.mark_inspection_incomplete();
         let mut report = Report::success("init", "unknown", evidence);
         report.exit = 3;
-        return Ok(report);
+        return Ok((report, environment_reader));
     }
     if confirmation {
         let mut report = Report::failure(
@@ -136,10 +139,13 @@ pub(super) async fn prepare_and_run(
         );
         report.status = "confirmation_required".into();
         report.evidence = evidence;
-        return Ok(report);
+        return Ok((report, environment_reader));
     }
     if options.inspect_only {
-        return Ok(Report::success("init", "inspected", evidence));
+        return Ok((
+            Report::success("init", "inspected", evidence),
+            environment_reader,
+        ));
     }
     let plan = Plan {
         paths,
@@ -149,7 +155,9 @@ pub(super) async fn prepare_and_run(
         context,
         native,
     };
-    local_assets::apply(&options, process, plan, evidence).await
+    local_assets::apply(&options, process, plan, evidence)
+        .await
+        .map(|report| (report, None))
 }
 
 fn template_evidence(root: &Path, declaration: &config::Declaration) -> Result<Value, Diagnostic> {

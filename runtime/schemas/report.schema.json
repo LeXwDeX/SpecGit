@@ -4,6 +4,48 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "hook_purpose": {
+      "enum": ["guard", "context", "observe"]
+    },
+    "host_hook_purposes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "installed", "declined"],
+      "properties": {
+        "requested": {"type":"array","uniqueItems":true,"items":{"enum":["guard","context","observe","none"]}},
+        "installed": {"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/hook_purpose"}},
+        "declined": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["purpose", "status", "reason"],
+            "properties": {
+              "purpose": {"$ref":"#/$defs/hook_purpose"},
+              "status": {"enum":["unknown","unsupported"]},
+              "reason": {"type":"string","minLength":1}
+            }
+          }
+        }
+      }
+    },
+    "hook_purposes": {
+      "type": "object",
+      "propertyNames": {"enum":["generic","claude","codex","opencode"]},
+      "additionalProperties": {"$ref":"#/$defs/host_hook_purposes"}
+    },
+    "setup_host_delivery": {
+      "description": "Setup records configuration only, never observed host delivery or wake verification.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "imported_event": {"const":"not_checked"},
+        "context_injection": {"const":"not_checked"},
+        "visible_message": {"const":"not_checked"},
+        "next_turn": {"const":"not_checked"},
+        "idle_wake": {"enum":["not_supported","configured_not_verified"]}
+      }
+    },
     "milestone_scope": {
       "oneOf": [
         {"type":"object","additionalProperties":false,"required":["kind","project_id"],"properties":{
@@ -649,6 +691,19 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
+    {
+      "if": {"properties":{"operation":{"const":"setup"},"evidence":{"type":"object"}},"required":["operation","evidence"]},
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "hook_purposes": {"$ref":"#/$defs/hook_purposes"},
+              "host_delivery": {"$ref":"#/$defs/setup_host_delivery"}
+            }
+          }
+        }
+      }
+    },
     {
       "if":{"properties":{"operation":{"enum":["init","doctor"]},"evidence":{"type":"object"}},"required":["operation","evidence"]},
       "then":{"properties":{"evidence":{"properties":{"environment":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/gitlab_environment"}]}}}}}

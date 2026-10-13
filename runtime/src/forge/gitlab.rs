@@ -139,7 +139,7 @@ fn milestone_context(
             .filter(|url| {
                 matches!(scope, MilestoneScope::Project { .. })
                     && ["https", "http"].iter().any(|scheme| {
-                        *url == format!("{scheme}://{}/{}/-/milestones/{id}", repo.host, repo.path)
+                        *url == format!("{scheme}://{}/{}/-/milestones/{iid}", repo.host, repo.path)
                     })
             })
             .map(str::to_owned);

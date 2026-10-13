@@ -16,6 +16,306 @@ use std::{
 #[path = "support/executable.rs"]
 mod executable;
 
+fn selection(purposes: &[specgit::setup::HookPurpose], wake: bool) -> specgit::setup::HookOptions {
+    specgit::setup::HookOptions {
+        purposes: purposes.to_vec(),
+        opencode_async_rewake: wake,
+    }
+}
+
+#[test]
+fn setup_report_schema_validates_real_selection_and_rejects_false_claims() {
+    use specgit::{report::Report, setup::HookPurpose::*};
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    let report = |evidence: Value| {
+        let status = if evidence.get("rolled_back").is_some() {
+            "rolled_back"
+        } else if evidence["written"] == false {
+            "dry_run"
+        } else {
+            "installed"
+        };
+        serde_json::to_value(Report::success("setup", status, evidence)).unwrap()
+    };
+    let validate = |value: &Value| jsonschema::draft202012::validate(&schema, value).is_ok();
+    let (f, mut options) = fixture(vec![Agent::Opencode, Agent::Generic]);
+    options.opencode_claude_hooks = true;
+    let hooks = selection(&[Context, Observe], false);
+    options.dry_run = true;
+    let preview = report(
+        project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap(),
+    );
+    assert!(validate(&preview), "{preview}");
+    assert_eq!(
+        preview["evidence"]["hook_purposes"]["opencode"]["declined"][0]["status"],
+        "unknown"
+    );
+    assert_eq!(
+        preview["evidence"]["hook_purposes"]["generic"]["declined"][0]["status"],
+        "unsupported"
+    );
+    options.dry_run = false;
+    let installed = report(
+        project::install_with_hooks(
+            &options,
+            &selection(&[Context, Observe], true),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap(),
+    );
+    assert!(validate(&installed), "{installed}");
+    assert_eq!(
+        installed["evidence"]["host_delivery"]["idle_wake"],
+        "configured_not_verified"
+    );
+    for (pointer, value) in [
+        (
+            "/evidence/hook_purposes/opencode/requested/0",
+            json!("invalid"),
+        ),
+        (
+            "/evidence/hook_purposes/opencode/installed/0",
+            json!("none"),
+        ),
+        (
+            "/evidence/hook_purposes/opencode/declined/0/status",
+            json!("supported"),
+        ),
+        (
+            "/evidence/hook_purposes/opencode/declined/0/purpose",
+            json!("none"),
+        ),
+        (
+            "/evidence/hook_purposes/opencode/declined/0/reason",
+            json!(""),
+        ),
+        (
+            "/evidence/hook_purposes/opencode/declined/0/reason",
+            json!(false),
+        ),
+        ("/evidence/host_delivery/idle_wake", json!("observed")),
+        (
+            "/evidence/host_delivery/context_injection",
+            json!("verified"),
+        ),
+    ] {
+        let mut invalid = preview.clone();
+        *invalid.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            !validate(&invalid),
+            "schema accepted invalid claim at {pointer}: {invalid}"
+        );
+    }
+    let mut invalid = preview.clone();
+    invalid["evidence"]["hook_purposes"]["unknown_host"] =
+        invalid["evidence"]["hook_purposes"]["opencode"].clone();
+    assert!(!validate(&invalid));
+    let mut invalid = preview.clone();
+    invalid["evidence"]["hook_purposes"]["opencode"]["declined"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("reason");
+    assert!(!validate(&invalid));
+
+    let rollback = project::Options {
+        agents: vec![],
+        opencode_claude_hooks: false,
+        uninstall: false,
+        dry_run: false,
+        rollback: Some(
+            installed["evidence"]["transaction"]["transaction"]
+                .as_str()
+                .unwrap()
+                .into(),
+        ),
+    };
+    let rolled_back = report(project::install(&rollback, &f.root, &f.private, &f.source).unwrap());
+    assert!(validate(&rolled_back));
+    let error = project::install_with_hooks(
+        &options,
+        &selection(&[None, Guard], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap_err();
+    assert!(validate(
+        &serde_json::to_value(Report::failure("setup", error)).unwrap()
+    ));
+    let no_hooks = report(
+        project::install_with_hooks(
+            &options,
+            &selection(&[None], false),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap(),
+    );
+    assert!(validate(&no_hooks));
+}
+
+#[test]
+fn selective_context_none_refresh_and_existing_guard_preservation() {
+    use specgit::setup::HookPurpose::*;
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let install = |hooks: &specgit::setup::HookOptions| {
+        project::install_with_hooks(&options, hooks, &f.root, &f.private, &f.source).unwrap()
+    };
+    install(&selection(&[Context], false));
+    let settings = f.root.join(".claude/settings.json");
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(value["hooks"].as_object().unwrap().len(), 2);
+    assert_eq!(
+        value["hooks"]["PostToolUse"][0]["hooks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    install(&selection(&[Guard], false));
+    let before = fs::read(&settings).unwrap();
+    let evidence = install(&selection(&[None], false));
+    assert_eq!(
+        evidence["hook_purposes"]["claude"]["installed"],
+        json!(["guard", "context"])
+    );
+    assert_eq!(before, fs::read(&settings).unwrap());
+    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    assert_eq!(before, fs::read(&settings).unwrap());
+    let mut uninstall = options.clone();
+    uninstall.agents.clear();
+    uninstall.uninstall = true;
+    project::install(&uninstall, &f.root, &f.private, &f.source).unwrap();
+    assert!(!settings.exists());
+
+    let (f, options) = fixture(vec![Agent::Claude]);
+    fs::remove_file(&f.source).unwrap();
+    project::install_with_hooks(
+        &options,
+        &selection(&[None], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    assert!(!f.root.join(".claude/settings.json").exists());
+}
+
+#[test]
+fn custom_observation_requires_explicit_capability_and_preserves_wake() {
+    use specgit::setup::HookPurpose::*;
+    let (mut f, mut options) = fixture(vec![Agent::Opencode]);
+    let quoted_source = f.base.join("shared cli's binary");
+    fs::rename(&f.source, &quoted_source).unwrap();
+    f.source = quoted_source;
+    options.opencode_claude_hooks = true;
+    let unknown = project::install_with_hooks(
+        &options,
+        &selection(&[Context, Observe], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        unknown["hook_purposes"]["opencode"]["declined"][0]["status"],
+        "unknown"
+    );
+    let settings = f.root.join(".opencode/hooks.json");
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert!(value.get("Stop").is_none());
+    let evidence = project::install_with_hooks(
+        &options,
+        &selection(&[Guard, Observe], true),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        evidence["host_delivery"]["idle_wake"],
+        "configured_not_verified"
+    );
+    let bytes = fs::read(&settings).unwrap();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    let stop = &value["Stop"][0]["hooks"];
+    assert_eq!(stop.as_array().unwrap().len(), 2);
+    assert_eq!(stop[1]["asyncRewake"], true);
+    assert_eq!(stop[1]["async"], true);
+    assert_eq!(stop[1]["timeout"], 1830);
+    assert_eq!(stop[1]["shell"], "bash");
+    assert_eq!(stop[1]["inputFormat"], "claude-code");
+    assert!(
+        stop[1]["command"]
+            .as_str()
+            .unwrap()
+            .contains("cli'\\''s binary'")
+    );
+    assert!(
+        stop[1]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(" hook --event Stop --observe")
+    );
+    options.opencode_claude_hooks = false;
+    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    assert_eq!(bytes, fs::read(&settings).unwrap());
+    fs::write(&settings, b"{\"manual\":true}").unwrap();
+    assert!(project::install(&options, &f.root, &f.private, &f.source).is_err());
+    assert_eq!(fs::read(&settings).unwrap(), b"{\"manual\":true}");
+}
+
+#[test]
+fn selection_rejects_invalid_combinations_without_writes() {
+    use specgit::setup::HookPurpose::*;
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let before = files(&f.root);
+    for hooks in [
+        selection(&[None, Guard], false),
+        selection(&[Guard, Guard], false),
+        selection(&[Observe], false),
+        selection(&[Context, Observe], true),
+    ] {
+        assert!(
+            project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).is_err()
+        );
+    }
+    assert_eq!(before, files(&f.root));
+    let (f, mut options) = fixture(vec![Agent::Opencode]);
+    options.opencode_claude_hooks = true;
+    assert!(
+        project::install_with_hooks(
+            &options,
+            &selection(&[None], true),
+            &f.root,
+            &f.private,
+            &f.source
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn hook_purpose_cli_is_available_and_validates_values() {
+    let output = Command::new(executable::binary())
+        .args(["setup", "--help"])
+        .output()
+        .unwrap();
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("--hook-purpose"), "{help}");
+    assert!(help.contains("--opencode-async-rewake"), "{help}");
+    let output = Command::new(executable::binary())
+        .args(["setup", "--hook-purpose", "invalid"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
 fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     for entry in fs::read_dir(root).unwrap() {
@@ -685,9 +985,68 @@ fn cli_rejects_ambiguous_or_unsupported_choices_before_writes_and_exports_typed_
         "codex",
         "opencode",
         "opencode-claude-hooks",
+        "hook-purpose",
+        "opencode-async-rewake",
     ] {
         assert!(text.contains(value), "{value}");
     }
+}
+
+#[test]
+fn selective_preview_rollback_and_legacy_refresh_do_not_enable_wake() {
+    use specgit::setup::HookPurpose::*;
+    let (f, mut options) = fixture(vec![Agent::Opencode]);
+    options.opencode_claude_hooks = true;
+    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    let path = f.root.join(".opencode/hooks.json");
+    let legacy = fs::read(&path).unwrap();
+    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    assert_eq!(legacy, fs::read(&path).unwrap());
+    assert!(
+        !String::from_utf8(legacy.clone())
+            .unwrap()
+            .contains("asyncRewake")
+    );
+    let before = files(&f.root);
+    options.dry_run = true;
+    let hooks = selection(&[Observe], true);
+    let preview =
+        project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+    assert_eq!(preview["written"], false);
+    assert_eq!(before, files(&f.root));
+    options.dry_run = false;
+    let result =
+        project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+    let rollback = project::Options {
+        agents: vec![],
+        opencode_claude_hooks: false,
+        uninstall: false,
+        dry_run: false,
+        rollback: Some(
+            result["transaction"]["transaction"]
+                .as_str()
+                .unwrap()
+                .into(),
+        ),
+    };
+    assert!(
+        project::install_with_hooks(&rollback, &hooks, &f.root, &f.private, &f.source).is_err()
+    );
+    project::install(&rollback, &f.root, &f.private, &f.source).unwrap();
+    assert_eq!(legacy, fs::read(&path).unwrap());
+    options.agents.clear();
+    options.opencode_claude_hooks = false;
+    options.uninstall = true;
+    assert!(
+        project::install_with_hooks(
+            &options,
+            &selection(&[None], false),
+            &f.root,
+            &f.private,
+            &f.source
+        )
+        .is_err()
+    );
 }
 
 #[cfg(feature = "test-fixtures")]
