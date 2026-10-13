@@ -102,37 +102,71 @@ pub async fn inspect(reader: &ForgeRead, facts: &ProjectFacts, target: &str) -> 
             "GitLab project metadata does not prove instance/request auto-merge support; select manual observation or verify the native capability with an authorized administrator.",
         )
     };
+    let rules_endpoint = format!("{base}/rules/branches/{}", encode(target));
+    let rules = if reader.provider == Provider::Github {
+        Some(reader.list(&rules_endpoint, None, 10).await)
+    } else {
+        None
+    };
+    let rules_capability = match rules {
+        Some(Ok(rows)) if !rows.is_empty() => {
+            if rows.iter().all(valid_effective_rule) {
+                Some(Capability::new(
+                    Support::Supported,
+                    format!("GET {rules_endpoint}"),
+                    "Active effective branch rules are readable for the target name. This does not establish a complete policy, branch existence or request eligibility; the native forge decides applicability.",
+                ))
+            } else {
+                reader.mark_inspection_incomplete();
+                Some(Capability::failed(
+                    format!("GET {rules_endpoint}"),
+                    Diagnostic::new(
+                        Code::MalformedResponse,
+                        "github_effective_branch_rules",
+                        "An effective branch rule has invalid native fields.",
+                        "Inspect the native Rulesets response and rerun the read.",
+                    ),
+                ))
+            }
+        }
+        Some(Err(d)) => Some(Capability::failed(format!("GET {rules_endpoint}"), d)),
+        _ => None,
+    };
     let endpoint = match reader.provider {
         Provider::Github => format!("{base}/branches/{}/protection", encode(target)),
         Provider::Gitlab => format!("{base}/protected_branches/{}", encode(target)),
     };
-    let target_protection = match reader.get(&endpoint).await {
-        Ok(value)
-            if match reader.provider {
-                Provider::Github => {
-                    value.get("required_status_checks").is_some()
-                        && value.get("enforce_admins").is_some()
-                }
-                Provider::Gitlab => {
-                    value.get("name").and_then(Value::as_str) == Some(target)
-                        && value
-                            .get("merge_access_levels")
-                            .is_some_and(Value::is_array)
-                }
-            } =>
-        {
-            Capability::new(
-                Support::Supported,
+    let target_protection = if let Some(capability) = rules_capability {
+        capability
+    } else {
+        match reader.get(&endpoint).await {
+            Ok(value)
+                if match reader.provider {
+                    Provider::Github => {
+                        value.get("required_status_checks").is_some()
+                            && value.get("enforce_admins").is_some()
+                    }
+                    Provider::Gitlab => {
+                        value.get("name").and_then(Value::as_str) == Some(target)
+                            && value
+                                .get("merge_access_levels")
+                                .is_some_and(Value::is_array)
+                    }
+                } =>
+            {
+                Capability::new(
+                    Support::Supported,
+                    format!("GET {endpoint}"),
+                    "Target branch protection is readable. This is not an exhaustive ruleset, merge queue, approval or request-eligibility assessment; the native forge decides applicability.",
+                )
+            }
+            Ok(_) => Capability::new(
+                Support::Unknown,
                 format!("GET {endpoint}"),
-                "Target branch protection is readable. This is not an exhaustive ruleset, merge queue, approval or request-eligibility assessment; the native forge decides applicability.",
-            )
+                "Target protection response lacks the expected native fields.",
+            ),
+            Err(d) => Capability::failed(format!("GET {endpoint}"), d),
         }
-        Ok(_) => Capability::new(
-            Support::Unknown,
-            format!("GET {endpoint}"),
-            "Target protection response lacks the expected native fields.",
-        ),
-        Err(d) => Capability::failed(format!("GET {endpoint}"), d),
     };
     let issue_closing = if target != facts.default_branch {
         Capability::new(
@@ -164,6 +198,24 @@ pub async fn inspect(reader: &ForgeRead, facts: &ProjectFacts, target: &str) -> 
             "Initialization cannot promise that a current or future request is eligible for auto-merge. The Agent inspects native request state under existing authorization.",
         ),
     }
+}
+
+fn valid_effective_rule(rule: &Value) -> bool {
+    rule.get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty())
+        && rule
+            .get("ruleset_id")
+            .is_none_or(|value| value.as_u64().is_some_and(|id| id > 0))
+        && rule
+            .get("ruleset_source")
+            .is_none_or(|value| value.as_str().is_some_and(|source| !source.is_empty()))
+        && rule.get("ruleset_source_type").is_none_or(|value| {
+            value
+                .as_str()
+                .is_some_and(|source_type| !source_type.is_empty())
+        })
+        && rule.get("parameters").is_none_or(Value::is_object)
 }
 
 pub async fn request_target(

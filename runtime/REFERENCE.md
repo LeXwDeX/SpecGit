@@ -317,7 +317,13 @@ choice persists for subsequent refreshes. No default branch is guessed, and init
 never changes native settings, protection or CI.
 
 GitHub `allow_auto_merge` reports a repository setting, not a request guarantee.
-Readable branch protection is not an exhaustive ruleset/queue/approval assessment.
+GitHub target protection first reads the active rules that apply to the target
+through `GET /repos/{owner}/{repo}/rules/branches/{branch}` with bounded pagination.
+A complete, valid nonempty result proves readable effective Rulesets. An empty
+result falls back to traditional branch protection; it does not prove the branch
+is unprotected. Failed, malformed or incomplete Rulesets reads remain unknown.
+Readable protection is not an exhaustive ruleset/queue/approval assessment and
+does not promise request eligibility. These probes use only GET requests.
 GitLab project metadata currently does not prove native auto-merge support; its
 status remains unknown without a guessed version threshold. A non-default target,
 disabled closing or unknown instance rules can leave Issues open after merge.

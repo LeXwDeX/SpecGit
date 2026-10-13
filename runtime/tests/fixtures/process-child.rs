@@ -771,6 +771,12 @@ fn native_api(args: &[String], path: &std::path::Path) {
         return;
     }
     if method == "GET" {
+        if endpoint.starts_with("repos/fixture/repo/rules/branches/")
+            && endpoint.contains("?per_page=100&page=")
+        {
+            println!("[]");
+            return;
+        }
         if endpoint == "user" {
             println!("{}", json!({"id":1,"login":"fixture","username":"fixture"}));
         } else if endpoint.starts_with("repos/fixture/repo/pulls?")
