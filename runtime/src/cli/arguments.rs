@@ -43,7 +43,7 @@ pub(super) enum Commands {
     Watch(specgit::watch::Options),
     /// Refresh pending events or explicitly acknowledge transport receipt.
     Inbox(specgit::watch::InboxOptions),
-    /// Inspect native flow and install the local project declaration and guidance.
+    /// Inspect native flow, preserve configuration and replace owned guidance with current templates.
     Init {
         #[arg(long)]
         remote: Option<String>,
@@ -72,7 +72,7 @@ pub(super) enum Commands {
         #[arg(long)]
         rollback: Option<String>,
     },
-    /// Install only project-owned agent assets; registration is not host verification.
+    /// Install or replace owned project Skills/guidance with current templates; preserve other content.
     Setup {
         /// Project is the only supported scope, permanently; the shared CLI is installed separately.
         #[arg(long, value_enum, default_value = "project")]

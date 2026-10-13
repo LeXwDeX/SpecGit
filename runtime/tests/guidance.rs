@@ -36,11 +36,11 @@ fn distributed_skill_defines_native_goals_environment_and_verification() {
         "Closing every Issue alone does not prove Milestone acceptance",
         "A PR/MR is a change integration unit, not a version",
         "A Release is a separate publication result",
-        "deployment (GitLab.com, Self-Managed or Dedicated)",
-        "server version, CE/EE edition, subscription tier",
-        "Keep the gh/glab CLI version separate from the server version",
-        "Unknown stays unknown; neither version nor tier proves actual capability",
-        "Start with read-only discovery",
+        "For GitHub, separate github.com/Enterprise Server, visibility",
+        "For GitLab, separate GitLab.com/Self-Managed/Dedicated",
+        "Keep gh/glab CLI versions separate",
+        "Plan/version/edition do not prove capability",
+        "Start read-only: confirm remote, project, target, identity",
         "no artificial failure is needed",
         "For documentation, check facts, links and applicable repository checks",
         "Blocked validation is not a pass",
@@ -134,15 +134,29 @@ fn refresh_preserves_exact_foreign_bytes_and_detects_damaged_or_edited_markers()
 }
 
 #[test]
-fn persisted_hash_allows_runtime_upgrade_without_allowing_an_edited_block() {
+fn edited_recorded_guidance_refresh_requires_transaction_proof() {
+    use specgit::assets::{AssetStore, Change};
+    use std::time::Duration;
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();
     let private = root.join("private");
     std::fs::create_dir(&private).unwrap();
     let d = Declaration::default();
     let old = guidance::render(&d).replace(env!("CARGO_PKG_VERSION"), "1.99.0-old");
-    std::fs::write(root.join("AGENTS.md"), format!("User prose\n{old}\n")).unwrap();
-    std::fs::write(private.join("guidance.json"), serde_json::json!({"version":1,"generator":"1.99.0-old","blocks":{"AGENTS.md":specgit::assets::hash(old.as_bytes())}}).to_string()).unwrap();
+    let guidance_change = Change::new(
+        root.join("AGENTS.md"),
+        Some(format!("User prose\n{old}\n").into_bytes()),
+    )
+    .unwrap();
+    let receipt_change = Change::new(private.join("guidance.json"), Some(serde_json::json!({"version":1,"generator":"1.99.0-old","blocks":{"AGENTS.md":specgit::assets::hash(old.as_bytes())}}).to_string().into_bytes())).unwrap();
+    AssetStore::lock(
+        &private.join("assets"),
+        &[root.clone(), private.clone()],
+        Duration::from_secs(1),
+    )
+    .unwrap()
+    .apply(vec![guidance_change, receipt_change])
+    .unwrap();
     let planned = guidance::changes(&root, &private, &d, &d, false).unwrap();
     assert!(
         String::from_utf8(planned[0].after.clone().unwrap())
@@ -154,7 +168,68 @@ fn persisted_hash_allows_runtime_upgrade_without_allowing_an_edited_block() {
         old.replace("Hook notices", "Edited text"),
     )
     .unwrap();
-    assert!(guidance::changes(&root, &private, &d, &d, false).is_err());
+    let refreshed = guidance::changes(&root, &private, &d, &d, false).unwrap();
+    let after = String::from_utf8(refreshed[0].after.clone().unwrap()).unwrap();
+    assert!(after.contains(&guidance::render(&d)));
+    assert!(!after.contains("Edited text"));
+}
+
+#[test]
+fn edited_guidance_survives_receipt_revision_cycle_but_not_a_foreign_asset_path() {
+    use specgit::assets::{AssetStore, Change};
+    use std::time::Duration;
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let private = root.join("private");
+    std::fs::create_dir(&private).unwrap();
+    let d = Declaration::default();
+    let block = guidance::render(&d);
+    let receipt_path = private.join("guidance.json");
+    let receipt_a = serde_json::json!({"version":1,"generator":"a","blocks":{"AGENTS.md":specgit::assets::hash(block.as_bytes())}}).to_string().into_bytes();
+    let receipt_b = serde_json::json!({"version":1,"generator":"b","blocks":{"AGENTS.md":specgit::assets::hash(block.as_bytes())}}).to_string().into_bytes();
+    let apply = |changes| {
+        AssetStore::lock(
+            &private.join("assets"),
+            &[root.clone(), private.clone()],
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .apply(changes)
+        .unwrap()
+    };
+    apply(vec![
+        Change::new(root.join("AGENTS.md"), Some(block.clone().into_bytes())).unwrap(),
+        Change::new(receipt_path.clone(), Some(receipt_a.clone())).unwrap(),
+    ]);
+    apply(vec![
+        Change::new(receipt_path.clone(), Some(receipt_b)).unwrap(),
+    ]);
+    apply(vec![
+        Change::new(receipt_path.clone(), Some(receipt_a)).unwrap(),
+    ]);
+    std::fs::write(
+        root.join("AGENTS.md"),
+        block.replace("SpecGit 2", "edited text"),
+    )
+    .unwrap();
+    assert!(guidance::changes(&root, &private, &d, &d, false).is_ok());
+    // A receipt plus a transaction for another path cannot claim this file.
+    let other = tempfile::tempdir().unwrap();
+    let foreign_root = other.path().canonicalize().unwrap();
+    let foreign_private = foreign_root.join("private");
+    std::fs::create_dir(&foreign_private).unwrap();
+    let foreign_receipt = foreign_private.join("guidance.json");
+    AssetStore::lock(&foreign_private.join("assets"), &[foreign_root.clone(), foreign_private.clone()], Duration::from_secs(1))
+        .unwrap().apply(vec![
+            Change::new(foreign_root.join("CLAUDE.md"), Some(block.clone().into_bytes())).unwrap(),
+            Change::new(foreign_receipt, Some(serde_json::json!({"version":1,"generator":"a","blocks":{"AGENTS.md":specgit::assets::hash(block.as_bytes())}}).to_string().into_bytes())).unwrap(),
+        ]).unwrap();
+    std::fs::write(
+        foreign_root.join("AGENTS.md"),
+        block.replace("SpecGit 2", "edited text"),
+    )
+    .unwrap();
+    assert!(guidance::changes(&foreign_root, &foreign_private, &d, &d, false).is_err());
 }
 
 #[test]
@@ -329,8 +404,9 @@ fn skill_retains_distinct_safety_rules_and_the_explicit_user_asset_exception() {
         "host tool classification is a heuristic, not a file-write sandbox",
         "registration is not verified delivery",
         "acknowledgment proves neither human reading nor completion",
-        "Project refresh changes only recorded, owned assets whose current content matches the receipt",
-        "Foreign files, edited managed assets and missing recorded assets retain conflict protection",
+        "Refresh replaces recorded assets and complete unique blocks, including edited body text",
+        "Missing/damaged/duplicate markers or unknown ownership conflict",
+        "Uninstall/rollback preserves later edits",
         "Contract version: {{version}}.",
     ] {
         assert!(skill.contains(clause), "missing Skill rule: {clause}");
@@ -433,14 +509,8 @@ fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content(
         );
     }
     for (language, pointer) in [
-        (
-            Language::En,
-            "For missing capabilities or a SpecGit defect, follow the Skill's recovery steps",
-        ),
-        (
-            Language::Zh,
-            "能力缺失或 SpecGit 故障时，按 Skill 的恢复步骤处理",
-        ),
+        (Language::En, "Follow Skill recovery for blockers"),
+        (Language::Zh, "阻塞恢复见 Skill"),
     ] {
         let declaration = Declaration {
             language,

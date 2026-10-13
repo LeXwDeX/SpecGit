@@ -16,16 +16,23 @@ within its scope; do not ask for the same generic confirmation again.
 ```text
 The shared SpecGit CLI is already installed. Read
 https://raw.githubusercontent.com/LeXwDeX/SpecGit/main/docs/agent-project-refresh.md
-and carry out its inspection and conflict-free maintenance in my current repository
+and carry out its inspection and ownership-safe maintenance in my current repository
 for the Agent host running this task. Do the work, not just suggest commands.
 Separately check for a stable CLI update with the installed help and update --check;
-if needed, preview and apply the verified update, then verify the actual path/version.
+if a newer stable version exists, preview and apply its verified update, then verify
+the actual path/version. Canonical replacement of edited managed content needs 2.9.0
+or later; never work around an older CLI by hand-editing guidance or receipts.
 Do not reinstall a missing CLI or change unrelated projects.
 Classify this project before writing: fresh, existing v2, v1 migration, lost declaration
 with private state, or conflicting leftovers. Preserve configuration, Git/user changes,
-checkpoints, receipts and other tools' assets. Preview and apply only safe owned changes.
-If native capability is unknown or unavailable, I choose manual observation only when
-native_auto_merge is already false or this is new adoption with that default.
+checkpoints, receipts and other tools' assets. This request authorizes the CLI to replace
+edited body text inside recorded assets and complete, unique managed blocks. Keep all
+outside bytes. Do not handwrite guidance, restore/move old blocks or make manual backups;
+use the CLI transaction recovery. Damaged/duplicate markers and unknown ownership remain
+conflicts. Preview and apply only changes with proven ownership.
+If optional native capability is unknown or unavailable, continue applicable local
+maintenance. For init, choose manual observation only when native_auto_merge is already
+false or this is new adoption with that default.
 --manual-observe sets it to false; if the existing preference is true, ask for that specific change
 before applying it. Do not change platform settings or protections. Refresh includes
 all recorded hosts, not just the --agent selection. Review and report each host's
@@ -46,12 +53,13 @@ use my authenticated gh session to retrieve it or report the problem; do not gue
 ```text
 共享 SpecGit CLI 已安装。请读取
 https://raw.githubusercontent.com/LeXwDeX/SpecGit/main/docs/agent-project-refresh.md
-并针对我当前的仓库和执行任务的 Agent 宿主，实际检查并完成无冲突的维护，
+并针对我当前的仓库和执行任务的 Agent 宿主，实际检查并完成所有权边界明确的维护，
 不要只给建议或命令。将 CLI 更新作为独立步骤：按已安装版本的帮助执行
-update --check；需要稳定版更新时，先预览并验证，再应用并核对实际路径和版本。
+update --check；有新版时，先预览并应用验证通过的稳定版，再核对实际路径和版本。
+覆盖编辑过的受管正文需要 2.9.0 或更新版；不要为绕过旧版限制而手写指导或收据。
 CLI 缺失时不要重装，也不要修改其他项目。
 写入前区分全新项目、已有 v2、v1 迁移、声明丢失但私有状态仍在、以及冲突残留。
-保留配置、Git 和用户改动、checkpoint、收据及其他工具资产；只预览和应用安全的受管改动。
+保留配置、Git 和用户改动、checkpoint、收据及其他工具资产。此请求授权 CLI 覆盖收据记录资产和边界完整唯一受管块内的编辑正文；保留块外字节。不要手写指导、恢复/移出旧块或额外手工备份，使用 CLI 事务恢复。标记损坏/重复或所有权未知仍冲突；只预览并应用所有权可信的改动。
 原生能力未知或不可用时，仅在 native_auto_merge 已为 false 或全新接入采用该默认值时，
 我选择手动观察。--manual-observe 会将此值设为 false；原有偏好为 true 时，先询问这项具体变更再应用。
 不要修改平台设置或保护规则。刷新会包含所有已记录宿主，不限于 --agent 所选宿主；
@@ -77,13 +85,23 @@ CLI 缺失时不要重装，也不要修改其他项目。
   Check the authenticated identity and actual read-only project capability with
   native `gh`/`glab` and `specgit doctor --provider <provider> --remote <remote> --json`.
   For multiple remotes, select one explicitly (for example `--remote origin`).
-  Add the actual `--api-host` where needed. Never expose credentials. For GitLab,
-  distinguish deployment, server version, edition/tier and actual capability;
-  neither a version nor a subscription proves access. Inaccessible stays unknown.
+  Add the actual `--api-host` where needed. Never expose credentials. For GitHub,
+  distinguish github.com/Enterprise Server, visibility, personal/organization ownership,
+  Free/Pro/Team/Enterprise plan and actual capability. For GitLab, distinguish
+  GitLab.com/Self-Managed/Dedicated, server version, CE/EE, subscription and actual
+  capability. Plan/version/edition do not prove access; 403/404 alone cannot distinguish
+  permission, hidden resources or plan limits. Never query admin license/billing data or
+  hard-code plan rejection. Report explicit plan limits, credential/scope failures and
+  unknown causes separately. Optional feature reads do not establish repository-wide
+  access. Incomplete evidence stays unknown; report its limits.
 - Inspect owned markers, receipts, journals, hooks and legacy writers, including
   Git-private state resolved through Git, not an assumed `.git/` directory.
-  Names such as `.specgit` do not prove ownership. Preserve manual content outside
-  managed blocks, foreign hooks, missing recorded assets and edited managed assets.
+  Names such as `.specgit` do not prove ownership. Preserve content outside blocks,
+  configuration, checkpoints and foreign hooks. Refresh replaces the complete recorded
+  asset or complete unique block, including edited body text. Damaged/missing/duplicate
+  markers and unknown ownership remain conflicts. Do not handwrite guidance, restore old
+  blocks, move them outside markers or add manual backups; CLI transactions provide
+  recovery. Uninstall/rollback preserves later edits.
 
 ## 2. Check the shared CLI separately
 
@@ -112,7 +130,7 @@ under an explicit alternative upgrade decision; do not invent supported options.
 | Valid v2 declaration | Retain its configuration and preferences; inspect and refresh owned init/setup assets. |
 | v1 declaration or legacy integration | Follow [v1 migration](migration-v2.md); do not replace the declaration with fresh defaults. |
 | Missing declaration but private state, routing, receipts or checkpoints remain | Not a fresh project. Restore the original declaration/backup, or use `init --config-file <original>` consistently. If unavailable, stop and request that configuration. |
-| Malformed declaration, damaged markers, foreign/edited leftovers or missing recorded assets | Preserve evidence and report exact conflicts. Recover from a verified original/backup or agree on a specific reconciliation; do not force overwrite. |
+| Malformed declaration, damaged/duplicate markers, unknown ownership, foreign leftovers or missing recorded assets | Preserve evidence and report exact conflicts. Recover from a verified original/backup or agree on a specific reconciliation; do not force whole-file overwrite. |
 
 Never delete `.specgit`, Git-private state, receipts or hooks to make initialization
 pass. Do not uninstall as a repair shortcut. Guard failures are not permission to
@@ -149,6 +167,7 @@ specific decision before proceeding with the changed preview/apply sequence.
 Continue independent read-only checks while waiting. Once authorized, repeat
 check/preview/apply with the same options. Do not change platform protections to
 pass a check. Apply only an applicable conflict-free preview; re-preview if inputs change.
+Unknown optional remote capability does not block an otherwise applicable local setup/refresh.
 
 Init and setup are separate. Read back `agent.native_auto_merge` and the rest of
 the declaration against the approved configuration, plus managed guidance and
@@ -203,10 +222,13 @@ not a claim of working idle wake. Transport receipts prove neither reading nor c
 
 ## 6. Verify and report
 
-Read back changed assets and Git status. Run `specgit status --remote <remote> --json`
-and `specgit doctor --provider <provider> --remote <remote> --json` with the selected
-host/API options where applicable. Inspect diagnostics and preserve failed/unknown
-results. No test Issue, PR, commit or platform setting change is needed.
+After all init/setup updates, run `specgit status --json` and
+`specgit doctor --provider <provider> --remote <remote> --json` with selected host/API
+options. Read back the Skill and guidance blocks, then run setup/init dry-runs again to
+check convergence. `init --dry-run` reports planned paths, not per-path changed state;
+do not claim every command reports unchanged. Preserve failed/unknown results. Do not
+create test Issues/PRs or change platform settings. Claims that hooks work require a
+harmless real probe of blocking behavior and context delivery; registration is not proof.
 
 Report:
 

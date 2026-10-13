@@ -5,18 +5,19 @@
 Open your Agent in the target repository and copy its
 [English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)
 or [中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
-to request actual inspection and conflict-free maintenance, not installation replay.
-The request authorizes a separate verified stable update when needed and chooses
-manual observation for unknown/unavailable capability only with new/default-false
-or existing-false `native_auto_merge`. The flag sets it to false; an existing true
+to request actual inspection and ownership-safe maintenance, not installation replay.
+The request authorizes a separate verified stable update when needed. Unknown optional
+capability does not block applicable local maintenance. Init chooses manual observation
+only with new/default-false or existing-false `native_auto_merge`. The flag sets it to false; an existing true
 preference needs a specific decision before changing it. It does not authorize
 platform settings, Issue/PR writes, commits, pushes, merges or releases.
 Confirm the actual CLI path/version; do not silently reinstall if missing.
 
 Before the abbreviated v2 sequence below, classify the project using that guide.
 A missing declaration with private state is not fresh adoption: restore its original
-configuration/backup. Preserve receipts, checkpoints and edited/foreign assets;
-never delete state or hooks to force a refresh. Carry the same selected configuration,
+configuration/backup. Preserve configuration, receipts, checkpoints, outside-block
+edits and foreign assets; complete uniquely marked managed content refreshes to the
+current template even if edited. Never delete state or hooks to force a refresh. Carry the same selected configuration,
 remote and capability options through inspection, preview and apply.
 
 For a v2 project, retain its existing declaration and preview/apply the refresh in the target repository:
@@ -29,6 +30,10 @@ specgit status --json
 ```
 
 Resolve reported capability choices explicitly; do not ignore diagnostics. Since 2.2 the SpecGit-owned exclusion block contains only `.specgit.yaml`; other repository/user ignore rules still apply. Review AGENTS/CLAUDE under repository policy. Select native Issues again on the original branch for older adoption-only checkpoints; do not delete or rewrite another branch's checkpoint.
+
+After all updates, run status and doctor, read back generated Skill/guidance, then
+repeat dry-runs. An init dry-run lists planned paths, not per-path changed state.
+Only claim host hooks work after a harmless real behavior/context probe.
 
 For v1 use the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), not retired `init --force`, `finish` or `bind`. Replacing the binary does not migrate the project.
 
@@ -47,8 +52,9 @@ specgit setup --agent codex --dry-run --json
 specgit setup --agent codex --json
 ```
 
-Preserve existing settings, actual host guidance, manual edits and foreign
-hooks. Codex/Claude have managed hooks; the official OpenCode build receives
+Preserve existing settings, manual guidance outside managed blocks and foreign
+hooks. Refresh replaces edited body text only inside a proven, complete managed
+range. Codex/Claude have managed hooks; the official OpenCode build receives
 skill/guidance only — a custom OpenCode fork can opt in to claude-code-format
 project hooks with `--opencode-claude-hooks` (requires `--agent opencode`). In 2.8,
 idle wake also needs explicit `--opencode-async-rewake`, confirmed real capability,

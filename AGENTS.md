@@ -72,7 +72,7 @@ astra 只做交付前终审，审查最终方案和最终代码；纯文档任�
   保留输入、输出和时间上限；超限、超时或取消后回收所拥有的进程树。
 - 本地集成只写所属项目资产和 Git 元数据中的状态。
   刷新、卸载和回滚先核对标记、所有权记录、当前内容及权限；加锁后重新核对。
-  使用原子替换和可恢复备份，保留人工编辑、其他 hook 和无关目录。
+  使用原子替换和原生事务恢复。刷新覆盖已确认受管的标准正文，保留块外人工编辑、其他 hook 和无关目录；卸载和回滚保留后续编辑。
 - 保持读取与写入分离。声明、dry-run、通知和建议不产生写入授权。
   不完整读取、未知能力和过期检查不能作为成功或后续写入的依据。
   事件确认只记录传输收据，不证明用户已读或交付完成。
@@ -162,11 +162,11 @@ Linux x64、macOS arm64、Windows x64 的源码和已安装入口。
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.8.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.9.0. Declaration: `.specgit.yaml` (v2, local configuration).
 
 新任务和已有 PR/MR 的 CI/评审修复都加载 specgit-native Skill。
 完整流程和恢复步骤见 Skill；二进制可选，但不得绕过项目 guard/checkpoint 约束。
-在授权范围内主动使用原生 gh/glab；只读环境探查和验证要求见 Skill。
+在授权范围内主动使用原生 gh/glab。GitHub 免费/付费计划、账号类型和仓库可见性，以及 GitLab 社区/商业层级，都是背景信息，不证明项目或当前身份的实际能力；套餐限制、权限不足和未知分开报告；403/404 不足以定因。细节见 Skill。
 Milestone 可选；Issue 承载规格和工作台账；PR/MR 集成变更，不代表版本；Release 需要独立授权。
 使用共享 CLI 时，以已安装的 `specgit --help` 和 `specgit --schema` 为契约。
 修改已跟踪的产品输入前，先查重并选择完整相关 Issue：Why / Scope / Approach / Acceptance（原因、范围、方案、验收要求）。
@@ -176,8 +176,9 @@ Milestone 可选；Issue 承载规格和工作台账；PR/MR 集成变更，不�
 GitHub/GitLab 负责 CI、评审、保护和实际合并。
 按用户目标收尾：评审、修复或跟踪报告已验证结果及限制。
 平台交付须原生回读确认目标分支合并及全部应关闭的关联 Issue 关闭。
-能力缺失或 SpecGit 故障时，按 Skill 的恢复步骤处理。
+全部更新后运行 status/doctor，读回生成的 Skill/指导，再次 dry-run 检查收敛；init dry-run 只列计划路径，不报告逐项是否改变。阻塞恢复见 Skill。
+已授权刷新时，由 CLI 覆盖所有权已核实的受管文件和完整唯一块内的编辑正文；保留块外字节、配置、checkpoint 和其他 hooks。所有权未知或标记损坏/重复仍冲突。不要手写、恢复旧块或额外手工备份；使用 CLI 恢复。卸载/回滚保留后续编辑。
 
 Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
-<!-- specgit:v2:sha256 be42ed842c48a7fc635e32f57a4764e6affda612b383f1bc135b092daddb61fb -->
+<!-- specgit:v2:sha256 5ecbafe83fce1b655d07af2a669a25d07b83cbb25ee172378004da2499f61627 -->
 <!-- specgit:v2:end -->
