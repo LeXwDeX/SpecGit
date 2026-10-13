@@ -615,6 +615,7 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
                 "repos/fixture/repo",
                 "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1",
                 "repos/fixture/repo",
+                "repos/fixture/repo/rules/branches/preview?per_page=100&page=1",
                 "repos/fixture/repo/branches/preview/protection",
             ]
         } else {
@@ -864,6 +865,7 @@ fn protection_read_failures_keep_inspection_incomplete_with_manual_observation()
                 "projects/fixture%2Frepo": state["project"].clone(),
                 "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
                 "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1": [],
+                "repos/fixture/repo/rules/branches/main?per_page=100&page=1": [],
                 endpoint: {"__fixture_error": error}
             });
             fs::write(&f.state, state.to_string()).unwrap();
@@ -1138,6 +1140,7 @@ fn init_inspection_reports_monotonic_activity_and_total_timing() {
         "user": {"id":1,"login":"fixture"},
         "repos/fixture/repo": state["project"].clone(),
         "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+        "repos/fixture/repo/rules/branches/preview?per_page=100&page=1": [],
         "repos/fixture/repo/branches/preview/protection": {}
     });
     fs::write(&f.state, serde_json::to_vec(&state).unwrap()).unwrap();
@@ -2048,6 +2051,256 @@ fn unknown_capabilities_require_choice_and_inspection_has_no_local_writes() {
     }
 }
 #[test]
+fn github_effective_rulesets_prove_readable_target_protection_without_classic_api() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["read_routes"] = json!({
+        "user": {"id":1,"login":"fixture"},
+        "repos/fixture/repo": state["project"].clone(),
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+        "repos/fixture/repo/rules/branches/preview?per_page=100&page=1": [{
+            "type": "required_status_checks",
+            "ruleset_id": 44,
+            "ruleset_source": "fixture/repo",
+            "ruleset_source_type": "Repository",
+            "parameters": {"required_status_checks":[{"context":"SpecGit Acceptance"}]}
+        }]
+    });
+    fs::write(&f.state, state.to_string()).unwrap();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    let protection = &report["evidence"]["capabilities"]["target_protection"];
+    assert_eq!(protection["status"], "supported", "{report}");
+    assert_eq!(
+        report["evidence"]["inspection"]["complete"], true,
+        "{report}"
+    );
+    assert!(
+        protection["source"]
+            .as_str()
+            .unwrap()
+            .contains("/rules/branches/preview")
+    );
+    let calls = f.state()["calls"].as_array().unwrap().clone();
+    assert!(calls.iter().all(|call| call["method"] == "GET"));
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call["endpoint"].as_str().unwrap().ends_with("/protection"))
+    );
+    assert!(!f.root.join(".specgit.yaml").exists());
+}
+#[test]
+fn github_rulesets_empty_falls_back_to_classic_and_errors_stay_unknown() {
+    for (rules, classic, expected, diagnostic, complete) in [
+        (
+            json!([]),
+            json!({"required_status_checks":null,"enforce_admins":{"enabled":true}}),
+            "supported",
+            None,
+            true,
+        ),
+        (
+            json!([]),
+            json!({"__fixture_error":"HTTP 404"}),
+            "unknown",
+            Some("ambiguous_not_found"),
+            false,
+        ),
+        (
+            json!({"__fixture_error":"HTTP 403"}),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("permission_denied"),
+            false,
+        ),
+        (
+            json!({"__fixture_error":"HTTP 404"}),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("ambiguous_not_found"),
+            false,
+        ),
+        (
+            json!({"__fixture_error":"network connection failed"}),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("network_failed"),
+            false,
+        ),
+        (
+            json!({"unexpected":"shape"}),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("malformed_response"),
+            false,
+        ),
+        (
+            json!([{"ruleset_id":44}]),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("malformed_response"),
+            false,
+        ),
+        (
+            json!([{"type":"required_status_checks","ruleset_id":"44"}]),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("malformed_response"),
+            false,
+        ),
+        (
+            json!([{"type":"required_status_checks","parameters":null}]),
+            json!({"required_status_checks":null,"enforce_admins":{}}),
+            "unknown",
+            Some("malformed_response"),
+            false,
+        ),
+    ] {
+        let f = Fixture::new();
+        let mut state = f.state();
+        let fallback = rules.as_array().is_some_and(Vec::is_empty);
+        state["read_routes"] = json!({
+            "user": {"id":1,"login":"fixture"},
+            "repos/fixture/repo": state["project"].clone(),
+            "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+            "repos/fixture/repo/rules/branches/preview?per_page=100&page=1": rules,
+            "repos/fixture/repo/branches/preview/protection": classic,
+        });
+        fs::write(&f.state, state.to_string()).unwrap();
+        let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+        let protection = &report["evidence"]["capabilities"]["target_protection"];
+        assert_eq!(protection["status"], expected, "{report}");
+        assert_eq!(
+            protection["diagnostic"]["code"].as_str(),
+            diagnostic,
+            "{report}"
+        );
+        assert_eq!(
+            report["evidence"]["inspection"]["complete"], complete,
+            "{report}"
+        );
+        let calls = f.state()["calls"].as_array().unwrap().clone();
+        let classic_called = calls
+            .iter()
+            .any(|call| call["endpoint"] == "repos/fixture/repo/branches/preview/protection");
+        assert_eq!(classic_called, fallback, "{report}");
+        assert!(calls.iter().all(|call| call["method"] == "GET"));
+    }
+}
+#[test]
+fn github_effective_rules_without_optional_ruleset_metadata_are_readable() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["read_routes"] = json!({
+        "user": {"id":1,"login":"fixture"},
+        "repos/fixture/repo": state["project"].clone(),
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+        "repos/fixture/repo/rules/branches/preview?per_page=100&page=1": [{"type":"required_status_checks"}],
+        "repos/fixture/repo/branches/preview/protection": {"required_status_checks":null,"enforce_admins":{"enabled":true}}
+    });
+    fs::write(&f.state, state.to_string()).unwrap();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_eq!(
+        report["evidence"]["capabilities"]["target_protection"]["status"], "supported",
+        "{report}"
+    );
+    assert_eq!(
+        report["evidence"]["inspection"]["complete"], true,
+        "{report}"
+    );
+    assert!(
+        f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|call| !call["endpoint"].as_str().unwrap().ends_with("/protection"))
+    );
+}
+#[test]
+fn github_rulesets_pagination_and_encoded_target_are_bounded() {
+    let rule = json!({"type":"future_rule","ruleset_id":44,"ruleset_source":"fixture","ruleset_source_type":"Organization"});
+    let f = Fixture::new();
+    let mut state = f.state();
+    state["project"]["default_branch"] = json!("release/x");
+    state["read_routes"] = json!({
+        "user": {"id":1,"login":"fixture"},
+        "repos/fixture/repo": state["project"].clone(),
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1": [],
+        "repos/fixture/repo/rules/branches/release%2Fx?per_page=100&page=1": vec![rule.clone();100],
+        "repos/fixture/repo/rules/branches/release%2Fx?per_page=100&page=2": [rule],
+        "repos/fixture/repo/branches/release%2Fx/protection": {"__fixture_error":"HTTP 404"}
+    });
+    fs::write(&f.state, state.to_string()).unwrap();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_eq!(
+        report["evidence"]["capabilities"]["target_protection"]["status"], "supported",
+        "{report}"
+    );
+    assert_eq!(
+        report["evidence"]["inspection"]["complete"], true,
+        "{report}"
+    );
+    let calls = f.state()["calls"].as_array().unwrap().clone();
+    assert!(calls.iter().any(|call| call["endpoint"]
+        == "repos/fixture/repo/rules/branches/release%2Fx?per_page=100&page=2"));
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call["endpoint"].as_str().unwrap().ends_with("/protection"))
+    );
+}
+#[test]
+fn github_rulesets_page_cap_does_not_promote_partial_evidence() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    let rule = json!({"type":"required_status_checks","ruleset_id":44,"ruleset_source":"fixture/repo","ruleset_source_type":"Repository"});
+    let mut routes = serde_json::Map::new();
+    routes.insert("user".into(), json!({"id":1,"login":"fixture"}));
+    routes.insert("repos/fixture/repo".into(), state["project"].clone());
+    routes.insert(
+        "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1".into(),
+        json!([]),
+    );
+    for page in 1..=10 {
+        routes.insert(
+            format!("repos/fixture/repo/rules/branches/preview?per_page=100&page={page}"),
+            json!(vec![rule.clone(); 100]),
+        );
+    }
+    routes.insert(
+        "repos/fixture/repo/branches/preview/protection".into(),
+        json!({"required_status_checks":null,"enforce_admins":{}}),
+    );
+    state["read_routes"] = Value::Object(routes);
+    fs::write(&f.state, state.to_string()).unwrap();
+    let report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
+    assert_eq!(
+        report["evidence"]["capabilities"]["target_protection"]["status"], "unknown",
+        "{report}"
+    );
+    assert_eq!(
+        report["evidence"]["inspection"]["complete"], false,
+        "{report}"
+    );
+    assert!(report["evidence"]["capabilities"]["target_protection"]["diagnostic"].is_object());
+    let calls = f.state()["calls"].as_array().unwrap().clone();
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call["endpoint"].as_str().unwrap().ends_with("/protection"))
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["endpoint"]
+                .as_str()
+                .unwrap()
+                .contains("/rules/branches/"))
+            .count(),
+        10
+    );
+}
+#[test]
 fn project_auto_merge_setting_is_a_fact_and_not_request_authority() {
     for (enabled, expected) in [(true, "supported"), (false, "unsupported")] {
         let f = Fixture::new();
@@ -2120,6 +2373,7 @@ fn supported_native_settings_allow_explicit_preference_and_refresh_detects_drift
         "user":{"id":1,"login":"fixture"},
         "repos/fixture/repo":state["project"],
         "repos/fixture/repo/pulls?state=open&head=fixture%3Afeature&per_page=100&page=1":[],
+        "repos/fixture/repo/rules/branches/preview?per_page=100&page=1":[],
         "repos/fixture/repo/branches/preview/protection":{
             "required_status_checks":null,"enforce_admins":{"enabled":true}
         }
