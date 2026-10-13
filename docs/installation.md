@@ -53,6 +53,12 @@ read-only native capabilities and authentication in the target repository. Use
 
 ## Upgrade and refresh
 
+For an already installed CLI, the [project maintenance guide](agent-project-refresh.md)
+is the canonical Agent procedure, with English/Chinese copyable requests. It
+separates binary update from project refresh, classifies missing declarations and
+legacy/conflicting assets, and preserves receipts, checkpoints and host choices.
+Do not replay first installation or delete private state to repair a project.
+
 From 2.6 on, prefer the built-in update. It needs an authenticated `gh` session
 and Cosign, and enforces the verification above:
 
