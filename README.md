@@ -165,7 +165,7 @@ integration. Omit hook purposes to preserve recorded modes; explicit purposes af
 all recorded and newly selected hosts. Review their effects, including shared Skill refresh. In 2.8,
 new custom OpenCode idle wake requires separate capability confirmation and explicit
 `--opencode-async-rewake` with observe/context; compatibility hooks alone do not enable it.
-The current runtime is 2.9.0. After project updates, run status and doctor, read back
+The current runtime is 2.9.1. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before

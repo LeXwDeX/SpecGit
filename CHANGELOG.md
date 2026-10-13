@@ -4,6 +4,12 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.9.1
+
+- Read the active GitHub Rulesets that apply to the target branch with bounded pagination. A complete, valid nonempty response reports readable effective protection; an empty response falls back to classic branch protection. Failed, malformed or incomplete reads remain unknown. This does not assess every ruleset, queue or approval condition, promise request eligibility, or change native settings.
+
+Scope: [#707](https://github.com/LeXwDeX/SpecGit/issues/707), [#709](https://github.com/LeXwDeX/SpecGit/issues/709).
+
 # 2.9.0
 
 - Refresh recorded project Skills and complete, uniquely marked SpecGit guidance with the current CLI templates, including edited generated text. Preserve manual content outside the blocks, configuration, checkpoints and other tools’ hooks. Unowned or ambiguous assets remain protected; uninstall and rollback still preserve later edits.
