@@ -22,6 +22,79 @@ fn reader(provider: Provider, response: &str) -> ForgeRead {
 }
 
 #[tokio::test]
+async fn environment_keeps_metadata_dimensions_independent_and_safe() {
+    for (response, version, edition) in [
+        (
+            json!({"version":"18.4.0","enterprise":false,"revision":"secret"}),
+            Some("18.4.0"),
+            Some("ce"),
+        ),
+        (
+            json!({"version":"18.4.0-ee","enterprise":true,"license":"secret"}),
+            Some("18.4.0-ee"),
+            Some("ee"),
+        ),
+        (json!({"version":"18.4.0-ee"}), Some("18.4.0-ee"), None),
+        (json!({"enterprise":false}), None, Some("ce")),
+        (
+            json!({"version":"18.4\nsecret","enterprise":"false"}),
+            None,
+            None,
+        ),
+        (
+            json!({"version":"1".repeat(129),"enterprise":null}),
+            None,
+            None,
+        ),
+        (json!({"version":42}), None, None),
+        (json!({}), None, None),
+        (json!([]), None, None),
+    ] {
+        let environment =
+            specgit::probe::environment(&reader(Provider::Gitlab, &response.to_string()))
+                .await
+                .unwrap();
+        let result = serde_json::to_value(environment).unwrap();
+        assert_eq!(result["server_version"]["value"], json!(version));
+        assert_eq!(result["edition"]["value"], json!(edition));
+        assert_eq!(result["subscription"]["status"], "unknown");
+        assert_eq!(result["deployment"]["status"], "unknown");
+        assert!(!result.to_string().contains("secret"));
+        if version.is_none() || edition.is_none() {
+            assert_eq!(result["metadata_status"], "unknown");
+            assert_eq!(result["diagnostic"]["code"], "malformed_response");
+        } else {
+            assert_eq!(result["metadata_status"], "known");
+            assert!(result["diagnostic"].is_null());
+        }
+    }
+    for (response, expected) in [
+        ("forbidden", Code::PermissionDenied),
+        ("notfound", Code::AmbiguousNotFound),
+        ("network", Code::NetworkFailed),
+        ("bad", Code::MalformedResponse),
+    ] {
+        let environment = specgit::probe::environment(&reader(Provider::Gitlab, response))
+            .await
+            .unwrap();
+        assert_eq!(environment.metadata_status, "unknown");
+        assert_eq!(environment.diagnostic.unwrap().code, expected);
+    }
+    let mut reader = reader(
+        Provider::Gitlab,
+        r#"{"version":"18.4.0","enterprise":true}"#,
+    );
+    reader.host = "gitlab.com".into();
+    let environment = serde_json::to_value(specgit::probe::environment(&reader).await).unwrap();
+    assert_eq!(environment["deployment"]["value"], "official_hosted");
+    for host in ["gitlab.com.example", "gitlab.com:443", "dedicated.example"] {
+        reader.host = host.into();
+        let environment = serde_json::to_value(specgit::probe::environment(&reader).await).unwrap();
+        assert_eq!(environment["deployment"]["status"], "unknown");
+    }
+}
+
+#[tokio::test]
 async fn project_probe_reports_role_permissions_from_its_only_read() {
     let cases: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/write-permissions.json")).unwrap();

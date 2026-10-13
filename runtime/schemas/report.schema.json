@@ -4,6 +4,70 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "milestone_scope": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["kind","project_id"],"properties":{
+          "kind":{"const":"project"},"project_id":{"type":"integer","minimum":1}
+        }},
+        {"type":"object","additionalProperties":false,"required":["kind","group_id"],"properties":{
+          "kind":{"const":"group"},"group_id":{"type":"integer","minimum":1}
+        }}
+      ]
+    },
+    "milestone": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["provider","id","number","title","state","url"],"properties":{
+          "provider":{"const":"github"},"id":{"type":"integer","minimum":1},
+          "number":{"type":"integer","minimum":1},"title":{"type":"string","minLength":1},
+          "state":{"enum":["open","closed"]},"url":{"type":"string","pattern":"^https?://[^/?#@\\s]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/milestone/[1-9][0-9]*$"}
+        }},
+        {"type":"object","additionalProperties":false,"required":["provider","id","iid","title","state","scope","url"],"properties":{
+          "provider":{"const":"gitlab"},"id":{"type":"integer","minimum":1},
+          "iid":{"type":"integer","minimum":1},"title":{"type":"string","minLength":1},
+          "state":{"enum":["active","closed"]},"scope":{"$ref":"#/$defs/milestone_scope"},
+          "url":{"type":["string","null"],"pattern":"^https?://[^/?#@\\s]+/(?:[A-Za-z0-9._-]+/)+-/milestones/[1-9][0-9]*$"}
+        }}
+      ]
+    },
+    "milestone_context": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["status","milestone"],"properties":{
+          "status":{"const":"linked"},"milestone":{"$ref":"#/$defs/milestone"}
+        }},
+        {"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"const":"none"}}},
+        {"type":"object","additionalProperties":false,"required":["status","reason"],"properties":{
+          "status":{"const":"unknown"},"reason":{"type":"string","minLength":1}
+        }}
+      ]
+    },
+    "environment_fact": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["status","value","source"],"properties":{
+          "status":{"const":"known"},
+          "value":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9.+_-]+$"},
+          "source":{"enum":["host","GET metadata"]}
+        }},
+        {"type":"object","additionalProperties":false,"required":["status","reason","source"],"properties":{
+          "status":{"const":"unknown"},
+          "reason":{"type":"string","minLength":1,"maxLength":256},
+          "source":{"enum":["host","GET metadata"]}
+        }}
+      ]
+    },
+    "gitlab_environment": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["host","metadata_status","diagnostic","deployment","server_version","edition","subscription"],
+      "properties":{
+        "host":{"type":"string","minLength":1,"maxLength":253},
+        "metadata_status":{"enum":["known","unknown"]},
+        "diagnostic":{"$ref":"#/$defs/probe/properties/diagnostic"},
+        "deployment":{"$ref":"#/$defs/environment_fact","properties":{"value":{"const":"official_hosted"}}},
+        "server_version":{"$ref":"#/$defs/environment_fact","properties":{"value":{"pattern":"^[0-9][A-Za-z0-9.+_-]*$"}}},
+        "edition":{"$ref":"#/$defs/environment_fact","properties":{"value":{"enum":["ce","ee"]}}},
+        "subscription":{"$ref":"#/$defs/environment_fact","properties":{"status":{"const":"unknown"}}}
+      }
+    },
     "skill_evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -586,6 +650,10 @@
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
     {
+      "if":{"properties":{"operation":{"enum":["init","doctor"]},"evidence":{"type":"object"}},"required":["operation","evidence"]},
+      "then":{"properties":{"evidence":{"properties":{"environment":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/gitlab_environment"}]}}}}}
+    },
+    {
       "if": {"properties": {"operation": {"const": "skill"}}, "required": ["operation"]},
       "then": {"properties": {"evidence": {"$ref": "#/$defs/skill_evidence"}}, "required": ["effects"]}
     },
@@ -627,6 +695,7 @@
           "evidence": {
             "properties": {
               "inspection": {"$ref": "#/$defs/inspection_summary"},
+              "milestones": {"type":"object","propertyNames":{"pattern":"^[1-9][0-9]*$"},"additionalProperties":{"$ref":"#/$defs/milestone_context"}},
               "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate_preflight"}}
             },
             "if": {"required": ["review_digest"]},

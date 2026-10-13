@@ -68,6 +68,243 @@ fn native_issue(provider: &str, number: u64, closed: bool) -> serde_json::Value 
 }
 
 #[test]
+fn milestone_context_is_read_only_and_distinguishes_absence_from_unknown() {
+    // Protocol sources: docs.github.com/rest/issues/issues#get-an-issue and
+    // docs.gitlab.com/api/issues/#single-issue (embedded milestone has no required web_url).
+    for provider in ["github", "gitlab"] {
+        for case in [
+            "linked",
+            "none",
+            "missing",
+            "malformed",
+            "foreign",
+            "group",
+            "unsafe",
+            "zero",
+            "bad_state",
+            "bad_number",
+            "empty",
+            "scalar",
+            "wrong_host",
+            "query",
+            "control",
+            "http",
+            "case",
+            "project_url",
+            "both_scopes",
+            "closed",
+        ] {
+            let f = Fixture::new(provider);
+            let mut issue = native_issue(provider, 1, false);
+            fs::write(
+                f.root.join(".specgit.yaml"),
+                format!("version: 2\nprovider: {provider}\nvalidation:\n  labels: off\n"),
+            )
+            .unwrap();
+            let mut milestone = if provider == "github" {
+                json!({"id":900,"number":2,"title":"Goal","state":"open","html_url":"https://forge.example/fixture/repo/milestone/2"})
+            } else {
+                json!({"id":900,"iid":2,"project_id":7,"title":"Goal","state":"active"})
+            };
+            match case {
+                "none" => milestone = serde_json::Value::Null,
+                "malformed" => milestone["id"] = json!("900"),
+                "zero" => milestone["id"] = json!(0),
+                "bad_state" => milestone["state"] = json!("completed"),
+                "closed" => milestone["state"] = json!("closed"),
+                "bad_number" => {
+                    milestone[if provider == "github" {
+                        "number"
+                    } else {
+                        "iid"
+                    }] = json!(0)
+                }
+                "empty" => milestone["title"] = json!(" "),
+                "scalar" => milestone = json!(false),
+                "foreign" if provider == "github" => {
+                    milestone["html_url"] = json!("https://forge.example/other/repo/milestone/2")
+                }
+                "foreign" => milestone["project_id"] = json!(8),
+                "group" if provider == "gitlab" => {
+                    milestone.as_object_mut().unwrap().remove("project_id");
+                    milestone["group_id"] = json!(42);
+                }
+                "unsafe" => {
+                    milestone[if provider == "github" {
+                        "html_url"
+                    } else {
+                        "web_url"
+                    }] = json!("https://token@forge.example/fixture/repo/milestone/2?token=secret")
+                }
+                "wrong_host" => {
+                    milestone[if provider == "github" {
+                        "html_url"
+                    } else {
+                        "web_url"
+                    }] = json!("https://other.example/fixture/repo/milestone/2")
+                }
+                "query" => {
+                    milestone[if provider == "github" {
+                        "html_url"
+                    } else {
+                        "web_url"
+                    }] = json!("https://forge.example/fixture/repo/milestone/2?token=secret")
+                }
+                "control" => {
+                    milestone[if provider == "github" {
+                        "html_url"
+                    } else {
+                        "web_url"
+                    }] = json!("https://forge.example/fixture/repo/milestone/2\n")
+                }
+                "http" if provider == "github" => {
+                    milestone["html_url"] = json!("http://forge.example/fixture/repo/milestone/2")
+                }
+                "case" if provider == "github" => {
+                    milestone["html_url"] = json!("https://FORGE.EXAMPLE/Fixture/Repo/milestone/2")
+                }
+                "project_url" if provider == "gitlab" => {
+                    milestone["web_url"] =
+                        json!("https://forge.example/fixture/repo/-/milestones/900")
+                }
+                "both_scopes" if provider == "gitlab" => milestone["group_id"] = json!(42),
+                _ => {}
+            }
+            if case != "missing" {
+                issue["milestone"] = milestone;
+            }
+            f.edit(|state| state["issues"] = json!([issue]));
+            for flag in ["--inspect", "--dry-run"] {
+                let report = f.run(&["issue", "1", flag]);
+                assert_eq!(report["exit"], 0, "{report}");
+                let context = &report["evidence"]["milestones"]["1"];
+                let expected = match case {
+                    "none" => "none",
+                    "missing" | "malformed" | "foreign" | "zero" | "bad_state" | "bad_number"
+                    | "empty" | "scalar" => "unknown",
+                    "unsafe" | "wrong_host" | "query" | "control" if provider == "github" => {
+                        "unknown"
+                    }
+                    "both_scopes" if provider == "gitlab" => "unknown",
+                    _ => "linked",
+                };
+                assert_eq!(context["status"], expected, "{provider} {case}: {report}");
+                if expected == "unknown" {
+                    assert!(context["reason"].as_str().is_some_and(|s| !s.is_empty()));
+                }
+                if expected == "linked" {
+                    assert_eq!(context["milestone"]["id"], 900);
+                    assert_eq!(
+                        context["milestone"][if provider == "github" {
+                            "number"
+                        } else {
+                            "iid"
+                        }],
+                        2
+                    );
+                    if provider == "gitlab" {
+                        if case == "project_url" {
+                            assert_eq!(
+                                context["milestone"]["url"],
+                                "https://forge.example/fixture/repo/-/milestones/900"
+                            );
+                        } else {
+                            assert!(context["milestone"]["url"].is_null());
+                        }
+                        assert_eq!(
+                            context["milestone"]["scope"]["kind"],
+                            if case == "group" { "group" } else { "project" }
+                        );
+                        if case == "group" {
+                            assert_eq!(context["milestone"]["scope"]["group_id"], 42);
+                            assert!(context["milestone"]["scope"].get("project_id").is_none());
+                        } else {
+                            assert_eq!(context["milestone"]["scope"]["project_id"], 7);
+                        }
+                    }
+                }
+                assert_eq!(report["evidence"]["writes"], false);
+                let schema: serde_json::Value =
+                    serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+                jsonschema::draft202012::validate(&schema, &report).unwrap();
+                let mut invalid = report.clone();
+                invalid["evidence"]["milestones"]["1"] =
+                    json!({"status":"linked","milestone":{"id":900}});
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+                invalid["evidence"]["milestones"]["1"] = json!({"status":"unknown"});
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+                assert!(!checkpoint_path(&f).exists());
+            }
+            let calls = f.state()["calls"].as_array().unwrap().clone();
+            assert_eq!(
+                calls.len(),
+                6,
+                "Only project, labels, and exact Issue per inspection: {calls:?}"
+            );
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|call| call["endpoint"]
+                        .as_str()
+                        .is_some_and(|s| s.ends_with("/issues/1")))
+                    .count(),
+                2
+            );
+            assert_eq!(f.writes(), 0);
+        }
+    }
+}
+
+#[test]
+fn milestone_context_refreshes_without_changing_checkpoint_or_candidate_digest() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            format!("version: 2\nprovider: {provider}\nvalidation:\n  labels: off\n"),
+        )
+        .unwrap();
+        let mut issue = native_issue(provider, 1, false);
+        issue["milestone"] = serde_json::Value::Null;
+        f.edit(|state| state["issues"] = json!([issue]));
+        let selected = f.run(&["issue", "1"]);
+        assert_eq!(selected["exit"], 0, "{selected}");
+        let checkpoint = fs::read(checkpoint_path(&f)).unwrap();
+        let before = f.run(&["issue", "fix: history", "--inspect"]);
+        assert_eq!(before["exit"], 0, "{before}");
+        assert_eq!(before["evidence"]["milestones"]["1"]["status"], "none");
+        f.edit(|state| {
+            state["issues"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("milestone");
+        });
+        let after = f.run(&["issue", "fix: history", "--inspect"]);
+        assert_eq!(after["exit"], 0, "{after}");
+        assert_eq!(after["evidence"]["milestones"]["1"]["status"], "unknown");
+        assert_eq!(
+            after["evidence"]["candidates"][0]["review_digest"],
+            before["evidence"]["candidates"][0]["review_digest"]
+        );
+        assert_eq!(
+            after["evidence"]["selection"],
+            before["evidence"]["selection"]
+        );
+        let exact = f.run(&["issue", "1", "--inspect"]);
+        assert_eq!(exact["exit"], 0, "{exact}");
+        assert_eq!(
+            exact["evidence"]["milestones"].as_object().unwrap().len(),
+            1
+        );
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), checkpoint);
+        assert!(!String::from_utf8(checkpoint).unwrap().contains("milestone"));
+        let selected_unknown = f.run(&["issue", "1"]);
+        assert_eq!(selected_unknown["exit"], 0, "{selected_unknown}");
+        assert_eq!(f.writes(), 0);
+    }
+}
+
+#[test]
 fn closed_history_is_separate_and_does_not_change_candidate_reviews() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new(provider);

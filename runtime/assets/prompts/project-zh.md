@@ -1,5 +1,7 @@
 新任务和已有 PR/MR 的 CI/评审修复都加载 specgit-native Skill。
 完整流程和恢复步骤见 Skill；二进制可选，但不得绕过项目 guard/checkpoint 约束。
+在授权范围内主动使用原生 gh/glab；只读环境探查和验证要求见 Skill。
+Milestone 可选；Issue 承载规格和工作台账；PR/MR 集成变更，不代表版本；Release 需要独立授权。
 使用共享 CLI 时，以已安装的 `specgit --help` 和 `specgit --schema` 为契约。
 修改已跟踪的产品输入前，先查重并选择完整相关 Issue：Why / Scope / Approach / Acceptance（原因、范围、方案、验收要求）。
 只读检查、审计和评审不需要 Issue checkpoint；纯文档遵循仓库规则及已安装 hooks。

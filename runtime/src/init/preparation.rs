@@ -112,6 +112,10 @@ pub(super) async fn prepare_and_run(
     }
     evidence["request_read"] = json!("verified");
     if options.inspect_only {
+        // Optional metadata runs after core native reads and never enters required probes.
+        evidence["environment"] =
+            serde_json::to_value(crate::probe::environment(&native.reader).await)
+                .expect("environment serializes");
         append_check_report(&mut evidence, &declaration.init_policy, check_scope.clone());
     }
     if failed {

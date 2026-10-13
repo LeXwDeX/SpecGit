@@ -7,6 +7,7 @@ pub(super) struct Prepared {
     pub foreign_checkpoint: Option<selection::BranchMismatch>,
     pub selection: Selection,
     pub pool: Vec<String>,
+    pub milestones: BTreeMap<u64, crate::delivery_model::MilestoneContext>,
 }
 
 pub(super) fn normalize(options: &mut Options, cwd: &Path) -> Result<(), Diagnostic> {
@@ -105,10 +106,14 @@ pub(super) async fn prepare(
         ));
     }
     let pool = native_delivery::label_pool(&w.reader, &w.context.repository).await?;
-    let (prepared, adopted) = submitted(options, &w, &pool).await?;
+    let mut milestones = BTreeMap::new();
+    let (prepared, adopted) = submitted(options, &w, &pool, &mut milestones).await?;
     for number in &selection.issues {
-        let issue =
-            native_delivery::issue(&w.reader, &w.context.repository, w.facts.id, *number).await?;
+        let read =
+            native_delivery::issue_read(&w.reader, &w.context.repository, w.facts.id, *number)
+                .await?;
+        milestones.insert(*number, read.milestone);
+        let issue = read.issue;
         validate(w.specification(), &issue.title, &issue.body, &issue.labels)?;
     }
     reconcile(&mut selection, adopted, prepared)?;
@@ -128,6 +133,7 @@ pub(super) async fn prepare(
         foreign_checkpoint,
         selection,
         pool,
+        milestones,
     })
 }
 
@@ -195,6 +201,7 @@ async fn submitted(
     options: &Options,
     w: &Workspace,
     pool: &[String],
+    milestones: &mut BTreeMap<u64, crate::delivery_model::MilestoneContext>,
 ) -> Result<(Vec<IssueIntent>, Vec<crate::delivery_model::Issue>), Diagnostic> {
     let mut prepared = vec![];
     let mut adopted = vec![];
@@ -204,9 +211,11 @@ async fn submitted(
             if number == 0 {
                 return Err(Diagnostic::input("Issue IDs must be positive."));
             }
-            let issue =
-                native_delivery::issue(&w.reader, &w.context.repository, w.facts.id, number)
+            let read =
+                native_delivery::issue_read(&w.reader, &w.context.repository, w.facts.id, number)
                     .await?;
+            milestones.insert(number, read.milestone);
+            let issue = read.issue;
             validate(w.specification(), &issue.title, &issue.body, &issue.labels)?;
             adopted.push(issue);
             continue;
