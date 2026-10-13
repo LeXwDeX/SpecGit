@@ -2,6 +2,13 @@
 
 SpecGit 的共享二进制、每个项目的初始化、Codex 等宿主的注册是三个独立步骤。只想在项目中使用命令行时，完成前两步即可。
 
+**CLI 已安装？** 在目标仓库打开 Agent，复制
+[中文维护请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
+（[English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)）。
+该请求要求 Agent 实际检查并完成安全维护，包括全新项目接入，而不是重做安装或只给命令。
+指南将已授权的稳定版验证升级与 init/setup 分开，保留配置、checkpoint 和收据。
+声明缺失但私有状态仍在时不是全新项目：先恢复原配置，不要删除状态。
+
 ## 1. 安装二进制
 
 正式分发渠道是 [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest)。按照[安装指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md)，下载**同一稳定 Release** 的平台 ZIP、`SHA256SUMS` 和 `SHA256SUMS.sigstore.json`；先验证签名身份，再用签名清单核对 ZIP 的 SHA-256，最后解压并将 `specgit`（Windows 为 `specgit.exe`）放到用户级 PATH。支持 macOS arm64、Linux x64 glibc 和 Windows x64。正式包运行时无需 Node.js、npm 或 Rust。
@@ -63,6 +70,11 @@ specgit doctor --provider github --remote origin --json
 已有 **v2** 项目应保留原声明，用相同的检查、预览和执行顺序刷新；不要直接覆盖手工配置。已有 **v1** 项目先按[显式迁移指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md)迁移，替换二进制本身不会迁移项目。旧版 `init --force`、`finish`、`bind` 已退役。
 
 ## 3. 按需注册宿主
+
+2.8 的用途选择与宿主实际验证见
+[维护指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-refresh-only-the-active-host)。
+新宿主可用 `--hook-purpose none` 只添加指导/Skill，不新增 hooks；它不会移除已有 hooks 或 Git guard。
+刷新时省略用途会保留收据记录的模式。官方 OpenCode 仅安装指导/Skill；自定义空闲唤醒需要单独确认能力、授权并显式启用。
 
 项目初始化**不等于**宿主注册。只有决定给当前宿主安装集成时，才单独查看 `specgit setup --help` 并预览相应的 `--agent codex`、`--agent claude`、`--agent opencode` 或 `--agent generic` 选择。自 2.4 起 setup 永久只支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，资产写入检出目录并使用 worktree 私有收据，hooks 直接调用已安装的共享二进制（无需先做全局 setup），已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。只安装二进制并初始化项目时，无需运行 `setup`。
 
