@@ -168,7 +168,7 @@ pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagno
         changes.push(proof);
     }
     for (host, old) in &receipt.instructions {
-        changes.push(instruction_change(host, root, Some(old), true)?.0);
+        changes.push(instruction_change(host, root, Some(old), true, false)?.0);
     }
     for (host, old) in &receipt.hooks {
         changes.push(registration_change(host, &old.settings, Some(old), None)?);
@@ -350,6 +350,7 @@ pub fn install_with_hooks(
         hooks: BTreeMap::new(),
     };
     let mut changes = vec![];
+    let receipt_path = private.join("ownership.json");
     let mut skills: BTreeSet<String> = previous.skills.keys().cloned().collect();
     if !options.uninstall {
         skills.insert(".agents/skills/specgit-native/SKILL.md".into());
@@ -361,12 +362,21 @@ pub fn install_with_hooks(
         let change = Change::new(root.join(&relative), (!options.uninstall).then(skill_bytes))?;
         if let Some(hash) = previous.skills.get(&relative) {
             if change.before.digest().as_ref() != Some(hash) {
-                return Err(conflict_at(
-                    "project",
-                    &change.path,
-                    None,
-                    "The owned project skill was edited or removed.",
-                ));
+                if options.uninstall || change.before.bytes.is_none() {
+                    return Err(conflict_at(
+                        "project",
+                        &change.path,
+                        None,
+                        "The owned project skill was edited or removed.",
+                    ));
+                }
+                let proof = AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &change.path, &change.before, Some(hash))?
+                    .ok_or_else(|| conflict_at("project", &change.path, None, "The project skill permissions or transaction ownership changed; retain it for reconciliation."))?;
+                for journal in proof {
+                    if !changes.iter().any(|c: &Change| c.path == journal.path) {
+                        changes.push(journal);
+                    }
+                }
             }
         } else if change.before.bytes.is_some() {
             return Err(conflict_at(
@@ -430,7 +440,22 @@ pub fn install_with_hooks(
         {
             continue;
         }
-        let (change, registration) = instruction_change(host, root, old, options.uninstall)?;
+        let proof = if let Some(old) = old.filter(|_| !options.uninstall) {
+            let path = root.join(&old.instructions);
+            let current = Snapshot::read(&path)?;
+            AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &path, &current, None)?
+        } else {
+            None
+        };
+        let (change, registration) =
+            instruction_change(host, root, old, options.uninstall, proof.is_some())?;
+        if let Some(proofs) = proof {
+            for journal in proofs {
+                if !changes.iter().any(|c| c.path == journal.path) {
+                    changes.push(journal);
+                }
+            }
+        }
         if !planned_paths.insert(change.path.clone()) {
             return Err(conflict("Two project guidance receipts own the same path."));
         }

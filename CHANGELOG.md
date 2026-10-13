@@ -4,6 +4,15 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.9.0
+
+- Refresh recorded project Skills and complete, uniquely marked SpecGit guidance with the current CLI templates, including edited generated text. Preserve manual content outside the blocks, configuration, checkpoints and other tools’ hooks. Unowned or ambiguous assets remain protected; uninstall and rollback still preserve later edits.
+- Make the Agent maintenance path use canonical CLI generation without hand-written prompt patches, old-template relocation or extra manual backups. Keep atomic transactions and recovery in the runtime.
+- Guide GitHub and GitLab adoption across free, community and commercial environments. Keep edition, plan, repository visibility/ownership and actual capabilities separate; an inaccessible optional endpoint does not establish a plan or repository-wide permission failure. No new plan-discovery API is introduced.
+- Require a final read-only verification after all project updates: actual status and doctor calls, guidance/Skill readback, and another preview. Report host behavior separately and verify it before claiming hooks work.
+
+Scope: [#704](https://github.com/LeXwDeX/SpecGit/issues/704), [#705](https://github.com/LeXwDeX/SpecGit/issues/705).
+
 # 2.8.0
 
 - Clarify optional Milestone goals, Issue specifications, PR/MR integration and separately authorized releases. Keep TDD and current-head CI as evidence, not automatic acceptance or write permission.

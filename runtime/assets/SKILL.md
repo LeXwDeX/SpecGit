@@ -28,14 +28,11 @@ The Agent judges specification quality, repair scope and completion evidence.
 Title/label/body rules are optional. Repository guidance sets review and documentation policy.
 
 ## Discover the native environment
+Start read-only: confirm remote, project, target, identity and CLI commands. Hide credentials. For GitHub, separate github.com/Enterprise Server, visibility, personal/organization ownership, Free/Pro/Team/Enterprise plan and actual access.
+For GitLab, separate GitLab.com/Self-Managed/Dedicated, server version, CE/EE, subscription and actual capability. Keep gh/glab CLI versions separate. Plan/version/edition do not prove capability; 403/404 alone cannot distinguish access, hidden resources or plan limits.
+Do not query admin license/billing or hard-code plan rejection. Unknown stays unknown; use read-only evidence. Current CLI reports optional GitLab metadata only; do not invent a GitHub environment report. Record limits and needed manual checks. These checks promise no new SpecGit commands or fields.
 
-Start with read-only discovery: confirm remote, project, target, identity and CLI commands. Hide credentials.
-Distinguish GitLab deployment (GitLab.com, Self-Managed or Dedicated),
-server version, CE/EE edition, subscription tier and actual capability for this project and identity.
-Keep the gh/glab CLI version separate from the server version.
-Unknown stays unknown; neither version nor tier proves actual capability. Use native read-only evidence.
-An inaccessible endpoint does not prove lack of support. Never change settings to discover support.
-Record read limits and needed manual checks. These Agent checks promise no new SpecGit commands or fields.
+Report explicit feature/plan limits, credential/scope failures and unknown causes separately; optional feature reads do not establish repository-wide access.
 
 ## Plan goals with native objects
 
@@ -167,7 +164,9 @@ The only user-level asset is the Skill explicitly installed with `specgit skill 
 at `~/.agents/skills/specgit-native/SKILL.md` (`%USERPROFILE%` on Windows).
 `specgit update` refreshes it only when managed; it does not install it by default.
 There are no global hooks or state. Install the shared CLI separately; setup never
-copies a project executable. Use `init --check` for native capabilities; init remains separate from setup.
+copies a project executable. `init --check` probes native capabilities; setup is separate.
+Unknown optional capability does not block applicable local setup/refresh. Init may need
+an explicit manual-observation choice; preserve `native_auto_merge=true` unless selected.
 Choose the least hook purposes allowed by real host capabilities and existing authorization, not each event:
 repeat `setup --hook-purpose guard|context|observe`, or `none` for no new hooks; preview `--dry-run`, then install.
 
@@ -190,9 +189,10 @@ Omitted purposes preserve recorded modes; `none` never removes hooks/Git guard. 
 Keep notices pending until transport receipt; acknowledgment proves neither human reading nor completion.
 
 After CLI replacement, preview `setup --dry-run` and refresh project Skills/entry guidance, not manual copies.
-Project refresh changes only recorded, owned assets whose current content matches the receipt.
-Names prove no ownership. Foreign files, edited managed assets and missing recorded assets retain conflict
-protection. Preserve manual text outside blocks and other tools' content; never force overwrite.
-Source edits alone do not change installed CLI output.
+Refresh replaces recorded assets and complete unique blocks, including edited body text;
+preserve outside bytes, declarations, checkpoints and other hooks. Missing/damaged/duplicate
+markers or unknown ownership conflict. Never handwrite, restore/move old blocks or add manual
+backups; CLI transactions handle recovery. Uninstall/rollback preserves later edits. Names prove nothing.
+After all init/setup updates, run `status` and `doctor`, read back generated Skill/guidance, then repeat dry-runs; `init --dry-run` lists planned paths only.
 
 Contract version: {{version}}.

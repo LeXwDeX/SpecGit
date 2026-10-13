@@ -637,9 +637,11 @@ reports add `next_actions` with `kind: "refresh_project_skills"`,
 `command: "specgit setup"` and a `remedy`. Human output displays the same remedy.
 It says existing project Skills **may need** refreshing, not that a specific
 Skill was checked or is stale. Run setup in each relevant project, previewing
-with `specgit setup --dry-run`. Setup refreshes only recorded, owned assets
-whose current content matches the record; manual edits, foreign files and missing
-recorded assets keep their existing conflict protection. Update does not invoke
+with `specgit setup --dry-run`. Setup refreshes recorded assets and complete,
+unique managed blocks when ownership and boundaries are proven, including edited
+body text. It preserves bytes outside blocks; unknown ownership, damaged/duplicate
+markers and missing recorded assets remain conflicts. This does not authorize
+uninstall or rollback to erase later edits. Update does not invoke
 setup, scan projects or refresh any project asset. Checks, previews, no-op and
 failed updates do not report this successful-replacement guidance.
 
@@ -862,10 +864,11 @@ another linked worktree still has a declaration or SpecGit private state.
 
 Init guidance owns one marked block in `AGENTS.md` (and mirrored `CLAUDE.md`).
 A generated block ends with a `<!-- specgit:v2:sha256 <digest> -->` line over its
-LF-normalized content, so any later runtime can refresh or remove an unmodified
-block without this worktree's receipt. A block without a digest is owned only when
-it exactly matches a released v2 render or the worktree receipt. An edited block is
-an ownership conflict and stays unchanged. When `.specgit.yaml` is missing,
+LF-normalized content. Refresh may replace edited body text when the receipt proves
+ownership and the block has complete, unique boundaries. A block without a digest
+is owned only when it exactly matches a released v2 render or the worktree receipt.
+Damaged/duplicate markers or unknown ownership remain conflicts; uninstall and
+rollback preserve later edits. When `.specgit.yaml` is missing,
 `init --config-file` also uses that declaration to recognize the existing block.
 
 The JSON `local_exclusion` result reports exclusions and already tracked files.

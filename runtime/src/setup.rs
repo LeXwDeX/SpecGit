@@ -143,6 +143,7 @@ fn instruction_change(
     root: &Path,
     old: Option<&HostRegistration>,
     uninstall: bool,
+    refresh_proven: bool,
 ) -> Result<(Change, Option<HostRegistration>), Diagnostic> {
     if old.is_some_and(|r| r.root != root) {
         return Err(conflict_at(
@@ -208,11 +209,11 @@ fn instruction_change(
         };
         if before.matches(start).count() != 1
             || before.matches(end).count() != 1
-            || !old.block.contains(start)
-            || !old.block.contains(end)
+            || old.block.matches(start).count() != 1
+            || old.block.matches(end).count() != 1
             || before.contains(other_start)
             || before.contains(other_end)
-            || before.matches(&old.block).count() != 1
+            || (before.matches(&old.block).count() != 1 && (uninstall || !refresh_proven))
         {
             return Err(conflict_at(
                 host,
@@ -221,18 +222,43 @@ fn instruction_change(
                 "The managed host instruction block was edited or removed.",
             ));
         }
-        let block = format!(
-            "{}{generated}\n",
-            if old.block.starts_with("\n\n") {
-                "\n\n"
-            } else {
-                ""
-            }
-        );
-        (
-            before.replacen(&old.block, if uninstall { "" } else { &block }, 1),
-            block,
-        )
+        let start_at = before.find(start).expect("unique start checked");
+        let end_at = before.find(end).expect("unique end checked") + end.len();
+        let old_start = old
+            .block
+            .find(start)
+            .expect("unique recorded start checked");
+        let old_end = old.block.find(end).expect("unique recorded end checked") + end.len();
+        if start_at >= end_at || old_start >= old_end {
+            return Err(conflict_at(
+                host,
+                &guidance.path,
+                None,
+                "The managed host instruction markers are damaged.",
+            ));
+        }
+        if before.matches(&old.block).count() == 1 {
+            let block = format!(
+                "{}{generated}{}",
+                if old.block.starts_with("\n\n") {
+                    "\n\n"
+                } else {
+                    ""
+                },
+                if old.block.ends_with('\n') { "\n" } else { "" }
+            );
+            (
+                before.replacen(&old.block, if uninstall { "" } else { &block }, 1),
+                block,
+            )
+        } else {
+            // Only the region between the unique markers is owned; surrounding
+            // manual bytes remain exactly as they were.
+            (
+                format!("{}{}{}", &before[..start_at], generated, &before[end_at..]),
+                generated,
+            )
+        }
     } else {
         if [HOST_START, HOST_END, LEGACY_START, LEGACY_END]
             .iter()
@@ -520,21 +546,21 @@ mod tests {
         let path = root.join("AGENTS.md");
         let foreign = b"User CRLF\r\nUser LF\n";
         std::fs::write(&path, foreign).unwrap();
-        let (first, registration) = instruction_change("codex", &root, None, false).unwrap();
+        let (first, registration) = instruction_change("codex", &root, None, false, false).unwrap();
         let registration = registration.unwrap();
         assert!(!registration.block.contains('\r'));
         let first = first.after.unwrap();
         assert!(first.starts_with(foreign));
         std::fs::write(&path, &first).unwrap();
         let (refreshed, _) =
-            instruction_change("codex", &root, Some(&registration), false).unwrap();
+            instruction_change("codex", &root, Some(&registration), false, false).unwrap();
         assert_eq!(refreshed.after.unwrap(), first);
         let original = String::from_utf8(first).unwrap();
         let edited = original.replace("stays project-only", "User edit");
         assert_ne!(edited, original);
         std::fs::write(&path, edited).unwrap();
         assert_eq!(
-            instruction_change("codex", &root, Some(&registration), false)
+            instruction_change("codex", &root, Some(&registration), false, false)
                 .err()
                 .unwrap()
                 .code,
