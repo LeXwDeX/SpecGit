@@ -7,7 +7,9 @@ Open your Agent in the target repository and copy its
 or [中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
 to request actual inspection and conflict-free maintenance, not installation replay.
 The request authorizes a separate verified stable update when needed and chooses
-manual observation for unknown/unavailable capability. It does not authorize
+manual observation for unknown/unavailable capability only with new/default-false
+or existing-false `native_auto_merge`. The flag sets it to false; an existing true
+preference needs a specific decision before changing it. It does not authorize
 platform settings, Issue/PR writes, commits, pushes, merges or releases.
 Confirm the actual CLI path/version; do not silently reinstall if missing.
 
@@ -30,7 +32,9 @@ Resolve reported capability choices explicitly; do not ignore diagnostics. Since
 
 For v1 use the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), not retired `init --force`, `finish` or `bind`. Replacing the binary does not migrate the project.
 
-Register only the active host. Since 2.4 setup is permanently project-only:
+Add only the active host when needed. Setup also refreshes all recorded hosts;
+`--agent` does not restrict refresh to that host. Review/report every host's asset
+changes, including shared Skill refresh. Since 2.4 setup is permanently project-only:
 `--scope project` is the default and the only scope value, hooks invoke the
 installed shared executable directly with no global setup prerequisite, and the
 retired global options (`--root`, `--provider`, `--api-host`, `--register-*`,
@@ -55,8 +59,10 @@ integration. Written registration is not proof of import, event triggering or
 notification delivery; reload and verify where needed.
 
 2.8 supports repeatable `--hook-purpose guard|context|observe`, or `none` for no
-new hooks. Omitted purposes preserve exact recorded modes on refresh. `none` never
-uninstalls existing hooks/Git guard; explicit purposes and agents remain additive.
+new hooks. Omit purposes on ordinary refresh to preserve exact recorded modes.
+Explicit purposes apply to all recorded and newly selected hosts; changes need
+authorization for every affected host. `none` preserves existing purposes and never
+uninstalls hooks/Git guard, but their assets can still refresh. Agents remain additive.
 Choose only minimal real capability and authorized use; upgrade never silently
 enables idle wake. See the guide for selective-receipt downgrade limits and checks.
 

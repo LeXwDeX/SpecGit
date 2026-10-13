@@ -130,10 +130,13 @@ configuration is authoritative for a refresh. For fresh setup, leave automatic
 merge/closure preferences at their defaults unless the user already chose them.
 
 If native capabilities are unavailable, `init` may require an explicit
-`--manual-observe` choice. The README installation prompt explicitly selects this
-fallback: when that is the user's request, include `--manual-observe` in both the
-preview and apply commands without asking again. Otherwise present that specific
-choice unless it is already selected in the session. Do not weaken protections or administer the
+`--manual-observe` choice, which writes `agent.native_auto_merge=false`. The README
+request permits that fallback for new/default-false or existing-false configuration.
+If the current, restored or supplied preference is true, obtain a specific decision
+to change it before the changed preview/apply sequence. Continue independent reads.
+Once authorized, use the same flag/configuration in check, preview and apply, then
+read back the preference. Otherwise present that specific choice unless already
+selected in the session. Do not weaken protections or administer the
 forge to make initialization pass. An applicable preview with no conflicts is
 sufficient to continue the user's authorized local setup without another generic
 confirmation.
@@ -142,11 +145,12 @@ Read back `.specgit.yaml` and the managed project guidance after initialization.
 Run `specgit status --remote <remote> --json` and `specgit doctor --provider <provider> --remote <remote> --json` and preserve their actual
 reported state. Do not create a test Issue or PR to demonstrate installation.
 
-## 4. Register the active agent
+## 4. Select the active agent and review the full refresh scope
 
 Select the host running this task; multiple installed host directories do not mean
-the user wants all of them configured, and noninteractive operation never guesses
-a host. Inspect `specgit setup --help` and preview the integration, passing the
+the user wants new hosts added, and noninteractive operation never guesses
+a host. Setup also refreshes every previously recorded host; `--agent` does not
+confine its effects to that host. Inspect `specgit setup --help` and preview the integration, passing the
 host explicitly and repeatably through `--agent`:
 
 | Active host | Setup selection |
@@ -164,11 +168,15 @@ specgit setup --agent codex --dry-run --json
 specgit setup --agent codex --json
 ```
 
-These calls preserve recorded modes on refresh. On 2.8, choose minimal authorized
+These calls omit purposes to preserve recorded modes on ordinary refresh. Explicit
+purposes affect every recorded and newly selected host, so purpose changes need
+authorization for all affected hosts. Review/report every host's asset changes,
+including shared Skill refresh. On 2.8, choose minimal authorized
 purposes for a new host with `--hook-purpose guard|context|observe` (repeatable),
 or `--hook-purpose none` for guidance/Skill only in both preview and apply.
-`none` adds no hooks and never removes existing hooks or Git guard. See the
-[maintenance guide](agent-project-refresh.md#5-refresh-only-the-active-host) for
+`none` adds no hooks, preserves existing purposes and never removes hooks or Git guard.
+It does not skip existing hosts' asset refresh. See the
+[maintenance guide](agent-project-refresh.md#5-review-the-full-host-refresh-scope) for
 capability checks, additive choices and selective-receipt downgrade limits.
 
 Project integration remains project-only: `--scope project` is the default and

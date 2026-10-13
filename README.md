@@ -20,7 +20,8 @@ and carry out the installation and initialization described there for this machi
 and the current repository. Install the latest stable SpecGit ZIP from GitHub
 Releases, verify its signature and SHA-256, extract it, initialize the project with specgit init, and configure the
 integration for the agent running this task. Use manual observation if native
-capabilities cannot be verified, preserve existing settings, and do not enable new
+capabilities cannot be verified and native_auto_merge is already false or uses the
+new-project default. If it is true, ask before changing it to false. Preserve other settings and do not enable new
 merge or closure automation. Use the repository and agent context already available;
 ask only for information that cannot be determined. Finish the
 installation and verification, rather than only giving me commands to run.
@@ -48,8 +49,11 @@ procedure. Open your Agent in the target repository and copy its
 [English request](docs/agent-project-refresh.md#english-request) or
 [中文请求](docs/agent-project-refresh.md#中文请求). The request asks the Agent to
 actually inspect and apply safe local maintenance, with a separate verified stable
-CLI update when needed. It preserves project settings and checkpoints and selects
-manual observation when native capability cannot be verified. It does not authorize
+CLI update when needed. It preserves project settings and checkpoints. Manual
+observation sets `native_auto_merge=false`; an existing true preference needs a
+specific decision first. Setup refresh includes all recorded hosts, not only the
+`--agent` selection. Ordinary refresh omits purposes and reviews every host's effects.
+Purpose changes need authorization for all affected hosts. The request does not authorize
 Issue/PR writes, commits, pushes, merges, releases or platform settings changes.
 
 ## How delivery works
@@ -110,7 +114,7 @@ Auto-merge preferences do not grant permission to change native protections.
 ## Agent integration and upgrades
 
 Project integration remains **project-only**: `specgit setup` writes owned
-project entry points for the explicitly selected agents
+project entry points for all recorded agents plus explicitly selected agents
 (`--agent generic|claude|codex|opencode`, repeatable), and `--scope project` is
 the default and only scope. It never copies the runtime binary into a project
 and never installs global or host-level integration state; project hooks invoke
@@ -156,7 +160,8 @@ and replays Git's standard ref stdin for the existing user hook.
 
 After CLI upgrades, use the [project maintenance guide](docs/agent-project-refresh.md)
 to verify the executable selected by PATH and refresh the existing project and host
-integration. Existing settings and recorded hook purposes are preserved. In 2.8,
+integration. Omit hook purposes to preserve recorded modes; explicit purposes affect
+all recorded and newly selected hosts. Review their effects, including shared Skill refresh. In 2.8,
 new custom OpenCode idle wake requires separate capability confirmation and explicit
 `--opencode-async-rewake` with observe/context; compatibility hooks alone do not enable it.
 
