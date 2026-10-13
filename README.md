@@ -125,9 +125,10 @@ are removed; `watch`, `hook` and `inbox` state is always Git-private. A custom
 OpenCode fork can opt in to claude-code-format project hooks with the explicit
 `--opencode-claude-hooks` choice (requires `--agent opencode`); official
 OpenCode keeps the skill and guidance only.
-`specgit init` stays unchanged and project-scoped — agent integration is
-optional and separate. Setup preserves unrelated guidance, reports ownership
-conflicts, and preserves manual edits and foreign hooks. Written registration
+`specgit init` stays project-scoped — agent integration is optional and separate.
+Setup refreshes recorded assets and complete, proven-owned blocks, including edited
+body text. It preserves bytes outside blocks, configuration, checkpoints and foreign
+hooks; unknown ownership or damaged/duplicate markers remain conflicts. Registration
 is reported separately from actual host discovery or event delivery; a reload, a
 host trust review (Codex `/hooks`), or another turn may be needed to verify the
 host. Coordinated removal of a whole
@@ -138,8 +139,8 @@ project-scope `--uninstall` covers only the recorded agent assets.
 The only user-level asset is the explicitly installed Skill file; no global
 hooks, state or receipts. To opt in, preview `specgit skill --user --dry-run --json`,
 then run `specgit skill --user --json`. It owns only
-`~/.agents/skills/specgit-native/SKILL.md` (Windows uses `%USERPROFILE%`) and backs
-up edited managed content before refreshing. `--remove` keeps user edits and
+`~/.agents/skills/specgit-native/SKILL.md` (Windows uses `%USERPROFILE%`) with a
+transaction backup for recovery. `--remove` keeps user edits and
 foreign files; `--refresh-only` skips missing or foreign files. After a successful
 `update`, the new executable refreshes an already managed user Skill, never
 installs one by default. Refresh failure retains the binary and reports the
@@ -164,6 +165,8 @@ integration. Omit hook purposes to preserve recorded modes; explicit purposes af
 all recorded and newly selected hosts. Review their effects, including shared Skill refresh. In 2.8,
 new custom OpenCode idle wake requires separate capability confirmation and explicit
 `--opencode-async-rewake` with observe/context; compatibility hooks alone do not enable it.
+The current runtime is 2.9.0. After project updates, run status and doctor, read back
+the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before
 replacing its declaration or lifecycle workflows. `finish`, `accept`, `bind` and

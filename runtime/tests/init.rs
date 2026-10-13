@@ -1892,8 +1892,41 @@ fn manual_declaration_edits_refresh_owned_blocks_and_rollback_receipt_together()
         .unwrap()
         .replace("原因、范围、方案", "用户编辑");
     fs::write(&agents, &edited).unwrap();
-    assert_eq!(f.run(&["init"])["exit"], 3);
-    assert_eq!(fs::read_to_string(agents).unwrap(), edited);
+    assert_eq!(f.run(&["init"])["exit"], 0);
+    let refreshed = fs::read_to_string(agents).unwrap();
+    assert!(refreshed.contains("原因、范围、方案"));
+    assert!(!refreshed.contains("用户编辑"));
+}
+
+#[test]
+fn cli_init_refreshes_edited_recorded_block_using_real_asset_journal() {
+    let f = Fixture::new();
+    let agents = f.root.join("AGENTS.md");
+    fs::write(&agents, "manual prefix\n").unwrap();
+    let first = f.run(&["init", "--provider", "github"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    let receipt = f.root.join(".git/specgit-v2/guidance.json");
+    let declaration = fs::read(f.root.join(".specgit.yaml")).unwrap();
+    let original = fs::read_to_string(&agents).unwrap();
+    let edited = original.replace("SpecGit 2", "edited managed block");
+    fs::write(&agents, &edited).unwrap();
+    let before_receipt = fs::read(&receipt).unwrap();
+    let preview = f.run(&["init", "--dry-run"]);
+    assert_eq!(preview["exit"], 0, "{preview}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), edited);
+    assert_eq!(fs::read(&receipt).unwrap(), before_receipt);
+    let applied = f.run(&["init"]);
+    assert_eq!(applied["exit"], 0, "{applied}");
+    let current = fs::read_to_string(&agents).unwrap();
+    assert!(current.starts_with("manual prefix\n"));
+    assert!(current.contains("## SpecGit 2"));
+    assert!(!current.contains("edited managed block"));
+    assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), declaration);
+    assert_eq!(f.run(&["status"])["exit"], 0);
+    assert_eq!(f.run_raw(&["doctor", "--provider", "github"])["exit"], 0);
+    let second = f.run(&["init", "--dry-run"]);
+    assert_eq!(second["exit"], 0, "{second}");
+    assert_eq!(f.run(&["init"])["evidence"]["transaction"]["changes"], 0);
 }
 
 #[test]

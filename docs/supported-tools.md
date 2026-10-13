@@ -1,6 +1,6 @@
 # Supported coding agents
 
-SpecGit 2.8 provides a native CLI and managed agent integrations. One shared
+SpecGit 2.9.0 provides a native CLI and managed agent integrations. One shared
 user-level `specgit` executable serves every repository and worktree.
 `specgit setup` refreshes all recorded agents plus explicitly selected
 agents (`--agent generic|claude|codex|opencode`, repeatable); the flag does not
@@ -10,11 +10,16 @@ value, writing documented checkout assets with a worktree-private receipt.
 Setup never copies the runtime binary into a project and never installs user-global
 host integration assets or state; project hooks invoke the installed executable
 directly, so there is no global setup prerequisite.
-`specgit init` remains project-scoped and unchanged; agent integration stays
+Refresh replaces recorded assets and complete, uniquely marked managed blocks,
+including edited body text, while preserving bytes outside blocks, configuration,
+checkpoints and other tools' hooks. Unknown ownership and damaged/duplicate markers
+remain conflicts. `specgit init` remains project-scoped; agent integration stays
 optional and separate. Written registration is not proof of host import or
 notification delivery. Follow the [installation guide](agent-install.md) for
 the matching host registration option and verification steps. With the CLI already
-installed, use the [project maintenance guide](agent-project-refresh.md) instead.
+installed, use the [project maintenance guide](agent-project-refresh.md) instead;
+unknown optional remote capability does not block applicable local refresh, but init
+still requires an explicit manual-observation choice where its preference requires one.
 
 ## Project integration assets
 

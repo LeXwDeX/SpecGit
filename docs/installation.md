@@ -58,6 +58,10 @@ is the canonical Agent procedure, with English/Chinese copyable requests. It
 separates binary update from project refresh, classifies missing declarations and
 legacy/conflicting assets, and preserves receipts, checkpoints and host choices.
 Do not replay first installation or delete private state to repair a project.
+In 2.9.0, refresh updates recorded assets and complete unique managed blocks even
+when their body text was edited; malformed/duplicate markers or unknown ownership
+remain conflicts. Follow the maintenance guide's final status, doctor, readback and
+dry-run checks after all updates.
 
 From 2.6 on, prefer the built-in update. It needs an authenticated `gh` session
 and Cosign, and enforces the verification above:
