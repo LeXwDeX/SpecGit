@@ -1,5 +1,9 @@
 # Install and initialize SpecGit — agent instructions
 
+**CLI already installed?** Use the [project maintenance guide](agent-project-refresh.md)
+and its English/Chinese copyable requests. It covers safe inspection, separate CLI
+updates and project refresh without replaying this first-install procedure.
+
 Carry out the user's requested installation on their selected machine and Git
 repository. This is a local setup task: it does not include implementing a feature,
 creating an Issue/PR, committing, pushing, merging or publishing a release.
@@ -92,7 +96,10 @@ incomplete setup, even if the absolute-path smoke checks pass.
 ## 3. Initialize the selected repository
 
 In the actual target repository, inspect its `AGENTS.md`, Git status, remotes and
-existing `.specgit.yaml`. Preserve unrelated changes. Determine the provider and
+existing `.specgit.yaml`. Classify it using the [maintenance guide](agent-project-refresh.md#3-classify-before-project-writes):
+a missing declaration with private state is not fresh adoption. Restore the original
+configuration; never delete receipts, private state or hooks to start over.
+Preserve unrelated changes. Determine the provider and
 intended remote from the repository, and use the native default target unless the
 user has selected another branch. Do not infer `main` from this document.
 
@@ -132,7 +139,7 @@ sufficient to continue the user's authorized local setup without another generic
 confirmation.
 
 Read back `.specgit.yaml` and the managed project guidance after initialization.
-Run `specgit status --json` and `specgit doctor --provider <provider> --json` and preserve their actual
+Run `specgit status --remote <remote> --json` and `specgit doctor --provider <provider> --remote <remote> --json` and preserve their actual
 reported state. Do not create a test Issue or PR to demonstrate installation.
 
 ## 4. Register the active agent
@@ -156,6 +163,13 @@ For example, in Codex:
 specgit setup --agent codex --dry-run --json
 specgit setup --agent codex --json
 ```
+
+These calls preserve recorded modes on refresh. On 2.8, choose minimal authorized
+purposes for a new host with `--hook-purpose guard|context|observe` (repeatable),
+or `--hook-purpose none` for guidance/Skill only in both preview and apply.
+`none` adds no hooks and never removes existing hooks or Git guard. See the
+[maintenance guide](agent-project-refresh.md#5-refresh-only-the-active-host) for
+capability checks, additive choices and selective-receipt downgrade limits.
 
 Project integration remains project-only: `--scope project` is the default and
 the only scope value. Setup writes documented checkout assets with a
@@ -264,8 +278,11 @@ hook support can opt in through `--opencode-claude-hooks` (requires
 `--agent opencode`): setup then generates project `.opencode/hooks.json` with
 top-level event entries, one single-quoted command string
 (`<executable> hook --event <event>`, no separate args entries) and
-`inputFormat: claude-code`, without an asynchronous observer. Observe
-pending events manually with bounded `specgit watch`. Verify actual
+`inputFormat: claude-code`. In 2.8, compatibility hooks alone do not enable an
+asynchronous observer. Custom idle wake additionally requires confirmed real
+`asyncRewake` capability, explicit user authorization, `--opencode-async-rewake`
+and observe/context purposes. An upgrade must not silently enable it. Otherwise
+observe pending events manually with bounded `specgit watch`. Verify actual
 deny/allow/context behavior on the installed fork before relying on it. The
 [observed custom-host behavior](supported-tools.md#observed-custom-host-behavior)
 records working tool-event context and the SessionStart delivery gap in

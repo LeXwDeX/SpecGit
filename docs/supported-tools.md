@@ -1,6 +1,6 @@
 # Supported coding agents
 
-SpecGit 2.4 provides a native CLI and managed agent integrations. One shared
+SpecGit 2.8 provides a native CLI and managed agent integrations. One shared
 user-level `specgit` executable serves every repository and worktree.
 `specgit setup` writes integration assets only for explicitly selected
 agents (`--agent generic|claude|codex|opencode`, repeatable) and is
@@ -12,7 +12,8 @@ directly, so there is no global setup prerequisite.
 `specgit init` remains project-scoped and unchanged; agent integration stays
 optional and separate. Written registration is not proof of host import or
 notification delivery. Follow the [installation guide](agent-install.md) for
-the matching host registration option and verification steps.
+the matching host registration option and verification steps. With the CLI already
+installed, use the [project maintenance guide](agent-project-refresh.md) instead.
 
 ## Project integration assets
 
@@ -32,7 +33,15 @@ still follows the host's documented paths; installation alone proves no import.
 | `claude` | `.claude/skills/specgit-native/` copy, root `CLAUDE.md` guidance, `.claude/settings.json` hooks |
 | `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) guidance plus `.codex/hooks.json` |
 | `opencode` (official) | `.agents` skill and root `AGENTS.md` guidance only; no hooks |
-| `opencode` custom fork with `--opencode-claude-hooks` | Adds `.opencode/hooks.json` with top-level event entries, one single-quoted command string (`<executable> hook --event <event>`, no separate args entries) and `inputFormat: claude-code`; no asynchronous observer — observe manually with bounded `watch` |
+| `opencode` custom fork with `--opencode-claude-hooks` | Adds selected compatible hooks in `.opencode/hooks.json` with `inputFormat: claude-code`; idle wake also requires explicit `--opencode-async-rewake`, confirmed capability and observe/context purposes |
+
+In 2.8, select minimal authorized purposes with repeatable `--hook-purpose
+guard|context|observe`, or `none` for no new hooks. Omission preserves exact recorded
+modes on refresh. `none` never uninstalls existing hooks or Git guard; explicit
+purposes add to existing choices. Claude/Codex hook entries in this table depend
+on that selection. Official OpenCode and generic remain guidance/Skill only. See
+the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes)
+for per-host declined reasons and older-client downgrade limits.
 
 Every project agent selection writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude additionally receives its
@@ -77,8 +86,12 @@ this integration; it receives the skill and guidance only. The
 `--opencode-claude-hooks` opt-in targets a custom OpenCode fork with
 claude-compatible hooks. Qualification is specific to the installed build,
 not a guarantee of complete semantics or compatibility with every fork. The
-generated hooks never launch an asynchronous observer, so observe manually
-with bounded `watch`. The fork's `/import-claude-hooks` command is an
+compatibility flag alone enables no asynchronous observer. In 2.8, custom idle
+wake needs real `asyncRewake` capability confirmation, user authorization and
+`--opencode-async-rewake` with observe/context. Upgrade alone never opts in.
+Without verified delivery, use bounded `watch`/`inbox` or manual continuation.
+Configured idle wake is not proof of actual context or idle delivery.
+The fork's `/import-claude-hooks` command is an
 interactive LLM prompt that reads the project's Claude settings and asks about
 each entry individually — it is not an automatic read, and entries that native
 setup already owns must not be imported again as unmanaged duplicates. In every case setup reports

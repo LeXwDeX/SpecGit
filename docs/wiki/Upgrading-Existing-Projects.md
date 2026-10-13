@@ -1,6 +1,21 @@
 # Upgrading Existing Projects and Agent Integrations
 
-Use the [installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md) to verify a stable native release and update the shared user binary. All repositories/worktrees use that operational CLI. Confirm PATH with `command -v specgit` (`Get-Command specgit` on Windows) and `specgit --human --version`; do not pin an obsolete 2.1.x release.
+**Shared CLI already installed:** use the canonical
+[project maintenance guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md).
+Open your Agent in the target repository and copy its
+[English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)
+or [中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
+to request actual inspection and conflict-free maintenance, not installation replay.
+The request authorizes a separate verified stable update when needed and chooses
+manual observation for unknown/unavailable capability. It does not authorize
+platform settings, Issue/PR writes, commits, pushes, merges or releases.
+Confirm the actual CLI path/version; do not silently reinstall if missing.
+
+Before the abbreviated v2 sequence below, classify the project using that guide.
+A missing declaration with private state is not fresh adoption: restore its original
+configuration/backup. Preserve receipts, checkpoints and edited/foreign assets;
+never delete state or hooks to force a refresh. Carry the same selected configuration,
+remote and capability options through inspection, preview and apply.
 
 For a v2 project, retain its existing declaration and preview/apply the refresh in the target repository:
 
@@ -31,11 +46,19 @@ specgit setup --agent codex --json
 Preserve existing settings, actual host guidance, manual edits and foreign
 hooks. Codex/Claude have managed hooks; the official OpenCode build receives
 skill/guidance only — a custom OpenCode fork can opt in to claude-code-format
-project hooks with `--opencode-claude-hooks` (requires `--agent opencode`); the
-generated hooks have no asynchronous observer, so observe manually with bounded
-`watch`. Do not copy Claude settings hooks into an unverified OpenCode
+project hooks with `--opencode-claude-hooks` (requires `--agent opencode`). In 2.8,
+idle wake also needs explicit `--opencode-async-rewake`, confirmed real capability,
+user authorization and observe/context purposes. Compatibility alone enables no
+asynchronous observer; use bounded `watch` or manual continuation when delivery
+is unavailable. Do not copy Claude settings hooks into an unverified OpenCode
 integration. Written registration is not proof of import, event triggering or
 notification delivery; reload and verify where needed.
+
+2.8 supports repeatable `--hook-purpose guard|context|observe`, or `none` for no
+new hooks. Omitted purposes preserve exact recorded modes on refresh. `none` never
+uninstalls existing hooks/Git guard; explicit purposes and agents remain additive.
+Choose only minimal real capability and authorized use; upgrade never silently
+enables idle wake. See the guide for selective-receipt downgrade limits and checks.
 
 Upgrading from 2.3: existing project receipts are refreshed into the 2.4
 format (which omits `shared_root`) locally, preserving foreign content and
