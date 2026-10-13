@@ -4,6 +4,16 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.8.0
+
+- Clarify optional Milestone goals, Issue specifications, PR/MR integration and separately authorized releases. Keep TDD and current-head CI as evidence, not automatic acceptance or write permission.
+- Add optional read-only GitLab environment diagnostics and native Issue Milestone context. Keep unknown facts explicit, preserve public Issue types, validate GitLab milestone URLs by project IID, and prevent optional metadata timeouts from invalidating completed core inspection reads.
+- Add `setup --hook-purpose guard|context|observe|none` for Agent-selected project integration. Preserve existing hooks and manually edited assets; `none` adds no new hooks, and ordinary refresh does not enable new purposes.
+- Add explicit `--opencode-async-rewake` for custom OpenCode hosts whose callback protocol has been checked. Bounded Stop observation can offer pending notices to the original session without acknowledging them or granting permission. Cancellation received by the adapter, timeout and repeated Stop callbacks stay silent; host user-stop suppression requires separate qualification. Configuration alone does not verify host delivery; unsupported hosts retain bounded polling or manual continuation.
+- Keep the existing setup Rust options and entrypoints. Older CLI versions may reject new selective no-hook receipts; preserve assets and use the current CLI's managed uninstall or recorded rollback rather than force-overwriting them.
+
+Scope: [#693](https://github.com/LeXwDeX/SpecGit/issues/693), [#694](https://github.com/LeXwDeX/SpecGit/issues/694), [#695](https://github.com/LeXwDeX/SpecGit/issues/695), [#698](https://github.com/LeXwDeX/SpecGit/issues/698), [#697](https://github.com/LeXwDeX/SpecGit/issues/697), [#699](https://github.com/LeXwDeX/SpecGit/issues/699).
+
 # 2.7.0
 
 - Hooks classify shell input per segment, allow common read-only `gh`/`glab`/`specgit` reads and descriptor or `/dev/null` redirects, and catch writes after `&&`, assignments and wrappers. Allowed PreToolUse calls emit no context; PostToolUse emits only pending notices. Git identity resolution uses fewer processes.

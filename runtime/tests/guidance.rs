@@ -2,6 +2,92 @@ use specgit::{
     config::{Declaration, Language},
     guidance,
 };
+
+#[test]
+fn skill_selects_minimal_hooks_and_respects_delivery_and_stop_boundaries() {
+    let source = include_str!("../assets/SKILL.md");
+    assert!(source.lines().count() <= 198);
+    let skill = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    for clause in [
+        "--hook-purpose",
+        "--opencode-async-rewake",
+        "PR-only",
+        "user stop",
+        "old head or attempt",
+        "no automatic retry",
+        "least hook purposes",
+    ] {
+        assert!(skill.contains(clause), "missing rule: {clause}");
+    }
+}
+
+#[test]
+fn distributed_skill_defines_native_goals_environment_and_verification() {
+    let skill = include_str!("../assets/SKILL.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for clause in [
+        "Use native gh/glab proactively; do not wait for a SpecGit wrapper",
+        "A Milestone is an optional goal or plan container",
+        "Small fixes need no Milestone",
+        "An Issue is the specification and work ledger for an independently verifiable goal",
+        "Organize multiple Issues by dependencies",
+        "Closing every Issue alone does not prove Milestone acceptance",
+        "A PR/MR is a change integration unit, not a version",
+        "A Release is a separate publication result",
+        "deployment (GitLab.com, Self-Managed or Dedicated)",
+        "server version, CE/EE edition, subscription tier",
+        "Keep the gh/glab CLI version separate from the server version",
+        "Unknown stays unknown; neither version nor tier proves actual capability",
+        "Start with read-only discovery",
+        "no artificial failure is needed",
+        "For documentation, check facts, links and applicable repository checks",
+        "Blocked validation is not a pass",
+        "Passing CI alone proves neither acceptance nor delivery",
+        "`native_auto_merge=false` disables auto-merge registration, not an already authorized ordinary merge",
+    ] {
+        assert!(skill.contains(clause), "missing Skill rule: {clause}");
+    }
+}
+
+#[test]
+fn generated_goal_entry_is_short_and_points_to_the_skill_in_both_languages() {
+    for (language, clauses) in [
+        (
+            Language::En,
+            [
+                "Use native gh/glab proactively",
+                "Milestone is optional",
+                "PR/MR integrates changes, not a version",
+                "Release needs separate authorization",
+            ],
+        ),
+        (
+            Language::Zh,
+            [
+                "主动使用原生 gh/glab",
+                "Milestone 可选",
+                "PR/MR 集成变更，不代表版本",
+                "Release 需要独立授权",
+            ],
+        ),
+    ] {
+        let prose = guidance::render(&Declaration {
+            language,
+            ..Declaration::default()
+        });
+        for clause in clauses {
+            assert!(prose.contains(clause), "missing entry rule: {clause}");
+        }
+        assert!(prose.lines().count() <= 26, "keep the entry short");
+        assert!(
+            !prose.contains("Self-Managed"),
+            "details belong in the Skill"
+        );
+    }
+}
+
 #[test]
 fn refresh_preserves_exact_foreign_bytes_and_detects_damaged_or_edited_markers() {
     let t = tempfile::tempdir().unwrap();

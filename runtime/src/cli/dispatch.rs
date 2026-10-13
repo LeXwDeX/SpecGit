@@ -54,17 +54,23 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             scope: _,
             agent,
             opencode_claude_hooks,
+            hook_purpose,
+            opencode_async_rewake,
             uninstall,
             dry_run,
             rollback,
         } => {
-            specgit::setup::project::run(
+            specgit::setup::project::run_with_hooks(
                 specgit::setup::project::Options {
                     agents: agent,
                     opencode_claude_hooks,
                     uninstall,
                     dry_run,
                     rollback,
+                },
+                specgit::setup::HookOptions {
+                    purposes: hook_purpose,
+                    opencode_async_rewake,
                 },
                 process,
                 &cwd,

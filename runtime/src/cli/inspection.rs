@@ -81,10 +81,11 @@ pub(super) async fn doctor(
     let failed = probes
         .iter()
         .any(|p| !matches!(p.status, Capability::Available | Capability::NotChecked));
+    let environment = probe::environment(&reader).await;
     let mut report = Report::success(
         "doctor",
         if failed { "unknown" } else { "ready" },
-        serde_json::json!({"probes":probes,"write_permissions":write_permissions}),
+        serde_json::json!({"probes":probes,"write_permissions":write_permissions,"environment":environment}),
     );
     if failed {
         report.exit = 3;

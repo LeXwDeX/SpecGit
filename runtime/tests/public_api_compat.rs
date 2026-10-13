@@ -4,6 +4,42 @@ use specgit::delivery_model::{CandidateRead, CandidateSearch, Pagination, Projec
 use specgit::identity::{Provider, Repository};
 
 #[test]
+fn issue_keeps_its_construction_and_checkpoint_contract() {
+    use specgit::delivery_model::{Issue, IssueRead, MilestoneContext};
+    let issue = Issue {
+        id: 1,
+        title: "fix: old client".into(),
+        body: "Why".into(),
+        labels: vec![],
+        state: "open".into(),
+        updated_at: "now".into(),
+    };
+    let serialized = serde_json::to_value(&issue).unwrap();
+    assert_eq!(serialized.as_object().unwrap().len(), 6);
+    assert_eq!(serde_json::from_value::<Issue>(serialized).unwrap(), issue);
+    let Issue {
+        id,
+        title,
+        body,
+        labels,
+        state,
+        updated_at,
+    } = issue;
+    let read = IssueRead {
+        issue: Issue {
+            id,
+            title,
+            body,
+            labels,
+            state,
+            updated_at,
+        },
+        milestone: MilestoneContext::None,
+    };
+    assert_eq!(read.issue.id, 1);
+}
+
+#[test]
 fn candidate_read_keeps_its_previous_fields() {
     let read = CandidateRead {
         issues: vec![],

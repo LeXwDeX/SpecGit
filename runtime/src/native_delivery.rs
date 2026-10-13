@@ -1,4 +1,5 @@
 //! Delivery operations dispatch to concrete native protocols; observers receive only ForgeRead.
+pub use crate::delivery_model::IssueRead;
 pub use crate::delivery_model::{CandidateRead, CandidateSearch, Issue, PullRequest};
 pub use crate::forge_routes::prefix;
 use crate::{
@@ -25,6 +26,18 @@ pub async fn issue(
     match repo.provider {
         Provider::Github => github::issue(reader, repo, project_id, number).await,
         Provider::Gitlab => gitlab::issue(reader, repo, project_id, number).await,
+    }
+}
+/// Read an exact issue and its optional native goal context in one request.
+pub async fn issue_read(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<IssueRead, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::issue_read(reader, repo, project_id, number).await,
+        Provider::Gitlab => gitlab::issue_read(reader, repo, project_id, number).await,
     }
 }
 /// Open duplicate candidates only; kept for existing callers.

@@ -136,24 +136,27 @@ impl Fixture {
         self.run_raw_with_paths(args, vec![self.bin.clone()])
     }
     fn run_raw_with_budget(&self, args: &[&str], budget_ms: u64) -> Value {
+        let out = self.command_with_budget(args, budget_ms).output().unwrap();
+        let value: Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("stdout={:?}, stderr={:?}", out.stdout, out.stderr));
+        assert_eq!(value["exit"].as_i64(), out.status.code().map(i64::from));
+        value
+    }
+    fn command_with_budget(&self, args: &[&str], budget_ms: u64) -> Command {
         let mut paths = vec![self.bin.clone()];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
         // Short budgets require the feature-enabled fixture binary, not the installed release.
-        let out = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_specgit"));
+        command
             .current_dir(&self.root)
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("SPECGIT_FIXTURE_API_FILE", &self.state)
             .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", budget_ms.to_string())
             .args(args)
-            .arg("--json")
-            .output()
-            .unwrap();
-        let value: Value = serde_json::from_slice(&out.stdout)
-            .unwrap_or_else(|_| panic!("stdout={:?}, stderr={:?}", out.stdout, out.stderr));
-        assert_eq!(value["exit"].as_i64(), out.status.code().map(i64::from));
-        value
+            .arg("--json");
+        command
     }
     fn run_human(&self, args: &[&str]) -> Value {
         let mut paths = vec![self.bin.clone()];
@@ -176,6 +179,227 @@ impl Fixture {
     fn state(&self) -> Value {
         serde_json::from_slice(&fs::read(&self.state).unwrap()).unwrap()
     }
+}
+
+#[test]
+fn environment_does_not_add_reads_to_github_or_normal_init() {
+    for (provider, command) in [("github", "doctor"), ("github", "init"), ("gitlab", "init")] {
+        let f = Fixture::new();
+        let report = f.run(&[command, "--provider", provider]);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert!(report["evidence"]["environment"].is_null());
+        assert!(
+            !f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|call| call["endpoint"] == "metadata")
+        );
+    }
+    let f = Fixture::new();
+    let report = f.run(&["init", "--provider", "github", "--check"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert!(report["evidence"]["environment"].is_null());
+    assert!(
+        !f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["endpoint"] == "metadata")
+    );
+}
+
+#[test]
+fn optional_gitlab_environment_is_read_only_and_does_not_gate_core_readiness() {
+    for metadata in [
+        json!({"version":"18.4.0-ee","enterprise":true}),
+        json!({}),
+        json!({"__fixture_error":"403 Forbidden secret"}),
+        json!({"__fixture_error":"404 Not Found secret"}),
+        json!([]),
+    ] {
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["read_routes"] = json!({
+            "metadata": metadata,
+            "user": {"id":1,"username":"fixture"},
+            "projects/fixture%2Frepo": state["project"],
+            "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1": [],
+            "projects/7/protected_branches/preview": {"name":"preview"}
+        });
+        fs::write(&f.state, state.to_string()).unwrap();
+        let doctor = f.run_raw(&["doctor", "--provider", "gitlab"]);
+        assert_eq!(doctor["exit"], 0, "{doctor}");
+        assert_eq!(doctor["status"], "ready");
+        let environment = &doctor["evidence"]["environment"];
+        assert_eq!(environment["host"], "forge.example");
+        assert_eq!(environment["deployment"]["status"], "unknown");
+        assert_eq!(environment["subscription"]["status"], "unknown");
+        assert_report_matches_schema(&doctor);
+        let mut invalid = doctor.clone();
+        invalid["evidence"]["environment"]["raw"] = json!("forbidden");
+        assert!(jsonschema::draft202012::validate(&report_schema(), &invalid).is_err());
+        let report = f.run(&["init", "--provider", "gitlab", "--check"]);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert_eq!(report["evidence"]["environment"], *environment);
+        assert_eq!(report["evidence"]["written"], false);
+        assert_report_matches_schema(&report);
+        let check_calls = f.state()["calls"].as_array().unwrap().clone();
+        assert_eq!(check_calls.last().unwrap()["endpoint"], "metadata");
+        let human = f.run_human(&[
+            "init",
+            "--provider",
+            "gitlab",
+            "--check",
+            "--manual-observe",
+        ]);
+        assert_eq!(human["environment"], *environment);
+        if metadata.get("version").is_none() {
+            assert_eq!(environment["metadata_status"], "unknown");
+            assert_eq!(report["evidence"]["inspection"]["complete"], false);
+            assert_eq!(human["inspection"]["complete"], false);
+        }
+        assert!(!environment.to_string().contains("secret"));
+        let state = f.state();
+        let calls = state["calls"].as_array().unwrap();
+        assert!(calls.iter().all(|call| call["method"] == "GET"));
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call["endpoint"] == "metadata")
+                .count(),
+            3
+        );
+        assert!(!f.root.join(".specgit.yaml").exists());
+        let account = f.run_raw(&[
+            "doctor",
+            "--provider",
+            "gitlab",
+            "--account-only",
+            "--api-host",
+            "gitlab.com",
+        ]);
+        assert_eq!(account["exit"], 0, "{account}");
+        assert_eq!(
+            account["evidence"]["environment"]["deployment"]["value"],
+            "official_hosted"
+        );
+        assert_eq!(account["evidence"]["write_permissions"], "not_checked");
+        assert_report_matches_schema(&account);
+    }
+}
+
+#[cfg(unix)]
+fn hanging_metadata_fixture() -> Fixture {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let executable = f.bin.join("glab");
+    fs::rename(&executable, f.bin.join("native-fixture")).unwrap();
+    // Only metadata hangs. All required reads still use the real fixture protocol.
+    fs::write(
+        &executable,
+        "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = metadata ]; then\n    printf '%s' \"$$\" > \"$(dirname \"$0\")/metadata.pid\"\n    exec sleep 30\n  fi\ndone\nexec \"$(dirname \"$0\")/native-fixture\" \"$@\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    f
+}
+
+#[cfg(unix)]
+fn assert_metadata_reaped(f: &Fixture) {
+    let pid = fs::read_to_string(f.bin.join("metadata.pid")).unwrap();
+    assert!(
+        !Command::new("kill")
+            .args(["-0", &pid])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn optional_metadata_timeout_preserves_core_inspection_and_deadline() {
+    let f = hanging_metadata_fixture();
+    let started = Instant::now();
+    let report = f.run_raw_with_budget(
+        &[
+            "init",
+            "--provider",
+            "gitlab",
+            "--check",
+            "--manual-observe",
+        ],
+        2000,
+    );
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(report["status"], "inspected");
+    assert_eq!(report["evidence"]["request_read"], "verified");
+    assert_eq!(report["evidence"]["written"], false);
+    let environment = &report["evidence"]["environment"];
+    assert_eq!(environment["metadata_status"], "unknown");
+    assert_eq!(environment["diagnostic"]["code"], "timeout");
+    let inspection = &report["evidence"]["inspection"];
+    assert_eq!(inspection["complete"], false);
+    assert_eq!(inspection["budget_exhausted"], true);
+    assert_eq!(inspection["budget_ms"], 2000);
+    assert!(inspection["requests_executed"].as_u64().unwrap() > 1);
+    assert_eq!(
+        inspection["activities"].as_array().unwrap().last().unwrap()["outcome"],
+        "timed_out"
+    );
+    assert!(started.elapsed().as_secs_f64() < 6.0, "{report}");
+    assert_report_matches_schema(&report);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert_metadata_reaped(&f);
+}
+
+#[cfg(unix)]
+#[test]
+fn optional_metadata_cancellation_remains_failure_and_reaps_child() {
+    use std::{process::Stdio, time::Duration};
+    let f = hanging_metadata_fixture();
+    let mut child = f
+        .command_with_budget(
+            &[
+                "init",
+                "--provider",
+                "gitlab",
+                "--check",
+                "--manual-observe",
+            ],
+            5000,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while !f.bin.join("metadata.pid").exists() && started.elapsed() < Duration::from_secs(4) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !f.bin.join("metadata.pid").exists() {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("metadata did not start within the test deadline");
+    }
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = child.wait_with_output().unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], "cancelled", "{report}");
+    // The CLI intentionally replaces interrupted command evidence with its
+    // top-level cancellation report, even after the command has cleaned up.
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_metadata_reaped(&f);
+    assert_report_matches_schema(&report);
 }
 
 #[test]
@@ -399,6 +623,7 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
                 "projects/fixture%2Frepo",
                 "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1",
                 "projects/7/protected_branches/preview",
+                "metadata",
             ]
         };
         let calls = f.state()["calls"].as_array().unwrap().clone();
@@ -429,7 +654,7 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
             );
         }
         let calls = f.state()["calls"].as_array().unwrap().clone();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
         assert_eq!(calls[0]["endpoint"], "user");
         assert_eq!(calls[1]["endpoint"], expected_routes[1]);
         assert!(calls.iter().all(|call| call["method"] == "GET"));
@@ -556,7 +781,7 @@ fn role_permissions_survive_later_init_read_failures() {
 }
 
 #[test]
-fn doctor_project_read_failure_reports_unknown_roles_and_only_two_reads() {
+fn doctor_project_read_failure_reports_unknown_roles_and_optional_metadata_read() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new();
         let route = if provider == "github" {
@@ -580,7 +805,7 @@ fn doctor_project_read_failure_reports_unknown_roles_and_only_two_reads() {
             );
         }
         let calls = f.state()["calls"].as_array().unwrap().clone();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
         assert!(calls.iter().all(|call| call["method"] == "GET"));
     }
 }

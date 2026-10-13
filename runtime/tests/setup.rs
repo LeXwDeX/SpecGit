@@ -195,6 +195,16 @@ fn project_scope_is_the_permanent_default_for_setup() {
             .join(".agents/skills/specgit-native/SKILL.md")
             .exists()
     );
+    let skill = fs::read_to_string(f.root.join(".agents/skills/specgit-native/SKILL.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert_eq!(
+        skill,
+        include_str!("../assets/SKILL.md")
+            .replace("\r\n", "\n")
+            .replace("{{version}}", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(skill.contains("A Milestone is an optional goal or plan container"));
     // Default OpenCode selection registers no hooks.
     assert!(!f.root.join(".opencode").exists());
     let f = fixture();

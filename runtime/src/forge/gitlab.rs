@@ -74,6 +74,15 @@ pub(crate) async fn issue(
     project_id: u64,
     number: u64,
 ) -> Result<Issue, Diagnostic> {
+    Ok(issue_read(reader, repo, project_id, number).await?.issue)
+}
+
+pub(crate) async fn issue_read(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<crate::delivery_model::IssueRead, Diagnostic> {
     let v = reader
         .get(&format!("{}/issues/{number}", prefix(repo)))
         .await?;
@@ -81,7 +90,71 @@ pub(crate) async fn issue(
     if result.id != number {
         return Err(malformed());
     }
-    Ok(result)
+    Ok(crate::delivery_model::IssueRead {
+        issue: result,
+        milestone: milestone_context(&v, repo, project_id),
+    })
+}
+
+fn milestone_context(
+    raw: &Value,
+    repo: &Repository,
+    project_id: u64,
+) -> crate::delivery_model::MilestoneContext {
+    use crate::delivery_model::{Milestone, MilestoneContext, MilestoneScope};
+    let unknown = || MilestoneContext::Unknown {
+        reason: "The embedded GitLab milestone is missing, malformed, or has unverified scope."
+            .into(),
+    };
+    let Some(value) = raw.get("milestone") else {
+        return unknown();
+    };
+    if value.is_null() {
+        return MilestoneContext::None;
+    }
+    let parsed = (|| {
+        let id = id(value, "id").ok()?;
+        let iid = super::protocol::id(value, "iid").ok()?;
+        let title = text(value, "title").ok()?;
+        let state = text(value, "state").ok()?;
+        if !["active", "closed"].contains(&state.as_str()) || title.trim().is_empty() {
+            return None;
+        }
+        let project = value.get("project_id").filter(|v| !v.is_null());
+        let group = value.get("group_id").filter(|v| !v.is_null());
+        let scope = match (project, group) {
+            (Some(p), None) if p.as_u64() == Some(project_id) => {
+                MilestoneScope::Project { project_id }
+            }
+            (None, Some(g)) if g.as_u64().is_some_and(|id| id > 0) => MilestoneScope::Group {
+                group_id: g.as_u64()?,
+            },
+            _ => return None,
+        };
+        // The embedded API need not supply web_url. Group paths cannot be
+        // verified from group_id alone, so do not expose or invent that URL.
+        let url = value
+            .get("web_url")
+            .and_then(Value::as_str)
+            .filter(|url| {
+                matches!(scope, MilestoneScope::Project { .. })
+                    && ["https", "http"].iter().any(|scheme| {
+                        *url == format!("{scheme}://{}/{}/-/milestones/{iid}", repo.host, repo.path)
+                    })
+            })
+            .map(str::to_owned);
+        Some(Milestone::Gitlab {
+            id,
+            iid,
+            title,
+            state,
+            scope,
+            url,
+        })
+    })();
+    parsed
+        .map(|milestone| MilestoneContext::Linked { milestone })
+        .unwrap_or_else(unknown)
 }
 pub(crate) async fn candidates(
     reader: &ForgeRead,
