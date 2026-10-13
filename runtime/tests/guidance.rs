@@ -4,6 +4,24 @@ use specgit::{
 };
 
 #[test]
+fn skill_selects_minimal_hooks_and_respects_delivery_and_stop_boundaries() {
+    let source = include_str!("../assets/SKILL.md");
+    assert!(source.lines().count() <= 198);
+    let skill = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    for clause in [
+        "--hook-purpose",
+        "--opencode-async-rewake",
+        "PR-only",
+        "user stop",
+        "old head or attempt",
+        "no automatic retry",
+        "least hook purposes",
+    ] {
+        assert!(skill.contains(clause), "missing rule: {clause}");
+    }
+}
+
+#[test]
 fn distributed_skill_defines_native_goals_environment_and_verification() {
     let skill = include_str!("../assets/SKILL.md")
         .split_whitespace()

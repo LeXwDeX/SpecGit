@@ -91,6 +91,7 @@ fn milestone_context_is_read_only_and_distinguishes_absence_from_unknown() {
             "http",
             "case",
             "project_url",
+            "global_id_url",
             "both_scopes",
             "closed",
         ] {
@@ -165,10 +166,33 @@ fn milestone_context_is_read_only_and_distinguishes_absence_from_unknown() {
                 }
                 "project_url" if provider == "gitlab" => {
                     milestone["web_url"] =
+                        json!("https://forge.example/fixture/repo/-/milestones/2")
+                }
+                "global_id_url" if provider == "gitlab" => {
+                    milestone["web_url"] =
                         json!("https://forge.example/fixture/repo/-/milestones/900")
                 }
                 "both_scopes" if provider == "gitlab" => milestone["group_id"] = json!(42),
                 _ => {}
+            }
+            if provider == "gitlab" {
+                // Keep the native iid path valid so each case isolates its
+                // host, scope or URL-safety check rather than failing by shape.
+                let url = match case {
+                    "wrong_host" => Some("https://other.example/fixture/repo/-/milestones/2"),
+                    "unsafe" => Some("https://token@forge.example/fixture/repo/-/milestones/2"),
+                    "query" => {
+                        Some("https://forge.example/fixture/repo/-/milestones/2?token=secret")
+                    }
+                    "control" => Some("https://forge.example/fixture/repo/-/milestones/2\n"),
+                    "group" | "foreign" | "both_scopes" => {
+                        Some("https://forge.example/fixture/repo/-/milestones/2")
+                    }
+                    _ => None,
+                };
+                if let Some(url) = url {
+                    milestone["web_url"] = json!(url);
+                }
             }
             if case != "missing" {
                 issue["milestone"] = milestone;
@@ -206,7 +230,7 @@ fn milestone_context_is_read_only_and_distinguishes_absence_from_unknown() {
                         if case == "project_url" {
                             assert_eq!(
                                 context["milestone"]["url"],
-                                "https://forge.example/fixture/repo/-/milestones/900"
+                                "https://forge.example/fixture/repo/-/milestones/2"
                             );
                         } else {
                             assert!(context["milestone"]["url"].is_null());

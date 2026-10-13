@@ -95,6 +95,51 @@ async fn environment_keeps_metadata_dimensions_independent_and_safe() {
 }
 
 #[tokio::test]
+async fn optional_environment_cancellation_keeps_diagnostic_and_telemetry() {
+    use std::time::Duration;
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("api.json");
+    std::fs::write(
+        &state,
+        json!({"calls":[],"read_failure":"hang"}).to_string(),
+    )
+    .unwrap();
+    let mut process = Process::default().with_inspection_budget(Duration::from_secs(5));
+    process
+        .environment
+        .insert("SPECGIT_FIXTURE_API_FILE".into(), state.into_os_string());
+    let reader = ForgeRead::with_executable(
+        process.clone(),
+        temp.path(),
+        Provider::Gitlab,
+        "forge.example",
+        env!("CARGO_BIN_EXE_specgit-process-fixture").into(),
+    )
+    .unwrap();
+    let cancellation = process.cancellation.clone();
+    let cancel = async {
+        while process.inspection_requests_executed() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancellation.cancel();
+    };
+    let (environment, ()) = tokio::time::timeout(Duration::from_secs(4), async {
+        tokio::join!(specgit::probe::environment(&reader), cancel)
+    })
+    .await
+    .unwrap();
+    let environment = environment.unwrap();
+    assert_eq!(environment.metadata_status, "unknown");
+    assert_eq!(environment.diagnostic.unwrap().code, Code::Cancelled);
+    let summary = process.inspection_summary().unwrap();
+    assert!(!summary.complete);
+    assert!(!summary.budget_exhausted);
+    assert_eq!(summary.requests_executed, 1);
+    assert_eq!(summary.activities.len(), 1);
+    assert_eq!(summary.activities[0].outcome, "failed");
+}
+
+#[tokio::test]
 async fn project_probe_reports_role_permissions_from_its_only_read() {
     let cases: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/write-permissions.json")).unwrap();

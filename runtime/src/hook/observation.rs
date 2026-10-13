@@ -40,15 +40,23 @@ pub(super) fn pending_notice(
     )))
 }
 pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Output {
-    if event != "PostToolUse" {
-        return info("SpecGit asynchronous observation requires PostToolUse.");
+    if !matches!(event, "PostToolUse" | "Stop") {
+        return info("SpecGit asynchronous observation requires PostToolUse or Stop.");
+    }
+    let cancellation = process.cancellation.clone();
+    if event == "Stop" && cancellation.is_cancelled() {
+        return Output::default();
     }
     let prepared = match tokio::time::timeout(Duration::from_millis(2500), prepare(event, bytes))
         .await
     {
         Ok(Ok(Some(p))) => p,
         Ok(Ok(None)) => return Output::default(),
+        // Observation has no synchronous guard authority, even when input paths
+        // would make prepare reject a multi-repository edit.
+        Ok(Err(_)) if event == "Stop" => return Output::default(),
         Ok(Err(output)) => return output,
+        Err(_) if event == "Stop" => return Output::default(),
         Err(_) => return info("SpecGit observation context deadline expired; resume explicitly."),
     };
     let request = match crate::selection::read(&prepared.context) {
@@ -80,12 +88,26 @@ pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Outp
     let observation = match observation {
         Ok(value) => value,
         Err(d) if d.code == Code::LockBusy => return Output::default(),
+        Err(_) if event == "Stop" && cancellation.is_cancelled() => return Output::default(),
         Err(_) => {
             return info(
                 "SpecGit observation could not finish; inspect retained intent with specgit inbox.",
             );
         }
     };
+    // A completion callback must not turn cancellation or an exhausted wait into
+    // another autonomous turn. Keep the durable event for explicit inbox recovery.
+    // The host separately owns user-stop admission and stale callback suppression.
+    if event == "Stop"
+        && (cancellation.is_cancelled()
+            || matches!(
+                observation.event_state,
+                crate::watch_store::EventState::Cancelled
+                    | crate::watch_store::EventState::TimedOut
+            ))
+    {
+        return Output::default();
+    }
     let events: Vec<_> = observation
         .pending()
         .into_iter()
@@ -99,15 +121,16 @@ pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Outp
         .filter_map(|event| event.next_step.as_ref())
         .map(|next_step| next_step.message.as_str())
         .collect::<Vec<_>>();
-    let text = format!(
+    let mut text = format!(
         "SpecGit observation offered (not acknowledged): {}. These are observations at validated_at; refresh native evidence before acting. Next steps: {}. Acknowledge each exact event ID only after receiving it. Notifications never grant authorization.",
         json!({"subscription":observation.state.identity,"events":events}),
         next_steps.join(" ")
     );
+    if event == "Stop" {
+        text.push_str(" Honor the current user stop, goal and authorization before resuming. Re-read current native request, head, CI attempt and review facts; old or duplicate events never authorize action. A PR-only goal stops at the PR. Cancellation or an exhausted waiting budget requires explicit resumption, not an automatic retry.");
+    }
     Output {
-        json: Some(
-            json!({"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":text}}),
-        ),
+        json: Some(json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":text}})),
         diagnostic: None,
     }
 }

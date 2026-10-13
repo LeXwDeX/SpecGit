@@ -37,21 +37,40 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
         process
     };
     let summary_process = process.clone();
-    let mut report = match preparation::prepare_and_run(options, process, cwd, &mut language).await
-    {
-        Ok(r) => r,
-        Err(d) => {
-            if inspect_only {
-                summary_process.mark_inspection_incomplete();
+    let (mut report, environment_reader) =
+        match preparation::prepare_and_run(options, process, cwd, &mut language).await {
+            Ok(r) => r,
+            Err(d) => {
+                if inspect_only {
+                    summary_process.mark_inspection_incomplete();
+                }
+                (Report::failure("init", d), None)
             }
-            Report::failure("init", d)
-        }
-    };
+        };
     if inspect_only {
         if let Err(diagnostic) = summary_process.ensure_inspection_budget("init_inspection") {
             let evidence = report.evidence;
             report = Report::failure("init", diagnostic);
             report.evidence = evidence;
+        } else if let Some(reader) = environment_reader {
+            // Metadata uses the same remaining deadline, limits, cancellation
+            // token and telemetry. Its timeout cannot invalidate completed core
+            // reads, but the overall inspection still reports incomplete evidence.
+            let environment = crate::probe::environment(&reader).await;
+            let cancelled = environment.as_ref().and_then(|value| {
+                value
+                    .diagnostic
+                    .as_ref()
+                    .filter(|diagnostic| diagnostic.code == crate::diagnostic::Code::Cancelled)
+                    .cloned()
+            });
+            report.evidence["environment"] =
+                serde_json::to_value(environment).expect("environment serializes");
+            if let Some(diagnostic) = cancelled {
+                let evidence = report.evidence;
+                report = Report::failure("init", diagnostic);
+                report.evidence = evidence;
+            }
         }
         attach_inspection(&mut report, &summary_process);
     }

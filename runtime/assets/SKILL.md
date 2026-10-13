@@ -111,12 +111,12 @@ Otherwise report the action, rejecting layer/reason and missing approval. Separa
 
 ## Wait, observe and finish
 
-Choose supported asynchronous Hook callbacks, then session polling, then manual continuation.
-Check host capabilities; create listeners/Hooks only within authorization. This Skill prescribes no host
-protocol fields, exit codes, script algorithms or new runtime listening service.
-Name the exact target and session stopping condition. Notices are leads: reread
-current facts before review, repair or reply. Stop your listener on completion,
-cancellation or the waiting boundary; report remaining work. A boundary is not completion.
+Choose supported Hook callbacks, bounded polling, then manual continuation; no daemon or webhook service.
+Name the target and session stopping condition. Respect the current user stop, goal and authorization.
+PR-only goals stop at the PR. For an authorized merge goal, keep bounded waiting through required
+verification/review and native merge/associated closure readback. Notifications are not completion.
+Re-read native facts before acting; an old head or attempt never authorizes action. Hosts own stale-callback
+suppression. Completion, cancellation or an exhausted budget means no automatic retry; resume explicitly.
 Use `pr --status` for native state; `status` is offline local evidence. Use bounded
 `watch` with the exact request ID, stable session ID and checks or lifecycle goal.
 A checks goal does not prove merge/closure. Follow `diagnostics[].remedy`,
@@ -167,9 +167,9 @@ The only user-level asset is the Skill explicitly installed with `specgit skill 
 at `~/.agents/skills/specgit-native/SKILL.md` (`%USERPROFILE%` on Windows).
 `specgit update` refreshes it only when managed; it does not install it by default.
 There are no global hooks or state. Install the shared CLI separately; setup never
-copies a project executable. Use `init --check` to inspect native capabilities;
-unknown/unsupported support needs explicit manual observation or authorized platform
-setup and recheck. Preview project writes with `init --dry-run` / `setup --dry-run`.
+copies a project executable. Use `init --check` for native capabilities; init remains separate from setup.
+Choose the least hook purposes allowed by real host capabilities and existing authorization, not each event:
+repeat `setup --hook-purpose guard|context|observe`, or `none` for no new hooks; preview `--dry-run`, then install.
 
 `specgit guard --install` merges owned pre-commit/pre-push blocks into the effective hooks path.
 Pre-push validates each branch ref and replays stdin to existing shell hooks. Husky's `.husky/_` maps to
@@ -181,12 +181,12 @@ preserve manual content/markers, never hide or untrack it merely because generat
 Committed untracking deletes `.specgit.yaml` in checkouts crossing that commit: back up, restore and rerun init.
 Restore lost declarations or use `specgit init --config-file <original>`; `specgit remove` needs one too.
 
-Official OpenCode `setup --agent opencode` installs only project guidance and Skill.
-Only custom hosts supporting Claude-compatible command hooks may preview/install
-`setup --agent opencode --opencode-claude-hooks --dry-run`. It owns project
-`.opencode/hooks.json` entries; do not duplicate them with a Claude-hook importer.
-Verify actual allow/deny and context delivery; registration is not verified delivery.
-Observer state is worktree Git-private. Use bounded observation if host delivery is unavailable.
+Official OpenCode installs only project guidance and Skill. Custom hooks need `--opencode-claude-hooks`;
+idle wake also needs explicit `--opencode-async-rewake` plus observe/context. Compatibility alone proves no wake.
+Claude/Codex async notification does not prove idle wake. Check per-host declined purposes and reasons;
+unknown/unsupported delivery needs bounded watch/inbox or manual continuation. Verify actual allow/deny,
+context and idle delivery; registration is not verified delivery. Do not duplicate managed hooks by import.
+Omitted purposes preserve recorded modes; `none` never removes hooks/Git guard. State stays worktree Git-private.
 Keep notices pending until transport receipt; acknowledgment proves neither human reading nor completion.
 
 After CLI replacement, preview `setup --dry-run` and refresh project Skills/entry guidance, not manual copies.

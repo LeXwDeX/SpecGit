@@ -33,6 +33,96 @@ pub enum Agent {
     Opencode,
 }
 
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HookPurpose {
+    Guard,
+    Context,
+    Observe,
+    None,
+}
+
+/// Additive hook selection. Empty purposes preserve the recorded installation.
+#[derive(Clone, Default)]
+pub struct HookOptions {
+    pub purposes: Vec<HookPurpose>,
+    pub opencode_async_rewake: bool,
+}
+
+fn purpose_manifest(
+    binary: &Path,
+    custom: bool,
+    purposes: &std::collections::BTreeSet<HookPurpose>,
+    wake: bool,
+) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    let mut entries = if custom {
+        opencode_manifest(binary)?
+    } else {
+        manifest(binary)
+    };
+    entries.retain(|event, _| match event.as_str() {
+        "PreToolUse" => purposes.contains(&HookPurpose::Guard),
+        "Stop" => purposes.contains(&HookPurpose::Guard) || wake,
+        _ => purposes.contains(&HookPurpose::Context),
+    });
+    if !custom
+        && !purposes.contains(&HookPurpose::Observe)
+        && let Some(entry) = entries.get_mut("PostToolUse")
+    {
+        entry["hooks"]
+            .as_array_mut()
+            .expect("manifest hooks")
+            .truncate(1);
+    }
+    if custom && wake {
+        let entry = entries.get_mut("Stop").expect("wake Stop");
+        let mut observer = entry["hooks"][0].clone();
+        observer["command"] = json!(format!(
+            "{} --observe",
+            observer["command"].as_str().expect("command")
+        ));
+        observer["async"] = json!(true);
+        observer["asyncRewake"] = json!(true);
+        observer["timeout"] = json!(1830);
+        let hooks = entry["hooks"].as_array_mut().expect("hooks");
+        if !purposes.contains(&HookPurpose::Guard) {
+            hooks.clear();
+        }
+        hooks.push(observer);
+    }
+    Ok(entries)
+}
+
+fn recorded_purposes(
+    registration: Option<&Registration>,
+) -> (std::collections::BTreeSet<HookPurpose>, bool) {
+    let mut purposes = std::collections::BTreeSet::new();
+    let mut wake = false;
+    if let Some(registration) = registration {
+        for (event, entry) in &registration.entries {
+            for hook in entry["hooks"].as_array().into_iter().flatten() {
+                let observe = hook["args"]
+                    .as_array()
+                    .is_some_and(|args| args.iter().any(|a| a == "--observe"))
+                    || hook["command"]
+                        .as_str()
+                        .is_some_and(|c| c.ends_with(" --observe"));
+                if observe {
+                    purposes.insert(HookPurpose::Observe);
+                    wake |= event == "Stop" && hook["asyncRewake"] == true && hook["async"] == true;
+                } else if matches!(event.as_str(), "PreToolUse" | "Stop") {
+                    purposes.insert(HookPurpose::Guard);
+                } else if matches!(event.as_str(), "SessionStart" | "PostToolUse") {
+                    purposes.insert(HookPurpose::Context);
+                }
+            }
+        }
+    }
+    (purposes, wake)
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 struct HostRegistration {
