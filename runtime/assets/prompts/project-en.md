@@ -1,5 +1,7 @@
 Load specgit-native Skill for new tasks and existing PR/MR CI/review repair.
 The Skill holds the workflow and recovery steps; the binary is optional, not a waiver of project guard/checkpoint constraints.
+Use native gh/glab proactively within authorization; follow the Skill for read-only environment discovery and verification.
+Milestone is optional; Issue holds the specification and work ledger; PR/MR integrates changes, not a version; Release needs separate authorization.
 When using the shared CLI, its installed `specgit --help` and `specgit --schema` are the contract.
 Before tracked product edits, inspect duplicate work and select a complete relevant Issue: Why / Scope / Approach / Acceptance.
 Read-only inspection, audit and review need no Issue checkpoint; pure documentation follows repository policy and installed hooks.

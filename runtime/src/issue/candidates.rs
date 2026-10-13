@@ -98,13 +98,14 @@ pub(super) async fn inspect(options: &Options, p: &Prepared) -> Result<Option<Re
         .cloned()
         .collect();
     if options.inspect || options.dry_run {
+        let milestones = &p.milestones;
         w.process.ensure_inspection_budget("issue_preflight")?;
         w.process.finish_inspection();
         if let Some(checkpoint) = &p.foreign_checkpoint {
             let mut report = Report::success(
                 "issue",
                 "prepared_blocked",
-                serde_json::json!({"prepared":selection.intents,"adopted":selection.issues,"selection":selection,"candidates":candidate_reports,"writes":false,"write_eligible":false,"checkpoint":checkpoint,"repository":w.context.repository,"project_id":w.facts.id,"target":w.target,"new_branch":options.branch,"missing_labels":missing_labels,"label_creation_requested":options.create_labels}),
+                serde_json::json!({"milestones":milestones,"prepared":selection.intents,"adopted":selection.issues,"selection":selection,"candidates":candidate_reports,"writes":false,"write_eligible":false,"checkpoint":checkpoint,"repository":w.context.repository,"project_id":w.facts.id,"target":w.target,"new_branch":options.branch,"missing_labels":missing_labels,"label_creation_requested":options.create_labels}),
             );
             report.next_actions.push(serde_json::json!({"kind":"return_to_checkpoint_branch","branch":checkpoint.recorded_branch,"remedy":"Return to the recorded branch to resume the existing checkpoint."}));
             report.next_actions.push(serde_json::json!({"kind":"use_independent_worktree","remedy":"Use a separate worktree for this prepared delivery before performing writes."}));
@@ -113,7 +114,7 @@ pub(super) async fn inspect(options: &Options, p: &Prepared) -> Result<Option<Re
         return Ok(Some(Report::success(
             "issue",
             "prepared",
-            serde_json::json!({"prepared":selection.intents,"adopted":selection.issues,"selection":selection,"candidates":candidate_reports,"writes":false,"repository":w.context.repository,"project_id":w.facts.id,"target":w.target,"new_branch":options.branch,"missing_labels":missing_labels,"label_creation_requested":options.create_labels}),
+            serde_json::json!({"milestones":milestones,"prepared":selection.intents,"adopted":selection.issues,"selection":selection,"candidates":candidate_reports,"writes":false,"repository":w.context.repository,"project_id":w.facts.id,"target":w.target,"new_branch":options.branch,"missing_labels":missing_labels,"label_creation_requested":options.create_labels}),
         )));
     }
     if !options.create_labels && !missing_labels.is_empty() {

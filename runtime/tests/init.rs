@@ -179,6 +179,114 @@ impl Fixture {
 }
 
 #[test]
+fn environment_does_not_add_reads_to_github_or_normal_init() {
+    for (provider, command) in [("github", "doctor"), ("github", "init"), ("gitlab", "init")] {
+        let f = Fixture::new();
+        let report = f.run(&[command, "--provider", provider]);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert!(report["evidence"]["environment"].is_null());
+        assert!(
+            !f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|call| call["endpoint"] == "metadata")
+        );
+    }
+    let f = Fixture::new();
+    let report = f.run(&["init", "--provider", "github", "--check"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert!(report["evidence"]["environment"].is_null());
+    assert!(
+        !f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["endpoint"] == "metadata")
+    );
+}
+
+#[test]
+fn optional_gitlab_environment_is_read_only_and_does_not_gate_core_readiness() {
+    for metadata in [
+        json!({"version":"18.4.0-ee","enterprise":true}),
+        json!({}),
+        json!({"__fixture_error":"403 Forbidden secret"}),
+        json!({"__fixture_error":"404 Not Found secret"}),
+        json!([]),
+    ] {
+        let f = Fixture::new();
+        let mut state = f.state();
+        state["read_routes"] = json!({
+            "metadata": metadata,
+            "user": {"id":1,"username":"fixture"},
+            "projects/fixture%2Frepo": state["project"],
+            "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1": [],
+            "projects/7/protected_branches/preview": {"name":"preview"}
+        });
+        fs::write(&f.state, state.to_string()).unwrap();
+        let doctor = f.run_raw(&["doctor", "--provider", "gitlab"]);
+        assert_eq!(doctor["exit"], 0, "{doctor}");
+        assert_eq!(doctor["status"], "ready");
+        let environment = &doctor["evidence"]["environment"];
+        assert_eq!(environment["host"], "forge.example");
+        assert_eq!(environment["deployment"]["status"], "unknown");
+        assert_eq!(environment["subscription"]["status"], "unknown");
+        assert_report_matches_schema(&doctor);
+        let mut invalid = doctor.clone();
+        invalid["evidence"]["environment"]["raw"] = json!("forbidden");
+        assert!(jsonschema::draft202012::validate(&report_schema(), &invalid).is_err());
+        let report = f.run(&["init", "--provider", "gitlab", "--check"]);
+        assert_eq!(report["exit"], 0, "{report}");
+        assert_eq!(report["evidence"]["environment"], *environment);
+        assert_eq!(report["evidence"]["written"], false);
+        assert_report_matches_schema(&report);
+        let check_calls = f.state()["calls"].as_array().unwrap().clone();
+        assert_eq!(check_calls.last().unwrap()["endpoint"], "metadata");
+        let human = f.run_human(&[
+            "init",
+            "--provider",
+            "gitlab",
+            "--check",
+            "--manual-observe",
+        ]);
+        assert_eq!(human["environment"], *environment);
+        if metadata.get("version").is_none() {
+            assert_eq!(environment["metadata_status"], "unknown");
+            assert_eq!(report["evidence"]["inspection"]["complete"], false);
+            assert_eq!(human["inspection"]["complete"], false);
+        }
+        assert!(!environment.to_string().contains("secret"));
+        let state = f.state();
+        let calls = state["calls"].as_array().unwrap();
+        assert!(calls.iter().all(|call| call["method"] == "GET"));
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call["endpoint"] == "metadata")
+                .count(),
+            3
+        );
+        assert!(!f.root.join(".specgit.yaml").exists());
+        let account = f.run_raw(&[
+            "doctor",
+            "--provider",
+            "gitlab",
+            "--account-only",
+            "--api-host",
+            "gitlab.com",
+        ]);
+        assert_eq!(account["exit"], 0, "{account}");
+        assert_eq!(
+            account["evidence"]["environment"]["deployment"]["value"],
+            "official_hosted"
+        );
+        assert_eq!(account["evidence"]["write_permissions"], "not_checked");
+        assert_report_matches_schema(&account);
+    }
+}
+
+#[test]
 fn init_inspection_emits_typed_check_contract_in_json_and_human_output() {
     let f = Fixture::new();
     let json_report = f.run_raw(&["init", "--provider", "github", "--inspect"]);
@@ -399,6 +507,7 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
                 "projects/fixture%2Frepo",
                 "projects/7/merge_requests?state=opened&scope=all&source_branch=feature&per_page=100&page=1",
                 "projects/7/protected_branches/preview",
+                "metadata",
             ]
         };
         let calls = f.state()["calls"].as_array().unwrap().clone();
@@ -429,7 +538,7 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
             );
         }
         let calls = f.state()["calls"].as_array().unwrap().clone();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
         assert_eq!(calls[0]["endpoint"], "user");
         assert_eq!(calls[1]["endpoint"], expected_routes[1]);
         assert!(calls.iter().all(|call| call["method"] == "GET"));
@@ -556,7 +665,7 @@ fn role_permissions_survive_later_init_read_failures() {
 }
 
 #[test]
-fn doctor_project_read_failure_reports_unknown_roles_and_only_two_reads() {
+fn doctor_project_read_failure_reports_unknown_roles_and_optional_metadata_read() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new();
         let route = if provider == "github" {
@@ -580,7 +689,7 @@ fn doctor_project_read_failure_reports_unknown_roles_and_only_two_reads() {
             );
         }
         let calls = f.state()["calls"].as_array().unwrap().clone();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
         assert!(calls.iter().all(|call| call["method"] == "GET"));
     }
 }

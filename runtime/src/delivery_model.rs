@@ -45,6 +45,48 @@ pub struct Issue {
     pub state: String,
     pub updated_at: String,
 }
+
+/// Fresh read context, never persisted in the selection or candidate digest.
+#[derive(Debug, Clone, Serialize)]
+pub struct IssueRead {
+    pub issue: Issue,
+    pub milestone: MilestoneContext,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum MilestoneContext {
+    Linked { milestone: Milestone },
+    None,
+    Unknown { reason: String },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "provider", rename_all = "lowercase")]
+pub enum Milestone {
+    Github {
+        id: u64,
+        number: u64,
+        title: String,
+        state: String,
+        url: String,
+    },
+    Gitlab {
+        id: u64,
+        iid: u64,
+        title: String,
+        state: String,
+        scope: MilestoneScope,
+        url: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MilestoneScope {
+    Project { project_id: u64 },
+    Group { group_id: u64 },
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PullRequest {
     pub id: u64,

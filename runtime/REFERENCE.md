@@ -199,7 +199,66 @@ fields remain unknown unless a known sufficient role proves the threshold or a
 known disabled feature/insufficient role proves lack of support. Source names
 the role-permission fields. Role support is not authorization; fine-grained
 token scopes and branch protection can still reject writes.
-Doctor's `ready` status describes successful read probes, not write readiness.
+Doctor's `ready` status describes successful required read probes, not write
+readiness or success of every optional diagnostic.
+
+### Issue Milestone context
+
+`issue <exact-id> --inspect` and `--dry-run` include `evidence.milestones`,
+keyed by each read Issue number (GitHub) or IID (GitLab). This also covers
+Issues read from an existing checkpoint. Each entry has `status: linked`,
+`none`, or `unknown`. Native `milestone: null` means `none`; missing or malformed
+data means `unknown` with a `reason`. Neither state blocks Issue selection.
+
+A linked entry contains `milestone` with `provider`, native `id`, `title`,
+`state`, and `url`. GitHub also supplies its distinct `number`; its native URL
+must match the selected host, repository (case-insensitive), and number.
+GitLab supplies its distinct `iid` and `scope`: either
+`{kind: project, project_id}` or `{kind: group, group_id}`. A project Milestone
+must match the Issue's project. Group Milestones remain group-scoped, not
+project-scoped. GitLab `url` may be null: embedded responses need not supply
+`web_url`, and a group ID alone cannot verify a group URL path. Only exact,
+verified native HTTP(S) resource URLs are exposed, without credentials,
+queries, fragments, or control characters.
+
+This context comes from the existing Issue response. It adds no requests,
+Milestone enumeration, writes, selection fields, or candidate digest inputs.
+It is not persisted in checkpoints. Missing context does not imply lack of
+permission; a Milestone's closed state does not prove delivery completion.
+Milestones are optional. Maintain them explicitly with the native platform
+tools. These fields do not change PR/MR, watch, merge, or release rules.
+
+### GitLab environment context
+
+For GitLab, `doctor` (including `--account-only`) and `init --check` / `--inspect`
+add optional `evidence.environment` after core native reads. This is separate
+from required `probes`, init check IDs, availability and exit decisions. Normal
+init, including dry-run, makes no extra metadata request. GitHub reports null
+and makes no extra read. If core initialization stops before these reads finish,
+the environment field can be absent; absence is not a successful metadata read.
+
+The environment report contains `host`, `metadata_status` (`known` or `unknown`),
+`diagnostic`, and four independent facts: `deployment`, `server_version`,
+`edition` and `subscription`. A fact has `status: known`, `value`, `source`, or
+`status: unknown`, `reason`, `source`. One bounded authenticated `GET metadata`
+uses the existing native read transport and inspection budget. It exports only
+the validated version string (1–128 ASCII version characters, starting with a
+digit) and the explicit `enterprise` boolean as `ee` or `ce`. It does not export
+raw metadata, revision, KAS details or credentials. It never reads admin/license
+endpoints. [GitLab metadata](https://docs.gitlab.com/api/metadata/) does not
+provide a subscription tier, so `subscription` is always unknown with a reason.
+An `-ee` version suffix does not establish edition or a paid tier.
+
+Only the exact host `gitlab.com` establishes `deployment: official_hosted`.
+Other hosts remain unknown; they do not prove self-managed or Dedicated.
+Missing or invalid fields retain unknown facts and a typed malformed-response
+diagnostic; valid sibling fields remain evidence. Unreadable metadata (including
+403/404 and transport failures) remains unknown with the native typed diagnostic,
+never `not_checked`. Failed or incomplete metadata keeps the init inspection
+summary incomplete, but does not change required-probe readiness or exit status.
+Unknown environment information is not evidence of insufficient capability.
+Conversely, a known version or edition grants no feature support, permission or
+authorization; actual capability and role checks remain independent.
 
 `issue.write_permission` and `request.write_permission` map supported roles to
 `verified` / `pass`, insufficient roles or disabled features to
