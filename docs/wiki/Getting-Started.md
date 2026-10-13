@@ -58,7 +58,15 @@ specgit init --provider github --remote origin --json
 
 `--check` inspects the project and native capabilities; `--dry-run` previews proposed writes. Neither initializes the project. With multiple Git remotes, use `--remote` to select the intended forge remote; omit it when a single remote is unambiguous. Do not assume the target branch is `main` from this example: let the command read the actual default branch, or pass `--target` when the project's selected target requires it. For GitLab use `--provider gitlab`; add `--api-host` when an actual self-hosted API requires it.
 
-If native support is unknown or unavailable and the command requires an operating choice, select manual observation by adding `--manual-observe` to **both preview and apply**, or ask an authorized administrator to configure or verify native support. Do not ignore reported conflicts. Initialization maintains the local `.specgit.yaml`, managed project guidance, and Git's local exclusion record. Review its effect on existing `AGENTS.md` and `CLAUDE.md`, preserving content outside SpecGit's managed blocks.
+If native support is unknown or unavailable, manual observation is one operating
+choice. `--manual-observe` writes `agent.native_auto_merge=false`. For new/default-false
+or existing-false configuration, the copied request already selects it. If the
+current/restored or supplied preference is true, obtain a specific decision before
+changing it; continue independent reads meanwhile. Use the approved options/configuration
+consistently in check, preview and apply, then read back the preference. Do not alter
+platform settings under this maintenance request or ignore conflicts. Initialization
+maintains `.specgit.yaml`, managed guidance and Git's local exclusion record; preserve
+content outside managed blocks in `AGENTS.md` and `CLAUDE.md`.
 
 Read back the configuration and status afterward:
 
@@ -74,10 +82,14 @@ For an existing **v2** project, retain its declaration and use the same inspect,
 ## 3. Register a host only when needed
 
 For 2.8 purpose selection and actual host verification, follow the
-[maintenance guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-refresh-only-the-active-host).
+[maintenance guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-review-the-full-host-refresh-scope).
 For a new host, `--hook-purpose none` adds guidance/Skill without new hooks;
 it never removes existing hooks or Git guard. Omitted purposes preserve recorded
-modes on refresh. Official OpenCode gets guidance/Skill only; custom idle wake
+modes on ordinary refresh. Setup includes all recorded hosts plus the `--agent`
+selection; explicit purposes affect that whole set and need authorization for every
+affected host. `none` preserves existing purposes but does not skip their asset
+refresh. Review/report every host's effects, including shared Skill refresh.
+Official OpenCode gets guidance/Skill only; custom idle wake
 requires separate capability confirmation, authorization and explicit opt-in.
 
 Project initialization **does not register any host**. Only when you decide to integrate the active host should you separately inspect `specgit setup --help` and preview the relevant `--agent codex`, `--agent claude`, `--agent opencode`, or `--agent generic` selection. Since 2.4, setup is permanently project-only: `--scope project` is the default and the only scope value, assets live in the checkout with a worktree-private receipt, hooks invoke the installed shared executable directly (no global setup prerequisite), and the retired global options (`--root`, `--provider`, `--api-host`, `--register-*`, per-host roots) are rejected. Installing the executable and initializing a project does not require `setup`.

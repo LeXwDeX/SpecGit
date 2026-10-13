@@ -181,13 +181,3 @@ GitHub/GitLab 负责 CI、评审、保护和实际合并。
 Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
 <!-- specgit:v2:sha256 be42ed842c48a7fc635e32f57a4764e6affda612b383f1bc135b092daddb61fb -->
 <!-- specgit:v2:end -->
-
-
-<!-- specgit:project:v2:start -->
-## SpecGit 2
-
-Project integration (setup, hooks, observation state and guidance) stays project-only.
-Use specgit-native Skill alongside this project's AGENTS.md and `.specgit.yaml`.
-Installed hooks check local context; they are not a general file-write sandbox.
-Refresh preserves manual text and other tools' content; only recorded, unedited project assets and blocks can change.
-<!-- specgit:project:v2:end -->
