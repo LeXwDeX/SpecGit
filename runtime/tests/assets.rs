@@ -1,5 +1,5 @@
 use specgit::{
-    assets::{AssetStore, Change, Snapshot},
+    assets::{AssetStore, Change, MaintenancePlan, Snapshot},
     diagnostic::{Code, Diagnostic},
 };
 use std::{fs, path::PathBuf, time::Duration};
@@ -15,6 +15,83 @@ fn store(root: &std::path::Path) -> AssetStore {
         Duration::from_millis(100),
     )
     .unwrap()
+}
+
+#[test]
+fn two_plans_rebase_only_the_first_confirmed_write_to_a_shared_file() {
+    let (_temp, root) = fixture();
+    let guidance = root.join("AGENTS.md");
+    fs::write(&guidance, b"init-old\nsetup-old\n").unwrap();
+    let make = |name: &str, content: &[u8]| {
+        MaintenancePlan::new(
+            root.join(name),
+            vec![root.clone()],
+            vec![Change::new(guidance.clone(), Some(content.to_vec())).unwrap()],
+            vec![],
+        )
+    };
+    let first = make("init-store", b"init-new\nsetup-old\n");
+    let stale_second = make("setup-store", b"init-old\nsetup-new\n");
+    let baseline = stale_second.read_set();
+    first.apply().unwrap();
+    let writes = first.write_set().unwrap();
+    let mut fresh_second = make("setup-store", b"init-new\nsetup-new\n");
+    fresh_second.validate_rebase(&baseline, &[writes]).unwrap();
+    fresh_second.apply().unwrap();
+    assert_eq!(fs::read(&guidance).unwrap(), b"init-new\nsetup-new\n");
+
+    fs::write(&guidance, b"init-old\nsetup-old\n").unwrap();
+    let first = make("init-store", b"init-new\nsetup-old\n");
+    let second = make("setup-store", b"init-old\nsetup-new\n");
+    let baseline = second.read_set();
+    first.apply().unwrap();
+    let writes = first.write_set().unwrap();
+    fs::write(&guidance, b"foreign edit\n").unwrap();
+    let mut fresh_second = make("setup-store", b"foreign edit\nsetup-new\n");
+    assert_eq!(
+        fresh_second
+            .validate_rebase(&baseline, &[writes])
+            .unwrap_err()
+            .code,
+        Code::ConcurrentEdit
+    );
+    assert_eq!(fs::read(&guidance).unwrap(), b"foreign edit\n");
+}
+
+#[test]
+fn rebase_rejects_unconfirmed_output_and_expanded_write_scope() {
+    let (_temp, root) = fixture();
+    let shared = root.join("AGENTS.md");
+    let foreign = root.join("foreign.md");
+    fs::write(&shared, b"old").unwrap();
+    let first = MaintenancePlan::new(
+        root.join("first-store"),
+        vec![root.clone()],
+        vec![Change::new(shared.clone(), Some(b"new".to_vec())).unwrap()],
+        vec![],
+    );
+    first.apply().unwrap();
+    fs::write(&shared, b"foreign").unwrap();
+    assert_eq!(first.write_set().err().unwrap().code, Code::ConcurrentEdit);
+
+    let original = MaintenancePlan::new(
+        root.join("second-store"),
+        vec![root.clone()],
+        vec![Change::new(shared.clone(), Some(b"expected".to_vec())).unwrap()],
+        vec![],
+    );
+    let baseline = original.read_set();
+    let mut expanded = MaintenancePlan::new(
+        root.join("second-store"),
+        vec![root.clone()],
+        vec![Change::new(foreign.clone(), Some(b"new file".to_vec())).unwrap()],
+        vec![],
+    );
+    assert_eq!(
+        expanded.validate_rebase(&baseline, &[]).unwrap_err().code,
+        Code::ConcurrentEdit
+    );
+    assert!(!foreign.exists());
 }
 #[test]
 fn transactions_restore_exact_bytes_and_remove_only_the_created_files() {

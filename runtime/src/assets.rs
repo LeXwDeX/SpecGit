@@ -4,6 +4,7 @@ use crate::diagnostic::{Code, Diagnostic};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions, Permissions, TryLockError},
     io::{Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
@@ -89,6 +90,30 @@ pub fn safe_path(path: &Path) -> Result<(), Diagnostic> {
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn same_missing_asset_path(recorded: &Path, selected: &Path) -> bool {
+    if recorded == selected {
+        return true;
+    }
+    // The leaf is absent, so require the same name under the same existing,
+    // symlink-free parent. This accepts Windows verbatim/ordinary path aliases
+    // without treating a different directory as owned.
+    let (Some(recorded_parent), Some(selected_parent)) = (recorded.parent(), selected.parent())
+    else {
+        return false;
+    };
+    if recorded.file_name() != selected.file_name()
+        || safe_path(recorded).is_err()
+        || safe_path(selected).is_err()
+    {
+        return false;
+    }
+    matches!(
+        (recorded_parent.canonicalize(), selected_parent.canonicalize()),
+        (Ok(recorded), Ok(selected)) if recorded == selected
+    )
 }
 /// Open only ordinary files; nonblocking/no-follow also covers a Unix leaf swap.
 pub fn open_regular(path: &Path) -> std::io::Result<File> {
@@ -200,6 +225,248 @@ impl Change {
 pub struct Applied {
     pub transaction: String,
     pub changes: usize,
+}
+
+/// A read-only maintenance preview. Construction never creates the asset store.
+/// Dependencies include receipts, journals and external executable snapshots.
+pub struct MaintenancePlan {
+    store: PathBuf,
+    allowed: Vec<PathBuf>,
+    changes: Vec<Change>,
+    dependencies: Vec<Change>,
+    precondition: Option<Box<dyn Fn() -> Result<(), Diagnostic> + Send + Sync>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MaintenanceAsset {
+    pub path: PathBuf,
+    pub state: &'static str,
+}
+
+/// The exact files a plan inspected before any repair was applied.
+#[derive(Clone)]
+pub struct MaintenanceBaseline {
+    reads: BTreeMap<PathBuf, Snapshot>,
+    writes: BTreeSet<PathBuf>,
+}
+
+/// Files written by a completed plan, read back with their actual permissions.
+#[derive(Clone)]
+pub struct MaintenanceWrites(BTreeMap<PathBuf, Snapshot>);
+
+impl MaintenancePlan {
+    pub fn new(
+        store: PathBuf,
+        allowed: Vec<PathBuf>,
+        changes: Vec<Change>,
+        dependencies: Vec<Change>,
+    ) -> Self {
+        Self {
+            store,
+            allowed,
+            changes,
+            dependencies,
+            precondition: None,
+        }
+    }
+
+    /// Recheck a read-only ownership condition under the asset lock and before
+    /// each write. The caller owns the check; the asset store stays independent
+    /// of project-specific rules.
+    pub fn with_precondition(
+        mut self,
+        check: impl Fn() -> Result<(), Diagnostic> + Send + Sync + 'static,
+    ) -> Self {
+        self.precondition = Some(Box::new(check));
+        self
+    }
+
+    pub fn assets(&self) -> Vec<MaintenanceAsset> {
+        self.changes
+            .iter()
+            .filter(|change| !change.unchanged())
+            .map(|change| MaintenanceAsset {
+                path: change.path.clone(),
+                state: if change.after.is_none() {
+                    "removed"
+                } else if change.before.bytes.is_none() {
+                    "created"
+                } else {
+                    "updated"
+                },
+            })
+            .collect()
+    }
+
+    pub fn depend_on(&mut self, path: &Path) -> Result<(), Diagnostic> {
+        let snapshot = Snapshot::read(path)?;
+        self.depend_on_snapshot(path, &snapshot);
+        Ok(())
+    }
+
+    pub fn depend_on_snapshot(&mut self, path: &Path, snapshot: &Snapshot) {
+        self.dependencies.push(Change {
+            path: path.to_owned(),
+            before: snapshot.clone(),
+            after: snapshot.bytes.clone(),
+            permissions: snapshot.permissions.clone(),
+        });
+    }
+
+    pub fn read_set(&self) -> MaintenanceBaseline {
+        let mut paths = BTreeMap::new();
+        for change in self.dependencies.iter().chain(&self.changes) {
+            paths.insert(change.path.clone(), change.before.clone());
+        }
+        MaintenanceBaseline {
+            reads: paths,
+            writes: self
+                .changes
+                .iter()
+                .filter(|change| !change.unchanged())
+                .map(|change| change.path.clone())
+                .collect(),
+        }
+    }
+
+    /// Verify the exact postimages before treating them as this command's own
+    /// writes during a subsequent plan. A concurrent edit never becomes proof.
+    pub fn write_set(&self) -> Result<MaintenanceWrites, Diagnostic> {
+        let mut paths = BTreeMap::new();
+        for change in self.changes.iter().filter(|change| !change.unchanged()) {
+            let current = Snapshot::read(&change.path)?;
+            if !matches_after(change, &current) {
+                return Err(error(
+                    Code::ConcurrentEdit,
+                    "A maintenance output changed after the transaction.",
+                ));
+            }
+            paths.insert(change.path.clone(), current);
+        }
+        Ok(MaintenanceWrites(paths))
+    }
+
+    /// Bind a freshly planned step to the original read set plus only the
+    /// postimages this command has confirmed from earlier steps.
+    pub fn validate_rebase(
+        &mut self,
+        baseline: &MaintenanceBaseline,
+        prior: &[MaintenanceWrites],
+    ) -> Result<(), Diagnostic> {
+        let current = self.read_set();
+        for (path, snapshot) in &current.reads {
+            if !baseline.reads.contains_key(path) {
+                let expected = prior
+                    .iter()
+                    .filter_map(|writes| writes.0.get(path))
+                    .next_back()
+                    .ok_or_else(|| {
+                        error(
+                            Code::ConcurrentEdit,
+                            "A replanned maintenance step reads a new unverified path.",
+                        )
+                    })?;
+                if !same_snapshot(snapshot, expected)
+                    || !same_snapshot(&Snapshot::read(path)?, expected)
+                {
+                    return Err(error(
+                        Code::ConcurrentEdit,
+                        "A new maintenance input differs from the confirmed repair output.",
+                    ));
+                }
+            }
+        }
+        if !current.writes.is_subset(&baseline.writes) {
+            return Err(error(
+                Code::ConcurrentEdit,
+                "A replanned maintenance step would expand its write scope.",
+            ));
+        }
+        for (path, original) in &baseline.reads {
+            let expected = prior
+                .iter()
+                .filter_map(|writes| writes.0.get(path))
+                .next_back()
+                .unwrap_or(original);
+            let planned = self
+                .dependencies
+                .iter()
+                .chain(&self.changes)
+                .find(|change| &change.path == path);
+            let actual = if let Some(change) = planned {
+                &change.before
+            } else {
+                self.depend_on_snapshot(path, expected);
+                expected
+            };
+            if !same_snapshot(actual, expected) || !same_snapshot(&Snapshot::read(path)?, expected)
+            {
+                return Err(error(
+                    Code::ConcurrentEdit,
+                    "A maintenance input changed outside the confirmed repairs.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn apply(&self) -> Result<Applied, Diagnostic> {
+        if self.assets().is_empty() {
+            return Ok(Applied {
+                transaction: String::new(),
+                changes: 0,
+            });
+        }
+        let store = AssetStore::lock(&self.store, &self.allowed, Duration::from_secs(2))?;
+        if !store.pending_transactions()?.is_empty() {
+            return Err(error(
+                Code::RollbackConflict,
+                "An interrupted transaction requires explicit recovery before maintenance.",
+            ));
+        }
+        let pending: Vec<_> = self
+            .changes
+            .iter()
+            .filter(|change| !change.unchanged())
+            .collect();
+        let recheck = |written: usize| {
+            if let Some(check) = &self.precondition {
+                check()?;
+            }
+            for dependency in &self.dependencies {
+                safe_path(&dependency.path)?;
+                let current = Snapshot::read(&dependency.path)?;
+                let own_write = pending[..written]
+                    .iter()
+                    .find(|change| change.path == dependency.path);
+                let matches = own_write.map_or_else(
+                    || same_snapshot(&current, &dependency.before),
+                    |change| matches_after(change, &current),
+                );
+                if !matches {
+                    return Err(error(
+                        Code::ConcurrentEdit,
+                        "A maintenance dependency changed after planning.",
+                    ));
+                }
+            }
+            Ok(())
+        };
+        recheck(0)?;
+        store.apply_checked(self.changes.clone(), recheck)
+    }
+}
+
+fn same_snapshot(left: &Snapshot, right: &Snapshot) -> bool {
+    left.digest() == right.digest()
+        && PermissionRecord::capture(left.permissions.as_ref())
+            == PermissionRecord::capture(right.permissions.as_ref())
+}
+
+fn matches_after(change: &Change, actual: &Snapshot) -> bool {
+    actual.digest() == change.after.as_deref().map(hash)
+        && PermissionRecord::capture(actual.permissions.as_ref())
+            == PermissionRecord::after(change.after.is_some(), change.permissions.as_ref())
 }
 
 /// A stable lock file is never deleted, avoiding lock-inode replacement races
@@ -379,7 +646,7 @@ impl AssetStore {
         asset: &Snapshot,
         asset_digest: Option<&str>,
     ) -> Result<Option<Vec<Change>>, Diagnostic> {
-        if receipt.bytes.is_none() || asset.bytes.is_none() {
+        if receipt.bytes.is_none() || (asset.bytes.is_none() && asset_digest.is_none()) {
             return Ok(None);
         }
         let directory = root.join("transactions");
@@ -388,7 +655,14 @@ impl AssetStore {
             return Ok(None);
         }
         let expected_receipt = receipt_path.canonicalize().map_err(|_| io_error())?;
-        let expected_asset = asset_path.canonicalize().map_err(|_| io_error())?;
+        // A removed leaf (or its parent directory) cannot be canonicalized.
+        // The journal path must exactly equal the selected absolute path.
+        safe_path(asset_path)?;
+        let expected_asset = if asset.bytes.is_some() {
+            asset_path.canonicalize().map_err(|_| io_error())?
+        } else {
+            asset_path.to_owned()
+        };
         let mut paths = Vec::new();
         for (i, entry) in fs::read_dir(directory).map_err(|_| io_error())?.enumerate() {
             if i >= 1000 {
@@ -462,11 +736,27 @@ impl AssetStore {
                 });
                 if journal.entries.iter().any(|e| {
                     safe_path(&e.path).is_ok()
-                        && e.path.canonicalize().ok().as_deref() == Some(expected_asset.as_path())
+                        && if asset.bytes.is_some() {
+                            e.path.canonicalize().ok().as_deref() == Some(expected_asset.as_path())
+                        } else {
+                            #[cfg(windows)]
+                            {
+                                same_missing_asset_path(&e.path, &expected_asset)
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                e.path == expected_asset
+                            }
+                        }
                         && e.after.is_some()
                         && asset_digest.is_none_or(|digest| e.after.as_deref() == Some(digest))
-                        && e.after_permissions.as_ref()
-                            == Some(&PermissionRecord::capture(asset.permissions.as_ref()))
+                        && if asset.bytes.is_none() {
+                            e.after_permissions.as_ref()
+                                == Some(&PermissionRecord::after(true, None))
+                        } else {
+                            e.after_permissions.as_ref()
+                                == Some(&PermissionRecord::capture(asset.permissions.as_ref()))
+                        }
                 }) {
                     return Ok(Some(chain));
                 }

@@ -230,7 +230,17 @@ fn optional_gitlab_environment_is_read_only_and_does_not_gate_core_readiness() {
         fs::write(&f.state, state.to_string()).unwrap();
         let doctor = f.run_raw(&["doctor", "--provider", "gitlab"]);
         assert_eq!(doctor["exit"], 0, "{doctor}");
-        assert_eq!(doctor["status"], "ready");
+        // Optional metadata still does not gate successful observation; this fresh
+        // fixture now explicitly reports that project initialization is pending.
+        assert_eq!(doctor["status"], "attention_required");
+        assert!(
+            doctor["evidence"]["health"]["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|check| check["id"] == "declaration"
+                    && check["status"] == "needs_initialization")
+        );
         let environment = &doctor["evidence"]["environment"];
         assert_eq!(environment["host"], "forge.example");
         assert_eq!(environment["deployment"]["status"], "unknown");

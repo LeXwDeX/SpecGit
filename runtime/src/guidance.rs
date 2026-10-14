@@ -361,6 +361,66 @@ pub fn changes(
     Ok(changes)
 }
 
+/// Inspect an already selected init guidance installation without creating one.
+/// A receipt or a certified marked block is the selection evidence. If AGENTS.md
+/// has disappeared, its unrecorded manual content cannot be reconstructed.
+pub fn health_plan(
+    root: &Path,
+    private: &Path,
+    declaration: &Declaration,
+) -> Result<Option<crate::assets::MaintenancePlan>, Diagnostic> {
+    let pending = crate::assets::AssetStore::pending_at(&private.join("assets"))?;
+    if !pending.is_empty() {
+        let rollback = pending
+            .iter()
+            .map(|id| format!("specgit init --rollback {id}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(Diagnostic::new(
+            Code::RollbackConflict,
+            "guidance_health",
+            &format!(
+                "Unfinished init asset transaction(s): {}.",
+                pending.join(", ")
+            ),
+            &format!(
+                "Inspect the recorded journal under {}. Recover only the verified transaction(s) with: {rollback}. Then repeat doctor.",
+                private.join("assets/transactions").display(),
+            ),
+        ));
+    }
+    let receipt_path = private.join("guidance.json");
+    let receipt = crate::assets::Snapshot::read(&receipt_path)?;
+    let agents = root.join("AGENTS.md");
+    let agents_block = has_block(&agents)?;
+    let claude_block = has_block(&root.join("CLAUDE.md"))?;
+    if receipt.bytes.is_none() && !agents_block && !claude_block {
+        return Ok(None);
+    }
+    if !agents_block {
+        return Err(conflict());
+    }
+    if let Some(bytes) = receipt.bytes.as_deref() {
+        let state: Receipt = serde_json::from_value(crate::input::json(bytes, 1_048_576, 16)?)
+            .map_err(|_| conflict())?;
+        if state.blocks.contains_key("CLAUDE.md") && !claude_block {
+            return Err(conflict());
+        }
+    }
+    let changes = changes(root, private, declaration, declaration, claude_block)?;
+    Ok(Some(crate::assets::MaintenancePlan::new(
+        private.join("assets"),
+        vec![root.to_path_buf(), private.to_path_buf()],
+        changes,
+        vec![crate::assets::Change {
+            path: receipt_path,
+            before: receipt.clone(),
+            after: receipt.bytes,
+            permissions: receipt.permissions,
+        }],
+    )))
+}
+
 /// Migration writes the same ownership evidence as initialization. Edited
 /// blocks still require a matching committed transaction before refresh.
 pub fn migration_receipt(

@@ -8,6 +8,275 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[tokio::test]
+async fn guard_health_requires_receipt_and_live_executable_hooks() {
+    let temp = fixture();
+    let root = temp.path();
+    let process = specgit::process::Process::default();
+    assert!(
+        specgit::guard::health_plan(&process, root)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(manage(root, "--install").status.success());
+    let current = specgit::guard::health_plan(&process, root)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(current.assets().is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let hook = root.join(".git/hooks/pre-commit");
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(specgit::guard::health_plan(&process, root).await.is_err());
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    git(root, &["config", "core.hooksPath", ".alternate-hooks"]);
+    assert!(specgit::guard::health_plan(&process, root).await.is_err());
+}
+
+#[tokio::test]
+async fn guard_health_refresh_rechecks_the_hook_after_preview() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    let process = specgit::process::Process::default();
+    assert!(manage(&root, "--install").status.success());
+    let receipt_path = root.join(".git/specgit-v2/guard-hooks.json");
+    let hook_path = root.join(".git/hooks/pre-commit");
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    let old = receipt["hooks"]["pre-commit"]["block"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let legacy = old.replace(
+        "# <<< specgit-v2:pre-commit:end <<<",
+        "# legacy generated line\n# <<< specgit-v2:pre-commit:end <<<",
+    );
+    receipt["hooks"]["pre-commit"]["block"] = legacy.clone().into();
+    fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    fs::write(
+        &hook_path,
+        fs::read_to_string(&hook_path)
+            .unwrap()
+            .replace(&old, &legacy),
+    )
+    .unwrap();
+    let declaration_path = root.join(".specgit.yaml");
+    let declaration_before = specgit::assets::Snapshot::read(&declaration_path).unwrap();
+    let mut preview = specgit::guard::health_plan(&process, &root)
+        .await
+        .unwrap()
+        .unwrap();
+    preview.depend_on_snapshot(&declaration_path, &declaration_before);
+    assert!(!preview.assets().is_empty());
+    let concurrent = format!("{}# user edit\n", fs::read_to_string(&hook_path).unwrap());
+    fs::write(&hook_path, &concurrent).unwrap();
+    assert!(preview.apply(&process).await.is_err());
+    assert_eq!(fs::read_to_string(&hook_path).unwrap(), concurrent);
+    let mut stale = specgit::guard::health_plan(&process, &root)
+        .await
+        .unwrap()
+        .unwrap();
+    stale.depend_on_snapshot(&declaration_path, &declaration_before);
+    fs::write(
+        &declaration_path,
+        "version: 2\nremote: origin\ntarget: main\n# changed\n",
+    )
+    .unwrap();
+    assert!(stale.apply(&process).await.is_err());
+    fs::write(&declaration_path, declaration_before.bytes.unwrap()).unwrap();
+    let fresh = specgit::guard::health_plan(&process, &root)
+        .await
+        .unwrap()
+        .unwrap();
+    fresh.apply(&process).await.unwrap();
+    let refreshed = fs::read_to_string(&hook_path).unwrap();
+    assert!(!refreshed.contains("# legacy generated line"));
+    assert!(refreshed.ends_with("# user edit\n"));
+}
+
+#[tokio::test]
+async fn guard_health_stops_shared_hook_refresh_for_a_sibling_consumer() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    let parent = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+    let name = format!(
+        "../{}/linked",
+        parent.path().file_name().unwrap().to_str().unwrap()
+    );
+    git(&root, &["worktree", "add", "-b", "linked", &name]);
+    let sibling = parent.path().join("linked");
+    fs::write(
+        sibling.join(".specgit.yaml"),
+        "version: 2\nremote: origin\ntarget: main\n",
+    )
+    .unwrap();
+    assert!(manage(&root, "--install").status.success());
+    assert!(
+        specgit::guard::health_plan(&specgit::process::Process::default(), &sibling)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let receipt_path = root.join(".git/specgit-v2/guard-hooks.json");
+    let hook_path = root.join(".git/hooks/pre-commit");
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    let old = receipt["hooks"]["pre-commit"]["block"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let legacy = old.replace(
+        "# <<< specgit-v2:pre-commit:end <<<",
+        "# legacy generated line\n# <<< specgit-v2:pre-commit:end <<<",
+    );
+    receipt["hooks"]["pre-commit"]["block"] = legacy.clone().into();
+    fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    fs::write(
+        &hook_path,
+        fs::read_to_string(&hook_path)
+            .unwrap()
+            .replace(&old, &legacy),
+    )
+    .unwrap();
+    assert!(
+        specgit::guard::health_plan(&specgit::process::Process::default(), &root)
+            .await
+            .is_err()
+    );
+    assert!(
+        fs::read_to_string(&hook_path)
+            .unwrap()
+            .contains("# legacy generated line")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn guard_health_preserves_a_repository_path_ending_in_newline() {
+    let temp = fixture();
+    let original = temp.path().canonicalize().unwrap();
+    let renamed = original.with_file_name(format!(
+        "{}-newline\n",
+        original.file_name().unwrap().to_string_lossy()
+    ));
+    fs::rename(&original, &renamed).unwrap();
+    let process = specgit::process::Process::default();
+    assert!(
+        specgit::guard::health_plan(&process, &renamed)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let installed = manage(&renamed, "--install");
+    assert!(installed.status.success(), "{installed:?}");
+    let health = specgit::guard::health_plan(&process, &renamed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(health.assets().is_empty());
+    fs::rename(&renamed, &original).unwrap();
+}
+
+#[cfg(feature = "test-fixtures")]
+#[tokio::test]
+async fn guard_health_reports_crashed_transactions_before_declaring_current_or_absent() {
+    for crash_point in ["before-write:0", "before-commit"] {
+        let temp = fixture();
+        let root = temp.path().canonicalize().unwrap();
+        // Fault injection belongs to the fixture build, even when the public
+        // entrypoint regressions target a separately installed production binary.
+        let crashed = Command::new(env!("CARGO_BIN_EXE_specgit"))
+            .current_dir(&root)
+            .args(["guard", "--install"])
+            .env("SPECGIT_FIXTURE_ASSET_CRASH", crash_point)
+            .output()
+            .unwrap();
+        assert_eq!(crashed.status.code(), Some(99), "{crashed:?}");
+        // Use the same Git-reported directory as guard's plan. On Windows,
+        // canonicalize() may add a verbatim prefix that differs from Git's path.
+        let process = specgit::process::Process::default();
+        let private = specgit::config::worktree::private_root(&process, &root)
+            .await
+            .unwrap();
+        let receipt = private.join("guard-hooks.json");
+        let before = fs::read(&receipt).ok();
+        let journal_root = private.join("transactions/transactions");
+        let id = fs::read_dir(&journal_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .find(|name| name.starts_with("tx-"))
+            .unwrap();
+        let error = specgit::guard::health_plan(&process, &root)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.code, specgit::diagnostic::Code::RollbackConflict);
+        assert!(error.message.contains(&id));
+        assert_eq!(fs::read(&receipt).ok(), before);
+        let hooks = specgit::config::worktree::hooks(&process, &root)
+            .await
+            .unwrap();
+        let store = specgit::assets::AssetStore::lock(
+            &private.join("transactions"),
+            &[hooks, private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        store.rollback(&id).unwrap();
+        assert!(
+            specgit::guard::health_plan(&process, &root)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn guard_health_reports_orphan_markers_without_taking_ownership() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    assert!(manage(&root, "--install").status.success());
+    let receipt = root.join(".git/specgit-v2/guard-hooks.json");
+    let hook = root.join(".git/hooks/pre-commit");
+    let before = fs::read(&hook).unwrap();
+    fs::remove_file(receipt).unwrap();
+    let error = specgit::guard::health_plan(&specgit::process::Process::default(), &root)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code, specgit::diagnostic::Code::OwnershipConflict);
+    assert_eq!(fs::read(&hook).unwrap(), before);
+}
+
+#[tokio::test]
+async fn guard_health_reads_external_effective_hooks_without_writing() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    let external_dir = tempfile::tempdir().unwrap();
+    let external = external_dir.path().canonicalize().unwrap();
+    fs::write(
+        external.join("pre-commit"),
+        b"#!/bin/sh\n# >>> specgit-v2:pre-commit:start >>>\n",
+    )
+    .unwrap();
+    git(
+        &root,
+        &["config", "core.hooksPath", external.to_str().unwrap()],
+    );
+    let before = fs::read(external.join("pre-commit")).unwrap();
+    let error = specgit::guard::health_plan(&specgit::process::Process::default(), &root)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code, specgit::diagnostic::Code::OwnershipConflict);
+    assert_eq!(fs::read(external.join("pre-commit")).unwrap(), before);
+}
+
 fn git(root: &Path, args: &[&str]) {
     assert!(
         Command::new("git")

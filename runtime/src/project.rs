@@ -38,6 +38,9 @@ fn trim_line(bytes: Vec<u8>) -> Result<String, Diagnostic> {
 pub async fn git(process: &Process, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
     let mut request =
         Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied());
+    // Read-only status probes must not refresh the index as an optional side effect.
+    // Required locks for explicit Git mutations are unaffected by this setting.
+    request.env.insert("GIT_OPTIONAL_LOCKS".into(), "0".into());
     // Native error classification is a machine protocol, independent of the caller's UI locale.
     request.env.insert("LC_ALL".into(), "C".into());
     // Native SHA evidence must describe the actual objects, not local replacement views.

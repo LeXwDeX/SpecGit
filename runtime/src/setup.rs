@@ -53,14 +53,15 @@ pub struct HookOptions {
 
 fn purpose_manifest(
     binary: &Path,
-    custom: bool,
+    agent: Agent,
     purposes: &std::collections::BTreeSet<HookPurpose>,
     wake: bool,
 ) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    let custom = agent == Agent::Opencode;
     let mut entries = if custom {
         opencode_manifest(binary)?
     } else {
-        manifest(binary)
+        manifest(binary, agent)?
     };
     entries.retain(|event, _| match event.as_str() {
         "PreToolUse" => purposes.contains(&HookPurpose::Guard),
@@ -344,16 +345,76 @@ fn conflict_at(host: &str, path: &Path, event: Option<&str>, message: &str) -> D
         "Preserve user edits. Restore the exact recorded owned content before retrying; if stale, explicitly remove only this project's proven owned integration. Do not overwrite or adopt foreign content.",
     )
 }
-fn manifest(binary: &Path) -> BTreeMap<String, Value> {
-    ["SessionStart", "PreToolUse", "PostToolUse", "Stop"].into_iter().map(|event| {
-        let mut entry = json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ TOOL_MATCHER }else{""},
-            "hooks":[{"type":"command","command":binary,"args":["hook","--event",event],"timeout":5}]});
-        if event == "PostToolUse" {
-            entry["hooks"].as_array_mut().expect("hooks is an array").push(
-                json!({"type":"command","command":binary,"args":["hook","--event",event,"--observe"],"async":true,"timeout":1830}));
+fn manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    // Claude accepts executable + argv. Codex runs only command through its shell.
+    let codex = (agent == Agent::Codex)
+        .then(|| codex_executable(binary))
+        .transpose()?;
+    let handler = |event: &str, observe: bool| {
+        let mut args = vec!["hook", "--event", event];
+        if observe {
+            args.push("--observe");
         }
-        (event.into(), entry)
-    }).collect()
+        let mut hook = if let Some(quoted) = &codex {
+            json!({"type":"command","command":format!("{quoted} {}", args.join(" "))})
+        } else {
+            json!({"type":"command","command":binary,"args":args})
+        };
+        hook["timeout"] = json!(if observe { 1830 } else { 5 });
+        if observe {
+            hook["async"] = json!(true);
+        }
+        hook
+    };
+    Ok(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]
+        .into_iter()
+        .map(|event| {
+            let mut hooks = vec![handler(event, false)];
+            if event == "PostToolUse" {
+                hooks.push(handler(event, true));
+            }
+            (
+                event.into(),
+                json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ TOOL_MATCHER }else{""},"hooks":hooks}),
+            )
+        })
+        .collect())
+}
+
+fn codex_executable(binary: &Path) -> Result<String, Diagnostic> {
+    let binary = binary
+        .to_str()
+        .ok_or_else(|| Diagnostic::input("Codex hook executable path must be UTF-8."))?;
+    if binary.chars().any(char::is_control) {
+        return Err(Diagnostic::input(
+            "Codex hook executable path contains an unsupported control character.",
+        ));
+    }
+    #[cfg(windows)]
+    {
+        codex_windows_executable(binary)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(format!("'{}'", binary.replace('\'', "'\\''")))
+    }
+}
+
+#[cfg(any(windows, test))]
+fn codex_windows_executable(binary: &str) -> Result<String, Diagnostic> {
+    // cmd expands %variables% even inside quotes, and !variables! when delayed
+    // expansion is enabled. Reject these paths instead of executing another CLI.
+    if binary.contains(['%', '!', '"']) || binary.chars().any(char::is_control) {
+        return Err(Diagnostic::input(
+            "Codex cmd hooks cannot safely use executable paths containing %, !, quotes or control characters; use a shared installation path without them.",
+        ));
+    }
+    let binary = if let Some(unc) = binary.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{unc}")
+    } else {
+        binary.strip_prefix("\\\\?\\").unwrap_or(binary).to_owned()
+    };
+    Ok(format!("\"{binary}\""))
 }
 fn opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnostic> {
     let binary = binary
@@ -397,6 +458,16 @@ fn registration_change(
     old: Option<&Registration>,
     new: Option<&BTreeMap<String, Value>>,
 ) -> Result<Change, Diagnostic> {
+    registration_change_recovering(host, path, old, new, &std::collections::BTreeSet::new())
+}
+
+fn registration_change_recovering(
+    host: &str,
+    path: &Path,
+    old: Option<&Registration>,
+    new: Option<&BTreeMap<String, Value>>,
+    recover_missing: &std::collections::BTreeSet<String>,
+) -> Result<Change, Diagnostic> {
     let before = Snapshot::read(path)?;
     let mut settings = match &before.bytes {
         Some(bytes) => input::json(bytes, 1_048_576, 32)?,
@@ -415,6 +486,18 @@ fn registration_change(
                 "Registration targets another settings path.",
             ));
         }
+        if !top_level
+            && map.get("hooks").is_none()
+            && old.created_hook_map
+            && old
+                .entries
+                .keys()
+                .all(|event| recover_missing.contains(event))
+        {
+            // Only a map created by this receipt may be reconstructed. Every
+            // recorded event must also be individually proven absent.
+            map.insert("hooks".into(), json!({}));
+        }
         let hooks = if top_level {
             &mut *map
         } else {
@@ -430,6 +513,17 @@ fn registration_change(
                 })?
         };
         for (event, entry) in &old.entries {
+            if recover_missing.contains(event) {
+                if !old.created_event_keys.contains(event) || hooks.contains_key(event) {
+                    return Err(conflict_at(
+                        host,
+                        path,
+                        Some(event),
+                        "Missing hook entry cannot be safely recovered.",
+                    ));
+                }
+                continue;
+            }
             let array = hooks
                 .get_mut(event)
                 .and_then(Value::as_array_mut)
@@ -482,7 +576,9 @@ fn registration_change(
                 .ok_or_else(|| conflict_at(host, path, None, "Host hooks is not an object."))?
         };
         for (event, entry) in new {
-            if old.is_some_and(|old| old.entries.contains_key(event)) {
+            if old.is_some_and(|old| old.entries.contains_key(event))
+                && !recover_missing.contains(event)
+            {
                 continue;
             }
             let array = hooks
@@ -539,6 +635,26 @@ fn registration_change(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn codex_cmd_paths_are_quoted_without_variable_expansion() {
+        assert_eq!(
+            codex_windows_executable(r"\\?\C:\Program Files\O'Brien & tools\specgit.exe").unwrap(),
+            r#""C:\Program Files\O'Brien & tools\specgit.exe""#
+        );
+        assert_eq!(
+            codex_windows_executable(r"\\?\UNC\server\share name\specgit.exe").unwrap(),
+            r#""\\server\share name\specgit.exe""#
+        );
+        for path in [
+            r"C:\%USERPROFILE%\specgit.exe",
+            r"C:\!expanded!\specgit.exe",
+            "C:\\broken\"path\\specgit.exe",
+            "C:\\broken\npath\\specgit.exe",
+        ] {
+            assert!(codex_windows_executable(path).is_err(), "{path}");
+        }
+    }
+
     #[test]
     fn host_prompt_refresh_is_canonical_and_preserves_foreign_bytes() {
         let temp = tempfile::tempdir().unwrap();
