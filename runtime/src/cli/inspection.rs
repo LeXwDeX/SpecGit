@@ -153,7 +153,11 @@ impl LocalInspection {
     ) -> Result<Self, Diagnostic> {
         let bytes = specgit::project::git(process, cwd, &["rev-parse", "--show-toplevel"]).await?;
         let root = String::from_utf8(bytes).map_err(|_| Diagnostic::input("Invalid Git root."))?;
-        let root = PathBuf::from(root.trim_end_matches(['\r', '\n']));
+        // Remove only Git's output delimiter; Unix directory names can end in a newline.
+        let root = root.strip_suffix('\n').unwrap_or(&root);
+        #[cfg(windows)]
+        let root = root.strip_suffix('\r').unwrap_or(root);
+        let root = PathBuf::from(root);
         let declaration = specgit::config::read(&root)?;
         let remote = remote.or_else(|| declaration.as_ref().and_then(|d| d.remote.as_deref()));
         let provider = provider.or_else(|| declaration.as_ref().and_then(|d| d.provider));

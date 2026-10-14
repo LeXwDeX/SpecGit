@@ -2868,6 +2868,8 @@ fn doctor_rejects_malformed_declaration_without_rewriting_it() {
     fs::write(f.root.join(".specgit.yaml"), malformed).unwrap();
     let report = f.run_raw(&["doctor", "--provider", "github"]);
     assert_ne!(report["exit"], 0, "{report}");
+    assert!(report["evidence"].get("local").is_none());
+    assert_report_matches_schema(&report);
     assert!(
         !report["diagnostics"].as_array().unwrap().is_empty(),
         "{report}"
@@ -2878,4 +2880,31 @@ fn doctor_rejects_malformed_declaration_without_rewriting_it() {
     );
     assert!(!f.root.join(".git/specgit-v2/selection.json").exists());
     assert!(f.state()["calls"].as_array().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_preserves_repository_root_with_trailing_newline() {
+    let mut f = Fixture::new();
+    let renamed = f.root.with_file_name("project\n");
+    fs::rename(&f.root, &renamed).unwrap();
+    f.root = renamed;
+    let declaration = "version: 2\nprovider: github\nremote: origin\ntarget: release\n";
+    fs::write(f.root.join(".specgit.yaml"), declaration).unwrap();
+    let report = f.run_raw(&["doctor", "--provider", "github"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(report["evidence"]["local"]["status"], "initialized");
+    assert_eq!(report["evidence"]["local"]["target"], "release");
+    assert_eq!(
+        report["evidence"]["local"]["context"]["root"],
+        json!(f.root)
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join(".specgit.yaml")).unwrap(),
+        declaration
+    );
+    assert_report_matches_schema(&report);
+    let status = f.run_raw(&["status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    assert_eq!(status["evidence"]["context"]["root"], json!(f.root));
 }

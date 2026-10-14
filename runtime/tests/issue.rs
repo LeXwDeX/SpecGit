@@ -1542,6 +1542,21 @@ fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() 
                 serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
             jsonschema::draft202012::validate(&schema, &report).unwrap();
             if branch == "feature" {
+                for evidence in [json!(null), json!("invalid"), json!([])] {
+                    let mut invalid = report.clone();
+                    invalid["evidence"] = evidence;
+                    assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+                }
+                let mut invalid = report.clone();
+                invalid["evidence"].as_object_mut().unwrap().remove("local");
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+                let mut invalid = report.clone();
+                invalid["evidence"]["local"]["context"] = json!({});
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+                let mut invalid = report.clone();
+                invalid["evidence"]["local"]["context"]["private_payload"] =
+                    json!("must not escape");
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
                 let mut invalid = report.clone();
                 invalid["evidence"]["local"]["remote_state"] = json!("verified");
                 assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
@@ -1561,11 +1576,16 @@ fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() 
             );
             assert_eq!(local["context"]["remote"], "origin");
             assert_eq!(local["context"]["repository"]["path"], "fixture/repo");
-            assert_eq!(local["context"]["root"], json!(f.root));
+            assert_eq!(
+                Path::new(local["context"]["root"].as_str().unwrap())
+                    .canonicalize()
+                    .unwrap(),
+                f.root
+            );
             assert!(
                 local["context"]["head"]
                     .as_str()
-                    .is_some_and(|head| head.len() == 40)
+                    .is_some_and(specgit::project::valid_oid)
             );
             let expected = if branch == "feature" {
                 "initialized"
