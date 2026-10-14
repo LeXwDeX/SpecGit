@@ -196,7 +196,12 @@ async fn guard_health_reports_crashed_transactions_before_declaring_current_or_a
             .output()
             .unwrap();
         assert_eq!(crashed.status.code(), Some(99), "{crashed:?}");
-        let private = root.join(".git/specgit-v2");
+        // Use the same Git-reported directory as guard's plan. On Windows,
+        // canonicalize() may add a verbatim prefix that differs from Git's path.
+        let process = specgit::process::Process::default();
+        let private = specgit::config::worktree::private_root(&process, &root)
+            .await
+            .unwrap();
         let receipt = private.join("guard-hooks.json");
         let before = fs::read(&receipt).ok();
         let journal_root = private.join("transactions/transactions");
@@ -205,14 +210,14 @@ async fn guard_health_reports_crashed_transactions_before_declaring_current_or_a
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .find(|name| name.starts_with("tx-"))
             .unwrap();
-        let error = specgit::guard::health_plan(&specgit::process::Process::default(), &root)
+        let error = specgit::guard::health_plan(&process, &root)
             .await
             .err()
             .unwrap();
         assert_eq!(error.code, specgit::diagnostic::Code::RollbackConflict);
         assert!(error.message.contains(&id));
         assert_eq!(fs::read(&receipt).ok(), before);
-        let hooks = specgit::config::worktree::hooks(&specgit::process::Process::default(), &root)
+        let hooks = specgit::config::worktree::hooks(&process, &root)
             .await
             .unwrap();
         let store = specgit::assets::AssetStore::lock(
@@ -223,7 +228,7 @@ async fn guard_health_reports_crashed_transactions_before_declaring_current_or_a
         .unwrap();
         store.rollback(&id).unwrap();
         assert!(
-            specgit::guard::health_plan(&specgit::process::Process::default(), &root)
+            specgit::guard::health_plan(&process, &root)
                 .await
                 .unwrap()
                 .is_none()
