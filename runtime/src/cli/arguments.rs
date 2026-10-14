@@ -113,7 +113,7 @@ pub(super) enum Commands {
         #[arg(long, conflicts_with_all = ["stage", "install"])]
         uninstall: bool,
     },
-    /// Probe native command support and authenticated read-only API access.
+    /// Inspect local project/checkpoint context and authenticated read-only API access.
     Doctor {
         #[arg(long, value_enum)]
         provider: Provider,
@@ -121,7 +121,7 @@ pub(super) enum Commands {
         remote: Option<String>,
         #[arg(long)]
         api_host: Option<String>,
-        /// Probe an account outside Git; project access remains not_checked.
+        /// Probe only an account; local context and project access remain not_checked.
         #[arg(long)]
         account_only: bool,
     },

@@ -139,6 +139,10 @@ commands use the global input/output contract above.
 | `update` | Update the running shared executable from a signed GitHub Release. `--check` only reads release metadata; `--dry-run` downloads and verifies without replacement; the default applies. `--version <x.y.z>` selects an exact release; an older one is a downgrade. Requires an authenticated `gh` and Cosign. See [self-update](#self-update). |
 | `skill` | Explicit user Skill only: `--user` is mandatory. `--dry-run` previews without writes; `--remove` removes only managed, unedited content; `--refresh-only` skips absent or foreign files and conflicts with `--remove`. See [user Skill](#user-skill). |
 
+`doctor` also reports `evidence.local`, a read-only summary of local context, the declaration target and checkpoint state. Its `status` is `initialized`, `uninitialized`, `checkpoint_branch_mismatch` or `not_checked`; checkpoint status is `absent`, `current`, `branch_mismatch` or `not_checked`. A current checkpoint summary contains only `recorded_branch`, `recorded_target`, `issues` and `request`. These are local records, not platform verification or write eligibility. Dirty files, a missing declaration or an absent checkpoint do not fail doctor. With a branch mismatch and successful API probes, the top-level status is `checkpoint_branch_mismatch` and exit is 0; API probe failures still produce `unknown` and exit 3. Invalid declarations or checkpoints retain their existing diagnostics and failure exits.
+
+Without `--account-only`, doctor uses the declaration's remote and stored API routing as fallbacks; explicit `--remote` and `--api-host` take precedence. Account-only mode skips local configuration and checkpoint reads and reports local state as `not_checked`. Local context inspection adds no API calls, fetches or writes.
+
 `inbox`, `status`, `doctor`, `migrate` and `update` remain auxiliary entrypoints in this
 native CLI. Core project operations are setup, init, issue, pr, watch
 and hook. No separate server is required for ordinary Agent use.
