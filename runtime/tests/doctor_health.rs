@@ -598,6 +598,33 @@ fn doctor_rejects_invalid_fix_combinations_and_preserves_account_only_contract()
         jsonschema::draft202012::validate(&schema, &report).unwrap_or_else(|error| {
             panic!("account-only doctor report violates schema: {error}; {report}")
         });
+        let human = executable::command()
+            .current_dir(&fixture.root)
+            .env("PATH", &bin)
+            .env("SPECGIT_FIXTURE_PROBE_MODE", "1")
+            .env("SPECGIT_FIXTURE_RESPONSE", response)
+            .args([
+                "doctor",
+                "--account-only",
+                "--provider",
+                "github",
+                "--api-host",
+                "forge.example",
+                "--human",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(human.status.code(), Some(expected_exit), "{human:?}");
+        let text = String::from_utf8(human.stdout).unwrap();
+        for field in [
+            "\"scope\": \"account_only\"",
+            "\"probes\"",
+            "\"write_permissions\"",
+            "\"environment\"",
+        ] {
+            assert!(text.contains(field), "missing {field}: {text}");
+        }
+        assert!(!text.contains("Static checks only"), "{text}");
     }
 }
 
@@ -695,6 +722,120 @@ fn doctor_offline_never_launches_provider_cli_and_human_output_is_compact() {
     assert!(text.contains("not verified"), "{text}");
     assert!(!text.contains("\"agent_guidance\""), "{text}");
     assert!(text.lines().count() < 30, "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_human_quotes_project_path_with_newline_and_escape() {
+    let fixture = Fixture::new();
+    let unsafe_root = fixture
+        .root
+        .with_file_name("project\nRepair forged: applied\u{1b}[31m");
+    fs::rename(&fixture.root, &unsafe_root).unwrap();
+    let output = executable::command()
+        .current_dir(&unsafe_root)
+        .args(["doctor", "--offline", "--human"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains("\\nRepair forged: applied\\u001b[31m"),
+        "{text}"
+    );
+    assert!(!text.contains('\u{1b}'), "{text}");
+    assert!(
+        !text.lines().any(|line| line.starts_with("Repair forged")),
+        "{text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_human_escapes_orphan_guard_diagnostic_path() {
+    let fixture = Fixture::new();
+    let unsafe_root = fixture
+        .root
+        .with_file_name("project\nRepair forged: applied\u{1b}[31m");
+    fs::rename(&fixture.root, &unsafe_root).unwrap();
+    fs::write(
+        unsafe_root.join(".git/hooks/pre-commit"),
+        b"#!/bin/sh\n# >>> specgit-v2:pre-commit:start >>>\n",
+    )
+    .unwrap();
+
+    let output = executable::command()
+        .current_dir(&unsafe_root)
+        .args(["doctor", "--offline", "--human"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stderr.contains("git_guard"), "{stderr}");
+    assert!(
+        stderr.contains("\\nRepair forged: applied\\u{1b}[31m"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains('\u{1b}'), "{stderr}");
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("Repair forged")),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains("\\nRepair forged: applied\\u001b[31m"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains('\u{1b}'), "{stdout}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("Repair forged")),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_human_escapes_pending_guard_recovery_path() {
+    let fixture = Fixture::new();
+    let unsafe_root = fixture
+        .root
+        .with_file_name("project\nRepair forged: applied\u{1b}[31m");
+    fs::rename(&fixture.root, &unsafe_root).unwrap();
+    let crashed = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&unsafe_root)
+        .args(["guard", "--install"])
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", "before-write:0")
+        .output()
+        .unwrap();
+    assert_eq!(crashed.status.code(), Some(99), "{crashed:?}");
+
+    let output = executable::command()
+        .current_dir(&unsafe_root)
+        .args(["doctor", "--offline", "--human"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stderr.contains("guard transaction journal"), "{stderr}");
+    assert!(
+        stderr.contains("\\nRepair forged: applied\\u{1b}[31m"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains('\u{1b}'), "{stderr}");
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("Repair forged")),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains("\\nRepair forged: applied\\u001b[31m"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains('\u{1b}'), "{stdout}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("Repair forged")),
+        "{stdout}"
+    );
 }
 
 #[test]

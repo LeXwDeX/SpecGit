@@ -11,7 +11,7 @@ pub(super) fn emit(report: Report, json: bool) {
     } else {
         println!("{}: {}", report.operation, report.status);
         for diagnostic in &report.diagnostics {
-            eprintln!("{diagnostic}");
+            eprintln!("{}", terminal_safe(&diagnostic.to_string()));
         }
         if report.operation == "doctor" {
             doctor_summary(&report);
@@ -23,19 +23,45 @@ pub(super) fn emit(report: Report, json: bool) {
         }
         for action in &report.next_actions {
             if let Some(remedy) = action.get("remedy").and_then(serde_json::Value::as_str) {
-                println!("{remedy}");
+                println!("{}", terminal_safe(remedy));
             }
         }
     }
 }
 
+fn terminal_safe(text: &str) -> String {
+    let mut safe = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() || matches!(character, '\u{2028}' | '\u{2029}') {
+            safe.extend(character.escape_default());
+        } else {
+            safe.push(character);
+        }
+    }
+    safe
+}
+
 fn doctor_summary(report: &Report) {
     let evidence = &report.evidence;
+    if evidence
+        .pointer("/health/scope")
+        .and_then(serde_json::Value::as_str)
+        == Some("account_only")
+    {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(evidence).unwrap_or_default()
+        );
+        return;
+    }
     if let Some(root) = evidence
         .pointer("/local/context/root")
         .and_then(serde_json::Value::as_str)
     {
-        println!("Project: {root}");
+        println!(
+            "Project: {}",
+            terminal_safe(&serde_json::to_string(root).expect("JSON strings serialize"))
+        );
     }
     if let Some(checks) = evidence
         .pointer("/health/checks")
@@ -75,4 +101,22 @@ fn doctor_summary(report: &Report) {
         }
     }
     println!("Static checks only; real host loading and hook delivery are not verified.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terminal_safe;
+
+    #[test]
+    fn action_remedy_keeps_plain_text_and_quotes_terminal_controls() {
+        assert_eq!(
+            terminal_safe("Review the repair plan."),
+            "Review the repair plan."
+        );
+        assert_eq!(
+            terminal_safe("Inspect path\nRepair forged: applied\u{1b}[31m"),
+            "Inspect path\\nRepair forged: applied\\u{1b}[31m"
+        );
+        assert_eq!(terminal_safe("line\u{2028}break"), "line\\u{2028}break");
+    }
 }

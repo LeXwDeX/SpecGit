@@ -804,13 +804,47 @@ fn health_plan_reports_legacy_codex_orphan_without_writing() {
         "args":["hook", "--event", "SessionStart"], "timeout":5
     }]}]}});
     fs::write(&settings, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+    let replacement = f.base.join("replacement");
+    fs::create_dir(&replacement).unwrap();
+    let moved_source = source_fixture(&replacement);
     let before = files(&f.base);
-    let error = project::health_plan(&f.root, &f.private, &f.source)
-        .err()
-        .expect("legacy Codex registration must remain an ownership conflict");
-    assert_eq!(error.code, Code::OwnershipConflict);
-    assert!(error.message.contains("registration"), "{error}");
-    assert_eq!(files(&f.base), before);
+    for current_source in [&f.source, &moved_source] {
+        let error = project::health_plan(&f.root, &f.private, current_source)
+            .err()
+            .expect("legacy Codex registration must remain an ownership conflict");
+        assert_eq!(error.code, Code::OwnershipConflict);
+        assert!(error.message.contains("registration"), "{error}");
+        assert_eq!(files(&f.base), before);
+    }
+}
+
+#[test]
+fn health_plan_reports_orphan_hook_after_shared_cli_moves() {
+    for agent in [Agent::Claude, Agent::Codex, Agent::Opencode] {
+        let (f, mut options) = fixture(vec![agent]);
+        if agent == Agent::Opencode {
+            options.opencode_claude_hooks = true;
+        }
+        install(&options, &f).unwrap();
+        fs::remove_file(f.private.join("ownership.json")).unwrap();
+        fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+        if agent == Agent::Claude {
+            fs::remove_file(f.root.join(".claude/skills/specgit-native/SKILL.md")).unwrap();
+            fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+        } else {
+            fs::remove_file(f.root.join("AGENTS.md")).unwrap();
+        }
+        let replacement = f.base.join("replacement");
+        fs::create_dir(&replacement).unwrap();
+        let moved_source = source_fixture(&replacement);
+        let before = files(&f.base);
+        let error = project::health_plan(&f.root, &f.private, &moved_source)
+            .err()
+            .unwrap();
+        assert_eq!(error.code, Code::OwnershipConflict, "{agent:?}: {error}");
+        assert!(error.message.contains("registration"), "{agent:?}: {error}");
+        assert_eq!(files(&f.base), before);
+    }
 }
 
 #[test]

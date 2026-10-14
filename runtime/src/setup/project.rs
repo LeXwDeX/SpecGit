@@ -221,7 +221,31 @@ fn orphan_at(path: &Path, message: &str) -> Diagnostic {
     diagnostic
 }
 
-fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+fn orphan_hook_executable(host: &str, event: &str, group: &Value) -> Option<PathBuf> {
+    let hook = group.get("hooks")?.as_array()?.first()?;
+    let command = hook.get("command")?.as_str()?;
+    if command.len() > 8192 {
+        return None;
+    }
+    let shell_command = host == "opencode" || (host == "codex" && hook.get("args").is_none());
+    let executable = if shell_command {
+        let command = command.strip_suffix(&format!(" hook --event {event}"))?;
+        let body = if cfg!(windows) && host == "codex" {
+            command.strip_prefix('"')?.strip_suffix('"')?.to_owned()
+        } else {
+            command
+                .strip_prefix('\'')?
+                .strip_suffix('\'')?
+                .replace("'\\''", "'")
+        };
+        PathBuf::from(body)
+    } else {
+        PathBuf::from(command)
+    };
+    executable.is_absolute().then_some(executable)
+}
+
+fn orphan_hook_registration(root: &Path) -> Result<Option<PathBuf>, Diagnostic> {
     for (agent, host, relative) in [
         (Agent::Claude, "claude", ".claude/settings.json"),
         (Agent::Codex, "codex", ".codex/hooks.json"),
@@ -241,31 +265,37 @@ fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf
         }) else {
             continue;
         };
-        let expected = if host == "opencode" {
-            opencode_manifest(source)?
-        } else {
-            manifest(source, agent)?
-        };
-        let mut recognized = vec![expected];
-        if agent == Agent::Codex {
-            // 2.9.2 emitted Claude's executable + argv shape for Codex. This
-            // only identifies an orphan; it never grants repair ownership.
-            recognized.push(manifest(source, Agent::Claude)?);
-        }
-        for (event, group) in recognized.into_iter().flatten() {
-            let Some(groups) = events.get(&event).and_then(Value::as_array) else {
+        for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+            let Some(groups) = events.get(event).and_then(Value::as_array) else {
                 continue;
             };
             if groups.iter().any(|candidate| {
-                candidate == &group
-                    || (event == "PostToolUse" && host != "opencode" && {
-                        let mut without_observer = group.clone();
-                        without_observer["hooks"]
-                            .as_array_mut()
-                            .expect("manifest hooks")
-                            .truncate(1);
-                        candidate == &without_observer
-                    })
+                let Some(executable) = orphan_hook_executable(host, event, candidate) else {
+                    return false;
+                };
+                let expected = if host == "opencode" {
+                    opencode_manifest(&executable)
+                } else {
+                    manifest(&executable, agent)
+                };
+                let mut recognized: Vec<_> = expected.into_iter().collect();
+                if agent == Agent::Codex {
+                    // Recognize 2.9.2's executable + argv protocol only to
+                    // report an orphan. Exact comparison grants no ownership.
+                    recognized.extend(manifest(&executable, Agent::Claude));
+                }
+                recognized.iter().any(|expected| {
+                    let group = &expected[event];
+                    candidate == group
+                        || (event == "PostToolUse" && host != "opencode" && {
+                            let mut without_observer = group.clone();
+                            without_observer["hooks"]
+                                .as_array_mut()
+                                .expect("manifest hooks")
+                                .truncate(1);
+                            candidate == &without_observer
+                        })
+                })
             }) {
                 return Ok(Some(path));
             }
@@ -781,7 +811,7 @@ pub fn health_plan(
                 ));
             }
         }
-        if let Some(path) = orphan_hook_registration(root, source)? {
+        if let Some(path) = orphan_hook_registration(root)? {
             return Err(orphan_at(
                 &path,
                 "An exact SpecGit host hook registration exists without a project ownership receipt; preserve it for reconciliation.",

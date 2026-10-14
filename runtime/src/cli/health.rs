@@ -343,9 +343,77 @@ async fn git_path(process: &Process, cwd: &Path, args: &[&str]) -> Result<PathBu
 }
 
 pub(super) fn guidance(checks: &[Check], root: &Path, source: &Path) -> Value {
-    let tasks: Vec<_> = checks.iter().enumerate().filter(|(_,c)|matches!(c.status,"unknown"|"change_required"|"needs_initialization")).map(|(index,c)| {
-        let command = c.repairable.then(|| json!({"executable":source,"argv":["doctor","--offline","--fix","--dry-run"],"cwd":root,"scope":"project","authorization":"existing_session_only"}));
-        json!({"check":c.id,"finding":c.status,"evidence_pointer":format!("/evidence/health/checks/{}",index),"reason":c.diagnostic.as_ref().map(|d|d.message.as_str()).unwrap_or(if c.repairable {"Recorded project assets differ from the current templates."}else{"Project configuration has not been selected."}),"certainty":if c.status=="unknown"{"unconfirmed"}else{"observed"},"recommendation":c.diagnostic.as_ref().map(|d|d.remedy.as_str()).unwrap_or(if c.repairable {"Review the concrete repair preview, then apply under existing authorization."}else{"Choose the intended initialization or integration before writing."}),"command":command,"preconditions":["Recheck current evidence and existing user authorization.","Preserve unknown ownership and manual content."],"verification":"Rerun doctor; verify host activation separately through the specgit-native Skill."})
-    }).collect();
+    let tasks: Vec<_> = checks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| matches!(c.status, "unknown" | "change_required" | "needs_initialization"))
+        .map(|(index, c)| {
+            let command = c.repairable.then(|| json!({"executable":source,"argv":["doctor","--offline","--fix","--dry-run"],"cwd":root,"scope":"project","authorization":"existing_session_only"}));
+            let reason = c.diagnostic.as_ref().map(|d| d.message.as_str()).unwrap_or_else(|| {
+                match (c.id, c.status, c.repairable) {
+                    (_, _, true) => "Recorded project assets differ from the current templates.",
+                    ("initialization", "needs_initialization", _) => "The project declaration exists, but this worktree has no initialization markers.",
+                    ("declaration", "needs_initialization", _) => "No project declaration or initialization state was found.",
+                    _ => "This project check needs attention before initialization.",
+                }
+            });
+            let recommendation = c.diagnostic.as_ref().map(|d| d.remedy.as_str())
+                .or_else(|| c.evidence.get("remedy").and_then(Value::as_str))
+                .unwrap_or(if c.repairable {"Review the concrete repair preview, then apply under existing authorization."} else {"Choose the intended initialization or integration before writing."});
+            json!({"check":c.id,"finding":c.status,"evidence_pointer":format!("/evidence/health/checks/{index}"),"reason":reason,"certainty":if c.status=="unknown"{"unconfirmed"}else{"observed"},"recommendation":recommendation,"command":command,"preconditions":["Recheck current evidence and existing user authorization.","Preserve unknown ownership and manual content."],"verification":"Rerun doctor; verify host activation separately through the specgit-native Skill."})
+        })
+        .collect();
     json!({"tasks":tasks,"max_rounds":3,"skill":"specgit-native","stop_conditions":["Permission or ownership is unresolved.","The same findings remain without progress.","Three guided attempts have completed."],"scope":"project_static","host_behavior":"not_verified"})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Check, guidance};
+    use serde_json::json;
+    use std::path::Path;
+
+    #[test]
+    fn guidance_names_missing_initialization_without_claiming_configuration_is_absent() {
+        let checks = [Check::fact(
+            "initialization",
+            "needs_initialization",
+            json!({
+                "markers":[],
+                "remedy":"Review specgit init --dry-run and select integrations explicitly."
+            }),
+        )];
+        let result = guidance(&checks, Path::new("/project"), Path::new("/shared/specgit"));
+        let task = &result["tasks"][0];
+        assert_eq!(task["check"], "initialization");
+        assert!(
+            task["reason"]
+                .as_str()
+                .unwrap()
+                .contains("declaration exists")
+        );
+        assert_eq!(task["recommendation"], checks[0].evidence["remedy"]);
+        assert!(task["command"].is_null());
+
+        let missing = [Check::fact(
+            "declaration",
+            "needs_initialization",
+            json!({"remedy":"Run specgit init after selecting the intended project configuration."}),
+        )];
+        let missing_task = guidance(
+            &missing,
+            Path::new("/project"),
+            Path::new("/shared/specgit"),
+        );
+        assert_eq!(missing_task["tasks"][0]["check"], "declaration");
+        assert!(
+            missing_task["tasks"][0]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("No project declaration")
+        );
+        assert_eq!(
+            missing_task["tasks"][0]["recommendation"],
+            missing[0].evidence["remedy"]
+        );
+    }
 }
