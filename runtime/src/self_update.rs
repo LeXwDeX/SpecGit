@@ -216,7 +216,10 @@ pub fn extract_executable(archive: &[u8], entry: &str, limit: u64) -> Result<Vec
     let mut file = zip
         .by_index(0)
         .map_err(|_| invalid("The release archive entry is unreadable or unsupported."))?;
-    if file.name() != entry
+    let name = file
+        .name()
+        .map_err(|_| invalid("The release archive entry name is invalid."))?;
+    if name != entry
         || file.enclosed_name().as_deref() != Some(Path::new(entry))
         || !file.is_file()
         || file.encrypted()
@@ -1172,6 +1175,28 @@ mod tests {
             assert_eq!(error.code, Code::EvidenceRejected, "{manifest:?}");
         }
         assert!(manifest_digest(&[0xff, 0xfe], "x.zip").is_err());
+    }
+
+    #[test]
+    fn archive_extraction_rejects_invalid_utf8_entry_names() {
+        let mut bytes = archive(&[("specgit", b"binary")]);
+        // Mark both ZIP headers as UTF-8, then corrupt their entry name bytes.
+        for (signature, flags_offset, name_offset) in
+            [(b"PK\x03\x04", 6, 30), (b"PK\x01\x02", 8, 46)]
+        {
+            let start = bytes
+                .windows(signature.len())
+                .position(|window| window == signature)
+                .unwrap();
+            let flags =
+                u16::from_le_bytes([bytes[start + flags_offset], bytes[start + flags_offset + 1]])
+                    | 0x0800;
+            bytes[start + flags_offset..start + flags_offset + 2]
+                .copy_from_slice(&flags.to_le_bytes());
+            bytes[start + name_offset] = 0xff;
+        }
+        let error = extract_executable(&bytes, "specgit", 64).unwrap_err();
+        assert_eq!(error.code, Code::EvidenceRejected);
     }
 
     #[test]
