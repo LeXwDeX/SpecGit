@@ -212,9 +212,12 @@ async fn guard_health_reports_crashed_transactions_before_declaring_current_or_a
         assert_eq!(error.code, specgit::diagnostic::Code::RollbackConflict);
         assert!(error.message.contains(&id));
         assert_eq!(fs::read(&receipt).ok(), before);
+        let hooks = specgit::config::worktree::hooks(&specgit::process::Process::default(), &root)
+            .await
+            .unwrap();
         let store = specgit::assets::AssetStore::lock(
             &private.join("transactions"),
-            &[root.join(".git/hooks"), private.clone()],
+            &[hooks, private.clone()],
             std::time::Duration::from_secs(2),
         )
         .unwrap();

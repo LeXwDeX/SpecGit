@@ -25,15 +25,34 @@ struct ProjectReceipt {
     hooks: BTreeMap<String, Registration>,
 }
 
+fn same_project_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic> {
+    #[cfg(windows)]
+    {
+        assets::safe_path(recorded)?;
+        assets::safe_path(current)?;
+        let recorded = recorded
+            .canonicalize()
+            .map_err(|_| conflict("The recorded project root cannot be resolved safely."))?;
+        let current = current
+            .canonicalize()
+            .map_err(|_| conflict("The current project root cannot be resolved safely."))?;
+        Ok(recorded == current)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(recorded == current)
+    }
+}
+
 fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagnostic> {
     let snapshot = Snapshot::read(&private.join("ownership.json"))?;
     let receipt = if let Some(bytes) = &snapshot.bytes {
-        let r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
+        let mut r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
             .map_err(|_| conflict("The project integration receipt is malformed."))?;
         if ![1, 2].contains(&r.version)
             || (r.version == 1) != r.shared_root.is_some()
             || r.owner != "specgit"
-            || r.root != root
+            || !same_project_root(&r.root, root)?
             || r.agents.is_empty()
             || r.skills.len() > 2
             || r.instructions.len() > 3
@@ -46,7 +65,7 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
                 .contains(&p.as_str())
             })
             || r.instructions.iter().any(|(host, g)| {
-                g.root != root
+                g.root != r.root
                     || !matches!(
                         (host.as_str(), g.instructions.as_str()),
                         ("generic", "AGENTS.md")
@@ -57,10 +76,10 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             || r.hooks.iter().any(|(host, h)| {
                 h.skill.is_some()
                     || match host.as_str() {
-                        "claude" => h.settings != root.join(".claude/settings.json"),
-                        "codex" => h.settings != root.join(".codex/hooks.json"),
+                        "claude" => h.settings != r.root.join(".claude/settings.json"),
+                        "codex" => h.settings != r.root.join(".codex/hooks.json"),
                         "opencode" => {
-                            h.settings != root.join(".opencode/hooks.json") || h.created_hook_map
+                            h.settings != r.root.join(".opencode/hooks.json") || h.created_hook_map
                         }
                         _ => true,
                     }
@@ -93,6 +112,23 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             return Err(conflict(
                 "The project receipt lacks required selected-agent ownership.",
             ));
+        }
+        // The receipt records the root spelling used at installation. Git may
+        // later return the same Windows directory without its extended prefix.
+        // Rebase only verified project paths to the current spelling so planned
+        // targets and the asset store's explicit roots use one representation.
+        r.root = root.to_path_buf();
+        for registration in r.instructions.values_mut() {
+            registration.root = root.to_path_buf();
+        }
+        for (host, registration) in &mut r.hooks {
+            let relative = match host.as_str() {
+                "claude" => ".claude/settings.json",
+                "codex" => ".codex/hooks.json",
+                "opencode" => ".opencode/hooks.json",
+                _ => unreachable!("validated host"),
+            };
+            registration.settings = root.join(relative);
         }
         r
     } else {
@@ -143,7 +179,9 @@ fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnost
             ));
         }
     }
-    if shared_inside_project(source, project)? {
+    if shared_inside_project(source, project)?
+        || crate::config::worktree::source_in_same_repository_checkout(source, project)?
+    {
         return Err(Diagnostic::input(
             "Project hooks require the installed shared CLI outside this checkout; setup never installs a project executable.",
         ));
@@ -175,6 +213,53 @@ fn orphan_at(path: &Path, message: &str) -> Diagnostic {
     let mut diagnostic = conflict_at("project", path, None, message);
     diagnostic.remedy = "Preserve the file. Find the matching worktree ownership receipt or reconcile this orphaned SpecGit asset explicitly before retrying; doctor will not adopt it.".into();
     diagnostic
+}
+
+fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+    for (host, relative) in [
+        ("claude", ".claude/settings.json"),
+        ("codex", ".codex/hooks.json"),
+        ("opencode", ".opencode/hooks.json"),
+    ] {
+        let path = root.join(relative);
+        let Some(bytes) = Snapshot::read(&path)?.bytes else {
+            continue;
+        };
+        let Ok(settings) = input::json(&bytes, 1_048_576, 32) else {
+            continue;
+        };
+        let Some(events) = (if host == "opencode" {
+            settings.as_object()
+        } else {
+            settings.get("hooks").and_then(Value::as_object)
+        }) else {
+            continue;
+        };
+        let expected = if host == "opencode" {
+            opencode_manifest(source)?
+        } else {
+            manifest(source)
+        };
+        for (event, group) in expected {
+            let Some(groups) = events.get(&event).and_then(Value::as_array) else {
+                continue;
+            };
+            if groups.iter().any(|candidate| {
+                candidate == &group
+                    || (event == "PostToolUse" && host != "opencode" && {
+                        let mut without_observer = group.clone();
+                        without_observer["hooks"]
+                            .as_array_mut()
+                            .expect("manifest hooks")
+                            .truncate(1);
+                        candidate == &without_observer
+                    })
+            }) {
+                return Ok(Some(path));
+            }
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagnostic> {
@@ -689,6 +774,12 @@ pub fn health_plan(
                 ));
             }
         }
+        if let Some(path) = orphan_hook_registration(root, source)? {
+            return Err(orphan_at(
+                &path,
+                "An exact SpecGit host hook registration exists without a project ownership receipt; preserve it for reconciliation.",
+            ));
+        }
         return Ok(None);
     }
     let receipt_path = private.join("ownership.json");
@@ -845,12 +936,21 @@ pub fn health_plan(
         after: Some(receipt_bytes),
         permissions: snapshot.permissions.clone(),
     });
-    Ok(Some(assets::MaintenancePlan::new(
+    let mut plan = assets::MaintenancePlan::new(
         private.into(),
         vec![root.into(), private.into()],
         changes,
         dependencies,
-    )))
+    );
+    if !previous.hooks.is_empty() {
+        let source = source.to_owned();
+        let root = root.to_owned();
+        plan = plan.with_precondition(move || {
+            shared_executable(&source, &root)?;
+            Ok(())
+        });
+    }
+    Ok(Some(plan))
 }
 
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {

@@ -91,6 +91,30 @@ pub fn safe_path(path: &Path) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
+
+#[cfg(windows)]
+fn same_missing_asset_path(recorded: &Path, selected: &Path) -> bool {
+    if recorded == selected {
+        return true;
+    }
+    // The leaf is absent, so require the same name under the same existing,
+    // symlink-free parent. This accepts Windows verbatim/ordinary path aliases
+    // without treating a different directory as owned.
+    let (Some(recorded_parent), Some(selected_parent)) = (recorded.parent(), selected.parent())
+    else {
+        return false;
+    };
+    if recorded.file_name() != selected.file_name()
+        || safe_path(recorded).is_err()
+        || safe_path(selected).is_err()
+    {
+        return false;
+    }
+    matches!(
+        (recorded_parent.canonicalize(), selected_parent.canonicalize()),
+        (Ok(recorded), Ok(selected)) if recorded == selected
+    )
+}
 /// Open only ordinary files; nonblocking/no-follow also covers a Unix leaf swap.
 pub fn open_regular(path: &Path) -> std::io::Result<File> {
     if !fs::symlink_metadata(path)?.file_type().is_file() {
@@ -210,6 +234,7 @@ pub struct MaintenancePlan {
     allowed: Vec<PathBuf>,
     changes: Vec<Change>,
     dependencies: Vec<Change>,
+    precondition: Option<Box<dyn Fn() -> Result<(), Diagnostic> + Send + Sync>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -241,7 +266,19 @@ impl MaintenancePlan {
             allowed,
             changes,
             dependencies,
+            precondition: None,
         }
+    }
+
+    /// Recheck a read-only ownership condition under the asset lock and before
+    /// each write. The caller owns the check; the asset store stays independent
+    /// of project-specific rules.
+    pub fn with_precondition(
+        mut self,
+        check: impl Fn() -> Result<(), Diagnostic> + Send + Sync + 'static,
+    ) -> Self {
+        self.precondition = Some(Box::new(check));
+        self
     }
 
     pub fn assets(&self) -> Vec<MaintenanceAsset> {
@@ -393,6 +430,9 @@ impl MaintenancePlan {
             .filter(|change| !change.unchanged())
             .collect();
         let recheck = |written: usize| {
+            if let Some(check) = &self.precondition {
+                check()?;
+            }
             for dependency in &self.dependencies {
                 safe_path(&dependency.path)?;
                 let current = Snapshot::read(&dependency.path)?;
@@ -699,7 +739,14 @@ impl AssetStore {
                         && if asset.bytes.is_some() {
                             e.path.canonicalize().ok().as_deref() == Some(expected_asset.as_path())
                         } else {
-                            e.path == expected_asset
+                            #[cfg(windows)]
+                            {
+                                same_missing_asset_path(&e.path, &expected_asset)
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                e.path == expected_asset
+                            }
                         }
                         && e.after.is_some()
                         && asset_digest.is_none_or(|digest| e.after.as_deref() == Some(digest))
