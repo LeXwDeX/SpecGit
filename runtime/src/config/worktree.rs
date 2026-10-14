@@ -440,7 +440,9 @@ pub async fn rollback(
 
 #[cfg(test)]
 mod tests {
-    use super::{git_dir, metadata_path, safe_git_path};
+    #[cfg(unix)]
+    use super::safe_git_path;
+    use super::{git_dir, metadata_path};
     use std::{fs, path::Path};
 
     #[test]
