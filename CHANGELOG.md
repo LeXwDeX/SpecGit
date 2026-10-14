@@ -4,6 +4,13 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.9.2
+
+- Include offline project identity, declaration state and Issue checkpoint evidence in `doctor`. Report branch/checkpoint mismatches and invalid local configuration as diagnostics, while a dirty worktree or missing checkpoint alone remains informational. Account-only diagnostics skip the local project inspection.
+- Preserve local evidence when native probes fail and support SHA-256 Git object IDs and project paths containing newlines. Doctor JSON now requires its local evidence section and validates the complete project context.
+
+Scope: [#712](https://github.com/LeXwDeX/SpecGit/issues/712), [#714](https://github.com/LeXwDeX/SpecGit/issues/714).
+
 # 2.9.1
 
 - Read the active GitHub Rulesets that apply to the target branch with bounded pagination. A complete, valid nonempty response reports readable effective protection; an empty response falls back to classic branch protection. Failed, malformed or incomplete reads remain unknown. This does not assess every ruleset, queue or approval condition, promise request eligibility, or change native settings.
