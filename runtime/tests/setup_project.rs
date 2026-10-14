@@ -419,6 +419,191 @@ fn fixture(agents: Vec<Agent>) -> (Fixture, project::Options) {
     )
 }
 
+#[test]
+fn health_plan_restores_proven_missing_skill_and_keeps_manual_guidance() {
+    let (f, options) = fixture(vec![Agent::Generic]);
+    assert!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .unwrap()
+            .is_none()
+    );
+    install(&options, &f).unwrap();
+    let guidance = f.root.join("AGENTS.md");
+    let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+    let original = fs::read(&skill).unwrap();
+    let prior_guidance = fs::read_to_string(&guidance).unwrap();
+    fs::write(
+        &guidance,
+        format!("manual prefix\n{prior_guidance}manual suffix\n"),
+    )
+    .unwrap();
+    fs::remove_file(&skill).unwrap();
+    let before = files(&f.base);
+    let plan = project::health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(
+        plan.assets()
+            .iter()
+            .any(|a| a.path == skill && a.state == "created")
+    );
+    assert_eq!(files(&f.base), before, "planning created a file or lock");
+    assert!(plan.apply().unwrap().changes > 0);
+    assert_eq!(fs::read(&skill).unwrap(), original);
+    let after = fs::read_to_string(&guidance).unwrap();
+    assert!(after.starts_with("manual prefix\n"));
+    assert!(after.ends_with("manual suffix\n"));
+    let settled = project::health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(settled.assets().is_empty());
+    assert_eq!(settled.apply().unwrap().changes, 0);
+}
+
+#[test]
+fn health_plan_rejects_missing_guidance_and_stale_snapshot() {
+    let (f, options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    let guidance = f.root.join("AGENTS.md");
+    fs::remove_file(&guidance).unwrap();
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    fs::write(&guidance, "foreign guidance").unwrap();
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    // Reinstall the precise owned block through a fresh fixture for the race check.
+    let (f, options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    let plan = project::health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    fs::write(
+        f.root.join(".agents/skills/specgit-native/SKILL.md"),
+        "raced",
+    )
+    .unwrap();
+    assert_eq!(plan.apply().unwrap_err().code, Code::ConcurrentEdit);
+    assert_eq!(
+        fs::read_to_string(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap(),
+        "raced"
+    );
+}
+
+#[test]
+fn health_plan_restores_only_proven_missing_hook_event() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    install(&options, &f).unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let original = value["hooks"]["SessionStart"].clone();
+    value["manual"] = json!("keep");
+    value["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("SessionStart");
+    fs::write(&settings, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    let plan = project::health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(
+        plan.assets()
+            .iter()
+            .any(|a| a.path == settings && a.state == "updated")
+    );
+    plan.apply().unwrap();
+    let restored: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(restored["manual"], "keep");
+    assert_eq!(restored["hooks"]["SessionStart"], original);
+    let mut edited = restored;
+    edited["hooks"]["SessionStart"][0]["hooks"][0]["args"] = json!(["foreign"]);
+    fs::write(&settings, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn health_plan_does_not_reset_changed_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+    fs::set_permissions(&skill, fs::Permissions::from_mode(0o644)).unwrap();
+    let before = files(&f.base);
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+    assert_eq!(
+        fs::metadata(&skill).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+}
+
+#[test]
+fn health_plan_reports_orphan_project_assets_without_claiming_foreign_files() {
+    let (f, _) = fixture(vec![]);
+    let guidance = f.root.join("AGENTS.md");
+    let foreign_hooks = f.root.join(".codex/hooks.json");
+    fs::create_dir_all(foreign_hooks.parent().unwrap()).unwrap();
+    fs::write(&guidance, "manual rules\n").unwrap();
+    fs::write(&foreign_hooks, "{\"manual\":true}").unwrap();
+    assert!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .unwrap()
+            .is_none()
+    );
+
+    let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "orphaned skill").unwrap();
+    let before = files(&f.base);
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+    fs::remove_file(&skill).unwrap();
+
+    fs::write(
+        &guidance,
+        "manual rules\n<!-- specgit:project:v2:start -->\n",
+    )
+    .unwrap();
+    let before = files(&f.base);
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+}
+
 fn install(
     options: &project::Options,
     f: &Fixture,
@@ -1276,4 +1461,42 @@ fn interrupted_project_install_has_recoverable_private_journal_and_no_outside_wr
     assert!(!f.root.join("AGENTS.md").exists());
     assert!(!f.private.join("ownership.json").exists());
     assert_eq!(fs::read(&f.source).unwrap(), source);
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn health_plan_reports_prepared_first_install_without_a_receipt() {
+    let (f, _) = fixture(vec![]);
+    let output = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.root)
+        .args(["setup", "--agent", "opencode", "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", "before-write:0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(99));
+    assert!(!f.private.join("ownership.json").exists());
+    let journal = fs::read_dir(f.private.join("transactions"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .join("journal.json");
+    let journal: Value = serde_json::from_slice(&fs::read(journal).unwrap()).unwrap();
+    assert_eq!(journal["state"], "prepared");
+    let before = files(&f.base);
+    let diagnostic = project::health_plan(&f.root, &f.private, &f.source)
+        .err()
+        .unwrap();
+    assert_eq!(diagnostic.code, Code::OwnershipConflict);
+    assert!(
+        diagnostic
+            .message
+            .contains("interrupted project asset transaction")
+    );
+    assert_eq!(
+        files(&f.base),
+        before,
+        "inspection attempted recovery or wrote state"
+    );
 }

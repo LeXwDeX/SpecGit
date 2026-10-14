@@ -8,15 +8,43 @@ use specgit::{
 };
 use std::path::{Path, PathBuf};
 
-pub(super) async fn doctor(
-    process: Process,
-    cwd: &Path,
-    provider: Provider,
-    remote: Option<String>,
-    api_host: Option<String>,
-    account_only: bool,
-) -> Report {
-    let mut probes = probe::commands(&process, cwd, provider).await;
+pub(super) struct DoctorOptions {
+    pub provider: Option<Provider>,
+    pub remote: Option<String>,
+    pub api_host: Option<String>,
+    pub account_only: bool,
+    pub offline: bool,
+    pub fix: bool,
+    pub dry_run: bool,
+}
+
+pub(super) async fn doctor(process: Process, cwd: &Path, options: DoctorOptions) -> Report {
+    use super::health::{self, Check};
+    use serde_json::json;
+    let DoctorOptions {
+        provider,
+        remote,
+        api_host,
+        account_only,
+        offline,
+        fix,
+        dry_run,
+    } = options;
+    let source = match std::env::current_exe().and_then(|p| p.canonicalize()) {
+        Ok(source) => source,
+        Err(_) => {
+            return Report::failure(
+                "doctor",
+                Diagnostic::input("The running CLI path is unavailable."),
+            );
+        }
+    };
+    let mut health = if account_only {
+        None
+    } else {
+        Some(health::inspect(&process, cwd, &source).await)
+    };
+    let mut diagnostics = vec![];
     let local = if account_only {
         None
     } else {
@@ -24,81 +52,259 @@ pub(super) async fn doctor(
             &process,
             cwd,
             remote.as_deref(),
-            Some(provider),
+            provider,
             api_host.as_deref(),
         )
         .await
         {
             Ok(local) => Some(local),
             Err(d) => {
-                let mut report = Report::failure("doctor", d);
-                report.evidence =
-                    serde_json::json!({"probes":probes,"write_permissions":"not_checked"});
-                return report;
+                if let Some(health) = &mut health {
+                    health
+                        .checks
+                        .push(Check::failed("local_context", d.clone()));
+                }
+                diagnostics.push(d);
+                None
             }
         }
     };
-    let context = local.as_ref().map(|local| &local.context);
-    let host = context
-        .as_ref()
-        .map(|c| c.repository.host.as_str())
-        .or(api_host.as_deref())
-        .unwrap_or(match provider {
-            Provider::Github => "github.com",
-            Provider::Gitlab => "gitlab.com",
+    let provider = provider
+        .or_else(|| local.as_ref().map(|l| l.context.repository.provider))
+        .or_else(|| {
+            health
+                .as_ref()
+                .and_then(|h| h.declaration.as_ref().and_then(|d| d.provider))
         });
-    let reader = match ForgeRead::new(process, cwd, provider, host) {
-        Ok(r) => r,
-        Err(d) => return Report::failure("doctor", d),
-    };
-    probes.push(probe::account(&reader).await);
-    probes.push(if let Some(context) = &context {
-        probe::inspect(&reader, context).await
-    } else {
-        probe::Probe::not_checked("project_api")
-    });
-    let write_permissions = if let Some(context) = &context {
-        let project_probe = probes.last().expect("project probe was appended");
-        project_probe
-            .evidence
-            .get("write_permissions")
-            .cloned()
-            .unwrap_or_else(|| {
-                serde_json::to_value(specgit::forge::capabilities::write_permissions(
-                    &context.repository,
-                    None,
-                ))
-                .expect("permissions serialize")
-            })
-    } else {
-        serde_json::json!("not_checked")
-    };
-    if let Some(account) = probes
-        .iter_mut()
-        .find(|probe| probe.operation == "account_api" && probe.status == Capability::Available)
-    {
-        account.evidence["write_permissions"] = write_permissions.clone();
+    if let Some(health) = &mut health {
+        health.checks.push(Check::fact(
+            "runtime",
+            "current",
+            json!({"executable":source,"version":env!("CARGO_PKG_VERSION")}),
+        ));
+        for name in std::iter::once("git").chain(provider.map(Provider::executable)) {
+            match specgit::process::resolve_executable(name) {
+                Ok(path) => health.checks.push(Check::fact(
+                    if name == "git" {
+                        "git_executable"
+                    } else {
+                        "forge_executable"
+                    },
+                    "current",
+                    json!({"executable":path,"behavior":"not_checked"}),
+                )),
+                Err(d) => health.checks.push(Check::failed(
+                    if name == "git" {
+                        "git_executable"
+                    } else {
+                        "forge_executable"
+                    },
+                    d,
+                )),
+            }
+        }
+        if provider.is_none() {
+            health.checks.push(Check::fact(
+                "platform",
+                "not_checked",
+                json!({"reason":"Select a provider or an unambiguous supported remote."}),
+            ));
+        }
     }
-    let failed = probes
+    let mut probes = vec![];
+    let mut write_permissions = json!("not_checked");
+    let mut environment = None;
+    if !offline && let Some(provider) = provider {
+        probes = probe::commands(&process, cwd, provider).await;
+        let context = local.as_ref().map(|local| &local.context);
+        let host = context
+            .map(|c| c.repository.host.as_str())
+            .or(api_host.as_deref())
+            .unwrap_or(match provider {
+                Provider::Github => "github.com",
+                Provider::Gitlab => "gitlab.com",
+            });
+        // Invalid local identity/configuration must not silently route to a guessed account.
+        if account_only || context.is_some() {
+            match ForgeRead::new(process.clone(), cwd, provider, host) {
+                Ok(reader) => {
+                    probes.push(probe::account(&reader).await);
+                    probes.push(if let Some(context) = context {
+                        probe::inspect(&reader, context).await
+                    } else {
+                        probe::Probe::not_checked("project_api")
+                    });
+                    if let Some(context) = context {
+                        write_permissions = probes
+                            .last()
+                            .and_then(|p| p.evidence.get("write_permissions"))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                json!(specgit::forge::capabilities::write_permissions(
+                                    &context.repository,
+                                    None
+                                ))
+                            });
+                    }
+                    if let Some(account) = probes
+                        .iter_mut()
+                        .find(|p| p.operation == "account_api" && p.status == Capability::Available)
+                    {
+                        account.evidence["write_permissions"] = write_permissions.clone();
+                    }
+                    environment = probe::environment(&reader).await;
+                }
+                Err(d) => diagnostics.push(d),
+            }
+        } else {
+            probes.extend([
+                probe::Probe::not_checked("account_api"),
+                probe::Probe::not_checked("project_api"),
+            ]);
+        }
+    } else {
+        probes.extend([
+            probe::Probe::not_checked("account_api"),
+            probe::Probe::not_checked("project_api"),
+        ]);
+    }
+    let failed_probes = probes
         .iter()
         .any(|p| !matches!(p.status, Capability::Available | Capability::NotChecked));
-    let environment = probe::environment(&reader).await;
+    if let Some(health) = &mut health {
+        for probe in &probes {
+            if let Some(d) = &probe.diagnostic {
+                health
+                    .checks
+                    .push(Check::failed("platform_probe", d.clone()));
+            }
+        }
+    }
+    let before = health.as_ref().map(|h| h.summary());
+    let plans = health
+        .as_ref()
+        .map(|h| h.preview())
+        .unwrap_or_else(|| json!([]));
+    let results = if fix && !dry_run {
+        match &mut health {
+            Some(health) => health.apply(&process, &source).await,
+            None => vec![],
+        }
+    } else {
+        vec![]
+    };
+    let failed_repairs = results
+        .iter()
+        .any(|r| matches!(r.status, "failed" | "skipped"));
+    let recheck = if fix && !dry_run {
+        let mut checked = health::inspect(&process, cwd, &source).await;
+        // A repair verifies static assets only. Preserve unresolved identity/probe evidence.
+        if let Some(previous) = &health {
+            checked.checks.extend(
+                previous
+                    .checks
+                    .iter()
+                    .filter(|c| {
+                        matches!(
+                            c.id,
+                            "local_context"
+                                | "platform_probe"
+                                | "runtime"
+                                | "git_executable"
+                                | "forge_executable"
+                                | "platform"
+                        )
+                    })
+                    .cloned(),
+            );
+        }
+        let summary = checked.summary();
+        health = Some(checked);
+        Some(summary)
+    } else {
+        None
+    };
+    if let Some(health) = &mut health {
+        for result in &results {
+            if let Some(diagnostic) = &result.diagnostic {
+                let id = match result.id {
+                    "setup" => "setup_repair",
+                    "guidance" => "guidance_repair",
+                    _ => "guard_repair",
+                };
+                health.checks.push(Check::failed(id, diagnostic.clone()));
+            }
+        }
+        diagnostics.extend(health.diagnostics());
+    }
+    // Preserve diagnostic precedence: cancellation, invalid input, failed operation, unknown facts.
+    let exit = if diagnostics.iter().any(|d| d.exit() == 130) {
+        130
+    } else if diagnostics.iter().any(|d| d.exit() == 2) {
+        2
+    } else if failed_repairs || diagnostics.iter().any(|d| d.exit() == 1) {
+        1
+    } else if failed_probes
+        || !diagnostics.is_empty()
+        || health.as_ref().is_some_and(|h| h.status() == "unknown")
+    {
+        3
+    } else {
+        0
+    };
+    let status = if failed_repairs {
+        "repair_failed"
+    } else if exit != 0 {
+        "unknown"
+    } else if local.as_ref().is_some_and(LocalInspection::branch_mismatch) {
+        "checkpoint_branch_mismatch"
+    } else if health.as_ref().is_some_and(|h| h.status() == "attention") {
+        "attention_required"
+    } else if offline {
+        "offline_checked"
+    } else {
+        "ready"
+    };
+    let root = health
+        .as_ref()
+        .and_then(|h| h.root.as_deref())
+        .unwrap_or(cwd);
+    let agent_guidance = health::guidance(
+        health.as_ref().map_or(&[], |h| h.checks.as_slice()),
+        root,
+        &source,
+    );
     let mut report = Report::success(
         "doctor",
-        if failed {
-            "unknown"
-        } else if local.as_ref().is_some_and(LocalInspection::branch_mismatch) {
-            "checkpoint_branch_mismatch"
-        } else {
-            "ready"
-        },
-        serde_json::json!({"probes":probes,"write_permissions":write_permissions,"environment":environment,"local":local.as_ref().map(LocalInspection::summary).unwrap_or_else(local_not_checked)}),
+        status,
+        json!({"probes":probes,"write_permissions":write_permissions,"environment":environment,"local":local.as_ref().map(LocalInspection::summary).unwrap_or_else(local_not_checked),"health":health.as_ref().map(|h|h.summary()).unwrap_or_else(||json!({"scope":"account_only","status":"not_checked","checks":[],"host_behavior":"not_verified"})),"repair":{"requested":fix,"dry_run":dry_run,"plans":plans,"results":results,"before":before,"recheck":recheck},"agent_guidance":agent_guidance}),
     );
+    if !account_only
+        && local.is_none()
+        && let Some(evidence) = report.evidence.as_object_mut()
+    {
+        evidence.remove("local");
+    }
+    report.exit = exit;
+    let mut effects = specgit::report::Effects::default();
+    for result in &results {
+        let index = effects.begin(
+            "local",
+            result.id,
+            json!({"transaction":result.transaction,"diagnostic":result.diagnostic}),
+        );
+        if result.status == "applied" {
+            effects.applied(index);
+        }
+    }
+    report.effects = Some(effects);
+    for d in diagnostics {
+        if !report.diagnostics.contains(&d) {
+            report.diagnostics.push(d);
+        }
+    }
     if let Some(local) = &local {
         local.add_next_actions(&mut report);
-    }
-    if failed {
-        report.exit = 3;
     }
     report
 }
