@@ -83,6 +83,22 @@ impl Fixture {
             .join("specgit-v2/agent-assets")
     }
 
+    fn install_guidance(&self) {
+        let private = self.private().parent().unwrap().to_path_buf();
+        let declaration = specgit::config::read(&self.root).unwrap().unwrap();
+        let changes =
+            specgit::guidance::changes(&self.root, &private, &declaration, &declaration, false)
+                .unwrap();
+        specgit::assets::AssetStore::lock(
+            &private.join("assets"),
+            &[self.root.clone(), private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(changes)
+        .unwrap();
+    }
+
     fn install_generic(&self) {
         fs::write(
             self.root.join(".specgit.yaml"),
@@ -460,6 +476,41 @@ fn doctor_fix_refuses_unknown_ownership_without_changing_project_files() {
 }
 
 #[test]
+fn doctor_unknown_ownership_blocks_independently_planned_repairs() {
+    let fixture = Fixture::new();
+    fixture.install_generic();
+    fixture.install_guidance();
+    let guidance = fixture.root.join("AGENTS.md");
+    let edited = fs::read_to_string(&guidance).unwrap().replace(
+        "<!-- specgit:v2:start -->",
+        "<!-- specgit:v2:start -->\nStale initialization guidance.",
+    );
+    fs::write(&guidance, edited).unwrap();
+    fs::write(
+        fixture.private().join("ownership.json"),
+        "malformed ownership",
+    )
+    .unwrap();
+    let before = files(&fixture.root);
+    let (preview, status) = fixture.doctor(&["doctor", "--offline", "--fix", "--dry-run"]);
+    assert_eq!(status.code(), Some(2), "{preview}");
+    assert!(
+        preview["evidence"]["repair"]["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == "guidance"),
+        "{preview}"
+    );
+    let (report, status) = fixture.doctor(&["doctor", "--offline", "--fix"]);
+    assert_eq!(status.code(), Some(2), "{report}");
+    assert_eq!(report["evidence"]["health"]["status"], "unknown");
+    assert_eq!(report["effects"]["outcome"], "not_applied", "{report}");
+    assert_eq!(report["effects"]["operations"], json!([]));
+    assert_eq!(files(&fixture.root), before);
+}
+
+#[test]
 fn doctor_rejects_invalid_fix_combinations_and_preserves_account_only_contract() {
     let fixture = Fixture::new();
     for args in [
@@ -673,6 +724,16 @@ fn doctor_does_not_treat_a_declaration_alone_as_completed_initialization() {
 fn doctor_keeps_committed_transaction_when_postimage_verification_fails() {
     let fixture = Fixture::new();
     fixture.install_generic();
+    fixture.install_guidance();
+    let guidance = fixture.root.join("AGENTS.md");
+    fs::write(
+        &guidance,
+        fs::read_to_string(&guidance).unwrap().replace(
+            "<!-- specgit:v2:start -->",
+            "<!-- specgit:v2:start -->\nStale initialization guidance.",
+        ),
+    )
+    .unwrap();
     fs::write(
         fixture.root.join(".agents/skills/specgit-native/SKILL.md"),
         "outdated owned content",
@@ -686,7 +747,21 @@ fn doctor_keeps_committed_transaction_when_postimage_verification_fails() {
         .unwrap();
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(1), "{report}");
-    let result = &report["evidence"]["repair"]["results"][0];
+    let results = report["evidence"]["repair"]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2, "{report}");
+    assert_eq!(results[1]["id"], "guidance");
+    assert_eq!(results[1]["status"], "skipped");
+    assert_eq!(
+        report["effects"]["operations"].as_array().unwrap().len(),
+        1,
+        "{report}"
+    );
+    assert!(
+        fs::read_to_string(&guidance)
+            .unwrap()
+            .contains("Stale initialization guidance.")
+    );
+    let result = &results[0];
     assert_eq!(result["status"], "failed");
     let transaction = result["transaction"]["transaction"].as_str().unwrap();
     assert!(!transaction.is_empty(), "{report}");

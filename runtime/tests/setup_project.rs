@@ -537,6 +537,64 @@ fn health_plan_restores_only_proven_missing_hook_event() {
     );
 }
 
+#[test]
+fn health_plan_restores_only_an_owned_missing_hook_map() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    install(&options, &f).unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let original_hooks = value["hooks"].clone();
+    value["manual"] = json!("keep");
+    value.as_object_mut().unwrap().remove("hooks");
+    fs::write(&settings, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    let before = files(&f.base);
+    let plan = project::health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert_eq!(files(&f.base), before);
+    assert!(
+        plan.assets()
+            .iter()
+            .any(|asset| asset.path == settings && asset.state == "updated")
+    );
+    plan.apply().unwrap();
+    let restored: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(restored["manual"], "keep");
+    assert_eq!(restored["hooks"], original_hooks);
+    let mut replaced = restored;
+    replaced["hooks"] = Value::Null;
+    fs::write(&settings, serde_json::to_vec_pretty(&replaced).unwrap()).unwrap();
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let settings = f.root.join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        b"{\"manual\":\"keep\",\"hooks\":{\"Foreign\":[{\"manual\":true}]}}",
+    )
+    .unwrap();
+    install(&options, &f).unwrap();
+    let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    value.as_object_mut().unwrap().remove("hooks");
+    fs::write(&settings, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    let before = files(&f.base);
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+}
+
 #[cfg(unix)]
 #[test]
 fn health_plan_does_not_reset_changed_permissions() {
@@ -861,7 +919,14 @@ fn project_receipt_v2_is_written_and_legacy_v1_receipts_stay_readable() {
 
 #[test]
 fn source_executable_faults_are_rejected_before_any_writes() {
-    for fault in ["relative", "inside project", "missing", "empty", "mode"] {
+    for fault in [
+        "relative",
+        "inside project",
+        "inside project canonical",
+        "missing",
+        "empty",
+        "mode",
+    ] {
         #[cfg(not(unix))]
         if fault == "mode" {
             continue;
@@ -873,6 +938,11 @@ fn source_executable_faults_are_rejected_before_any_writes() {
                 let path = f.root.join("copied-fixture");
                 fs::copy(&f.source, &path).unwrap();
                 path
+            }
+            "inside project canonical" => {
+                let path = f.root.join("copied-fixture");
+                fs::copy(&f.source, &path).unwrap();
+                path.canonicalize().unwrap()
             }
             "missing" => f.base.join("absent-fixture"),
             "empty" => {
@@ -903,7 +973,7 @@ fn source_executable_faults_are_rejected_before_any_writes() {
                 assert_eq!(error.code, Code::UnsafePath, "{fault}: {error}");
                 assert!(error.message.contains("absolute"), "{error}");
             }
-            "inside project" => {
+            "inside project" | "inside project canonical" => {
                 assert_eq!(error.code, Code::InvalidInput, "{fault}: {error}");
                 assert!(error.message.contains("outside this checkout"), "{error}");
             }

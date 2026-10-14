@@ -425,6 +425,18 @@ fn registration_change_recovering(
                 "Registration targets another settings path.",
             ));
         }
+        if !top_level
+            && map.get("hooks").is_none()
+            && old.created_hook_map
+            && old
+                .entries
+                .keys()
+                .all(|event| recover_missing.contains(event))
+        {
+            // Only a map created by this receipt may be reconstructed. Every
+            // recorded event must also be individually proven absent.
+            map.insert("hooks".into(), json!({}));
+        }
         let hooks = if top_level {
             &mut *map
         } else {

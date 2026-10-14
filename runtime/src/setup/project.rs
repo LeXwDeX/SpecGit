@@ -112,7 +112,8 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
 
 fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnostic> {
     assets::safe_path(source)?;
-    if !source.is_absolute() || source.starts_with(project) {
+    assets::safe_path(project)?;
+    if !source.is_absolute() || !project.is_absolute() {
         return Err(Diagnostic::input(
             "Project hooks require the installed shared CLI outside this checkout; setup never installs a project executable.",
         ));
@@ -142,7 +143,32 @@ fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnost
             ));
         }
     }
+    if shared_inside_project(source, project)? {
+        return Err(Diagnostic::input(
+            "Project hooks require the installed shared CLI outside this checkout; setup never installs a project executable.",
+        ));
+    }
     Ok(snapshot)
+}
+
+fn shared_inside_project(source: &Path, project: &Path) -> Result<bool, Diagnostic> {
+    let source = source.canonicalize().map_err(|_| {
+        conflict_at(
+            "shared",
+            source,
+            None,
+            "The shared executable path cannot be resolved.",
+        )
+    })?;
+    let project = project.canonicalize().map_err(|_| {
+        conflict_at(
+            "project",
+            project,
+            None,
+            "The project root cannot be resolved.",
+        )
+    })?;
+    Ok(source.starts_with(project))
 }
 
 fn orphan_at(path: &Path, message: &str) -> Diagnostic {
@@ -875,5 +901,40 @@ pub async fn run_with_hooks(
             evidence,
         ),
         Err(d) => Report::failure("setup", d),
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::shared_inside_project;
+    use std::fs;
+
+    #[test]
+    fn containment_normalizes_project_dot_alias_and_keeps_external_cli_outside() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let nested = project.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let inside = project.join("specgit");
+        let outside = temporary.path().join("shared-specgit");
+        fs::write(&inside, b"inside").unwrap();
+        fs::write(&outside, b"outside").unwrap();
+        let project_alias = nested.join("..");
+        assert!(shared_inside_project(&inside.canonicalize().unwrap(), &project_alias).unwrap());
+        assert!(!shared_inside_project(&outside.canonicalize().unwrap(), &project_alias).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extended_executable_path_is_inside_plain_windows_project_path() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let inside = project.join("specgit.exe");
+        fs::write(&inside, b"inside").unwrap();
+        let extended = inside.canonicalize().unwrap();
+        assert!(extended.to_string_lossy().starts_with(r"\\?\"));
+        let plain = project.to_string_lossy().replace(r"\\?\", "");
+        assert!(shared_inside_project(&extended, std::path::Path::new(&plain)).unwrap());
     }
 }
