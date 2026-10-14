@@ -9,8 +9,9 @@ and [release procedure](runtime/distribution/README.md).
 - Add project health checks, offline inspection, repair previews and ownership-checked repairs to `doctor`. Inspect selected Skills, guidance, host hooks, Git guard and interrupted transactions, and report bounded Agent guidance with explicit unknown and unverified states.
 - Preserve manual content and worktree boundaries during repair. Recheck ownership before writes, restore only recoverable assets, retain partial-failure evidence and keep existing account-only and report contracts compatible.
 - Generate complete Codex hook command strings with literal executable-path quoting. Preserve the separate Claude/custom OpenCode contracts and verify generated hook commands through the supported lifecycle.
+- Update Rust dependencies and pinned CI actions. Support zip 9 archive names and reject invalid names before installing an update.
 
-Scope: [#711](https://github.com/LeXwDeX/SpecGit/issues/711), [#717](https://github.com/LeXwDeX/SpecGit/issues/717), [#718](https://github.com/LeXwDeX/SpecGit/issues/718).
+Scope: [#711](https://github.com/LeXwDeX/SpecGit/issues/711), [#717](https://github.com/LeXwDeX/SpecGit/issues/717), [#718](https://github.com/LeXwDeX/SpecGit/issues/718), [#725](https://github.com/LeXwDeX/SpecGit/issues/725).
 
 # 2.9.2
 
