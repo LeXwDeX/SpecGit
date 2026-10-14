@@ -58,6 +58,7 @@ flowchart TD
   skill --> assets
   skill --> report
   setup --> skill
+  setup --> config
 
   issue --> workspace[delivery_context::Workspace]
   pr --> workspace

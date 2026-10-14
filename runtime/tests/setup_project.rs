@@ -460,6 +460,103 @@ fn health_plan_restores_proven_missing_skill_and_keeps_manual_guidance() {
     assert_eq!(settled.apply().unwrap().changes, 0);
 }
 
+#[cfg(windows)]
+#[test]
+fn health_plan_repairs_missing_skill_across_windows_root_spellings() {
+    let (f, options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    let extended = f.root.to_string_lossy();
+    let ordinary = extended
+        .strip_prefix(r"\\?\")
+        .expect("the Windows fixture root should use a verbatim prefix");
+    let ordinary_root = PathBuf::from(ordinary);
+    let skill = ordinary_root.join(".agents/skills/specgit-native/SKILL.md");
+    let expected = fs::read(&skill).unwrap();
+    fs::remove_file(&skill).unwrap();
+
+    let plan = project::health_plan(&ordinary_root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(plan.assets().iter().any(|asset| asset.path == skill));
+    assert!(plan.apply().unwrap().changes > 0);
+    assert_eq!(fs::read(&skill).unwrap(), expected);
+    let settled = project::health_plan(&ordinary_root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(settled.assets().is_empty());
+}
+
+#[test]
+fn health_plan_rechecks_shared_executable_ownership_after_lock() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let shared = f.base.join("shared-dir");
+    fs::create_dir(&shared).unwrap();
+    let source = source_fixture(&shared);
+    project::install(&options, &f.root, &f.private, &source).unwrap();
+    let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+    fs::remove_file(&skill).unwrap();
+    let plan = project::health_plan(&f.root, &f.private, &source)
+        .unwrap()
+        .unwrap();
+    assert!(plan.assets().iter().any(|asset| asset.path == skill));
+    let original_source = specgit::assets::Snapshot::read(&source).unwrap();
+
+    git(
+        &f.root,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "--no-checkout",
+            "../newlinked",
+            "HEAD",
+        ],
+    );
+    let linked = f.base.join("newlinked");
+    source_fixture(&linked);
+    fs::rename(&shared, f.base.join("shared-old")).unwrap();
+    fs::rename(&linked, &shared).unwrap();
+    git(&f.root, &["worktree", "repair", "../shared-dir"]);
+    assert_eq!(
+        git(&shared, &["rev-parse", "--is-inside-work-tree"]),
+        "true"
+    );
+    let replacement_source = specgit::assets::Snapshot::read(&source).unwrap();
+    assert_eq!(original_source.bytes, replacement_source.bytes);
+    assert_eq!(
+        original_source
+            .permissions
+            .as_ref()
+            .map(fs::Permissions::readonly),
+        replacement_source
+            .permissions
+            .as_ref()
+            .map(fs::Permissions::readonly)
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            original_source.permissions.as_ref().unwrap().mode(),
+            replacement_source.permissions.as_ref().unwrap().mode()
+        );
+    }
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &source)
+            .err()
+            .unwrap()
+            .code,
+        Code::InvalidInput
+    );
+
+    let error = plan.apply().unwrap_err();
+    assert_eq!(error.code, Code::InvalidInput);
+    assert!(
+        !skill.exists(),
+        "rejected repair must not restore the skill"
+    );
+}
+
 #[test]
 fn health_plan_rejects_missing_guidance_and_stale_snapshot() {
     let (f, options) = fixture(vec![Agent::Generic]);
@@ -658,6 +755,60 @@ fn health_plan_reports_orphan_project_assets_without_claiming_foreign_files() {
             .unwrap()
             .code,
         Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+}
+
+#[test]
+fn health_plan_reports_exact_orphan_host_registration() {
+    for agent in [Agent::Claude, Agent::Codex, Agent::Opencode] {
+        let (f, mut options) = fixture(vec![agent]);
+        if agent == Agent::Opencode {
+            options.opencode_claude_hooks = true;
+        }
+        install(&options, &f).unwrap();
+        let settings = f.root.join(match agent {
+            Agent::Claude => ".claude/settings.json",
+            Agent::Codex => ".codex/hooks.json",
+            Agent::Opencode => ".opencode/hooks.json",
+            Agent::Generic => unreachable!(),
+        });
+        fs::remove_file(f.private.join("ownership.json")).unwrap();
+        fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+        if agent == Agent::Claude {
+            fs::remove_file(f.root.join(".claude/skills/specgit-native/SKILL.md")).unwrap();
+            fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+        } else {
+            fs::remove_file(f.root.join("AGENTS.md")).unwrap();
+        }
+        let before = files(&f.base);
+        let error = project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap();
+        assert_eq!(error.code, Code::OwnershipConflict, "{agent:?}: {error}");
+        assert!(error.message.contains("registration"), "{agent:?}: {error}");
+        assert_eq!(files(&f.base), before, "{agent:?}");
+        assert!(settings.exists());
+    }
+}
+
+#[test]
+fn health_plan_does_not_claim_unrelated_host_settings_without_receipt() {
+    let (f, _) = fixture(vec![]);
+    for relative in [
+        ".claude/settings.json",
+        ".codex/hooks.json",
+        ".opencode/hooks.json",
+    ] {
+        let path = f.root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"command\":\"other-tool\",\"args\":[\"hook\",\"--event\",\"PreToolUse\"]}]}]},\"manual\":true}").unwrap();
+    }
+    let before = files(&f.base);
+    assert!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .unwrap()
+            .is_none()
     );
     assert_eq!(files(&f.base), before);
 }
@@ -1313,6 +1464,32 @@ fn cli_linked_worktrees_have_separate_receipts_and_removal_is_local() {
     assert_eq!(cli(&root, &["--uninstall"])["ok"], true);
     assert!(!root.join(".agents/skills/specgit-native/SKILL.md").exists());
     assert_eq!(files(&other), other_before);
+}
+
+#[test]
+fn setup_rejects_shared_executable_from_a_linked_checkout() {
+    let (f, mut options) = fixture(vec![Agent::Claude]);
+    git(
+        &f.root,
+        &["worktree", "add", "--detach", "../linked", "HEAD"],
+    );
+    let linked = f.root.parent().unwrap().join("linked");
+    let source = source_fixture(&linked);
+    options.dry_run = true;
+    let before = files(&f.base);
+    let error = project::install(&options, &f.root, &f.private, &source)
+        .err()
+        .unwrap();
+    assert_eq!(error.code, Code::InvalidInput);
+    assert_eq!(files(&f.base), before);
+    fs::remove_file(linked.join(".git")).unwrap();
+    let before = files(&f.base);
+    let error = project::install(&options, &f.root, &f.private, &source)
+        .err()
+        .unwrap();
+    assert_eq!(error.code, Code::InvalidInput);
+    assert_eq!(files(&f.base), before);
+    assert!(project::install(&options, &f.root, &f.private, &f.source).is_ok());
 }
 
 #[test]
