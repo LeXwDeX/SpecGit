@@ -216,10 +216,10 @@ fn orphan_at(path: &Path, message: &str) -> Diagnostic {
 }
 
 fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf>, Diagnostic> {
-    for (host, relative) in [
-        ("claude", ".claude/settings.json"),
-        ("codex", ".codex/hooks.json"),
-        ("opencode", ".opencode/hooks.json"),
+    for (agent, host, relative) in [
+        (Agent::Claude, "claude", ".claude/settings.json"),
+        (Agent::Codex, "codex", ".codex/hooks.json"),
+        (Agent::Opencode, "opencode", ".opencode/hooks.json"),
     ] {
         let path = root.join(relative);
         let Some(bytes) = Snapshot::read(&path)?.bytes else {
@@ -238,9 +238,15 @@ fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf
         let expected = if host == "opencode" {
             opencode_manifest(source)?
         } else {
-            manifest(source)
+            manifest(source, agent)?
         };
-        for (event, group) in expected {
+        let mut recognized = vec![expected];
+        if agent == Agent::Codex {
+            // 2.9.2 emitted Claude's executable + argv shape for Codex. This
+            // only identifies an orphan; it never grants repair ownership.
+            recognized.push(manifest(source, Agent::Claude)?);
+        }
+        for (event, group) in recognized.into_iter().flatten() {
             let Some(groups) = events.get(&event).and_then(Value::as_array) else {
                 continue;
             };
@@ -446,10 +452,7 @@ pub fn install_with_hooks(
         any_wake |= wake && !options.uninstall;
         purpose_evidence.insert(host.into(), json!({"requested":wanted,"installed":if options.uninstall { BTreeSet::new() } else { effective.clone() },"declined":declined}));
         if !options.uninstall && !effective.is_empty() {
-            plans.insert(
-                host,
-                purpose_manifest(source, host == "opencode", &effective, wake)?,
-            );
+            plans.insert(host, purpose_manifest(source, agent, &effective, wake)?);
         }
     }
     let needs_executable = !plans.is_empty();
@@ -893,7 +896,20 @@ pub fn health_plan(
                 })?;
         add_proofs(proof);
         let (purposes, wake) = recorded_purposes(Some(old));
-        let entries = purpose_manifest(source, host == "opencode", &purposes, wake)?;
+        let agent = match host.as_str() {
+            "claude" => Agent::Claude,
+            "codex" => Agent::Codex,
+            "opencode" => Agent::Opencode,
+            _ => {
+                return Err(conflict_at(
+                    host,
+                    path,
+                    None,
+                    "Unsupported recorded hook host.",
+                ));
+            }
+        };
+        let entries = purpose_manifest(source, agent, &purposes, wake)?;
         let document = input::json(current.bytes.as_deref().expect("checked"), 1_048_576, 32)?;
         let hooks = if host == "opencode" {
             &document
