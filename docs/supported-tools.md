@@ -1,6 +1,6 @@
 # Supported coding agents
 
-SpecGit 2.9.2 provides a native CLI and managed agent integrations. One shared
+SpecGit 2.10.0 provides a native CLI and managed agent integrations. One shared
 user-level `specgit` executable serves every repository and worktree.
 `specgit setup` refreshes all recorded agents plus explicitly selected
 agents (`--agent generic|claude|codex|opencode`, repeatable); the flag does not

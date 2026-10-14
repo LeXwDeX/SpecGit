@@ -120,6 +120,15 @@ fn main() {
     }
 
     if std::env::var_os("SPECGIT_FIXTURE_PROBE_MODE").is_some()
+        && args.first().map(String::as_str) == Some("api")
+        && args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        println!("fixture command help");
+        return;
+    }
+    if std::env::var_os("SPECGIT_FIXTURE_PROBE_MODE").is_some()
         && args.first().map(String::as_str) != Some("api")
     {
         println!("fixture command help");

@@ -937,7 +937,21 @@ fn hook_reuses_the_target_probe_instead_of_resolving_toplevel_again() {
     );
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        value["hookSpecificOutput"]["permissionDecision"],
+        "deny",
+        "hook exit status: {:?}; stdout: {}; stderr: {}; fake-git state: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout)
+            .chars()
+            .take(2048)
+            .collect::<String>(),
+        String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(2048)
+            .collect::<String>(),
+        fs::read_to_string(&state_path).unwrap_or_else(|error| format!("unavailable: {error}")),
+    );
     let state: Value = serde_json::from_slice(&fs::read(state_path).unwrap()).unwrap();
     let queries = state["git_proxy_cache"].as_object().unwrap();
     assert_eq!(queries.len(), 4, "{state}");

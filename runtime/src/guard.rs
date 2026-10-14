@@ -93,29 +93,27 @@ pub(crate) async fn plan(
             "Run the command from the intended repository.",
         ));
     };
-    let git_dir = String::from_utf8(
+    let git_dir = git_path(
         project::git(process, &root, &["rev-parse", "--absolute-git-dir"]).await?,
-    )
-    .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 metadata path."))?;
+        "metadata",
+    )?;
     let hook_root = config::worktree::hooks(process, &root).await?;
-    let common_dir = String::from_utf8(
+    let common_dir = git_path(
         project::git(
             process,
             &root,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
         )
         .await?,
-    )
-    .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 common metadata path."))?;
-    let common_dir = PathBuf::from(common_dir.trim_end_matches(['\r', '\n']));
+        "common metadata",
+    )?;
     if !hook_root.starts_with(&root) && !hook_root.starts_with(&common_dir) {
         return Err(rejected(
             "The effective Git hooks path is external to this repository and its common Git directory.",
         ));
     }
     assets::safe_path(&hook_root)?;
-    let receipt_path =
-        PathBuf::from(git_dir.trim_end_matches(['\r', '\n'])).join("specgit-v2/guard-hooks.json");
+    let receipt_path = git_dir.join("specgit-v2/guard-hooks.json");
     let receipt_snapshot = Snapshot::read(&receipt_path)?;
     let previous: Option<Receipt> = receipt_snapshot
         .bytes
@@ -227,8 +225,290 @@ pub(crate) async fn plan(
     Ok((changes, hook_root, receipt_parent))
 }
 
+/// A selected guard installation. Unlike the ordinary install planner this
+/// cannot introduce hooks when the worktree has no ownership receipt.
+pub struct GuardHealthPlan {
+    root: PathBuf,
+    hook_root: PathBuf,
+    receipt_parent: PathBuf,
+    changes: Vec<Change>,
+    dependencies: Vec<Change>,
+}
+
+impl GuardHealthPlan {
+    pub fn depend_on(&mut self, path: &Path) -> Result<(), Diagnostic> {
+        let snapshot = Snapshot::read(path)?;
+        self.depend_on_snapshot(path, &snapshot);
+        Ok(())
+    }
+
+    pub fn depend_on_snapshot(&mut self, path: &Path, snapshot: &Snapshot) {
+        self.dependencies.push(Change {
+            path: path.to_path_buf(),
+            before: snapshot.clone(),
+            after: snapshot.bytes.clone(),
+            permissions: snapshot.permissions.clone(),
+        });
+    }
+
+    pub fn assets(&self) -> Vec<assets::MaintenanceAsset> {
+        self.changes
+            .iter()
+            .filter(|change| !change.unchanged())
+            .map(|change| assets::MaintenanceAsset {
+                path: change.path.clone(),
+                state: if change.after.is_none() {
+                    "removed"
+                } else {
+                    "updated"
+                },
+            })
+            .collect()
+    }
+
+    /// Hold the guard transaction lock while re-reading the effective Git
+    /// path, ownership receipt, sibling consumers and hook permissions.
+    pub async fn apply(self, process: &Process) -> Result<assets::Applied, Diagnostic> {
+        if self.assets().is_empty() {
+            return Ok(assets::Applied {
+                transaction: String::new(),
+                changes: 0,
+            });
+        }
+        let store = AssetStore::lock(
+            &self.receipt_parent.join("transactions"),
+            &[self.hook_root.clone(), self.receipt_parent.clone()],
+            Duration::from_secs(2),
+        )?;
+        if !store.pending_transactions()?.is_empty() {
+            return Err(rejected(
+                "An unfinished guard transaction requires recovery.",
+            ));
+        }
+        guard_dependencies_unchanged(&self.dependencies)?;
+        let fresh = health_plan(process, &self.root)
+            .await?
+            .ok_or_else(|| rejected("The Git guard ownership receipt disappeared."))?;
+        let same = self.changes.len() == fresh.changes.len()
+            && self.changes.iter().zip(&fresh.changes).all(|(a, b)| {
+                a.path == b.path && a.after == b.after && a.before.bytes == b.before.bytes
+            });
+        if !same || self.hook_root != fresh.hook_root {
+            return Err(rejected("Git guard state changed after inspection."));
+        }
+        let dependencies = self.dependencies;
+        store.apply_checked(self.changes, move |_| {
+            guard_dependencies_unchanged(&dependencies)
+        })
+    }
+}
+
+fn guard_dependencies_unchanged(dependencies: &[Change]) -> Result<(), Diagnostic> {
+    for dependency in dependencies {
+        let current = Snapshot::read(&dependency.path)?;
+        if current.bytes != dependency.before.bytes
+            || current.permissions.as_ref().map(permission_bits)
+                != dependency.before.permissions.as_ref().map(permission_bits)
+        {
+            return Err(rejected(
+                "A guard maintenance dependency changed after inspection.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub async fn health_plan(
+    process: &Process,
+    cwd: &Path,
+) -> Result<Option<GuardHealthPlan>, Diagnostic> {
+    let Some(root) = root(process, cwd).await? else {
+        return Ok(None);
+    };
+    let private = config::worktree::private_root(process, &root).await?;
+    let pending = AssetStore::pending_at(&private.join("transactions"))?;
+    if !pending.is_empty() {
+        return Err(Diagnostic::new(
+            Code::RollbackConflict,
+            "git_guard_health",
+            &format!(
+                "Unfinished Git guard transaction(s): {}.",
+                pending.join(", ")
+            ),
+            &format!(
+                "Preserve and inspect the guard transaction journal under {} for id(s) {}; recover each verified id before using guard or doctor again. This CLI has no guard rollback command.",
+                private.join("transactions/transactions").display(),
+                pending.join(", ")
+            ),
+        ));
+    }
+    let receipt_path = private.join("guard-hooks.json");
+    let receipt_snapshot = Snapshot::read(&receipt_path)?;
+    let Some(bytes) = receipt_snapshot.bytes.as_deref() else {
+        let hook_root = config::worktree::hooks(process, &root).await?;
+        for stage in ["pre-commit", "pre-push"] {
+            let path = hook_root.join(stage);
+            let snapshot = Snapshot::read(&path)?;
+            let Some(contents) = snapshot.bytes else {
+                continue;
+            };
+            let marker = b"specgit-v2:pre-";
+            if contents.windows(marker.len()).any(|part| part == marker)
+                && owner(process, &root, &path).await?.is_none()
+            {
+                return Err(Diagnostic::new(
+                    Code::OwnershipConflict,
+                    "git_guard_health",
+                    &format!(
+                        "The Git hook {} contains a SpecGit marker but this worktree has no guard ownership receipt.",
+                        path.display()
+                    ),
+                    "Preserve the hook and recover its ownership receipt or inspect the owning sibling worktree before making changes.",
+                ));
+            }
+        }
+        return Ok(None);
+    };
+    let value = crate::input::json(bytes, 1_048_576, 16)?;
+    let receipt: Receipt = serde_json::from_value(value)
+        .map_err(|_| rejected("The Git-hook ownership receipt is malformed."))?;
+    if receipt.version != 1 || receipt.hooks.len() != 2 {
+        return Err(rejected(
+            "The Git-hook ownership receipt inventory is unsupported.",
+        ));
+    }
+    let hook_root = config::worktree::hooks(process, &root).await?;
+    let common_dir = git_path(
+        project::git(
+            process,
+            &root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .await?,
+        "common metadata",
+    )?;
+    if !hook_root.starts_with(&root) && !hook_root.starts_with(&common_dir) {
+        return Err(rejected(
+            "The effective Git hooks path is external to this repository.",
+        ));
+    }
+    assets::safe_path(&hook_root)?;
+    for stage in ["pre-commit", "pre-push"] {
+        let hook = receipt
+            .hooks
+            .get(stage)
+            .ok_or_else(|| rejected("The Git-hook ownership receipt inventory is incomplete."))?;
+        if !hook
+            .block
+            .starts_with(&format!("# >>> specgit-v2:{stage}:start >>>\n"))
+            || !hook
+                .block
+                .ends_with(&format!("# <<< specgit-v2:{stage}:end <<<\n"))
+            || !hook
+                .block
+                .contains(&format!("specgit guard --stage {stage}"))
+        {
+            return Err(rejected(
+                "The recorded Git-hook block has an invalid format.",
+            ));
+        }
+        if hook.path != hook_root.join(stage) {
+            return Err(rejected(
+                "The recorded Git hook no longer matches the effective hooks path.",
+            ));
+        }
+        let snapshot = Snapshot::read(&hook.path)?;
+        let script = std::str::from_utf8(snapshot.bytes.as_deref().unwrap_or_default())
+            .map_err(|_| rejected("The recorded Git hook is not UTF-8."))?;
+        let first = script.lines().next().unwrap_or("");
+        if !first.starts_with("#!")
+            || !["sh", "bash", "zsh"]
+                .iter()
+                .any(|shell| first.contains(shell))
+        {
+            return Err(rejected(
+                "The recorded Git hook has no supported shell shebang.",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if snapshot
+                .permissions
+                .as_ref()
+                .is_none_or(|mode| mode.mode() & 0o111 == 0)
+            {
+                return Err(rejected(
+                    "The recorded Git hook is not executable; restore its permissions explicitly.",
+                ));
+            }
+        }
+        if script.matches(&hook.block).count() != 1 {
+            return Err(rejected(
+                "The recorded Git-hook block is missing, edited or duplicated.",
+            ));
+        }
+    }
+    let (changes, planned_root, receipt_parent) = plan(process, &root, false).await?;
+    if changes
+        .iter()
+        .any(|change| change.path.starts_with(&hook_root) && !change.unchanged())
+    {
+        for sibling in config::worktree::siblings(process, &root).await? {
+            let shares = sibling.hooks == hook_root
+                || matches!((sibling.hooks.canonicalize(), hook_root.canonicalize()), (Ok(a), Ok(b)) if a == b);
+            if shares
+                && Snapshot::read(&sibling.private_root.join("guard-hooks.json"))?
+                    .bytes
+                    .is_some()
+            {
+                return Err(rejected(
+                    "Shared Git hooks have another ownership receipt; refresh from its owning worktree.",
+                ));
+            }
+        }
+        let consumers = config::worktree::sibling_consumers(process, &root).await?;
+        if consumers
+            .iter()
+            .any(|consumer| config::worktree::shares_hooks(consumer, &hook_root))
+        {
+            return Err(rejected(
+                "Shared Git hooks have another initialized worktree consumer; refresh ownership from that worktree.",
+            ));
+        }
+    }
+    Ok(Some(GuardHealthPlan {
+        root,
+        hook_root: planned_root,
+        receipt_parent,
+        changes,
+        dependencies: vec![],
+    }))
+}
+
+#[cfg(unix)]
+fn permission_bits(permission: &std::fs::Permissions) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    permission.mode()
+}
+
+#[cfg(not(unix))]
+fn permission_bits(permission: &std::fs::Permissions) -> bool {
+    permission.readonly()
+}
+
 /// The sibling worktree whose guard receipt records this shared hook file.
 async fn owner(process: &Process, root: &Path, hook: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+    let Some(stage) = hook.file_name().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    if !["pre-commit", "pre-push"].contains(&stage) {
+        return Ok(None);
+    }
+    let current = Snapshot::read(hook)?;
+    let Some(current) = current.bytes else {
+        return Ok(None);
+    };
     for sibling in config::worktree::siblings(process, root).await? {
         let Some(bytes) = Snapshot::read(&sibling.private_root.join("guard-hooks.json"))?.bytes
         else {
@@ -241,10 +521,40 @@ async fn owner(process: &Process, root: &Path, hook: &Path) -> Result<Option<Pat
         else {
             continue;
         };
-        if receipt.hooks.values().any(|recorded| {
-            recorded.path == hook
-                || matches!((recorded.path.canonicalize(), hook.canonicalize()), (Ok(a), Ok(b)) if a == b)
-        }) {
+        if receipt.version != 1
+            || receipt.hooks.len() != 2
+            || !["pre-commit", "pre-push"]
+                .iter()
+                .all(|stage| receipt.hooks.contains_key(*stage))
+        {
+            continue;
+        }
+        let Some(recorded) = receipt.hooks.get(stage) else {
+            continue;
+        };
+        let same_path = recorded.path == hook
+            || matches!((recorded.path.canonicalize(), hook.canonicalize()), (Ok(a), Ok(b)) if a == b);
+        let same_root = hook.parent().is_some_and(|parent| {
+            sibling.hooks == parent
+                || matches!((sibling.hooks.canonicalize(), parent.canonicalize()), (Ok(a), Ok(b)) if a == b)
+        });
+        if same_path
+            && same_root
+            && recorded
+                .block
+                .starts_with(&format!("# >>> specgit-v2:{stage}:start >>>\n"))
+            && recorded
+                .block
+                .ends_with(&format!("# <<< specgit-v2:{stage}:end <<<\n"))
+            && recorded
+                .block
+                .contains(&format!("specgit guard --stage {stage}"))
+            && current
+                .windows(recorded.block.len())
+                .filter(|part| *part == recorded.block.as_bytes())
+                .count()
+                == 1
+        {
             return Ok(Some(sibling.root));
         }
     }
@@ -387,9 +697,18 @@ async fn root(process: &Process, cwd: &Path) -> Result<Option<PathBuf>, Diagnost
         Err(d) if d.code == Code::MissingProject => return Ok(None),
         Err(d) => return Err(d),
     };
-    let value = String::from_utf8(bytes)
-        .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 project root."))?;
-    Ok(Some(PathBuf::from(value.trim_end_matches(['\r', '\n']))))
+    Ok(Some(git_path(bytes, "project root")?))
+}
+
+fn git_path(bytes: Vec<u8>, what: &str) -> Result<PathBuf, Diagnostic> {
+    let text = String::from_utf8(bytes)
+        .map_err(|_| Diagnostic::input(&format!("Git returned a non-UTF-8 {what} path.")))?;
+    let path = text
+        .strip_suffix('\n')
+        .ok_or_else(|| Diagnostic::input(&format!("Git returned an unterminated {what} path.")))?;
+    #[cfg(windows)]
+    let path = path.strip_suffix('\r').unwrap_or(path);
+    Ok(PathBuf::from(path))
 }
 
 pub async fn check(

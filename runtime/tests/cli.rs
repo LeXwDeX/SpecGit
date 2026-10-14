@@ -104,7 +104,7 @@ fn interrupts_preserve_json_and_reap_the_native_child_through_the_installed_entr
 #[test]
 fn json_invalid_arguments_have_one_document_and_matching_exit() {
     let output = executable::command()
-        .args(["doctor", "--json"])
+        .args(["doctor", "--dry-run", "--json"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
