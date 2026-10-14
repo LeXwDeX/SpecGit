@@ -25,15 +25,34 @@ struct ProjectReceipt {
     hooks: BTreeMap<String, Registration>,
 }
 
+fn same_project_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic> {
+    #[cfg(windows)]
+    {
+        assets::safe_path(recorded)?;
+        assets::safe_path(current)?;
+        let recorded = recorded
+            .canonicalize()
+            .map_err(|_| conflict("The recorded project root cannot be resolved safely."))?;
+        let current = current
+            .canonicalize()
+            .map_err(|_| conflict("The current project root cannot be resolved safely."))?;
+        Ok(recorded == current)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(recorded == current)
+    }
+}
+
 fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagnostic> {
     let snapshot = Snapshot::read(&private.join("ownership.json"))?;
     let receipt = if let Some(bytes) = &snapshot.bytes {
-        let r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
+        let mut r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
             .map_err(|_| conflict("The project integration receipt is malformed."))?;
         if ![1, 2].contains(&r.version)
             || (r.version == 1) != r.shared_root.is_some()
             || r.owner != "specgit"
-            || r.root != root
+            || !same_project_root(&r.root, root)?
             || r.agents.is_empty()
             || r.skills.len() > 2
             || r.instructions.len() > 3
@@ -46,7 +65,7 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
                 .contains(&p.as_str())
             })
             || r.instructions.iter().any(|(host, g)| {
-                g.root != root
+                g.root != r.root
                     || !matches!(
                         (host.as_str(), g.instructions.as_str()),
                         ("generic", "AGENTS.md")
@@ -57,10 +76,10 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             || r.hooks.iter().any(|(host, h)| {
                 h.skill.is_some()
                     || match host.as_str() {
-                        "claude" => h.settings != root.join(".claude/settings.json"),
-                        "codex" => h.settings != root.join(".codex/hooks.json"),
+                        "claude" => h.settings != r.root.join(".claude/settings.json"),
+                        "codex" => h.settings != r.root.join(".codex/hooks.json"),
                         "opencode" => {
-                            h.settings != root.join(".opencode/hooks.json") || h.created_hook_map
+                            h.settings != r.root.join(".opencode/hooks.json") || h.created_hook_map
                         }
                         _ => true,
                     }
@@ -94,6 +113,23 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
                 "The project receipt lacks required selected-agent ownership.",
             ));
         }
+        // The receipt records the root spelling used at installation. Git may
+        // later return the same Windows directory without its extended prefix.
+        // Rebase only verified project paths to the current spelling so planned
+        // targets and the asset store's explicit roots use one representation.
+        r.root = root.to_path_buf();
+        for registration in r.instructions.values_mut() {
+            registration.root = root.to_path_buf();
+        }
+        for (host, registration) in &mut r.hooks {
+            let relative = match host.as_str() {
+                "claude" => ".claude/settings.json",
+                "codex" => ".codex/hooks.json",
+                "opencode" => ".opencode/hooks.json",
+                _ => unreachable!("validated host"),
+            };
+            registration.settings = root.join(relative);
+        }
         r
     } else {
         ProjectReceipt {
@@ -112,7 +148,8 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
 
 fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnostic> {
     assets::safe_path(source)?;
-    if !source.is_absolute() || source.starts_with(project) {
+    assets::safe_path(project)?;
+    if !source.is_absolute() || !project.is_absolute() {
         return Err(Diagnostic::input(
             "Project hooks require the installed shared CLI outside this checkout; setup never installs a project executable.",
         ));
@@ -142,7 +179,87 @@ fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnost
             ));
         }
     }
+    if shared_inside_project(source, project)?
+        || crate::config::worktree::source_in_same_repository_checkout(source, project)?
+    {
+        return Err(Diagnostic::input(
+            "Project hooks require the installed shared CLI outside this checkout; setup never installs a project executable.",
+        ));
+    }
     Ok(snapshot)
+}
+
+fn shared_inside_project(source: &Path, project: &Path) -> Result<bool, Diagnostic> {
+    let source = source.canonicalize().map_err(|_| {
+        conflict_at(
+            "shared",
+            source,
+            None,
+            "The shared executable path cannot be resolved.",
+        )
+    })?;
+    let project = project.canonicalize().map_err(|_| {
+        conflict_at(
+            "project",
+            project,
+            None,
+            "The project root cannot be resolved.",
+        )
+    })?;
+    Ok(source.starts_with(project))
+}
+
+fn orphan_at(path: &Path, message: &str) -> Diagnostic {
+    let mut diagnostic = conflict_at("project", path, None, message);
+    diagnostic.remedy = "Preserve the file. Find the matching worktree ownership receipt or reconcile this orphaned SpecGit asset explicitly before retrying; doctor will not adopt it.".into();
+    diagnostic
+}
+
+fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+    for (host, relative) in [
+        ("claude", ".claude/settings.json"),
+        ("codex", ".codex/hooks.json"),
+        ("opencode", ".opencode/hooks.json"),
+    ] {
+        let path = root.join(relative);
+        let Some(bytes) = Snapshot::read(&path)?.bytes else {
+            continue;
+        };
+        let Ok(settings) = input::json(&bytes, 1_048_576, 32) else {
+            continue;
+        };
+        let Some(events) = (if host == "opencode" {
+            settings.as_object()
+        } else {
+            settings.get("hooks").and_then(Value::as_object)
+        }) else {
+            continue;
+        };
+        let expected = if host == "opencode" {
+            opencode_manifest(source)?
+        } else {
+            manifest(source)
+        };
+        for (event, group) in expected {
+            let Some(groups) = events.get(&event).and_then(Value::as_array) else {
+                continue;
+            };
+            if groups.iter().any(|candidate| {
+                candidate == &group
+                    || (event == "PostToolUse" && host != "opencode" && {
+                        let mut without_observer = group.clone();
+                        without_observer["hooks"]
+                            .as_array_mut()
+                            .expect("manifest hooks")
+                            .truncate(1);
+                        candidate == &without_observer
+                    })
+            }) {
+                return Ok(Some(path));
+            }
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagnostic> {
@@ -612,6 +729,230 @@ pub fn install_with_hooks(
     Ok(evidence)
 }
 
+/// Inspect only assets named by this worktree's receipt. A missing receipt
+/// means no project integration was selected here.
+pub fn health_plan(
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Option<assets::MaintenancePlan>, Diagnostic> {
+    assets::safe_path(root)?;
+    assets::safe_path(private)?;
+    if !AssetStore::pending_at(private)?.is_empty() {
+        return Err(conflict(
+            "An interrupted project asset transaction requires recovery first.",
+        ));
+    }
+    let (snapshot, previous) = read(root, private)?;
+    if snapshot.bytes.is_none() {
+        for relative in [
+            ".agents/skills/specgit-native/SKILL.md",
+            ".claude/skills/specgit-native/SKILL.md",
+        ] {
+            let path = root.join(relative);
+            if Snapshot::read(&path)?.bytes.is_some() {
+                return Err(orphan_at(
+                    &path,
+                    "A SpecGit project Skill exists without a project ownership receipt; preserve it for reconciliation.",
+                ));
+            }
+        }
+        for relative in ["AGENTS.md", "AGENTS.override.md", "CLAUDE.md"] {
+            let path = root.join(relative);
+            if let Some(bytes) = Snapshot::read(&path)?.bytes
+                && [HOST_START, HOST_END, LEGACY_START, LEGACY_END]
+                    .iter()
+                    .any(|marker| {
+                        bytes
+                            .windows(marker.len())
+                            .any(|window| window == marker.as_bytes())
+                    })
+            {
+                return Err(orphan_at(
+                    &path,
+                    "A reserved project guidance block exists without a project ownership receipt; preserve it for reconciliation.",
+                ));
+            }
+        }
+        if let Some(path) = orphan_hook_registration(root, source)? {
+            return Err(orphan_at(
+                &path,
+                "An exact SpecGit host hook registration exists without a project ownership receipt; preserve it for reconciliation.",
+            ));
+        }
+        return Ok(None);
+    }
+    let receipt_path = private.join("ownership.json");
+    let mut next = ProjectReceipt {
+        version: 2,
+        owner: "specgit".into(),
+        root: root.into(),
+        shared_root: None,
+        agents: previous.agents.clone(),
+        skills: BTreeMap::new(),
+        instructions: BTreeMap::new(),
+        hooks: BTreeMap::new(),
+    };
+    let mut changes = Vec::new();
+    let mut dependencies = vec![Change {
+        path: receipt_path.clone(),
+        before: snapshot.clone(),
+        after: snapshot.bytes.clone(),
+        permissions: snapshot.permissions.clone(),
+    }];
+    let mut add_proofs = |proofs: Vec<Change>| {
+        for proof in proofs {
+            if !dependencies.iter().any(|old| old.path == proof.path) {
+                dependencies.push(proof);
+            }
+        }
+    };
+    for (relative, digest) in &previous.skills {
+        let path = root.join(relative);
+        let mut change = Change::new(path.clone(), Some(skill_bytes()))?;
+        let proof = AssetStore::owned_pair_at(
+            private,
+            &receipt_path,
+            &snapshot,
+            &path,
+            &change.before,
+            Some(digest),
+        )?
+        .ok_or_else(|| {
+            conflict_at(
+                "project",
+                &path,
+                None,
+                "The project skill ownership or permissions cannot be proved.",
+            )
+        })?;
+        add_proofs(proof);
+        if change.before.bytes.is_none() {
+            change.permissions = None;
+        }
+        next.skills.insert(
+            relative.clone(),
+            assets::hash(change.after.as_deref().expect("skill bytes")),
+        );
+        changes.push(change);
+    }
+    for (host, old) in &previous.instructions {
+        let path = root.join(&old.instructions);
+        let current = Snapshot::read(&path)?;
+        if current.bytes.is_none() {
+            return Err(conflict_at(
+                host,
+                &path,
+                None,
+                "Missing guidance may contain manual content and cannot be reconstructed.",
+            ));
+        }
+        let proof =
+            AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &path, &current, None)?
+                .ok_or_else(|| {
+                    conflict_at(
+                        host,
+                        &path,
+                        None,
+                        "Guidance ownership or permissions cannot be proved.",
+                    )
+                })?;
+        add_proofs(proof);
+        let (change, registration) = instruction_change(host, root, Some(old), false, true)?;
+        next.instructions.insert(
+            host.clone(),
+            registration.expect("refresh retains guidance"),
+        );
+        changes.push(change);
+    }
+    let executable = if previous.hooks.is_empty() {
+        None
+    } else {
+        Some(shared_executable(source, root)?)
+    };
+    for (host, old) in &previous.hooks {
+        let path = &old.settings;
+        let current = Snapshot::read(path)?;
+        if current.bytes.is_none() {
+            return Err(conflict_at(
+                host,
+                path,
+                None,
+                "Missing host settings may contain manual content and cannot be reconstructed.",
+            ));
+        }
+        let proof =
+            AssetStore::owned_pair_at(private, &receipt_path, &snapshot, path, &current, None)?
+                .ok_or_else(|| {
+                    conflict_at(
+                        host,
+                        path,
+                        None,
+                        "Host settings ownership or permissions cannot be proved.",
+                    )
+                })?;
+        add_proofs(proof);
+        let (purposes, wake) = recorded_purposes(Some(old));
+        let entries = purpose_manifest(source, host == "opencode", &purposes, wake)?;
+        let document = input::json(current.bytes.as_deref().expect("checked"), 1_048_576, 32)?;
+        let hooks = if host == "opencode" {
+            &document
+        } else {
+            &document["hooks"]
+        };
+        let recover_missing: BTreeSet<String> = old
+            .entries
+            .keys()
+            .filter(|event| {
+                hooks.get(event.as_str()).is_none() && old.created_event_keys.contains(*event)
+            })
+            .cloned()
+            .collect();
+        let change = registration_change_recovering(
+            host,
+            path,
+            Some(old),
+            Some(&entries),
+            &recover_missing,
+        )?;
+        let mut registration = old.clone();
+        registration.entries = entries;
+        next.hooks.insert(host.clone(), registration);
+        changes.push(change);
+    }
+    if let Some(executable) = executable {
+        dependencies.push(Change {
+            path: source.into(),
+            before: executable.clone(),
+            after: executable.bytes.clone(),
+            permissions: executable.permissions.clone(),
+        });
+    }
+    let receipt_bytes = serde_json::to_vec_pretty(&next)
+        .map_err(|_| conflict("Project receipt cannot be represented."))?;
+    changes.push(Change {
+        path: receipt_path,
+        before: snapshot.clone(),
+        after: Some(receipt_bytes),
+        permissions: snapshot.permissions.clone(),
+    });
+    let mut plan = assets::MaintenancePlan::new(
+        private.into(),
+        vec![root.into(), private.into()],
+        changes,
+        dependencies,
+    );
+    if !previous.hooks.is_empty() {
+        let source = source.to_owned();
+        let root = root.to_owned();
+        plan = plan.with_precondition(move || {
+            shared_executable(&source, &root)?;
+            Ok(())
+        });
+    }
+    Ok(Some(plan))
+}
+
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     run_with_hooks(options, HookOptions::default(), process, cwd).await
 }
@@ -660,5 +1001,40 @@ pub async fn run_with_hooks(
             evidence,
         ),
         Err(d) => Report::failure("setup", d),
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::shared_inside_project;
+    use std::fs;
+
+    #[test]
+    fn containment_normalizes_project_dot_alias_and_keeps_external_cli_outside() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let nested = project.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let inside = project.join("specgit");
+        let outside = temporary.path().join("shared-specgit");
+        fs::write(&inside, b"inside").unwrap();
+        fs::write(&outside, b"outside").unwrap();
+        let project_alias = nested.join("..");
+        assert!(shared_inside_project(&inside.canonicalize().unwrap(), &project_alias).unwrap());
+        assert!(!shared_inside_project(&outside.canonicalize().unwrap(), &project_alias).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extended_executable_path_is_inside_plain_windows_project_path() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let inside = project.join("specgit.exe");
+        fs::write(&inside, b"inside").unwrap();
+        let extended = inside.canonicalize().unwrap();
+        assert!(extended.to_string_lossy().starts_with(r"\\?\"));
+        let plain = project.to_string_lossy().replace(r"\\?\", "");
+        assert!(shared_inside_project(&extended, std::path::Path::new(&plain)).unwrap());
     }
 }

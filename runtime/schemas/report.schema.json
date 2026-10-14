@@ -77,6 +77,121 @@
         }
       }
     },
+    "doctor_health_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "severity", "repairable", "evidence", "diagnostic"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["current", "change_required", "not_selected", "not_checked", "unknown", "needs_initialization"]},
+        "severity": {"enum": ["info", "warning", "error"]},
+        "repairable": {"type": "boolean"},
+        "evidence": {},
+        "diagnostic": {"$ref": "#/$defs/probe/properties/diagnostic"}
+      }
+    },
+    "doctor_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "status", "checks", "host_behavior"],
+      "properties": {
+        "scope": {"enum": ["project_static", "account_only"]},
+        "status": {"enum": ["healthy", "attention", "unknown", "not_checked"]},
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/doctor_health_check"}},
+        "host_behavior": {"const": "not_verified"}
+      }
+    },
+    "doctor_maintenance_asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "state"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "state": {"enum": ["created", "updated", "removed"]}
+      }
+    },
+    "doctor_repair_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "assets"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "assets": {"type": "array", "items": {"$ref": "#/$defs/doctor_maintenance_asset"}}
+      }
+    },
+    "doctor_repair_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "transaction", "diagnostic"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["applied", "failed", "skipped"]},
+        "transaction": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["transaction", "changes"], "properties": {
+              "transaction": {"type": "string", "minLength": 1},
+              "changes": {"type": "integer", "minimum": 0}
+            }}
+          ]
+        },
+        "diagnostic": {"$ref": "#/$defs/probe/properties/diagnostic"}
+      }
+    },
+    "doctor_repair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "dry_run", "plans", "results", "before", "recheck"],
+      "properties": {
+        "requested": {"type": "boolean"},
+        "dry_run": {"type": "boolean"},
+        "plans": {"type": "array", "items": {"$ref": "#/$defs/doctor_repair_plan"}},
+        "results": {"type": "array", "items": {"$ref": "#/$defs/doctor_repair_result"}},
+        "before": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/doctor_health"}]},
+        "recheck": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/doctor_health"}]}
+      }
+    },
+    "doctor_agent_command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable", "argv", "cwd", "scope", "authorization"],
+      "properties": {
+        "executable": {"type": "string", "minLength": 1},
+        "argv": {"type": "array", "items": {"type": "string"}},
+        "cwd": {"type": "string", "minLength": 1},
+        "scope": {"const": "project"},
+        "authorization": {"const": "existing_session_only"}
+      }
+    },
+    "doctor_agent_task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check", "finding", "evidence_pointer", "reason", "certainty", "recommendation", "command", "preconditions", "verification"],
+      "properties": {
+        "check": {"type": "string", "minLength": 1},
+        "finding": {"enum": ["unknown", "change_required", "needs_initialization"]},
+        "evidence_pointer": {"type": "string", "pattern": "^/evidence/health/checks/[0-9]+$"},
+        "reason": {"type": "string", "minLength": 1},
+        "certainty": {"enum": ["observed", "unconfirmed"]},
+        "recommendation": {"type": "string", "minLength": 1},
+        "command": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/doctor_agent_command"}]},
+        "preconditions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "verification": {"type": "string", "minLength": 1}
+      }
+    },
+    "doctor_agent_guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tasks", "max_rounds", "skill", "stop_conditions", "scope", "host_behavior"],
+      "properties": {
+        "tasks": {"type": "array", "items": {"$ref": "#/$defs/doctor_agent_task"}},
+        "max_rounds": {"const": 3},
+        "skill": {"const": "specgit-native"},
+        "stop_conditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "scope": {"const": "project_static"},
+        "host_behavior": {"const": "not_verified"}
+      }
+    },
     "doctor_checkpoint": {
       "oneOf": [
         {
@@ -864,7 +979,7 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
-    {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"evidence":{"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
+    {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"status":{"enum":["ready","offline_checked","attention_required","checkpoint_branch_mismatch","unknown","repair_failed","invalid_input","rejected"]},"evidence":{"properties":{"local":{"$ref":"#/$defs/doctor_local"},"health":{"$ref":"#/$defs/doctor_health"},"repair":{"$ref":"#/$defs/doctor_repair"},"agent_guidance":{"$ref":"#/$defs/doctor_agent_guidance"}}}}}},
     {"if":{"properties":{"operation":{"const":"doctor"},"exit":{"const":0}},"required":["operation","exit"]},"then":{"properties":{"evidence":{"type":"object","required":["local"],"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
     {
       "if": {"properties":{"operation":{"const":"setup"},"evidence":{"type":"object"}},"required":["operation","evidence"]},

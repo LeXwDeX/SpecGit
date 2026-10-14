@@ -397,6 +397,16 @@ fn registration_change(
     old: Option<&Registration>,
     new: Option<&BTreeMap<String, Value>>,
 ) -> Result<Change, Diagnostic> {
+    registration_change_recovering(host, path, old, new, &std::collections::BTreeSet::new())
+}
+
+fn registration_change_recovering(
+    host: &str,
+    path: &Path,
+    old: Option<&Registration>,
+    new: Option<&BTreeMap<String, Value>>,
+    recover_missing: &std::collections::BTreeSet<String>,
+) -> Result<Change, Diagnostic> {
     let before = Snapshot::read(path)?;
     let mut settings = match &before.bytes {
         Some(bytes) => input::json(bytes, 1_048_576, 32)?,
@@ -415,6 +425,18 @@ fn registration_change(
                 "Registration targets another settings path.",
             ));
         }
+        if !top_level
+            && map.get("hooks").is_none()
+            && old.created_hook_map
+            && old
+                .entries
+                .keys()
+                .all(|event| recover_missing.contains(event))
+        {
+            // Only a map created by this receipt may be reconstructed. Every
+            // recorded event must also be individually proven absent.
+            map.insert("hooks".into(), json!({}));
+        }
         let hooks = if top_level {
             &mut *map
         } else {
@@ -430,6 +452,17 @@ fn registration_change(
                 })?
         };
         for (event, entry) in &old.entries {
+            if recover_missing.contains(event) {
+                if !old.created_event_keys.contains(event) || hooks.contains_key(event) {
+                    return Err(conflict_at(
+                        host,
+                        path,
+                        Some(event),
+                        "Missing hook entry cannot be safely recovered.",
+                    ));
+                }
+                continue;
+            }
             let array = hooks
                 .get_mut(event)
                 .and_then(Value::as_array_mut)
@@ -482,7 +515,9 @@ fn registration_change(
                 .ok_or_else(|| conflict_at(host, path, None, "Host hooks is not an object."))?
         };
         for (event, entry) in new {
-            if old.is_some_and(|old| old.entries.contains_key(event)) {
+            if old.is_some_and(|old| old.entries.contains_key(event))
+                && !recover_missing.contains(event)
+            {
                 continue;
             }
             let array = hooks

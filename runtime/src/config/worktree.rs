@@ -11,7 +11,10 @@ use crate::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    io::Read,
+    path::{Component, Path, PathBuf},
+};
 
 /// Files that exist only after `init`, `migrate` or an Issue checkpoint wrote
 /// this worktree's state. Setup-only receipts do not prove initialization, and a
@@ -76,7 +79,12 @@ pub fn private_state(private_root: &Path) -> Result<PrivateState, Diagnostic> {
 fn git_line(bytes: Vec<u8>, what: &str) -> Result<PathBuf, Diagnostic> {
     let text = String::from_utf8(bytes)
         .map_err(|_| Diagnostic::input(&format!("Git returned a non-UTF-8 {what} path.")))?;
-    Ok(PathBuf::from(text.trim_end_matches(['\r', '\n'])))
+    let path = text
+        .strip_suffix('\n')
+        .ok_or_else(|| Diagnostic::input(&format!("Git returned an unterminated {what} path.")))?;
+    #[cfg(windows)]
+    let path = path.strip_suffix('\r').unwrap_or(path);
+    Ok(PathBuf::from(path))
 }
 
 /// The worktree's SpecGit-private root, `<absolute git dir>/specgit-v2`.
@@ -167,6 +175,180 @@ fn same(a: &Path, b: &Path) -> bool {
     a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
+fn metadata_bytes(path: &Path, what: &str) -> Result<Vec<u8>, Diagnostic> {
+    safe_path(path)?;
+    let file = crate::assets::open_regular(path)
+        .map_err(|_| Diagnostic::input(&format!("Git {what} cannot be read.")))?;
+    let mut bytes = Vec::new();
+    file.take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Diagnostic::input(&format!("Git {what} cannot be read.")))?;
+    if bytes.len() > 4096 {
+        return Err(Diagnostic::input(&format!("Git {what} is too large.")));
+    }
+    Ok(bytes)
+}
+
+fn protocol_line<'a>(bytes: &'a [u8], what: &str) -> Result<&'a str, Diagnostic> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| Diagnostic::input(&format!("Git {what} is not UTF-8.")))?;
+    let line = text.strip_suffix('\n').unwrap_or(text);
+    #[cfg(windows)]
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    Ok(line)
+}
+
+fn metadata_path(path: &Path) -> Result<PathBuf, Diagnostic> {
+    let bytes = metadata_bytes(path, "worktree metadata")?;
+    let path = PathBuf::from(protocol_line(&bytes, "worktree metadata")?);
+    if path.as_os_str().is_empty() {
+        return Err(Diagnostic::input(
+            "Git worktree metadata has an empty path.",
+        ));
+    }
+    Ok(path)
+}
+
+// Git writes legitimate relative paths such as ../.. in commondir. Inspect
+// every prefix before folding traversal so a symlink/.. boundary stays visible.
+fn safe_git_path(path: &Path) -> Result<PathBuf, Diagnostic> {
+    if !path.is_absolute() {
+        return Err(Diagnostic::input("Git metadata path is not absolute."));
+    }
+    let mut resolved = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                resolved.push(component.as_os_str());
+                if resolved.is_absolute() {
+                    safe_path(&resolved)?;
+                }
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !resolved.pop() || !resolved.is_absolute() {
+                    return Err(Diagnostic::input("Git metadata path escapes its root."));
+                }
+            }
+        }
+    }
+    safe_path(&resolved)?;
+    Ok(resolved)
+}
+
+fn git_dir(root: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+    let marker = root.join(".git");
+    let metadata = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            return Err(Diagnostic::input(
+                "Git worktree marker cannot be inspected.",
+            ));
+        }
+    };
+    if metadata.is_dir() {
+        return Ok(Some(marker.canonicalize().map_err(|_| {
+            Diagnostic::input("Git directory cannot be resolved.")
+        })?));
+    }
+    if !metadata.is_file() {
+        return Err(Diagnostic::input(
+            "Git worktree marker is not a file or directory.",
+        ));
+    }
+    let bytes = metadata_bytes(&marker, "worktree marker")?;
+    let path = protocol_line(&bytes, "worktree marker")?
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| Diagnostic::input("Git worktree marker is malformed."))?;
+    let path = Path::new(path);
+    let path = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        root.join(path)
+    };
+    let path = safe_git_path(&path)?;
+    Ok(Some(path.canonicalize().map_err(|_| {
+        Diagnostic::input("Git directory cannot be resolved.")
+    })?))
+}
+
+fn common_dir(root: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+    let Some(git_dir) = git_dir(root)? else {
+        return Ok(None);
+    };
+    let marker = git_dir.join("commondir");
+    let common = if present(&marker)? {
+        let path = metadata_path(&marker)?;
+        if path.is_absolute() {
+            path
+        } else {
+            git_dir.join(path)
+        }
+    } else {
+        git_dir
+    };
+    let common = safe_git_path(&common)?;
+    let common = common
+        .canonicalize()
+        .map_err(|_| Diagnostic::input("Git common directory cannot be resolved."))?;
+    safe_path(&common)?;
+    Ok(Some(common))
+}
+
+/// Reject an executable under any checkout linked to this repository.
+/// Missing Git markers in simple fixture projects retain the caller's root-only check.
+pub fn source_in_same_repository_checkout(source: &Path, root: &Path) -> Result<bool, Diagnostic> {
+    let Some(common) = common_dir(root)? else {
+        return Ok(false);
+    };
+    let source = source
+        .canonicalize()
+        .map_err(|_| Diagnostic::input("Shared executable cannot be resolved."))?;
+    for ancestor in source.ancestors().skip(1) {
+        if let Some(candidate) = common_dir(ancestor)?
+            && candidate == common
+        {
+            return Ok(true);
+        }
+    }
+    let registry = common.join("worktrees");
+    if !present(&registry)? {
+        return Ok(false);
+    }
+    let entries = std::fs::read_dir(&registry)
+        .map_err(|_| Diagnostic::input("Git worktree registry cannot be read."))?;
+    for (index, entry) in entries.enumerate() {
+        if index >= WORKTREE_LIMIT {
+            return Err(Diagnostic::input(
+                "Worktree discovery exceeds 64 worktrees.",
+            ));
+        }
+        let entry = entry.map_err(|_| Diagnostic::input("Git worktree registry is incomplete."))?;
+        let gitdir = entry.path().join("gitdir");
+        let marker = metadata_path(&gitdir)?;
+        let marker = if marker.is_absolute() {
+            marker
+        } else {
+            entry.path().join(marker)
+        };
+        let marker = safe_git_path(&marker)?;
+        let Some(checkout) = marker.parent() else {
+            return Err(Diagnostic::input("Git worktree path is malformed."));
+        };
+        if !present(checkout)? {
+            continue;
+        } // Prunable worktree cannot contain a runnable source.
+        let checkout = checkout
+            .canonicalize()
+            .map_err(|_| Diagnostic::input("Git worktree path cannot be resolved."))?;
+        if source.starts_with(checkout) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Every other existing, non-bare worktree of this repository.
 pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, Diagnostic> {
     let list = project::git(process, root, &["worktree", "list", "--porcelain", "-z"]).await?;
@@ -254,4 +436,52 @@ pub async fn rollback(
         .map(|path| json!({"path":path,"reason":"shared_initialized_worktree","shared_consumers":consumers}))
         .collect();
     Ok((applied, json!(retained)))
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    use super::safe_git_path;
+    use super::{git_dir, metadata_path};
+    use std::{fs, path::Path};
+
+    #[test]
+    fn metadata_read_is_bounded_and_preserves_path_newline() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let marker = base.join("gitdir");
+        fs::write(&marker, b"/checkout/ends-with-newline\n\n").unwrap();
+        assert_eq!(
+            metadata_path(&marker).unwrap(),
+            Path::new("/checkout/ends-with-newline\n")
+        );
+        fs::write(&marker, vec![b'a'; 4097]).unwrap();
+        assert!(
+            metadata_path(&marker)
+                .unwrap_err()
+                .message
+                .contains("too large")
+        );
+
+        let root = base.join("checkout");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join(".git"), vec![b'a'; 4097]).unwrap();
+        assert!(git_dir(&root).unwrap_err().message.contains("too large"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_git_path_checks_symlink_before_folding_parent() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let root = base.as_path();
+        fs::create_dir(root.join("real")).unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+        assert!(safe_git_path(&root.join("link/../real")).is_err());
+        assert_eq!(
+            safe_git_path(&root.join("real/../real")).unwrap(),
+            root.join("real")
+        );
+    }
 }
