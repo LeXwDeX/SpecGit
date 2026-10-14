@@ -4,6 +4,39 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "project_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "git_dir",
+        "common_dir",
+        "head",
+        "branch",
+        "dirty",
+        "remote",
+        "repository"
+      ],
+      "properties": {
+        "root": {"type": "string"},
+        "git_dir": {"type": "string"},
+        "common_dir": {"type": "string"},
+        "head": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "branch": {"type": ["string", "null"]},
+        "dirty": {"type": "boolean"},
+        "remote": {"type": "string"},
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "host", "path"],
+          "properties": {
+            "provider": {"enum": ["github", "gitlab"]},
+            "host": {"type": "string"},
+            "path": {"type": "string"}
+          }
+        }
+      }
+    },
     "doctor_local": {
       "description": "Read-only local facts. Current means repository and branch ownership only; recorded IDs and target are not native verification or write eligibility.",
       "type": "object",
@@ -25,9 +58,9 @@
           ]
         },
         "context": {
-          "type": [
-            "object",
-            "null"
+          "anyOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/project_context"}
           ]
         },
         "target": {
@@ -832,6 +865,7 @@
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
     {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"evidence":{"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
+    {"if":{"properties":{"operation":{"const":"doctor"},"exit":{"const":0}},"required":["operation","exit"]},"then":{"properties":{"evidence":{"type":"object","required":["local"],"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
     {
       "if": {"properties":{"operation":{"const":"setup"},"evidence":{"type":"object"}},"required":["operation","evidence"]},
       "then": {
