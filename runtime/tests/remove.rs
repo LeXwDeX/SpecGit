@@ -736,10 +736,11 @@ fn removal_revalidates_owned_and_preserved_assets_after_lock_wait() {
             .spawn()
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
-        while !ready.exists() && Instant::now() < deadline {
+        let plan_is_ready = || fs::read(&ready).is_ok_and(|contents| contents == b"planned");
+        while !plan_is_ready() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
-        if !ready.exists() {
+        if !plan_is_ready() {
             let _ = child.kill();
             let out = child.wait_with_output().unwrap();
             panic!("removal never completed planning: {out:?}");
