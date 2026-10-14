@@ -821,7 +821,7 @@ pub fn health_plan(
     }
     let receipt_path = private.join("ownership.json");
     if previous.agents.contains(&Agent::Codex)
-        && previous.instructions.get("codex").is_none()
+        && !previous.instructions.contains_key("codex")
         && previous
             .instructions
             .get("generic")
