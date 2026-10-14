@@ -483,16 +483,71 @@ fn doctor_rejects_invalid_fix_combinations_and_preserves_account_only_contract()
         let report: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}: {report}");
     }
-    let (report, status) = fixture.doctor(&["doctor", "--account-only", "--provider", "github"]);
-    assert!(status.success(), "{report}");
-    assert_eq!(report["evidence"]["health"]["scope"], "account_only");
-    assert_eq!(report["evidence"]["health"]["status"], "not_checked");
-    assert_eq!(report["evidence"]["repair"]["requested"], false);
     let schema: Value =
         serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
-    jsonschema::draft202012::validate(&schema, &report).unwrap_or_else(|error| {
-        panic!("account-only doctor report violates schema: {error}; {report}")
-    });
+    let bin = fixture._temp.path().join("fixture-bin");
+    fs::create_dir_all(&bin).unwrap();
+    for name in ["git", "gh", "glab"] {
+        let name = if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.into()
+        };
+        fs::copy(
+            env!("CARGO_BIN_EXE_specgit-process-fixture"),
+            bin.join(name),
+        )
+        .unwrap();
+    }
+
+    for (response, expected_exit, expected_probe, expected_diagnostic) in [
+        (r#"{"id":1,"login":"fixture"}"#, 0, "available", None),
+        ("unauth", 3, "unknown", Some("authentication_failed")),
+    ] {
+        let output = executable::command()
+            .current_dir(&fixture.root)
+            .env("PATH", &bin)
+            .env("SPECGIT_FIXTURE_PROBE_MODE", "1")
+            .env("SPECGIT_FIXTURE_RESPONSE", response)
+            .args([
+                "doctor",
+                "--account-only",
+                "--provider",
+                "github",
+                "--api-host",
+                "forge.example",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        let report: Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|_| panic!("stdout={:?}; stderr={:?}", output.stdout, output.stderr));
+        assert_eq!(output.status.code(), Some(expected_exit), "{report}");
+        assert_eq!(report["exit"], expected_exit);
+        assert_eq!(report["evidence"]["health"]["scope"], "account_only");
+        assert_eq!(report["evidence"]["health"]["status"], "not_checked");
+        assert_eq!(report["evidence"]["repair"]["requested"], false);
+        assert_eq!(report["evidence"]["write_permissions"], "not_checked");
+        let probes = report["evidence"]["probes"].as_array().unwrap();
+        let account_probe = probes
+            .iter()
+            .find(|probe| probe["operation"] == "account_api")
+            .unwrap();
+        assert_eq!(account_probe["status"], expected_probe);
+        if let Some(code) = expected_diagnostic {
+            assert_eq!(account_probe["diagnostic"]["code"], code);
+        }
+        assert_eq!(
+            probes
+                .iter()
+                .find(|probe| probe["operation"] == "project_api")
+                .unwrap()["status"],
+            "not_checked"
+        );
+        jsonschema::draft202012::validate(&schema, &report).unwrap_or_else(|error| {
+            panic!("account-only doctor report violates schema: {error}; {report}")
+        });
+    }
 }
 
 #[test]
