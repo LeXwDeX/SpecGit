@@ -1532,6 +1532,13 @@ fn additive_guidance_refresh_detects_new_codex_shadow_in_both_selection_orders()
             Code::OwnershipConflict
         );
         assert_eq!(files(&f.base), before);
+        let health_error = match project::health_plan(&f.root, &f.private, &f.source) {
+            Err(error) => error,
+            Ok(_) => panic!("health planning must reject the shadowing Codex override"),
+        };
+        assert_eq!(health_error.code, Code::OwnershipConflict);
+        assert!(health_error.message.contains("new Codex override shadows"));
+        assert_eq!(files(&f.base), before);
     }
 }
 

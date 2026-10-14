@@ -189,6 +189,12 @@ fn shared_executable(source: &Path, project: &Path) -> Result<Snapshot, Diagnost
     Ok(snapshot)
 }
 
+fn codex_override_shadows(root: &Path) -> Result<bool, Diagnostic> {
+    Ok(Snapshot::read(&root.join("AGENTS.override.md"))?
+        .bytes
+        .is_some_and(|bytes| !bytes.iter().all(u8::is_ascii_whitespace)))
+}
+
 fn shared_inside_project(source: &Path, project: &Path) -> Result<bool, Diagnostic> {
     let source = source.canonicalize().map_err(|_| {
         conflict_at(
@@ -534,9 +540,7 @@ pub fn install_with_hooks(
         let old = previous.instructions.get(host);
         if host == "codex" && old.is_none() && previous.instructions.contains_key("generic") {
             let override_path = root.join("AGENTS.override.md");
-            let shadows = Snapshot::read(&override_path)?
-                .bytes
-                .is_some_and(|b| !b.iter().all(u8::is_ascii_whitespace));
+            let shadows = codex_override_shadows(root)?;
             if !shadows {
                 continue;
             }
@@ -786,6 +790,22 @@ pub fn health_plan(
         return Ok(None);
     }
     let receipt_path = private.join("ownership.json");
+    if previous.agents.contains(&Agent::Codex)
+        && previous.instructions.get("codex").is_none()
+        && previous
+            .instructions
+            .get("generic")
+            .is_some_and(|guidance| guidance.instructions == "AGENTS.md")
+        && codex_override_shadows(root)?
+    {
+        let override_path = root.join("AGENTS.override.md");
+        return Err(conflict_at(
+            "codex",
+            &override_path,
+            None,
+            "A new Codex override shadows the registered instructions; reconcile the host guidance first.",
+        ));
+    }
     let mut next = ProjectReceipt {
         version: 2,
         owner: "specgit".into(),
