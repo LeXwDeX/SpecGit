@@ -475,8 +475,19 @@ fn selected_agents_are_isolated_and_project_never_installs_an_executable() {
                 assert!(!text.contains("--state-root"), "{text}");
                 let hooks: Value = serde_json::from_str(&text).unwrap();
                 let entry = &hooks["hooks"]["SessionStart"][0]["hooks"][0];
-                assert_eq!(entry["command"], json!(f.source.to_str().unwrap()));
-                assert_eq!(entry["args"], json!(["hook", "--event", "SessionStart"]));
+                if relative == ".claude/settings.json" {
+                    assert_eq!(entry["command"], json!(f.source.to_str().unwrap()));
+                    assert_eq!(entry["args"], json!(["hook", "--event", "SessionStart"]));
+                } else {
+                    assert!(entry.get("args").is_none(), "{entry}");
+                    assert!(
+                        entry["command"]
+                            .as_str()
+                            .unwrap()
+                            .ends_with(" hook --event SessionStart"),
+                        "{entry}"
+                    );
+                }
             }
         }
         options.agents.clear();
@@ -492,6 +503,91 @@ fn selected_agents_are_isolated_and_project_never_installs_an_executable() {
         assert!(!f.private.join("ownership.json").exists());
         assert_eq!(fs::read(&f.source).unwrap(), source);
     }
+}
+
+#[test]
+fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_hooks() {
+    let (f, mut options) = fixture(vec![Agent::Codex, Agent::Claude]);
+    install(&options, &f).unwrap();
+    let settings_path = f.root.join(".codex/hooks.json");
+    let receipt_path = f.private.join("ownership.json");
+    let claude = fs::read(f.root.join(".claude/settings.json")).unwrap();
+    let mut settings: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+    let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    // Reconstruct the recorded 2.9.2 registration, including both PostToolUse
+    // handlers. These are fixture-owned assets, not unowned hooks to adopt.
+    for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+        let group = &mut settings["hooks"][event][0];
+        for handler in group["hooks"].as_array_mut().unwrap() {
+            let mut args = vec![json!("hook"), json!("--event"), json!(event)];
+            if handler["async"] == true {
+                args.push(json!("--observe"));
+            }
+            handler["command"] = json!(f.source);
+            handler["args"] = json!(args);
+        }
+        receipt["hooks"]["codex"]["entries"][event] = group.clone();
+    }
+    let foreign = json!({"matcher":"Read","hooks":[{"type":"command","command":"foreign-hook","unknown":true}]});
+    settings["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(foreign.clone());
+    fs::write(
+        &settings_path,
+        serde_json::to_vec_pretty(&settings).unwrap(),
+    )
+    .unwrap();
+    fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    let legacy = fs::read(&settings_path).unwrap();
+    let before = files(&f.base);
+    options.agents.clear();
+    options.dry_run = true;
+    let preview = install(&options, &f).unwrap();
+    assert_eq!(preview["written"], false);
+    assert_eq!(files(&f.base), before);
+    options.dry_run = false;
+    let refreshed = install(&options, &f).unwrap();
+    let after: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+    for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+        for handler in after["hooks"][event][0]["hooks"].as_array().unwrap() {
+            assert!(handler.get("args").is_none(), "{handler}");
+            let suffix = if handler["async"] == true {
+                format!(" hook --event {event} --observe")
+            } else {
+                format!(" hook --event {event}")
+            };
+            assert!(handler["command"].as_str().unwrap().ends_with(&suffix));
+        }
+    }
+    assert_eq!(after["hooks"]["PreToolUse"][1], foreign);
+    assert_eq!(after["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        after["hooks"]["PostToolUse"][0]["hooks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        fs::read(f.root.join(".claude/settings.json")).unwrap(),
+        claude
+    );
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    options.rollback = Some(
+        refreshed["transaction"]["transaction"]
+            .as_str()
+            .unwrap()
+            .into(),
+    );
+    install(&options, &f).unwrap();
+    assert_eq!(fs::read(&settings_path).unwrap(), legacy);
+    options.rollback = None;
+    install(&options, &f).unwrap();
+    options.uninstall = true;
+    install(&options, &f).unwrap();
+    let remaining: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+    assert_eq!(remaining, json!({"hooks":{"PreToolUse":[foreign]}}));
 }
 
 #[test]

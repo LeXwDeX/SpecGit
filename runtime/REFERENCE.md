@@ -490,7 +490,16 @@ purposes can install fewer events. PreToolUse/PostToolUse entries match the mana
 (`Write`, `Edit`, `MultiEdit`, `Bash`, `PowerShell`, `apply_patch`, including
 the fork spellings `functions.apply_patch` and
 `mcp__functions__apply_patch`), and relevant PostToolUse events may launch a
-bounded asynchronous observer. The `--opencode-claude-hooks` opt-in generates
+bounded asynchronous observer. Codex runs a complete
+shell command string, including `hook --event <event>` and the observer's
+`--observe`; it does not receive a separate `args` array. POSIX executable paths
+are single-quoted. Windows uses cmd double-quoting and rejects `%`, `!`, quote
+and control characters in the executable path because cmd may expand them.
+Claude retains its supported executable-plus-`args` form. Refresh with the
+updated shared CLI migrates recorded Codex entries through the normal ownership
+transaction; do not hand-edit the managed entries or their receipt.
+
+The `--opencode-claude-hooks` opt-in generates
 project `.opencode/hooks.json` for a custom OpenCode fork with claude-code
 input: top-level event entries, one single-quoted command string
 (`<executable> hook --event <event>`) with no separate args entries,

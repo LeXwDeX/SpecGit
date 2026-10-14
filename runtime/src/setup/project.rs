@@ -329,10 +329,7 @@ pub fn install_with_hooks(
         any_wake |= wake && !options.uninstall;
         purpose_evidence.insert(host.into(), json!({"requested":wanted,"installed":if options.uninstall { BTreeSet::new() } else { effective.clone() },"declined":declined}));
         if !options.uninstall && !effective.is_empty() {
-            plans.insert(
-                host,
-                purpose_manifest(source, host == "opencode", &effective, wake)?,
-            );
+            plans.insert(host, purpose_manifest(source, agent, &effective, wake)?);
         }
     }
     let needs_executable = !plans.is_empty();
