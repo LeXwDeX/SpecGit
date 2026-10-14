@@ -76,7 +76,12 @@ pub fn private_state(private_root: &Path) -> Result<PrivateState, Diagnostic> {
 fn git_line(bytes: Vec<u8>, what: &str) -> Result<PathBuf, Diagnostic> {
     let text = String::from_utf8(bytes)
         .map_err(|_| Diagnostic::input(&format!("Git returned a non-UTF-8 {what} path.")))?;
-    Ok(PathBuf::from(text.trim_end_matches(['\r', '\n'])))
+    let path = text
+        .strip_suffix('\n')
+        .ok_or_else(|| Diagnostic::input(&format!("Git returned an unterminated {what} path.")))?;
+    #[cfg(windows)]
+    let path = path.strip_suffix('\r').unwrap_or(path);
+    Ok(PathBuf::from(path))
 }
 
 /// The worktree's SpecGit-private root, `<absolute git dir>/specgit-v2`.

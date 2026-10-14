@@ -47,6 +47,11 @@ flowchart TD
   cli --> watch
   cli --> self_update
   cli --> skill
+  cli --> assets
+  cli --> guidance
+  cli --> guard
+  cli --> config
+  cli --> project_git[project Git boundary]
   self_update --> process
   self_update --> report
   self_update --> skill
@@ -138,6 +143,9 @@ The intended boundaries are:
   and the child's report; it never performs the refresh with old embedded bytes.
 - `cli` separates argument parsing, host behavior, dispatch, inspection, and
   output. `main` only starts the CLI.
+- Doctor's health inspection uses typed setup/guidance/guard asset plans and
+  applies them through their owning modules. The CLI does not parse its own JSON
+  report or invoke host hooks; offline checks do not launch platform probes.
 - `prompts` embeds short English and Chinese guidance and host entry points.
   `runtime/assets/SKILL.md` remains the full operational guide. Keep the
   generated guidance short. Do not copy the full workflow into each host file.

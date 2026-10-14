@@ -288,6 +288,12 @@ fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
             );
         }
     }
+    for dependency in ["assets", "guidance", "guard"] {
+        assert!(
+            graph["cli"].contains(dependency),
+            "The CLI doctor maintenance path must use typed {dependency} plans"
+        );
+    }
     for (owner, dependencies) in &graph {
         for dependency in dependencies {
             assert!(
