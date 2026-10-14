@@ -13,14 +13,66 @@ pub(super) fn emit(report: Report, json: bool) {
         for diagnostic in &report.diagnostics {
             eprintln!("{diagnostic}");
         }
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report.evidence).unwrap_or_default()
-        );
+        if report.operation == "doctor" {
+            doctor_summary(&report);
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report.evidence).unwrap_or_default()
+            );
+        }
         for action in &report.next_actions {
             if let Some(remedy) = action.get("remedy").and_then(serde_json::Value::as_str) {
                 println!("{remedy}");
             }
         }
     }
+}
+
+fn doctor_summary(report: &Report) {
+    let evidence = &report.evidence;
+    if let Some(root) = evidence
+        .pointer("/local/context/root")
+        .and_then(serde_json::Value::as_str)
+    {
+        println!("Project: {root}");
+    }
+    if let Some(checks) = evidence
+        .pointer("/health/checks")
+        .and_then(serde_json::Value::as_array)
+    {
+        for check in checks {
+            let id = check["id"].as_str().unwrap_or("check");
+            let status = check["status"].as_str().unwrap_or("unknown");
+            println!("  {id}: {status}");
+        }
+    }
+    if let Some(results) = evidence
+        .pointer("/repair/results")
+        .and_then(serde_json::Value::as_array)
+    {
+        for result in results {
+            println!(
+                "Repair {}: {}",
+                result["id"].as_str().unwrap_or("unknown"),
+                result["status"].as_str().unwrap_or("unknown")
+            );
+        }
+    }
+    if let Some(plans) = evidence
+        .pointer("/repair/plans")
+        .and_then(serde_json::Value::as_array)
+    {
+        let changes: usize = plans
+            .iter()
+            .filter_map(|p| p["assets"].as_array())
+            .map(Vec::len)
+            .sum();
+        if changes > 0 {
+            println!(
+                "Repair preview: {changes} asset changes. Use --json for paths and preconditions."
+            );
+        }
+    }
+    println!("Static checks only; real host loading and hook delivery are not verified.");
 }

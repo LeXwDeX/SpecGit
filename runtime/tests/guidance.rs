@@ -3,6 +3,116 @@ use specgit::{
     guidance,
 };
 
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn guidance_health_crash_child() {
+    let Some(root) = std::env::var_os("SPECGIT_TEST_GUIDANCE_CRASH_ROOT") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    let private = root.join("private");
+    let declaration = Declaration::default();
+    let changes = guidance::changes(&root, &private, &declaration, &declaration, false).unwrap();
+    let store = specgit::assets::AssetStore::lock(
+        &private.join("assets"),
+        &[root.clone(), private],
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
+    store.apply(changes).unwrap();
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn guidance_health_reports_a_prepared_journal_before_current_or_absent() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let private = root.join("private");
+    let crashed = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "guidance_health_crash_child"])
+        .env("SPECGIT_TEST_GUIDANCE_CRASH_ROOT", &root)
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", "before-commit")
+        .output()
+        .unwrap();
+    assert_eq!(crashed.status.code(), Some(99), "{crashed:?}");
+    let agents = root.join("AGENTS.md");
+    let before = std::fs::read(&agents).unwrap();
+    let journal_root = private.join("assets/transactions");
+    let id = std::fs::read_dir(&journal_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .find(|name| name.starts_with("tx-"))
+        .unwrap();
+    let error = guidance::health_plan(&root, &private, &Declaration::default())
+        .err()
+        .unwrap();
+    assert_eq!(error.code, specgit::diagnostic::Code::RollbackConflict);
+    assert!(error.message.contains(&id));
+    assert_eq!(std::fs::read(&agents).unwrap(), before);
+    let store = specgit::assets::AssetStore::lock(
+        &private.join("assets"),
+        &[root.clone(), private.clone()],
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
+    store.rollback(&id).unwrap();
+    assert!(
+        guidance::health_plan(&root, &private, &Declaration::default())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn health_requires_selected_guidance_and_preserves_missing_manual_content() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let private = root.join("private");
+    let declaration = Declaration::default();
+    assert!(
+        guidance::health_plan(&root, &private, &declaration)
+            .unwrap()
+            .is_none()
+    );
+    std::fs::write(
+        root.join("AGENTS.md"),
+        format!("Manual rules\n\n{}\n", guidance::render(&declaration)),
+    )
+    .unwrap();
+    let plan = guidance::health_plan(&root, &private, &declaration)
+        .unwrap()
+        .unwrap();
+    assert!(!plan.assets().is_empty());
+    plan.apply().unwrap();
+    assert!(
+        guidance::health_plan(&root, &private, &declaration)
+            .unwrap()
+            .unwrap()
+            .assets()
+            .is_empty()
+    );
+    std::fs::remove_file(root.join("AGENTS.md")).unwrap();
+    assert!(guidance::health_plan(&root, &private, &declaration).is_err());
+}
+
+#[test]
+fn health_rejects_a_missing_recorded_claude_guidance_file() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let private = root.join("private");
+    let declaration = Declaration::default();
+    let changes = guidance::changes(&root, &private, &declaration, &declaration, true).unwrap();
+    let store = specgit::assets::AssetStore::lock(
+        &private.join("assets"),
+        &[root.clone(), private.clone()],
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
+    store.apply(changes).unwrap();
+    std::fs::remove_file(root.join("CLAUDE.md")).unwrap();
+    assert!(guidance::health_plan(&root, &private, &declaration).is_err());
+}
+
 #[test]
 fn skill_selects_minimal_hooks_and_respects_delivery_and_stop_boundaries() {
     let source = include_str!("../assets/SKILL.md");

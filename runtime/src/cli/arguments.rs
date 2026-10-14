@@ -113,17 +113,26 @@ pub(super) enum Commands {
         #[arg(long, conflicts_with_all = ["stage", "install"])]
         uninstall: bool,
     },
-    /// Inspect local project/checkpoint context and authenticated read-only API access.
+    /// Check project health; repair only recorded integrations with --fix.
     Doctor {
         #[arg(long, value_enum)]
-        provider: Provider,
+        provider: Option<Provider>,
         #[arg(long)]
         remote: Option<String>,
         #[arg(long)]
         api_host: Option<String>,
         /// Probe only an account; local context and project access remain not_checked.
-        #[arg(long)]
+        #[arg(long, requires = "provider")]
         account_only: bool,
+        /// Skip authentication and all platform/network probes.
+        #[arg(long, conflicts_with = "account_only")]
+        offline: bool,
+        /// Repair only proven owned project assets, then check them again.
+        #[arg(long, conflicts_with = "account_only")]
+        fix: bool,
+        /// Preview concrete repairs without creating files, locks or transactions.
+        #[arg(long, requires = "fix", conflicts_with = "account_only")]
+        dry_run: bool,
     },
     /// Check, verify or apply a signed GitHub Release to the running shared executable.
     Update(specgit::self_update::Options),
