@@ -187,8 +187,9 @@ pub(super) async fn doctor(process: Process, cwd: &Path, options: DoctorOptions)
         .unwrap_or_else(|| json!([]));
     let results = if fix && !dry_run {
         match &mut health {
-            Some(health) => health.apply(&process, &source).await,
-            None => vec![],
+            // Incomplete inspection cannot establish the prerequisites for any write.
+            Some(health) if health.status() != "unknown" => health.apply(&process, &source).await,
+            _ => vec![],
         }
     } else {
         vec![]
@@ -287,7 +288,7 @@ pub(super) async fn doctor(process: Process, cwd: &Path, options: DoctorOptions)
     }
     report.exit = exit;
     let mut effects = specgit::report::Effects::default();
-    for result in &results {
+    for result in results.iter().filter(|result| result.status != "skipped") {
         let index = effects.begin(
             "local",
             result.id,
