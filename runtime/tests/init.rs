@@ -2727,3 +2727,184 @@ fn rollback_counts_a_sibling_with_private_state_but_no_declaration() {
     assert_eq!(consumer["private_state"], json!(["guidance.json"]));
     assert!(git_ok(&sibling, &["check-ignore", "-q", ".specgit.yaml"]));
 }
+
+#[test]
+fn doctor_reports_uninitialized_local_context_without_writing() {
+    let f = Fixture::new();
+    let before = fs::read(f.root.join(".git/config")).unwrap();
+    let report = f.run_raw(&["doctor", "--provider", "github"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(
+        report["evidence"]["local"]["status"], "uninitialized",
+        "{report}"
+    );
+    assert_eq!(
+        report["evidence"]["local"]["checkpoint"]["status"],
+        "absent"
+    );
+    assert_eq!(report["evidence"]["local"]["remote_state"], "not_checked");
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert!(!f.root.join(".git/specgit-v2/selection.json").exists());
+    assert_eq!(fs::read(f.root.join(".git/config")).unwrap(), before);
+}
+
+#[test]
+fn doctor_account_only_skips_malformed_local_configuration_and_checkpoint() {
+    let f = Fixture::new();
+    fs::write(f.root.join(".specgit.yaml"), "version: [broken").unwrap();
+    let private = f.root.join(".git/specgit-v2");
+    fs::create_dir_all(&private).unwrap();
+    fs::write(private.join("selection.json"), "{broken checkpoint").unwrap();
+    let report = f.run_raw(&[
+        "doctor",
+        "--provider",
+        "github",
+        "--account-only",
+        "--api-host",
+        "forge.example",
+    ]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(
+        report["evidence"]["local"],
+        json!({
+            "status": "not_checked", "context": null, "target": null,
+            "checkpoint": {"status": "not_checked"}, "remote_state": "not_checked"
+        })
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join(".specgit.yaml")).unwrap(),
+        "version: [broken"
+    );
+    assert_eq!(
+        fs::read_to_string(private.join("selection.json")).unwrap(),
+        "{broken checkpoint"
+    );
+    assert_eq!(f.state()["calls"].as_array().unwrap().len(), 1);
+    assert_report_matches_schema(&report);
+}
+
+#[test]
+fn doctor_uses_declared_remote_stored_routing_and_explicit_overrides() {
+    let f = Fixture::new();
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["remote", "rename", "origin", "upstream"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    fs::write(
+        f.root.join(".specgit.yaml"),
+        "version: 2\nprovider: github\nremote: upstream\ntarget: release\n",
+    )
+    .unwrap();
+    let private = f.root.join(".git/specgit-v2");
+    fs::create_dir_all(&private).unwrap();
+    let routing = json!({"version":2,"repository":{"provider":"github","host":"forge.example","path":"fixture/repo"},"api_host":"api.example:8443"}).to_string();
+    fs::write(private.join("local-routing.json"), &routing).unwrap();
+    for (args, host) in [
+        (vec!["doctor", "--provider", "github"], "api.example:8443"),
+        (
+            vec![
+                "doctor",
+                "--provider",
+                "github",
+                "--api-host",
+                "override.example",
+            ],
+            "override.example",
+        ),
+    ] {
+        let report = f.run_raw(&args);
+        assert_eq!(report["exit"], 0, "{report}");
+        let local = &report["evidence"]["local"];
+        assert_eq!(local["status"], "initialized");
+        assert_eq!(local["target"], "release");
+        assert_eq!(local["checkpoint"]["status"], "absent");
+        assert_eq!(local["context"]["repository"]["host"], host);
+        assert_report_matches_schema(&report);
+    }
+    assert!(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args([
+                "remote",
+                "add",
+                "alternate",
+                "https://elsewhere.example/fixture/repo.git"
+            ])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let report = f.run_raw(&[
+        "doctor",
+        "--provider",
+        "github",
+        "--remote",
+        "alternate",
+        "--api-host",
+        "explicit.example",
+    ]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(
+        report["evidence"]["local"]["context"]["repository"]["host"],
+        "explicit.example"
+    );
+    assert_eq!(
+        fs::read_to_string(private.join("local-routing.json")).unwrap(),
+        routing
+    );
+    assert!(!private.join("selection.json").exists());
+}
+
+#[test]
+fn doctor_rejects_malformed_declaration_without_rewriting_it() {
+    let f = Fixture::new();
+    let malformed = "version: [broken";
+    fs::write(f.root.join(".specgit.yaml"), malformed).unwrap();
+    let report = f.run_raw(&["doctor", "--provider", "github"]);
+    assert_ne!(report["exit"], 0, "{report}");
+    assert!(report["evidence"].get("local").is_none());
+    assert_report_matches_schema(&report);
+    assert!(
+        !report["diagnostics"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join(".specgit.yaml")).unwrap(),
+        malformed
+    );
+    assert!(!f.root.join(".git/specgit-v2/selection.json").exists());
+    assert!(f.state()["calls"].as_array().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_preserves_repository_root_with_trailing_newline() {
+    let mut f = Fixture::new();
+    let renamed = f.root.with_file_name("project\n");
+    fs::rename(&f.root, &renamed).unwrap();
+    f.root = renamed;
+    let declaration = "version: 2\nprovider: github\nremote: origin\ntarget: release\n";
+    fs::write(f.root.join(".specgit.yaml"), declaration).unwrap();
+    let report = f.run_raw(&["doctor", "--provider", "github"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(report["evidence"]["local"]["status"], "initialized");
+    assert_eq!(report["evidence"]["local"]["target"], "release");
+    assert_eq!(
+        report["evidence"]["local"]["context"]["root"],
+        json!(f.root)
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join(".specgit.yaml")).unwrap(),
+        declaration
+    );
+    assert_report_matches_schema(&report);
+    let status = f.run_raw(&["status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    assert_eq!(status["evidence"]["context"]["root"], json!(f.root));
+}

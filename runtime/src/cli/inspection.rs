@@ -17,10 +17,10 @@ pub(super) async fn doctor(
     account_only: bool,
 ) -> Report {
     let mut probes = probe::commands(&process, cwd, provider).await;
-    let context = if account_only {
+    let local = if account_only {
         None
     } else {
-        match specgit::project::resolve(
+        match LocalInspection::read(
             &process,
             cwd,
             remote.as_deref(),
@@ -29,7 +29,7 @@ pub(super) async fn doctor(
         )
         .await
         {
-            Ok(context) => Some(context),
+            Ok(local) => Some(local),
             Err(d) => {
                 let mut report = Report::failure("doctor", d);
                 report.evidence =
@@ -38,6 +38,7 @@ pub(super) async fn doctor(
             }
         }
     };
+    let context = local.as_ref().map(|local| &local.context);
     let host = context
         .as_ref()
         .map(|c| c.repository.host.as_str())
@@ -84,9 +85,18 @@ pub(super) async fn doctor(
     let environment = probe::environment(&reader).await;
     let mut report = Report::success(
         "doctor",
-        if failed { "unknown" } else { "ready" },
-        serde_json::json!({"probes":probes,"write_permissions":write_permissions,"environment":environment}),
+        if failed {
+            "unknown"
+        } else if local.as_ref().is_some_and(LocalInspection::branch_mismatch) {
+            "checkpoint_branch_mismatch"
+        } else {
+            "ready"
+        },
+        serde_json::json!({"probes":probes,"write_permissions":write_permissions,"environment":environment,"local":local.as_ref().map(LocalInspection::summary).unwrap_or_else(local_not_checked)}),
     );
+    if let Some(local) = &local {
+        local.add_next_actions(&mut report);
+    }
     if failed {
         report.exit = 3;
     }
@@ -99,53 +109,111 @@ pub(super) async fn status(
     remote: Option<String>,
     provider: Option<Provider>,
 ) -> Report {
-    let root = match specgit::project::git(&process, cwd, &["rev-parse", "--show-toplevel"]).await {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(s) => PathBuf::from(s.trim_end_matches(['\r', '\n'])),
-            Err(_) => {
-                return Report::failure("status", Diagnostic::input("Invalid Git root."));
-            }
-        },
-        Err(d) => return Report::failure("status", d),
-    };
-    let declaration = match specgit::config::read(&root) {
-        Ok(d) => d,
-        Err(d) => return Report::failure("status", d),
-    };
-    let selected_remote = remote
-        .as_deref()
-        .or_else(|| declaration.as_ref().and_then(|d| d.remote.as_deref()));
-    let selected_provider = provider.or_else(|| declaration.as_ref().and_then(|d| d.provider));
-    match specgit::config::resolve(&process, &root, selected_remote, selected_provider, None).await
+    let local = match LocalInspection::read(&process, cwd, remote.as_deref(), provider, None).await
     {
-        Ok(context) => {
-            let selection = match specgit::selection::classify(&context) {
-                Ok(specgit::selection::ReadOutcome::Absent) => None,
-                Ok(specgit::selection::ReadOutcome::Current(current_selection)) => {
-                    Some(current_selection)
-                }
-                Ok(specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. }) => {
-                    let mut report = Report::success(
-                        "status",
-                        "checkpoint_branch_mismatch",
-                        serde_json::json!({"context":context,"declaration":declaration,"selection":null,"checkpoint":checkpoint,"write_eligible":false,"remote_state":"not_checked"}),
-                    );
-                    report.next_actions.push(serde_json::json!({"kind":"return_to_checkpoint_branch","branch":checkpoint.recorded_branch,"remedy":"Return to the recorded branch to resume this checkpoint."}));
-                    report.next_actions.push(serde_json::json!({"kind":"use_independent_worktree","remedy":"Use a separate worktree for an independent delivery; do not move or discard this checkpoint."}));
-                    return report;
-                }
-                Err(d) => return Report::failure("status", d),
+        Ok(local) => local,
+        Err(d) => return Report::failure("status", d),
+    };
+    let mut report = match &local.selection {
+        specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } => Report::success(
+            "status",
+            "checkpoint_branch_mismatch",
+            serde_json::json!({"context":local.context,"declaration":local.declaration,"selection":null,"checkpoint":checkpoint,"write_eligible":false,"remote_state":"not_checked"}),
+        ),
+        selection => {
+            let selection = match selection {
+                specgit::selection::ReadOutcome::Current(selection) => Some(selection),
+                _ => None,
             };
             Report::success(
                 "status",
-                if declaration.is_some() {
-                    "initialized"
-                } else {
-                    "uninitialized"
-                },
-                serde_json::json!({"context":context,"declaration":declaration,"selection":selection,"remote_state":"not_checked"}),
+                local.status(),
+                serde_json::json!({"context":local.context,"declaration":local.declaration,"selection":selection,"remote_state":"not_checked"}),
             )
         }
-        Err(d) => Report::failure("status", d),
+    };
+    local.add_next_actions(&mut report);
+    report
+}
+
+/// Shared typed local reads; neither command consumes the other's JSON report.
+struct LocalInspection {
+    context: specgit::project::Context,
+    declaration: Option<specgit::config::Declaration>,
+    selection: specgit::selection::ReadOutcome,
+}
+
+impl LocalInspection {
+    async fn read(
+        process: &Process,
+        cwd: &Path,
+        remote: Option<&str>,
+        provider: Option<Provider>,
+        api_host: Option<&str>,
+    ) -> Result<Self, Diagnostic> {
+        let bytes = specgit::project::git(process, cwd, &["rev-parse", "--show-toplevel"]).await?;
+        let root = String::from_utf8(bytes).map_err(|_| Diagnostic::input("Invalid Git root."))?;
+        // Remove only Git's output delimiter; Unix directory names can end in a newline.
+        let root = root.strip_suffix('\n').unwrap_or(&root);
+        #[cfg(windows)]
+        let root = root.strip_suffix('\r').unwrap_or(root);
+        let root = PathBuf::from(root);
+        let declaration = specgit::config::read(&root)?;
+        let remote = remote.or_else(|| declaration.as_ref().and_then(|d| d.remote.as_deref()));
+        let provider = provider.or_else(|| declaration.as_ref().and_then(|d| d.provider));
+        let context = specgit::config::resolve(process, &root, remote, provider, api_host).await?;
+        let selection = specgit::selection::classify(&context)?;
+        Ok(Self {
+            context,
+            declaration,
+            selection,
+        })
     }
+
+    fn branch_mismatch(&self) -> bool {
+        matches!(
+            self.selection,
+            specgit::selection::ReadOutcome::BranchMismatch { .. }
+        )
+    }
+
+    fn status(&self) -> &'static str {
+        if self.branch_mismatch() {
+            "checkpoint_branch_mismatch"
+        } else if self.declaration.is_some() {
+            "initialized"
+        } else {
+            "uninitialized"
+        }
+    }
+
+    fn summary(&self) -> serde_json::Value {
+        let checkpoint = match &self.selection {
+            specgit::selection::ReadOutcome::Absent => serde_json::json!({"status":"absent"}),
+            specgit::selection::ReadOutcome::Current(selection) => serde_json::json!({
+                "status":"current", "recorded_branch":selection.branch,
+                "recorded_target":selection.target, "issues":selection.issues, "request":selection.request
+            }),
+            specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } => {
+                serde_json::to_value(checkpoint).expect("checkpoint metadata serializes")
+            }
+        };
+        serde_json::json!({
+            "status":self.status(), "context":self.context,
+            "target":self.declaration.as_ref().and_then(|d| d.target.as_deref()),
+            "checkpoint":checkpoint, "remote_state":"not_checked"
+        })
+    }
+
+    fn add_next_actions(&self, report: &mut Report) {
+        if let specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } = &self.selection
+        {
+            report.next_actions.push(serde_json::json!({"kind":"return_to_checkpoint_branch","branch":checkpoint.recorded_branch,"remedy":"Return to the recorded branch to resume this checkpoint."}));
+            report.next_actions.push(serde_json::json!({"kind":"use_independent_worktree","remedy":"Use a separate worktree for an independent delivery; do not move or discard this checkpoint."}));
+        }
+    }
+}
+
+fn local_not_checked() -> serde_json::Value {
+    serde_json::json!({"status":"not_checked","context":null,"target":null,"checkpoint":{"status":"not_checked"},"remote_state":"not_checked"})
 }
