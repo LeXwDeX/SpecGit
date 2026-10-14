@@ -4,6 +4,146 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "doctor_local": {
+      "description": "Read-only local facts. Current means repository and branch ownership only; recorded IDs and target are not native verification or write eligibility.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "context",
+        "target",
+        "checkpoint",
+        "remote_state"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "initialized",
+            "uninitialized",
+            "checkpoint_branch_mismatch",
+            "not_checked"
+          ]
+        },
+        "context": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/doctor_checkpoint"
+        },
+        "remote_state": {
+          "const": "not_checked"
+        }
+      }
+    },
+    "doctor_checkpoint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "absent",
+                "not_checked"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "recorded_branch",
+            "recorded_target",
+            "issues",
+            "request"
+          ],
+          "properties": {
+            "status": {
+              "const": "current"
+            },
+            "recorded_branch": {
+              "type": "string"
+            },
+            "recorded_target": {
+              "type": "string"
+            },
+            "issues": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "request": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "path",
+            "recorded_branch",
+            "recorded_target",
+            "recorded_project_id",
+            "current_branch",
+            "pending_write",
+            "write_eligible"
+          ],
+          "properties": {
+            "status": {
+              "const": "branch_mismatch"
+            },
+            "path": {
+              "type": "string"
+            },
+            "recorded_branch": {
+              "type": "string"
+            },
+            "recorded_target": {
+              "type": "string"
+            },
+            "recorded_project_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "current_branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pending_write": {
+              "type": "boolean"
+            },
+            "write_eligible": {
+              "const": false
+            }
+          }
+        }
+      ]
+    },
     "hook_purpose": {
       "enum": ["guard", "context", "observe"]
     },
@@ -691,6 +831,7 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
+    {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"evidence":{"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
     {
       "if": {"properties":{"operation":{"const":"setup"},"evidence":{"type":"object"}},"required":["operation","evidence"]},
       "then": {

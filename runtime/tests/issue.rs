@@ -777,6 +777,7 @@ fn malformed_or_foreign_repository_checkpoints_remain_rejected() {
         git(&fixture.root, &["switch", "-c", "other-branch"]);
         for command in [
             vec!["status"],
+            vec!["doctor", "--provider", "github"],
             vec!["issue", "fix: must not degrade", "--inspect"],
             vec![
                 "issue",
@@ -1507,5 +1508,147 @@ fn resumed_dry_run_previews_all_pending_specs_and_labels_without_saving() {
         );
         assert_eq!(fs::read(&selection_path).unwrap(), before);
         assert_eq!(f.writes(), writes);
+    }
+}
+
+#[test]
+fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let selected = f.run(&["issue", "--create-labels", "feat: private checkpoint title"]);
+        assert_eq!(selected["exit"], 0, "{selected}");
+        fs::write(f.root.join("dirty.txt"), "uncommitted").unwrap();
+        let checkpoint = checkpoint_path(&f);
+        // Persist valid recovery payloads to exercise redaction at the real CLI boundary.
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+        saved["adopted"] = json!([{"id":1,"title":"private adopted title","body":"private adopted body","labels":[],"state":"open","updated_at":"2026-10-14T00:00:00Z"}]);
+        saved["request_intent"] = json!({"head":"feature","title":"private request title","body":"private request body","labels":[]});
+        fs::write(&checkpoint, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let before = fs::read(&checkpoint).unwrap();
+        let config = fs::read(f.root.join(".specgit.yaml")).unwrap();
+        let files = files_below(&f.root.join(".git/specgit-v2"));
+        let writes = f.writes();
+        for branch in ["feature", "other-branch", "detached"] {
+            match branch {
+                "other-branch" => git(&f.root, &["switch", "-c", branch]),
+                "detached" => git(&f.root, &["switch", "--detach"]),
+                _ => {}
+            }
+            let calls_before = f.state()["calls"].as_array().unwrap().len();
+            let report = f.run(&["doctor", "--provider", provider]);
+            assert_eq!(report["exit"], 0, "{provider} {branch}: {report}");
+            let schema: serde_json::Value =
+                serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+            jsonschema::draft202012::validate(&schema, &report).unwrap();
+            if branch == "feature" {
+                let mut invalid = report.clone();
+                invalid["evidence"]["local"]["remote_state"] = json!("verified");
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+                let mut invalid = report.clone();
+                invalid["evidence"]["local"]["checkpoint"]["intents"] = json!([]);
+                assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+            }
+            let local = &report["evidence"]["local"];
+            assert_eq!(local["context"]["dirty"], true);
+            assert_eq!(
+                local["context"]["branch"],
+                if branch == "detached" {
+                    serde_json::Value::Null
+                } else {
+                    json!(branch)
+                }
+            );
+            assert_eq!(local["context"]["remote"], "origin");
+            assert_eq!(local["context"]["repository"]["path"], "fixture/repo");
+            assert_eq!(local["context"]["root"], json!(f.root));
+            assert!(
+                local["context"]["head"]
+                    .as_str()
+                    .is_some_and(|head| head.len() == 40)
+            );
+            let expected = if branch == "feature" {
+                "initialized"
+            } else {
+                "checkpoint_branch_mismatch"
+            };
+            assert_eq!(local["status"], expected, "{report}");
+            assert_eq!(
+                report["status"],
+                if branch == "feature" {
+                    "ready"
+                } else {
+                    expected
+                }
+            );
+            assert_eq!(local["remote_state"], "not_checked");
+            assert_eq!(local["checkpoint"]["recorded_branch"], "feature");
+            assert_eq!(local["checkpoint"]["recorded_target"], "main");
+            if branch == "feature" {
+                assert_eq!(local["checkpoint"]["status"], "current");
+                assert_eq!(local["checkpoint"]["issues"], json!([1]));
+                assert!(local["checkpoint"]["request"].is_null());
+            } else {
+                assert_eq!(local["checkpoint"]["status"], "branch_mismatch");
+                assert_eq!(
+                    local["checkpoint"]["current_branch"],
+                    if branch == "detached" {
+                        serde_json::Value::Null
+                    } else {
+                        json!(branch)
+                    }
+                );
+            }
+            for forbidden in ["intents", "adopted", "request_intent"] {
+                assert!(local["checkpoint"].get(forbidden).is_none(), "{report}");
+            }
+            for secret in [
+                "private checkpoint title",
+                "private adopted title",
+                "private adopted body",
+                "private request title",
+                "private request body",
+            ] {
+                assert!(!report.to_string().contains(secret), "{report}");
+            }
+            let state = f.state();
+            let calls = &state["calls"].as_array().unwrap()[calls_before..];
+            assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
+            assert!(calls.iter().all(|call| call["method"] == "GET"));
+            let human = f.run_human(&["doctor", "--provider", provider]);
+            assert_eq!(human.status.code(), Some(0));
+            let text = String::from_utf8(human.stdout).unwrap();
+            for secret in [
+                "private checkpoint title",
+                "private adopted title",
+                "private adopted body",
+                "private request title",
+                "private request body",
+            ] {
+                assert!(!text.contains(secret), "{text}");
+            }
+            assert!(!text.contains("\"adopted\""));
+            assert!(!text.contains("\"intents\""));
+            assert!(!text.contains("\"request_intent\""));
+            assert_eq!(fs::read(&checkpoint).unwrap(), before);
+            assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), config);
+            assert_eq!(files_below(&f.root.join(".git/specgit-v2")), files);
+            assert_eq!(f.writes(), writes);
+        }
+        f.edit(|s| {
+            s["read_routes"][if provider == "github" {
+                "repos/fixture/repo"
+            } else {
+                "projects/fixture%2Frepo"
+            }] = json!({"__fixture_error":"HTTP 403"})
+        });
+        let failure = f.run(&["doctor", "--provider", provider]);
+        assert_eq!(failure["exit"], 3, "{failure}");
+        assert_eq!(failure["status"], "unknown");
+        assert_eq!(
+            failure["evidence"]["local"]["status"],
+            "checkpoint_branch_mismatch"
+        );
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
     }
 }

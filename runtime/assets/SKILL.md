@@ -114,7 +114,7 @@ PR-only goals stop at the PR. For an authorized merge goal, keep bounded waiting
 verification/review and native merge/associated closure readback. Notifications are not completion.
 Re-read native facts before acting; an old head or attempt never authorizes action. Hosts own stale-callback
 suppression. Completion, cancellation or an exhausted budget means no automatic retry; resume explicitly.
-Use `pr --status` for native state; `status` is offline local evidence. Use bounded
+Use `pr --status` for native state; `status` is offline local evidence. `doctor` reports local declaration/checkpoint context without extra API calls, fetches or writes; `--account-only` skips local reads. Local records do not prove platform state or write eligibility. Use bounded
 `watch` with the exact request ID, stable session ID and checks or lifecycle goal.
 A checks goal does not prove merge/closure. Follow `diagnostics[].remedy`,
 `next_actions` and `effects` after failure. Exit 0 means the operation/read succeeded,
