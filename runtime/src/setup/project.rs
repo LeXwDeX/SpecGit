@@ -215,7 +215,27 @@ fn orphan_at(path: &Path, message: &str) -> Diagnostic {
     diagnostic
 }
 
-fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf>, Diagnostic> {
+fn orphan_hook_executable(host: &str, event: &str, group: &Value) -> Option<PathBuf> {
+    let command = group
+        .get("hooks")?
+        .as_array()?
+        .first()?
+        .get("command")?
+        .as_str()?;
+    if command.len() > 8192 {
+        return None;
+    }
+    let executable = if host == "opencode" {
+        let command = command.strip_suffix(&format!(" hook --event {event}"))?;
+        let body = command.strip_prefix('\'')?.strip_suffix('\'')?;
+        PathBuf::from(body.replace("'\\''", "'"))
+    } else {
+        PathBuf::from(command)
+    };
+    executable.is_absolute().then_some(executable)
+}
+
+fn orphan_hook_registration(root: &Path) -> Result<Option<PathBuf>, Diagnostic> {
     for (host, relative) in [
         ("claude", ".claude/settings.json"),
         ("codex", ".codex/hooks.json"),
@@ -235,17 +255,24 @@ fn orphan_hook_registration(root: &Path, source: &Path) -> Result<Option<PathBuf
         }) else {
             continue;
         };
-        let expected = if host == "opencode" {
-            opencode_manifest(source)?
-        } else {
-            manifest(source)
-        };
-        for (event, group) in expected {
-            let Some(groups) = events.get(&event).and_then(Value::as_array) else {
+        for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+            let Some(groups) = events.get(event).and_then(Value::as_array) else {
                 continue;
             };
             if groups.iter().any(|candidate| {
-                candidate == &group
+                let Some(executable) = orphan_hook_executable(host, event, candidate) else {
+                    return false;
+                };
+                let expected = if host == "opencode" {
+                    let Ok(manifest) = opencode_manifest(&executable) else {
+                        return false;
+                    };
+                    manifest
+                } else {
+                    manifest(&executable)
+                };
+                let group = &expected[event];
+                candidate == group
                     || (event == "PostToolUse" && host != "opencode" && {
                         let mut without_observer = group.clone();
                         without_observer["hooks"]
@@ -774,7 +801,7 @@ pub fn health_plan(
                 ));
             }
         }
-        if let Some(path) = orphan_hook_registration(root, source)? {
+        if let Some(path) = orphan_hook_registration(root)? {
             return Err(orphan_at(
                 &path,
                 "An exact SpecGit host hook registration exists without a project ownership receipt; preserve it for reconciliation.",
