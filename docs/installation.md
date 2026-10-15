@@ -86,14 +86,20 @@ shim can otherwise continue selecting the retired CLI. For a manual upgrade, bac
 up the previous executable before replacing it; restore that file to roll back
 the local upgrade.
 
-In a v2 project, inspect the current declaration and preview entry-point changes:
+In a v2 project, inspect initialization and host integration separately. Every
+clone and linked worktree needs its own `specgit init`; local declarations,
+generated Skill files and private receipts do not travel with Git. `init` installs
+the shared project Skill and stable guidance entry points. It does not install
+host hooks. `setup` is the separate host choice.
 
 ```sh
 specgit init --check --json
 specgit init --dry-run --json
 specgit init --json
 specgit setup --dry-run --json
+specgit setup --json
 specgit status --json
+specgit doctor --provider github --json
 ```
 
 Apply project changes only after an applicable conflict-free preview. Resolve any
@@ -103,8 +109,10 @@ before that change; then use consistent options/configuration in check, preview 
 apply and read back the preference. Continue independent reads while blocked.
 Setup refresh includes all recorded hosts plus the `--agent` selection. Omit purposes
 on ordinary refresh; explicit purposes affect the full set and need authorization
-for every affected host. Review all asset changes, including shared Skill refresh,
-before applying. Adding a host with `none` preserves existing purposes, not their asset bytes.
+for every affected host. Review all host assets before applying. Registration records
+that files were written; it does not prove that the host loaded hooks or delivered
+context. Verify with the host's documented import/trust flow and a real behavior
+check.
 From 2.4 on, setup is permanently project-only (`--scope project` is the
 default and only scope): refreshing a 2.3-era project receipt rewrites it into
 the 2.4 format locally without `shared_root` and without reading or writing the
@@ -122,10 +130,17 @@ existing v1 project, follow the migration guide above.
 
 ### Local generated files
 
-`init` and v2 migration maintain one owned block in Git's local `info/exclude`,
-resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
-`.specgit.yaml`. SpecGit does not add exclusions for project `AGENTS.md` /
-`CLAUDE.md`: one worktree cannot establish ownership of another worktree's guidance.
+`init` maintains one owned block in Git's local `info/exclude`, resolved by Git
+and shared by linked worktrees. The block excludes `.specgit.yaml` and the generated
+`.agents/skills/specgit-native/SKILL.md`. It adds
+`.claude/skills/specgit-native/SKILL.md` only when Claude is selected. A v1 migration
+may carry forward legacy exclusion rules; run `init` afterward to reconcile current
+local assets. Rules retained for another initialized worktree can keep a selected
+Claude Skill excluded. The block does not hide `.agents/` or `.claude/` directories.
+Ignore rules do not untrack already committed files.
+If a generated Skill is tracked, review an explicit `git rm --cached` change
+before applying it: that commit removes the file in other clones that advance
+past it, and each clone must run `specgit init` to regenerate local files.
 Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
 identify them and review their purpose before changing them. Repeated initialization
 refreshes the block without duplicating it and preserves surrounding user rules.

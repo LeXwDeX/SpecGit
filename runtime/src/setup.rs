@@ -146,6 +146,14 @@ fn instruction_change(
     uninstall: bool,
     refresh_proven: bool,
 ) -> Result<(Change, Option<HostRegistration>), Diagnostic> {
+    instruction_change_after(host, root, old, uninstall, refresh_proven, None)
+}
+
+fn instruction_target(
+    host: &str,
+    root: &Path,
+    old: Option<&HostRegistration>,
+) -> Result<String, Diagnostic> {
     if old.is_some_and(|r| r.root != root) {
         return Err(conflict_at(
             host,
@@ -188,16 +196,33 @@ fn instruction_change(
     } else {
         "AGENTS.md".into()
     };
+    Ok(instructions)
+}
+
+fn instruction_change_after(
+    host: &str,
+    root: &Path,
+    old: Option<&HostRegistration>,
+    uninstall: bool,
+    refresh_proven: bool,
+    planned: Option<&Change>,
+) -> Result<(Change, Option<HostRegistration>), Diagnostic> {
+    let instructions = instruction_target(host, root, old)?;
     let mut guidance = Change::new(root.join(&instructions), None)?;
-    let before = std::str::from_utf8(guidance.before.bytes.as_deref().unwrap_or_default())
-        .map_err(|_| {
-            conflict_at(
-                host,
-                &guidance.path,
-                None,
-                "Host instructions must be UTF-8.",
-            )
-        })?;
+    let before = std::str::from_utf8(
+        planned
+            .filter(|change| change.path == guidance.path)
+            .map(|c| c.after.as_deref().unwrap_or_default())
+            .unwrap_or_else(|| guidance.before.bytes.as_deref().unwrap_or_default()),
+    )
+    .map_err(|_| {
+        conflict_at(
+            host,
+            &guidance.path,
+            None,
+            "Host instructions must be UTF-8.",
+        )
+    })?;
     let prompt = crate::prompts::host_entry();
     let entry = prompt.trim_end();
     let generated = format!("{HOST_START}\n## SpecGit 2\n\n{entry}\n{HOST_END}");
@@ -261,22 +286,31 @@ fn instruction_change(
             )
         }
     } else {
-        if [HOST_START, HOST_END, LEGACY_START, LEGACY_END]
-            .iter()
-            .any(|marker| before.contains(marker))
+        if before.matches(&generated).count() == 1
+            && before.matches(HOST_START).count() == 1
+            && before.matches(HOST_END).count() == 1
+            && !before.contains(LEGACY_START)
+            && !before.contains(LEGACY_END)
         {
-            return Err(conflict_at(
-                host,
-                &guidance.path,
-                None,
-                "An unowned SpecGit instruction marker already exists.",
-            ));
+            (before.to_owned(), generated)
+        } else {
+            if [HOST_START, HOST_END, LEGACY_START, LEGACY_END]
+                .iter()
+                .any(|marker| before.contains(marker))
+            {
+                return Err(conflict_at(
+                    host,
+                    &guidance.path,
+                    None,
+                    "An unowned SpecGit instruction marker already exists.",
+                ));
+            }
+            let block = format!(
+                "{}{generated}\n",
+                if before.is_empty() { "" } else { "\n\n" }
+            );
+            (format!("{before}{block}"), block)
         }
-        let block = format!(
-            "{}{generated}\n",
-            if before.is_empty() { "" } else { "\n\n" }
-        );
-        (format!("{before}{block}"), block)
     };
     let created_instructions =
         old.map_or(guidance.before.bytes.is_none(), |r| r.created_instructions);
@@ -672,8 +706,15 @@ mod tests {
             instruction_change("codex", &root, Some(&registration), false, false).unwrap();
         assert_eq!(refreshed.after.unwrap(), first);
         let original = String::from_utf8(first).unwrap();
-        let edited = original.replace("stays project-only", "User edit");
-        assert_ne!(edited, original);
+        assert!(
+            original.contains("specgit init"),
+            "the fixture must target managed entry text"
+        );
+        let edited = original.replace("specgit init", "User edit");
+        assert_ne!(
+            edited, original,
+            "the managed entry must actually be edited"
+        );
         std::fs::write(&path, edited).unwrap();
         assert_eq!(
             instruction_change("codex", &root, Some(&registration), false, false)
@@ -682,6 +723,30 @@ mod tests {
                 .code,
             Code::OwnershipConflict,
         );
+    }
+
+    #[test]
+    fn host_prompt_ignores_a_planned_change_for_another_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let manual = b"override manual\r\n";
+        std::fs::write(root.join("AGENTS.override.md"), manual).unwrap();
+        let wrong = Change::new(
+            root.join("AGENTS.md"),
+            Some(b"wrong file contents".to_vec()),
+        )
+        .unwrap();
+        let (change, registration) =
+            instruction_change_after("codex", &root, None, false, false, Some(&wrong)).unwrap();
+        assert_eq!(change.path, root.join("AGENTS.override.md"));
+        let after = change.after.unwrap();
+        assert!(after.starts_with(manual));
+        assert!(
+            !after
+                .windows(b"wrong file contents".len())
+                .any(|bytes| bytes == b"wrong file contents")
+        );
+        assert_eq!(registration.unwrap().instructions, "AGENTS.override.md");
     }
 
     #[test]

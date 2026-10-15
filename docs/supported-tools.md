@@ -1,22 +1,21 @@
 # Supported coding agents
 
-SpecGit 2.11.1 provides a native CLI and managed agent integrations. One shared
-user-level `specgit` executable serves every repository and worktree.
-`specgit setup` refreshes all recorded agents plus explicitly selected
-agents (`--agent generic|claude|codex|opencode`, repeatable); the flag does not
-confine refresh to that host. Setup is
-permanently project-only: `--scope project` is the default and the only scope
-value, writing documented checkout assets with a worktree-private receipt.
-Setup never copies the runtime binary into a project and never installs user-global
-host integration assets or state; project hooks invoke the installed executable
-directly, so there is no global setup prerequisite.
+SpecGit 2.12.0 provides a native CLI and managed project guidance. One shared
+user-level `specgit` executable serves every repository and worktree. Run
+`specgit init` in every clone and worktree: it installs the common project Skill
+and stable guidance entry points. Local declarations, Skills and private receipts
+do not travel with Git. `init` does not install host hooks. Select host integration
+separately with `specgit setup`; it refreshes recorded hosts plus explicitly
+selected agents (`--agent generic|claude|codex|opencode`, repeatable). Setup is
+project-only and does not copy the runtime binary or scan other repositories.
+Hooks invoke the shared installed executable directly.
 Refresh replaces recorded assets and complete, uniquely marked managed blocks,
 including edited body text, while preserving bytes outside blocks, configuration,
-checkpoints and other tools' hooks. Unknown ownership and damaged/duplicate markers
-remain conflicts. `specgit init` remains project-scoped; agent integration stays
-optional and separate. Written registration is not proof of host import or
-notification delivery. Follow the [installation guide](agent-install.md) for
-the matching host registration option and verification steps. With the CLI already
+checkpoints and other tools' hooks. It migrates recorded, uniquely owned legacy
+guidance blocks; unknown ownership and damaged or duplicate markers remain conflicts.
+Written registration is not proof of host import or notification delivery. Follow
+the [installation guide](agent-install.md) for the matching host registration
+option and verification steps. With the CLI already
 installed, use the [project maintenance guide](agent-project-refresh.md) instead;
 unknown optional remote capability does not block applicable local refresh, but init
 still requires an explicit manual-observation choice where its preference requires one.
@@ -33,12 +32,12 @@ content, or `--refresh-only` to refresh only an existing managed file. A success
 retain the binary and give `specgit skill --user` as the remedy. Host discovery
 still follows the host's documented paths; installation alone proves no import.
 
-| Agent | Project assets (the only scope) |
+| Agent | Project assets |
 | --- | --- |
-| `generic` | `.agents/skills/specgit-native/` plus root `AGENTS.md` guidance; no hooks |
-| `claude` | `.claude/skills/specgit-native/` copy, root `CLAUDE.md` guidance, `.claude/settings.json` hooks |
-| `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) guidance plus `.codex/hooks.json` |
-| `opencode` (official) | `.agents` skill and root `AGENTS.md` guidance only; no hooks |
+| `generic` | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
+| `claude` | Root `CLAUDE.md` stable entry to the canonical `.agents` Skill; `.claude/skills/specgit-native/SKILL.md` copy for host discovery and selected `.claude/settings.json` hooks |
+| `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) stable entry to the canonical `.agents` Skill, plus selected `.codex/hooks.json` hooks |
+| `opencode` (official) | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
 | `opencode` custom fork with `--opencode-claude-hooks` | Adds selected compatible hooks in `.opencode/hooks.json` with `inputFormat: claude-code`; idle wake also requires explicit `--opencode-async-rewake`, confirmed capability and observe/context purposes |
 
 In 2.8, select minimal authorized purposes with repeatable `--hook-purpose
@@ -46,23 +45,25 @@ guard|context|observe`, or `none` for no new hooks. Omission preserves exact rec
 modes on ordinary refresh. Explicit purposes apply to all recorded and newly
 selected hosts; purpose changes need authorization for every affected host.
 `none` preserves existing purposes and never uninstalls hooks or Git guard.
-Review/report all hosts' asset changes, including shared Skill refresh, even with
-`none`. Claude/Codex hook entries in this table depend
-on that selection. Official OpenCode and generic remain guidance/Skill only. See
+Review/report all affected hosts' asset changes, even with `none`. Claude/Codex
+hook entries in this table depend on that selection. Official OpenCode and generic remain guidance/Skill only. See
 the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes)
 for per-host declined reasons and older-client downgrade limits.
 
-Every project agent selection writes the canonical
-`.agents/skills/specgit-native/SKILL.md`; Claude additionally receives its
-native skill copy. Project scope resolves the Git checkout and the private
-absolute Git directory, records its receipt and journal under
-`<git_dir>/specgit-v2/agent-assets/`, and therefore integrates each linked
-worktree independently. The 2.4 receipt omits `shared_root`; a 2.3-era project
-receipt is refreshed, removed or recovered locally with foreign content and
-manual edits preserved, and setup never reads or writes the retired 2.3 global
-root. Existing 2.3 global data stays preserved — 2.4 ships no global cleanup
-command, so back up first and use the 2.3 CLI's exact owned cleanup before
-upgrading if it must go; never blind-delete.
+Every entry point contains stable instructions pointing to the canonical
+`.agents/skills/specgit-native/SKILL.md`, without versioned declaration summaries
+or hashes. Claude also gets
+`.claude/skills/specgit-native/SKILL.md` for host discovery. Project scope resolves
+the Git checkout and private absolute Git directory. The receipt remains at
+`<git_dir>/specgit-v2/agent-assets/ownership.json`; new transaction journals are
+stored under `<git_dir>/specgit-v2/assets/`. Older journals under `agent-assets/`
+are used only as migration evidence or for recovery. This state keeps each linked
+worktree's integration independent. The 2.4 receipt omits `shared_root`; a
+2.3-era project receipt is refreshed, removed or recovered locally with foreign
+content and manual edits preserved.
+Setup never reads or writes the retired 2.3 global root. Existing 2.3 global data
+stays preserved; 2.4 ships no global cleanup command. If that data must go, back
+it up first and use the 2.3 CLI's exact owned cleanup before upgrading.
 Selection is additive on refresh, a new project integration requires an
 explicit `--agent`, and `--uninstall` (without `--agent`) removes exactly the
 recorded project assets of that worktree.

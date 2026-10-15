@@ -73,10 +73,17 @@ IDs and the intended PR/MR, inspect their native associations, and confirm watch
 and the correct host/session deliver meaningful changes. Check actual Issue state
 after merge; a merged request alone is not completed delivery.
 
-`setup` previews with `--dry-run`. Host registration, successful import, event
-trigger, next-turn context and user-visible notifications are distinct outcomes.
-Do not claim idle wake just because an integration file was written. Keep the old
-executable and backups until this project's real installed flow is verified.
+Run `specgit init` in each clone and worktree after migration or checkout. Its
+local declaration, generated project Skill and private records are not transferred
+by Git. Initialization installs the common Skill and stable entry points; it does
+not install host hooks. Select a host separately with `specgit setup --dry-run`,
+review the preview, then apply it and read back the generated files. Finish with
+`specgit status`, `specgit doctor`, and another dry-run to confirm the state has
+converged. Host registration only records written assets. Successful import,
+hook execution, next-turn context and visible notifications require separate
+verification through the host. Do not claim idle wake just because an integration
+file was written. Keep the old executable and backups until this project's real
+installed flow is verified.
 
 Publication and repository cutover are separate operations. Retiring one project's
 old writer does not authorize deleting historical branches, closing unrelated

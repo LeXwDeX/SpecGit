@@ -387,7 +387,7 @@ pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, D
     Ok(worktrees)
 }
 
-/// Siblings that keep a declaration (even invalid or legacy) or initialized private state.
+/// Siblings that keep a declaration (even invalid or legacy) or selected integration state.
 /// They keep the shared `info/exclude` block and shared hook blocks in use.
 pub async fn sibling_consumers(
     process: &Process,
@@ -397,7 +397,7 @@ pub async fn sibling_consumers(
     for sibling in siblings(process, root).await? {
         let pointer = super::snapshot(&sibling.root)?;
         let state = private_state(&sibling.private_root)?;
-        if pointer.bytes.is_some() || state.is_initialized() {
+        if pointer.bytes.is_some() || state.is_initialized() || !state.receipts.is_empty() {
             consumers.push(Consumer {
                 declaration_sha256: pointer.digest(),
                 private_state: state.markers(),

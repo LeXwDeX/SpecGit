@@ -910,7 +910,9 @@ fn doctor_keeps_committed_transaction_when_postimage_verification_fails() {
         &fs::read(
             fixture
                 .private()
-                .join("transactions")
+                .parent()
+                .unwrap()
+                .join("assets/transactions")
                 .join(transaction)
                 .join("journal.json"),
         )

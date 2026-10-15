@@ -783,9 +783,10 @@ retired global integration scope and its selectors — `--root`, `--provider`,
 not deprecated aliases.
 
 Project scope resolves the Git checkout root and the private absolute Git
-directory and records its receipt and journal under
-`<git_dir>/specgit-v2/agent-assets/`, so linked worktrees integrate
-independently. It writes the canonical
+directory. Its receipt stays at `<git_dir>/specgit-v2/agent-assets/ownership.json`;
+new init/setup transactions use the shared `<git_dir>/specgit-v2/assets/` store.
+Linked worktrees retain independent receipts and transaction histories. Legacy
+`agent-assets` journals remain available as bounded ownership/recovery evidence. It writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude adds a managed
 `.claude/skills/specgit-native/SKILL.md`, root `CLAUDE.md` guidance and
 `.claude/settings.json` hooks; Codex adds root `AGENTS.md` guidance (or an
@@ -799,9 +800,15 @@ Setup-managed project instruction blocks use the
 `<!-- specgit:project:v2:start -->` / `<!-- specgit:project:v2:end -->`
 markers; a 2.3-era receipt whose block still carries the old
 `specgit:global:v2` labels is refreshed in place to the project labels, and an
-unowned marker is an ownership conflict, not a target. These blocks stay
-separate from init's `<!-- specgit:v2 -->` project guidance blocks, and
-`init` itself remains unchanged.
+unowned marker is an ownership conflict, not a target. Refresh migrates proven
+legacy init `<!-- specgit:v2 -->` blocks and setup blocks to one stable project
+entry in the same transaction. It preserves every byte outside the owned blocks.
+The entry points to the project Skill and includes an initialization command and
+an official installation link for a missing shared CLI. Runtime versions,
+declaration summaries and dynamic hashes are not embedded in the entry.
+`init` creates the generic project Skill/entry without adding hooks; `--mirror-claude`
+also creates the Claude entry and Skill. Later `setup` selects additional hosts
+and preserves existing hook choices.
 
 #### Select project hook purposes
 
@@ -809,7 +816,7 @@ Repeat `setup --hook-purpose guard|context|observe|none` with selected `--agent`
 hosts. Guard maps to synchronous PreToolUse/Stop, context to synchronous
 SessionStart/PostToolUse, and observe to bounded asynchronous observation.
 Choose the least purposes justified by actual capabilities and existing
-authorization, preview with `--dry-run`, then apply. Init and setup stay separate.
+authorization, preview with `--dry-run`, then apply. Initialization adds no new hooks.
 `none` cannot combine with other purposes. It adds no hooks and never uninstalls
 recorded hooks or Git guard. On new hosts explicit purposes start empty; on
 existing hosts they add to recorded purposes. Omission preserves exact recorded
@@ -829,9 +836,9 @@ Project receipts use version 3 and a unique install generation. Refresh retains
 that generation; a later install gets a new one. Consistent, valid v1/v2
 ownership evidence can migrate. Permission or history ambiguity is an ownership
 conflict: older matching records cannot cancel newer evidence. Older published
-CLIs cannot read v3. Upgrade every checkout that may refresh the project to a
-supporting published CLI version before refreshing; preserve the receipt and
-assets during any downgrade. Never force-overwrite ownership or delete the
+CLIs cannot verify the shared project transaction history introduced in 2.12.
+Use a 2.12-or-newer shared CLI in every checkout after migration; preserve the
+receipt and assets during any downgrade. Never force-overwrite ownership or delete the
 receipt to bypass it. These proof rules also apply to whole-project `remove`;
 its apply requires the reviewed preview digest.
 
@@ -915,44 +922,46 @@ Installation does not authorize publication or native administration.
 
 ### Local generated files
 
-`init` and v2 migration maintain one owned block in Git's local `info/exclude`,
-resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
-`.specgit.yaml`. SpecGit does not add exclusions for project `AGENTS.md` /
-`CLAUDE.md`: one worktree cannot establish ownership of another worktree's guidance.
-Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
-identify them and review their purpose before changing them. Repeated initialization
-refreshes the block without duplicating it and preserves surrounding user rules.
-Preview and rollback include this file; damaged markers require reconciliation.
-`init --check` reports the block state (`absent`, `current`, `refresh` or
-`damaged`) and already tracked files without writing. `init --rollback` and
-`migrate --rollback` keep the shared file, and report it under `retained`, while
-another linked worktree still has a declaration or SpecGit private state.
+`init` and project `setup` maintain one owned block in Git's local `info/exclude`,
+resolved by Git and shared by linked worktrees. The block excludes `.specgit.yaml`
+and the generated `.agents/skills/specgit-native/SKILL.md`; selected Claude
+integration also excludes `.claude/skills/specgit-native/SKILL.md`. These are exact
+repository-root paths. Other Skills, notes and `AGENTS.md` / `CLAUDE.md` remain
+visible. Existing generated-Skill exclusions are retained for sibling consumers.
+Refresh removes legacy whole-guidance-file exclusions while preserving user rules
+outside the block. Damaged or unknown rules require reconciliation.
 
-Init guidance owns one marked block in `AGENTS.md` (and mirrored `CLAUDE.md`).
-A generated block ends with a `<!-- specgit:v2:sha256 <digest> -->` line over its
-LF-normalized content. Refresh may replace edited body text when the receipt proves
-ownership and the block has complete, unique boundaries. A block without a digest
-is owned only when it exactly matches a released v2 render or the worktree receipt.
-Damaged/duplicate markers or unknown ownership remain conflicts; uninstall and
-rollback preserve later edits. When `.specgit.yaml` is missing,
-`init --config-file` also uses that declaration to recognize the existing block.
+Each clone/worktree initializes its local Skill and private records separately;
+Git does not transport ignored assets. Run `specgit init --dry-run` and then
+`specgit init`, supplying the original declaration with `--config-file` when
+restoring a lost configuration. Existing registered hosts can also refresh through
+`specgit setup --dry-run` and `specgit setup`. Read back the Skill and instruction
+entry, run `status` and `doctor`, and repeat the previews to check convergence.
+Installed records do not prove the host actually loaded the entry or Skill.
+
+Older initialization blocks are recognized through their recorded ownership,
+embedded digest or exact released template. Refresh can replace edited body text
+only with the required transaction and permission evidence and complete unique
+markers. It migrates the old block into the single project entry; it never adopts
+foreign Skills or damaged/duplicate markers. Uninstall and rollback preserve later
+edits. An empty initialization receipt retains the initialized-worktree marker
+without owning another instruction block; the project receipt owns the Skill/entry.
 
 The JSON `local_exclusion` result reports exclusions and already tracked files.
-Ignore rules never untrack a file. Review project guidance changes under the
-repository's normal documentation policy; preserve manual content and owned
-markers. Do not hide or untrack guidance merely because SpecGit generated part
-of it. Untracking an already committed local declaration requires an explicit,
-reviewed repository change. Committing `git rm --cached .specgit.yaml` deletes
-the local declaration in every other clone or worktree that later fast-forwards,
-pulls or switches across that commit. Back up `.specgit.yaml` in those checkouts
-first; afterwards restore it and rerun `specgit init` there. A worktree whose
-declaration is missing while its SpecGit private state (guidance receipt, routing
-or checkpoint) remains is not treated as uninitialized: Git guard and agent edit
-hooks fail closed with this remedy, `init --check` reports its `private_state`
-without claiming `initial_adoption`, and `remove` in a sibling still counts it as
-a consumer of shared assets. Project `setup` writes documented checkout assets
-and keeps its receipt under that worktree's Git directory; 2.4 has no global
-setup assets.
+Ignore rules never untrack a file. Keep hand-written instructions tracked. Moving
+an already committed generated Skill or local declaration out of Git requires an
+explicit reviewed index change, such as `git rm --cached -- <exact-owned-path>`.
+The local file remains, but crossing that commit in another clone/worktree deletes
+its tracked copy. Preserve declarations and manual edits before crossing it; restore
+the declaration and run `specgit init` to regenerate the Skill afterwards.
+Repository/user ignore rules still apply; inspect them with `git check-ignore -v`.
+
+`init --check` reports exclusion state (`absent`, `current`, `refresh`, `damaged`)
+and tracked paths without writing. Rollback and whole-project removal keep shared
+exclusions while another worktree still has a declaration or initialized private
+state. A missing declaration with surviving initialized state is not a fresh clone:
+guards fail closed, `init --check` reports `private_state`, and recovery requires
+the original declaration. Setup-only registration does not fabricate initialization.
 
 ### 2.2 consistency boundaries
 
