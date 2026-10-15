@@ -104,22 +104,56 @@ pub fn schema(command: &mut Command) -> Value {
     )
 }
 
-/// Clap exposes no getter for `Arg::requires`, so read its debug form. The
-/// clap version is locked and the CLI contract tests check every requirement
-/// this CLI declares, so a format change fails tests instead of hiding one.
+/// Clap exposes no getter for `Arg::requires`, so read its locked debug form,
+/// `requires: [(IsPresent, "id"), ...]`. The scan skips quoted text such as
+/// help and unescapes each id. Only unconditional requirements can be
+/// published; any other predicate or shape panics so a contract test fails
+/// rather than the schema silently dropping or weakening a requirement.
 fn requirements(arg: &Arg) -> Vec<String> {
+    const FIELD: &str = "requires: [";
     let debug = format!("{arg:?}");
-    let Some(start) = debug.find("requires: [") else {
-        return Vec::new();
-    };
-    let list = &debug[start + "requires: [".len()..];
-    let list = &list[..list.find(']').unwrap_or(list.len())];
-    list.split("), (")
-        .filter_map(|entry| {
-            let id = entry.rsplit(", ").next()?.trim_end_matches(')');
-            Some(id.strip_prefix('"')?.strip_suffix('"')?.to_owned())
-        })
-        .collect()
+    let bytes = debug.as_bytes();
+    let (mut index, mut quoted, mut start) = (0, false, None);
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if quoted => index += 1,
+            b'"' => quoted = !quoted,
+            _ if !quoted && debug[index..].starts_with(FIELD) => {
+                start = Some(index + FIELD.len());
+                break;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    let mut rest = &debug[start.unwrap_or_else(|| panic!("clap debug lacks requires: {debug}"))..];
+    let mut ids = Vec::new();
+    loop {
+        rest = rest.trim_start_matches([',', ' ']);
+        if rest.starts_with(']') {
+            return ids;
+        }
+        rest = rest
+            .strip_prefix("(IsPresent, \"")
+            .unwrap_or_else(|| panic!("unsupported requirement for {}: {rest}", arg.get_id()));
+        let mut id = String::new();
+        let mut chars = rest.char_indices();
+        let end = loop {
+            match chars.next() {
+                Some((_, '\\')) => match chars.next() {
+                    Some((_, c @ ('"' | '\\' | '\''))) => id.push(c),
+                    other => panic!("unsupported escape in requirement id: {other:?}"),
+                },
+                Some((i, '"')) => break i,
+                Some((_, c)) => id.push(c),
+                None => panic!("unterminated requirement id for {}", arg.get_id()),
+            }
+        };
+        rest = rest[end + 1..]
+            .strip_prefix(')')
+            .unwrap_or_else(|| panic!("unsupported requirement for {}", arg.get_id()));
+        ids.push(id);
+    }
 }
 
 fn input_type(arg: &Arg) -> &'static str {

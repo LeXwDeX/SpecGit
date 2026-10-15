@@ -436,3 +436,48 @@ fn schema_descendants_keep_global_options_and_effects_path() {
             .any(|a| a["long"] == "cwd")
     );
 }
+fn schema_arg(command: Command, long: &str) -> serde_json::Value {
+    let mut command = command;
+    cli_contract::schema(&mut command)["command"]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["long"] == long)
+        .unwrap()
+        .clone()
+}
+#[test]
+fn schema_requirements_ignore_quoted_text_and_keep_exact_ids() {
+    let command = Command::new("fixture")
+        .arg(
+            Arg::new("a, b] \"c\\")
+                .long("odd")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(Arg::new("plain").long("plain").action(ArgAction::SetTrue))
+        .arg(
+            Arg::new("dependent")
+                .long("dependent")
+                .help("requires: [(IsPresent, \"decoy\")]")
+                .action(ArgAction::SetTrue)
+                .requires("a, b] \"c\\")
+                .requires("plain"),
+        );
+    assert_eq!(
+        schema_arg(command.clone(), "dependent")["requires"],
+        serde_json::json!(["a, b] \"c\\", "plain"])
+    );
+    assert_eq!(
+        schema_arg(command, "plain")["requires"],
+        serde_json::json!([])
+    );
+}
+#[test]
+#[should_panic(expected = "unsupported requirement")]
+fn schema_refuses_to_publish_conditional_requirements_as_unconditional() {
+    let command = Command::new("fixture")
+        .arg(Arg::new("mode").long("mode"))
+        .arg(Arg::new("plain").long("plain").action(ArgAction::SetTrue))
+        .arg(Arg::new("x").long("x").requires_if("strict", "plain"));
+    let _ = schema_arg(command, "x");
+}
