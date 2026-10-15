@@ -126,9 +126,9 @@ Read back the generated Skill and guidance, then repeat the same dry-run. Writte
 files do not prove host loading; use the documented host trust flow and verify
 actual context delivery. Verify allow/deny behavior for Git guard only.
 From 2.4 on, setup is permanently project-only (`--scope project` is the
-default and only scope): refreshing a 2.3-era project receipt rewrites it into
-the 2.4 format locally without `shared_root` and without reading or writing the
-retired global root.
+default and only scope). In 2.13, refreshing a consistent legacy project receipt
+migrates it to v4 locally without `shared_root` and without reading or writing
+the retired global root. Use CLI 2.13 or newer after that migration.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.
 For a v1 project, follow the [migration guide](migration-v2.md): prepare a complete
 v2 declaration, inspect `specgit migrate --config-file <file> --json`, resolve old

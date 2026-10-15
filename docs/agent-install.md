@@ -334,5 +334,5 @@ or checkpoint) remains is not treated as uninitialized: Git guard fails closed,
 host hooks offer recovery context, and `init --check` reports its `private_state`
 without claiming `initial_adoption`, and `remove` in a sibling still counts it as
 a consumer of shared assets. Project `setup` writes documented checkout assets
-and keeps its receipt under that worktree's Git directory; 2.4 has no global
-setup assets.
+and keeps its receipt under that worktree's Git directory; setup has no global
+assets.

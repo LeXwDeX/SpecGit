@@ -149,50 +149,48 @@ review, then refresh `pr --status`. Adapters reject unconditional body replaceme
 
 ## Integration and notices
 
-Project integration (setup, hooks, observation state and guidance) remains project-only. The only user-level asset is
-the Skill explicitly installed with `specgit skill --user` at `~/.agents/skills/specgit-native/SKILL.md`
-(`%USERPROFILE%` on Windows). `specgit update` refreshes it only when managed; it does not install it by default.
-There are no global hooks or state. Install the shared CLI separately; setup never copies a project executable.
-Unknown optional capability does not block applicable setup/refresh. The Agent may select init's explicit
-manual-observation fallback while preserving the auto-merge preference unless a change is selected. Choose the least
-hook purposes supported by the host and task: repeat `setup --hook-purpose guard|context|observe`, or `none` for no new
-hooks; preview `--dry-run`, then install.
+Project integration remains project-only. Inspect `specgit setup --catalog --json` before choosing capabilities. This
+offline catalog needs no repository, Git or provider CLI and reads/writes no project state. Verify written assets, host
+loading and effects separately. Prefer the project `.agents/` shared Skill. Agent-maintained custom host glue is outside
+SpecGit receipts and doctor checks. Re-read the Skill after compaction when needed.
 
-`setup --hook-purpose guard` configures native pre-commit/pre-push checks. `specgit guard --install` remains the
-explicit Git guard entry; setup verifies and reuses independently installed guards without taking ownership. Pre-push
-validates each branch ref and replays stdin to existing shell hooks. Husky's `.husky/_` maps to user scripts.
-Preserve/report unsupported non-shell hooks; `guard --uninstall` removes only recorded blocks. Each clone/worktree
-runs `init` to create the local project Skill and one stable instruction entry, with no new hooks. `setup` selects
-host integration and shares that Skill/entry ownership; proven old init/setup blocks migrate on refresh. Init/setup
-maintain one Git-local `info/exclude` block for `.specgit.yaml` and generated SpecGit Skill files only. Keep
-hand-written project instructions and other Skills visible; never exclude entire agent directories. Inspect
-repository/user ignore rules; `local_exclusion` reports tracked files and never changes the index. Committing explicit
-untracking deletes those files in checkouts crossing that commit: preserve declarations/manual edits and rerun init to
-regenerate Skills. Restore lost declarations or use `specgit init --config-file <original>`; `specgit remove` needs
-one too.
+Install the shared CLI separately; setup never copies a project executable. `init` creates each clone/worktree's
+declaration, Skill and stable entry without new hooks. New `setup` defaults to the shared Skill/entry; existing
+installations retain their choices. Preview setup, refresh or uninstall with `--dry-run`. Proven old init/setup blocks
+migrate on refresh. Unknown optional capability does not block applicable work; use init's explicit manual-observation
+fallback while preserving the auto-merge preference unless a change is selected. The only user-level asset is the Skill
+explicitly installed with `specgit skill --user` at `~/.agents/skills/specgit-native/SKILL.md` (`%USERPROFILE%` on Windows).
+`specgit update` refreshes it only when managed; it does not install it by default. No global hooks or state are installed.
 
-Official OpenCode installs project guidance and Skill; host callbacks need `--opencode-claude-hooks` support. Host
-registration is limited to SessionStart and PreToolUse. SessionStart briefly states rules and points to the project
-Skill; PreToolUse adds needed context/recovery without denying ordinary tools or repeating the full rules.
-PostToolUse/Stop, including asynchronous idle wake, are retired. Old callbacks return quietly before reading input.
-The legacy `--opencode-async-rewake` flag does not restore them. Check installed/declined purposes and reasons;
-unsupported automatic observation falls back to Agent-run bounded watch/inbox, without a false installed claim. Read
-automatic context only for the current branch; preserve other branches' checkpoints. Diagnose real commit/push
-failures in tool results and let the Agent repair them; do not turn dirty state or missing selection into dialogue
-prompts. Verify actual hook/context behavior; registration alone is insufficient. Do not duplicate managed hooks by
-import. Omitted purposes preserve recorded choices; `none` requests no new hooks. Refresh migrates retired events.
-State stays worktree Git-private. Notice receipts prove transport delivery, not human reading or task completion.
+Choose the least hook purposes supported by the host and task. `setup --hook-purpose guard` configures native
+pre-commit/pre-push checks; `specgit guard --install --dry-run` and `specgit guard --uninstall --dry-run` preview
+independent guard changes. Setup verifies/reuses independent guards without taking ownership. Preserve unsupported non-shell
+hooks. Uninstall removes only recorded blocks while respecting active consumers.
 
-After CLI replacement, preview `init --dry-run` or the recorded `setup --dry-run`, then refresh the project Skill and
-stable entry. Refresh replaces recorded assets and complete unique blocks, including edited body text; preserve
-outside bytes, declarations, checkpoints and other hooks. Missing/damaged/duplicate instruction markers or unknown
-ownership conflict; missing generated Skills need verified recovery, not guessed ownership. Refresh, including a
-no-op, uninstall and whole-project `remove` verify paired ownership and recorded permissions; mismatch conflicts,
-preserves assets/receipts and blocks the entire remove plan. Apply remove only with the reviewed `preview_sha256`.
-Do not adopt permission drift or handwrite/restore blocks; use ownership-proven repair and transaction recovery.
-Project receipts use v4 with explicit purposes and retain the install generation; consistent v1-v3 evidence migrates.
-Ambiguous permissions/history conflict. Use a 2.13-or-newer CLI after receipt migration. Uninstall/rollback preserves later
-edits to content and permissions. After init/setup updates, run `status`, `doctor`, read generated Skill/guidance and
-repeat dry-runs; `init --dry-run` lists planned paths only. Names prove nothing.
+Init/setup maintain one Git-local `info/exclude` block for `.specgit.yaml` and generated SpecGit Skill files. Keep manual
+instructions and other Skills visible; never exclude entire agent directories. Inspect repository/user ignore rules;
+`local_exclusion` reports tracked files and never changes the index. Committing explicit untracking deletes those files in
+checkouts crossing that commit: preserve declarations/manual edits and rerun init to regenerate Skills. Restore lost
+declarations or use `specgit init --config-file <original>`; `specgit remove` needs one too.
+
+Host registration is limited to SessionStart and PreToolUse. SessionStart briefly states rules and points to the Skill;
+PreToolUse adds needed context/recovery without denying ordinary tools or repeating full rules. PostToolUse/Stop and idle
+wake are retired; old callbacks return quietly before reading input. `--opencode-async-rewake` does not restore them.
+Official OpenCode keeps guidance/Skill; custom callbacks require `--opencode-claude-hooks` support. Check installed/declined
+purposes and reasons. Unsupported automatic observation falls back to Agent-run bounded watch/inbox. Read context only for
+the current branch; preserve other checkpoints. Repair real commit/push failures from tool results without turning dirty
+state or missing selection into dialogue prompts. Verify actual behavior; registration alone is insufficient. Do not
+duplicate managed hooks by import. Omitted purposes preserve choices; `none` adds no new hooks. Refresh migrates retired
+events. State stays worktree Git-private. Notice receipts prove transport delivery, not human reading or task completion.
+
+After CLI replacement, preview init or recorded setup, then refresh the Skill and stable entry. Refresh replaces recorded
+assets and complete unique blocks, including edited body text; preserve outside bytes, declarations, checkpoints and other
+hooks. Missing/damaged/duplicate markers or unknown ownership conflict; recover missing generated Skills only with proof.
+Refresh (including no-op), uninstall and whole-project remove verify paired ownership and recorded permissions; mismatch
+preserves assets/receipts and blocks the entire plan. Apply remove only with its reviewed `preview_sha256`. Never adopt
+permission drift or handwrite/restore blocks; use proven repair and transaction recovery. Receipts use v4 with explicit
+purposes and retain install generation; consistent v1-v3 evidence migrates. Ambiguous permissions/history conflict. After
+migration, use CLI 2.13 or newer. Uninstall/rollback preserves later edits. After updates, run status/doctor, read generated
+Skill/guidance and repeat previews; init dry-run lists planned paths only.
 
 Contract version: {{version}}.
