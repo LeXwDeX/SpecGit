@@ -351,9 +351,13 @@ fn schema_publishes_option_requirements_and_the_groups_they_name() {
         requires(&doctor, "account-only"),
         serde_json::json!(["provider"])
     );
+    assert_eq!(group["required"], false);
     for (command, long, target) in [
         ("remove", "apply", "expect"),
+        ("remove", "expect", "apply"),
         ("migrate", "apply", "expect"),
+        ("migrate", "expect", "apply"),
+        ("pr", "update-body", "body_file"),
     ] {
         assert_eq!(
             requires(&find(command), long),
