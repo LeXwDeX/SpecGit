@@ -368,6 +368,14 @@ fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
                 not_found()
             };
             if is_read {
+                if let Some(error) = state["metadata_error"].as_str() {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+                if state["metadata_malformed"].as_bool() == Some(true) {
+                    print!("{{not-json");
+                    return;
+                }
                 let tag = if route == "latest" {
                     state["latest"].as_str()
                 } else {
@@ -597,10 +605,22 @@ fn native_api(args: &[String], path: &std::path::Path) {
     } else {
         Value::Null
     };
-    state["calls"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"method":method,"endpoint":endpoint,"body":input}));
+    let mut call = json!({"method":method,"endpoint":endpoint,"body":input});
+    if state["record_transport"].as_bool() == Some(true) {
+        call["hostname"] = json!(
+            args.windows(2)
+                .find(|pair| pair[0] == "--hostname")
+                .map(|pair| pair[1].as_str())
+        );
+        call["executable"] = json!(
+            std::env::current_exe()
+                .unwrap()
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+        );
+    }
+    state["calls"].as_array_mut().unwrap().push(call);
     if method == "GET" && (endpoint.starts_with("search/issues?") || endpoint.contains("/issues?"))
     {
         if state["edit_declaration_on_search"].as_bool() == Some(true) {

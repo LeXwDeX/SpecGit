@@ -143,6 +143,21 @@ The installed executable's `--help` and `--schema` remain its active contract. E
 
 `doctor` also reports `evidence.local`, a read-only summary of local context, the declaration target and checkpoint state. Its `status` is `initialized`, `uninitialized`, `checkpoint_branch_mismatch` or `not_checked`; checkpoint status is `absent`, `current`, `branch_mismatch` or `not_checked`. A current checkpoint summary contains only `recorded_branch`, `recorded_target`, `issues` and `request`. These are local records, not platform verification or write eligibility. Dirty files and an absent checkpoint are facts, not failures. A missing declaration without recorded private state is reported as `needs_initialization`; a missing declaration with initialized/private integration state fails closed and requires restoring the original declaration. With a branch mismatch and successful API probes, the top-level status is `checkpoint_branch_mismatch` and exit is 0; API probe failures still produce `unknown` and exit 3. Invalid declarations or checkpoints retain their diagnostics and failure exits.
 
+Doctor also reports `evidence.runtime_update` with `status` (`not_checked`,
+`up_to_date`, `update_available`, `current_newer` or `unknown`),
+`current_version`, `latest_version` (null when unknown) and `diagnostic`
+(structured failure detail or null). Online checks, including `--account-only`,
+make a bounded read-only metadata request to the stable GitHub Releases endpoint
+for `LeXwDeX/SpecGit`; an update is suggested only when a newer stable release
+and all required upgrade assets are present, adding `next_actions` kind
+`consider_runtime_update`. Offline mode reports `not_checked` and makes
+no network request. A failed check is `unknown`, never proof that the installed
+version is current. Doctor does not download, cache or install a release, and
+`--fix` never upgrades. A friendly update reminder does not change health, exit
+status or existing protections, and grants no authorization; use
+`specgit update --check` for an explicit follow-up. Release metadata does not
+verify the installed executable's signature.
+
 Without `--account-only`, doctor uses explicit provider/remote first, then the local repository identity and declaration as available; stored API routing is used as a fallback, and explicit `--api-host` takes precedence. Account-only mode skips local configuration and checkpoint reads and reports local state as `not_checked`. Local context inspection adds no API calls, fetches or writes.
 
 Project-mode doctor also reports `evidence.health`, `evidence.repair` and `evidence.agent_guidance`. Health checks cover the declaration, selected setup assets, generated guidance, Git guard and static executable paths. Any unknown health check blocks all repair writes; the report keeps independently prepared plans as preview evidence until inspection is complete. Skipped repairs remain in repair results but are not recorded as attempted effects. An unselected integration is `not_selected`; doctor does not guess a host or hook purpose. Recognizable SpecGit host registrations without an ownership receipt are conflicts. A project hook executable must be outside every checkout of the same repository, including linked worktrees. `health.status` is `healthy`, `attention`, or `unknown`; `host_behavior` is always `not_verified`. File presence or a registered hook does not prove that an Agent loaded a Skill or that a host event ran.
@@ -607,6 +622,13 @@ Synchronous Stop uses a block decision for its single recovery turn. Stop with
 `additionalContext` only for pending enabled notifications; it never emits a
 block, permission or completion-control decision. PostToolUse observation keeps
 its own event tag and existing framing. Neither callback acknowledges events.
+Automatic observation and automatic pending-notice reads use only the checkpoint
+selected for the current branch. A valid same-repository checkpoint for another
+branch is silently skipped and left unchanged; `status` and `doctor` still report
+the branch mismatch. PreToolUse, Git guards and ordinary synchronous Stop
+protection are unchanged. If a hook cannot resolve a native request, its
+diagnostic preserves the specific cause and recommends `specgit doctor`; this is
+guidance, not a new block, and the hook does not run doctor automatically.
 Observation uses configured poll/wait limits (default 15/1,800 seconds); the host
 timeout can end a longer configured wait and does not guarantee later delivery.
 Verification is of the

@@ -22,6 +22,14 @@ fn info(message: &str) -> Output {
         diagnostic: None,
     }
 }
+fn diagnostic_notice(diagnostic: impl std::fmt::Display) -> String {
+    format!(
+        "SpecGit hook notice: {diagnostic} You can run `specgit doctor` in this project for diagnostics. The agent and user decide whether to act."
+    )
+}
+fn notice(diagnostic: impl std::fmt::Display) -> Output {
+    info(&diagnostic_notice(diagnostic))
+}
 pub async fn stdin(event: &str, observe: bool) -> Output {
     let read = async {
         let mut bytes = vec![];
@@ -44,11 +52,9 @@ pub async fn stdin(event: &str, observe: bool) -> Output {
         }
         Ok(Ok(bytes)) => tokio::time::timeout(Duration::from_millis(2500), handle(event, &bytes))
             .await
-            .unwrap_or_else(|_| {
-                info("SpecGit context deadline expired; use explicit diagnostics.")
-            }),
-        _ => info(
-            "SpecGit could not read bounded hook input; ordinary tool execution remains unchanged.",
+            .unwrap_or_else(|_| notice("The hook context deadline expired; resume explicitly.")),
+        _ => notice(
+            "The hook could not read bounded input; ordinary tool execution remains unchanged.",
         ),
     }
 }
@@ -103,9 +109,7 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
                 diagnostic: None,
             },
             Ok(None) => Output::default(),
-            Err(_) => info(
-                "SpecGit has unreadable local observation state; inspect it with explicit diagnostics.",
-            ),
+            Err(d) => notice(&d),
         };
     }
     let branch = context.branch.as_deref().unwrap_or("detached");
@@ -134,9 +138,15 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
     };
     if event == "SessionStart" {
         match pending_notice(&context, &session, &observation.notify) {
-            Ok(Some(notice)) => { text.push('\n'); text.push_str(&notice); },
-            Ok(None) => {},
-            Err(_) => text.push_str("\nSpecGit has unreadable local observation state; inspect it with explicit diagnostics."),
+            Ok(Some(notice)) => {
+                text.push('\n');
+                text.push_str(&notice);
+            }
+            Ok(None) => {}
+            Err(d) => {
+                text.push('\n');
+                text.push_str(&diagnostic_notice(&d));
+            }
         }
     }
     if event == "Stop" {

@@ -86,6 +86,89 @@ impl fmt::Display for Version {
     }
 }
 
+/// Advisory release evidence. It never grants permission to update or changes health.
+#[derive(Debug, Serialize)]
+pub struct RuntimeUpdate {
+    pub status: RuntimeUpdateStatus,
+    pub current_version: &'static str,
+    pub latest_version: Option<String>,
+    pub diagnostic: Option<Diagnostic>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdateStatus {
+    NotChecked,
+    UpToDate,
+    UpdateAvailable,
+    CurrentNewer,
+    Unknown,
+}
+
+/// Compare official release metadata without downloading assets or writing state.
+/// The caller decides whether an online check is appropriate. Offline checks do
+/// not resolve or launch gh, including for GitLab and account-only inspection.
+pub async fn check_latest(process: &Process, cwd: &Path, offline: bool) -> RuntimeUpdate {
+    let mut evidence = RuntimeUpdate {
+        status: RuntimeUpdateStatus::NotChecked,
+        current_version: env!("CARGO_PKG_VERSION"),
+        latest_version: None,
+        diagnostic: None,
+    };
+    if offline {
+        return evidence;
+    }
+    let checked = async {
+        let current = Version::parse(evidence.current_version).ok_or_else(|| {
+            rejected(
+                "github_release_read",
+                "The running version is not a stable version.",
+                "Inspect the installed runtime version.",
+            )
+        })?;
+        let gh = resolve_executable("gh")?;
+        let transport = Transport { process, gh, cwd };
+        let release = transport
+            .release_with_timeout(None, Duration::from_secs(5))
+            .await?;
+        // Incomplete release metadata must not be reported as a successful check.
+        {
+            let platform = current_platform().ok_or_else(|| {
+                rejected(
+                    "github_release_read",
+                    "This platform has no published native archive.",
+                    "Inspect the supported release platforms.",
+                )
+            })?;
+            select_asset(
+                &release.assets,
+                &archive_name(release.version, platform),
+                MAX_ARCHIVE_BYTES,
+            )?;
+            select_asset(&release.assets, MANIFEST, MAX_SIDECAR_BYTES)?;
+            select_asset(&release.assets, SIGNATURE_BUNDLE, MAX_SIDECAR_BYTES)?;
+        }
+        Ok::<_, Diagnostic>((release.version, current))
+    }
+    .await;
+    match checked {
+        Ok((latest, current)) => {
+            evidence.latest_version = Some(latest.to_string());
+            evidence.status = match latest.cmp(&current) {
+                Ordering::Equal => RuntimeUpdateStatus::UpToDate,
+                Ordering::Greater => RuntimeUpdateStatus::UpdateAvailable,
+                Ordering::Less => RuntimeUpdateStatus::CurrentNewer,
+            };
+        }
+        Err(mut diagnostic) => {
+            evidence.status = RuntimeUpdateStatus::Unknown;
+            diagnostic.remedy = "If useful, run `specgit update --check` explicitly to check again. This reminder does not authorize an update.".into();
+            evidence.diagnostic = Some(diagnostic);
+        }
+    }
+    evidence
+}
+
 /// Map a compile-time target to its release asset platform.
 pub fn platform_for(os: &str, arch: &str, env: &str) -> Option<&'static str> {
     match (os, arch, env) {
@@ -250,11 +333,8 @@ pub fn extract_executable(archive: &[u8], entry: &str, limit: u64) -> Result<Vec
 #[derive(Deserialize)]
 struct ReleaseDocument {
     tag_name: String,
-    #[serde(default)]
     draft: bool,
-    #[serde(default)]
     prerelease: bool,
-    #[serde(default)]
     assets: Vec<AssetDocument>,
 }
 #[derive(Deserialize, Clone)]
@@ -318,12 +398,20 @@ struct Transport<'a> {
 }
 impl Transport<'_> {
     async fn release(&self, requested: Option<Version>) -> Result<Release, Diagnostic> {
+        self.release_with_timeout(requested, METADATA_TIMEOUT).await
+    }
+
+    async fn release_with_timeout(
+        &self,
+        requested: Option<Version>,
+        timeout: Duration,
+    ) -> Result<Release, Diagnostic> {
         let route = match requested {
             Some(version) => format!("repos/{REPOSITORY}/releases/tags/v{version}"),
             None => format!("repos/{REPOSITORY}/releases/latest"),
         };
         let operation = "github_release_read";
-        let output = bounded(self.process, METADATA_TIMEOUT, MAX_METADATA_BYTES)
+        let output = bounded(self.process, timeout, MAX_METADATA_BYTES)
             .run(Request::new(&self.gh, self.cwd, operation).args([
                 "api",
                 "--hostname",

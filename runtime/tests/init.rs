@@ -181,6 +181,40 @@ impl Fixture {
     }
 }
 
+// Keep the advisory release request separate from project/account capability reads.
+fn doctor_platform_calls(calls: &[Value]) -> Vec<&Value> {
+    const RELEASE: &str = "repos/LeXwDeX/SpecGit/releases/latest";
+    let releases: Vec<_> = calls
+        .iter()
+        .filter(|call| call["endpoint"] == RELEASE)
+        .collect();
+    assert_eq!(releases.len(), 1, "{calls:?}");
+    assert_eq!(releases[0]["method"], "GET");
+    assert_eq!(releases[0]["hostname"], "github.com");
+    assert_eq!(releases[0]["executable"], "gh");
+    assert!(releases[0]["body"].is_null());
+    let platform: Vec<_> = calls
+        .iter()
+        .filter(|call| call["endpoint"] != RELEASE)
+        .collect();
+    assert!(platform.iter().all(|call| call["method"] == "GET"));
+    platform
+}
+
+fn project_files(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
+    let mut result = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            result.insert(path.clone(), None);
+            result.extend(project_files(&path));
+        } else {
+            result.insert(path.clone(), Some(fs::read(path).unwrap()));
+        }
+    }
+    result
+}
+
 #[test]
 fn environment_does_not_add_reads_to_github_or_normal_init() {
     for (provider, command) in [("github", "doctor"), ("github", "init"), ("gitlab", "init")] {
@@ -650,8 +684,11 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
 
         state = f.state();
         state["calls"] = json!([]);
+        state["record_transport"] = json!(true);
         fs::write(&f.state, state.to_string()).unwrap();
+        let before = project_files(&f.root);
         let doctor = f.run_raw(&["doctor", "--provider", provider]);
+        assert_eq!(project_files(&f.root), before);
         assert_eq!(doctor["exit"], 0, "{case}: {doctor}");
         assert_eq!(doctor["evidence"]["write_permissions"], *permissions);
         let probes = doctor["evidence"]["probes"].as_array().unwrap();
@@ -665,7 +702,17 @@ fn init_and_doctor_derive_write_permissions_without_extra_api_routes() {
             );
         }
         let calls = f.state()["calls"].as_array().unwrap().clone();
+        let calls = doctor_platform_calls(&calls);
         assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
+        assert!(calls.iter().all(|call| call["hostname"] == "forge.example"));
+        assert!(
+            calls
+                .iter()
+                .all(|call| call["executable"] == if provider == "github" { "gh" } else { "glab" })
+        );
+        if provider == "gitlab" {
+            assert_eq!(calls[2]["endpoint"], "metadata");
+        }
         assert_eq!(calls[0]["endpoint"], "user");
         assert_eq!(calls[1]["endpoint"], expected_routes[1]);
         assert!(calls.iter().all(|call| call["method"] == "GET"));
@@ -801,12 +848,15 @@ fn doctor_project_read_failure_reports_unknown_roles_and_optional_metadata_read(
             "projects/fixture%2Frepo"
         };
         let mut state = f.state();
+        state["record_transport"] = json!(true);
         state["read_routes"] = json!({
             "user": {"id":1,"login":"fixture","username":"fixture"},
             route: {"__fixture_error":"HTTP 403"},
         });
         fs::write(&f.state, state.to_string()).unwrap();
+        let before = project_files(&f.root);
         let report = f.run_raw(&["doctor", "--provider", provider]);
+        assert_eq!(project_files(&f.root), before);
         assert_report_matches_schema(&report);
         assert_eq!(report["exit"], 3);
         for kind in ["issue", "request"] {
@@ -816,7 +866,19 @@ fn doctor_project_read_failure_reports_unknown_roles_and_optional_metadata_read(
             );
         }
         let calls = f.state()["calls"].as_array().unwrap().clone();
+        let calls = doctor_platform_calls(&calls);
         assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
+        assert_eq!(calls[0]["endpoint"], "user");
+        assert_eq!(calls[1]["endpoint"], route);
+        assert!(calls.iter().all(|call| call["hostname"] == "forge.example"));
+        assert!(
+            calls
+                .iter()
+                .all(|call| call["executable"] == if provider == "github" { "gh" } else { "glab" })
+        );
+        if provider == "gitlab" {
+            assert_eq!(calls[2]["endpoint"], "metadata");
+        }
         assert!(calls.iter().all(|call| call["method"] == "GET"));
     }
 }
@@ -2765,6 +2827,10 @@ fn doctor_account_only_skips_malformed_local_configuration_and_checkpoint() {
     let private = f.root.join(".git/specgit-v2");
     fs::create_dir_all(&private).unwrap();
     fs::write(private.join("selection.json"), "{broken checkpoint").unwrap();
+    let mut state = f.state();
+    state["record_transport"] = json!(true);
+    fs::write(&f.state, state.to_string()).unwrap();
+    let before = project_files(&f.root);
     let report = f.run_raw(&[
         "doctor",
         "--provider",
@@ -2789,7 +2855,13 @@ fn doctor_account_only_skips_malformed_local_configuration_and_checkpoint() {
         fs::read_to_string(private.join("selection.json")).unwrap(),
         "{broken checkpoint"
     );
-    assert_eq!(f.state()["calls"].as_array().unwrap().len(), 1);
+    let state = f.state();
+    let calls = doctor_platform_calls(state["calls"].as_array().unwrap());
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["endpoint"], "user");
+    assert_eq!(calls[0]["hostname"], "forge.example");
+    assert_eq!(calls[0]["executable"], "gh");
+    assert_eq!(project_files(&f.root), before);
     assert_report_matches_schema(&report);
 }
 
@@ -2876,6 +2948,10 @@ fn doctor_rejects_malformed_declaration_without_rewriting_it() {
     let f = Fixture::new();
     let malformed = "version: [broken";
     fs::write(f.root.join(".specgit.yaml"), malformed).unwrap();
+    let mut state = f.state();
+    state["record_transport"] = json!(true);
+    fs::write(&f.state, state.to_string()).unwrap();
+    let before = project_files(&f.root);
     let report = f.run_raw(&["doctor", "--provider", "github"]);
     assert_ne!(report["exit"], 0, "{report}");
     assert!(report["evidence"].get("local").is_none());
@@ -2889,7 +2965,9 @@ fn doctor_rejects_malformed_declaration_without_rewriting_it() {
         malformed
     );
     assert!(!f.root.join(".git/specgit-v2/selection.json").exists());
-    assert!(f.state()["calls"].as_array().unwrap().is_empty());
+    let state = f.state();
+    assert!(doctor_platform_calls(state["calls"].as_array().unwrap()).is_empty());
+    assert_eq!(project_files(&f.root), before);
 }
 
 #[cfg(unix)]

@@ -44,6 +44,20 @@ fn terminal_safe(text: &str) -> String {
 fn doctor_summary(report: &Report) {
     let evidence = &report.evidence;
     if evidence
+        .pointer("/runtime_update/status")
+        .and_then(serde_json::Value::as_str)
+        == Some("unknown")
+    {
+        let reason = evidence
+            .pointer("/runtime_update/diagnostic/message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Release metadata could not be checked.");
+        println!(
+            "Runtime update: unknown. {} If useful, run `specgit update --check` explicitly to check again.",
+            terminal_safe(reason)
+        );
+    }
+    if evidence
         .pointer("/health/scope")
         .and_then(serde_json::Value::as_str)
         == Some("account_only")
