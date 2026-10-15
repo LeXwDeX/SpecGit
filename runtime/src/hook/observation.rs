@@ -1,15 +1,24 @@
 //! Pending notification receipts and bounded native observation.
-use super::{Output, context::prepare, info};
-use crate::{config, diagnostic::Code, process::Process, project};
+use super::{Output, context::prepare, notice};
+use crate::{config, diagnostic::Code, process::Process, project, selection};
 use serde_json::json;
 use std::time::Duration;
+
+fn current_request(
+    context: &project::Context,
+) -> Result<Option<u64>, crate::diagnostic::Diagnostic> {
+    match selection::classify(context)? {
+        selection::ReadOutcome::Current(selected) => Ok(selected.request),
+        selection::ReadOutcome::Absent | selection::ReadOutcome::BranchMismatch { .. } => Ok(None),
+    }
+}
 
 pub(super) fn pending_notice(
     context: &project::Context,
     session: &str,
     notifications: &[config::Notification],
 ) -> Result<Option<String>, crate::diagnostic::Diagnostic> {
-    let Some(request) = crate::selection::read(context)?.and_then(|s| s.request) else {
+    let Some(request) = current_request(context)? else {
         return Ok(None);
     };
     let identity = crate::watch_store::Identity::new(
@@ -41,7 +50,7 @@ pub(super) fn pending_notice(
 }
 pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Output {
     if !matches!(event, "PostToolUse" | "Stop") {
-        return info("SpecGit asynchronous observation requires PostToolUse or Stop.");
+        return notice("Asynchronous observation requires PostToolUse or Stop.");
     }
     let cancellation = process.cancellation.clone();
     if event == "Stop" && cancellation.is_cancelled() {
@@ -57,19 +66,12 @@ pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Outp
         Ok(Err(_)) if event == "Stop" => return Output::default(),
         Ok(Err(output)) => return output,
         Err(_) if event == "Stop" => return Output::default(),
-        Err(_) => return info("SpecGit observation context deadline expired; resume explicitly."),
+        Err(_) => return notice("The observation context deadline expired; resume explicitly."),
     };
-    let request = match crate::selection::read(&prepared.context) {
-        Ok(Some(s)) => match s.request {
-            Some(id) => id,
-            None => return Output::default(),
-        },
+    let request = match current_request(&prepared.context) {
+        Ok(Some(id)) => id,
         Ok(None) => return Output::default(),
-        Err(_) => {
-            return info(
-                "SpecGit cannot resolve the selected native request; use explicit diagnostics.",
-            );
-        }
+        Err(d) => return notice(&d),
     };
     let notifications = prepared.observation.notify;
     let observation = crate::watch::observe_until_attention(
@@ -89,11 +91,7 @@ pub async fn observe_handle(event: &str, bytes: &[u8], process: Process) -> Outp
         Ok(value) => value,
         Err(d) if d.code == Code::LockBusy => return Output::default(),
         Err(_) if event == "Stop" && cancellation.is_cancelled() => return Output::default(),
-        Err(_) => {
-            return info(
-                "SpecGit observation could not finish; inspect retained intent with specgit inbox.",
-            );
-        }
+        Err(d) => return notice(&d),
     };
     // A completion callback must not turn cancellation or an exhausted wait into
     // another autonomous turn. Keep the durable event for explicit inbox recovery.
