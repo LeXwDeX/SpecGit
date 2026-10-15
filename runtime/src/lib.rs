@@ -23,6 +23,7 @@ pub mod pr;
 pub mod probe;
 pub mod process;
 pub mod project;
+mod project_receipt;
 mod prompts;
 pub mod remove;
 pub mod report;

@@ -9,8 +9,9 @@ to request actual inspection and ownership-safe maintenance, not installation re
 The request authorizes a separate verified stable update when needed. Unknown optional
 capability does not block applicable local maintenance. Init chooses manual observation
 only with new/default-false or existing-false `native_auto_merge`. The flag sets it to false; an existing true
-preference needs a specific decision before changing it. It does not authorize
-platform settings, Issue/PR writes, commits, pushes, merges or releases.
+preference needs a specific decision before changing it. Installation/enablement delegates the task-related workflow without repeated approvals.
+Explicit task limits remain controlling; a declaration or old receipt cannot expand scope.
+Release publication is included only when the task itself includes it.
 Confirm the actual CLI path/version; do not silently reinstall if missing.
 
 Before the abbreviated v2 sequence below, classify the project using that guide.
@@ -44,7 +45,7 @@ checkpoints; do not delete or rewrite another branch's checkpoint.
 
 After all updates, run status and doctor, read back generated Skill/guidance, then
 repeat dry-runs. An init dry-run lists planned paths, not per-path changed state.
-Only claim host hooks work after a harmless real behavior/context probe.
+Only SessionStart and PreToolUse are supported: brief starting rules/Skill entry, then relevant context/recovery. Do not configure PostToolUse, Stop or idle wake. Only claim hooks work after a harmless behavior/context probe.
 
 For v1 use the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), not retired `init --force`, `finish` or `bind`. Replacing the binary does not migrate the project.
 
@@ -73,23 +74,18 @@ nonempty `AGENTS.override.md` for Codex. Each points to the canonical
 
 Preserve existing settings, manual guidance outside managed blocks and foreign
 hooks. Refresh replaces edited body text only inside a proven, complete managed
-range. Codex/Claude have managed hooks; the official OpenCode build receives
-skill/guidance only — a custom OpenCode fork can opt in to claude-code-format
-project hooks with `--opencode-claude-hooks` (requires `--agent opencode`). In 2.8,
-idle wake also needs explicit `--opencode-async-rewake`, confirmed real capability,
-user authorization and observe/context purposes. Compatibility alone enables no
-asynchronous observer; use bounded `watch` or manual continuation when delivery
-is unavailable. Do not copy Claude settings hooks into an unverified OpenCode
+range. Managed hooks provide only SessionStart and PreToolUse. Do not register PostToolUse,
+Stop callbacks or idle wake. Use bounded watch/inbox or manual continuation when
+automatic observation is unavailable. Do not copy Claude settings hooks into an unverified OpenCode
 integration. Written registration is not proof of import, event triggering or
 notification delivery; reload and verify where needed.
 
-2.8 supports repeatable `--hook-purpose guard|context|observe`, or `none` for no
-new hooks. Omit purposes on ordinary refresh to preserve exact recorded modes.
-Explicit purposes apply to all recorded and newly selected hosts; changes need
-authorization for every affected host. `none` preserves existing purposes and never
-uninstalls hooks/Git guard, but their assets can still refresh. Agents remain additive.
-Choose only minimal real capability and authorized use; upgrade never silently
-enables idle wake. See the guide for selective-receipt downgrade limits and checks.
+Use only supported SessionStart and PreToolUse hooks; `guard` configures native
+commit/push checks, while `context` supplies relevant context/recovery. Omit purposes on ordinary refresh to preserve exact recorded modes.
+Explicit purposes apply to all recorded and newly selected hosts within the current
+task. `none` adds no purposes and preserves valid purposes/native Git guard, while
+refresh removes owned retired PostToolUse/Stop registrations. Hosts remain additive.
+Choose only purposes supported by the host and needed in the current task. See the guide for selective-receipt downgrade limits and checks.
 
 Upgrading from 2.3: existing project receipts are refreshed into the 2.4
 format (which omits `shared_root`) locally, preserving foreign content and

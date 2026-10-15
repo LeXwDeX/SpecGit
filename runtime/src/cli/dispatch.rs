@@ -51,6 +51,7 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             unreachable!("hook and guard have their own framing")
         }
         Commands::Setup {
+            catalog,
             scope: _,
             agent,
             opencode_claude_hooks,
@@ -60,6 +61,9 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             dry_run,
             rollback,
         } => {
+            if catalog {
+                return specgit::setup::catalog::report();
+            }
             specgit::setup::project::run_with_hooks(
                 specgit::setup::project::Options {
                     agents: agent,

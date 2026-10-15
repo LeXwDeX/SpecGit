@@ -174,13 +174,31 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
     let private = git_dir.join("specgit-v2");
     let store_root = private.join("assets");
     if let Some(id) = &options.rollback {
-        let store = AssetStore::lock(
-            &store_root,
-            &[root.clone(), private.clone(), exclude_parent.clone()],
-            Duration::from_secs(2),
-        )?;
-        let (transaction, retained) =
-            config::worktree::rollback(&store, &process, &root, &exclude, id).await?;
+        let serialization = config::worktree::lock_native_guard(&process, &root).await?;
+        let (store_root, shared) = config::worktree::rollback_store(
+            &process,
+            &root,
+            id,
+            std::slice::from_ref(&store_root),
+        )
+        .await?;
+        let allowed = config::worktree::rollback_allowed_roots(&[
+            shared,
+            root.clone(),
+            private.clone(),
+            exclude_parent.clone(),
+            config::worktree::hooks(&process, &root).await?,
+        ])?;
+        let store = AssetStore::lock(&store_root, &allowed, Duration::from_secs(2))?;
+        let (transaction, retained) = config::worktree::rollback_with_lock(
+            &serialization,
+            &store,
+            &process,
+            &root,
+            &exclude,
+            id,
+        )
+        .await?;
         return Ok(Report::success(
             "migrate",
             "rolled_back",

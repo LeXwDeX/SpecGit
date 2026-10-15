@@ -6,9 +6,9 @@ The shared SpecGit executable, initialization of each project, and registration 
 [English maintenance request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)
 ([中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)).
 It asks the Agent to inspect and perform safe project maintenance, including fresh
-adoption, rather than repeat installation or just suggest commands. The guide
-separates an authorized verified stable CLI update from init/setup and preserves
-configuration, checkpoints and receipts. Missing declaration plus private state
+adoption, rather than repeat installation or just suggest commands. Enabling SpecGit
+delegates the current task workflow without repeated step approvals. The guide covers
+stable CLI updates separately and preserves configuration, checkpoints and receipts. Missing declaration plus private state
 is not a fresh project; restore the original configuration, never delete state.
 
 ## 1. Install the executable
@@ -60,10 +60,9 @@ specgit init --provider github --remote origin --json
 
 If native support is unknown or unavailable, manual observation is one operating
 choice. `--manual-observe` writes `agent.native_auto_merge=false`. For new/default-false
-or existing-false configuration, the copied request already selects it. If the
-current/restored or supplied preference is true, obtain a specific decision before
-changing it; continue independent reads meanwhile. Use the approved options/configuration
-consistently in check, preview and apply, then read back the preference. Do not alter
+or existing-false configuration, the copied request already selects it. Preserve configured preferences unless a specific change is required by the current
+task. Use consistent options/configuration in check, preview and apply, then read back
+the preference. Do not alter
 platform settings under this maintenance request or ignore conflicts. Initialization
 maintains `.specgit.yaml`, managed guidance and Git's local exclusion record; preserve
 content outside managed blocks in `AGENTS.md` and `CLAUDE.md`.
@@ -81,16 +80,14 @@ For an existing **v2** project, retain its declaration and use the same inspect,
 
 ## 3. Register a host only when needed
 
-For 2.8 purpose selection and actual host verification, follow the
+For hook selection and actual host verification, follow the
 [maintenance guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-review-the-full-host-refresh-scope).
-For a new host, `--hook-purpose none` adds guidance/Skill without new hooks;
-it never removes existing hooks or Git guard. Omitted purposes preserve recorded
-modes on ordinary refresh. Setup includes all recorded hosts plus the `--agent`
-selection; explicit purposes affect that whole set and need authorization for every
-affected host. `none` preserves existing purposes but does not skip their asset
-refresh. Review/report every host's effects, including shared Skill refresh.
-Official OpenCode gets guidance/Skill only; custom idle wake
-requires separate capability confirmation, authorization and explicit opt-in.
+Only SessionStart and PreToolUse are supported: SessionStart gives brief rules and
+the Skill entry; PreToolUse provides relevant context or recovery. Do not configure
+PostToolUse, Stop or idle wake. `guard` configures native Git commit/push hooks. If
+automatic observation is unavailable through supported events, use bounded watch/inbox
+or continue manually. Setup includes all recorded hosts plus the `--agent` selection;
+review/report every host's effects, including shared Skill refresh.
 
 Project initialization **does not register any host**. Only when you decide to integrate the active host should you separately inspect `specgit setup --help` and preview the relevant `--agent codex`, `--agent claude`, `--agent opencode`, or `--agent generic` selection. Since 2.4, setup is permanently project-only: `--scope project` is the default and the only scope value, assets live in the checkout with a worktree-private receipt, hooks invoke the installed shared executable directly (no global setup prerequisite), and the retired global options (`--root`, `--provider`, `--api-host`, `--register-*`, per-host roots) are rejected. Installing the executable and initializing a project does not require `setup`.
 

@@ -5,6 +5,7 @@ mod acceptance;
 mod delivery;
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -114,27 +115,71 @@ fn same_head_check_rerun_invalidates_the_observation() {
 }
 
 #[test]
-fn async_hook_offers_prepare_review_before_lifecycle_timeout() {
+fn retired_lifecycle_callbacks_are_silent_without_observation_side_effects() {
     let f = acceptance::fixture_with_observation(
         "github",
         "observation:\n  poll_seconds: 1\n  max_wait_seconds: 20\n",
     );
     f.edit(|s| s["requests"][0]["draft"] = json!(true));
-    let mut child = f
-        .command(&["hook", "--event", "PostToolUse", "--observe"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let started = Instant::now();
-    child.stdin.take().unwrap().write_all(json!({"hook_event_name":"PostToolUse","cwd":f.root,"session_id":"draft","tool_name":"Bash","tool_input":{"command":"specgit pr --ready"}}).to_string().as_bytes()).unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{:?}", output.stderr);
-    let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.contains("prepare_review"), "{text}");
-    assert!(!text.contains("timed_out"), "{text}");
-    assert!(started.elapsed() < Duration::from_secs(15));
+    let calls = f.state()["calls"].clone();
+    let private = f.root.join(".git/specgit-v2");
+    fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut result = BTreeMap::new();
+        if !root.exists() {
+            return result;
+        }
+        for entry in fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                result.extend(files(&path));
+            } else {
+                result.insert(path.clone(), fs::read(path).unwrap());
+            }
+        }
+        result
+    }
+    let state_before = files(&private);
+    for event in ["PostToolUse", "Stop"] {
+        let mut child = f
+            .command(&["hook", "--event", event, "--observe"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        if let Err(error) = stdin.write_all(
+            json!({"hook_event_name":event,"cwd":f.root,"session_id":"draft","tool_name":"Bash","tool_input":{"command":"specgit pr --ready"}})
+                .to_string()
+                .as_bytes(),
+        ) {
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{event}: {error}");
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("retired {event} callback waited for stdin or lifecycle state");
+        }
+        drop(stdin);
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{event}: {:?}", output.stderr);
+        assert!(output.stdout.is_empty(), "{event}: {:?}", output.stdout);
+        assert!(output.stderr.is_empty(), "{event}: {:?}", output.stderr);
+    }
+    assert_eq!(
+        f.state()["calls"],
+        calls,
+        "retired callbacks queried the forge"
+    );
+    assert_eq!(
+        files(&private),
+        state_before,
+        "retired callbacks changed project state"
+    );
 }
 
 #[test]

@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub mod catalog;
 pub mod project;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -22,27 +23,8 @@ pub enum Scope {
     Project,
 }
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Agent {
-    Generic,
-    Claude,
-    Codex,
-    Opencode,
-}
-
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookPurpose {
-    Guard,
-    Context,
-    Observe,
-    None,
-}
+pub use crate::project_receipt::{Agent, HookPurpose};
+use crate::project_receipt::{HostRegistration, Registration};
 
 /// Additive hook selection. Empty purposes preserve the recorded installation.
 #[derive(Clone, Default)]
@@ -57,43 +39,15 @@ fn purpose_manifest(
     purposes: &std::collections::BTreeSet<HookPurpose>,
     wake: bool,
 ) -> Result<BTreeMap<String, Value>, Diagnostic> {
-    let custom = agent == Agent::Opencode;
-    let mut entries = if custom {
-        opencode_manifest(binary)?
+    let _ = wake;
+    if !purposes.contains(&HookPurpose::Context) {
+        return Ok(BTreeMap::new());
+    }
+    if agent == Agent::Opencode {
+        opencode_manifest(binary)
     } else {
-        manifest(binary, agent)?
-    };
-    entries.retain(|event, _| match event.as_str() {
-        "PreToolUse" => purposes.contains(&HookPurpose::Guard),
-        "Stop" => purposes.contains(&HookPurpose::Guard) || wake,
-        _ => purposes.contains(&HookPurpose::Context),
-    });
-    if !custom
-        && !purposes.contains(&HookPurpose::Observe)
-        && let Some(entry) = entries.get_mut("PostToolUse")
-    {
-        entry["hooks"]
-            .as_array_mut()
-            .expect("manifest hooks")
-            .truncate(1);
+        manifest(binary, agent)
     }
-    if custom && wake {
-        let entry = entries.get_mut("Stop").expect("wake Stop");
-        let mut observer = entry["hooks"][0].clone();
-        observer["command"] = json!(format!(
-            "{} --observe",
-            observer["command"].as_str().expect("command")
-        ));
-        observer["async"] = json!(true);
-        observer["asyncRewake"] = json!(true);
-        observer["timeout"] = json!(1830);
-        let hooks = entry["hooks"].as_array_mut().expect("hooks");
-        if !purposes.contains(&HookPurpose::Guard) {
-            hooks.clear();
-        }
-        hooks.push(observer);
-    }
-    Ok(entries)
 }
 
 fn recorded_purposes(
@@ -124,20 +78,11 @@ fn recorded_purposes(
     (purposes, wake)
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-struct HostRegistration {
-    root: PathBuf,
-    skill_hash: String,
-    instructions: String,
-    block: String,
-    created_instructions: bool,
-}
 const HOST_START: &str = "<!-- specgit:project:v2:start -->";
 const HOST_END: &str = "<!-- specgit:project:v2:end -->";
 const LEGACY_START: &str = "<!-- specgit:global:v2:start -->";
 const LEGACY_END: &str = "<!-- specgit:global:v2:end -->";
-const TOOL_MATCHER: &str = "Write|Edit|MultiEdit|Bash|PowerShell|apply_patch|functions.apply_patch|mcp__functions__apply_patch";
+const TOOL_MATCHER: &str = "*";
 
 fn instruction_change(
     host: &str,
@@ -264,15 +209,19 @@ fn instruction_change_after(
             ));
         }
         if before.matches(&old.block).count() == 1 {
-            let block = format!(
-                "{}{generated}{}",
-                if old.block.starts_with("\n\n") {
-                    "\n\n"
-                } else {
-                    ""
-                },
-                if old.block.ends_with('\n') { "\n" } else { "" }
-            );
+            let block = if old.block.replace("\r\n", "\n") == generated {
+                old.block.clone()
+            } else {
+                format!(
+                    "{}{generated}{}",
+                    if old.block.starts_with("\n\n") {
+                        "\n\n"
+                    } else {
+                        ""
+                    },
+                    if old.block.ends_with('\n') { "\n" } else { "" }
+                )
+            };
             (
                 before.replacen(&old.block, if uninstall { "" } else { &block }, 1),
                 block,
@@ -286,13 +235,32 @@ fn instruction_change_after(
             )
         }
     } else {
-        if before.matches(&generated).count() == 1
-            && before.matches(HOST_START).count() == 1
+        if before.matches(HOST_START).count() == 1
             && before.matches(HOST_END).count() == 1
             && !before.contains(LEGACY_START)
             && !before.contains(LEGACY_END)
         {
-            (before.to_owned(), generated)
+            let start_at = before.find(HOST_START).expect("unique start checked");
+            let end_at = before.find(HOST_END).expect("unique end checked") + HOST_END.len();
+            if start_at >= end_at {
+                return Err(conflict_at(
+                    host,
+                    &guidance.path,
+                    None,
+                    "An unowned SpecGit instruction marker already exists.",
+                ));
+            }
+            let raw_block = &before[start_at..end_at];
+            if raw_block.replace("\r\n", "\n") == generated {
+                (before.to_owned(), raw_block.to_owned())
+            } else {
+                return Err(conflict_at(
+                    host,
+                    &guidance.path,
+                    None,
+                    "An unowned SpecGit instruction marker already exists.",
+                ));
+            }
         } else {
             if [HOST_START, HOST_END, LEGACY_START, LEGACY_END]
                 .iter()
@@ -329,21 +297,6 @@ fn instruction_change_after(
     Ok((guidance, registration))
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-struct Registration {
-    settings: PathBuf,
-    entries: BTreeMap<String, Value>,
-    #[serde(default)]
-    created_file: bool,
-    #[serde(default)]
-    created_hook_map: bool,
-    #[serde(default)]
-    created_event_keys: Vec<String>,
-    // Persisted 2.3 project receipts contain this null field; project hooks never own an external skill.
-    #[serde(default)]
-    skill: Option<Value>,
-}
 fn skill_bytes() -> Vec<u8> {
     crate::skill::bytes()
 }
@@ -380,6 +333,24 @@ fn conflict_at(host: &str, path: &Path, event: Option<&str>, message: &str) -> D
     )
 }
 fn manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    manifest_for(binary, agent, &CURRENT_EVENTS)
+}
+
+/// Host callbacks written by this release.
+const CURRENT_EVENTS: [&str; 2] = ["SessionStart", "PreToolUse"];
+/// Callbacks written through 2.12. Used only to recognize exact receiptless
+/// registrations; recognition grants no ownership and nothing new is written.
+const LEGACY_EVENTS: [&str; 4] = ["SessionStart", "PreToolUse", "PostToolUse", "Stop"];
+
+fn legacy_manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    manifest_for(binary, agent, &LEGACY_EVENTS)
+}
+
+fn manifest_for(
+    binary: &Path,
+    agent: Agent,
+    events: &[&str],
+) -> Result<BTreeMap<String, Value>, Diagnostic> {
     // Claude accepts executable + argv. Codex runs only command through its shell.
     let codex = (agent == Agent::Codex)
         .then(|| codex_executable(binary))
@@ -400,16 +371,16 @@ fn manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diag
         }
         hook
     };
-    Ok(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]
-        .into_iter()
-        .map(|event| {
+    Ok(events
+        .iter()
+        .map(|&event| {
             let mut hooks = vec![handler(event, false)];
             if event == "PostToolUse" {
                 hooks.push(handler(event, true));
             }
             (
                 event.into(),
-                json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ TOOL_MATCHER }else{""},"hooks":hooks}),
+                json!({"matcher":if matches!(event, "PreToolUse" | "PostToolUse"){ TOOL_MATCHER }else{""},"hooks":hooks}),
             )
         })
         .collect())
@@ -451,6 +422,17 @@ fn codex_windows_executable(binary: &str) -> Result<String, Diagnostic> {
     Ok(format!("\"{binary}\""))
 }
 fn opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    opencode_manifest_for(binary, &CURRENT_EVENTS)
+}
+
+fn legacy_opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    opencode_manifest_for(binary, &LEGACY_EVENTS)
+}
+
+fn opencode_manifest_for(
+    binary: &Path,
+    events: &[&str],
+) -> Result<BTreeMap<String, Value>, Diagnostic> {
     let binary = binary
         .to_str()
         .ok_or_else(|| Diagnostic::input("Hook executable path must be UTF-8."))?;
@@ -479,8 +461,8 @@ fn opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnosti
             .replace('\\', "/")
     };
     let quoted = format!("'{}'", binary.replace('\'', "'\\''"));
-    Ok(["SessionStart", "PreToolUse", "PostToolUse", "Stop"].into_iter().map(|event| {
-        (event.into(), json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ TOOL_MATCHER }else{"*"},
+    Ok(events.iter().map(|&event| {
+        (event.into(), json!({"matcher":if matches!(event, "PreToolUse" | "PostToolUse"){ TOOL_MATCHER }else{"*"},
             "hooks":[{"type":"command","shell":"bash","command":format!("{quoted} hook --event {event}"),"inputFormat":"claude-code","timeout":5}]}))
     }).collect())
 }

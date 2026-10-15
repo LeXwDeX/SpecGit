@@ -48,6 +48,15 @@ pub fn project_change(
     exclude: &Path,
     changes: &[Change],
 ) -> Result<Change, Diagnostic> {
+    project_change_with_shared(root, exclude, changes, &[])
+}
+
+pub(crate) fn project_change_with_shared(
+    root: &Path,
+    exclude: &Path,
+    changes: &[Change],
+    shared_skills: &[String],
+) -> Result<Change, Diagnostic> {
     let current = Change::new(exclude.to_owned(), None)?;
     let text = std::str::from_utf8(current.before.bytes.as_deref().unwrap_or_default())
         .map_err(|_| conflict())?;
@@ -57,6 +66,7 @@ pub fn project_change(
         if body
             .lines()
             .any(|line| line.strip_prefix('/') == Some(name))
+            || shared_skills.iter().any(|skill| skill == name)
             || changes
                 .iter()
                 .any(|change| change.path == root.join(name) && change.after.is_some())

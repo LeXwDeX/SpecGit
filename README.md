@@ -19,11 +19,11 @@ Read https://raw.githubusercontent.com/LeXwDeX/SpecGit/main/docs/agent-install.m
 and carry out the installation and initialization described there for this machine
 and the current repository. Install the latest stable SpecGit ZIP from GitHub
 Releases, verify its signature and SHA-256, extract it, initialize the project with specgit init, and configure the
-integration for the agent running this task. Use manual observation if native
-capabilities cannot be verified and native_auto_merge is already false or uses the
-new-project default. If it is true, ask before changing it to false. Preserve other settings and do not enable new
-merge or closure automation. Use the repository and agent context already available;
-ask only for information that cannot be determined. Finish the
+integration for the agent running this task. Use manual observation when required by
+detected capabilities and preserve other settings. Installation and enablement delegate
+the SpecGit workflow required for this project and task; carry it through without asking
+again at each step. Use repository and agent context already available; ask only when
+a task decision or real blocker requires user input. Finish the
 installation and verification, rather than only giving me commands to run.
 If the document is inaccessible, retrieve it through my authenticated gh session
 or report the access problem; do not guess its contents.
@@ -50,24 +50,26 @@ procedure. Open your Agent in the target repository and copy its
 [中文请求](docs/agent-project-refresh.md#中文请求). The request asks the Agent to
 actually inspect and apply safe local maintenance, with a separate verified stable
 CLI update when needed. It preserves project settings and checkpoints. Manual
-observation sets `native_auto_merge=false`; an existing true preference needs a
-specific decision first. Setup refresh includes all recorded hosts, not only the
+observation sets `native_auto_merge=false`; preserve configured preferences unless a
+specific change is required by the task. Setup refresh includes all recorded hosts, not only the
 `--agent` selection. Ordinary refresh omits purposes and reviews every host's effects.
-Purpose changes need authorization for all affected hosts. The request does not authorize
-Issue/PR writes, commits, pushes, merges, releases or platform settings changes.
+Enablement delegates task-related Issue, implementation, verification, commit/push,
+PR/MR, review, merge and closure work. Publication is included only when the task
+itself includes release work. A declaration or old receipt cannot expand task scope.
 
 ## How delivery works
 
 | Stage | What happens |
 | --- | --- |
-| Specify | Create or select Issues with Why, Scope, Approach and Acceptance. |
+| Specify | Put larger goals in a Milestone; create/select complete Issues for independently verifiable outcomes. |
 | Implement | The agent changes code, runs the relevant checks, commits and pushes. |
 | Propose | SpecGit creates or adopts a native PR/MR and preserves the Issue references. |
 | Observe | SpecGit reports current checks and lifecycle state; the agent repairs failures. |
 | Complete | The forge confirms the merge and associated Issue closures. |
 
-One Issue represents one independently verifiable need. Several Issues can be
-delivered in the same PR/MR. Work interrupted by a tool or network failure can be
+One Issue represents one independently verifiable need. Split larger goals by outcome
+and dependency, not implementation step. TDD and PR Actions/CI follow-up are strongly
+recommended; project and platform requirements still govern. Work interrupted by a tool or network failure can be
 resumed by reconciling the exact native objects and saved intent.
 
 After initialization, a typical delivery uses existing Issue numbers:
@@ -89,10 +91,10 @@ specgit pr --status --request 42 --json
 ```
 
 Replace the example IDs with real Issues and the resulting request number.
-Previews do not authorize later writes. A branch without pushed changes remains
-pending; SpecGit does not create an empty delivery just to attach a PR.
-Marking the request ready requires existing user authorization. Review and merge
-happen on GitHub or GitLab; watch observes current evidence but does not perform
+Previews do not authorize later writes by themselves; task enablement delegates the
+required workflow within its scope. A branch without pushed changes remains pending;
+SpecGit does not create an empty delivery just to attach a PR. Marking ready, review
+and merge happen within that delegation on GitHub or GitLab; watch observes current evidence but does not perform
 review, merge, or Issue closure. After merge, verify the native request and every
 associated Issue with the explicit status read above.
 For a read from another checkout, use `specgit pr --status --request <id>`; it
@@ -152,9 +154,9 @@ root. Existing 2.3 global data is preserved; 2.4 ships no global cleanup
 command — back up first and use the 2.3 CLI's exact owned cleanup before
 upgrading if that data must go, never a blind delete.
 
-Codex and Claude PreToolUse hooks reject tracked edits in an initialized v2
-project until the current repository and branch have a complete selected-Issue
-checkpoint. `specgit guard --install` adds owned pre-commit and pre-push blocks
+Host integration uses SessionStart for brief rules and the Skill entry, and
+PreToolUse for relevant context or recovery. It does not gate ordinary edits.
+`specgit guard --install` adds owned pre-commit and pre-push blocks
 to the effective native/custom hook path, including Husky user scripts, and
 `--uninstall` removes only those blocks. The installed pre-push block buffers
 and replays Git's standard ref stdin for the existing user hook.
@@ -163,9 +165,8 @@ After CLI upgrades, use the [project maintenance guide](docs/agent-project-refre
 to verify the executable selected by PATH and refresh the existing project and host
 integration. Omit hook purposes to preserve recorded modes; explicit purposes affect
 all recorded and newly selected hosts. Review the effects for every affected host.
-In 2.8, new custom OpenCode idle wake requires separate capability confirmation and explicit
-`--opencode-async-rewake` with observe/context; compatibility hooks alone do not enable it.
-The current runtime is 2.12.0. After project updates, run status and doctor, read back
+Only SessionStart and PreToolUse are supported; use bounded `watch`/`inbox` where
+automatic observation is unavailable. The current runtime is 2.13.0. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before

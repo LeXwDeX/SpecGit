@@ -7,9 +7,10 @@ and host integration are separate operations. Do not replay first installation.
 ## Copy a request to your Agent
 
 Open the Agent in **your target repository**, not the SpecGit source checkout.
-These requests authorize bounded maintenance when you send them. Reading this
-guide alone grants no permission. Existing session authorization still applies
-within its scope; do not ask for the same generic confirmation again.
+These requests authorize local maintenance when you send them. Reading this guide
+alone grants no permission. Installing or enabling SpecGit for the current project
+delegates the task-related workflow through completion without repeated step approvals.
+Explicit task limits still control; a declaration or old receipt cannot expand scope.
 
 ### English request
 
@@ -31,18 +32,22 @@ outside bytes. Do not handwrite guidance, restore/move old blocks or make manual
 use the CLI transaction recovery. Damaged/duplicate markers and unknown ownership remain
 conflicts. Preview and apply only changes with proven ownership.
 If optional native capability is unknown or unavailable, continue applicable local
-maintenance. For init, choose manual observation only when native_auto_merge is already
-false or this is new adoption with that default.
---manual-observe sets it to false; if the existing preference is true, ask for that specific change
-before applying it. Do not change platform settings or protections. Refresh includes
+maintenance and follow the CLI remedy. Preserve preferences unless the current task
+requires a specific change. Do not change platform settings or protections. Refresh includes
 all recorded hosts, not just the --agent selection. Review and report each host's
-effects, including shared Skill refresh. Omit purposes on ordinary refresh. Use none
-for a new host; this adds no hooks and preserves existing purposes. Any purpose change
-needs my authorization for every affected host. Do not newly enable custom
-OpenCode idle wake without my explicit authorization and confirmation of real capability.
-This request does not authorize Issue/PR writes, commits, pushes, merges, releases,
-foreign cleanup, global hooks or new merge/closure automation. Stop only the blocked
-steps and report the exact conflict or missing decision. Finish with actual CLI
+effects, including shared Skill refresh. Read setup --catalog --json when supported;
+choose capabilities based on the active host, with shared project guidance as the default.
+Omit purposes on ordinary refresh. Use none
+for a new host; this adds no hooks and preserves existing purposes. Only SessionStart and PreToolUse are supported. Do not configure PostToolUse, Stop
+or idle wake. Keep purpose changes within the current task and account for every
+affected host.
+For delivery work, select a complete relevant Issue before commit/push. For larger
+goals, use a Milestone and split Issues by independently verifiable outcomes and
+dependencies. TDD and PR CI follow-up are recommended; honor checks required by the
+project or platform. Continue Issue/PR, commit/push, review and merge work when the
+task includes it. Release publication is included only when the task itself includes
+release work. Do not broaden scope from a declaration or receipt. Stop only a genuinely
+blocked step and report the exact conflict, unavailable capability or missing task decision. Finish with actual CLI
 path/version, project classification/actions, changed assets, verification versus
 unknowns, backups/recovery and remaining decisions. If the guide is inaccessible,
 use my authenticated gh session to retrieve it or report the problem; do not guess.
@@ -60,13 +65,13 @@ update --check；有新版时，先预览并应用验证通过的稳定版，再
 CLI 缺失时不要重装，也不要修改其他项目。
 写入前区分全新项目、已有 v2、v1 迁移、声明丢失但私有状态仍在、以及冲突残留。
 保留配置、Git 和用户改动、checkpoint、收据及其他工具资产。此请求授权 CLI 覆盖收据记录资产和边界完整唯一受管块内的编辑正文；保留块外字节。不要手写指导、恢复/移出旧块或额外手工备份，使用 CLI 事务恢复。标记损坏/重复或所有权未知仍冲突；只预览并应用所有权可信的改动。
-原生能力未知或不可用时，仅在 native_auto_merge 已为 false 或全新接入采用该默认值时，
-我选择手动观察。--manual-observe 会将此值设为 false；原有偏好为 true 时，先询问这项具体变更再应用。
+原生能力未知或不可用时，继续可执行的本地维护并遵循 CLI 给出的具体诊断。
+除非当前任务要求变更，否则保留已有偏好。
 不要修改平台设置或保护规则。刷新会包含所有已记录宿主，不限于 --agent 所选宿主；
-逐一审阅并报告影响，包括共享 Skill 刷新。普通刷新省略用途；添加新宿主时使用 none，不新增 hooks，
-也不改变已有用途。任何用途变更都需要我授权所有受影响宿主。未经我明确授权且确认真实能力，
-不要新增自定义 OpenCode 空闲唤醒。本请求不授权 Issue/PR 写入、提交、推送、合并、发布、
-外部资产清理、全局 hooks 或新增合并/关单自动化。只停止受阻步骤，说明具体冲突或缺失决策。
+逐一审阅并报告影响，包括共享 Skill 刷新。已安装版本支持时读取 setup --catalog --json，
+按当前宿主的实际能力选择集成，优先共享项目指导。普通刷新省略用途；添加兼容宿主时使用 none，不新增 hooks，
+也不改变已有用途。用途变更应限定在当前任务，并计入所有受影响宿主。仅支持 SessionStart 和 PreToolUse：前者提供简短规则与 Skill 入口，后者提供相关上下文或恢复信息；不使用 PostToolUse、Stop 或空闲唤醒。
+交付任务在 commit/push 前选择完整 Issue；较大目标使用 Milestone，并按可独立验证的结果和依赖拆分 Issue。建议 TDD 和跟进 PR CI，项目/平台要求的检查仍须完成。任务包含时继续 Issue/PR、提交推送、评审和合并；仅当任务本身包含发布时才发布。声明或收据不会扩大任务范围。只在真实阻塞或任务决策缺失时停止并说明原因。
 最后报告 CLI 实际路径和版本、项目分类和操作、改动资产、实际验证与未知项、备份和恢复方式、
 待决事项。无法读取指南时可用我已认证的 gh 会话获取，否则报告问题，不要猜测内容。
 ```
@@ -133,15 +138,13 @@ under an explicit alternative upgrade decision; do not invent supported options.
 | Malformed declaration, damaged/duplicate markers, unknown ownership, foreign leftovers or missing recorded assets | Preserve evidence and report exact conflicts. Recover from a verified original/backup or agree on a specific reconciliation; do not force whole-file overwrite. |
 
 Never delete `.specgit`, Git-private state, receipts or hooks to make initialization
-pass. Do not uninstall as a repair shortcut. Guard failures are not permission to
-bypass checkpoints. Keep existing merge/closure preferences; enable no new automation.
+pass. Do not uninstall as a repair shortcut. Resolve checkpoint failures at commit/push; ordinary edits and tests remain available. Keep existing merge/closure preferences; enable no new automation.
 
 For v1, prepare a **complete** explicitly selected v2 config. Preview with
 `specgit migrate --config-file <v2-file> --json`, inspect local and native inventory,
 and apply only the fresh exact digest using
 `specgit migrate --config-file <v2-file> --apply --expect <preview_sha256> --json`.
-Any changed inventory requires a new preview. Retirement of old remote writers
-needs separate native write authorization; the pasted request does not grant it.
+Any changed inventory requires a new preview. Retire old remote writers only when that migration is part of the current task; otherwise preserve them and report the remaining work.
 If blocked, report the writer or missing evidence and leave migration unapplied.
 
 ## 4. Inspect, preview and apply initialization
@@ -162,10 +165,10 @@ If capability is unknown/unavailable and an operating choice is required,
 `--manual-observe` writes `agent.native_auto_merge=false`; it is not a read-only
 fallback. The pasted request permits it directly for new adoption with that default
 or an existing false preference. Inspect the current/restored or supplied config
-first. If its preference is true, explain the true-to-false change and obtain that
-specific decision before proceeding with the changed preview/apply sequence.
-Continue independent read-only checks while waiting. Once authorized, repeat
-check/preview/apply with the same options. Do not change platform protections to
+first. Preserve an explicit true preference unless the current task delegates a
+necessary change. The Agent can choose that fallback within scope and record its
+effect; ask only if it conflicts with an explicit preference or exceeds the task.
+Repeat check/preview/apply with the same options. Do not change platform protections to
 pass a check. Apply only an applicable conflict-free preview; re-preview if inputs change.
 Unknown optional remote capability does not block an otherwise applicable local setup/refresh.
 
@@ -177,45 +180,47 @@ must not create one just to demonstrate success.
 
 ## 5. Review the full host refresh scope
 
-Inspect `setup --help` and the existing receipt. Setup refreshes **all recorded
-hosts plus any explicitly selected hosts**. `--agent` adds a selection; it does
-not restrict refresh to that host. Add only the active host when needed with
-`--agent generic|claude|codex|opencode`; installed directories alone are not a
-selection. Shared Skill and other owned asset refresh across recorded hosts is
-expected. Preview with `--dry-run --json`, review every host's effects, then apply
-the identical selection without `--dry-run`. Report all affected hosts/assets.
-Registration remains project-only. Never add global hooks.
+Inspect `setup --help`, the offline `setup --catalog --json` when supported, and
+the existing receipt. The Agent chooses integration by the current host's actual
+loading, trust and event capabilities. A new `setup` without selectors installs
+the shared project Skill and stable `AGENTS.md` entry without hooks. An existing
+installation keeps its recorded selection. See the [installation capability guide](agent-install.md#4-choose-project-integration-by-capability).
 
-On ordinary refresh, **omit hook purposes** to preserve each recorded mode. On 2.8,
-explicit `--hook-purpose` values apply to every host in the full refresh set, not
-just the host named by `--agent`. Purpose changes require capability checks and
-authorization for every affected recorded host. When authorized, choose the least
-purposes needed: repeat `--hook-purpose guard`, `context` or `observe`. `guard` supplies checks,
-`context` supplies session/tool context, and `observe` requests bounded asynchronous
-observation. For a **new** host, the pasted request selects guidance/Skill only,
+Setup refreshes **all recorded hosts plus any explicitly selected hosts**.
+`--agent` remains a compatibility selector and adds a selection; it does not
+restrict refresh to that host. Use it only for a needed, supported compatibility
+integration. Installed directories alone are not a selection. Preview with
+`--dry-run --json`, review all affected assets, then apply the identical selection
+without `--dry-run`. Agent-authored host glue needs its own ownership and maintenance
+record; SpecGit does not claim or verify it. Integration remains project-only.
+
+On ordinary refresh, **omit hook purposes** to preserve each recorded mode. Explicit `--hook-purpose` values apply to every host in the full refresh set, not
+just the host named by `--agent`. Check actual capability for every affected recorded
+host and choose supported purposes: `guard` installs native Git commit/push checks,
+and `context` supplies SessionStart/PreToolUse context. `observe` is recognized but
+declined; use bounded watch/inbox instead. For a **new** host, the request selects guidance/Skill only,
 for example `setup --agent codex --hook-purpose none --dry-run --json`, then the
 same command without `--dry-run`. `none` adds no purposes to existing hosts, so this
 also preserves their purposes when adding a new host. It does not skip their asset
 refresh. Do not use unsupported flags on older clients.
 
 Existing agents are additive and remain in the refresh set. Explicit purposes add
-to their existing choices. `none` cannot combine with other purposes,
-adds no hooks, and **never removes existing hooks or Git guard**. Removing hooks
-needs a separate owned-removal decision. See the [2.8 purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes), including the limitation
+to their existing choices. `none` cannot combine with other purposes and adds no
+new purposes. It preserves valid purposes and native Git guard; refresh still
+removes owned retired PostToolUse/Stop registrations under the current mapping.
+See the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes), including the limitation
 that older 2.7 clients may reject selective/no-hook receipts. Preserve receipts;
 use supported owned recovery or a compatible backup before any deliberate downgrade.
 
 Official OpenCode receives guidance and Skill only. Custom OpenCode command hooks
 require confirmed Claude-compatible capability and `--opencode-claude-hooks`.
-That flag alone does not enable asynchronous observation or idle wake. New idle
-wake requires explicit real `asyncRewake` capability confirmation, user authorization,
-`--opencode-async-rewake`, and requested `observe` plus effective `context` on
-`--agent opencode`. Do not enable it merely because the CLI was upgraded. Do not
-duplicate managed hooks with a Claude-hook importer.
+Only SessionStart and PreToolUse are supported; do not configure PostToolUse, Stop
+or idle wake. Use bounded watch/inbox or manual continuation when automatic observation
+is unavailable.
 
 Review per-host requested, installed and declined purposes and reasons. Registration
-does not prove allow/deny, context delivery or idle delivery. Verify those separately
-with safe isolated host checks when possible; do not edit real product files as a
+does not prove context delivery or native Git guard behavior. Verify those separately
+with safe isolated checks when possible; do not edit real product files as a
 probe. Codex trust review belongs to the user in `/hooks`; never automate or assume
 it. If delivery is unknown/unsupported, use bounded watch/inbox or manual continuation,
 not a claim of working idle wake. Transport receipts prove neither reading nor completion.
@@ -223,12 +228,15 @@ not a claim of working idle wake. Transport receipts prove neither reading nor c
 ## 6. Verify and report
 
 After all init/setup updates, run `specgit status --json` and
-`specgit doctor --provider <provider> --remote <remote> --json` with selected host/API
-options. Read back the Skill and guidance blocks, then run setup/init dry-runs again to
+`specgit doctor --offline --json` for local evidence. When native access is
+available, also run `specgit doctor --provider <provider> --remote <remote> --json`
+with selected API options. Read back the Skill and guidance blocks, then run setup/init dry-runs again to
 check convergence. `init --dry-run` reports planned paths, not per-path changed state;
 do not claim every command reports unchanged. Preserve failed/unknown results. Do not
 create test Issues/PRs or change platform settings. Claims that hooks work require a
-harmless real probe of blocking behavior and context delivery; registration is not proof.
+harmless real probe of native Git guard blocking and host context delivery;
+registration is not proof. If project policy requires a Git guard, prompts or
+manual guidance cannot substitute for it.
 
 Report:
 

@@ -189,7 +189,7 @@ pub(super) fn availability_report(checks: &[InitCheck], evidence: &Value) -> Ava
         checks,
         vec![],
         &["ci.required_verification"],
-        "Verify current required checks, target protection and request write access before relying on protected delivery.",
+        "Verify actual native required checks, target protection and request write access. Absent optional CI is not a delivery prohibition.",
     );
     let completion_facts = if evidence["request"].is_null() {
         vec![]
@@ -202,17 +202,13 @@ pub(super) fn availability_report(checks: &[InitCheck], evidence: &Value) -> Ava
         checks: vec![],
         facts: completion_facts,
         blocked_by: vec![],
-        unverified_by: vec![
-            "native.merge_readback",
-            "native.issue_closure_readback",
-            "main.installed_acceptance",
-        ],
+        unverified_by: vec!["native.merge_readback", "native.issue_closure_readback"],
         warnings: vec![],
-        next_step: "Read back the merged native request and every associated Issue, then verify installed/runtime acceptance on that exact main merge.",
+        next_step: "Read back the native request merged into the intended target and closure of every associated Issue that should close. Apply any project-specific acceptance requirements.",
     };
     AvailabilityReport {
         scope: "reported_init_facts_only",
-        note: "Layer conclusions use only facts included in this init --inspect report. Listed checks are not write authorization; absent lifecycle readbacks remain unverified, and no single overall conclusion is emitted.",
+        note: "Layer conclusions use only reported init facts. init_policy.required_checks governs init diagnostics, not native merge eligibility. Observed CI alone does not establish platform requirements or merge eligibility. Listed checks grant no write authorization; missing lifecycle readbacks remain unverified. No overall conclusion is emitted.",
         layers: vec![
             specification_development,
             protected_delivery,

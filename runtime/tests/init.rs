@@ -1161,11 +1161,7 @@ fn init_inspection_reports_three_independent_availability_layers() {
     );
     assert_eq!(layer("delivery_completion")["checks"], json!([]));
     assert_eq!(layer("delivery_completion")["facts"], json!([]));
-    for unknown in [
-        "native.merge_readback",
-        "native.issue_closure_readback",
-        "main.installed_acceptance",
-    ] {
+    for unknown in ["native.merge_readback", "native.issue_closure_readback"] {
         assert!(
             layer("delivery_completion")["unverified_by"]
                 .as_array()
@@ -1174,6 +1170,17 @@ fn init_inspection_reports_three_independent_availability_layers() {
             "missing lifecycle evidence {unknown} must remain visible"
         );
     }
+    assert!(
+        !availability
+            .to_string()
+            .contains("main.installed_acceptance")
+    );
+    assert!(
+        availability["note"]
+            .as_str()
+            .unwrap()
+            .contains("init_policy.required_checks")
+    );
     assert!(availability.get("overall").is_none());
     assert_eq!(
         json_report["evidence"]["operation_assessments"]["operations"]
@@ -1421,11 +1428,7 @@ fn init_inspection_keeps_merged_request_with_open_issue_unverified_without_lifec
     assert_eq!(completion["facts"], json!([]));
     assert_eq!(
         completion["unverified_by"],
-        json!([
-            "native.merge_readback",
-            "native.issue_closure_readback",
-            "main.installed_acceptance"
-        ])
+        json!(["native.merge_readback", "native.issue_closure_readback"])
     );
     let calls = f.state()["calls"].as_array().unwrap().clone();
     assert!(calls.iter().all(|call| {

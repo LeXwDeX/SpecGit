@@ -147,19 +147,23 @@ impl Fixture {
         ])
     }
     fn agents(&self) {
-        specgit::setup::project::install(
-            &specgit::setup::project::Options {
-                agents: vec![specgit::setup::Agent::Claude, specgit::setup::Agent::Codex],
-                opencode_claude_hooks: false,
-                uninstall: false,
-                dry_run: false,
-                rollback: None,
-            },
-            &self.root,
-            &self.private.join("agent-assets"),
-            &executable::binary().canonicalize().unwrap(),
-        )
-        .unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(specgit::setup::project::install_with_context(
+                &specgit::setup::project::Options {
+                    agents: vec![specgit::setup::Agent::Claude, specgit::setup::Agent::Codex],
+                    opencode_claude_hooks: false,
+                    uninstall: false,
+                    dry_run: false,
+                    rollback: None,
+                },
+                &specgit::setup::HookOptions::default(),
+                &self.root,
+                &self.private.join("agent-assets"),
+                &executable::binary().canonicalize().unwrap(),
+                &specgit::process::Process::default(),
+            ))
+            .unwrap();
     }
 }
 
@@ -512,7 +516,6 @@ fn receiptless_worktree_removes_only_unmodified_earlier_release_guidance() {
 fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
     for husky in [false, true] {
         let f = Fixture::new(true);
-        f.agents();
         if husky {
             fs::create_dir_all(f.root.join(".husky/_")).unwrap();
             git(
@@ -524,6 +527,7 @@ fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
                 ],
             );
         }
+        f.agents();
         assert!(
             executable::command()
                 .current_dir(&f.root)
@@ -541,19 +545,23 @@ fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
         initialize(&sibling);
         let sibling_private = PathBuf::from(git(&sibling, &["rev-parse", "--absolute-git-dir"]))
             .join("specgit-v2/agent-assets");
-        specgit::setup::project::install(
-            &specgit::setup::project::Options {
-                agents: vec![specgit::setup::Agent::Opencode],
-                opencode_claude_hooks: false,
-                uninstall: false,
-                dry_run: false,
-                rollback: None,
-            },
-            &sibling,
-            &sibling_private,
-            &executable::binary().canonicalize().unwrap(),
-        )
-        .unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(specgit::setup::project::install_with_context(
+                &specgit::setup::project::Options {
+                    agents: vec![specgit::setup::Agent::Opencode],
+                    opencode_claude_hooks: false,
+                    uninstall: false,
+                    dry_run: false,
+                    rollback: None,
+                },
+                &specgit::setup::HookOptions::default(),
+                &sibling,
+                &sibling_private,
+                &executable::binary().canonicalize().unwrap(),
+                &specgit::process::Process::default(),
+            ))
+            .unwrap();
         let sibling_before = inventory(&sibling);
         let exclude = PathBuf::from(git(
             &f.root,
