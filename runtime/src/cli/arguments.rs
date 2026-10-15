@@ -83,10 +83,10 @@ pub(super) enum Commands {
         /// Opt in only on a custom OpenCode supporting Claude-compatible command hooks.
         #[arg(long, conflicts_with_all = ["uninstall", "rollback"])]
         opencode_claude_hooks: bool,
-        /// Select hook purposes; repeat to combine. None adds no hooks and preserves existing hooks.
+        /// Select native Git guard or SessionStart/PreToolUse context; observe is declined. None preserves selected purposes.
         #[arg(long, value_enum, action = clap::ArgAction::Append, conflicts_with_all = ["uninstall", "rollback"])]
         hook_purpose: Vec<specgit::setup::HookPurpose>,
-        /// Explicitly confirm custom OpenCode asyncRewake capability (not verified delivery).
+        /// Legacy flag, retained for compatibility; no Stop callback or idle wake is installed.
         #[arg(long, conflicts_with_all = ["uninstall", "rollback"])]
         opencode_async_rewake: bool,
         #[arg(long, conflicts_with = "rollback")]
@@ -100,7 +100,7 @@ pub(super) enum Commands {
     Hook {
         #[arg(long)]
         event: String,
-        /// Bounded native observation for the host's asynchronous PostToolUse or Stop hook.
+        /// Legacy observer flag; allowed events report unsupported, old callbacks quietly return.
         #[arg(long)]
         observe: bool,
     },

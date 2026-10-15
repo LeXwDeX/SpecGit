@@ -135,7 +135,13 @@ pub(super) fn next_step(
         issue_ids,
         failed_checks,
         diagnostics,
-        message,
+        message: if requires_user_authorization {
+            format!(
+                "{message} The Agent can execute scoped writes under existing task authorization; seek permission only for missing scope."
+            )
+        } else {
+            message
+        },
         command,
         requires_user_authorization,
     }
@@ -226,7 +232,7 @@ fn checks_action(
             };
             (
                 ActionKind::WaitForChecks,
-                format!("Native checks are still running. {draft_context} Wait for their result, then refresh this request. {goal_context}"),
+                format!("Native checks are still running. {draft_context} Keep observing their result. The Agent can prepare review and mark a reviewed draft ready under existing task authorization while CI runs, where the platform allows it. Actual native required checks and review still govern merge. {goal_context}"),
                 Some(format!("specgit pr --status --request {request_id} --json")),
                 false,
                 Vec::new(),
@@ -234,7 +240,11 @@ fn checks_action(
         }
         EventState::Pending => (
             ActionKind::InspectChecks,
-            "No usable native check result is available yet. Inspect or refresh the checks before inferring review readiness or lifecycle completion.".into(),
+            if goal == Goal::Checks {
+                "The explicit checks goal remains open: no usable native check result is available. Refresh native evidence; absence is not a passing result."
+            } else {
+                "No usable native check result is available yet. Inspect the native check configuration and actual platform requirements; absent optional CI alone does not prevent review preparation, ready or authorized native delivery. The Agent can continue those steps under existing task authorization. This observation proves neither passing checks nor lifecycle completion."
+            }.into(),
             Some(format!("specgit pr --status --request {request_id} --json")),
             false,
             Vec::new(),

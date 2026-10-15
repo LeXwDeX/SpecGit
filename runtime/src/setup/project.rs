@@ -25,6 +25,8 @@ struct ProjectReceipt {
     skills: BTreeMap<String, String>,
     instructions: BTreeMap<String, HostRegistration>,
     hooks: BTreeMap<String, Registration>,
+    #[serde(default)]
+    purposes: BTreeMap<String, BTreeSet<HookPurpose>>,
 }
 
 /// New init and setup transactions share one lock and history. Existing setup
@@ -87,9 +89,9 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
     let receipt = if let Some(bytes) = &snapshot.bytes {
         let mut r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
             .map_err(|_| conflict("The project integration receipt is malformed."))?;
-        if ![1, 2, 3].contains(&r.version)
+        if ![1, 2, 3, 4].contains(&r.version)
             || (r.version == 1) != r.shared_root.is_some()
-            || if r.version == 3 {
+            || if r.version >= 3 {
                 !r.generation.as_ref().is_some_and(|generation| {
                     generation.len() == 64
                         && generation
@@ -99,6 +101,13 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             } else {
                 r.generation.is_some()
             }
+            || (r.version < 4 && !r.purposes.is_empty())
+            || r.purposes.len() > 4
+            || r.purposes.iter().any(|(host, purposes)| {
+                !["generic", "claude", "codex", "opencode"].contains(&host.as_str())
+                    || purposes.contains(&HookPurpose::None)
+                    || purposes.contains(&HookPurpose::Observe)
+            })
             || r.owner != "specgit"
             || !same_project_root(&r.root, root)?
             || r.agents.is_empty()
@@ -151,6 +160,21 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             || (r.hooks.contains_key("codex") && !r.agents.contains(&Agent::Codex))
             || r.instructions.contains_key("claude") != r.agents.contains(&Agent::Claude)
             || (r.hooks.contains_key("opencode") && !r.agents.contains(&Agent::Opencode))
+            || (r.version >= 4
+                && (r.purposes.len() != r.agents.len()
+                    || r.purposes.iter().any(|(host, purposes)| {
+                        let agent = match host.as_str() {
+                            "generic" => Agent::Generic,
+                            "claude" => Agent::Claude,
+                            "codex" => Agent::Codex,
+                            "opencode" => Agent::Opencode,
+                            _ => return true,
+                        };
+                        !r.agents.contains(&agent)
+                            || (purposes.contains(&HookPurpose::Context)
+                                != r.hooks.contains_key(host))
+                            || (agent == Agent::Generic && purposes.contains(&HookPurpose::Context))
+                    })))
             || (r.agents.contains(&Agent::Codex)
                 && !shared_guidance
                 && !r.instructions.contains_key("codex"))
@@ -181,7 +205,7 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
         r
     } else {
         ProjectReceipt {
-            version: 3,
+            version: 4,
             owner: "specgit".into(),
             root: root.into(),
             shared_root: None,
@@ -190,6 +214,7 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             skills: BTreeMap::new(),
             instructions: BTreeMap::new(),
             hooks: BTreeMap::new(),
+            purposes: BTreeMap::new(),
         }
     };
     Ok((snapshot, receipt))
@@ -440,18 +465,162 @@ pub fn install_with_hooks(
     install_plan(options, hooks, root, private, source, None, None)
 }
 
+fn purposes_for(previous: &ProjectReceipt, host: &str) -> (BTreeSet<HookPurpose>, bool) {
+    if previous.version >= 4 {
+        (
+            previous.purposes.get(host).cloned().unwrap_or_default(),
+            false,
+        )
+    } else {
+        recorded_purposes(previous.hooks.get(host))
+    }
+}
+fn wants_guard(previous: &ProjectReceipt) -> bool {
+    ["generic", "claude", "codex", "opencode"]
+        .iter()
+        .any(|host| purposes_for(previous, host).0.contains(&HookPurpose::Guard))
+}
+
+pub fn install_with_guard_plan(
+    options: &Options,
+    hooks: &HookOptions,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+    native: crate::guard::SetupPlan,
+) -> Result<Value, Diagnostic> {
+    if options.rollback.is_some() {
+        return Err(Diagnostic::input(
+            "Typed setup installation does not dispatch rollback; use the setup CLI --rollback with discovered Git context.",
+        ));
+    }
+    let mut prepared = None;
+    let mut evidence = install_plan(
+        options,
+        hooks,
+        root,
+        private,
+        source,
+        Some(&mut prepared),
+        None,
+    )?;
+    let mut prepared = prepared.expect("project plan");
+    merge_guard(root, &mut prepared, &mut evidence, native)?;
+    if options.dry_run {
+        return Ok(evidence);
+    }
+    apply_prepared(root, private, source, prepared, evidence, options.uninstall)
+}
+/// Discover Git layout before applying the existing typed setup transaction.
+pub async fn install_with_context(
+    options: &Options,
+    hooks: &HookOptions,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+    process: &crate::process::Process,
+) -> Result<Value, Diagnostic> {
+    if options.rollback.is_some() {
+        return Err(Diagnostic::input(
+            "Typed setup installation does not dispatch rollback; use the setup CLI --rollback with discovered Git context.",
+        ));
+    }
+    let mut prepared = None;
+    let mut evidence = install_plan(
+        options,
+        hooks,
+        root,
+        private,
+        source,
+        Some(&mut prepared),
+        None,
+    )?;
+    let mut prepared = prepared.expect("project plan");
+    let native = crate::guard::setup_plan(process, root, prepared.guard_enabled).await?;
+    merge_guard(root, &mut prepared, &mut evidence, native)?;
+    if options.dry_run {
+        return Ok(evidence);
+    }
+    apply_prepared(root, private, source, prepared, evidence, options.uninstall)
+}
+fn merge_guard(
+    root: &Path,
+    prepared: &mut Prepared,
+    evidence: &mut Value,
+    native: crate::guard::SetupPlan,
+) -> Result<(), Diagnostic> {
+    if native.root != root || native.enabled != prepared.guard_enabled {
+        return Err(Diagnostic::input(
+            "The discovered native guard plan belongs to a different project or purpose selection.",
+        ));
+    }
+    if native.changes.iter().any(|c| {
+        c.path.file_name().and_then(|n| n.to_str()) == Some("setup-guard-hooks.json")
+            && !c.unchanged()
+            && c.after.is_some()
+    }) {
+        prepared.observations.extend(
+            native
+                .changes
+                .iter()
+                .filter(|c| {
+                    c.unchanged()
+                        && matches!(
+                            c.path.file_name().and_then(|n| n.to_str()),
+                            Some("pre-commit" | "pre-push")
+                        )
+                })
+                .map(|c| c.path.clone()),
+        );
+    }
+    prepared.native_serialization = Some(native.serialization);
+    prepared.native_inventory = Some(native.inventory);
+    prepared.allowed.extend(native.allowed);
+    prepared.dependencies.extend(native.dependencies);
+    prepared.changes.extend(native.changes);
+    evidence["native_guard"] = native.evidence;
+    evidence["assets"] = json!(prepared.changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect::<Vec<_>>());
+    Ok(())
+}
+pub(crate) fn verify_dependencies(dependencies: &[Change]) -> Result<(), Diagnostic> {
+    for dependency in dependencies {
+        let snapshot = Snapshot::read(&dependency.path)?;
+        if !(Change {
+            path: dependency.path.clone(),
+            before: dependency.before.clone(),
+            after: snapshot.bytes,
+            permissions: snapshot.permissions,
+        })
+        .unchanged()
+        {
+            return Err(Diagnostic::new(
+                Code::ConcurrentEdit,
+                "setup",
+                "A native guard dependency changed after planning.",
+                "Preview again with the current Git configuration and ownership.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 struct Prepared {
     changes: Vec<Change>,
     observations: Vec<PathBuf>,
     snapshot: Snapshot,
     executable: Option<Snapshot>,
     allowed: Vec<PathBuf>,
+    dependencies: Vec<Change>,
+    guard_enabled: bool,
+    native_serialization: Option<PathBuf>,
+    native_inventory: Option<crate::guard::Inventory>,
 }
 
 pub(crate) struct Initialization {
     pub changes: Vec<Change>,
     pub observations: Vec<PathBuf>,
     pub executable: Option<(PathBuf, Snapshot)>,
+    pub guard_enabled: bool,
 }
 
 pub(crate) fn recheck_executable(
@@ -514,6 +683,7 @@ pub(crate) fn initialization_changes(
         changes: prepared.changes,
         observations: prepared.observations,
         executable: prepared.executable.map(|snapshot| (source, snapshot)),
+        guard_enabled: prepared.guard_enabled,
     })
 }
 
@@ -570,6 +740,16 @@ fn install_plan(
         }
         let shared = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
         let rolled_back = if store_path.join("transactions").join(id).exists() {
+            if shared.rollback_paths(id)?.iter().any(|path| {
+                matches!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("pre-commit" | "pre-push" | "guard-hooks.json" | "setup-guard-hooks.json")
+                )
+            }) {
+                return Err(Diagnostic::input(
+                    "Native guard rollback requires discovered worktree consumers; use setup --rollback through the CLI.",
+                ));
+            }
             shared.rollback(id)?
         } else {
             // Hold the new shared lock while recovering a pre-migration journal.
@@ -627,14 +807,10 @@ fn install_plan(
         ));
     }
     let custom_opencode = options.opencode_claude_hooks || previous.hooks.contains_key("opencode");
-    if hooks.opencode_async_rewake && (!selected.contains(&Agent::Opencode) || !custom_opencode) {
-        return Err(Diagnostic::input(
-            "Async rewake requires a selected custom OpenCode Claude-compatible host.",
-        ));
-    }
+
     let mut plans = BTreeMap::new();
     let mut purpose_evidence = serde_json::Map::new();
-    let mut any_wake = false;
+    let mut receipt_purposes = BTreeMap::new();
     for (agent, host) in [
         (Agent::Generic, "generic"),
         (Agent::Claude, "claude"),
@@ -644,47 +820,33 @@ fn install_plan(
         if !selected.contains(&agent) {
             continue;
         }
-        let (mut effective, old_wake) = recorded_purposes(previous.hooks.get(host));
+        let (mut effective, _old_wake) = purposes_for(&previous, host);
         let mut wanted = requested.clone();
         if wanted.is_empty() && !previous.agents.contains(&agent) && options.agents.contains(&agent)
         {
-            wanted.extend([HookPurpose::Guard, HookPurpose::Context]);
+            if matches!(agent, Agent::Claude | Agent::Codex)
+                || (agent == Agent::Opencode && custom_opencode)
+            {
+                wanted.extend([HookPurpose::Guard, HookPurpose::Context]);
+            }
             if matches!(agent, Agent::Claude | Agent::Codex) {
                 wanted.insert(HookPurpose::Observe);
             }
         }
         effective.extend(wanted.iter().copied().filter(|p| *p != HookPurpose::None));
-        if effective.contains(&HookPurpose::Observe) && !effective.contains(&HookPurpose::Context) {
-            return Err(Diagnostic::input(
-                "Observe requires effective context hooks.",
-            ));
-        }
-        if host == "opencode"
-            && hooks.opencode_async_rewake
-            && (!effective.contains(&HookPurpose::Observe)
-                || !effective.contains(&HookPurpose::Context))
-        {
-            return Err(Diagnostic::input(
-                "Async rewake requires effective observe and context purposes.",
-            ));
-        }
         let mut declined = vec![];
         for purpose in effective.clone() {
-            let refusal = if agent == Agent::Generic
-                || (agent == Agent::Opencode && !custom_opencode)
+            let refusal = if purpose == HookPurpose::Observe {
+                Some((
+                    "unsupported",
+                    "Automatic observation and idle wake are unsupported on SessionStart/PreToolUse; use bounded specgit watch/inbox tools.",
+                ))
+            } else if purpose == HookPurpose::Context
+                && (agent == Agent::Generic || (agent == Agent::Opencode && !custom_opencode))
             {
                 Some((
                     "unsupported",
-                    "This host integration installs guidance and Skill only.",
-                ))
-            } else if agent == Agent::Opencode
-                && purpose == HookPurpose::Observe
-                && !old_wake
-                && !hooks.opencode_async_rewake
-            {
-                Some((
-                    "unknown",
-                    "Async rewake capability is unknown; explicitly opt in with --opencode-async-rewake or use bounded watch manually.",
+                    "This host has no verified SessionStart/PreToolUse integration; use the project Skill and bounded tools.",
                 ))
             } else {
                 None
@@ -694,21 +856,26 @@ fn install_plan(
                 declined.push(json!({"purpose":purpose,"status":status,"reason":reason}));
             }
         }
-        let wake = host == "opencode"
-            && effective.contains(&HookPurpose::Observe)
-            && (old_wake || hooks.opencode_async_rewake);
-        any_wake |= wake && !options.uninstall;
+        if hooks.opencode_async_rewake {
+            declined.push(json!({"purpose":"observe","status":"unsupported","reason":"The legacy async-rewake flag is retained for parsing only; no Stop callback or idle wake is installed. Use bounded specgit watch/inbox."}));
+        }
         purpose_evidence.insert(host.into(), json!({"requested":wanted,"installed":if options.uninstall { BTreeSet::new() } else { effective.clone() },"declined":declined}));
-        if !options.uninstall && !effective.is_empty() {
-            plans.insert(host, purpose_manifest(source, agent, &effective, wake)?);
+        if !options.uninstall {
+            receipt_purposes.insert(host.to_owned(), effective.clone());
+        }
+        if !options.uninstall && effective.contains(&HookPurpose::Context) {
+            plans.insert(host, purpose_manifest(source, agent, &effective, false)?);
         }
     }
+    let guard_enabled = receipt_purposes
+        .values()
+        .any(|purposes| purposes.contains(&HookPurpose::Guard));
     let needs_executable = !plans.is_empty();
     let executable = needs_executable
         .then(|| shared_executable(source, root))
         .transpose()?;
     let mut receipt = ProjectReceipt {
-        version: 3,
+        version: 4,
         owner: "specgit".into(),
         root: root.into(),
         shared_root: None,
@@ -717,7 +884,9 @@ fn install_plan(
         skills: BTreeMap::new(),
         instructions: BTreeMap::new(),
         hooks: BTreeMap::new(),
+        purposes: BTreeMap::new(),
     };
+    receipt.purposes = receipt_purposes;
     let mut changes = migration;
     let receipt_path = private.join("ownership.json");
     let mut skills: BTreeSet<String> = previous.skills.keys().cloned().collect();
@@ -970,9 +1139,6 @@ fn install_plan(
     let summary: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"opencode_claude_hooks":custom_opencode,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
     evidence["hook_purposes"] = Value::Object(purpose_evidence);
-    if any_wake {
-        evidence["host_delivery"]["idle_wake"] = json!("configured_not_verified");
-    }
     if let Some(planned) = planned {
         *planned = Some(Prepared {
             changes,
@@ -980,8 +1146,23 @@ fn install_plan(
             snapshot,
             executable,
             allowed,
+            dependencies: Vec::new(),
+            guard_enabled,
+            native_serialization: None,
+            native_inventory: None,
         });
         return Ok(evidence);
+    }
+    if guard_enabled
+        || private
+            .parent()
+            .unwrap_or(private)
+            .join("setup-guard-hooks.json")
+            .exists()
+    {
+        return Err(Diagnostic::input(
+            "Native Git guard planning requires a discovered Git context; use install_with_guard_plan or the setup CLI.",
+        ));
     }
     if options.dry_run {
         return Ok(evidence);
@@ -996,6 +1177,10 @@ fn install_plan(
             snapshot,
             executable,
             allowed,
+            dependencies: Vec::new(),
+            guard_enabled,
+            native_serialization: None,
+            native_inventory: None,
         },
         evidence,
         options.uninstall,
@@ -1016,12 +1201,23 @@ fn apply_prepared(
         snapshot,
         executable,
         allowed,
+        dependencies,
+        guard_enabled: _,
+        native_serialization,
+        native_inventory,
     } = prepared;
     let store_path = transaction_store(private);
     #[cfg(feature = "test-fixtures")]
     if let Some(marker) = std::env::var_os("SPECGIT_FIXTURE_SETUP_PLAN_READY") {
         std::fs::write(marker, b"planned")
             .map_err(|_| Diagnostic::input("Fixture plan marker is unavailable."))?;
+    }
+    let _native_lock = native_serialization
+        .as_ref()
+        .map(|path| AssetStore::lock(path, std::slice::from_ref(path), Duration::from_secs(2)))
+        .transpose()?;
+    if let Some(inventory) = &native_inventory {
+        inventory.verify()?;
     }
     let store = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
     if Snapshot::read(&private.join("ownership.json"))?.digest() != snapshot.digest() {
@@ -1053,7 +1249,12 @@ fn apply_prepared(
             ));
         }
     }
-    evidence["transaction"] = json!(store.apply_recording(changes, &observations)?);
+    verify_dependencies(&dependencies)?;
+    evidence["transaction"] = json!(store.apply_recording_checked(
+        changes,
+        &observations,
+        |_| verify_dependencies(&dependencies)
+    )?);
     evidence["written"] = json!(true);
     evidence["registration"] = json!(if uninstall {
         "not_registered"
@@ -1066,6 +1267,25 @@ fn apply_prepared(
 /// Inspect only assets named by this worktree's receipt. A missing receipt
 /// means no project integration was selected here.
 pub fn health_plan(
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Option<assets::MaintenancePlan>, Diagnostic> {
+    let (_, previous) = read(root, private)?;
+    if wants_guard(&previous)
+        || private
+            .parent()
+            .unwrap_or(private)
+            .join("setup-guard-hooks.json")
+            .exists()
+    {
+        return Err(Diagnostic::input(
+            "Native Git guard maintenance requires asynchronous Git discovery; use health_plan_with_context.",
+        ));
+    }
+    health_plan_inner(root, private, source)
+}
+fn health_plan_inner(
     root: &Path,
     private: &Path,
     source: &Path,
@@ -1136,7 +1356,7 @@ pub fn health_plan(
         ));
     }
     let mut next = ProjectReceipt {
-        version: 3,
+        version: 4,
         owner: "specgit".into(),
         root: root.into(),
         shared_root: None,
@@ -1145,7 +1365,20 @@ pub fn health_plan(
         skills: BTreeMap::new(),
         instructions: BTreeMap::new(),
         hooks: BTreeMap::new(),
+        purposes: BTreeMap::new(),
     };
+    for (agent, host) in [
+        (Agent::Generic, "generic"),
+        (Agent::Claude, "claude"),
+        (Agent::Codex, "codex"),
+        (Agent::Opencode, "opencode"),
+    ] {
+        if previous.agents.contains(&agent) {
+            let mut purposes = purposes_for(&previous, host).0;
+            purposes.remove(&HookPurpose::Observe);
+            next.purposes.insert(host.to_owned(), purposes);
+        }
+    }
     let mut changes = Vec::new();
     let mut dependencies = vec![Change {
         path: receipt_path.clone(),
@@ -1243,7 +1476,9 @@ pub fn health_plan(
                 )
             })?;
         add_proofs(proof);
-        let (purposes, wake) = recorded_purposes(Some(old));
+        let (mut purposes, _) = purposes_for(&previous, host);
+        purposes.remove(&HookPurpose::Observe);
+        next.purposes.insert(host.clone(), purposes.clone());
         let agent = match host.as_str() {
             "claude" => Agent::Claude,
             "codex" => Agent::Codex,
@@ -1257,7 +1492,7 @@ pub fn health_plan(
                 ));
             }
         };
-        let entries = purpose_manifest(source, agent, &purposes, wake)?;
+        let entries = purpose_manifest(source, agent, &purposes, false)?;
         let document = input::json(current.bytes.as_deref().expect("checked"), 1_048_576, 32)?;
         let hooks = if host == "opencode" {
             &document
@@ -1281,7 +1516,9 @@ pub fn health_plan(
         )?;
         let mut registration = old.clone();
         registration.entries = entries;
-        next.hooks.insert(host.clone(), registration);
+        if !registration.entries.is_empty() {
+            next.hooks.insert(host.clone(), registration);
+        }
         changes.push(change);
     }
     if let Some(executable) = executable {
@@ -1324,6 +1561,160 @@ pub fn health_plan(
     Ok(Some(plan))
 }
 
+struct ExclusionHealth {
+    change: Change,
+    dependencies: Vec<Change>,
+    allowed: PathBuf,
+}
+
+async fn exclusion_health(
+    process: &crate::process::Process,
+    root: &Path,
+    private: &Path,
+    changes: &[Change],
+) -> Result<Option<ExclusionHealth>, Diagnostic> {
+    let exclude = crate::local_exclude::path(process, root).await?;
+    let observed = Snapshot::read(&exclude)?;
+    let state = private.parent().unwrap_or(private);
+    let stores = [transaction_store(private), private.to_owned()];
+    let mut dependencies = None;
+    for receipt in [private.join("ownership.json"), state.join("guidance.json")] {
+        let snapshot = Snapshot::read(&receipt)?;
+        if snapshot.bytes.is_none() {
+            continue;
+        }
+        if observed.bytes.is_none() {
+            if AssetStore::selected_missing_asset_at(&stores, &receipt, &snapshot, &exclude)? {
+                return Err(Diagnostic::new(
+                    Code::OwnershipConflict,
+                    "local_exclude",
+                    "The selected Git info/exclude file is missing; its manual rules cannot be reconstructed safely.",
+                    "Preserve transaction evidence, restore the original exclude file and its user rules, then preview doctor again. No file was recreated.",
+                ));
+            }
+        } else if let Some(mut proof) = AssetStore::owned_pair_across_at(
+            &stores, &receipt, &snapshot, &exclude, &observed, None,
+        )? {
+            proof.push(Change {
+                path: receipt,
+                before: snapshot.clone(),
+                after: snapshot.bytes,
+                permissions: snapshot.permissions,
+            });
+            dependencies = Some(proof);
+            break;
+        }
+    }
+    let Some(mut dependencies) = dependencies else {
+        return Ok(None);
+    };
+    let mut shared_skills = Vec::new();
+    // A lost block has no surviving sibling rules. Reconstruct only exact
+    // generated Skill paths whose sibling receipt and permissions still prove ownership.
+    for sibling in crate::config::worktree::siblings(process, root).await? {
+        let sibling_exclude = crate::local_exclude::path(process, &sibling.root).await?;
+        if sibling_exclude != exclude
+            && sibling_exclude.canonicalize().ok() != exclude.canonicalize().ok()
+        {
+            continue;
+        }
+        let sibling_private = sibling.private_root.join("agent-assets");
+        let receipt = sibling_private.join("ownership.json");
+        let (snapshot, selected) = read(&sibling.root, &sibling_private)?;
+        dependencies.push(Change {
+            path: receipt.clone(),
+            before: snapshot.clone(),
+            after: snapshot.bytes.clone(),
+            permissions: snapshot.permissions.clone(),
+        });
+        let sibling_stores = [transaction_store(&sibling_private), sibling_private.clone()];
+        let Some(proof) = AssetStore::owned_pair_across_at(
+            &sibling_stores,
+            &receipt,
+            &snapshot,
+            &exclude,
+            &observed,
+            None,
+        )?
+        else {
+            continue;
+        };
+        dependencies.extend(proof);
+        for (relative, digest) in &selected.skills {
+            let path = sibling.root.join(relative);
+            let asset = Snapshot::read(&path)?;
+            let proof = owned_pair(&sibling_private, &receipt, &snapshot, &path, &asset, Some(digest))?.ok_or_else(|| conflict_at("local_exclude", &path, None, "A shared Skill rule cannot be restored without current sibling ownership and permissions."))?;
+            dependencies.extend(proof);
+            dependencies.push(Change {
+                path,
+                before: asset.clone(),
+                after: asset.bytes,
+                permissions: asset.permissions,
+            });
+            shared_skills.push(relative.clone());
+        }
+    }
+    let change =
+        crate::local_exclude::project_change_with_shared(root, &exclude, changes, &shared_skills)?;
+    if !(Change {
+        path: exclude.clone(),
+        before: observed.clone(),
+        after: change.before.bytes.clone(),
+        permissions: change.before.permissions.clone(),
+    })
+    .unchanged()
+    {
+        return Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "local_exclude",
+            "Git exclusion rules changed during ownership verification.",
+            "Preserve the current rules and preview doctor again.",
+        ));
+    }
+    dependencies.push(Change {
+        path: exclude.clone(),
+        before: observed.clone(),
+        after: observed.bytes,
+        permissions: observed.permissions,
+    });
+    let allowed = exclude
+        .parent()
+        .ok_or_else(|| Diagnostic::input("Git exclude parent is unavailable."))?
+        .to_owned();
+    Ok(Some(ExclusionHealth {
+        change,
+        dependencies,
+        allowed,
+    }))
+}
+
+pub async fn health_plan_with_context(
+    process: &Process,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Option<assets::MaintenancePlan>, Diagnostic> {
+    let (_, previous) = read(root, private)?;
+    let Some(mut plan) = health_plan_inner(root, private, source)? else {
+        return Ok(None);
+    };
+    let native = crate::guard::setup_plan(process, root, wants_guard(&previous)).await?;
+    if let Some(exclusion) =
+        exclusion_health(process, root, private, plan.planned_changes()).await?
+    {
+        plan.extend(
+            vec![exclusion.change],
+            exclusion.dependencies,
+            vec![exclusion.allowed],
+        );
+    }
+    plan.serialize_with(native.serialization);
+    let inventory = native.inventory;
+    plan = plan.with_precondition(move || inventory.verify());
+    plan.extend(native.changes, native.dependencies, native.allowed);
+    Ok(Some(plan))
+}
+
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     run_with_hooks(options, HookOptions::default(), process, cwd).await
 }
@@ -1358,7 +1749,7 @@ pub async fn run_with_hooks(
                 return Err(Diagnostic::input("Use an exact reported transaction id."));
             }
             let store_path = transaction_store(&private);
-            let allowed = vec![root.clone(), git_dir.join("specgit-v2"), exclude.parent().ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?.to_owned()];
+            let allowed = vec![crate::config::worktree::hooks(&process, &root).await?, root.clone(), git_dir.join("specgit-v2"), exclude.parent().ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?.to_owned()];
             let shared = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
             let (rolled_back, retained) = if store_path.join("transactions").join(id).exists() {
                 crate::config::worktree::rollback(&shared, &process, &root, &exclude, id).await?
@@ -1378,7 +1769,9 @@ pub async fn run_with_hooks(
             Some(&mut prepared),
             Some(&exclude),
         )?;
-        let prepared = prepared.expect("project plan");
+        let mut prepared = prepared.expect("project plan");
+        let native = crate::guard::setup_plan(&process, &root, prepared.guard_enabled).await?;
+        merge_guard(&root, &mut prepared, &mut evidence, native)?;
         evidence["local_exclusion"] =
             crate::local_exclude::inspect(&process, &root, &exclude, &prepared.changes).await?;
         if options.dry_run {

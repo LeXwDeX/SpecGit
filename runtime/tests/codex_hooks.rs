@@ -1,6 +1,5 @@
 #![cfg(feature = "test-fixtures")]
-#[path = "support/acceptance.rs"]
-mod acceptance;
+#[allow(dead_code)]
 #[path = "support/delivery.rs"]
 mod delivery;
 use serde_json::{Value, json};
@@ -87,6 +86,17 @@ fn event(
         &serde_json::to_vec(&payload).unwrap(),
     )
 }
+fn run_command(mut command: Command, name: &str, bytes: &[u8]) -> Output {
+    let mut child = command
+        .args(["hook", "--event", name])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    child.wait_with_output().unwrap()
+}
 fn payload(f: &delivery::Fixture, name: &str) -> Value {
     json!({"session_id":"codex-lifecycle", "hook_event_name":name,"cwd":f.root})
 }
@@ -121,175 +131,102 @@ fn codex_generated_command_delivers_session_context() {
 }
 
 #[test]
-fn codex_host_enforces_checkpoint_then_runs_tools_and_stops_once() {
+fn codex_pre_tool_use_never_denies_ordinary_tools_and_observers_are_absent() {
     let f = delivery::Fixture::new("github");
     let settings = setup(&f);
-    for tool in ["Read", "Glob", "Grep", "unknown"] {
+    for tool in [
+        "Read",
+        "Glob",
+        "Grep",
+        "Write",
+        "Edit",
+        "apply_patch",
+        "Bash",
+        "unknown",
+    ] {
         let mut p = payload(&f, "PreToolUse");
         p["tool_name"] = json!(tool);
-        p["tool_input"] = json!({"file_path":f.root.join(".specgit.yaml")});
+        p["tool_input"] = json!({"file_path":f.root.join(".specgit.yaml"),"command":"git push"});
         let out = event(&f, &settings, "PreToolUse", false, p);
-        assert!(out.status.success());
+        assert!(
+            out.status.success(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         assert!(
             out.stdout.is_empty(),
             "{tool}: {}",
             String::from_utf8_lossy(&out.stdout)
         );
-    }
-    for (tool, input) in [
-        (
-            "Write",
-            json!({"file_path":f.root.join(".specgit.yaml"),"content":"changed"}),
-        ),
-        (
-            "Edit",
-            json!({"file_path":f.root.join(".specgit.yaml"),"old_string":"2","new_string":"3"}),
-        ),
-        (
-            "apply_patch",
-            json!({"patch":"*** Begin Patch\n*** Update File: .specgit.yaml\n@@\n-version: 2\n+version: 3\n*** End Patch"}),
-        ),
-        ("Bash", json!({"command":"printf changed > .specgit.yaml"})),
-    ] {
-        let original = fs::read(f.root.join(".specgit.yaml")).unwrap();
-        let mut p = payload(&f, "PreToolUse");
-        p["tool_name"] = json!(tool);
-        p["tool_input"] = input;
-        let decision = value(&event(&f, &settings, "PreToolUse", false, p));
-        // The simulated host must gate the actual tool execution on the response.
-        if decision["hookSpecificOutput"]["permissionDecision"] != "deny" {
-            fs::write(f.root.join(".specgit.yaml"), "changed").unwrap();
-        }
-        assert_eq!(
-            decision["hookSpecificOutput"]["permissionDecision"], "deny",
-            "{tool}: {decision}"
-        );
         assert!(
-            decision["hookSpecificOutput"]["permissionDecisionReason"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty())
+            out.stderr.is_empty(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), original);
     }
-    fs::write(
-        f.root.join(".specgit.yaml"),
-        "version: 2\nremote: origin\nprovider: github\nvalidation:\n  labels: kind\n# dirty\n",
-    )
-    .unwrap();
-    let stop = value(&event(&f, &settings, "Stop", false, payload(&f, "Stop")));
-    assert_eq!(stop["decision"], "block", "{stop}");
-    let mut repeated = payload(&f, "Stop");
-    repeated["stop_hook_active"] = json!(true);
-    assert!(
-        event(&f, &settings, "Stop", false, repeated)
-            .stdout
-            .is_empty()
-    );
-    let selected = f.run(&["issue", "--create-labels", "feat: first spec"]);
-    assert_eq!(selected["exit"], 0, "{selected}");
-    let writes = f.writes();
-    let mut p = payload(&f, "PreToolUse");
-    p["tool_name"] = json!("Write");
-    p["tool_input"] = json!({"file_path":f.root.join(".specgit.yaml")});
-    let allowed = event(&f, &settings, "PreToolUse", false, p);
-    assert!(allowed.status.success());
-    assert!(allowed.stdout.is_empty());
-    let content = fs::read_to_string(f.root.join(".specgit.yaml")).unwrap()
-        + "# host executed tool after allow\n";
-    fs::write(f.root.join(".specgit.yaml"), &content).unwrap();
-    assert_eq!(
-        fs::read_to_string(f.root.join(".specgit.yaml")).unwrap(),
-        content
-    );
     for name in ["PostToolUse", "Stop"] {
-        let mut p = payload(&f, name);
-        p["tool_name"] = json!("Write");
-        p["tool_input"] = json!({"file_path":f.root.join(".specgit.yaml")});
-        let out = event(&f, &settings, name, false, p);
+        let out = run_command(
+            f.command(&[]),
+            name,
+            &serde_json::to_vec(&payload(&f, name)).unwrap(),
+        );
         assert!(out.status.success());
-        if name == "PostToolUse" {
-            assert!(out.stdout.is_empty());
-        } else if !out.stdout.is_empty() {
-            assert!(value(&out).get("decision").is_none());
-        }
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.is_empty());
     }
-    assert_eq!(f.writes(), writes);
+    for event in ["SessionStart", "PreToolUse"] {
+        let groups = settings["hooks"][event].as_array().unwrap();
+        assert!(
+            groups
+                .iter()
+                .flat_map(|g| g["hooks"].as_array().unwrap())
+                .all(|hook| !hook["async"].as_bool().unwrap_or(false))
+        );
+    }
+    assert_eq!(settings["hooks"].as_object().unwrap().len(), 2);
 }
 
 #[test]
-fn codex_registered_observers_deliver_pending_notices_without_platform_writes() {
-    for provider in ["github", "gitlab"] {
-        let f = acceptance::fixture(provider);
-        let settings = setup(&f);
-        let writes = f.writes();
-        {
-            let name = "PostToolUse";
-            let mut p = payload(&f, name);
-            p["tool_name"] = json!("Bash");
-            p["tool_input"] = json!({"command":"git add --dry-run .specgit.yaml"});
-            let notice = value(&event(&f, &settings, name, true, p));
-            let text = notice["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap();
-            assert!(
-                text.contains("not acknowledged") && text.contains("never grant authorization"),
-                "{text}"
-            );
-            assert!(notice.get("decision").is_none());
-            let inbox = f.run(&[
-                "inbox",
-                "--request",
-                "41",
-                "--session",
-                "codex-lifecycle",
-                "--goal",
-                "lifecycle",
-                "--no-refresh",
-            ]);
-            assert_eq!(inbox["exit"], 0, "{inbox}");
-            let ids = inbox["evidence"]["pending_event_ids"].as_array().unwrap();
-            assert!(!ids.is_empty(), "{inbox}");
-            assert!(ids.iter().any(|id| text.contains(id.as_str().unwrap())));
-        }
-        // Synchronous PostToolUse delivers local pending context without refreshing forge state.
-        let calls = f.state()["calls"].clone();
-        let mut sync = payload(&f, "PostToolUse");
-        sync["tool_name"] = json!("Write");
-        sync["tool_input"] = json!({"file_path":f.root.join(".specgit.yaml")});
-        let notice = value(&event(&f, &settings, "PostToolUse", false, sync));
+fn codex_observation_purpose_is_declined_without_registering_observers() {
+    let f = delivery::Fixture::new("github");
+    let result = f.run(&[
+        "setup",
+        "--agent",
+        "codex",
+        "--hook-purpose",
+        "guard",
+        "--hook-purpose",
+        "context",
+        "--hook-purpose",
+        "observe",
+    ]);
+    assert_eq!(result["exit"], 0, "{result}");
+    let settings: Value =
+        serde_json::from_slice(&fs::read(f.root.join(".codex/hooks.json")).unwrap()).unwrap();
+    assert_eq!(settings["hooks"].as_object().unwrap().len(), 2);
+    for event in ["SessionStart", "PreToolUse"] {
+        assert!(settings["hooks"][event].as_array().is_some(), "{settings}");
         assert!(
-            notice["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap()
-                .contains("Receipt acknowledgement is explicit")
-        );
-        assert_eq!(f.state()["calls"], calls);
-        let pending = f.run(&[
-            "inbox",
-            "--request",
-            "41",
-            "--session",
-            "codex-lifecycle",
-            "--goal",
-            "lifecycle",
-            "--no-refresh",
-        ]);
-        assert!(
-            !pending["evidence"]["pending_event_ids"]
+            settings["hooks"][event]
                 .as_array()
                 .unwrap()
-                .is_empty(),
-            "receipt must not acknowledge delivery: {pending}"
+                .iter()
+                .flat_map(|g| g["hooks"].as_array().unwrap())
+                .all(|hook| !hook["async"].as_bool().unwrap_or(false))
         );
-        let mut repeated = payload(&f, "Stop");
-        repeated["stop_hook_active"] = json!(true);
-        assert!(
-            event(&f, &settings, "Stop", false, repeated)
-                .stdout
-                .is_empty()
-        );
-        assert_eq!(f.writes(), writes);
     }
+    assert_eq!(
+        result["evidence"]["host_delivery"]["idle_wake"],
+        "not_supported"
+    );
+    assert!(
+        result["evidence"]["hook_purposes"]["codex"]["declined"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["purpose"] == "observe"),
+        "{result}"
+    );
 }
 
 #[test]
@@ -302,7 +239,16 @@ fn codex_registered_input_failures_remain_nonblocking() {
         vec![b'x'; 1_048_577],
     ] {
         let out = execute(&f, entry(&settings, "SessionStart", false), &input);
-        assert!(value(&out).get("systemMessage").is_some());
+        assert!(out.status.success());
+        if !out.stdout.is_empty() {
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert!(value.get("decision").is_none());
+            assert!(
+                value
+                    .pointer("/hookSpecificOutput/permissionDecision")
+                    .is_none()
+            );
+        }
     }
 }
 
@@ -397,11 +343,7 @@ fn codex_generated_command_runs_shared_executable_with_shell_metacharacters() {
         rollback: None,
     };
     let hooks = HookOptions {
-        purposes: vec![
-            HookPurpose::Guard,
-            HookPurpose::Context,
-            HookPurpose::Observe,
-        ],
+        purposes: vec![HookPurpose::Context, HookPurpose::Observe],
         opencode_async_rewake: false,
     };
     project::install_with_hooks(
@@ -425,8 +367,8 @@ fn codex_generated_command_runs_shared_executable_with_shell_metacharacters() {
     let mut p = payload(&f, "PreToolUse");
     p["tool_name"] = json!("Write");
     p["tool_input"] = json!({"file_path":f.root.join(".specgit.yaml")});
-    assert_eq!(
-        value(&event(&f, &settings, "PreToolUse", false, p))["hookSpecificOutput"]["permissionDecision"],
-        "deny"
-    );
+    let output = event(&f, &settings, "PreToolUse", false, p);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }

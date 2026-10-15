@@ -160,8 +160,8 @@ the local declaration in every other clone or worktree that later fast-forwards,
 pulls or switches across that commit. Back up `.specgit.yaml` in those checkouts
 first; afterwards restore it and rerun `specgit init` there. A worktree whose
 declaration is missing while its SpecGit private state (guidance receipt, routing
-or checkpoint) remains is not treated as uninitialized: Git guard and agent edit
-hooks fail closed with this remedy, `init --check` reports its `private_state`
+or checkpoint) remains is not treated as uninitialized: Git guard fails closed,
+host hooks offer recovery context, and `init --check` reports its `private_state`
 without claiming `initial_adoption`, and `remove` in a sibling still counts it as
 a consumer of shared assets. Project `setup` writes documented checkout assets
 and keeps its receipt under that worktree's Git directory; 2.4 has no global

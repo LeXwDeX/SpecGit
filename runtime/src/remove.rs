@@ -242,6 +242,9 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
         value["shares_hooks"] = json!(shares_hooks);
         plan.consumers.push(value);
     }
+    let exclusion_consumers =
+        config::worktree::sibling_exclusion_consumers(process, &layout.root).await?;
+    let hook_consumers = config::worktree::sibling_hook_consumers(process, &layout.root).await?;
     let config_path = layout.root.join(".specgit.yaml");
     let declaration = match config::read(&layout.root) {
         Ok(d) => d,
@@ -388,7 +391,7 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             Err(d),
         ),
     }
-    if plan.consumers.is_empty() {
+    if exclusion_consumers.is_empty() {
         plan.add(
             &layout.exclude,
             "exact_shared_exclude_block",
@@ -397,39 +400,48 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
     } else {
         plan.preserve(&layout.exclude, "shared_initialized_worktree");
     }
-    let guard_receipt = layout.private.join("guard-hooks.json");
-    if guard_receipt.exists() {
-        let result = guard::plan(process, &layout.root, true).await;
-        let shared = plan.consumers.iter().any(|c| c["shares_hooks"] == true);
-        match result {
-            Ok((changes, hooks, _)) => {
-                if changes.iter().any(|c| {
-                    c.path != guard_receipt
-                        && c.path != hooks.join("pre-commit")
-                        && c.path != hooks.join("pre-push")
-                }) {
-                    plan.add(
-                        &guard_receipt,
-                        "guard_receipt",
-                        Err(conflict(
+    for receipt_name in ["guard-hooks.json", "setup-guard-hooks.json"] {
+        let guard_receipt = layout.private.join(receipt_name);
+        if guard_receipt.exists() {
+            let result = guard::plan_named(process, &layout.root, true, receipt_name).await;
+            let shared = hook_consumers
+                .iter()
+                .any(|consumer| config::worktree::shares_hooks(consumer, &layout.hooks));
+            match result {
+                Ok((changes, hooks, _)) => {
+                    if changes.iter().any(|c| {
+                        c.path != guard_receipt
+                            && c.path != hooks.join("pre-commit")
+                            && c.path != hooks.join("pre-push")
+                    }) {
+                        plan.add(
                             &guard_receipt,
-                            "Recorded hook paths differ from the effective hook directory.",
-                        )),
-                    );
-                } else if shared {
-                    for c in changes {
-                        plan.preserve(&c.path, "shared_initialized_worktree");
+                            "guard_receipt",
+                            Err(conflict(
+                                &guard_receipt,
+                                "Recorded hook paths differ from the effective hook directory.",
+                            )),
+                        );
+                    } else if shared {
+                        for c in changes {
+                            plan.preserve(&c.path, "shared_initialized_worktree");
+                        }
+                    } else {
+                        plan.add(&guard_receipt, "exact_guard_receipt_block", Ok(changes));
                     }
-                } else {
-                    plan.add(&guard_receipt, "exact_guard_receipt_block", Ok(changes));
+                }
+                Err(d) => plan.add(&guard_receipt, "guard_receipt", Err(d)),
+            }
+        } else {
+            plan.preserve(&guard_receipt, "absent");
+            if !["guard-hooks.json", "setup-guard-hooks.json"]
+                .iter()
+                .any(|name| layout.private.join(name).exists())
+            {
+                for stage in ["pre-commit", "pre-push"] {
+                    plan.preserve(&layout.hooks.join(stage), "unowned_hook_preserved");
                 }
             }
-            Err(d) => plan.add(&guard_receipt, "guard_receipt", Err(d)),
-        }
-    } else {
-        plan.preserve(&guard_receipt, "absent");
-        for stage in ["pre-commit", "pre-push"] {
-            plan.preserve(&layout.hooks.join(stage), "unowned_hook_preserved");
         }
     }
     for name in [
@@ -480,14 +492,20 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
             .iter()
             .map(|p| AssetStore::lock(p, &layout.allowed, Duration::from_secs(2)))
             .collect::<Result<_, _>>()?;
-        let restored = locks
-            .last()
-            .ok_or_else(|| Diagnostic::input("Removal store is unavailable."))?
-            .rollback(&id)?;
+        let (restored, retained) = config::worktree::rollback(
+            locks
+                .last()
+                .ok_or_else(|| Diagnostic::input("Removal store is unavailable."))?,
+            process,
+            &layout.root,
+            &layout.exclude,
+            &id,
+        )
+        .await?;
         return Ok(Report::success(
             "remove",
             "rolled_back",
-            json!({"root":layout.root,"transaction":restored,"native_writes":false}),
+            json!({"root":layout.root,"transaction":restored,"retained":retained,"native_writes":false}),
         ));
     }
     let mut planned = plan(&layout, process).await?;
@@ -519,6 +537,12 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
         std::fs::write(marker, b"planned")
             .map_err(|_| Diagnostic::input("Fixture plan marker is unavailable."))?;
     }
+    let serialization = guard::serialization_path(process, &layout.root).await?;
+    let _serialization = AssetStore::lock(
+        &serialization,
+        std::slice::from_ref(&serialization),
+        Duration::from_secs(2),
+    )?;
     let locks: Vec<_> = layout
         .stores()
         .iter()

@@ -12,7 +12,8 @@ conforms to it.
 | Declaration | `declaration` | Parses and validates `.specgit.yaml`. It owns schema rules, not file access or Git lookup. |
 | Repository identity | `identity` | Defines repository, host, and object-ID rules. It does not call Git or a forge. |
 | Local project state | `config`, `project`, `selection` | Reads project configuration and Git context. State belongs to the repository or its Git metadata. `config::worktree` owns the read-only private-state probe and sibling-consumer discovery for worktree-shared assets. |
-| Agent integration | `setup`, `guidance`, `prompts`, `assets` | Builds and writes project-scoped skills, marked instruction blocks, host hook entries, and ownership receipts. It does not install global host state or a project executable. |
+| Agent integration | `setup`, `guidance`, `prompts`, `assets` | Builds and writes project-scoped Skills, stable instruction entries, host context hooks, and ownership receipts. Setup includes a typed native guard plan in the same transaction. It does not install global host state or a project executable. |
+| Native Git guard | `guard` | Checks checkpoints when installed pre-commit/pre-push hooks run; owns Git hook planning, independent/setup receipt proof and shared-consumer rechecks. Ordinary editor tools have no checkpoint gate. |
 | User Skill | `skill` | Owns the shared embedded Skill bytes and the explicitly installed user Skill file. A SHA-256 marker establishes ownership; refresh backs up edited content, removal preserves edits. No global hooks, state, lock file or receipts. |
 | Native platform | `forge_read`, `forge_routes`, `forge`, `native_delivery` | Separates read transport, route construction, response decoding, and explicit mutation. The forge owns CI, protection, review, and merge. |
 | Observation | `observation_model`, `watch_store`, `watch`, `observation`, `report` | Stores scoped event facts and presents them. An observation is not authorization or proof of completion. |
@@ -20,10 +21,10 @@ conforms to it.
 | Command line | `cli`, `main` | Parses and dispatches commands, then formats output. `main` is only the process entry point. |
 | Delivery context | `delivery_context::Workspace` | Loads and rechecks Git, declaration, and native project identity. It does not own Issue or PR write transactions. |
 
-The local runtime can enforce only the checks that it owns. Host hooks and Git
-hooks must be installed to run. Hook context can fail open when input is
-unsupported or local identity is unavailable. Git guard checks apply when the
-installed hook runs. Neither path is a universal sandbox for file edits.
+The local runtime enforces checkpoints only at installed Git commit/push hooks.
+Host SessionStart/PreToolUse hooks offer context and recovery guidance without
+tool denial. Retired PostToolUse/Stop callbacks exit before input or state work.
+Missing host context is diagnostic evidence, not a request for another turn.
 
 Native writes require existing user authorization. A declaration and a
 `--dry-run` result grant no permission. GitHub or GitLab decides whether CI,
@@ -72,11 +73,21 @@ flowchart TD
 
   init --> guidance
   init --> setup
+  init --> guard
   init --> config
   setup --> prompts
   setup --> guidance
   setup --> local_exclude
   setup --> assets
+  setup --> guard
+  guard --> config
+  guard --> project_git
+  guard --> selection
+  guard --> assets
+  hook --> config
+  hook --> project_git
+  hook --> selection
+  hook --> watch_store
   guidance --> prompts
   config --> declaration
   config --> identity
@@ -158,6 +169,14 @@ The intended boundaries are:
   entry without adding hooks. Setup owns the single project receipt for these
   assets. `guidance` validates legacy init blocks and retains the initialization
   marker; migration does not grant ordinary removal permission to discard edits.
+- `guard` discovers Git hook paths through `project` and returns a typed plan.
+  Setup/init/doctor apply that plan atomically with their other assets; they do
+  not parse guard JSON or perform a second independent installation. Guard
+  ownership and shared-consumer preconditions are checked again under a common
+  Git-directory lock before writes.
+- `hook` offers bounded local context for SessionStart/PreToolUse. It reads
+  pending notice IDs without fetching forge data or acknowledging them. Its
+  session/event offer ledger suppresses repeated text, not future Agent work.
 
 These edges describe the intended design. Do not treat this page alone as
 evidence that an unfinished extraction or test has passed.
@@ -176,8 +195,21 @@ Git-metadata receipt at `agent-assets/ownership.json`. Init and setup apply thei
 plans through the same `assets` transaction store and lock. Legacy `agent-assets`
 journals remain bounded migration/recovery evidence; their receipt-generation and
 permission checks still apply. The empty legacy initialization receipt records
-initialization without owning a second entry. The Git guard keeps its separate
-receipt and owns only its recorded hook blocks.
+initialization without owning a second entry. The v4 project receipt stores
+purposes explicitly, avoiding ambiguity between old guard and new context hooks.
+Independent Git guards retain `guard-hooks.json`; setup-owned guard blocks use
+`setup-guard-hooks.json` and share the project asset transaction. Reuse never silently adopts an independent
+guard; explicit independent installation can transfer setup-owned blocks with
+their original preimages. Active setup and sibling consumers retain shared
+blocks until the last applicable consumer releases them. New standalone guard
+transactions also use the shared `assets` store; legacy guard journals remain
+bounded read-only recovery evidence.
+
+Partial rollback retains the original journal and records its exact remaining
+entries. Only retained entries remain ownership evidence. A later rollback
+rechecks consumers, content and permissions and cannot replay already restored
+entries. Host context offers use a bounded atomic checkpoint without transaction
+journals; advisory deduplication must not grow durable history per notification.
 
 Refresh and uninstall must validate the recorded content before changing it.
 An edited or ambiguous owned asset is preserved for reconciliation. Foreign

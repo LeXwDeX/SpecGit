@@ -5,9 +5,10 @@ and its English/Chinese copyable requests. It covers safe inspection, separate C
 updates and project refresh without replaying this first-install procedure.
 
 Carry out the user's requested installation on their selected machine and Git
-repository. This is a local setup task: it does not include implementing a feature,
-creating an Issue/PR, committing, pushing, merging or publishing a release.
-The user's existing instructions and authorization control any additional work.
+repository. Installing and enabling SpecGit delegates the task-related workflow for this project
+without repeated approval at each delivery step. Explicit task limits remain controlling;
+a declaration or old receipt cannot expand task or publication scope. The user's current
+request controls whether release publication is included.
 
 Use the repository and active agent already identified in the session. If the
 repository path or target machine is unknown, resolve that before initialization.
@@ -134,14 +135,11 @@ merge/closure preferences at their defaults unless the user already chose them.
 If native capabilities are unavailable, `init` may require an explicit
 `--manual-observe` choice, which writes `agent.native_auto_merge=false`. The README
 request permits that fallback for new/default-false or existing-false configuration.
-If the current, restored or supplied preference is true, obtain a specific decision
-to change it before the changed preview/apply sequence. Continue independent reads.
-Once authorized, use the same flag/configuration in check, preview and apply, then
-read back the preference. Otherwise present that specific choice unless already
-selected in the session. Do not weaken protections or administer the
+If the selected setup requires a preference change, apply it within the installation
+task delegation and use the same flag/configuration in check, preview and apply.
+Preserve preferences when the task does not require a change, then read back the result. Do not weaken protections or administer the
 forge to make initialization pass. An applicable preview with no conflicts is
-sufficient to continue the user's authorized local setup without another generic
-confirmation.
+sufficient to continue the delegated local setup without another confirmation.
 
 Read back `.specgit.yaml` and the managed project guidance after initialization.
 Run `specgit status --remote <remote> --json` and `specgit doctor --provider <provider> --remote <remote> --json` and preserve their actual
@@ -171,12 +169,12 @@ specgit setup --agent codex --json
 ```
 
 These calls omit purposes to preserve recorded modes on ordinary refresh. Explicit
-purposes affect every recorded and newly selected host, so purpose changes need
-authorization for all affected hosts. Review/report every affected host's assets.
-On 2.8, choose minimal authorized
-purposes for a new host with `--hook-purpose guard|context|observe` (repeatable),
-or `--hook-purpose none` for guidance/Skill only in both preview and apply.
-`none` adds no hooks, preserves existing purposes and never removes hooks or Git guard.
+purposes affect every recorded and newly selected host; keep them within current task scope. Review/report every affected host's assets.
+Choose only supported SessionStart/PreToolUse hooks. SessionStart gives brief rules
+and the Skill entry; PreToolUse provides relevant context or recovery. No PostToolUse,
+Stop callback or idle wake is supported. `guard` configures native commit/push hooks.
+`none` adds no purposes and preserves valid purposes and native Git guard.
+Refresh still removes owned retired PostToolUse/Stop registrations.
 It does not skip existing hosts' asset refresh. See the
 [maintenance guide](agent-project-refresh.md#5-review-the-full-host-refresh-scope) for
 capability checks, additive choices and selective-receipt downgrade limits.
@@ -292,20 +290,15 @@ not automate, bypass or assume host trust.
 ### OpenCode integration boundaries
 
 The official OpenCode build receives the `.agents` skill and `AGENTS.md`
-guidance only — no hooks. Only a custom OpenCode fork with claude-compatible
+guidance. A custom OpenCode fork with claude-compatible
 hook support can opt in through `--opencode-claude-hooks` (requires
 `--agent opencode`): setup then generates project `.opencode/hooks.json` with
 top-level event entries, one single-quoted command string
 (`<executable> hook --event <event>`, no separate args entries) and
-`inputFormat: claude-code`. In 2.8, compatibility hooks alone do not enable an
-asynchronous observer. Custom idle wake additionally requires confirmed real
-`asyncRewake` capability, explicit user authorization, `--opencode-async-rewake`
-and observe/context purposes. An upgrade must not silently enable it. Otherwise
-observe pending events manually with bounded `specgit watch`. Verify actual
-deny/allow/context behavior on the installed fork before relying on it. The
-[observed custom-host behavior](supported-tools.md#observed-custom-host-behavior)
-records working tool-event context and the SessionStart delivery gap in
-`opencode run` on the qualified build; registration is not a compatibility guarantee.
+`inputFormat: claude-code`. Only SessionStart and PreToolUse are supported; do not configure PostToolUse, Stop
+or idle wake. If observation cannot be delivered through allowed host events, use
+bounded `specgit watch`/`inbox` or manual continuation. Verify actual behavior before
+relying on registration.
 The fork's
 `/import-claude-hooks` command is an interactive LLM prompt that reads the
 project's Claude settings and asks about each entry individually — it is not an
@@ -318,7 +311,7 @@ rather than inventing an unsupported registration flag.
 Verify that the active host discovers the installed `specgit-native` entry point
 and project guidance. If discovery requires a reload or next turn, report
 registration as written but not yet verified and name that remaining action.
-File existence alone does not prove host import, hook delivery or idle wake;
+File existence alone does not prove host import or hook delivery;
 the setup report itself lists registration as `written_not_verified` and host
 delivery facts as `not_checked`. After CLI upgrades, repeat the binary checks
 and preview the existing project/host
@@ -362,8 +355,8 @@ the local declaration in every other clone or worktree that later fast-forwards,
 pulls or switches across that commit. Back up `.specgit.yaml` in those checkouts
 first; afterwards restore it and rerun `specgit init` there. A worktree whose
 declaration is missing while its SpecGit private state (guidance receipt, routing
-or checkpoint) remains is not treated as uninitialized: Git guard and agent edit
-hooks fail closed with this remedy, `init --check` reports its `private_state`
+or checkpoint) remains is not treated as uninitialized: Git guard fails closed,
+host hooks offer recovery context, and `init --check` reports its `private_state`
 without claiming `initial_adoption`, and `remove` in a sibling still counts it as
 a consumer of shared assets. Project `setup` writes documented checkout assets
 and keeps its receipt under that worktree's Git directory; 2.4 has no global

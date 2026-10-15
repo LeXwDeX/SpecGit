@@ -204,7 +204,7 @@ async fn guard_health_reports_crashed_transactions_before_declaring_current_or_a
             .unwrap();
         let receipt = private.join("guard-hooks.json");
         let before = fs::read(&receipt).ok();
-        let journal_root = private.join("transactions/transactions");
+        let journal_root = private.join("assets/transactions");
         let id = fs::read_dir(&journal_root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -221,7 +221,7 @@ async fn guard_health_reports_crashed_transactions_before_declaring_current_or_a
             .await
             .unwrap();
         let store = specgit::assets::AssetStore::lock(
-            &private.join("transactions"),
+            &private.join("assets"),
             &[hooks, private.clone()],
             std::time::Duration::from_secs(2),
         )

@@ -235,6 +235,7 @@ pub struct MaintenancePlan {
     changes: Vec<Change>,
     dependencies: Vec<Change>,
     precondition: Option<Box<dyn Fn() -> Result<(), Diagnostic> + Send + Sync>>,
+    serialization_locks: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -267,6 +268,7 @@ impl MaintenancePlan {
             changes,
             dependencies,
             precondition: None,
+            serialization_locks: Vec::new(),
         }
     }
 
@@ -277,8 +279,33 @@ impl MaintenancePlan {
         mut self,
         check: impl Fn() -> Result<(), Diagnostic> + Send + Sync + 'static,
     ) -> Self {
-        self.precondition = Some(Box::new(check));
+        let previous = self.precondition.take();
+        self.precondition = Some(Box::new(move || {
+            if let Some(previous) = &previous {
+                previous()?;
+            }
+            check()
+        }));
         self
+    }
+
+    pub(crate) fn serialize_with(&mut self, path: PathBuf) {
+        self.serialization_locks.push(path);
+    }
+
+    pub(crate) fn extend(
+        &mut self,
+        changes: Vec<Change>,
+        dependencies: Vec<Change>,
+        allowed: Vec<PathBuf>,
+    ) {
+        self.changes.extend(changes);
+        self.dependencies.extend(dependencies);
+        self.allowed.extend(allowed);
+    }
+
+    pub(crate) fn planned_changes(&self) -> &[Change] {
+        &self.changes
     }
 
     pub fn assets(&self) -> Vec<MaintenanceAsset> {
@@ -417,6 +444,11 @@ impl MaintenancePlan {
                 changes: 0,
             });
         }
+        let _serialization: Vec<_> = self
+            .serialization_locks
+            .iter()
+            .map(|path| AssetStore::lock(path, std::slice::from_ref(path), Duration::from_secs(2)))
+            .collect::<Result<_, _>>()?;
         let store = AssetStore::lock(&self.store, &self.allowed, Duration::from_secs(2))?;
         if !store.pending_transactions()?.is_empty() {
             return Err(error(
@@ -620,6 +652,12 @@ impl AssetStore {
                     "A retained transaction journal is damaged.",
                 )
             })?;
+            if !journal.valid() {
+                return Err(error(
+                    Code::RollbackConflict,
+                    "A retained transaction journal has invalid ownership state.",
+                ));
+            }
             if journal.state == "prepared" {
                 pending.push(name);
             }
@@ -664,7 +702,53 @@ impl AssetStore {
         asset: &Snapshot,
         asset_digest: Option<&str>,
     ) -> Result<Option<Vec<Change>>, Diagnostic> {
-        if receipt.bytes.is_none() || (asset.bytes.is_none() && asset_digest.is_none()) {
+        Self::read_pair_history(
+            roots,
+            receipt_path,
+            receipt,
+            asset_path,
+            asset,
+            asset_digest,
+            false,
+        )
+    }
+
+    /// Diagnose a missing selected asset. This proves historical selection only,
+    /// never its lost contents or current permissions, and grants no write proof.
+    pub(crate) fn selected_missing_asset_at(
+        roots: &[PathBuf],
+        receipt_path: &Path,
+        receipt: &Snapshot,
+        asset_path: &Path,
+    ) -> Result<bool, Diagnostic> {
+        let missing = Snapshot::read(asset_path)?;
+        if missing.bytes.is_some() {
+            return Ok(false);
+        }
+        Ok(Self::read_pair_history(
+            roots,
+            receipt_path,
+            receipt,
+            asset_path,
+            &missing,
+            None,
+            true,
+        )?
+        .is_some())
+    }
+
+    fn read_pair_history(
+        roots: &[PathBuf],
+        receipt_path: &Path,
+        receipt: &Snapshot,
+        asset_path: &Path,
+        asset: &Snapshot,
+        asset_digest: Option<&str>,
+        missing_diagnosis: bool,
+    ) -> Result<Option<Vec<Change>>, Diagnostic> {
+        if receipt.bytes.is_none()
+            || (asset.bytes.is_none() && asset_digest.is_none() && !missing_diagnosis)
+        {
             return Ok(None);
         }
         let expected_receipt = receipt_path.canonicalize().map_err(|_| io_error())?;
@@ -714,13 +798,19 @@ impl AssetStore {
                         )
                     },
                 )?;
-            if journal.version != 2 || journal.entries.len() > 100 {
+            if !journal.valid() {
                 return Err(error(
                     Code::RollbackConflict,
                     "A retained transaction journal is unsupported.",
                 ));
             }
-            if journal.state == "committed" {
+            if journal.state == "committed" || journal.state == "rolled_back_retaining" {
+                let mut journal = journal;
+                if journal.state == "rolled_back_retaining" {
+                    journal
+                        .entries
+                        .retain(|entry| journal.retained_paths.contains(&entry.path));
+                }
                 records.push((journal_path, before, journal));
             }
         }
@@ -807,7 +897,13 @@ impl AssetStore {
                     } else {
                         PermissionRecord::capture(asset.permissions.as_ref())
                     };
-                    if entry.after_permissions.as_ref() == Some(&observed) {
+                    if (missing_diagnosis
+                        && entry.after_permissions.as_ref().is_some_and(|permissions| {
+                            permissions.readonly.is_some()
+                                && (!cfg!(unix) || permissions.unix_mode.is_some())
+                        }))
+                        || entry.after_permissions.as_ref() == Some(&observed)
+                    {
                         matched = true;
                     } else {
                         incomplete = true;
@@ -886,15 +982,16 @@ impl AssetStore {
                         )
                     },
                 )?;
-            if journal.version != 2 || journal.entries.len() > 100 {
+            if !journal.valid() {
                 return Err(error(
                     Code::RollbackConflict,
                     "A retained transaction journal is unsupported.",
                 ));
             }
-            if journal.state == "committed"
+            if (journal.state == "committed" || journal.state == "rolled_back_retaining")
                 && journal.entries.iter().any(|entry| {
-                    safe_path(&entry.path).is_ok()
+                    (journal.state == "committed" || journal.retained_paths.contains(&entry.path))
+                        && safe_path(&entry.path).is_ok()
                         && entry.path.canonicalize().ok().as_ref() == Some(&expected_path)
                         && match recorded_digest {
                             Some(digest) => {
@@ -931,13 +1028,13 @@ impl AssetStore {
         self.apply_checked_recording(changes, &[], &mut before_write)
     }
 
-    /// Record an explicit ownership baseline without rewriting unchanged bytes.
-    pub(crate) fn apply_recording(
+    pub(crate) fn apply_recording_checked(
         &self,
         changes: Vec<Change>,
         observations: &[PathBuf],
+        mut before_write: impl FnMut(usize) -> Result<(), Diagnostic>,
     ) -> Result<Applied, Diagnostic> {
-        self.apply_checked_recording(changes, observations, &mut |_| Ok(()))
+        self.apply_checked_recording(changes, observations, &mut before_write)
     }
 
     fn apply_checked_recording(
@@ -1021,6 +1118,7 @@ impl AssetStore {
             version: 2,
             state: "prepared".into(),
             entries: vec![],
+            retained_paths: vec![],
         };
         for (i, change) in changes.iter().enumerate() {
             let backup = format!("{i}.before");
@@ -1168,6 +1266,73 @@ impl AssetStore {
         }
         Ok(())
     }
+    fn rollback_journal(&self, id: &str) -> Result<(PathBuf, Journal), Diagnostic> {
+        if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err(Diagnostic::input("Use an exact reported transaction id."));
+        }
+        let directory = self.root.join("transactions").join(id);
+        let bytes = Snapshot::read(&directory.join("journal.json"))?
+            .bytes
+            .ok_or_else(io_error)?;
+        let journal: Journal =
+            serde_json::from_value(crate::input::json(&bytes, JOURNAL_LIMIT, 20)?)
+                .map_err(|_| io_error())?;
+        if !journal.valid() {
+            return Err(Diagnostic::input("Unsupported transaction journal."));
+        }
+        Ok((directory, journal))
+    }
+    pub(crate) fn rollback_paths(&self, id: &str) -> Result<Vec<PathBuf>, Diagnostic> {
+        let (_, journal) = self.rollback_journal(id)?;
+        if journal.state == "rolled_back" {
+            return Ok(Vec::new());
+        }
+        Ok(journal
+            .entries
+            .iter()
+            .filter(|entry| {
+                journal.state != "rolled_back_retaining"
+                    || journal.retained_paths.contains(&entry.path)
+            })
+            .map(|entry| entry.path.clone())
+            .collect())
+    }
+    /// The target bytes after rollback, if this transaction owns the path.
+    pub(crate) fn rollback_content(
+        &self,
+        id: &str,
+        path: &Path,
+    ) -> Result<Option<Option<Vec<u8>>>, Diagnostic> {
+        let (directory, journal) = self.rollback_journal(id)?;
+        if journal.state == "rolled_back" {
+            return Ok(None);
+        }
+        let Some(entry) = journal.entries.iter().find(|entry| {
+            entry.path == path
+                && (journal.state != "rolled_back_retaining"
+                    || journal
+                        .retained_paths
+                        .iter()
+                        .any(|retained| retained == path))
+        }) else {
+            return Ok(None);
+        };
+        self.validate(path)?;
+        if entry.before.is_none() {
+            return Ok(Some(None));
+        }
+        if entry.backup.contains(['/', '\\']) || entry.backup.starts_with('.') {
+            return Err(error(Code::UnsafePath, "Invalid backup locator."));
+        }
+        let backup = Snapshot::read(&directory.join(&entry.backup))?;
+        if backup.digest() != entry.before {
+            return Err(error(
+                Code::RollbackConflict,
+                "A rollback preimage is missing or changed.",
+            ));
+        }
+        Ok(Some(backup.bytes))
+    }
     pub fn rollback(&self, id: &str) -> Result<Applied, Diagnostic> {
         self.rollback_retaining(id, &[]).map(|(applied, _)| applied)
     }
@@ -1179,31 +1344,34 @@ impl AssetStore {
         id: &str,
         retain: &[PathBuf],
     ) -> Result<(Applied, Vec<PathBuf>), Diagnostic> {
-        if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
-            return Err(Diagnostic::input("Use an exact reported transaction id."));
-        }
-        let directory = self.root.join("transactions").join(id);
-        let bytes = Snapshot::read(&directory.join("journal.json"))?
-            .bytes
-            .ok_or_else(io_error)?;
-        if bytes.len() > JOURNAL_LIMIT {
-            return Err(error(
-                Code::InputLimit,
-                "Transaction journal exceeds its size allowance.",
+        let (directory, mut journal) = self.rollback_journal(id)?;
+        if journal.state == "rolled_back" {
+            return Ok((
+                Applied {
+                    transaction: id.into(),
+                    changes: 0,
+                },
+                Vec::new(),
             ));
-        }
-        let mut journal: Journal = serde_json::from_slice(&bytes).map_err(|_| io_error())?;
-        if journal.version != 2 || journal.entries.len() > 100 {
-            return Err(Diagnostic::input("Unsupported transaction journal."));
         }
         let (retained, restored): (Vec<_>, Vec<_>) = journal
             .entries
             .iter()
+            .filter(|entry| {
+                journal.state != "rolled_back_retaining"
+                    || journal.retained_paths.contains(&entry.path)
+            })
             .partition(|entry| retain.contains(&entry.path));
         let restored: Vec<Entry> = restored.into_iter().cloned().collect();
         let retained: Vec<PathBuf> = retained.into_iter().map(|e| e.path.clone()).collect();
         self.restore(&directory, &restored)?;
-        journal.state = "rolled_back".into();
+        journal.state = if retained.is_empty() {
+            "rolled_back"
+        } else {
+            "rolled_back_retaining"
+        }
+        .into();
+        journal.retained_paths = retained.clone();
         self.save_journal(&directory, &journal)?;
         Ok((
             Applied {
@@ -1221,6 +1389,33 @@ struct Journal {
     version: u32,
     state: String,
     entries: Vec<Entry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retained_paths: Vec<PathBuf>,
+}
+impl Journal {
+    fn valid(&self) -> bool {
+        self.version == 2
+            && self.entries.len() <= 100
+            && self
+                .entries
+                .iter()
+                .map(|entry| &entry.path)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == self.entries.len()
+            && self.retained_paths.len() <= 100
+            && self.retained_paths.iter().collect::<BTreeSet<_>>().len()
+                == self.retained_paths.len()
+            && self
+                .retained_paths
+                .iter()
+                .all(|path| self.entries.iter().any(|entry| entry.path == *path))
+            && match self.state.as_str() {
+                "prepared" | "committed" | "rolled_back" => self.retained_paths.is_empty(),
+                "rolled_back_retaining" => !self.retained_paths.is_empty(),
+                _ => false,
+            }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1382,5 +1577,34 @@ fn persist_windows(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod rollback_terminal_tests {
+    use super::*;
+
+    #[test]
+    fn completed_rollback_has_no_remaining_paths_or_preimages() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let path = root.join("asset");
+        let id = store
+            .apply(vec![
+                Change::new(path.clone(), Some(b"owned".to_vec())).unwrap(),
+            ])
+            .unwrap()
+            .transaction;
+        store.rollback(&id).unwrap();
+        std::fs::write(&path, b"owned").unwrap();
+        assert!(store.rollback_paths(&id).unwrap().is_empty());
+        assert!(store.rollback_content(&id, &path).unwrap().is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"owned");
     }
 }

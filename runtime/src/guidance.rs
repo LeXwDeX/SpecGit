@@ -235,7 +235,7 @@ fn removal_inner(
     declaration: &Declaration,
     refresh: bool,
 ) -> Result<Vec<Change>, Diagnostic> {
-    let receipt = Change::new(private.join("guidance.json"), None)?;
+    let mut receipt = Change::new(private.join("guidance.json"), None)?;
     let state: Option<Receipt> = receipt
         .before
         .bytes
@@ -254,9 +254,6 @@ fn removal_inner(
             Ok(parsed)
         })
         .transpose()?;
-    if refresh && state.as_ref().is_some_and(|s| s.blocks.is_empty()) {
-        return Ok(vec![]);
-    }
     let mut changes = vec![];
     for name in ["AGENTS.md", "CLAUDE.md"] {
         let path = root.join(name);
@@ -309,7 +306,19 @@ fn removal_inner(
         };
         changes.push(c);
     }
-    if receipt.before.bytes.is_some() {
+    if receipt.before.bytes.is_some() && (!refresh || !changes.is_empty()) {
+        if refresh {
+            // Retire legacy block ownership while retaining evidence that this
+            // worktree was initialized. A new setup-only install creates none.
+            receipt.after = Some(
+                serde_json::to_vec_pretty(&Receipt {
+                    version: 1,
+                    generator: env!("CARGO_PKG_VERSION").into(),
+                    blocks: BTreeMap::new(),
+                })
+                .map_err(|_| conflict())?,
+            );
+        }
         changes.push(receipt);
     }
     Ok(changes)
@@ -438,7 +447,15 @@ pub fn health_plan(
             let state: Receipt = serde_json::from_value(crate::input::json(bytes, 1_048_576, 16)?)
                 .map_err(|_| conflict())?;
             if state.version == 1 && state.blocks.is_empty() {
-                return Ok(None);
+                if !claude_block {
+                    return Ok(None);
+                }
+                return Err(Diagnostic::new(
+                    Code::MigrationRequired,
+                    "guidance_health",
+                    "Legacy Claude guidance needs project migration.",
+                    "Preview specgit init or specgit setup, then refresh the proven project integration; preserve manual content.",
+                ));
             }
         }
         return Err(conflict());

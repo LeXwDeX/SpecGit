@@ -606,7 +606,8 @@
           "type": ["string", "null"]
         },
         "requires_user_authorization": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "The suggested action needs authorization for its scope. Existing user delegation of the current workflow satisfies it; true does not request renewed confirmation. The observer never performs the action."
         }
       }
     },
