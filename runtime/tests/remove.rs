@@ -422,7 +422,7 @@ fn edited_unowned_or_tracked_assets_are_conflicts_and_stale_previews_never_write
             "guidance" => {
                 let path = f.root.join("AGENTS.md");
                 let text = fs::read_to_string(&path).unwrap();
-                fs::write(path, text.replace("Runtime:", "user changed:")).unwrap();
+                fs::write(path, text.replace("specgit init", "user changed:")).unwrap();
             }
             "skill" => {
                 f.agents();

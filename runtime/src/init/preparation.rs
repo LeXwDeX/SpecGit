@@ -33,9 +33,9 @@ pub(super) async fn prepare_and_run(
     }
     let root = paths.root.clone();
     let declaration::Prepared {
+        previous,
         declaration_change,
         existing,
-        previous,
         mut declaration,
     } = declaration::prepare(&options, &root, language)?;
     // Private state survives a lost declaration; such a worktree is not a new adoption.
@@ -43,13 +43,12 @@ pub(super) async fn prepare_and_run(
     let initial_adoption = existing.is_none() && !private_state.is_initialized();
     let local_exclusion = if options.inspect_only {
         // Inspection plans guidance only to classify mixed files; nothing is recorded.
-        let guidance = crate::guidance::changes(
+        let guidance = crate::setup::project::initialization_changes(
             &root,
-            &paths.private_root,
-            &previous,
-            &declaration,
+            &paths.private_root.join("agent-assets"),
             options.mirror_claude,
         )
+        .map(|prepared| prepared.changes)
         .unwrap_or_default();
         Some(crate::local_exclude::inspect(&process, &root, &paths.exclude, &guidance).await?)
     } else {
@@ -150,7 +149,6 @@ pub(super) async fn prepare_and_run(
     let plan = Plan {
         paths,
         declaration_change,
-        previous,
         declaration,
         context,
         native,

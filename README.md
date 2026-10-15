@@ -113,26 +113,26 @@ Auto-merge preferences do not grant permission to change native protections.
 
 ## Agent integration and upgrades
 
-Project integration remains **project-only**: `specgit setup` writes owned
-project entry points for all recorded agents plus explicitly selected agents
-(`--agent generic|claude|codex|opencode`, repeatable), and `--scope project` is
-the default and only scope. It never copies the runtime binary into a project
-and never installs global or host-level integration state; project hooks invoke
-the one shared user-installed executable directly, so no global setup
-prerequisite exists. The 2.3 global integration scope and its `--root`,
+Project integration remains **project-only**. Run `specgit init` in every clone
+and worktree because the declaration, Skill and private records are local; it
+installs the common project Skill and stable guidance entry points. Those entry points direct agents to the Skill and to the official install
+guide when the shared CLI is missing; with the CLI installed, use `specgit init`
+to recover local project state. Initialization does not install host hooks. Run
+`specgit setup` only when selecting a host integration; it refreshes the recorded
+host assets and hooks for the current project. Setup never copies the executable
+into a project or scans other repositories. Hooks invoke the shared user-installed
+executable. The 2.3 global integration scope and its `--root`,
 `--provider`, `--api-host`, `--register-*` and per-host root/settings options
 are removed; `watch`, `hook` and `inbox` state is always Git-private. A custom
 OpenCode fork can opt in to claude-code-format project hooks with the explicit
 `--opencode-claude-hooks` choice (requires `--agent opencode`); official
-OpenCode keeps the skill and guidance only.
-`specgit init` stays project-scoped — agent integration is optional and separate.
-Setup refreshes recorded assets and complete, proven-owned blocks, including edited
-body text. It preserves bytes outside blocks, configuration, checkpoints and foreign
-hooks; unknown ownership or damaged/duplicate markers remain conflicts. Registration
-is reported separately from actual host discovery or event delivery; a reload, a
-host trust review (Codex `/hooks`), or another turn may be needed to verify the
-host. Coordinated removal of a whole
-project's SpecGit integration is the separate `specgit remove` command (preview,
+OpenCode keeps the skill and guidance only. Refresh migrates recorded, uniquely
+owned legacy guidance blocks; unknown ownership or damaged/duplicate markers
+remain conflicts. Manual text outside managed blocks is preserved. Registration
+is reported separately from actual host discovery or event delivery; a reload,
+a host trust review (Codex `/hooks`), or another turn may be needed to verify the
+host. Coordinated removal
+of a whole project's SpecGit integration is the separate `specgit remove` command (preview,
 digest-bound apply, offline rollback), introduced in the 2.3 runtime contract;
 project-scope `--uninstall` covers only the recorded agent assets.
 
@@ -162,10 +162,10 @@ and replays Git's standard ref stdin for the existing user hook.
 After CLI upgrades, use the [project maintenance guide](docs/agent-project-refresh.md)
 to verify the executable selected by PATH and refresh the existing project and host
 integration. Omit hook purposes to preserve recorded modes; explicit purposes affect
-all recorded and newly selected hosts. Review their effects, including shared Skill refresh. In 2.8,
-new custom OpenCode idle wake requires separate capability confirmation and explicit
+all recorded and newly selected hosts. Review the effects for every affected host.
+In 2.8, new custom OpenCode idle wake requires separate capability confirmation and explicit
 `--opencode-async-rewake` with observe/context; compatibility hooks alone do not enable it.
-The current runtime is 2.11.1. After project updates, run status and doctor, read back
+The current runtime is 2.12.0. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before

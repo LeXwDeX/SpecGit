@@ -173,11 +173,12 @@ repeat `setup --hook-purpose guard|context|observe`, or `none` for no new hooks;
 `specgit guard --install` merges owned pre-commit/pre-push blocks into the effective hooks path.
 Pre-push validates each branch ref and replays stdin to existing shell hooks. Husky's `.husky/_` maps to
 user scripts. Preserve/report unsupported non-shell hooks; `guard --uninstall` removes only recorded blocks.
-Init keeps one shared Git-local `info/exclude` block for `.specgit.yaml`, not guidance, across worktrees.
-Inspect repository/user ignore rules before scope changes; `local_exclusion` does not untrack files.
-Keep mixed user/generated guidance visible and review it under documentation policy;
-preserve manual content/markers, never hide or untrack it merely because generated.
-Committed untracking deletes `.specgit.yaml` in checkouts crossing that commit: back up, restore and rerun init.
+Each clone/worktree runs `init` to create the local project Skill and one stable instruction entry, with no new hooks.
+`setup` selects host integration and shares that Skill/entry ownership; proven old init/setup blocks migrate on refresh.
+Init/setup maintain one Git-local `info/exclude` block for `.specgit.yaml` and generated SpecGit Skill files only.
+Keep hand-written project instructions and other Skills visible; never exclude entire agent directories.
+Inspect repository/user ignore rules; `local_exclusion` reports tracked files and never changes the index.
+Committing explicit untracking deletes those files in checkouts crossing that commit: preserve declarations/manual edits and rerun init to regenerate Skills.
 Restore lost declarations or use `specgit init --config-file <original>`; `specgit remove` needs one too.
 
 Official OpenCode installs only project guidance and Skill. Custom hooks need `--opencode-claude-hooks`;
@@ -188,10 +189,10 @@ context and idle delivery; registration is not verified delivery. Do not duplica
 Omitted purposes preserve recorded modes; `none` never removes hooks/Git guard. State stays worktree Git-private.
 Keep notices pending until transport receipt; acknowledgment proves neither human reading nor completion.
 
-After CLI replacement, preview `setup --dry-run` and refresh project Skills/guidance, not manual copies. Refresh replaces recorded assets and complete unique blocks, including edited body text; preserve outside bytes, declarations, checkpoints and other hooks.
-Missing/damaged/duplicate markers or unknown ownership conflict. Refresh, including a no-op, uninstall and whole-project `remove` verify paired ownership and recorded permissions; mismatch conflicts, preserves assets/receipts and blocks the entire remove plan. Apply remove only with the reviewed `preview_sha256`; edited managed content remains a conflict.
+After CLI replacement, preview `init --dry-run` or the recorded `setup --dry-run`, then refresh the project Skill and stable entry. Refresh replaces recorded assets and complete unique blocks, including edited body text; preserve outside bytes, declarations, checkpoints and other hooks.
+Missing/damaged/duplicate instruction markers or unknown ownership conflict; missing generated Skills need verified recovery, not guessed ownership. Refresh, including a no-op, uninstall and whole-project `remove` verify paired ownership and recorded permissions; mismatch conflicts, preserves assets/receipts and blocks the entire remove plan. Apply remove only with the reviewed `preview_sha256`; edited managed content remains a conflict.
 Do not automatically restore permissions or adopt observed state; resolve mismatches through a separate explicit maintenance choice. Never handwrite/restore blocks or add backups; transactions handle recovery.
-Project receipts use v3 with a unique install generation: refresh retains it and a later install gets a new one. Valid, consistent v1/v2 ownership evidence can migrate; permission or history ambiguity conflicts. Older published CLIs cannot read v3, so upgrade every checkout that may refresh the project to a supporting version first.
+Project receipts use v3 with a unique install generation: refresh retains it and a later install gets a new one. Valid, consistent v1/v2 ownership evidence can migrate; permission or history ambiguity conflicts. Use a 2.12-or-newer shared CLI after migrating to the shared project asset journal; older tools cannot verify its ownership history.
 Uninstall/rollback preserves later edits to content and permissions. After all init/setup updates, run `status`, `doctor`, read back generated Skill/guidance and repeat dry-runs; `init --dry-run` lists planned paths only. Names prove nothing.
 
 Contract version: {{version}}.

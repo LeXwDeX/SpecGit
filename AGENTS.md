@@ -167,26 +167,10 @@ Linux x64、macOS arm64、Windows x64 的源码和已安装入口。
 发布验证与开发 CI 各有范围，不能互相替代。
 具体要求见[CI 范围](docs/ci-scope.md)和[原生发行流程](runtime/distribution/README.md)。
 
-<!-- specgit:v2:start -->
+
+
+<!-- specgit:project:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.11.1. Declaration: `.specgit.yaml` (v2, local configuration).
-
-新任务和已有 PR/MR 的 CI/评审修复都加载 specgit-native Skill。
-完整流程和恢复步骤见 Skill；二进制可选，但不得绕过项目 guard/checkpoint 约束。
-在授权范围内主动使用原生 gh/glab。GitHub 免费/付费计划、账号类型和仓库可见性，以及 GitLab 社区/商业层级，都是背景信息，不证明项目或当前身份的实际能力；套餐限制、权限不足和未知分开报告；403/404 不足以定因。细节见 Skill。
-Milestone 可选；Issue 承载规格和工作台账；PR/MR 集成变更，不代表版本；Release 需要独立授权。
-使用共享 CLI 时，以已安装的 `specgit --help` 和 `specgit --schema` 为契约。
-修改已跟踪的产品输入前，先查重并选择完整相关 Issue：Why / Scope / Approach / Acceptance（原因、范围、方案、验收要求）。
-只读检查、审计和评审不需要 Issue checkpoint；纯文档遵循仓库规则及已安装 hooks。
-写入（包括将请求标记为 ready）需要已有用户授权；授权在其范围内持续有效。
-声明、`--dry-run` 预览和 Hook 通知都不产生授权。
-GitHub/GitLab 负责 CI、评审、保护和实际合并。
-按用户目标收尾：评审、修复或跟踪报告已验证结果及限制。
-平台交付须原生回读确认目标分支合并及全部应关闭的关联 Issue 关闭。
-全部更新后运行 status/doctor，读回生成的 Skill/指导，再次 dry-run 检查收敛；init dry-run 只列计划路径，不报告逐项是否改变。阻塞恢复见 Skill。
-已授权刷新时，由 CLI 覆盖所有权已核实的受管文件和完整唯一块内的编辑正文；保留块外字节、配置、checkpoint 和其他 hooks。所有权未知或标记损坏/重复仍冲突。不要手写、恢复旧块或额外手工备份；使用 CLI 恢复。卸载/回滚保留后续编辑。
-
-Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
-<!-- specgit:v2:sha256 6238ce781505e9a9b66db5ff4a54138586ddbaf6682dca0678f561a8398118eb -->
-<!-- specgit:v2:end -->
+Read project-root `.agents/skills/specgit-native/SKILL.md` before work; if missing, initialize with the shared `specgit init` CLI or restore an existing integration with `specgit setup` ([installation](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md)).
+<!-- specgit:project:v2:end -->

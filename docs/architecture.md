@@ -71,8 +71,11 @@ flowchart TD
   workspace --> forge_read
 
   init --> guidance
+  init --> setup
   init --> config
   setup --> prompts
+  setup --> guidance
+  setup --> local_exclude
   setup --> assets
   guidance --> prompts
   config --> declaration
@@ -147,9 +150,14 @@ The intended boundaries are:
 - Doctor's health inspection uses typed setup/guidance/guard asset plans and
   applies them through their owning modules. The CLI does not parse its own JSON
   report or invoke host hooks; offline checks do not launch platform probes.
-- `prompts` embeds short English and Chinese guidance and host entry points.
-  `runtime/assets/SKILL.md` remains the full operational guide. Keep the
-  generated guidance short. Do not copy the full workflow into each host file.
+- `prompts` embeds one stable host entry; the language-specific compatibility
+  function delegates to that same source. `runtime/assets/SKILL.md` remains the
+  full operational guide, installed as an ignored project Skill. Tracked entries
+  contain no runtime version, declaration summary or dynamic content hash.
+- `init` uses setup's typed project asset plan to initialize the generic Skill and
+  entry without adding hooks. Setup owns the single project receipt for these
+  assets. `guidance` validates legacy init blocks and retains the initialization
+  marker; migration does not grant ordinary removal permission to discard edits.
 
 These edges describe the intended design. Do not treat this page alone as
 evidence that an unfinished extraction or test has passed.
@@ -164,10 +172,12 @@ same-directory temporary files atomically. Absent-file publication cannot clobbe
 a concurrent creation. User Skill removal never removes edited files or backups.
 
 Setup owns only the project files and hook entries recorded in its private
-Git-metadata receipt. Guidance owns only its marked block and its separate
-receipt. The local Git guard owns only its recorded hook blocks. Keep these
-receipts separate because the features have different install paths and
-rollback lifecycles.
+Git-metadata receipt at `agent-assets/ownership.json`. Init and setup apply their
+plans through the same `assets` transaction store and lock. Legacy `agent-assets`
+journals remain bounded migration/recovery evidence; their receipt-generation and
+permission checks still apply. The empty legacy initialization receipt records
+initialization without owning a second entry. The Git guard keeps its separate
+receipt and owns only its recorded hook blocks.
 
 Refresh and uninstall must validate the recorded content before changing it.
 An edited or ambiguous owned asset is preserved for reconciliation. Foreign
