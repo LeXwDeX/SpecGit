@@ -136,9 +136,15 @@ pub(crate) async fn plan_named(
             "Preserve the legacy transactions/transactions journals and recover their exact ids before installing or migrating guard ownership.",
         ));
     }
-    let receipt_path = git_dir.join("specgit-v2").join(name);
+    let shared = config::worktree::shared_setup_guard_private(process, &root).await?;
+    let setup_path = setup_source(&git_dir.join("specgit-v2"), &shared)?;
+    let receipt_path = if name == "setup-guard-hooks.json" {
+        setup_path.clone()
+    } else {
+        git_dir.join("specgit-v2").join(name)
+    };
     let receipt_snapshot = Snapshot::read(&receipt_path)?;
-    let transfer_path = git_dir.join("specgit-v2/setup-guard-hooks.json");
+    let transfer_path = setup_path;
     if name == "setup-guard-hooks.json"
         && receipt_snapshot.bytes.is_some()
         && Snapshot::read(&git_dir.join("specgit-v2/guard-hooks.json"))?
@@ -267,8 +273,8 @@ pub(crate) async fn plan_named(
             &receipt_path
         };
         for change in &changes {
-            AssetStore::owned_pair_at(
-                &git_dir.join("specgit-v2/assets"),
+            AssetStore::owned_pair_across_at(
+                &source_stores(&git_dir.join("specgit-v2"), &shared),
                 ownership,
                 &previous_snapshot,
                 &change.path,
@@ -470,18 +476,22 @@ pub async fn health_plan(
             ),
         ));
     }
+    let shared = config::worktree::shared_setup_guard_private(process, &root).await?;
+    let setup_path = setup_source(&private, &shared)?;
     let receipt_name = if Snapshot::read(&private.join("guard-hooks.json"))?
         .bytes
         .is_none()
-        && Snapshot::read(&private.join("setup-guard-hooks.json"))?
-            .bytes
-            .is_some()
+        && Snapshot::read(&setup_path)?.bytes.is_some()
     {
         "setup-guard-hooks.json"
     } else {
         "guard-hooks.json"
     };
-    let receipt_path = private.join(receipt_name);
+    let receipt_path = if receipt_name == "setup-guard-hooks.json" {
+        setup_path
+    } else {
+        private.join(receipt_name)
+    };
     let receipt_snapshot = Snapshot::read(&receipt_path)?;
     let Some(bytes) = receipt_snapshot.bytes.as_deref() else {
         let hook_root = config::worktree::hooks(process, &root).await?;
@@ -656,6 +666,11 @@ async fn owner(process: &Process, root: &Path, hook: &Path) -> Result<Option<Pat
         .collect();
     candidates.push((
         root.to_owned(),
+        config::worktree::shared_setup_guard_private(process, root).await?,
+        config::worktree::hooks(process, root).await?,
+    ));
+    candidates.push((
+        root.to_owned(),
         config::worktree::private_root(process, root).await?,
         config::worktree::hooks(process, root).await?,
     ));
@@ -756,11 +771,23 @@ async fn install_with_preview(
             Duration::from_secs(2),
         )?)
     };
+    let shared = config::worktree::shared_setup_guard_private(process, &root).await?;
     let (changes, hook_root, receipt_parent) = plan(process, cwd, uninstall).await?;
+    // A transfer from retained shared custody removes exactly that receipt; its
+    // fixed custody directory is the only extra root this operation may write.
+    let transfer = setup_source(&receipt_parent, &shared)?;
+    let mut roots = vec![hook_root.clone(), receipt_parent.clone()];
+    if transfer.starts_with(&shared)
+        && changes
+            .iter()
+            .any(|c| c.path == transfer && c.after.is_none())
+    {
+        roots.push(shared.clone());
+    }
     if dry_run {
         for change in &changes {
             assets::safe_path(&change.path)?;
-            if !change.path.starts_with(&hook_root) && !change.path.starts_with(&receipt_parent) {
+            if !roots.iter().any(|root| change.path.starts_with(root)) {
                 return Err(rejected(
                     "A recorded Git-hook path is outside the planned asset roots.",
                 ));
@@ -773,13 +800,12 @@ async fn install_with_preview(
         }
     }
     let mut dependencies = Vec::new();
-    let transfer = receipt_parent.join("setup-guard-hooks.json");
     if let Some(change) = changes
         .iter()
         .find(|c| c.path == transfer && c.after.is_none())
     {
         for hook in changes.iter().filter(|c| c.path.starts_with(&hook_root)) {
-            dependencies.extend(AssetStore::owned_pair_at(&receipt_parent.join("assets"), &transfer, &change.before, &hook.path, &hook.before, None)?.ok_or_else(|| rejected("The setup guard transfer requires current transaction and permission proof."))?);
+            dependencies.extend(AssetStore::owned_pair_across_at(&source_stores(&receipt_parent, &shared), &transfer, &change.before, &hook.path, &hook.before, None)?.ok_or_else(|| rejected("The setup guard transfer requires current transaction and permission proof."))?);
         }
     }
 
@@ -839,7 +865,7 @@ async fn install_with_preview(
     }
     let store = AssetStore::lock(
         &receipt_parent.join("assets"),
-        &[hook_root, receipt_parent],
+        &roots,
         Duration::from_secs(2),
     )?;
     let observations: Vec<_> = changes
@@ -1097,6 +1123,22 @@ pub(crate) async fn serialization_path(
     config::worktree::native_guard_lock(process, root).await
 }
 
+fn setup_source(private: &Path, shared: &Path) -> Result<PathBuf, Diagnostic> {
+    let local = private.join("setup-guard-hooks.json");
+    let common = shared.join("setup-guard-hooks.json");
+    let local_exists = Snapshot::read(&local)?.bytes.is_some();
+    let common_exists = Snapshot::read(&common)?.bytes.is_some();
+    if local_exists && common_exists {
+        return Err(rejected(
+            "Local and shared setup guard sources both claim these hooks; preserve both histories for reconciliation.",
+        ));
+    }
+    Ok(if common_exists { common } else { local })
+}
+fn source_stores(private: &Path, shared: &Path) -> [PathBuf; 2] {
+    [private.join("assets"), shared.join("assets")]
+}
+
 /// An asynchronously discovered native Git plan, merged into setup's transaction.
 pub struct SetupPlan {
     pub(crate) serialization: PathBuf,
@@ -1107,11 +1149,50 @@ pub struct SetupPlan {
     pub(crate) dependencies: Vec<Change>,
     pub(crate) allowed: Vec<PathBuf>,
     pub(crate) evidence: Value,
+    pub(crate) transaction_store: Option<PathBuf>,
+}
+impl SetupPlan {
+    pub(crate) fn observations(&self) -> Vec<PathBuf> {
+        if !self.changes.iter().any(|c| {
+            c.path
+                .file_name()
+                .is_some_and(|n| n == "setup-guard-hooks.json")
+                && !c.unchanged()
+                && c.after.is_some()
+        }) {
+            return vec![];
+        }
+        self.changes
+            .iter()
+            .filter(|c| {
+                c.unchanged()
+                    && matches!(
+                        c.path.file_name().and_then(|n| n.to_str()),
+                        Some("pre-commit" | "pre-push")
+                    )
+            })
+            .map(|c| c.path.clone())
+            .collect()
+    }
 }
 pub async fn setup_plan(
     process: &Process,
     root: &Path,
     enabled: bool,
+) -> Result<SetupPlan, Diagnostic> {
+    setup_plan_inner(process, root, enabled, !enabled).await
+}
+pub(crate) async fn retiring_setup_plan(
+    process: &Process,
+    root: &Path,
+) -> Result<SetupPlan, Diagnostic> {
+    setup_plan_inner(process, root, false, true).await
+}
+async fn setup_plan_inner(
+    process: &Process,
+    root: &Path,
+    enabled: bool,
+    retiring: bool,
 ) -> Result<SetupPlan, Diagnostic> {
     let private = config::worktree::private_root(process, root).await?;
     let legacy_pending = AssetStore::pending_at(&private.join("transactions"))?;
@@ -1137,24 +1218,50 @@ pub async fn setup_plan(
     )?;
     let serialization = common.join("specgit-v2/native-guard-lock");
     let inventory = Inventory::read(common.join("worktrees"))?;
-    let own = private.join("setup-guard-hooks.json");
-    let existing = Snapshot::read(&own)?;
-    if existing.bytes.is_some()
-        && Snapshot::read(&private.join("guard-hooks.json"))?
-            .bytes
-            .is_some()
-    {
+    let shared = config::worktree::shared_setup_guard_private(process, root).await?;
+    if !AssetStore::pending_at(&shared.join("assets"))?.is_empty() {
+        return Err(rejected(
+            "An interrupted shared setup guard transaction requires exact-id recovery first.",
+        ));
+    }
+    // Decide ownership and pin dependencies from one set of snapshots. A
+    // concurrent owner retirement then invalidates this plan at lock time.
+    let local_path = private.join("setup-guard-hooks.json");
+    let shared_path = shared.join("setup-guard-hooks.json");
+    let independent_path = private.join("guard-hooks.json");
+    let local_setup = Snapshot::read(&local_path)?;
+    let shared_setup = Snapshot::read(&shared_path)?;
+    let independent = Snapshot::read(&independent_path)?;
+    if local_setup.bytes.is_some() && shared_setup.bytes.is_some() {
+        return Err(rejected(
+            "Local and shared setup guard sources both claim these hooks; preserve both histories for reconciliation.",
+        ));
+    }
+    let (own, existing) = if shared_setup.bytes.is_some() {
+        (shared_path.clone(), shared_setup.clone())
+    } else {
+        (local_path.clone(), local_setup.clone())
+    };
+    if existing.bytes.is_some() && independent.bytes.is_some() {
         return Err(rejected(
             "Independent and setup guard sources both claim this worktree; preserve both receipts and reconcile the recorded transaction before setup.",
         ));
     }
+    let pinned = |path: &Path, snapshot: &Snapshot| Change {
+        path: path.to_owned(),
+        before: snapshot.clone(),
+        after: snapshot.bytes.clone(),
+        permissions: snapshot.permissions.clone(),
+    };
     let mut dependencies = vec![
-        read_dependency(&own)?,
-        read_dependency(&private.join("guard-hooks.json"))?,
+        pinned(&local_path, &local_setup),
+        pinned(&shared_path, &shared_setup),
+        pinned(&independent_path, &independent),
     ];
     let hooks = config::worktree::hooks(process, root).await?;
     if !enabled && existing.bytes.is_none() {
         return Ok(SetupPlan {
+            transaction_store: None,
             serialization,
             inventory,
             root: root.to_owned(),
@@ -1270,6 +1377,7 @@ pub async fn setup_plan(
             permissions: snapshot.permissions,
         });
         return Ok(SetupPlan {
+            transaction_store: None,
             serialization,
             inventory,
             root: root.to_owned(),
@@ -1289,8 +1397,8 @@ pub async fn setup_plan(
         let (current, _, _) = plan_named(process, root, false, "setup-guard-hooks.json").await?;
         for change in current.iter().filter(|c| c.path != own) {
             dependencies.extend(
-                AssetStore::owned_pair_at(
-                    &private.join("assets"),
+                AssetStore::owned_pair_across_at(
+                    &source_stores(&private, &shared),
                     &own,
                     &existing,
                     &change.path,
@@ -1302,10 +1410,54 @@ pub async fn setup_plan(
                 })?,
             );
         }
+        if retiring && !own.starts_with(&shared) {
+            let shared_receipt = shared.join("setup-guard-hooks.json");
+            let mut changes = current;
+            let recorded = changes.iter_mut().find(|c| c.path == own).ok_or_else(|| {
+                rejected("The retiring setup guard receipt is missing from its plan.")
+            })?;
+            let mut receipt: Receipt = serde_json::from_slice(
+                recorded
+                    .after
+                    .as_deref()
+                    .ok_or_else(|| rejected("The retiring guard has no source postimage."))?,
+            )
+            .map_err(|_| rejected("The retiring guard source is malformed."))?;
+            receipt.version = 2;
+            // Derive a distinct custody identity from the already proven source
+            // identity and target contents. Preview, apply and lock-time replan
+            // must name the same generation without writing preview state.
+            let mut identity = serde_json::to_vec(&receipt)
+                .map_err(|_| rejected("The custody identity cannot be represented."))?;
+            identity.extend_from_slice(shared.as_os_str().as_encoded_bytes());
+            identity.extend_from_slice(b"specgit-shared-custody-v1");
+            receipt.generation = Some(crate::assets::hash(&identity));
+            *recorded = Change::new(
+                shared_receipt,
+                Some(
+                    serde_json::to_vec_pretty(&receipt)
+                        .map_err(|_| rejected("The shared guard source cannot be represented."))?,
+                ),
+            )?;
+            changes.push(Change::new(own.clone(), None)?);
+            dependencies.retain(|d| !changes.iter().any(|c| c.path == d.path && !c.unchanged()));
+            return Ok(SetupPlan {
+                serialization,
+                inventory,
+                root: root.to_owned(),
+                enabled,
+                changes,
+                dependencies,
+                allowed: vec![hooks, private, shared.clone()],
+                evidence: json!({"selected":false,"ownership":"shared_custody","retained":"shared_worktree"}),
+                transaction_store: Some(shared.join("assets")),
+            });
+        }
         for stage in ["pre-commit", "pre-push"] {
             dependencies.push(read_dependency(&hooks.join(stage))?);
         }
         return Ok(SetupPlan {
+            transaction_store: None,
             serialization,
             inventory,
             root: root.to_owned(),
@@ -1320,8 +1472,8 @@ pub async fn setup_plan(
         plan_named(process, root, !enabled, "setup-guard-hooks.json").await?;
     if existing.bytes.is_some() {
         for change in changes.iter().filter(|c| c.path != own) {
-            let proofs = AssetStore::owned_pair_at(
-                &private.join("assets"),
+            let proofs = AssetStore::owned_pair_across_at(
+                &source_stores(&private, &shared),
                 &own,
                 &existing,
                 &change.path,
@@ -1336,6 +1488,8 @@ pub async fn setup_plan(
     }
     dependencies.retain(|d| !changes.iter().any(|c| c.path == d.path && !c.unchanged()));
     Ok(SetupPlan {
+        transaction_store: (own.starts_with(&shared) && changes.iter().any(|c| !c.unchanged()))
+            .then(|| shared.join("assets")),
         serialization,
         inventory,
         root: root.to_owned(),
@@ -1345,7 +1499,7 @@ pub async fn setup_plan(
         // Git may spell its metadata root differently from a caller's
         // canonical Windows checkout path. Authorize the discovered receipt
         // directory explicitly, alongside the discovered hook directory.
-        allowed: vec![hook_root, private],
+        allowed: vec![hook_root, private, shared],
         evidence: json!({"selected":enabled,"ownership":"setup"}),
     })
 }

@@ -91,17 +91,17 @@ impl Paths {
         }
         let hook_root = config::worktree::hooks(process, root).await?;
         let serialization = config::worktree::lock_native_guard(process, root).await?;
+        let (store_path, shared) =
+            config::worktree::rollback_store(process, root, id, &[private_root.join("assets")])
+                .await?;
         let allowed = config::worktree::rollback_allowed_roots(&[
             root.clone(),
             private_root.clone(),
             exclude_parent.clone(),
             hook_root,
+            shared,
         ])?;
-        let store = AssetStore::lock(
-            &private_root.join("assets"),
-            &allowed,
-            Duration::from_secs(2),
-        )?;
+        let store = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
         let (transaction, retained) = config::worktree::rollback_with_lock(
             &serialization,
             &store,
@@ -151,7 +151,7 @@ pub(super) async fn apply(
     let mut changes = vec![declaration_change];
     let crate::setup::project::Initialization {
         changes: integration,
-        observations,
+        mut observations,
         executable,
         guard_enabled,
     } = crate::setup::project::initialization_changes(
@@ -161,6 +161,8 @@ pub(super) async fn apply(
     )?;
     changes.extend(integration);
     let guard_plan = crate::guard::setup_plan(&process, &root, guard_enabled).await?;
+    observations.extend(guard_plan.observations());
+    let custody_store = guard_plan.transaction_store;
     changes.extend(guard_plan.changes);
     let native_dependencies = guard_plan.dependencies;
     let native_allowed = guard_plan.allowed;
@@ -210,8 +212,14 @@ pub(super) async fn apply(
         Duration::from_secs(2),
     )?;
     native_inventory.verify()?;
+    let origin_store = context.git_dir.join("specgit-v2/assets");
+    let _origin = custody_store
+        .as_ref()
+        .filter(|p| *p != &origin_store)
+        .map(|_| AssetStore::lock(&origin_store, &allowed, Duration::from_secs(2)))
+        .transpose()?;
     let store = AssetStore::lock(
-        &context.git_dir.join("specgit-v2/assets"),
+        custody_store.as_ref().unwrap_or(&origin_store),
         &allowed,
         Duration::from_secs(2),
     )?;

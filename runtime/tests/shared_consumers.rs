@@ -36,6 +36,24 @@ fn cli(root: &Path, args: &[&str]) -> Value {
     report
 }
 
+fn owned_declaration(root: &Path) {
+    let private = PathBuf::from(git(root, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
+    AssetStore::lock(
+        &private.join("assets"),
+        &[root.to_owned(), private.clone()],
+        Duration::from_secs(2),
+    )
+    .unwrap()
+    .apply(vec![
+        Change::new(
+            root.join(".specgit.yaml"),
+            Some(b"version: 2\nprovider: github\nremote: origin\ntarget: main\n".to_vec()),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     root: PathBuf,
@@ -381,4 +399,272 @@ fn truncated_setup_demand_blocks_sibling_and_current_rollback_consumers() {
             assert_eq!(fs::read(&receipt).unwrap(), receipt_before);
         }
     }
+}
+
+#[test]
+fn setup_guard_survives_either_owners_retirement_and_pruning_until_last_consumer_leaves() {
+    for retire_borrower_first in [false, true] {
+        for action in ["setup", "remove"] {
+            let f = Fixture::new();
+            git(
+                &f.root,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/fixture/repo.git",
+                ],
+            );
+            git(&f.root, &["worktree", "add", "-b", "second", "../second"]);
+            let second = f.root.parent().unwrap().join("second");
+            for root in [&f.sibling, &second] {
+                // Whole-project removal only deletes declarations with init ownership proof.
+                owned_declaration(root);
+            }
+            for stage in ["pre-commit", "pre-push"] {
+                fs::write(f.hooks.join(stage), "#!/bin/sh\n# original foreign hook\n").unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(f.hooks.join(stage), fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                }
+            }
+            cli(
+                &f.sibling,
+                &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+            );
+            cli(
+                &second,
+                &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+            );
+            for stage in ["pre-commit", "pre-push"] {
+                let path = f.hooks.join(stage);
+                let mut bytes = fs::read(&path).unwrap();
+                bytes.extend_from_slice(b"# later foreign hook\n");
+                fs::write(path, bytes).unwrap();
+            }
+            let (retiring, survivor) = if retire_borrower_first {
+                (&second, &f.sibling)
+            } else {
+                (&f.sibling, &second)
+            };
+            let retire = || {
+                if action == "setup" {
+                    cli(retiring, &["setup", "--uninstall"])
+                } else {
+                    let preview = cli(retiring, &["remove", "--dry-run"]);
+                    cli(
+                        retiring,
+                        &[
+                            "remove",
+                            "--apply",
+                            "--expect",
+                            preview["evidence"]["preview_sha256"].as_str().unwrap(),
+                        ],
+                    )
+                }
+            };
+            let first = retire();
+            let first_id = first["evidence"]["transaction"]["transaction"]
+                .as_str()
+                .unwrap();
+            cli(retiring, &[action, "--rollback", first_id]);
+            f.assert_guard(true);
+            let retired = retire();
+            let id = retired["evidence"]["transaction"]["transaction"]
+                .as_str()
+                .unwrap();
+            f.assert_guard(true);
+            fs::remove_dir_all(retiring).unwrap();
+            git(&f.root, &["worktree", "prune", "--expire", "now"]);
+            let before: Vec<_> = ["pre-commit", "pre-push"]
+                .map(|stage| fs::read(f.hooks.join(stage)).unwrap())
+                .into();
+            let rollback = executable::command()
+                .current_dir(survivor)
+                .args([action, "--rollback", id, "--json"])
+                .output()
+                .unwrap();
+            assert!(
+                !rollback.status.success(),
+                "a survivor must not reconstruct the retired worktree: {rollback:?}"
+            );
+            assert!(!retiring.exists());
+            for (stage, expected) in ["pre-commit", "pre-push"].iter().zip(&before) {
+                assert_eq!(fs::read(f.hooks.join(stage)).unwrap(), *expected);
+            }
+            let doctor = cli(survivor, &["doctor", "--offline"]);
+            assert_ne!(
+                doctor["evidence"]["health"]["status"], "unknown",
+                "{doctor}"
+            );
+            assert!(
+                doctor["evidence"]["health"]["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|check| check["id"] == "guard" && check["status"] == "current"),
+                "{doctor}"
+            );
+            cli(survivor, &["setup", "--dry-run"]);
+            cli(survivor, &["setup", "--uninstall"]);
+            f.assert_guard(false);
+            for stage in ["pre-commit", "pre-push"] {
+                let script = fs::read_to_string(f.hooks.join(stage)).unwrap();
+                assert!(script.contains("# original foreign hook"));
+                assert!(script.contains("# later foreign hook"));
+            }
+            cli(survivor, &["guard", "--install"]);
+            cli(survivor, &["guard", "--uninstall"]);
+            f.assert_guard(false);
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn canonical_library_guard_rollback_revokes_receipt_and_hooks_together() {
+    use specgit::setup::{Agent, HookOptions, HookPurpose, project};
+    for entry in ["init", "setup", "migrate"] {
+        let f = Fixture::new();
+        let private = f.root.join(".git/specgit-v2/agent-assets");
+        let installed = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(project::install_with_context(
+                &project::Options {
+                    agents: vec![Agent::Generic],
+                    opencode_claude_hooks: false,
+                    uninstall: false,
+                    dry_run: false,
+                    rollback: None,
+                },
+                &HookOptions {
+                    purposes: vec![HookPurpose::Guard],
+                    opencode_async_rewake: false,
+                },
+                &f.root,
+                &private,
+                &executable::binary(),
+                &specgit::process::Process::default(),
+            ))
+            .unwrap();
+        let id = installed["transaction"]["transaction"].as_str().unwrap();
+        f.assert_guard(true);
+        cli(&f.root, &[entry, "--rollback", id]);
+        assert!(!private.join("ownership.json").exists());
+        assert!(
+            !private
+                .parent()
+                .unwrap()
+                .join("setup-guard-hooks.json")
+                .exists()
+        );
+        f.assert_guard(false);
+        cli(&f.root, &["guard", "--install"]);
+        cli(&f.root, &["guard", "--uninstall"]);
+        f.assert_guard(false);
+    }
+}
+
+#[test]
+fn borrower_can_take_independent_ownership_from_retained_shared_custody() {
+    let f = Fixture::new();
+    git(&f.root, &["worktree", "add", "-b", "second", "../second"]);
+    let owner = f.root.parent().unwrap().join("second");
+    cli(
+        &owner,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    cli(&owner, &["setup", "--uninstall"]);
+    f.assert_guard(true);
+    fs::remove_dir_all(&owner).unwrap();
+    git(&f.root, &["worktree", "prune", "--expire", "now"]);
+
+    let preview = cli(&f.sibling, &["guard", "--install", "--dry-run"]);
+    assert_eq!(preview["prepared"], true, "{preview}");
+    cli(&f.sibling, &["guard", "--install"]);
+    let common = PathBuf::from(git(
+        &f.root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ));
+    let custody = common.join("specgit-v2/shared-setup-guard");
+    let leftover = fs::read_dir(&custody)
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().join("setup-guard-hooks.json").exists());
+    assert!(!leftover, "the transferred shared receipt must be retired");
+    // Setup no longer owns the hooks; the independent guard keeps them.
+    cli(&f.sibling, &["setup", "--uninstall"]);
+    f.assert_guard(true);
+    cli(&f.sibling, &["guard", "--uninstall"]);
+    f.assert_guard(false);
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn concurrent_owner_and_borrower_uninstall_never_leave_unowned_hooks() {
+    use std::{process::Stdio, time::Instant};
+    let f = Fixture::new();
+    cli(
+        &f.root,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    f.assert_guard(true);
+    let native = PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
+        .join("specgit-v2/native-guard-lock");
+    let held = AssetStore::lock(
+        &native,
+        std::slice::from_ref(&native),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    // Both uninstalls plan against the shared state before either may write.
+    let spawn = |root: &Path, marker: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_specgit"))
+            .current_dir(root)
+            .env("SPECGIT_FIXTURE_SETUP_PLAN_READY", marker)
+            .args(["setup", "--uninstall", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let markers = [f.root.join("owner-ready"), f.sibling.join("borrower-ready")];
+    let children = [spawn(&f.root, &markers[0]), spawn(&f.sibling, &markers[1])];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while markers.iter().any(|m| !m.exists()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        markers.iter().all(|m| m.exists()),
+        "both uninstalls must plan"
+    );
+    drop(held);
+    let outcomes: Vec<bool> = children
+        .into_iter()
+        .map(|child| child.wait_with_output().unwrap().status.success())
+        .collect();
+    let guard_left = fs::read_to_string(f.hooks.join("pre-commit"))
+        .unwrap_or_default()
+        .contains("specgit guard --stage");
+    assert!(
+        !(outcomes.iter().all(|ok| *ok) && guard_left),
+        "both stale uninstalls succeeded but left unowned hooks"
+    );
+    // A stale plan is rejected rather than applied; replanning finishes cleanup.
+    for (root, ok) in [&f.root, &f.sibling].into_iter().zip(&outcomes) {
+        if !ok {
+            cli(root, &["setup", "--uninstall"]);
+        }
+    }
+    f.assert_guard(false);
 }

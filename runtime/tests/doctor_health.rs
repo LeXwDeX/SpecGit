@@ -3,7 +3,7 @@
 use native_exclude_fixture::executable;
 
 use serde_json::{Value, json};
-use specgit::setup::{Agent, project};
+use specgit::setup::{Agent, HookOptions, HookPurpose, project};
 use std::{
     collections::BTreeMap,
     fs,
@@ -1212,5 +1212,87 @@ fn doctor_coordinates_setup_owned_guard_refresh_and_preserves_independent_guard_
         assert_eq!(again["exit"], 0, "{again}");
         assert_eq!(again["evidence"]["health"]["status"], "healthy", "{again}");
         assert_eq!(files(&f.root), before);
+    }
+}
+
+#[test]
+fn doctor_removes_legacy_guard_only_host_registration_without_leaving_empty_settings() {
+    use specgit::assets::{AssetStore, Change};
+
+    for preserve_foreign_settings in [false, true] {
+        let f = Fixture::new();
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            "version: 2\nprovider: github\nremote: origin\ntarget: main\n",
+        )
+        .unwrap();
+        let private = f.private();
+        let settings_path = f.root.join(".codex/hooks.json");
+        let receipt_path = private.join("ownership.json");
+        project::install_with_hooks(
+            &project::Options {
+                agents: vec![Agent::Codex],
+                opencode_claude_hooks: false,
+                uninstall: false,
+                dry_run: false,
+                rollback: None,
+            },
+            &HookOptions {
+                purposes: vec![HookPurpose::Context],
+                opencode_async_rewake: false,
+            },
+            &f.root,
+            &private,
+            &executable::binary(),
+        )
+        .unwrap();
+
+        let mut settings: Value =
+            serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+        let owned = settings["hooks"]["PreToolUse"][0].clone();
+        settings["hooks"] = json!({"PreToolUse":[owned.clone()]});
+        if preserve_foreign_settings {
+            settings["userSetting"] = json!({"keep": true});
+        }
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        receipt["version"] = json!(3);
+        receipt.as_object_mut().unwrap().remove("purposes");
+        receipt["hooks"]["codex"]["entries"] = json!({"PreToolUse":owned});
+        receipt["hooks"]["codex"]["created_event_keys"] = json!(["PreToolUse"]);
+        AssetStore::lock(
+            &private,
+            &[f.root.clone(), private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(vec![
+            Change::new(
+                settings_path.clone(),
+                Some(serde_json::to_vec_pretty(&settings).unwrap()),
+            )
+            .unwrap(),
+            Change::new(
+                receipt_path.clone(),
+                Some(serde_json::to_vec_pretty(&receipt).unwrap()),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let (report, status) = f.doctor(&["doctor", "--offline", "--fix"]);
+        assert!(status.success(), "{report}");
+        assert_eq!(report["exit"], 0, "{report}");
+        let migrated: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        assert_eq!(migrated["version"], 4, "{report}");
+        assert!(migrated["hooks"].get("codex").is_none(), "{migrated}");
+
+        if preserve_foreign_settings {
+            let retained: Value =
+                serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+            assert_eq!(retained["userSetting"], json!({"keep":true}));
+            assert!(retained.get("hooks").is_none(), "{retained}");
+        } else {
+            assert!(!settings_path.exists(), "SpecGit-created settings remain");
+        }
     }
 }

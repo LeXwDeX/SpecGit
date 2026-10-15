@@ -748,13 +748,24 @@ not deprecated aliases.
 
 Project scope resolves the Git checkout root and the private absolute Git
 directory. Its receipt stays at `<git_dir>/specgit-v2/agent-assets/ownership.json`;
-new init/setup/guard transactions use the shared `<git_dir>/specgit-v2/assets/` store.
+ordinary init/setup/guard transactions use the same per-worktree `<git_dir>/specgit-v2/assets/` store.
 Both `init --rollback <transaction>` and `setup --rollback <transaction>` can
 restore an exact transaction from this store, regardless of which of those
 commands created it. Recovery restores the whole recorded transaction, subject
 to ownership, later-edit and active-consumer checks; it is not a command-specific
 uninstall. Review the transaction's paths before recovery.
-Linked worktrees retain independent receipts and transaction histories. Legacy
+When a setup-guard owner retires while other worktrees still need its hooks, that
+retirement transaction and the retained guard receipt move to the fixed
+`<common_git_dir>/specgit-v2/shared-setup-guard/<hook-identity>/` namespace, selected
+by the verified canonical hook directory's SHA-256. Its `assets/` journal keeps the
+guard proof reachable after the original worktree is pruned. Later transactions
+that change this shared guard receipt use the same store; ordinary host maintenance
+keeps its worktree store. CLI recovery
+can locate an exact transaction ID in the current worktree or this shared store.
+Applying it still requires the original worktree and its allowed paths; ambiguous
+IDs and paths outside those roots remain conflicts. Recovery never recreates
+pruned Git metadata or grants access to another worktree's files.
+Other receipts and transaction histories remain worktree-specific. Legacy
 `agent-assets` journals remain available as bounded ownership/recovery evidence. It writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude adds a managed
 `.claude/skills/specgit-native/SKILL.md`, root `CLAUDE.md` guidance and
@@ -802,7 +813,11 @@ Setup-owned guard blocks use `setup-guard-hooks.json`; independent guards use
 `guard-hooks.json`. Explicit `guard --install`
 can transfer them to independent ownership while preserving their original
 preimages. Uninstall retains shared blocks while an active setup or sibling
-worktree needs them. After those consumers release them, independent uninstall
+worktree needs them. A retiring setup owner moves retained ownership to the fixed
+shared Git namespace in the same transaction as its host-asset removal. The last
+setup consumer removes these retained blocks and their receipt; pruning earlier
+consumers does not discard the remaining ownership proof. Independent guards keep
+their separate ownership. After those consumers release them, independent uninstall
 can remove its recorded blocks. Content or permission ambiguity remains a conflict.
 The synchronous library setup API cannot discover Git guard paths; callers that
 request Guard use `setup::project::install_with_context` with a typed `Process`,

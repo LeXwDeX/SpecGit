@@ -520,6 +520,20 @@ pub fn rollback_allowed_roots(selected: &[PathBuf]) -> Result<Vec<PathBuf>, Diag
                     Diagnostic::input("A selected rollback root cannot be resolved safely.")
                 })?;
                 crate::assets::safe_path(&canonical)?;
+                if let Some(ordinary) = crate::assets::ordinary_windows_path(&canonical) {
+                    crate::assets::safe_path(&ordinary)?;
+                    if ordinary.canonicalize().map_err(|_| {
+                        Diagnostic::input("A rollback alias cannot be resolved safely.")
+                    })? != canonical
+                    {
+                        return Err(Diagnostic::input(
+                            "A rollback alias no longer names the selected directory.",
+                        ));
+                    }
+                    if !roots.contains(&ordinary) {
+                        roots.push(ordinary);
+                    }
+                }
                 if !roots.contains(&canonical) {
                     roots.push(canonical);
                 }
@@ -531,6 +545,110 @@ pub fn rollback_allowed_roots(selected: &[PathBuf]) -> Result<Vec<PathBuf>, Diag
     {
         Ok(selected.to_vec())
     }
+}
+
+/// Read-only proof roots in the fixed, bounded shared custody namespace.
+/// Git metadata resolution supplies the root; receipts cannot name extra stores.
+pub(crate) fn shared_setup_guard_stores(root: &Path) -> Result<Vec<PathBuf>, Diagnostic> {
+    let Some(common) = common_dir(root)? else {
+        return Ok(vec![]);
+    };
+    let namespace = common.join("specgit-v2/shared-setup-guard");
+    crate::assets::safe_path(&namespace)?;
+    if !namespace
+        .try_exists()
+        .map_err(|_| Diagnostic::input("Shared guard histories cannot be inspected."))?
+    {
+        return Ok(vec![]);
+    }
+    let mut stores = Vec::new();
+    for (index, entry) in std::fs::read_dir(namespace)
+        .map_err(|_| Diagnostic::input("Shared guard histories cannot be read."))?
+        .enumerate()
+    {
+        if index >= 128 {
+            return Err(Diagnostic::input(
+                "Shared guard history inventory exceeds its bound.",
+            ));
+        }
+        let path = entry
+            .map_err(|_| Diagnostic::input("A shared guard history cannot be read."))?
+            .path();
+        let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        if name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            crate::assets::safe_path(&path)?;
+            stores.push(path.join("assets"));
+        }
+    }
+    Ok(stores)
+}
+
+/// Stable custody for setup-owned hooks after their worktree owner retires.
+/// The namespace is bounded to the current effective hook directory.
+pub(crate) async fn shared_setup_guard_private(
+    process: &Process,
+    root: &Path,
+) -> Result<PathBuf, Diagnostic> {
+    let common = git_line(
+        project::git(
+            process,
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .await?,
+        "common metadata",
+    )?;
+    let hooks = hooks(process, root).await?;
+    let identity = if hooks
+        .try_exists()
+        .map_err(|_| Diagnostic::input("The shared hook directory cannot be inspected."))?
+    {
+        hooks
+            .canonicalize()
+            .map_err(|_| Diagnostic::input("The shared hook directory cannot be resolved."))?
+    } else {
+        hooks
+    };
+    crate::assets::safe_path(&identity)?;
+    let key = crate::assets::hash(identity.as_os_str().as_encoded_bytes());
+    Ok(common.join("specgit-v2/shared-setup-guard").join(key))
+}
+
+/// Resolve an exact journal in the caller's ordinary stores or fixed shared
+/// custody. Ambiguous IDs never select a history by search order.
+pub(crate) async fn rollback_store(
+    process: &Process,
+    root: &Path,
+    id: &str,
+    local: &[PathBuf],
+) -> Result<(PathBuf, PathBuf), Diagnostic> {
+    if !id.starts_with("tx-") || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(Diagnostic::input("Use an exact reported transaction id."));
+    }
+    let shared = shared_setup_guard_private(process, root).await?;
+    let mut candidates = local.to_vec();
+    candidates.push(shared.join("assets"));
+    candidates.sort();
+    candidates.dedup();
+    let mut matching = Vec::new();
+    for store in candidates {
+        let journal = store.join("transactions").join(id).join("journal.json");
+        crate::assets::safe_path(&journal)?;
+        if journal
+            .try_exists()
+            .map_err(|_| Diagnostic::input("The rollback journal cannot be inspected."))?
+        {
+            matching.push(store);
+        }
+    }
+    if matching.len() != 1 {
+        return Err(Diagnostic::input(
+            "Use an exact, unique local or shared-custody transaction id; missing or duplicate histories require inspection.",
+        ));
+    }
+    Ok((matching.remove(0), shared))
 }
 
 /// A native serialization lock acquired before any transaction-store lock.
@@ -620,13 +738,20 @@ pub async fn rollback_with_lock(
     // rollbacks that would remove a consumer's only guard.
     let mut restores_source = false;
     let mut source_count = 0;
-    for name in ["guard-hooks.json", "setup-guard-hooks.json"] {
-        let path = private.join(name);
-        let target = store.rollback_content(id, &path)?;
+    let shared_source = shared_setup_guard_private(process, root)
+        .await?
+        .join("setup-guard-hooks.json");
+    let source_paths = [
+        private.join("guard-hooks.json"),
+        private.join("setup-guard-hooks.json"),
+        shared_source,
+    ];
+    for path in &source_paths {
+        let target = store.rollback_content(id, path)?;
         restores_source |= matches!(&target, Some(Some(_)));
         let bytes = match target {
             Some(bytes) => bytes,
-            None => crate::assets::Snapshot::read(&path)?.bytes,
+            None => crate::assets::Snapshot::read(path)?.bytes,
         };
         source_count += usize::from(bytes.is_some());
     }
@@ -652,11 +777,7 @@ pub async fn rollback_with_lock(
                 .any(|consumer| shares_hooks(consumer, &hook_root)))
     {
         retain.extend([hook_root.join("pre-commit"), hook_root.join("pre-push")]);
-        let private = private_root(process, root).await?;
-        retain.extend([
-            private.join("guard-hooks.json"),
-            private.join("setup-guard-hooks.json"),
-        ]);
+        retain.extend(source_paths);
     }
     let (applied, retained) = store.rollback_retaining(id, &retain)?;
     let retained: Vec<_> = retained

@@ -569,6 +569,57 @@ async fn failed_pending_context_read_can_retry_all_offers_in_the_same_session() 
 }
 
 #[test]
+fn concurrent_session_start_callbacks_deliver_rules_to_both_sessions() {
+    let f = delivery::Fixture::new("github");
+    let sessions = ["concurrent-left", "concurrent-right"];
+    let start = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let threads: Vec<_> = sessions
+            .iter()
+            .map(|session| {
+                let f = &f;
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    hook(
+                        f,
+                        "SessionStart",
+                        json!({"session_id":session,"hook_event_name":"SessionStart","cwd":f.root}),
+                    )
+                })
+            })
+            .collect();
+        for thread in threads {
+            let output = thread.join().unwrap();
+            assert!(output.status.success());
+            assert!(
+                output.stderr.is_empty(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let delivered: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(
+                delivered["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .unwrap()
+                    .contains("SKILL.md")
+            );
+        }
+    });
+    for session in sessions {
+        let repeated = hook(
+            &f,
+            "SessionStart",
+            json!({"session_id":session,"hook_event_name":"SessionStart","cwd":f.root}),
+        );
+        assert!(repeated.status.success());
+        assert!(repeated.stdout.is_empty());
+        assert!(repeated.stderr.is_empty());
+    }
+    assert!(f.state()["calls"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn interrupted_explicit_guard_source_transfer_can_be_rolled_back_without_manual_receipt_edits() {
     use specgit::assets::AssetStore;
     let f = delivery::Fixture::new("github");

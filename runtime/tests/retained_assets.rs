@@ -131,3 +131,17 @@ fn partial_rollback_preserves_concurrent_permission_edits_without_partial_restor
         0o700
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_ordinary_retention_path_matches_the_canonical_journal_entry() {
+    let (_temp, root, store, id) = fixture();
+    let ordinary_root = PathBuf::from(root.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    let retained = ordinary_root.join("retained");
+    let (applied, paths) = store.rollback_retaining(&id, &[retained]).unwrap();
+    assert_eq!(applied.changes, 1);
+    assert_eq!(paths, vec![root.join("retained")]);
+    assert_eq!(fs::read(root.join("retained")).unwrap(), b"owned");
+    assert!(!root.join("restored").exists());
+    assert_eq!(store.rollback(&id).unwrap().changes, 1);
+}

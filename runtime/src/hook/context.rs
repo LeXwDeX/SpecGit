@@ -121,7 +121,7 @@ fn offer_at(
     session: &str,
     candidates: &[(&str, &str)],
 ) -> Result<String, crate::diagnostic::Diagnostic> {
-    use crate::assets::{AssetStore, Change, Snapshot};
+    use crate::assets::{AssetStore, Snapshot};
     use serde::{Deserialize, Serialize};
     if candidates.is_empty() {
         return Ok(String::new());
@@ -140,6 +140,11 @@ fn offer_at(
     }
     let directory = git_dir.join("specgit-v2/hook-context");
     let path = directory.join("offers.json");
+    let store = AssetStore::lock(
+        &directory,
+        std::slice::from_ref(&directory),
+        Duration::from_millis(50),
+    )?;
     let current = Snapshot::read(&path)?;
     let mut offers = if let Some(bytes) = current.bytes.as_deref() {
         let offers: Offers = serde_json::from_value(crate::input::json(bytes, 32_768, 6)?)
@@ -201,24 +206,6 @@ fn offer_at(
         return Ok(String::new());
     }
     let text = selected.join("\n");
-    let store = AssetStore::lock(
-        &directory,
-        std::slice::from_ref(&directory),
-        Duration::from_millis(50),
-    )?;
-    let observed = Snapshot::read(&path)?;
-    if !(Change {
-        path: path.clone(),
-        before: current.clone(),
-        after: observed.bytes,
-        permissions: observed.permissions,
-    })
-    .unchanged()
-    {
-        return Err(crate::diagnostic::Diagnostic::input(
-            "Hook context offers changed while acquiring their advisory lock; preserve the current cache.",
-        ));
-    }
     let bytes = serde_json::to_vec(&offers).map_err(|_| {
         crate::diagnostic::Diagnostic::input("Hook context offers cannot be represented.")
     })?;
@@ -228,6 +215,48 @@ fn offer_at(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn concurrent_sessions_each_receive_their_rules_and_keep_both_offer_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for index in 0..128 {
+            super::offer_at(
+                &root,
+                &format!("older-{index}"),
+                &[("session-rules", "Read Skill")],
+            )
+            .unwrap();
+        }
+        for round in 0..16 {
+            let sessions = [format!("left-{round}"), format!("right-{round}")];
+            let start = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let threads: Vec<_> = sessions
+                    .iter()
+                    .map(|session| {
+                        let root = &root;
+                        let start = &start;
+                        scope.spawn(move || {
+                            start.wait();
+                            super::offer_at(root, session, &[("session-rules", "Read Skill")])
+                        })
+                    })
+                    .collect();
+                for thread in threads {
+                    assert_eq!(thread.join().unwrap().unwrap(), "Read Skill");
+                }
+            });
+            for session in sessions {
+                assert!(
+                    super::offer_at(&root, &session, &[("session-rules", "Read Skill")])
+                        .unwrap()
+                        .is_empty(),
+                    "concurrent callback lost the offer record for {session}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn advisory_offers_remain_bounded_after_more_than_one_thousand_sessions() {
         let temp = tempfile::tempdir().unwrap();
