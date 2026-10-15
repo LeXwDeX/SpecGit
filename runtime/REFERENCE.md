@@ -657,6 +657,11 @@ rechecks content/permissions after locking, uses atomic replacement and saves
 restorable private preimages. Edited ownership or interrupted transactions
 require explicit recovery. Rollback refuses later conflicting edits; uninstall
 retains backups and unrelated directories.
+The same paired receipt/permission proof governs whole-project `remove`: its
+read-only preview reports conflicts without writes, and apply requires the exact
+reviewed `preview_sha256`. Any edited managed content rejects the whole removal;
+preserve it for reconciliation. Removal rollback still refuses later edits and
+restores only when its transaction evidence matches.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
 facts; successful setup is not verified host registration or delivery.
@@ -827,7 +832,8 @@ conflict: older matching records cannot cancel newer evidence. Older published
 CLIs cannot read v3. Upgrade every checkout that may refresh the project to a
 supporting published CLI version before refreshing; preserve the receipt and
 assets during any downgrade. Never force-overwrite ownership or delete the
-receipt to bypass it.
+receipt to bypass it. These proof rules also apply to whole-project `remove`;
+its apply requires the reviewed preview digest.
 
 Project scope never installs a runtime binary inside the checkout and never
 edits global agent settings. Project hooks invoke the currently installed

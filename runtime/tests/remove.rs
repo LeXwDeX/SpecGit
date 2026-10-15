@@ -240,6 +240,126 @@ fn default_preview_is_read_only_and_removal_rollback_preserve_mixed_owned_assets
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn whole_project_removal_rejects_permission_drift_before_any_write() {
+    use std::os::unix::fs::PermissionsExt;
+    for relative in [
+        "AGENTS.md",
+        ".codex/hooks.json",
+        ".claude/settings.json",
+        ".git/specgit-v2/agent-assets/ownership.json",
+    ] {
+        // Keep init guidance absent so its separate proof cannot mask a missing
+        // project-agent permission check in the whole-project removal path.
+        let f = Fixture::new(false);
+        f.agents();
+        assert_eq!(f.run(&["remove"])["status"], "prepared");
+        let path = f.root.join(relative);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let before = inventory(&f.base);
+        for args in [vec!["remove"], vec!["remove", "--dry-run"]] {
+            let preview = f.run(&args);
+            assert_eq!(preview["exit"], 3, "{relative}: {preview}");
+            let diagnostics = preview["diagnostics"].to_string();
+            for expected in [
+                "ownership_conflict",
+                "recorded unix_mode=0600",
+                "observed unix_mode=0644",
+            ] {
+                assert!(diagnostics.contains(expected), "{relative}: {preview}");
+            }
+            assert_eq!(inventory(&f.base), before);
+            let applied = f.apply(&preview);
+            assert_eq!(applied["exit"], 3, "{relative}: {applied}");
+            assert!(
+                applied["diagnostics"]
+                    .to_string()
+                    .contains("ownership_conflict")
+            );
+            assert_eq!(inventory(&f.base), before);
+            assert!(!f.private.join("removal").exists());
+        }
+    }
+}
+
+#[test]
+fn whole_project_removal_preserves_readonly_host_settings() {
+    let f = Fixture::new(false);
+    f.agents();
+    let path = f.root.join(".codex/hooks.json");
+    let original = fs::metadata(&path).unwrap().permissions();
+    let mut changed = original.clone();
+    changed.set_readonly(true);
+    fs::set_permissions(&path, changed).unwrap();
+    let before = inventory(&f.base);
+    let preview = f.run(&["remove", "--dry-run"]);
+    let after = inventory(&f.base);
+    let readonly = fs::metadata(&path).unwrap().permissions().readonly();
+    // Restore only this disposable fixture so Windows can remove its directory.
+    fs::set_permissions(&path, original).unwrap();
+    assert_eq!(preview["exit"], 3, "{preview}");
+    let diagnostic = preview["diagnostics"].to_string();
+    assert!(diagnostic.contains("ownership_conflict"), "{preview}");
+    assert!(diagnostic.contains("readonly=false"), "{preview}");
+    assert!(diagnostic.contains("readonly=true"), "{preview}");
+    assert_eq!(after, before);
+    assert!(readonly);
+}
+
+#[cfg(unix)]
+#[test]
+fn whole_project_removal_cannot_use_an_older_matching_permission() {
+    use std::os::unix::fs::PermissionsExt;
+    for relative in [
+        ".agents/skills/specgit-native/SKILL.md",
+        ".codex/hooks.json",
+    ] {
+        let f = Fixture::new(false);
+        f.agents();
+        let private = f.private.join("agent-assets");
+        let receipt_path = private.join("ownership.json");
+        let receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        let path = f.root.join(relative);
+        let mut change = Change::new(path.clone(), Some(fs::read(&path).unwrap())).unwrap();
+        change.permissions = Some(fs::Permissions::from_mode(0o640));
+        AssetStore::lock(
+            &private,
+            &[f.root.clone(), private.clone()],
+            Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(vec![
+            change,
+            Change::new(receipt_path, Some(serde_json::to_vec(&receipt).unwrap())).unwrap(),
+        ])
+        .unwrap();
+        // This matches an old transaction but contradicts the asset write in
+        // the current receipt's chain. Digest-gated apply must reject it too.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let before = inventory(&f.base);
+        let preview = f.run(&["remove"]);
+        assert_eq!(preview["exit"], 3, "{relative}: {preview}");
+        let diagnostics = preview["diagnostics"].to_string();
+        assert!(diagnostics.contains("recorded unix_mode=0640"), "{preview}");
+        assert!(diagnostics.contains("observed unix_mode=0600"), "{preview}");
+        assert_eq!(inventory(&f.base), before);
+        let applied = f.apply(&preview);
+        assert_eq!(applied["exit"], 3, "{applied}");
+        assert!(
+            applied["diagnostics"]
+                .to_string()
+                .contains("ownership_conflict")
+        );
+        assert_eq!(inventory(&f.base), before);
+        assert!(!f.private.join("removal").exists());
+    }
+}
+
 #[test]
 fn a_user_only_repository_is_not_adopted_and_preview_never_creates_private_state() {
     let f = Fixture::new(false);
