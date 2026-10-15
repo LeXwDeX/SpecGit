@@ -140,10 +140,14 @@ fn offer_at(
     }
     let directory = git_dir.join("specgit-v2/hook-context");
     let path = directory.join("offers.json");
+    // A peer callback holds this lock for one small read and a durable write.
+    // Waiting up to one second covers fsync latency on a busy disk while
+    // leaving most of the host's five-second callback budget; a longer hold
+    // still returns LockBusy and the context is offered again next callback.
     let store = AssetStore::lock(
         &directory,
         std::slice::from_ref(&directory),
-        Duration::from_millis(50),
+        Duration::from_secs(1),
     )?;
     let current = Snapshot::read(&path)?;
     let mut offers = if let Some(bytes) = current.bytes.as_deref() {
