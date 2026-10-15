@@ -4,7 +4,6 @@ mod acceptance;
 #[path = "support/delivery.rs"]
 mod delivery;
 use acceptance::fixture;
-use delivery::executable;
 use serde_json::{Value, json};
 use specgit::watch_store::{self, ActionKind, EventState, Identity, Revision, Store};
 
@@ -717,6 +716,18 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
                     assert_eq!(next_step["kind"], "wait_for_checks", "{result}");
                     assert!(next_step["message"].as_str().unwrap().contains("checks"));
                     assert!(next_step["message"].as_str().unwrap().contains("draft"));
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("while CI runs")
+                    );
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("existing task authorization")
+                    );
                 }
                 "passed" => {
                     assert_eq!(result["status"], "checks_passed", "{provider}: {result}");
@@ -726,6 +737,12 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
                         "{result}"
                     );
                     assert_eq!(next_step["requires_user_authorization"], true, "{result}");
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("seek permission only for missing scope")
+                    );
                     assert!(
                         next_step["message"]
                             .as_str()
@@ -752,6 +769,85 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
             assert_eq!(f.writes(), writes, "{provider}/{check_state}");
         }
     }
+}
+
+#[test]
+fn absent_ci_keeps_checks_unobserved_and_lifecycle_guidance_actionable() {
+    for provider in ["github", "gitlab"] {
+        for draft in [true, false] {
+            let f = fixture(provider);
+            f.edit(|state| {
+                state["requests"][0]["draft"] = json!(draft);
+                state["requests"][0]["head_pipeline"] = Value::Null;
+                state["requests"][0]["pipeline"] = Value::Null;
+                state["project"]["only_allow_merge_if_pipeline_succeeds"] = json!(false);
+                for (route, response) in state["read_routes"].as_object_mut().unwrap() {
+                    if route.contains("/check-runs?") {
+                        *response = json!({"total_count":0,"check_runs":[]});
+                    } else if route.contains("/actions/runs?") {
+                        *response = json!({"total_count":0,"workflow_runs":[]});
+                    }
+                }
+            });
+            let writes = f.writes();
+            for goal in ["checks", "lifecycle"] {
+                let result = f.run(&watch(goal));
+                let action = &result["next_actions"][0];
+                assert_eq!(
+                    result["status"], "pending",
+                    "{provider}/{draft}/{goal}: {result}"
+                );
+                assert_eq!(action["check_outcome"], "unobserved", "{result}");
+                assert_eq!(action["kind"], "inspect_checks", "{result}");
+                assert_eq!(action["draft"], draft, "{result}");
+                let message = action["message"].as_str().unwrap();
+                if goal == "checks" {
+                    assert!(
+                        message.contains("explicit checks goal remains open"),
+                        "{result}"
+                    );
+                    assert!(
+                        message.contains("absence is not a passing result"),
+                        "{result}"
+                    );
+                } else {
+                    assert!(
+                        message.contains("absent optional CI alone does not prevent"),
+                        "{result}"
+                    );
+                    assert!(message.contains("existing task authorization"), "{result}");
+                    assert!(message.contains("actual platform requirements"), "{result}");
+                }
+            }
+            assert_eq!(f.writes(), writes, "{provider}/{draft}");
+        }
+    }
+}
+
+#[test]
+fn advisory_checks_do_not_infer_native_merge_eligibility() {
+    let f = fixture("github");
+    f.edit(|state| {
+        for (route, response) in state["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/check-runs?") {
+                response["check_runs"][0]["conclusion"] = json!("neutral");
+            }
+        }
+    });
+    let writes = f.writes();
+    let result = f.run(&watch("lifecycle"));
+    assert_eq!(result["status"], "checks_completed", "{result}");
+    assert_eq!(
+        result["next_actions"][0]["kind"], "interpret_checks",
+        "{result}"
+    );
+    assert!(
+        result["next_actions"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no merge eligibility")
+    );
+    assert_eq!(f.writes(), writes);
 }
 
 #[test]
@@ -815,7 +911,7 @@ fn checks_and_lifecycle_goals_keep_their_next_steps_distinct() {
 }
 
 #[test]
-fn merged_open_issues_include_ids_and_hook_text_matches_the_structured_action() {
+fn merged_open_issues_keep_structured_actions_in_explicit_tools_and_hooks_offer_receipt_ids() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
         f.edit(|state| {
@@ -850,30 +946,16 @@ fn merged_open_issues_include_ids_and_hook_text_matches_the_structured_action() 
             inbox_report["next_actions"][0], *next_step,
             "{inbox_report}"
         );
-        let offered = hook_output(&f, "PostToolUse", true);
-        let hook_text = offered["hookSpecificOutput"]["additionalContext"]
+        let calls = f.state()["calls"].as_array().unwrap().len();
+        assert!(hook_output(&f, "PostToolUse", true).is_null());
+        assert_eq!(f.state()["calls"].as_array().unwrap().len(), calls);
+        let recovered = hook_output(&f, "SessionStart", false);
+        let text = recovered["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(
-            hook_text.contains(next_step["message"].as_str().unwrap()),
-            "{offered}"
-        );
-        let offered_label = hook_text
-            .find("SpecGit observation offered (not acknowledged):")
-            .unwrap();
-        let next_steps_label = hook_text.find("Next steps:").unwrap();
-        assert!(
-            offered_label < next_steps_label,
-            "event evidence and next-step text are in the wrong order: {offered}"
-        );
-        assert!(
-            hook_text[offered_label..next_steps_label].contains("events"),
-            "event evidence is missing before the next-step label: {offered}"
-        );
-        assert!(
-            hook_text.contains(&serde_json::to_string(next_step).unwrap()),
-            "{offered}"
-        );
+        assert!(text.contains(event["id"].as_str().unwrap()), "{recovered}");
+        assert!(text.contains("unverified event receipts"));
+        assert!(!text.contains(next_step["message"].as_str().unwrap()));
         assert_eq!(f.writes(), writes, "{provider}");
     }
 }
@@ -972,9 +1054,14 @@ fn attention_only_notifications_deliver_failed_native_observations() {
     );
     f.edit(|s| s["read_failure"] = json!("auth"));
 
-    let offered = hook_output(&f, "PostToolUse", true);
-    let text = offered.to_string();
-    assert!(text.contains("unknown"), "{offered}");
+    let watched = f.run(&watch("lifecycle"));
+    assert_eq!(watched["status"], "unknown", "{watched}");
+    assert!(hook_output(&f, "PostToolUse", true).is_null());
+    let offered = hook_output(&f, "SessionStart", false);
+    assert!(
+        offered.to_string().contains("unverified event receipts"),
+        "{offered}"
+    );
 }
 
 #[test]
@@ -985,7 +1072,10 @@ fn completed_only_notifications_suppress_attention_events() {
     );
     f.edit(|s| s["read_failure"] = json!("auth"));
 
-    let offered = hook_output(&f, "PostToolUse", true);
+    let watched = f.run(&watch("lifecycle"));
+    assert_eq!(watched["status"], "unknown", "{watched}");
+    assert!(hook_output(&f, "PostToolUse", true).is_null());
+    let offered = hook_output(&f, "SessionStart", false);
     let text = offered.to_string();
     assert!(!text.contains("unknown"), "{offered}");
     assert!(!text.contains("unverified event receipts"), "{offered}");
@@ -1516,7 +1606,7 @@ fn hook_output(f: &delivery::Fixture, event: &str, observe: bool) -> Value {
     }
 }
 #[test]
-fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverified_ids() {
+fn explicit_watch_offers_fresh_events_and_allowed_hooks_only_recover_unverified_ids() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
         f.edit(|s| {
@@ -1529,18 +1619,13 @@ fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverifi
             s["issues"][0]["state"] = json!("closed");
         });
         let writes = f.writes();
-        let offered = hook_output(&f, "PostToolUse", true);
-        let text = offered["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        assert!(
-            text.contains("not acknowledged") && text.contains("completed"),
-            "{offered}"
-        );
         let first = f.run(&watch("lifecycle"));
+        assert_eq!(first["status"], "completed", "{first}");
         let id = first["evidence"]["events"][0]["id"].as_str().unwrap();
-        assert!(text.contains(id));
         let calls = f.state()["calls"].as_array().unwrap().len();
+        for event in ["PostToolUse", "Stop"] {
+            assert!(hook_output(&f, event, true).is_null());
+        }
         let recovered = hook_output(&f, "SessionStart", false);
         let text = recovered["hookSpecificOutput"]["additionalContext"]
             .as_str()
@@ -1548,42 +1633,9 @@ fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverifi
         assert!(text.contains(id) && text.contains("unverified event receipts"));
         assert!(!text.contains("\"state\":\"completed\""));
         assert_eq!(f.state()["calls"].as_array().unwrap().len(), calls);
+        assert!(hook_output(&f, "SessionStart", false).is_null());
         assert_eq!(f.writes(), writes);
     }
-}
-#[test]
-#[ignore = "Explicit local host qualification; requires real Claude Code and Python, isolated loopback model only"]
-fn real_claude_host_consumes_async_observer_event_on_the_next_model_turn() {
-    let f = fixture("github");
-    f.edit(|s| {
-        s["requests"][0]["state"] = json!("closed");
-        s["requests"][0]["merged"] = json!(true);
-        s["issues"][0]["state"] = json!("closed");
-    });
-    let environment = f.command(&[]);
-    let mut command = std::process::Command::new("python3");
-    for (key, value) in environment.get_envs() {
-        if let Some(value) = value {
-            command.env(key, value);
-        }
-    }
-    let out = command
-        .args([
-            "scripts/claude-local-host-probe.py",
-            "--binary",
-            executable::binary().to_str().unwrap(),
-            "--project",
-            f.root.to_str().unwrap(),
-            "--observe",
-        ])
-        .output()
-        .unwrap();
-    println!("{}", String::from_utf8_lossy(&out.stdout));
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 #[test]

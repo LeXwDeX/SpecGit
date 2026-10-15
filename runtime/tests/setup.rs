@@ -112,7 +112,19 @@ fn options(agents: Vec<Agent>) -> project::Options {
 }
 
 fn install(options: &project::Options, f: &Fixture) -> Result<Value, Diagnostic> {
-    project::install(options, &f.root, &f.private, &f.source)
+    if options.rollback.is_some() {
+        return project::install(options, &f.root, &f.private, &f.source);
+    }
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(project::install_with_context(
+            options,
+            &specgit::setup::HookOptions::default(),
+            &f.root,
+            &f.private,
+            &f.source,
+            &specgit::process::Process::default(),
+        ))
 }
 
 fn cli(root: &Path, args: &[&str]) -> Value {
@@ -412,8 +424,12 @@ fn rollback_rejects_conflicting_choices_and_restores_the_recorded_state() {
     assert!(!f.private.join("ownership.json").exists());
     let mut rollback = options(vec![]);
     rollback.rollback = Some(id.into());
-    let rolled = install(&rollback, &f).unwrap();
-    assert_eq!(rolled["scope"], "project");
+    assert!(
+        install(&rollback, &f).is_err(),
+        "the synchronous API must not bypass native guard consumer discovery"
+    );
+    let rolled = cli(&f.root, &["--rollback", id]);
+    assert_eq!(rolled["evidence"]["scope"], "project");
     // Owned checkout assets are restored byte-identically; the rollback
     // transaction's own journal files are AssetStore mechanics covered elsewhere.
     let journal = |path: &Path| path.components().any(|c| c.as_os_str() == "transactions");

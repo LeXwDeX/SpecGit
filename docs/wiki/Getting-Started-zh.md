@@ -6,7 +6,7 @@ SpecGit 的共享二进制、每个项目的初始化、Codex 等宿主的注册
 [中文维护请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
 （[English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)）。
 该请求要求 Agent 实际检查并完成安全维护，包括全新项目接入，而不是重做安装或只给命令。
-指南将已授权的稳定版验证升级与 init/setup 分开，保留配置、checkpoint 和收据。
+启用 SpecGit 会委托当前任务所需工作流，无需逐步重复确认。指南将稳定版 CLI 升级与 init/setup 分开，保留配置、checkpoint 和收据。
 声明缺失但私有状态仍在时不是全新项目：先恢复原配置，不要删除状态。
 
 ## 1. 安装二进制
@@ -58,8 +58,7 @@ specgit init --provider github --remote origin --json
 
 若原生能力未知或不可用，可以选择手动观察，但 `--manual-observe` 会写入
 `agent.native_auto_merge=false`。新项目采用 false 默认值或已有值为 false 时，复制的请求已选择此方式。
-当前、恢复或传入配置为 true 时，先取得这项偏好变更的明确决策；等待期间继续独立的只读检查。
-检查、预览和应用使用同一套已授权选项及配置，随后回读偏好。不要凭维护请求修改平台设置或忽略冲突。
+除非当前任务要求变更，否则保留已配置偏好。检查、预览和应用使用一致的选项及配置，随后回读偏好。不要凭维护请求修改平台设置或忽略冲突。
 初始化维护 `.specgit.yaml`、受管指导和 Git 本地排除记录；审阅对 `AGENTS.md`、`CLAUDE.md` 的影响并保留非受管内容。
 
 执行后回读配置与状态：
@@ -75,12 +74,9 @@ specgit doctor --provider github --remote origin --json
 
 ## 3. 按需注册宿主
 
-2.8 的用途选择与宿主实际验证见
+Hooks 用途选择与宿主实际验证见
 [维护指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-review-the-full-host-refresh-scope)。
-新宿主可用 `--hook-purpose none` 只添加指导/Skill，不新增 hooks；它不会移除已有 hooks 或 Git guard。
-普通刷新省略用途会保留记录的模式。setup 包含所有已记录宿主及 `--agent` 新选宿主；显式用途作用于整个集合，
-用途变更需要所有受影响宿主的授权。`none` 保留已有用途，但不跳过其资产刷新。
-逐一审阅并报告影响，包括共享 Skill 刷新。官方 OpenCode 仅安装指导/Skill；自定义空闲唤醒需要单独确认能力、授权并显式启用。
+仅支持 SessionStart 和 PreToolUse：前者提供简短规则与 Skill 入口，后者提供相关上下文或恢复信息。不配置 PostToolUse、Stop 或空闲唤醒。`guard` 配置原生 Git commit/push hooks。若支持事件无法自动观察，使用有界 watch/inbox 或手动继续。setup 包含所有已记录宿主及 `--agent` 新选宿主；逐一审阅并报告影响，包括共享 Skill 刷新。
 
 项目初始化**不等于**宿主注册。只有决定给当前宿主安装集成时，才单独查看 `specgit setup --help` 并预览相应的 `--agent codex`、`--agent claude`、`--agent opencode` 或 `--agent generic` 选择。自 2.4 起 setup 永久只支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，资产写入检出目录并使用 worktree 私有收据，hooks 直接调用已安装的共享二进制（无需先做全局 setup），已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。只安装二进制并初始化项目时，无需运行 `setup`。
 

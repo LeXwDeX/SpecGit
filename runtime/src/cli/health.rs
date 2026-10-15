@@ -169,62 +169,69 @@ impl Inspection {
             let mut committed = None;
             let outcome = match plan {
                 Plan::Guard(plan) => plan.apply(process).await.map(|a| (a, None)),
-                Plan::Assets(mut plan) => (|| {
-                    if !prior.is_empty() {
-                        let baseline = plan.read_set();
-                        let root = self
-                            .root
-                            .as_deref()
-                            .ok_or_else(|| Diagnostic::input("Missing repair root."))?;
-                        let private = self
-                            .private
-                            .as_deref()
-                            .ok_or_else(|| Diagnostic::input("Missing repair state."))?;
-                        plan = match id {
-                            "setup" => specgit::setup::project::health_plan(
-                                root,
-                                &private.join("agent-assets"),
-                                source,
-                            )?,
-                            "guidance" => specgit::guidance::health_plan(
-                                root,
-                                private,
-                                self.declaration.as_ref().ok_or_else(|| {
-                                    Diagnostic::input("Missing repair declaration.")
-                                })?,
-                            )?,
-                            _ => return Err(Diagnostic::input("Unknown repair component.")),
+                Plan::Assets(mut plan) => {
+                    (async {
+                        if !prior.is_empty() {
+                            let baseline = plan.read_set();
+                            let root = self
+                                .root
+                                .as_deref()
+                                .ok_or_else(|| Diagnostic::input("Missing repair root."))?;
+                            let private = self
+                                .private
+                                .as_deref()
+                                .ok_or_else(|| Diagnostic::input("Missing repair state."))?;
+                            plan = match id {
+                                "setup" => {
+                                    specgit::setup::project::health_plan_with_context(
+                                        process,
+                                        root,
+                                        &private.join("agent-assets"),
+                                        source,
+                                    )
+                                    .await?
+                                }
+                                "guidance" => specgit::guidance::health_plan(
+                                    root,
+                                    private,
+                                    self.declaration.as_ref().ok_or_else(|| {
+                                        Diagnostic::input("Missing repair declaration.")
+                                    })?,
+                                )?,
+                                _ => return Err(Diagnostic::input("Unknown repair component.")),
+                            }
+                            .ok_or_else(|| {
+                                Diagnostic::new(
+                                    Code::ConcurrentEdit,
+                                    "doctor",
+                                    "The selected repair ownership disappeared.",
+                                    "Recheck current state before continuing.",
+                                )
+                            })?;
+                            if let Some(snapshot) = &self.declaration_snapshot {
+                                plan.depend_on_snapshot(&root.join(".specgit.yaml"), snapshot);
+                            }
+                            plan.validate_rebase(&baseline, &prior)?;
                         }
-                        .ok_or_else(|| {
-                            Diagnostic::new(
+                        let applied = plan.apply()?;
+                        committed = Some(Applied {
+                            transaction: applied.transaction.clone(),
+                            changes: applied.changes,
+                        });
+                        #[cfg(feature = "test-fixtures")]
+                        if std::env::var_os("SPECGIT_FIXTURE_DOCTOR_POST_APPLY_FAILURE").is_some() {
+                            return Err(Diagnostic::new(
                                 Code::ConcurrentEdit,
                                 "doctor",
-                                "The selected repair ownership disappeared.",
-                                "Recheck current state before continuing.",
-                            )
-                        })?;
-                        if let Some(snapshot) = &self.declaration_snapshot {
-                            plan.depend_on_snapshot(&root.join(".specgit.yaml"), snapshot);
+                                "Fixture postimage verification failed after commit.",
+                                "Inspect the retained repair transaction before continuing.",
+                            ));
                         }
-                        plan.validate_rebase(&baseline, &prior)?;
-                    }
-                    let applied = plan.apply()?;
-                    committed = Some(Applied {
-                        transaction: applied.transaction.clone(),
-                        changes: applied.changes,
-                    });
-                    #[cfg(feature = "test-fixtures")]
-                    if std::env::var_os("SPECGIT_FIXTURE_DOCTOR_POST_APPLY_FAILURE").is_some() {
-                        return Err(Diagnostic::new(
-                            Code::ConcurrentEdit,
-                            "doctor",
-                            "Fixture postimage verification failed after commit.",
-                            "Inspect the retained repair transaction before continuing.",
-                        ));
-                    }
-                    let writes = plan.write_set()?;
-                    Ok((applied, Some(writes)))
-                })(),
+                        let writes = plan.write_set()?;
+                        Ok((applied, Some(writes)))
+                    })
+                    .await
+                }
             };
             match outcome {
                 Ok((applied, writes)) => {
@@ -309,8 +316,14 @@ pub(super) async fn inspect(process: &Process, cwd: &Path, source: &Path) -> Ins
             Err(diagnostic) => result.checks.push(Check::failed("initialization",diagnostic)),
         }
     }
-    let setup = specgit::setup::project::health_plan(&root, &private.join("agent-assets"), source)
-        .map(|p| p.map(Plan::Assets));
+    let setup = specgit::setup::project::health_plan_with_context(
+        process,
+        &root,
+        &private.join("agent-assets"),
+        source,
+    )
+    .await
+    .map(|p| p.map(Plan::Assets));
     result.plan("setup", setup);
     if let Some(d) = &result.declaration {
         let guidance =

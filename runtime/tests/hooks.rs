@@ -1,7 +1,5 @@
 #[cfg(feature = "test-fixtures")]
-#[path = "support/acceptance.rs"]
-mod acceptance;
-#[cfg(feature = "test-fixtures")]
+#[allow(dead_code)]
 #[path = "support/delivery.rs"]
 mod delivery;
 #[cfg(not(feature = "test-fixtures"))]
@@ -88,431 +86,80 @@ fn run(event: &str, bytes: &[u8]) -> std::process::Output {
 }
 
 #[cfg(feature = "test-fixtures")]
-fn observe(f: &delivery::Fixture, event: &str, repeated: bool) -> std::process::Output {
-    let payload = json!({"session_id":"stop-session","hook_event_name":event,"cwd":f.root,
-        "stop_hook_active":repeated,"tool_name":"Bash","tool_input":{"command":"git add --dry-run .specgit.yaml"}});
-    let mut child = f
-        .command(&["hook", "--observe", "--event", event])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&serde_json::to_vec(&payload).unwrap())
-        .unwrap();
-    child.wait_with_output().unwrap()
-}
-
-#[cfg(feature = "test-fixtures")]
 #[test]
-fn stop_observer_offers_bound_fresh_events_without_ack_or_completion_control() {
-    for provider in ["github", "gitlab"] {
-        let f = acceptance::fixture(provider);
-        let writes = f.writes();
-        for event in ["Stop", "PostToolUse"] {
-            let out = observe(&f, event, false);
-            assert!(out.status.success());
-            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-            assert_eq!(
-                value["hookSpecificOutput"]["hookEventName"], event,
-                "{value}"
-            );
-            assert!(value.get("decision").is_none());
-            assert!(value.get("continue").is_none());
-            let text = value["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap();
-            let inbox = f.run(&[
-                "inbox",
-                "--request",
-                "41",
-                "--session",
-                "stop-session",
-                "--goal",
-                "lifecycle",
-                "--no-refresh",
-            ]);
-            let id = inbox["evidence"]["pending_event_ids"][0].as_str().unwrap();
-            assert!(text.contains(id), "{text}");
-            assert!(text.contains("\"request\":41") && text.contains("stop-session"));
-            assert!(text.contains("\"head\":") && text.contains("validated_at"));
-            assert!(
-                text.contains("not acknowledged") && text.contains("never grant authorization")
-            );
-        }
-        assert_eq!(f.writes(), writes);
-    }
-}
-
-#[cfg(feature = "test-fixtures")]
-#[test]
-fn stop_observer_recursion_and_missing_selection_are_silent_without_remote_reads() {
-    for selected in [false, true] {
-        let f = if selected {
-            acceptance::fixture("github")
-        } else {
-            delivery::Fixture::new("github")
-        };
-        let calls = f.state()["calls"].clone();
-        let out = observe(&f, "Stop", selected);
-        assert!(out.status.success());
-        assert!(
-            out.stdout.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&out.stdout)
-        );
-        assert_eq!(f.state()["calls"], calls);
-    }
-}
-
-#[cfg(feature = "test-fixtures")]
-fn observation_files(
-    root: &std::path::Path,
-) -> std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>> {
-    let mut files = std::collections::BTreeMap::new();
-    for entry in fs::read_dir(root).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            files.insert(path.clone(), None);
-            files.extend(observation_files(&path));
-        } else {
-            files.insert(path.clone(), Some(fs::read(path).unwrap()));
-        }
-    }
-    files
-}
-
-#[cfg(feature = "test-fixtures")]
-#[test]
-fn automatic_observation_skips_other_branch_records_and_preserves_guards() {
-    for provider in ["github", "gitlab"] {
-        let f = acceptance::fixture(provider);
-        let pending = f.run(&[
-            "watch",
-            "--request",
-            "41",
-            "--session",
-            "stop-session",
-            "--goal",
-            "lifecycle",
-            "--once",
-        ]);
-        assert_eq!(pending["exit"], 0, "{pending}");
-        git(&f.root, &["switch", "-c", "main"]);
-        let declaration = f.root.join(".specgit.yaml");
-        let mut bytes = fs::read(&declaration).unwrap();
-        bytes.extend_from_slice(b"\n# Existing local changes are outside the old task.\n");
-        fs::write(&declaration, bytes).unwrap();
-        git(&f.root, &["add", ".specgit.yaml"]);
-        let private = f.root.join(".git/specgit-v2");
-        let before = observation_files(&private);
-        let calls = f.state()["calls"].clone();
-        for event in ["Stop", "PostToolUse"] {
-            let out = observe(&f, event, false);
-            assert!(out.status.success());
-            assert!(
-                out.stdout.is_empty(),
-                "{provider}/{event}: {}",
-                String::from_utf8_lossy(&out.stdout)
-            );
-            assert!(out.stderr.is_empty());
-        }
-        for event in ["SessionStart", "PostToolUse", "PreToolUse", "Stop"] {
-            let payload = json!({"session_id":"stop-session","hook_event_name":event,"cwd":f.root,
-                "tool_name":"Edit","tool_input":{"file_path":declaration}});
-            let out = run_command(
-                f.command(&[]),
-                event,
-                &serde_json::to_vec(&payload).unwrap(),
-            );
-            assert!(out.status.success());
-            if event == "PostToolUse" {
-                assert!(
-                    out.stdout.is_empty(),
-                    "{}",
-                    String::from_utf8_lossy(&out.stdout)
-                );
-                continue;
-            }
-            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-            match event {
-                "PreToolUse" => {
-                    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny")
-                }
-                "Stop" => assert_eq!(value["decision"], "block"),
-                _ => {
-                    let text = value["hookSpecificOutput"]["additionalContext"]
-                        .as_str()
-                        .unwrap();
-                    assert!(text.contains("branch main"), "{value}");
-                    assert!(
-                        !text.contains("unreadable") && !text.contains("unverified event receipts"),
-                        "{value}"
-                    );
-                }
-            }
-        }
-        let status = f.run(&["status"]);
-        assert_eq!(status["status"], "checkpoint_branch_mismatch", "{status}");
-        let doctor = f.run(&["doctor", "--offline"]);
-        assert_eq!(doctor["status"], "checkpoint_branch_mismatch", "{doctor}");
-        let guard = f
-            .command(&["guard", "--stage", "pre-commit"])
-            .output()
-            .unwrap();
-        assert!(!guard.status.success());
-        assert!(String::from_utf8_lossy(&guard.stderr).contains("selection_branch"));
-        assert_eq!(f.state()["calls"], calls);
-        assert_eq!(observation_files(&private), before);
-    }
-}
-
-#[cfg(feature = "test-fixtures")]
-#[test]
-fn automatic_observation_keeps_real_record_errors_as_advisory_diagnostics() {
-    for damage in ["malformed", "foreign_repository", "invalid_version"] {
-        let f = acceptance::fixture("github");
-        git(&f.root, &["switch", "-c", "main"]);
-        let private = f.root.join(".git/specgit-v2");
-        let path = private.join("selection.json");
-        if damage == "malformed" {
-            fs::write(&path, b"{").unwrap();
-        } else {
-            let mut selection: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-            if damage == "foreign_repository" {
-                selection["repository"]["path"] = json!("another/repository");
-            } else {
-                selection["version"] = json!(0);
-            }
-            fs::write(&path, serde_json::to_vec(&selection).unwrap()).unwrap();
-        }
-        let before = observation_files(&private);
-        let calls = f.state()["calls"].clone();
-        for event in ["Stop", "PostToolUse"] {
-            let out = observe(&f, event, false);
-            assert!(out.status.success());
-            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-            let text = value["systemMessage"].as_str().unwrap();
-            assert!(text.contains("specgit doctor"), "{damage}/{event}: {value}");
-            assert!(
-                text.contains(if damage == "malformed" {
-                    "input:"
-                } else {
-                    "selection:"
-                }),
-                "{value}"
-            );
-            assert!(value.get("decision").is_none());
-            assert!(value.get("hookSpecificOutput").is_none());
-            assert!(out.stderr.is_empty());
-        }
-        for event in ["SessionStart", "PostToolUse"] {
-            let payload = json!({"session_id":"stop-session","hook_event_name":event,"cwd":f.root,
-                "tool_name":"Edit","tool_input":{"file_path":f.root.join(".specgit.yaml")}});
-            let out = run_command(
-                f.command(&[]),
-                event,
-                &serde_json::to_vec(&payload).unwrap(),
-            );
-            assert!(out.status.success());
-            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-            let text = if event == "SessionStart" {
-                &value["hookSpecificOutput"]["additionalContext"]
-            } else {
-                &value["systemMessage"]
-            }
-            .as_str()
-            .unwrap();
-            assert!(text.contains("specgit doctor"), "{damage}/{event}: {value}");
-            assert!(
-                text.contains(if damage == "malformed" {
-                    "input:"
-                } else {
-                    "selection:"
-                }),
-                "{value}"
-            );
-            assert!(value.get("decision").is_none());
-        }
-        assert_eq!(f.state()["calls"], calls);
-        assert_eq!(observation_files(&private), before);
-    }
-}
-
-#[cfg(feature = "test-fixtures")]
-#[test]
-fn stop_observer_lease_conflict_is_silent() {
-    let f = acceptance::fixture("github");
-    let first = f.run(&[
-        "watch",
-        "--request",
-        "41",
-        "--session",
-        "stop-session",
-        "--goal",
-        "lifecycle",
-        "--once",
-    ]);
-    let identity = serde_json::from_value(first["evidence"]["subscription"].clone()).unwrap();
-    let store = specgit::watch_store::Store::new(identity).unwrap();
-    let (_lock, lease) = store.lease(specgit::watch_store::now() + 60).unwrap();
+fn retired_host_events_are_quiet_without_observation_side_effects() {
+    let f = delivery::Fixture::new("github");
     let calls = f.state()["calls"].clone();
-    let out = observe(&f, "Stop", false);
-    assert!(out.status.success());
-    assert!(
-        out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert_eq!(f.state()["calls"], calls);
-    store.release(&lease).unwrap();
-}
-
-#[cfg(feature = "test-fixtures")]
-#[test]
-fn stop_observer_refresh_supersedes_old_success_on_head_change_or_failed_read() {
-    for changed_head in [false, true] {
-        let f = acceptance::fixture("github");
-        let first = observe(&f, "Stop", false);
-        assert!(first.status.success());
-        let inbox = f.run(&[
-            "inbox",
-            "--request",
-            "41",
-            "--session",
-            "stop-session",
-            "--goal",
-            "lifecycle",
-            "--no-refresh",
-        ]);
-        let old_id = inbox["evidence"]["pending_event_ids"][0].as_str().unwrap();
-        f.edit(|s| {
-            if changed_head {
-                s["requests"][0]["head"]["sha"] = json!("f".repeat(40));
-            } else {
-                s["read_failure"] = json!("auth");
+    for event in ["PostToolUse", "Stop"] {
+        for observe in [false, true] {
+            let mut command = f.command(&["hook", "--event", event]);
+            if observe {
+                command.arg("--observe");
             }
-        });
-        let current = observe(&f, "Stop", false);
-        assert!(current.status.success());
-        let value: Value = serde_json::from_slice(&current.stdout).unwrap();
-        let text = value["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        assert!(!text.contains(old_id), "{text}");
-        assert!(!text.contains("\"state\":\"checks_passed\""), "{text}");
-        assert!(
-            text.contains(if changed_head {
-                "identity_changed"
-            } else {
-                "unknown"
-            }),
-            "{text}"
-        );
-        assert!(text.contains("Re-read current native request, head, CI attempt and review facts"));
+            let mut child = command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let held_stdin = child.stdin.take().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if child.try_wait().unwrap().is_none() {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{event} observe={observe} waited for stdin");
+            }
+            drop(held_stdin);
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(output.stderr.is_empty());
+        }
+        let malformed = run_command(f.command(&[]), event, b"{");
+        assert!(malformed.status.success());
+        assert!(malformed.stdout.is_empty());
+        assert!(malformed.stderr.is_empty());
     }
+    fs::remove_file(f.root.join(".specgit.yaml")).unwrap();
+    for event in ["PostToolUse", "Stop"] {
+        let payload = json!({"session_id":"legacy-session","hook_event_name":event,"cwd":f.root});
+        let output = run_command(
+            f.command(&[]),
+            event,
+            &serde_json::to_vec(&payload).unwrap(),
+        );
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+    assert_eq!(f.state()["calls"], calls);
 }
 
 #[cfg(feature = "test-fixtures")]
 #[test]
-fn stop_observer_timeout_keeps_pending_intent_without_a_wake_callback() {
-    let f = acceptance::fixture_with_observation(
-        "github",
-        "observation:\n  poll_seconds: 1\n  max_wait_seconds: 1\n",
-    );
-    f.edit(|s| s["read_failure"] = json!("hang"));
-    let out = observe(&f, "Stop", false);
-    assert!(out.status.success());
+fn explicit_observe_mode_declines_with_a_bounded_recovery_path() {
+    let f = delivery::Fixture::new("github");
+    let output = f
+        .command(&["hook", "--event", "PreToolUse", "--observe"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
     assert!(
-        out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
+        diagnostic.contains("Automatic host observation is unsupported"),
+        "{diagnostic}"
     );
-    let recovered = f.run(&[
-        "inbox",
-        "--request",
-        "41",
-        "--session",
-        "stop-session",
-        "--goal",
-        "lifecycle",
-        "--no-refresh",
-    ]);
     assert!(
-        !recovered["evidence"]["pending_event_ids"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+        diagnostic.contains("watch") || diagnostic.contains("inbox"),
+        "{diagnostic}"
     );
 }
 
-#[cfg(all(unix, feature = "test-fixtures"))]
-#[test]
-fn cancelled_stop_observer_reaps_child_and_cannot_wake_a_stopped_task() {
-    let f = acceptance::fixture("github");
-    f.edit(|s| s["read_failure"] = json!("hang"));
-    let mut child = f
-        .command(&["hook", "--event", "Stop", "--observe"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(
-            serde_json::to_string(
-                &json!({"session_id":"stop-session","hook_event_name":"Stop","cwd":f.root}),
-            )
-            .unwrap()
-            .as_bytes(),
-        )
-        .unwrap();
-    let start = Instant::now();
-    let reader = loop {
-        if let Some(pid) = f.state()["hanging_reader_pid"].as_u64() {
-            break pid;
-        }
-        if start.elapsed() > Duration::from_secs(10) {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("Stop observer did not start its owned reader");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    // SAFETY: this PID is the observer owned by this test.
-    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
-    let out = child.wait_with_output().unwrap();
-    assert!(
-        out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    // SAFETY: signal zero only probes the exact recorded fixture reader.
-    assert_ne!(unsafe { libc::kill(reader as i32, 0) }, 0);
-    let recovered = f.run(&[
-        "inbox",
-        "--request",
-        "41",
-        "--session",
-        "stop-session",
-        "--goal",
-        "lifecycle",
-        "--no-refresh",
-    ]);
-    assert!(
-        !recovered["evidence"]["pending_event_ids"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-}
 fn run_command(mut command: Command, event: &str, bytes: &[u8]) -> std::process::Output {
     let mut child = command
         .args(["hook", "--event", event])
@@ -563,181 +210,74 @@ fn native_hook_is_silent_outside_initialized_projects_and_for_irrelevant_tools()
     }
 }
 #[test]
-fn event_context_keeps_unknown_input_and_never_grants_permission_or_loops_stop() {
-    let t = fixture();
-    fs::write(
-        t.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\nlanguage: zh\n",
-    )
-    .unwrap();
-    checkpoint(t.path(), "master");
-    for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
-        let p = json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":"file","unknown":{"retain":[1,true]}},"future_field":"retained by host"});
-        let original = p.clone();
-        let out = run(event, &serde_json::to_vec(&p).unwrap());
-        assert!(out.status.success());
-        if matches!(event, "PreToolUse" | "PostToolUse") {
-            assert!(out.stdout.is_empty(), "{event}: {:?}", out.stdout);
-            assert_eq!(p, original);
-            continue;
-        }
-        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(p, original);
-        assert!(v.get("continue").is_none());
-        assert!(v.get("decision").is_none());
-        assert!(
-            v.pointer("/hookSpecificOutput/permissionDecision")
-                .is_none()
-        );
-        assert!(v.pointer("/hookSpecificOutput/updatedInput").is_none());
-        if event == "Stop" {
-            assert!(v.get("systemMessage").is_some());
-            assert!(v.get("hookSpecificOutput").is_none());
-            let mut repeated = p;
-            repeated["stop_hook_active"] = json!(true);
-            assert!(
-                run(event, &serde_json::to_vec(&repeated).unwrap())
-                    .stdout
-                    .is_empty()
-            );
-        } else {
-            assert_eq!(v["hookSpecificOutput"]["hookEventName"], event);
-            assert!(
-                v["hookSpecificOutput"]["additionalContext"]
-                    .as_str()
-                    .unwrap()
-                    .contains("远端状态尚未检查")
-            );
-        }
-    }
-}
-#[test]
-fn pre_tool_use_denies_tracked_edits_without_a_current_issue_checkpoint() {
+fn session_start_is_brief_context_and_pre_tool_use_does_not_gate_edits() {
     let t = fixture();
     fs::write(
         t.path().join(".specgit.yaml"),
         "version: 2\nremote: origin\nlanguage: en\n",
     )
     .unwrap();
-    for payload in [
-        json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}}),
-        json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: new/file.rs\n+x\n*** End Patch"}}),
-    ] {
-        let out = run("PreToolUse", &serde_json::to_vec(&payload).unwrap());
-        assert!(out.status.success());
-        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
-        assert!(
-            value["hookSpecificOutput"]["permissionDecisionReason"]
-                .as_str()
-                .unwrap()
-                .contains("Issue checkpoint")
-        );
-    }
-}
-
-#[test]
-fn a_lost_declaration_with_private_state_fails_closed_but_new_repositories_stay_silent() {
-    let t = fixture();
-    let edit = |event: &str| json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}});
-    // Never initialized: no declaration and no private state.
-    for event in ["SessionStart", "PreToolUse"] {
-        assert!(
-            run(event, &serde_json::to_vec(&edit(event)).unwrap())
-                .stdout
-                .is_empty()
-        );
-    }
-    fs::write(
-        t.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\nlanguage: en\n",
-    )
-    .unwrap();
-    checkpoint(t.path(), "master");
-    fs::remove_file(t.path().join(".specgit.yaml")).unwrap();
-    let out = run(
-        "PreToolUse",
-        &serde_json::to_vec(&edit("PreToolUse")).unwrap(),
-    );
+    let session = json!({"session_id":"fixture-session","hook_event_name":"SessionStart","cwd":t.path(),"future_field":"retained by host"});
+    let out = run("SessionStart", &serde_json::to_vec(&session).unwrap());
     assert!(out.status.success());
     let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
-    let reason = value["hookSpecificOutput"]["permissionDecisionReason"]
+    let text = value["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(reason.contains("no .specgit.yaml"), "{reason}");
-    assert!(reason.contains("specgit init"), "{reason}");
-    for event in ["SessionStart", "PostToolUse", "Stop"] {
-        let out = run(event, &serde_json::to_vec(&edit(event)).unwrap());
-        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert!(
-            value["systemMessage"]
-                .as_str()
-                .unwrap()
-                .contains("private state"),
-            "{value}"
-        );
-    }
-}
-
-#[test]
-fn pre_tool_use_allows_issue_lifecycle_commands_without_a_current_checkpoint() {
-    let t = fixture();
-    fs::write(
-        t.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\nlanguage: en\n",
-    )
-    .unwrap();
-    for (tool_name, command) in [
-        ("Bash", "specgit issue --inspect 'fix: first checkpoint'"),
+    assert!(
+        text.contains(".agents/skills/specgit-native/SKILL.md"),
+        "{text}"
+    );
+    assert!(text.contains("commit/push"), "{text}");
+    assert!(text.contains("TDD") && text.contains("CI"), "{text}");
+    assert!(
+        text.len() < 1200,
+        "SessionStart should stay concise: {text}"
+    );
+    assert!(value.get("decision").is_none());
+    for (tool, input) in [
+        (
+            "Write",
+            json!({"file_path":t.path().join("src/lib.rs"),"content":"x"}),
+        ),
+        (
+            "Edit",
+            json!({"file_path":t.path().join("src/lib.rs"),"old_string":"a","new_string":"b"}),
+        ),
+        (
+            "apply_patch",
+            json!({"patch":"*** Begin Patch\n*** Update File: src/lib.rs\n-x\n+y\n*** End Patch"}),
+        ),
         (
             "Bash",
-            "specgit --json issue --dry-run 'fix: first checkpoint'",
-        ),
-        ("Bash", "specgit issue 'fix: first checkpoint'"),
-        (
-            "PowerShell",
-            "specgit issue --inspect 'fix: first checkpoint'",
+            json!({"command":"printf changed > src/lib.rs && git add -A"}),
         ),
     ] {
-        let payload = json!({
-            "session_id":"fixture-session",
-            "hook_event_name":"PreToolUse",
-            "cwd":t.path(),
-            "tool_name":tool_name,
-            "tool_input":{"command":command}
-        });
+        let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":tool,"tool_input":input});
         let out = run("PreToolUse", &serde_json::to_vec(&payload).unwrap());
         assert!(out.status.success());
         assert!(
             out.stdout.is_empty(),
-            "issue lifecycle command was blocked by the source-edit checkpoint guard: {command}"
+            "{tool}: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            out.stderr.is_empty(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
-
-    let compound_payload = json!({
-        "session_id":"fixture-session",
-        "hook_event_name":"PreToolUse",
-        "cwd":t.path(),
-        "tool_name":"Bash",
-        "tool_input":{"command":"specgit issue --inspect 'fix: first checkpoint' && touch tracked-file"}
-    });
-    let compound = run(
-        "PreToolUse",
-        &serde_json::to_vec(&compound_payload).unwrap(),
-    );
-    let value: Value = serde_json::from_slice(&compound.stdout).unwrap();
-    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
-    assert!(
-        value["hookSpecificOutput"]["permissionDecisionReason"]
-            .as_str()
-            .unwrap()
-            .contains("Issue checkpoint")
-    );
+    for event in ["PostToolUse", "Stop"] {
+        let payload =
+            json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path()});
+        let out = run(event, &serde_json::to_vec(&payload).unwrap());
+        assert!(out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.is_empty());
+    }
 }
-
 #[test]
-fn pre_tool_use_accepts_only_the_checkpoint_branch_and_rejects_cross_repository_patches() {
+fn stale_selection_does_not_turn_pre_tool_use_into_a_write_gate() {
     let t = fixture();
     fs::write(
         t.path().join(".specgit.yaml"),
@@ -745,54 +285,23 @@ fn pre_tool_use_accepts_only_the_checkpoint_branch_and_rejects_cross_repository_
     )
     .unwrap();
     checkpoint(t.path(), "master");
-    let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":t.path().join("src/lib.rs")}});
-    assert!(
-        run("PreToolUse", &serde_json::to_vec(&payload).unwrap())
-            .stdout
-            .is_empty()
-    );
     git(t.path(), &["checkout", "-b", "other"]);
-    let value: Value =
-        serde_json::from_slice(&run("PreToolUse", &serde_json::to_vec(&payload).unwrap()).stdout)
-            .unwrap();
-    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
-
-    let other = fixture();
-    fs::write(
-        other.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\n",
-    )
-    .unwrap();
-    let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"apply_patch","tool_input":{"command":format!("*** Begin Patch\n*** Update File: {}\n+x\n*** Update File: {}\n+y\n*** End Patch",t.path().join("a").display(),other.path().join("b").display())}});
-    let value: Value =
-        serde_json::from_slice(&run("PreToolUse", &serde_json::to_vec(&payload).unwrap()).stdout)
-            .unwrap();
-    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
-}
-
-#[test]
-fn stop_requests_at_most_one_checkpoint_recovery_turn() {
-    let t = fixture();
-    fs::write(
-        t.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\n",
-    )
-    .unwrap();
-    let mut payload =
-        json!({"session_id":"fixture-session","hook_event_name":"Stop","cwd":t.path()});
-    let value: Value =
-        serde_json::from_slice(&run("Stop", &serde_json::to_vec(&payload).unwrap()).stdout)
-            .unwrap();
-    assert_eq!(value["decision"], "block");
-    payload["stop_hook_active"] = json!(true);
+    let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Write","tool_input":{"file_path":t.path().join("src/lib.rs")}});
+    let out = run("PreToolUse", &serde_json::to_vec(&payload).unwrap());
+    assert!(out.status.success());
     assert!(
-        run("Stop", &serde_json::to_vec(&payload).unwrap())
-            .stdout
-            .is_empty()
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 #[test]
-fn malformed_duplicate_and_oversized_hook_inputs_remain_nonblocking() {
+fn malformed_supported_hook_inputs_remain_nonblocking() {
     for bytes in [
         b"{".to_vec(),
         b"{\"cwd\":\"a\",\"cwd\":\"b\"}".to_vec(),
@@ -800,15 +309,15 @@ fn malformed_duplicate_and_oversized_hook_inputs_remain_nonblocking() {
     ] {
         let out = run("SessionStart", &bytes);
         assert!(out.status.success());
-        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert!(v.get("systemMessage").is_some());
-        assert!(
-            v["systemMessage"]
-                .as_str()
-                .unwrap()
-                .contains("specgit doctor")
-        );
-        assert!(v.get("decision").is_none());
+        if !out.stdout.is_empty() {
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert!(value.get("decision").is_none());
+            assert!(
+                value
+                    .pointer("/hookSpecificOutput/permissionDecision")
+                    .is_none()
+            );
+        }
     }
 }
 #[test]
@@ -824,8 +333,14 @@ fn stalled_stdin_cannot_hold_runtime_shutdown() {
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     assert!(start.elapsed() < Duration::from_secs(5));
-    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(v.get("systemMessage").is_some());
+    if !output.stdout.is_empty() {
+        let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            v.pointer("/hookSpecificOutput/permissionDecision")
+                .is_none()
+        );
+        assert!(v.get("decision").is_none());
+    }
 }
 #[test]
 fn project_setup_registers_a_working_native_hook_adapter() {
@@ -875,163 +390,41 @@ fn state_root_is_not_a_supported_hook_argument() {
 }
 
 #[test]
-fn native_write_commands_require_checkpoint_but_observer_commands_do_not_recurse() {
+fn pre_tool_use_never_guards_native_writes_or_shell_segments() {
     let t = fixture();
     fs::write(
         t.path().join(".specgit.yaml"),
         "version: 2\nremote: origin\n",
     )
     .unwrap();
-    for (command, relevant) in [
-        ("touch generated.rs", true),
-        ("sed -i.bak 's/a/b/' source.rs", true),
-        ("printf data > output.txt", true),
-        ("printf 'a > b'", false),
-        ("specgit pr --ready", true),
-        ("specgit --json pr --ready", true),
-        ("specgit --cwd '/tmp/project space' --json pr --ready", true),
-        ("specgit --cwd=\"/tmp/project space\" --json issue 1", false),
-        ("specgit --json --cwd /tmp/project finish", false),
-        (
-            "specgit merge --request 41 --mode now --strategy squash",
-            true,
-        ),
-        ("node bin/specgit.js issue 1", true),
-        ("specgit watch --request 41", false),
-        ("specgit inbox --request 41", false),
-        ("specgit finish", false),
+    for command in [
+        "touch generated.rs",
+        "specgit issue --inspect fix",
+        "specgit issue fix",
+        "specgit pr --ready",
+        "gh pr merge 41",
+        "git push",
+        "printf data > output.txt",
+        "cmd && git push",
     ] {
-        let payload = json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":t.path(),"tool_name":"Bash","tool_input":{"command":command}});
-        assert_eq!(
-            !run("PreToolUse", &serde_json::to_vec(&payload).unwrap())
-                .stdout
-                .is_empty(),
-            relevant,
-            "{command}"
+        let payload = shell_payload(t.path(), command);
+        let out = run("PreToolUse", &serde_json::to_vec(&payload).unwrap());
+        assert!(out.status.success(), "{command}");
+        assert!(
+            out.stdout.is_empty(),
+            "{command}: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            out.stderr.is_empty(),
+            "{command}: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
 }
 
 fn shell_payload(root: &std::path::Path, command: &str) -> Value {
     json!({"session_id":"fixture-session","hook_event_name":"PreToolUse","cwd":root,"tool_name":"Bash","tool_input":{"command":command}})
-}
-
-#[test]
-fn readonly_commands_and_non_repository_redirects_do_not_need_checkpoint() {
-    let t = fixture();
-    fs::write(
-        t.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\n",
-    )
-    .unwrap();
-    for command in [
-        "gh pr view 41",
-        "gh pr list",
-        "gh pr checks 41",
-        "gh pr diff 41",
-        "gh pr status",
-        "gh issue view 41",
-        "gh issue list",
-        "glab mr view 41",
-        "glab mr list",
-        "glab mr diff 41",
-        "glab issue view 41",
-        "glab issue list",
-        "specgit pr --status",
-        "specgit --json pr --status --request 41",
-        "specgit status",
-        "specgit doctor",
-        "specgit watch",
-        "specgit inbox",
-        "cmd 2>&1",
-        "cmd >&2",
-        "cmd &>/dev/null",
-        "cmd 2>/dev/null",
-        "cmd >/dev/null",
-        "cmd 2> /dev/null",
-        "cmd >>/dev/null 2>&1",
-        "cmd 2>&1 | gh pr view 41",
-        "printf 'rm x; touch y && cp z q | mv a b & mkdir c\n git push'",
-        "printf \"a > b\"",
-        "printf git push",
-        "env FOO=1 gh pr checks 41",
-        "sudo command gh issue view 41",
-        "gh pr view 41 --json body -q '.body | $(x)'",
-    ] {
-        let out = run(
-            "PreToolUse",
-            &serde_json::to_vec(&shell_payload(t.path(), command)).unwrap(),
-        );
-        assert!(out.status.success());
-        assert!(
-            out.stdout.is_empty(),
-            "{command}: {}",
-            String::from_utf8_lossy(&out.stdout)
-        );
-    }
-}
-
-#[test]
-fn shell_segments_and_leading_wrappers_cannot_hide_tracked_writes() {
-    let t = fixture();
-    fs::write(
-        t.path().join(".specgit.yaml"),
-        "version: 2\nremote: origin\n",
-    )
-    .unwrap();
-    for command in [
-        "cd x && rm y",
-        "cd x;rm y",
-        "cd x || rm y",
-        "pwd | rm y",
-        "pwd & rm y",
-        "pwd\nrm y",
-        "FOO=1 rm y",
-        "sudo rm y",
-        "env rm y",
-        "command rm y",
-        "nohup rm y",
-        "time rm y",
-        "FOO='a b' sudo env BAR=2 command nohup time rm y",
-        "sudo -u root rm y",
-        "env -i FOO=1 rm y",
-        "cmd 2>&1 && rm y",
-        "cmd &>/dev/null; rm y",
-        "gh pr view 41 && git push",
-        "specgit pr --status;touch x",
-        "gh pr create",
-        "gh pr merge",
-        "gh issue edit 41",
-        "gh pr view \"$(touch x)\"",
-        "gh pr view `touch x`",
-        "glab mr view \"$(rm y)\"",
-        "specgit pr --status --request \"$(touch x)\"",
-        "specgit status \"$(touch x)\"",
-        "specgit watch --session `rm y`",
-        "glab mr approve 41",
-        "glab issue close 41",
-        "specgit pr --ready",
-        "printf data > output.txt",
-        "cmd 2>&1 >output",
-        "cmd &>output",
-        "cmd >/dev/null.txt",
-        "specgit issue --inspect x && pwd",
-        "FOO=1 specgit issue 41",
-        "sudo specgit issue 41",
-        "specgit issue --inspect \"$(touch x)\"",
-    ] {
-        let out = run(
-            "PreToolUse",
-            &serde_json::to_vec(&shell_payload(t.path(), command)).unwrap(),
-        );
-        assert!(out.status.success());
-        assert!(!out.stdout.is_empty(), "missed write: {command}");
-        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(
-            value["hookSpecificOutput"]["permissionDecision"], "deny",
-            "{command}: {value}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -1117,21 +510,15 @@ fn hook_reuses_the_target_probe_instead_of_resolving_toplevel_again() {
         &serde_json::to_vec(&payload).unwrap(),
     );
     assert!(output.status.success());
-    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        value["hookSpecificOutput"]["permissionDecision"],
-        "deny",
-        "hook exit status: {:?}; stdout: {}; stderr: {}; fake-git state: {}",
-        output.status,
+    assert!(
+        output.stdout.is_empty(),
+        "stdout: {}",
         String::from_utf8_lossy(&output.stdout)
-            .chars()
-            .take(2048)
-            .collect::<String>(),
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(2048)
-            .collect::<String>(),
-        fs::read_to_string(&state_path).unwrap_or_else(|error| format!("unavailable: {error}")),
     );
     let state: Value = serde_json::from_slice(&fs::read(state_path).unwrap()).unwrap();
     let queries = state["git_proxy_cache"].as_object().unwrap();
@@ -1242,70 +629,20 @@ async fn batched_project_resolution_keeps_unborn_and_remote_error_categories() {
     );
 }
 
-#[tokio::test]
-async fn post_tool_use_emits_only_pending_receipts_without_acknowledging_them() {
-    use specgit::{
-        process::Process,
-        project, selection,
-        watch_store::{self, EventState, Goal, Identity, Revision, Store},
-    };
+#[test]
+fn pre_tool_use_stays_quiet_and_legacy_events_do_not_emit_pending_receipts() {
     let t = fixture();
     fs::write(
         t.path().join(".specgit.yaml"),
         "version: 2\nremote: origin\nlanguage: en\n",
     )
     .unwrap();
-    let context = project::resolve(&Process::default(), t.path(), None, None, None)
-        .await
-        .unwrap();
-    checkpoint(t.path(), context.branch.as_deref().unwrap());
-    let path = selection::path(&context);
-    let mut selected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    selected["request"] = json!(41);
-    fs::write(path, serde_json::to_vec(&selected).unwrap()).unwrap();
-    let identity = Identity::new(&context, "fixture-session", 41, Goal::Lifecycle).unwrap();
-    let state = Store::new(identity.clone())
-        .unwrap()
-        .publish(
-            Revision {
-                head: context.head.clone(),
-                local_head: context.head.clone(),
-                target: "main".into(),
-                declaration: "fixture".into(),
-                evidence_digest: "fixture".into(),
-            },
-            EventState::Completed,
-            "fixture".into(),
-            "Refresh native evidence".into(),
-            watch_store::now(),
-        )
-        .unwrap();
-    let id = &state.events[0].id;
-    for event in ["PostToolUse", "SessionStart", "PreToolUse"] {
+    checkpoint(t.path(), "master");
+    for event in ["PreToolUse", "PostToolUse", "Stop"] {
         let payload = json!({"session_id":"fixture-session","hook_event_name":event,"cwd":t.path(),"tool_name":"Edit","tool_input":{"file_path":"file"}});
         let out = run(event, &serde_json::to_vec(&payload).unwrap());
         assert!(out.status.success());
-        if event == "PreToolUse" {
-            assert!(out.stdout.is_empty());
-            continue;
-        }
-        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let text = value["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        assert!(
-            text.contains(id) && text.contains("unverified event receipts"),
-            "{value}"
-        );
-        assert_eq!(
-            text.contains("Remote state is not checked"),
-            event == "SessionStart"
-        );
-        assert_eq!(text.contains("SpecGit 2 ["), event == "SessionStart");
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.is_empty());
     }
-    assert!(
-        watch_store::read(&identity).unwrap().unwrap().events[0]
-            .acknowledged_at
-            .is_none()
-    );
 }

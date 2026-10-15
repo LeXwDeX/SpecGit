@@ -4,6 +4,13 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.13.0
+
+- Guide Agents through the delegated task with complete Issues and Milestones for larger goals. Treat TDD and PR CI as strong recommendations while respecting each project's required checks. (#735)
+- Limit host callbacks to SessionStart and PreToolUse. Keep checkpoint enforcement at native Git commit/push, migrate owned integrations, and retire Stop/PostToolUse reminders and idle wake. (#734)
+- Give actionable delivery advice without imposing installed-runtime acceptance on every project or requesting repeated approval for delegated steps. (#736)
+- Preserve initialization markers during legacy migration, recognize CRLF guidance in new clones, distinguish shared hook and exclusion consumers, and check owned local exclusions in doctor. Retained rollback assets keep their ownership evidence. (#734)
+
 # 2.12.0
 
 - Keep one stable project Skill entry in agent instruction files. Runtime upgrades and declaration changes no longer rewrite versions, rules or content hashes in tracked guidance; manual project instructions stay intact.

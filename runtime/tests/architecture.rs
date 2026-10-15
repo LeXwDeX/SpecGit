@@ -298,6 +298,8 @@ fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
         ("init", "setup"),
         ("setup", "guidance"),
         ("setup", "local_exclude"),
+        ("setup", "guard"),
+        ("init", "guard"),
     ] {
         assert!(
             graph[owner].contains(dependency),

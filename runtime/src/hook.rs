@@ -1,9 +1,8 @@
-//! Host framing and local checkpoint enforcement. Classification is best effort.
-mod classification;
+//! Bounded host context on SessionStart/PreToolUse; native Git owns enforcement.
 mod context;
 mod observation;
 
-use crate::{declaration::Language, process::Process};
+use crate::declaration::Language;
 use context::{Prepared, prepare};
 pub use observation::observe_handle;
 use observation::pending_notice;
@@ -16,21 +15,24 @@ pub struct Output {
     pub json: Option<Value>,
     pub diagnostic: Option<String>,
 }
-fn info(message: &str) -> Output {
+fn notice(diagnostic: impl std::fmt::Display) -> Output {
     Output {
-        json: Some(json!({"systemMessage":message})),
-        diagnostic: None,
+        json: None,
+        diagnostic: Some(format!("SpecGit hook: {diagnostic}")),
     }
 }
-fn diagnostic_notice(diagnostic: impl std::fmt::Display) -> String {
-    format!(
-        "SpecGit hook notice: {diagnostic} You can run `specgit doctor` in this project for diagnostics. The agent and user decide whether to act."
-    )
-}
-fn notice(diagnostic: impl std::fmt::Display) -> Output {
-    info(&diagnostic_notice(diagnostic))
+fn allowed(event: &str) -> bool {
+    matches!(event, "SessionStart" | "PreToolUse")
 }
 pub async fn stdin(event: &str, observe: bool) -> Output {
+    if !allowed(event) {
+        return Output::default();
+    }
+    if observe {
+        return notice(
+            "Automatic host observation is unsupported; use bounded specgit watch or inbox tools.",
+        );
+    }
     let read = async {
         let mut bytes = vec![];
         tokio::io::stdin()
@@ -40,16 +42,6 @@ pub async fn stdin(event: &str, observe: bool) -> Output {
             .map(|_| bytes)
     };
     match tokio::time::timeout(Duration::from_secs(2), read).await {
-        Ok(Ok(bytes)) if observe => {
-            let process = Process::default();
-            let cancel = process.cancellation.clone();
-            let task = observe_handle(event, &bytes, process);
-            tokio::pin!(task);
-            tokio::select! {
-                output = &mut task => output,
-                _ = termination() => { cancel.cancel(); task.await }
-            }
-        }
         Ok(Ok(bytes)) => tokio::time::timeout(Duration::from_millis(2500), handle(event, &bytes))
             .await
             .unwrap_or_else(|_| notice("The hook context deadline expired; resume explicitly.")),
@@ -58,134 +50,91 @@ pub async fn stdin(event: &str, observe: bool) -> Output {
         ),
     }
 }
-fn deny(message: &str) -> Output {
-    Output {
-        json: Some(json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": message
-            }
-        })),
-        diagnostic: None,
-    }
-}
 pub async fn handle(event: &str, bytes: &[u8]) -> Output {
+    if !allowed(event) {
+        return Output::default();
+    }
     let Prepared {
         context,
         language,
         session,
-        target,
         observation,
+        ..
     } = match prepare(event, bytes).await {
-        Ok(Some(p)) => p,
+        Ok(Some(prepared)) => prepared,
         Ok(None) => return Output::default(),
         Err(output) => return output,
     };
-    let selection = crate::selection::read(&context);
-    let checkpoint_valid = selection.as_ref().is_ok_and(|selected| {
-        selected
+    let selected = match crate::selection::classify(&context) {
+        Ok(crate::selection::ReadOutcome::Current(selected)) => Some(selected),
+        Ok(_) => None,
+        Err(diagnostic) => return notice(diagnostic),
+    };
+    let mut text = if event == "SessionStart" {
+        let branch = context.branch.as_deref().unwrap_or("detached");
+        let issues = selected
             .as_ref()
-            .is_some_and(|selected| selected.checkpoint_valid(target.as_deref()))
-    });
-    if event == "PreToolUse" && !checkpoint_valid {
-        let reason = if language == Language::Zh {
-            "SpecGit 已阻止本次受跟踪修改：当前项目和分支没有有效的 Issue checkpoint。先运行 specgit issue --inspect 查重，再选择或创建包含 Why、Scope、Approach、Acceptance 的 Issue。"
+            .map(|s| s.issues.as_slice())
+            .unwrap_or_default();
+        if language == Language::Zh {
+            format!(
+                "读取项目 `.agents/skills/specgit-native/SKILL.md`。在当前任务持续授权内主动处理 Issue/Milestone，先自修复错误；TDD 与 PR 后 CI 强烈推荐，遵守平台必需检查。提交或推送前准备有效 Issue checkpoint。分支 {branch}；选定 Issue {issues:?}。"
+            )
         } else {
-            "SpecGit blocked this tracked edit because this project and branch have no valid Issue checkpoint. Run specgit issue --inspect first, then select or create Issues with Why, Scope, Approach, and Acceptance."
-        };
-        return deny(reason);
+            format!(
+                "Read project `.agents/skills/specgit-native/SKILL.md`. Use standing task authorization to handle Issues/Milestones and repair errors proactively. TDD and post-PR CI are strongly recommended; respect platform-required checks. Prepare an Issue checkpoint before commit/push. Branch {branch}; selected Issues {issues:?}."
+            )
+        }
+    } else {
+        String::new()
+    };
+    if !text.is_empty() {
+        match context::offer_once(&context, &session, "session-rules", &text) {
+            Ok(true) => {}
+            Ok(false) => text.clear(),
+            Err(diagnostic) => return notice(diagnostic),
+        }
     }
-    if event == "PreToolUse" {
-        // A successful checkpoint check never repeats the session guidance.
+    if let Some(selected) = selected.as_ref()
+        && (selected
+            .intents
+            .iter()
+            .any(|i| i.write_started && i.issue.is_none())
+            || (selected.request_write_started && selected.request.is_none()))
+    {
+        let recovery = "SpecGit retains an uncertain native write. Inspect native candidates and adopt the exact Issue/PR ID before retrying creation; preserve the checkpoint.";
+        match context::offer_once(&context, &session, "write-recovery", recovery) {
+            Ok(true) => {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(recovery);
+            }
+            Ok(false) => {}
+            Err(diagnostic) => return notice(diagnostic),
+        }
+    }
+    match pending_notice(&context, &session, &observation.notify) {
+        Ok(Some(pending)) => {
+            match context::offer_once(&context, &session, "event-recovery", &pending) {
+                Ok(true) => {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&pending);
+                }
+                Ok(false) => {}
+                Err(diagnostic) => return notice(diagnostic),
+            }
+        }
+        Ok(None) => {}
+        Err(diagnostic) => return notice(diagnostic),
+    }
+    if text.is_empty() {
         return Output::default();
     }
-    if event == "PostToolUse" {
-        return match pending_notice(&context, &session, &observation.notify) {
-            Ok(Some(text)) => Output {
-                json: Some(
-                    json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":text}}),
-                ),
-                diagnostic: None,
-            },
-            Ok(None) => Output::default(),
-            Err(d) => notice(&d),
-        };
+    Output {
+        json: Some(json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":text}})),
+        diagnostic: None,
     }
-    let branch = context.branch.as_deref().unwrap_or("detached");
-    let context_id = crate::assets::hash(
-        format!(
-            "{session}\0{:?}\0{}\0{event}\0{}",
-            context.root, context.head, context.dirty
-        )
-        .as_bytes(),
-    );
-    let context_id = &context_id[..16];
-    let mut text = if language == Language::Zh {
-        format!(
-            "SpecGit 2 [{context_id}]：当前分支 {branch}，本地{}。远端状态尚未检查；开始受跟踪的修改前先选择原生 issue，完成须确认目标分支已合并、全部选定 issue 已关闭。",
-            if context.dirty { "有改动" } else { "干净" }
-        )
-    } else {
-        format!(
-            "SpecGit 2 [{context_id}]: branch {branch}; local tree {}. Remote state is not checked. Select native issues before tracked edits; completion requires the intended target merge and every selected issue closed.",
-            if context.dirty {
-                "has changes"
-            } else {
-                "is clean"
-            }
-        )
-    };
-    if event == "SessionStart" {
-        match pending_notice(&context, &session, &observation.notify) {
-            Ok(Some(notice)) => {
-                text.push('\n');
-                text.push_str(&notice);
-            }
-            Ok(None) => {}
-            Err(d) => {
-                text.push('\n');
-                text.push_str(&diagnostic_notice(&d));
-            }
-        }
-    }
-    if event == "Stop" {
-        if context.dirty && !checkpoint_valid {
-            Output {
-                json: Some(json!({
-                    "decision": "block",
-                    "reason": if language == Language::Zh {
-                        "工作区已有未关联有效 Issue checkpoint 的修改。检查并登记规格，或明确说明这些修改为何不属于本次交付；不要宣称交付完成。"
-                    } else {
-                        "The worktree has changes without a valid Issue checkpoint. Inspect and record the specification, or explain why the changes are outside this delivery; do not claim completion."
-                    }
-                })),
-                diagnostic: None,
-            }
-        } else if context.dirty {
-            info(&text)
-        } else {
-            Output::default()
-        }
-    } else {
-        Output {
-            json: Some(
-                json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":text}}),
-            ),
-            diagnostic: None,
-        }
-    }
-}
-
-async fn termination() {
-    #[cfg(unix)]
-    {
-        if let Ok(mut terminate) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
-            return;
-        }
-    }
-    let _ = tokio::signal::ctrl_c().await;
 }

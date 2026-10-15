@@ -22,7 +22,11 @@ use std::{
 pub const INITIALIZED_MARKERS: [&str; 3] =
     ["guidance.json", "local-routing.json", "selection.json"];
 /// Integration receipts reported for context; they do not prove initialization.
-pub const RECEIPT_MARKERS: [&str; 2] = ["guard-hooks.json", "agent-assets/ownership.json"];
+pub const RECEIPT_MARKERS: [&str; 3] = [
+    "guard-hooks.json",
+    "setup-guard-hooks.json",
+    "agent-assets/ownership.json",
+];
 const WORKTREE_LIMIT: usize = 64;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -388,16 +392,66 @@ pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, D
 }
 
 /// Siblings that keep a declaration (even invalid or legacy) or selected integration state.
-/// They keep the shared `info/exclude` block and shared hook blocks in use.
+/// This compatibility view includes either asset kind; retirement uses the specific views below.
 pub async fn sibling_consumers(
     process: &Process,
     root: &Path,
+) -> Result<Vec<Consumer>, Diagnostic> {
+    consumers_for(process, root, SharedAsset::Any).await
+}
+
+/// Siblings that still need shared native Git hooks.
+pub async fn sibling_hook_consumers(
+    process: &Process,
+    root: &Path,
+) -> Result<Vec<Consumer>, Diagnostic> {
+    consumers_for(process, root, SharedAsset::Hooks).await
+}
+
+/// Siblings that still need the shared declaration and Skill exclusions.
+pub async fn sibling_exclusion_consumers(
+    process: &Process,
+    root: &Path,
+) -> Result<Vec<Consumer>, Diagnostic> {
+    consumers_for(process, root, SharedAsset::Exclusions).await
+}
+
+enum SharedAsset {
+    Any,
+    Hooks,
+    Exclusions,
+}
+
+async fn consumers_for(
+    process: &Process,
+    root: &Path,
+    asset: SharedAsset,
 ) -> Result<Vec<Consumer>, Diagnostic> {
     let mut consumers = vec![];
     for sibling in siblings(process, root).await? {
         let pointer = super::snapshot(&sibling.root)?;
         let state = private_state(&sibling.private_root)?;
-        if pointer.bytes.is_some() || state.is_initialized() || !state.receipts.is_empty() {
+        let initialized = pointer.bytes.is_some() || state.is_initialized();
+        let consumes = initialized
+            || match asset {
+                SharedAsset::Any => !state.receipts.is_empty(),
+                SharedAsset::Exclusions => state.receipts.contains(&"agent-assets/ownership.json"),
+                SharedAsset::Hooks => {
+                    state
+                        .receipts
+                        .iter()
+                        .any(|name| matches!(*name, "guard-hooks.json" | "setup-guard-hooks.json"))
+                        || setup_guard_demand(
+                            crate::assets::Snapshot::read(
+                                &sibling.private_root.join("agent-assets/ownership.json"),
+                            )?
+                            .bytes
+                            .as_deref(),
+                            &sibling.root,
+                        )?
+                }
+            };
+        if consumes {
             consumers.push(Consumer {
                 declaration_sha256: pointer.digest(),
                 private_state: state.markers(),
@@ -414,6 +468,62 @@ pub fn shares_hooks(consumer: &Consumer, hooks: &Path) -> bool {
     same(&consumer.hooks, hooks)
 }
 
+/// A typed subset of setup's receipt sufficient to preserve an active native consumer.
+pub(crate) fn setup_guard_demand(bytes: Option<&[u8]>, root: &Path) -> Result<bool, Diagnostic> {
+    #[derive(serde::Deserialize)]
+    struct Demand {
+        version: u8,
+        owner: String,
+        root: PathBuf,
+        #[serde(default)]
+        purposes: std::collections::BTreeMap<String, Vec<String>>,
+    }
+    let Some(bytes) = bytes else {
+        return Ok(false);
+    };
+    let demand: Demand = serde_json::from_value(crate::input::json(bytes, 1_048_576, 20)?)
+        .map_err(|_| {
+            Diagnostic::input("The setup native guard demand is malformed; preserve its hooks.")
+        })?;
+    let actual = root
+        .canonicalize()
+        .map_err(|_| Diagnostic::input("The setup guard consumer root cannot be resolved."))?;
+    if ![1, 2, 3, 4].contains(&demand.version)
+        || demand.owner != "specgit"
+        || demand.root.canonicalize().ok().as_ref() != Some(&actual)
+        || demand.purposes.len() > 4
+        || (demand.version < 4 && !demand.purposes.is_empty())
+        || demand.purposes.iter().any(|(host, purposes)| {
+            !["generic", "claude", "codex", "opencode"].contains(&host.as_str())
+                || purposes
+                    .iter()
+                    .any(|purpose| !["guard", "context"].contains(&purpose.as_str()))
+        })
+    {
+        return Err(Diagnostic::input(
+            "The setup native guard demand is unsupported; preserve its hooks.",
+        ));
+    }
+    Ok(demand
+        .purposes
+        .values()
+        .any(|purposes| purposes.iter().any(|purpose| purpose == "guard")))
+}
+
+/// Shared serialization for native Git hook ownership across linked worktrees.
+pub async fn native_guard_lock(process: &Process, root: &Path) -> Result<PathBuf, Diagnostic> {
+    let common = git_line(
+        project::git(
+            process,
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .await?,
+        "common metadata",
+    )?;
+    Ok(common.join("specgit-v2/native-guard-lock"))
+}
+
 /// Roll back an init or migrate journal while keeping the worktree-shared
 /// `info/exclude` file when a sibling worktree still relies on its block.
 /// Retained paths are reported with the consumers that keep them in use.
@@ -424,16 +534,86 @@ pub async fn rollback(
     exclude: &Path,
     id: &str,
 ) -> Result<(Applied, Value), Diagnostic> {
+    let serialization = native_guard_lock(process, root).await?;
+    let _serialization = AssetStore::lock(
+        &serialization,
+        std::slice::from_ref(&serialization),
+        std::time::Duration::from_secs(2),
+    )?;
     let consumers = sibling_consumers(process, root).await?;
-    let retain = if consumers.is_empty() {
+    let hook_consumers = sibling_hook_consumers(process, root).await?;
+    let mut retain = if sibling_exclusion_consumers(process, root).await?.is_empty() {
         vec![]
     } else {
         vec![exclude.to_owned()]
     };
+    let hook_root = hooks(process, root).await?;
+    let private = private_root(process, root).await?;
+    let setup_receipt = private.join("agent-assets/ownership.json");
+    let setup_after = match store.rollback_content(id, &setup_receipt)? {
+        Some(content) => content,
+        None => crate::assets::Snapshot::read(&setup_receipt)?.bytes,
+    };
+    let current_setup_consumer = setup_guard_demand(setup_after.as_deref(), root)?;
+    let installed_guard = ["pre-commit", "pre-push"]
+        .iter()
+        .map(|stage| crate::assets::Snapshot::read(&hook_root.join(stage)))
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|snapshot| {
+            snapshot.bytes.as_deref().is_some_and(|bytes| {
+                bytes
+                    .windows(b"specgit-v2:pre-".len())
+                    .any(|part| part == b"specgit-v2:pre-")
+            })
+        });
+    // A source-transfer rollback may restore the original owner without losing
+    // either hook. Permit that recovery while retaining genuinely destructive
+    // rollbacks that would remove a consumer's only guard.
+    let mut restores_source = false;
+    let mut source_count = 0;
+    for name in ["guard-hooks.json", "setup-guard-hooks.json"] {
+        let path = private.join(name);
+        let target = store.rollback_content(id, &path)?;
+        restores_source |= matches!(&target, Some(Some(_)));
+        let bytes = match target {
+            Some(bytes) => bytes,
+            None => crate::assets::Snapshot::read(&path)?.bytes,
+        };
+        source_count += usize::from(bytes.is_some());
+    }
+    let mut preserves_hooks = true;
+    for stage in ["pre-commit", "pre-push"] {
+        let path = hook_root.join(stage);
+        let target = match store.rollback_content(id, &path)? {
+            Some(bytes) => bytes,
+            None => crate::assets::Snapshot::read(&path)?.bytes,
+        };
+        preserves_hooks &= target.as_deref().is_some_and(|bytes| {
+            bytes
+                .windows(b"specgit guard --stage ".len())
+                .any(|part| part == b"specgit guard --stage ")
+        });
+    }
+    let restores_complete_source = restores_source && source_count == 1 && preserves_hooks;
+    if installed_guard
+        && !restores_complete_source
+        && (current_setup_consumer
+            || hook_consumers
+                .iter()
+                .any(|consumer| shares_hooks(consumer, &hook_root)))
+    {
+        retain.extend([hook_root.join("pre-commit"), hook_root.join("pre-push")]);
+        let private = private_root(process, root).await?;
+        retain.extend([
+            private.join("guard-hooks.json"),
+            private.join("setup-guard-hooks.json"),
+        ]);
+    }
     let (applied, retained) = store.rollback_retaining(id, &retain)?;
     let retained: Vec<_> = retained
         .iter()
-        .map(|path| json!({"path":path,"reason":"shared_initialized_worktree","shared_consumers":consumers}))
+        .map(|path| json!({"path":path,"reason":if current_setup_consumer {"setup_guard_purpose"}else{"shared_initialized_worktree"},"shared_consumers":consumers}))
         .collect();
     Ok((applied, json!(retained)))
 }

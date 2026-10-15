@@ -102,7 +102,9 @@ than copied into the report. Business code consumes typed library values, not
 its own serialized reports.
 
 Human output also displays the remedies in `next_actions`. These are guidance,
-not automatically executed operations or new authorization.
+not automatically executed operations or new authorization. A typed
+`requires_user_authorization: true` marks a write that must be within the task;
+existing installation/enablement delegation can satisfy it without another prompt.
 
 | Exit | Meaning |
 | --- | --- |
@@ -129,7 +131,7 @@ commands use the global input/output contract above.
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. |
-| `hook` | Host event adapter with `--event`. PreToolUse denies tracked edits unless the actual target repository and branch have a complete selected-Issue checkpoint. Synchronous Stop may request one recovery turn; `stop_hook_active` prevents repetition. `--observe` accepts PostToolUse (legacy Claude/Codex notification) or Stop (explicitly capable custom OpenCode). Observation never blocks Stop. State is always Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
+| `hook` | Advisory host context with `--event SessionStart\|PreToolUse`. SessionStart briefly states rules and points to the project Skill; PreToolUse adds pending context and recovery guidance without tool denial. Retired PostToolUse/Stop callbacks return quietly before input is read. `--observe` does not launch automatic observation; use bounded watch/inbox. State is Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
 | `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while a sibling initialized worktree shares the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
@@ -160,9 +162,9 @@ verify the installed executable's signature.
 
 Without `--account-only`, doctor uses explicit provider/remote first, then the local repository identity and declaration as available; stored API routing is used as a fallback, and explicit `--api-host` takes precedence. Account-only mode skips local configuration and checkpoint reads and reports local state as `not_checked`. Local context inspection adds no API calls, fetches or writes.
 
-Project-mode doctor also reports `evidence.health`, `evidence.repair` and `evidence.agent_guidance`. Health checks cover the declaration, selected setup assets, generated guidance, Git guard and static executable paths. Any unknown health check blocks all repair writes; the report keeps independently prepared plans as preview evidence until inspection is complete. Skipped repairs remain in repair results but are not recorded as attempted effects. An unselected integration is `not_selected`; doctor does not guess a host or hook purpose. Recognizable SpecGit host registrations without an ownership receipt are conflicts. A project hook executable must be outside every checkout of the same repository, including linked worktrees. `health.status` is `healthy`, `attention`, or `unknown`; `host_behavior` is always `not_verified`. File presence or a registered hook does not prove that an Agent loaded a Skill or that a host event ran.
+Project-mode doctor also reports `evidence.health`, `evidence.repair` and `evidence.agent_guidance`. Health checks cover the declaration, selected setup assets, generated guidance, recorded Git-local exclusions, Git guard and static executable paths. Any unknown health check blocks all repair writes; the report keeps independently prepared plans as preview evidence until inspection is complete. Skipped repairs remain in repair results but are not recorded as attempted effects. An unselected integration is `not_selected`; doctor does not guess a host or hook purpose. Recognizable SpecGit host registrations without an ownership receipt are conflicts. A project hook executable must be outside every checkout of the same repository, including linked worktrees. `health.status` is `healthy`, `attention`, or `unknown`; `host_behavior` is always `not_verified`. File presence or a registered hook does not prove that an Agent loaded a Skill or that a host event ran.
 
-`--offline` performs local checks without authentication, network/API requests, or launching the provider CLI. The existing probe fields remain present as `not_checked`. `--fix --dry-run` reports typed project-asset plans and writes no files, locks, receipts, or transaction state. `--fix` applies only repair plans backed by a valid declaration and recorded ownership, then rechecks the project. Unknown ownership, damaged receipts/markers, permission or path conflicts remain in place with diagnostics. A missing declaration with initialized private state fails closed and must be restored from its original source. Manually edited content inside a valid owned guidance block follows the refresh contract; arbitrary manual content in a missing whole file cannot be reconstructed, so the repair is refused.
+`--offline` performs local checks without authentication, network/API requests, or launching the provider CLI. The existing probe fields remain present as `not_checked`. `--fix --dry-run` reports typed project-asset plans and writes no files, locks, receipts, or transaction state. `--fix` applies only repair plans backed by a valid declaration and recorded ownership, then rechecks the project. Unknown ownership, damaged receipts/markers, permission or path conflicts remain in place with diagnostics. A missing declaration with initialized private state fails closed and must be restored from its original source. Manually edited content inside a valid owned guidance block follows the refresh contract; arbitrary manual content in a missing whole file cannot be reconstructed, so the repair is refused. A missing owned exclusion block can be restored from proven native integration records, including shared worktree Skill rules; a missing whole exclude file, damaged markers or permission drift remain conflicts. Library-only setup that never selected native exclusions does not acquire them through doctor.
 
 Agent guidance points to evidence and offers bounded next steps; it is advice, not authorization. It allows at most three rounds and stops on unresolved ownership/permission or repeated findings without progress. Suggested commands remain subject to current evidence and existing user authorization. No repair writes the forge or changes platform settings. Exit precedence is cancellation (130), invalid input (2), failed repair/lost-declaration evidence (1), unknown required facts (3), then success (0). Successful doctor status is `ready`, `offline_checked`, `attention_required` or `checkpoint_branch_mismatch`; failures report `unknown` or `repair_failed`. Exit 0 reports that the operation completed, not that every host behavior was verified.
 
@@ -319,9 +321,11 @@ writes, CI and target protection. Protected delivery remains unverified while
 request write access or current required-verification evidence is unknown; a
 target-protection warning also keeps that layer unverified unless the project
 promotes it to a required check, in which case it blocks that layer. Init does
-not probe CI. Delivery completion remains unverified because init does not read
-back a merged native request, every associated Issue's closure, or installed
-acceptance on the exact main merge. An observed open request is listed as a
+not probe CI. The `ci.required_verification` entry means actual platform
+requirements remain to be checked; missing optional CI is not a prohibition.
+Delivery completion remains unverified because init does not read
+back a merged native request or every associated Issue's closure. Installed
+acceptance applies only when the project requires it, not as a universal condition. An observed open request is listed as a
 fact but does not establish completion. The three layers are never collapsed
 into one overall-green conclusion.
 
@@ -499,140 +503,68 @@ Each watch event includes the legacy `next_action` text and a typed `next_step`;
 the report-level `next_actions` repeats those same typed steps for direct
 consumers. The action records the goal, check outcome, draft state, auto-merge
 registration, open Issue IDs and diagnostic codes used to form its message.
-Drafts with passing checks suggest the explicitly authorized ready-for-review
-operation; they do not approve or merge. Ready requests distinguish registered,
+Drafts with passing checks suggest ready-for-review under the existing task
+authorization; they do not approve or merge. Running or absent optional CI does
+not itself prevent review preparation or ready. The Agent checks actual platform
+requirements before delivery; an explicit checks goal with no results remains
+unobserved, not passed. Ready requests distinguish registered,
 unregistered and unknown auto-merge state, and never infer review, merge or
 delivery completion from passing checks. Merged requests with open Issues name
 those IDs; a merged request without verified closing facts remains unknown.
 Watch, inbox and Hook actions are advisory and never ready, merge or close
 anything automatically.
 
-Project setup-managed hooks exist only in project scope. Legacy Claude/Codex
-defaults register SessionStart, PreToolUse, PostToolUse and Stop; selective
-purposes can install fewer events. PreToolUse/PostToolUse entries match the managed tool names
-(`Write`, `Edit`, `MultiEdit`, `Bash`, `PowerShell`, `apply_patch`, including
-the fork spellings `functions.apply_patch` and
-`mcp__functions__apply_patch`), and relevant PostToolUse events may launch a
-bounded asynchronous observer. Codex runs a complete
-shell command string, including `hook --event <event>` and the observer's
-`--observe`; it does not receive a separate `args` array. POSIX executable paths
-are single-quoted. Windows uses cmd double-quoting and rejects `%`, `!`, quote
-and control characters in the executable path because cmd may expand them.
-Claude retains its supported executable-plus-`args` form. Refresh with the
-updated shared CLI migrates recorded Codex entries through the normal ownership
-transaction; do not hand-edit the managed entries or their receipt.
+Project setup-managed host hooks use only SessionStart and PreToolUse. Context
+purpose registers both. Guard purpose installs native Git pre-commit/pre-push
+checks independently of host callback support. Observe remains a recognized
+purpose but is reported declined: no automatic observer or idle wake is installed.
+Use Agent-run bounded watch/inbox for that work. Refresh removes owned legacy
+PostToolUse/Stop entries while preserving foreign hooks and ownership proof.
 
-The `--opencode-claude-hooks` opt-in generates
-project `.opencode/hooks.json` for a custom OpenCode fork with claude-code
-input: top-level event entries, one single-quoted command string
-(`<executable> hook --event <event>`) with no separate args entries,
-`inputFormat: claude-code`. This compatibility flag alone adds no idle observer.
-Only the additional `--opencode-async-rewake` opt-in with effective observe/context
-purposes registers `hook --event Stop --observe`, `shell: bash`, `async: true`,
-`asyncRewake: true`, and a 1,830-second host timeout. This declares a custom-host
-capability; it is not inferred from naming compatibility or verified delivery.
-Live qualification of the earlier custom OpenCode `1.0.57` confirmed
-project import, tracked-write deny/allow and model-visible PreToolUse/PostToolUse
-context, but `opencode run` lost SessionStart context even on continuation.
-TUI/serve modes and live patch-tool delivery were not verified; that build
-offered no `apply_patch` tool. See the [host evidence boundaries](../docs/supported-tools.md#observed-custom-host-behavior).
-Official OpenCode keeps the skill and
-guidance only. Registration is `written_not_verified`; import, context
-injection, visible messages and later-turn delivery require separate host
-evidence. Legacy async notification alone does not prove idle wake. Synchronous Stop requests at most one
-recovery turn when a dirty initialized project lacks a valid checkpoint; the
-host's repeated-event flag makes the next Stop silent. Hooks never acknowledge
-themselves. Use explicit watch/inbox when automatic delivery is unavailable.
+Codex and custom OpenCode use complete shell command strings with no separate
+`args` array. POSIX paths are single-quoted; Codex on Windows uses cmd quoting
+and rejects `%`, `!`, quotes and controls in executable paths. Claude uses its
+executable-plus-`args` form. Custom OpenCode requires `--opencode-claude-hooks`
+and writes project `.opencode/hooks.json` with `inputFormat: claude-code`.
+The legacy `--opencode-async-rewake` flag never restores retired events.
+`${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}` are rejected in custom
+OpenCode executable paths because the host expands them before shell quoting.
+Official OpenCode and generic hosts receive guidance/Skill without host callbacks;
+the native Git guard is available independently.
 
-The Stop observer reuses the selected request, lifecycle watch, session/worktree
-identity, lease and pending event IDs. A busy lease, no selected request, repeated
-Stop (`stop_hook_active: true`), cancellation received by the adapter or wait
-expiry emits no callback. Adapter cancellation/expiry retain resumable durable
-state; owned children are reaped.
-There is no daemon, webhook service or automatic retry loop. The runtime cannot
-infer the user's task state: the host owns callback admission and stale suppression.
-An admitted callback tells the Agent to honor the current user stop, goal and
-authorization and reread native request/head/attempt/review facts. Old or duplicate
-events never authorize action. PR-only goals stop at the PR; authorized merge
-goals use bounded waiting and native merge/associated Issue closure readback.
-`native_auto_merge=false` does not prohibit an already authorized ordinary merge.
-Release remains separately authorized.
-
-Qualification on 2026-10-13 found a host-side limitation in the tested custom
-OpenCode 1.0.75 build: `/session/:id/abort` returned success while an idle Stop
-observer was pending, but its later callback still started another model request.
-Delivery, non-recursion and newer-prompt suppression passed in that isolated test;
-user-abort suppression did not. Do not enable idle wake on that build until its
-abort path is repaired and requalified. The host fix is tracked separately in
-[OpenCode-GraphAgent #774](https://github.com/LeXwDeX/OpenCode-GraphAgent/issues/774).
-SpecGit delivery assumes correct host cancellation; that assumption is not a
-passing host qualification. Use bounded watch/inbox instead on the affected build.
-Adapter signal-cancellation tests do not prove host API, TUI or desktop stop behavior.
-
-Custom OpenCode hook executable paths must not contain the reserved
-`${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_DATA}` placeholders: the host expands
-them before shell quoting. Setup rejects these paths before writing assets.
+Registration is `written_not_verified`; import and model-visible context need
+real host evidence. Earlier host qualification is retained in
+[host evidence boundaries](../docs/supported-tools.md#observed-custom-host-behavior).
+Those historical results do not qualify new registrations. No daemon, webhook
+service, automatic retry or Stop wake is installed.
 
 ### Hook input and decisions
 
-Each host event posts one JSON object. The adapter reads the native input keys
-`hook_event_name`, `session_id`, `cwd`, `tool_name`, `tool_input` (with the
-`file_path`, native `filePath`, `path`, `patch`, native `patchText` and `command`
-keys actually present for the tool)
-and `stop_hook_active`. The managed matcher routes file tools and
-Bash/PowerShell calls to the adapter; state-changing shell commands (Git
-history/branch mutations, file mutations and SpecGit write commands) fall
-under the same checkpoint rule as file edits. PreToolUse decisions are
-explicit:
+SessionStart and PreToolUse accept one bounded JSON object with matching
+`hook_event_name`, a valid `session_id`, and absolute `cwd`; `schema_version`,
+when present, must be 1. Input is capped at 1 MiB with a two-second read deadline;
+context handling has a 2.5-second deadline. Invalid input or unreadable local
+state emits a diagnostic, never a block or permission decision. Ordinary file,
+shell, Issue-planning and read-only tools run without an edit checkpoint gate.
+Commit/push checkpoint failures arise from the installed native Git guard and
+are handled by the Agent from the tool result.
 
-- Deny: a tracked-edit tool (`Write`, `Edit`, `MultiEdit`, `apply_patch`) or a
-  state-changing shell command targets a repository or branch without a
-  complete selected-Issue checkpoint.
-  The decision is `hookSpecificOutput.permissionDecision: "deny"` plus a
-  `permissionDecisionReason`. Editing another repository in one call is denied
-  with its own reason; the call is never silently split.
-- Allow/pass-through: every other event and every verified call. The adapter
-  emits no blocking decision and the host proceeds. Allowed PreToolUse calls
-  emit no output. A direct, non-compound
-  `specgit issue ...` call is exempt on PreToolUse so the first checkpoint can
-  be created; compound shell input is still inspected.
+SessionStart emits short rules, the project Skill reference, current branch and
+selected Issue IDs. PreToolUse does not repeat these rules. Both can offer pending
+notice IDs or recovery for uncertain native writes; those receipts are explicitly
+unverified and require inbox/native refresh before use. Context is scoped to the
+actual current branch. A checkpoint for another branch is preserved and is not
+used for automatic notices. These paths never fetch forge state or acknowledge
+notices. Repeated identical text is suppressed per session/event in bounded,
+Git-private offer records; an offer is not evidence of reading or delivery.
 
-Shell classification checks each segment separated outside quotes by `;`,
-`&&`, `||`, `|`, `&` or a newline. Leading assignments and `sudo`, `env`,
-`command`, `nohup` and `time` do not hide file mutations. Descriptor redirects
-(`2>&1`, `>&2`) and redirects to `/dev/null` do not count as repository writes;
-other unquoted output redirects do. Read-only `gh pr view|list|checks|diff|status`,
-`gh issue view|list`, `glab mr view|list|diff`, `glab issue view|list`,
-`specgit pr --status` and `specgit status|doctor|watch|inbox` need no checkpoint.
-A segment that contains command substitution (`$(...)` or backticks, unless
-single-quoted) loses these read-only exemptions. Commands run through another
-interpreter, such as `bash -c`, `python -c` or PowerShell cmdlets, are not
-parsed. This classification is best effort, not a general shell or file-write sandbox.
-
-`apply_patch` calls are verified, not exempt: the adapter parses
-`*** Add File: `, `*** Update File: `, `*** Delete File: ` and `*** Move to: `
-markers from the patch payload (or the wrapped command), resolves relative paths against the
-reported `cwd`, and checks each actual target through Git before deciding.
-SessionStart adds managed guidance and any pending notice with `additionalContext`.
-Synchronous PostToolUse emits only pending notice text in `additionalContext`;
-without a pending notice it is silent. Unreadable observation state produces a
-diagnostic `systemMessage`, not repeated guidance.
-Synchronous Stop uses a block decision for its single recovery turn. Stop with
-`--observe` instead returns `hookSpecificOutput.hookEventName: "Stop"` and
-`additionalContext` only for pending enabled notifications; it never emits a
-block, permission or completion-control decision. PostToolUse observation keeps
-its own event tag and existing framing. Neither callback acknowledges events.
-Automatic observation and automatic pending-notice reads use only the checkpoint
-selected for the current branch. A valid same-repository checkpoint for another
-branch is silently skipped and left unchanged; `status` and `doctor` still report
-the branch mismatch. PreToolUse, Git guards and ordinary synchronous Stop
-protection are unchanged. If a hook cannot resolve a native request, its
-diagnostic preserves the specific cause and recommends `specgit doctor`; this is
-guidance, not a new block, and the hook does not run doctor automatically.
-Observation uses configured poll/wait limits (default 15/1,800 seconds); the host
-timeout can end a longer configured wait and does not guarantee later delivery.
-Verification is of the
-actual edit target resolved on disk, not of the event's claimed path alone.
+Output uses `hookSpecificOutput.hookEventName` and `additionalContext` only when
+context is available. Hook diagnostics do not request another conversation turn.
+PostToolUse, Stop and other retired callbacks return quietly before reading
+stdin, resolving Git, locking assets, contacting a forge or changing state,
+including when invoked with the legacy `--observe` flag. An allowed event with
+`--observe` emits an unsupported-observation diagnostic and recommends bounded
+watch/inbox. The public `observe_handle` compatibility entry follows that rule.
 
 ### Manual OpenCode imports
 
@@ -662,6 +594,13 @@ read-only preview reports conflicts without writes, and apply requires the exact
 reviewed `preview_sha256`. Any edited managed content rejects the whole removal;
 preserve it for reconciliation. Removal rollback still refuses later edits and
 restores only when its transaction evidence matches.
+Rollback keeps guard assets while the current setup or another worktree still
+uses them. Its journal preserves the complete original history and records the
+exact retained entries in `retained_paths` with state `rolled_back_retaining`.
+Only those entries can still prove ownership; a later rollback checks consumers,
+content and permissions again and processes only the remaining retained entries.
+An empty retained set completes ordinary rollback. Invalid or ambiguous journal
+state remains a conflict, never permission to restore unrelated paths.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
 facts; successful setup is not verified host registration or delivery.
@@ -784,7 +723,12 @@ not deprecated aliases.
 
 Project scope resolves the Git checkout root and the private absolute Git
 directory. Its receipt stays at `<git_dir>/specgit-v2/agent-assets/ownership.json`;
-new init/setup transactions use the shared `<git_dir>/specgit-v2/assets/` store.
+new init/setup/guard transactions use the shared `<git_dir>/specgit-v2/assets/` store.
+Both `init --rollback <transaction>` and `setup --rollback <transaction>` can
+restore an exact transaction from this store, regardless of which of those
+commands created it. Recovery restores the whole recorded transaction, subject
+to ownership, later-edit and active-consumer checks; it is not a command-specific
+uninstall. Review the transaction's paths before recovery.
 Linked worktrees retain independent receipts and transaction histories. Legacy
 `agent-assets` journals remain available as bounded ownership/recovery evidence. It writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude adds a managed
@@ -813,31 +757,43 @@ and preserves existing hook choices.
 #### Select project hook purposes
 
 Repeat `setup --hook-purpose guard|context|observe|none` with selected `--agent`
-hosts. Guard maps to synchronous PreToolUse/Stop, context to synchronous
-SessionStart/PostToolUse, and observe to bounded asynchronous observation.
-Choose the least purposes justified by actual capabilities and existing
-authorization, preview with `--dry-run`, then apply. Initialization adds no new hooks.
-`none` cannot combine with other purposes. It adds no hooks and never uninstalls
-recorded hooks or Git guard. On new hosts explicit purposes start empty; on
-existing hosts they add to recorded purposes. Omission preserves exact recorded
-modes, including a no-hook receipt, and retains legacy defaults for new hosts.
-Refreshing never silently enables idle wake.
+hosts. Guard means native pre-commit/pre-push checkpoint checks. Context means
+SessionStart and PreToolUse advisory context on a supported host. Observe is
+recognized but declined because automatic callbacks are retired; use bounded
+watch/inbox. Per-host `hook_purposes` reports requested, installed and declined
+purposes with their reason. Never infer support from the selected host name.
 
-Official OpenCode and generic hosts keep guidance/Skill only. Custom OpenCode
-guard/context need `--opencode-claude-hooks`; observe additionally needs explicit
-`--opencode-async-rewake` and effective context. The extra opt-in requires the
-custom hook flag and `--agent opencode`. Claude/Codex retain legacy PostToolUse
-async observation without a claim of idle wake. Per-host `hook_purposes` reports
-`requested`, `installed` and `declined` entries with `purpose`, `status` and
-`reason`. Unsupported and unknown remain distinct; use bounded watch/inbox or
-manual continuation for declined capability, not guessed support.
+Preview with `--dry-run` and apply within the existing task delegation. Init adds
+no new hooks. `none` cannot combine with other purposes and requests no new hooks;
+it does not uninstall recorded choices. Explicit purposes add to existing choices;
+omission preserves them. Refresh migrates old event registrations to the current
+purpose mapping without enabling an observer. Claude/Codex support context;
+custom OpenCode requires `--opencode-claude-hooks`. Official OpenCode/generic
+have no host callback registration, but Guard can still install native Git hooks.
 
-Project receipts use version 3 and a unique install generation. Refresh retains
-that generation; a later install gets a new one. Consistent, valid v1/v2
+Setup plans its guard changes in the same asset transaction as host integration.
+It verifies and reuses an independently installed guard without taking ownership.
+Setup-owned guard blocks use `setup-guard-hooks.json`; independent guards use
+`guard-hooks.json`. Explicit `guard --install`
+can transfer them to independent ownership while preserving their original
+preimages. Uninstall retains shared blocks while an active setup or sibling
+worktree needs them. After those consumers release them, independent uninstall
+can remove its recorded blocks. Content or permission ambiguity remains a conflict.
+The synchronous library setup API cannot discover Git guard paths; callers that
+request Guard use `setup::project::install_with_context` with a typed `Process`,
+or `install_with_guard_plan` with a prepared plan. This includes previews;
+unsupported synchronous calls fail before writes rather than reporting a partial
+plan. Existing no-guard callers keep the synchronous entry point. The typed
+`install_with_context` and `install_with_guard_plan` entry points reject rollback
+before writes; use either CLI rollback entry point for Git-aware recovery. The
+legacy synchronous API also rejects transactions that affect native guard assets.
+
+Project receipts use version 4, explicit per-host purposes and a unique install
+generation. Refresh retains that generation; a later install gets a new one. Valid v1-v3
 ownership evidence can migrate. Permission or history ambiguity is an ownership
 conflict: older matching records cannot cancel newer evidence. Older published
 CLIs cannot verify the shared project transaction history introduced in 2.12.
-Use a 2.12-or-newer shared CLI in every checkout after migration; preserve the
+Use a 2.13-or-newer shared CLI after migration to v4 receipts; preserve the
 receipt and assets during any downgrade. Never force-overwrite ownership or delete the
 receipt to bypass it. These proof rules also apply to whole-project `remove`;
 its apply requires the reviewed preview digest.
@@ -860,9 +816,8 @@ separate `remove` command, not part of `setup`; see
 
 Registration is reported as `written_not_verified`, with
 `host_delivery.imported_event`, `context_injection`, `visible_message` and
-`next_turn` as `not_checked`. `idle_wake: configured_not_verified` means only the
-explicit custom OpenCode wake registration exists; other modes do not claim
-verified idle wake. Actual isolated host event delivery needs separate evidence. Project Codex
+`next_turn` as `not_checked`. `idle_wake: not_supported` makes the retired wake
+path explicit. Actual isolated host context delivery needs separate evidence. Project Codex
 selection reports `codex_trust: review_in_host_required`: Codex loads
 `<repo>/.codex/hooks.json` only after the user reviews and trusts the project
 `.codex/` layer in the host's `/hooks` menu, and SpecGit never performs,
@@ -965,8 +920,8 @@ the original declaration. Setup-only registration does not fabricate initializat
 
 ### 2.2 consistency boundaries
 
-Adopted specifications are saved independently of native creation intents. Guard
-and Agent edit hooks accept both validated adoption and resolved creation records.
+Adopted specifications are saved independently of native creation intents. Native
+Git guards accept both validated adoption and resolved creation records.
 Older adoption-only checkpoints must be selected once again to obtain the native
 snapshot. Deletion and type-change commits also require a checkpoint.
 
@@ -997,8 +952,8 @@ set are discarded. Independent check suites remain distinct. A replacement with
 no visible checks is unknown, and a running workflow cannot inherit old success.
 Unavailable or incomplete run identities never fall back to old green checks.
 This reads execution identities, not workflow jobs or dependency graphs.
-Async hooks deliver actionable check
-results before lifecycle completion and preserve the subscription for resumption.
+Explicit watch/inbox delivers actionable check results before lifecycle completion
+and preserves the subscription for resumption. Host hooks do not launch observation.
 
 GitLab merged-results pipelines retain both `head` (source) and `tested_head`.
 A differing tested SHA must be the MR's head pipeline on its merge ref, and the

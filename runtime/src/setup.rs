@@ -57,43 +57,15 @@ fn purpose_manifest(
     purposes: &std::collections::BTreeSet<HookPurpose>,
     wake: bool,
 ) -> Result<BTreeMap<String, Value>, Diagnostic> {
-    let custom = agent == Agent::Opencode;
-    let mut entries = if custom {
-        opencode_manifest(binary)?
+    let _ = wake;
+    if !purposes.contains(&HookPurpose::Context) {
+        return Ok(BTreeMap::new());
+    }
+    if agent == Agent::Opencode {
+        opencode_manifest(binary)
     } else {
-        manifest(binary, agent)?
-    };
-    entries.retain(|event, _| match event.as_str() {
-        "PreToolUse" => purposes.contains(&HookPurpose::Guard),
-        "Stop" => purposes.contains(&HookPurpose::Guard) || wake,
-        _ => purposes.contains(&HookPurpose::Context),
-    });
-    if !custom
-        && !purposes.contains(&HookPurpose::Observe)
-        && let Some(entry) = entries.get_mut("PostToolUse")
-    {
-        entry["hooks"]
-            .as_array_mut()
-            .expect("manifest hooks")
-            .truncate(1);
+        manifest(binary, agent)
     }
-    if custom && wake {
-        let entry = entries.get_mut("Stop").expect("wake Stop");
-        let mut observer = entry["hooks"][0].clone();
-        observer["command"] = json!(format!(
-            "{} --observe",
-            observer["command"].as_str().expect("command")
-        ));
-        observer["async"] = json!(true);
-        observer["asyncRewake"] = json!(true);
-        observer["timeout"] = json!(1830);
-        let hooks = entry["hooks"].as_array_mut().expect("hooks");
-        if !purposes.contains(&HookPurpose::Guard) {
-            hooks.clear();
-        }
-        hooks.push(observer);
-    }
-    Ok(entries)
 }
 
 fn recorded_purposes(
@@ -137,7 +109,7 @@ const HOST_START: &str = "<!-- specgit:project:v2:start -->";
 const HOST_END: &str = "<!-- specgit:project:v2:end -->";
 const LEGACY_START: &str = "<!-- specgit:global:v2:start -->";
 const LEGACY_END: &str = "<!-- specgit:global:v2:end -->";
-const TOOL_MATCHER: &str = "Write|Edit|MultiEdit|Bash|PowerShell|apply_patch|functions.apply_patch|mcp__functions__apply_patch";
+const TOOL_MATCHER: &str = "*";
 
 fn instruction_change(
     host: &str,
@@ -264,15 +236,19 @@ fn instruction_change_after(
             ));
         }
         if before.matches(&old.block).count() == 1 {
-            let block = format!(
-                "{}{generated}{}",
-                if old.block.starts_with("\n\n") {
-                    "\n\n"
-                } else {
-                    ""
-                },
-                if old.block.ends_with('\n') { "\n" } else { "" }
-            );
+            let block = if old.block.replace("\r\n", "\n") == generated {
+                old.block.clone()
+            } else {
+                format!(
+                    "{}{generated}{}",
+                    if old.block.starts_with("\n\n") {
+                        "\n\n"
+                    } else {
+                        ""
+                    },
+                    if old.block.ends_with('\n') { "\n" } else { "" }
+                )
+            };
             (
                 before.replacen(&old.block, if uninstall { "" } else { &block }, 1),
                 block,
@@ -286,13 +262,32 @@ fn instruction_change_after(
             )
         }
     } else {
-        if before.matches(&generated).count() == 1
-            && before.matches(HOST_START).count() == 1
+        if before.matches(HOST_START).count() == 1
             && before.matches(HOST_END).count() == 1
             && !before.contains(LEGACY_START)
             && !before.contains(LEGACY_END)
         {
-            (before.to_owned(), generated)
+            let start_at = before.find(HOST_START).expect("unique start checked");
+            let end_at = before.find(HOST_END).expect("unique end checked") + HOST_END.len();
+            if start_at >= end_at {
+                return Err(conflict_at(
+                    host,
+                    &guidance.path,
+                    None,
+                    "An unowned SpecGit instruction marker already exists.",
+                ));
+            }
+            let raw_block = &before[start_at..end_at];
+            if raw_block.replace("\r\n", "\n") == generated {
+                (before.to_owned(), raw_block.to_owned())
+            } else {
+                return Err(conflict_at(
+                    host,
+                    &guidance.path,
+                    None,
+                    "An unowned SpecGit instruction marker already exists.",
+                ));
+            }
         } else {
             if [HOST_START, HOST_END, LEGACY_START, LEGACY_END]
                 .iter()
@@ -400,16 +395,14 @@ fn manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diag
         }
         hook
     };
-    Ok(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]
+    Ok(["SessionStart", "PreToolUse"]
         .into_iter()
         .map(|event| {
-            let mut hooks = vec![handler(event, false)];
-            if event == "PostToolUse" {
-                hooks.push(handler(event, true));
-            }
+            let hooks = vec![handler(event, false)];
+
             (
                 event.into(),
-                json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ TOOL_MATCHER }else{""},"hooks":hooks}),
+                json!({"matcher":if event == "PreToolUse"{ TOOL_MATCHER }else{""},"hooks":hooks}),
             )
         })
         .collect())
@@ -479,8 +472,8 @@ fn opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnosti
             .replace('\\', "/")
     };
     let quoted = format!("'{}'", binary.replace('\'', "'\\''"));
-    Ok(["SessionStart", "PreToolUse", "PostToolUse", "Stop"].into_iter().map(|event| {
-        (event.into(), json!({"matcher":if matches!(event,"PreToolUse"|"PostToolUse"){ TOOL_MATCHER }else{"*"},
+    Ok(["SessionStart", "PreToolUse"].into_iter().map(|event| {
+        (event.into(), json!({"matcher":if event == "PreToolUse"{ TOOL_MATCHER }else{"*"},
             "hooks":[{"type":"command","shell":"bash","command":format!("{quoted} hook --event {event}"),"inputFormat":"claude-code","timeout":5}]}))
     }).collect())
 }
