@@ -278,15 +278,26 @@ fn advisory_failures_preserve_successful_online_doctor() {
     }
 }
 
-fn files(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
+fn files(
+    root: &std::path::Path,
+    phase: &str,
+) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
     let mut result = std::collections::BTreeMap::new();
-    for entry in fs::read_dir(root).unwrap() {
-        let path = entry.unwrap().path();
+    for entry in fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("{phase}: cannot enumerate {}: {error}", root.display()))
+    {
+        let path = entry
+            .unwrap_or_else(|error| {
+                panic!("{phase}: cannot read entry in {}: {error}", root.display())
+            })
+            .path();
         if path.is_dir() {
             result.insert(path.clone(), None);
-            result.extend(files(&path));
+            result.extend(files(&path, phase));
         } else {
-            result.insert(path.clone(), Some(fs::read(path).unwrap()));
+            let bytes = fs::read(&path)
+                .unwrap_or_else(|error| panic!("{phase}: cannot read {}: {error}", path.display()));
+            result.insert(path, Some(bytes));
         }
     }
     result
@@ -295,7 +306,7 @@ fn files(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Option<V
 #[test]
 fn offline_real_project_preserves_every_file_and_never_launches_provider() {
     let fixture = platform_fixture();
-    let before = files(&fixture.root);
+    let before = files(&fixture.root, "before offline doctor");
     let state = fixture.state();
     let report = fixture.run(&["doctor", "--offline"]);
     assert_eq!(report["exit"], 0, "{report}");
@@ -303,7 +314,7 @@ fn offline_real_project_preserves_every_file_and_never_launches_provider() {
         report["evidence"]["runtime_update"]["status"],
         "not_checked"
     );
-    assert_eq!(files(&fixture.root), before);
+    assert_eq!(files(&fixture.root, "after offline doctor"), before);
     assert_eq!(fixture.state(), state);
 }
 

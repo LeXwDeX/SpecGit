@@ -26,6 +26,30 @@ fn hook(f: &delivery::Fixture, event: &str, payload: Value) -> std::process::Out
         .unwrap();
     child.wait_with_output().unwrap()
 }
+
+fn add_linked_worktree(
+    root: &std::path::Path,
+    branch: &str,
+) -> (tempfile::TempDir, std::path::PathBuf) {
+    // Git for Windows rejects Rust's verbatim absolute paths. Give the worktree
+    // a unique sibling directory and pass its ordinary relative path instead.
+    let parent = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+    let parent_name = parent.path().file_name().unwrap().to_str().unwrap();
+    let name = format!("../{parent_name}/linked");
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["worktree", "add", "-b", branch, &name])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let linked = parent.path().join("linked").canonicalize().unwrap();
+    (parent, linked)
+}
+
 #[test]
 fn legacy_callbacks_return_before_reading_stalled_or_malformed_input() {
     let f = delivery::Fixture::new("github");
@@ -324,17 +348,7 @@ fn setup_rollback_keeps_native_guard_owned_for_a_linked_worktree() {
     let transaction = installed["evidence"]["transaction"]["transaction"]
         .as_str()
         .unwrap();
-    let sibling = f.root.parent().unwrap().join("linked");
-    let added = std::process::Command::new("git")
-        .current_dir(&f.root)
-        .args(["worktree", "add", "-b", "linked", sibling.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(
-        added.status.success(),
-        "{}",
-        String::from_utf8_lossy(&added.stderr)
-    );
+    let (_worktree_parent, sibling) = add_linked_worktree(&f.root, "linked");
     let hook = f.root.join(".git/hooks/pre-commit");
     let before = fs::read(&hook).unwrap();
     let rollback = f.run(&["setup", "--rollback", transaction]);
@@ -452,6 +466,106 @@ fn context_offer_cache_rolls_over_and_deduplicates_without_losing_new_sessions()
     let retained: Value =
         serde_json::from_slice(&fs::read(directory.join("offers.json")).unwrap()).unwrap();
     assert_eq!(retained["entries"].as_array().unwrap().len(), 128);
+}
+
+#[tokio::test]
+async fn failed_pending_context_read_can_retry_all_offers_in_the_same_session() {
+    use specgit::{
+        identity::Provider,
+        process::Process,
+        selection::{IssueIntent, Locked, Selection},
+        watch_store::{EventState, Goal, Identity, Revision, Store},
+    };
+    let f = delivery::Fixture::new("github");
+    let context = specgit::config::resolve(
+        &Process::default(),
+        &f.root,
+        None,
+        Some(Provider::Github),
+        None,
+    )
+    .await
+    .unwrap();
+    Locked::acquire(&context)
+        .unwrap()
+        .save(&Selection {
+            version: 2,
+            repository: context.repository.clone(),
+            project_id: 7,
+            branch: context.branch.clone().unwrap(),
+            target: "main".into(),
+            issues: vec![],
+            intents: vec![IssueIntent {
+                title: "feat: interrupted issue creation".into(),
+                body: "Specification awaiting native reconciliation.".into(),
+                labels: vec![],
+                issue: None,
+                write_started: true,
+            }],
+            adopted: vec![],
+            request: Some(7),
+            request_write_started: false,
+            request_intent: None,
+        })
+        .unwrap();
+    let session = "retry-context";
+    let identity = Identity::new(&context, session, 7, Goal::Lifecycle).unwrap();
+    Store::new(identity.clone())
+        .unwrap()
+        .publish(
+            Revision {
+                head: "a".repeat(40),
+                local_head: "a".repeat(40),
+                target: "main".into(),
+                declaration: "b".repeat(64),
+                evidence_digest: "c".repeat(64),
+            },
+            EventState::Unknown,
+            "Evidence needs refresh.".into(),
+            "Inspect native evidence.".into(),
+            1,
+        )
+        .unwrap();
+    let state = context
+        .git_dir
+        .join("specgit-v2/subscriptions")
+        .join(identity.key())
+        .join("state.json");
+    let valid = fs::read(&state).unwrap();
+    fs::write(&state, "malformed watch state").unwrap();
+    let offers = context.git_dir.join("specgit-v2/hook-context/offers.json");
+    let payload = json!({"session_id":session,"hook_event_name":"SessionStart","cwd":f.root});
+    let failed = hook(&f, "SessionStart", payload.clone());
+    assert!(failed.stdout.is_empty());
+    assert!(!failed.stderr.is_empty());
+    assert!(
+        !offers.exists(),
+        "failed context delivery consumed advisory offers"
+    );
+
+    fs::write(&state, &valid).unwrap();
+    let retried = hook(&f, "SessionStart", payload.clone());
+    assert!(retried.status.success());
+    assert!(retried.stderr.is_empty());
+    let output: Value = serde_json::from_slice(&retried.stdout).unwrap();
+    let text = output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    for expected in [
+        "SKILL.md",
+        "uncertain native write",
+        "unverified event receipts",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    let offered: Value = serde_json::from_slice(&fs::read(&offers).unwrap()).unwrap();
+    assert_eq!(offered["entries"].as_array().unwrap().len(), 3);
+    let repeated = hook(&f, "SessionStart", payload);
+    assert!(repeated.status.success());
+    assert!(repeated.stdout.is_empty());
+    assert!(repeated.stderr.is_empty());
+    assert_eq!(fs::read(&state).unwrap(), valid);
+    assert!(f.state()["calls"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -607,22 +721,7 @@ fn doctor_verifies_retained_setup_guard_after_its_project_receipt_is_rolled_back
         let transaction = installed["evidence"]["transaction"]["transaction"]
             .as_str()
             .unwrap();
-        let sibling = f.root.parent().unwrap().join("consumer");
-        assert!(
-            std::process::Command::new("git")
-                .current_dir(&f.root)
-                .args([
-                    "worktree",
-                    "add",
-                    "-b",
-                    "consumer",
-                    sibling.to_str().unwrap()
-                ])
-                .output()
-                .unwrap()
-                .status
-                .success()
-        );
+        let (_worktree_parent, sibling) = add_linked_worktree(&f.root, "consumer");
         let borrowed = f
             .command(&["setup", "--agent", "generic", "--hook-purpose", "guard"])
             .current_dir(&sibling)
@@ -814,7 +913,12 @@ fn an_empty_init_marker_does_not_hide_claude_legacy_guidance_after_branch_switch
     let refreshed = f.run(&["setup"]);
     assert_eq!(refreshed["exit"], 0, "{refreshed}");
     let claude = fs::read_to_string(f.root.join("CLAUDE.md")).unwrap();
-    assert!(claude.starts_with("Manual Claude rules\n"));
+    assert!(
+        claude
+            .replace("\r\n", "\n")
+            .starts_with("Manual Claude rules\n"),
+        "{claude:?}"
+    );
     assert!(!claude.contains("<!-- specgit:v2:start -->"), "{claude}");
     assert_eq!(
         claude.matches("<!-- specgit:project:v2:start -->").count(),

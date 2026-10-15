@@ -252,3 +252,130 @@ fn receipt_only_setup_with_guard_purpose_retains_the_borrowed_native_guard() {
     f.assert_guard(true);
     f.assert_excluded(&f.sibling, ".agents/skills/specgit-native/SKILL.md", true);
 }
+
+#[test]
+fn rollback_waits_for_native_serialization_before_taking_asset_lock() {
+    for operation in ["init", "setup", "remove", "migrate"] {
+        let f = Fixture::new();
+        let id = f.exclusion_transaction();
+        let private =
+            PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
+        let id = if operation == "remove" {
+            AssetStore::lock(
+                &private.join("removal"),
+                std::slice::from_ref(&f.root),
+                Duration::from_secs(2),
+            )
+            .unwrap()
+            .apply(vec![
+                Change::new(f.root.join("removal-probe"), Some(b"owned".to_vec())).unwrap(),
+            ])
+            .unwrap()
+            .transaction
+        } else {
+            id
+        };
+        let native = private.join("native-guard-lock");
+        let held = AssetStore::lock(
+            &native,
+            std::slice::from_ref(&native),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let marker = f.root.join("rollback-ready");
+        let child = executable::command()
+            .current_dir(&f.root)
+            .env("SPECGIT_FIXTURE_NATIVE_LOCK_READY", &marker)
+            .args([operation, "--rollback", &id, "--json"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !marker.exists() && started.elapsed() < Duration::from_secs(1) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let reached_lock = marker.exists();
+        let asset_available = AssetStore::lock(
+            &private.join("assets"),
+            std::slice::from_ref(&f.root),
+            Duration::from_millis(100),
+        );
+        let available = asset_available.is_ok();
+        drop(asset_available);
+        drop(held);
+        let result = child.wait_with_output().unwrap();
+        assert!(reached_lock, "{result:?}");
+        assert!(
+            available,
+            "rollback occupied assets while waiting for native serialization: {result:?}"
+        );
+        assert!(result.status.success(), "{result:?}");
+    }
+}
+
+#[tokio::test]
+async fn prelocked_rollback_compatibility_api_rejects_without_changing_assets() {
+    let f = Fixture::new();
+    let id = f.exclusion_transaction();
+    let private =
+        PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
+    let before = fs::read(&f.exclude).unwrap();
+    let store = AssetStore::lock(
+        &private.join("assets"),
+        std::slice::from_ref(&f.root),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let result = specgit::config::worktree::rollback(
+        &store,
+        &specgit::process::Process::default(),
+        &f.root,
+        &f.exclude,
+        &id,
+    )
+    .await;
+    assert!(result.unwrap_err().message.contains("lock_native_guard"));
+    assert_eq!(fs::read(&f.exclude).unwrap(), before);
+    assert!(f.root.join(".specgit.yaml").exists());
+}
+
+#[test]
+fn truncated_setup_demand_blocks_sibling_and_current_rollback_consumers() {
+    for sibling in [false, true] {
+        let f = Fixture::new();
+        let installed = cli(&f.root, &["guard", "--install"]);
+        let id = installed["transaction"]["transaction"].as_str().unwrap();
+        let consumer = if sibling { &f.sibling } else { &f.root };
+        cli(
+            consumer,
+            &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+        );
+        let receipt = PathBuf::from(git(consumer, &["rev-parse", "--absolute-git-dir"]))
+            .join("specgit-v2/agent-assets/ownership.json");
+        let mut value: Value = serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("purposes");
+        fs::write(&receipt, serde_json::to_vec(&value).unwrap()).unwrap();
+        let before: Vec<_> = ["pre-commit", "pre-push"]
+            .map(|stage| fs::read(f.hooks.join(stage)).unwrap())
+            .into();
+        let receipt_before = fs::read(&receipt).unwrap();
+        for args in [
+            vec!["guard", "--uninstall", "--dry-run"],
+            vec!["guard", "--uninstall"],
+            vec!["init", "--rollback", id],
+        ] {
+            let result = executable::command()
+                .current_dir(&f.root)
+                .args(args)
+                .arg("--json")
+                .output()
+                .unwrap();
+            assert!(!result.status.success(), "sibling={sibling}: {result:?}");
+            for (stage, expected) in ["pre-commit", "pre-push"].iter().zip(&before) {
+                assert_eq!(fs::read(f.hooks.join(stage)).unwrap(), *expected);
+            }
+            assert_eq!(fs::read(&receipt).unwrap(), receipt_before);
+        }
+    }
+}

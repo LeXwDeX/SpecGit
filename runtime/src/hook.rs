@@ -70,7 +70,7 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
         Ok(_) => None,
         Err(diagnostic) => return notice(diagnostic),
     };
-    let mut text = if event == "SessionStart" {
+    let rules = if event == "SessionStart" {
         let branch = context.branch.as_deref().unwrap_or("detached");
         let issues = selected
             .as_ref()
@@ -88,12 +88,9 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
     } else {
         String::new()
     };
-    if !text.is_empty() {
-        match context::offer_once(&context, &session, "session-rules", &text) {
-            Ok(true) => {}
-            Ok(false) => text.clear(),
-            Err(diagnostic) => return notice(diagnostic),
-        }
+    let mut offers = vec![];
+    if !rules.is_empty() {
+        offers.push(("session-rules", rules.as_str()));
     }
     if let Some(selected) = selected.as_ref()
         && (selected
@@ -103,33 +100,21 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
             || (selected.request_write_started && selected.request.is_none()))
     {
         let recovery = "SpecGit retains an uncertain native write. Inspect native candidates and adopt the exact Issue/PR ID before retrying creation; preserve the checkpoint.";
-        match context::offer_once(&context, &session, "write-recovery", recovery) {
-            Ok(true) => {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(recovery);
-            }
-            Ok(false) => {}
-            Err(diagnostic) => return notice(diagnostic),
-        }
+        offers.push(("write-recovery", recovery));
     }
-    match pending_notice(&context, &session, &observation.notify) {
-        Ok(Some(pending)) => {
-            match context::offer_once(&context, &session, "event-recovery", &pending) {
-                Ok(true) => {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(&pending);
-                }
-                Ok(false) => {}
-                Err(diagnostic) => return notice(diagnostic),
-            }
-        }
-        Ok(None) => {}
+    // Resolve every fallible context source before committing any offer digest.
+    // A failed read must leave all context available to the next host callback.
+    let pending = match pending_notice(&context, &session, &observation.notify) {
+        Ok(pending) => pending,
         Err(diagnostic) => return notice(diagnostic),
+    };
+    if let Some(pending) = &pending {
+        offers.push(("event-recovery", pending.as_str()));
     }
+    let text = match context::offer_all(&context, &session, &offers) {
+        Ok(text) => text,
+        Err(diagnostic) => return notice(diagnostic),
+    };
     if text.is_empty() {
         return Output::default();
     }

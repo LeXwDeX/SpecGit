@@ -429,7 +429,7 @@ fn rollback_rejects_conflicting_choices_and_restores_the_recorded_state() {
         "the synchronous API must not bypass native guard consumer discovery"
     );
     let rolled = cli(&f.root, &["--rollback", id]);
-    assert_eq!(rolled["evidence"]["scope"], "project");
+    assert_eq!(rolled["evidence"]["scope"], "project", "{rolled}");
     // Owned checkout assets are restored byte-identically; the rollback
     // transaction's own journal files are AssetStore mechanics covered elsewhere.
     let journal = |path: &Path| path.components().any(|c| c.as_os_str() == "transactions");

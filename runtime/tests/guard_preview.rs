@@ -303,3 +303,59 @@ fn cli_setup_guard_transfer_and_retained_previews_preserve_the_project_tree() {
     assert!(report["changes"].as_array().unwrap().is_empty());
     assert_eq!(git_inventory(root), before_uninstall);
 }
+
+#[test]
+fn transferred_guard_rejects_incomplete_setup_demand_without_writes() {
+    for field in [
+        "purposes",
+        "agents",
+        "skills",
+        "instructions",
+        "hooks",
+        "generation",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        assert!(
+            Command::new("git")
+                .current_dir(root)
+                .args(["init", "-b", "feature"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        for args in [
+            vec!["setup", "--hook-purpose", "guard", "--json"],
+            vec!["guard", "--install", "--json"],
+        ] {
+            let result = executable::command()
+                .current_dir(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{result:?}");
+        }
+        let receipt = root.join(".git/specgit-v2/agent-assets/ownership.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove(field);
+        fs::write(&receipt, serde_json::to_vec(&value).unwrap()).unwrap();
+        let before = git_inventory(root);
+        for preview in [true, false] {
+            let mut command = executable::command();
+            command
+                .current_dir(root)
+                .args(["guard", "--uninstall", "--json"]);
+            if preview {
+                command.arg("--dry-run");
+            }
+            let result = command.output().unwrap();
+            assert!(
+                !result.status.success(),
+                "missing {field}, preview={preview}: {result:?}"
+            );
+            assert_eq!(git_inventory(root), before, "missing {field}");
+        }
+    }
+}

@@ -487,12 +487,15 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
     }
     let layout = Layout::read(process, cwd).await?;
     if let Some(id) = options.rollback {
+        let serialization = config::worktree::lock_native_guard(process, &layout.root).await?;
+        let allowed = config::worktree::rollback_allowed_roots(&layout.allowed)?;
         let locks: Vec<_> = layout
             .stores()
             .iter()
-            .map(|p| AssetStore::lock(p, &layout.allowed, Duration::from_secs(2)))
+            .map(|p| AssetStore::lock(p, &allowed, Duration::from_secs(2)))
             .collect::<Result<_, _>>()?;
-        let (restored, retained) = config::worktree::rollback(
+        let (restored, retained) = config::worktree::rollback_with_lock(
+            &serialization,
             locks
                 .last()
                 .ok_or_else(|| Diagnostic::input("Removal store is unavailable."))?,

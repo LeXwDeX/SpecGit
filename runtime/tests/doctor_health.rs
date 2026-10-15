@@ -1074,7 +1074,7 @@ fn doctor_native_exclude_rebuilds_shared_rules_only_for_proven_sibling_owners() 
                     "add",
                     "-b",
                     "claude-consumer",
-                    sibling.to_str().unwrap()
+                    "../claude-consumer"
                 ])
                 .output()
                 .unwrap()
@@ -1123,5 +1123,94 @@ fn doctor_native_exclude_rebuilds_shared_rules_only_for_proven_sibling_owners() 
             native,
             "{repaired}"
         );
+    }
+}
+
+#[test]
+fn doctor_coordinates_setup_owned_guard_refresh_and_preserves_independent_guard_repairs() {
+    for independent in [false, true] {
+        let f = native_exclude_fixture::Fixture::new("github");
+        let hooks = f.root.join(".git/hooks");
+        for stage in ["pre-commit", "pre-push"] {
+            let path = hooks.join(stage);
+            fs::write(&path, "#!/bin/sh\n# foreign hook kept\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        for args in [
+            vec!["init", "--manual-observe"],
+            vec!["setup", "--hook-purpose", "guard"],
+        ] {
+            let report = f.run(&args);
+            assert_eq!(report["exit"], 0, "{report}");
+        }
+        if independent {
+            let installed = f.command(&["guard", "--install"]).output().unwrap();
+            assert!(installed.status.success(), "{installed:?}");
+        }
+        let private = f.root.join(".git/specgit-v2");
+        let receipt_path = private.join(if independent {
+            "guard-hooks.json"
+        } else {
+            "setup-guard-hooks.json"
+        });
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        let mut changes = vec![];
+        for stage in ["pre-commit", "pre-push"] {
+            let block = receipt["hooks"][stage]["block"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let old = block.replacen('\n', "\n# previous release\n", 1);
+            let path = hooks.join(stage);
+            let script = fs::read_to_string(&path).unwrap();
+            changes.push(
+                specgit::assets::Change::new(
+                    path,
+                    Some(script.replacen(&block, &old, 1).into_bytes()),
+                )
+                .unwrap(),
+            );
+            receipt["hooks"][stage]["block"] = old.into();
+        }
+        changes.push(
+            specgit::assets::Change::new(receipt_path, Some(serde_json::to_vec(&receipt).unwrap()))
+                .unwrap(),
+        );
+        specgit::assets::AssetStore::lock(
+            &private.join("assets"),
+            &[f.root.clone(), private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(changes)
+        .unwrap();
+        let preview = f.run(&["doctor", "--offline", "--fix", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        let mut paths = std::collections::BTreeSet::new();
+        for plan in preview["evidence"]["repair"]["plans"].as_array().unwrap() {
+            for asset in plan["assets"].as_array().unwrap() {
+                assert!(
+                    paths.insert(asset["path"].as_str().unwrap().to_owned()),
+                    "duplicate repair: {preview}"
+                );
+            }
+        }
+        let fixed = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(fixed["exit"], 0, "{fixed}");
+        assert_eq!(fixed["evidence"]["health"]["status"], "healthy", "{fixed}");
+        for stage in ["pre-commit", "pre-push"] {
+            let script = fs::read_to_string(hooks.join(stage)).unwrap();
+            assert!(script.contains("# foreign hook kept"));
+            assert!(!script.contains("# previous release"));
+        }
+        let before = files(&f.root);
+        let again = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(again["exit"], 0, "{again}");
+        assert_eq!(again["evidence"]["health"]["status"], "healthy", "{again}");
+        assert_eq!(files(&f.root), before);
     }
 }

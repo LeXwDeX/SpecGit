@@ -109,22 +109,23 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
 }
 
 /// A bounded advisory offer cache; it is neither acknowledgment nor authorization.
-pub(super) fn offer_once(
+pub(super) fn offer_all(
     context: &project::Context,
     session: &str,
-    kind: &str,
-    text: &str,
-) -> Result<bool, crate::diagnostic::Diagnostic> {
-    offer_at(&context.git_dir, session, kind, text)
+    candidates: &[(&str, &str)],
+) -> Result<String, crate::diagnostic::Diagnostic> {
+    offer_at(&context.git_dir, session, candidates)
 }
 fn offer_at(
     git_dir: &std::path::Path,
     session: &str,
-    kind: &str,
-    text: &str,
-) -> Result<bool, crate::diagnostic::Diagnostic> {
+    candidates: &[(&str, &str)],
+) -> Result<String, crate::diagnostic::Diagnostic> {
     use crate::assets::{AssetStore, Change, Snapshot};
     use serde::{Deserialize, Serialize};
+    if candidates.is_empty() {
+        return Ok(String::new());
+    }
     #[derive(Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Offer {
@@ -139,8 +140,6 @@ fn offer_at(
     }
     let directory = git_dir.join("specgit-v2/hook-context");
     let path = directory.join("offers.json");
-    let key = crate::assets::hash(format!("{session}\0{kind}").as_bytes());
-    let digest = crate::assets::hash(text.as_bytes());
     let current = Snapshot::read(&path)?;
     let mut offers = if let Some(bytes) = current.bytes.as_deref() {
         let offers: Offers = serde_json::from_value(crate::input::json(bytes, 32_768, 6)?)
@@ -180,18 +179,28 @@ fn offer_at(
             entries: vec![],
         }
     };
-    if offers
-        .entries
-        .iter()
-        .any(|offer| offer.key == key && offer.digest == digest)
-    {
-        return Ok(false);
+    let mut selected = vec![];
+    for (kind, text) in candidates {
+        let key = crate::assets::hash(format!("{session}\0{kind}").as_bytes());
+        let digest = crate::assets::hash(text.as_bytes());
+        if offers
+            .entries
+            .iter()
+            .any(|offer| offer.key == key && offer.digest == digest)
+        {
+            continue;
+        }
+        offers.entries.retain(|offer| offer.key != key);
+        if offers.entries.len() == 128 {
+            offers.entries.remove(0);
+        }
+        offers.entries.push(Offer { key, digest });
+        selected.push(*text);
     }
-    offers.entries.retain(|offer| offer.key != key);
-    if offers.entries.len() == 128 {
-        offers.entries.remove(0);
+    if selected.is_empty() {
+        return Ok(String::new());
     }
-    offers.entries.push(Offer { key, digest });
+    let text = selected.join("\n");
     let store = AssetStore::lock(
         &directory,
         std::slice::from_ref(&directory),
@@ -214,7 +223,7 @@ fn offer_at(
         crate::diagnostic::Diagnostic::input("Hook context offers cannot be represented.")
     })?;
     store.checkpoint(&path, &current, &bytes)?;
-    Ok(true)
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -224,18 +233,22 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         for index in 0..1005 {
-            assert!(
+            assert_eq!(
                 super::offer_at(
                     &root,
                     &format!("session-{index}"),
-                    "session-rules",
-                    "Read Skill"
+                    &[("session-rules", "Read Skill")]
                 )
                 .unwrap(),
+                "Read Skill",
                 "session {index} lost its context"
             );
         }
-        assert!(!super::offer_at(&root, "session-1004", "session-rules", "Read Skill").unwrap());
+        assert!(
+            super::offer_at(&root, "session-1004", &[("session-rules", "Read Skill")])
+                .unwrap()
+                .is_empty()
+        );
         let directory = root.join("specgit-v2/hook-context");
         let entries: Vec<_> = std::fs::read_dir(&directory)
             .unwrap()

@@ -11,23 +11,7 @@ pub struct Options {
     pub rollback: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProjectReceipt {
-    version: u8,
-    owner: String,
-    root: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    shared_root: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    generation: Option<String>,
-    agents: BTreeSet<Agent>,
-    skills: BTreeMap<String, String>,
-    instructions: BTreeMap<String, HostRegistration>,
-    hooks: BTreeMap<String, Registration>,
-    #[serde(default)]
-    purposes: BTreeMap<String, BTreeSet<HookPurpose>>,
-}
+use crate::project_receipt::ProjectReceipt;
 
 /// New init and setup transactions share one lock and history. Existing setup
 /// journals remain read-only evidence for installations created before migration.
@@ -87,102 +71,10 @@ fn same_project_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic
 fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagnostic> {
     let snapshot = Snapshot::read(&private.join("ownership.json"))?;
     let receipt = if let Some(bytes) = &snapshot.bytes {
-        let mut r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
-            .map_err(|_| conflict("The project integration receipt is malformed."))?;
-        if ![1, 2, 3, 4].contains(&r.version)
-            || (r.version == 1) != r.shared_root.is_some()
-            || if r.version >= 3 {
-                !r.generation.as_ref().is_some_and(|generation| {
-                    generation.len() == 64
-                        && generation
-                            .bytes()
-                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-                })
-            } else {
-                r.generation.is_some()
-            }
-            || (r.version < 4 && !r.purposes.is_empty())
-            || r.purposes.len() > 4
-            || r.purposes.iter().any(|(host, purposes)| {
-                !["generic", "claude", "codex", "opencode"].contains(&host.as_str())
-                    || purposes.contains(&HookPurpose::None)
-                    || purposes.contains(&HookPurpose::Observe)
-            })
-            || r.owner != "specgit"
-            || !same_project_root(&r.root, root)?
-            || r.agents.is_empty()
-            || r.skills.len() > 2
-            || r.instructions.len() > 3
-            || r.hooks.len() > 3
-            || r.skills.keys().any(|p| {
-                ![
-                    ".agents/skills/specgit-native/SKILL.md",
-                    ".claude/skills/specgit-native/SKILL.md",
-                ]
-                .contains(&p.as_str())
-            })
-            || r.instructions.iter().any(|(host, g)| {
-                g.root != r.root
-                    || !matches!(
-                        (host.as_str(), g.instructions.as_str()),
-                        ("generic", "AGENTS.md")
-                            | ("codex", "AGENTS.md" | "AGENTS.override.md")
-                            | ("claude", "CLAUDE.md")
-                    )
-            })
-            || r.hooks.iter().any(|(host, h)| {
-                h.skill.is_some()
-                    || match host.as_str() {
-                        "claude" => h.settings != r.root.join(".claude/settings.json"),
-                        "codex" => h.settings != r.root.join(".codex/hooks.json"),
-                        "opencode" => {
-                            h.settings != r.root.join(".opencode/hooks.json") || h.created_hook_map
-                        }
-                        _ => true,
-                    }
-            })
-        {
+        let mut r = crate::project_receipt::decode(bytes)?;
+        if !same_project_root(&r.root, root)? {
             return Err(conflict(
-                "The project integration receipt is unsupported or unsafe.",
-            ));
-        }
-        let shared_guidance = r.instructions.contains_key("generic")
-            || r.instructions
-                .get("codex")
-                .is_some_and(|g| g.instructions == "AGENTS.md");
-        if !r
-            .skills
-            .contains_key(".agents/skills/specgit-native/SKILL.md")
-            || r.skills
-                .contains_key(".claude/skills/specgit-native/SKILL.md")
-                != r.agents.contains(&Agent::Claude)
-            || (r.hooks.contains_key("claude") && !r.agents.contains(&Agent::Claude))
-            || (r.hooks.contains_key("codex") && !r.agents.contains(&Agent::Codex))
-            || r.instructions.contains_key("claude") != r.agents.contains(&Agent::Claude)
-            || (r.hooks.contains_key("opencode") && !r.agents.contains(&Agent::Opencode))
-            || (r.version >= 4
-                && (r.purposes.len() != r.agents.len()
-                    || r.purposes.iter().any(|(host, purposes)| {
-                        let agent = match host.as_str() {
-                            "generic" => Agent::Generic,
-                            "claude" => Agent::Claude,
-                            "codex" => Agent::Codex,
-                            "opencode" => Agent::Opencode,
-                            _ => return true,
-                        };
-                        !r.agents.contains(&agent)
-                            || (purposes.contains(&HookPurpose::Context)
-                                != r.hooks.contains_key(host))
-                            || (agent == Agent::Generic && purposes.contains(&HookPurpose::Context))
-                    })))
-            || (r.agents.contains(&Agent::Codex)
-                && !shared_guidance
-                && !r.instructions.contains_key("codex"))
-            || ((r.agents.contains(&Agent::Generic) || r.agents.contains(&Agent::Opencode))
-                && !shared_guidance)
-        {
-            return Err(conflict(
-                "The project receipt lacks required selected-agent ownership.",
+                "The project integration receipt belongs to another root.",
             ));
         }
         // The receipt records the root spelling used at installation. Git may
@@ -1755,12 +1647,14 @@ pub async fn run_with_hooks(
             }
             let store_path = transaction_store(&private);
             let allowed = vec![crate::config::worktree::hooks(&process, &root).await?, root.clone(), git_dir.join("specgit-v2"), exclude.parent().ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?.to_owned()];
+            let allowed = crate::config::worktree::rollback_allowed_roots(&allowed)?;
+            let serialization = crate::config::worktree::lock_native_guard(&process, &root).await?;
             let shared = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
             let (rolled_back, retained) = if store_path.join("transactions").join(id).exists() {
-                crate::config::worktree::rollback(&shared, &process, &root, &exclude, id).await?
+                crate::config::worktree::rollback_with_lock(&serialization, &shared, &process, &root, &exclude, id).await?
             } else {
                 let legacy = AssetStore::lock(&private, &allowed, Duration::from_secs(2))?;
-                crate::config::worktree::rollback(&legacy, &process, &root, &exclude, id).await?
+                crate::config::worktree::rollback_with_lock(&serialization, &legacy, &process, &root, &exclude, id).await?
             };
             return Ok(json!({"scope":"project","root":root,"private":private,"rolled_back":rolled_back,"retained":retained}));
         }

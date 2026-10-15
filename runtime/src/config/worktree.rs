@@ -468,46 +468,24 @@ pub fn shares_hooks(consumer: &Consumer, hooks: &Path) -> bool {
     same(&consumer.hooks, hooks)
 }
 
-/// A typed subset of setup's receipt sufficient to preserve an active native consumer.
+/// Validate the complete setup receipt before determining active native guard demand.
 pub(crate) fn setup_guard_demand(bytes: Option<&[u8]>, root: &Path) -> Result<bool, Diagnostic> {
-    #[derive(serde::Deserialize)]
-    struct Demand {
-        version: u8,
-        owner: String,
-        root: PathBuf,
-        #[serde(default)]
-        purposes: std::collections::BTreeMap<String, Vec<String>>,
-    }
     let Some(bytes) = bytes else {
         return Ok(false);
     };
-    let demand: Demand = serde_json::from_value(crate::input::json(bytes, 1_048_576, 20)?)
-        .map_err(|_| {
-            Diagnostic::input("The setup native guard demand is malformed; preserve its hooks.")
-        })?;
+    let demand = crate::project_receipt::decode(bytes)?;
     let actual = root
         .canonicalize()
         .map_err(|_| Diagnostic::input("The setup guard consumer root cannot be resolved."))?;
-    if ![1, 2, 3, 4].contains(&demand.version)
-        || demand.owner != "specgit"
-        || demand.root.canonicalize().ok().as_ref() != Some(&actual)
-        || demand.purposes.len() > 4
-        || (demand.version < 4 && !demand.purposes.is_empty())
-        || demand.purposes.iter().any(|(host, purposes)| {
-            !["generic", "claude", "codex", "opencode"].contains(&host.as_str())
-                || purposes
-                    .iter()
-                    .any(|purpose| !["guard", "context"].contains(&purpose.as_str()))
-        })
-    {
+    if demand.root.canonicalize().ok().as_ref() != Some(&actual) {
         return Err(Diagnostic::input(
-            "The setup native guard demand is unsupported; preserve its hooks.",
+            "The setup guard consumer belongs to another root; preserve its hooks.",
         ));
     }
     Ok(demand
         .purposes
         .values()
-        .any(|purposes| purposes.iter().any(|purpose| purpose == "guard")))
+        .any(|purposes| purposes.contains(&crate::project_receipt::HookPurpose::Guard)))
 }
 
 /// Shared serialization for native Git hook ownership across linked worktrees.
@@ -524,22 +502,92 @@ pub async fn native_guard_lock(process: &Process, root: &Path) -> Result<PathBuf
     Ok(common.join("specgit-v2/native-guard-lock"))
 }
 
-/// Roll back an init or migrate journal while keeping the worktree-shared
-/// `info/exclude` file when a sibling worktree still relies on its block.
-/// Retained paths are reported with the consumers that keep them in use.
+/// Preserve the selected rollback boundaries while accepting Windows' ordinary
+/// and canonical spellings of the same existing directories. No new directory
+/// or journal-provided root can enter the authorization set.
+pub fn rollback_allowed_roots(selected: &[PathBuf]) -> Result<Vec<PathBuf>, Diagnostic> {
+    for directory in selected {
+        crate::assets::safe_path(directory)?;
+    }
+    #[cfg(windows)]
+    {
+        let mut roots = selected.to_vec();
+        for directory in selected {
+            if directory.try_exists().map_err(|_| {
+                Diagnostic::input("A selected rollback root cannot be inspected safely.")
+            })? {
+                let canonical = directory.canonicalize().map_err(|_| {
+                    Diagnostic::input("A selected rollback root cannot be resolved safely.")
+                })?;
+                crate::assets::safe_path(&canonical)?;
+                if !roots.contains(&canonical) {
+                    roots.push(canonical);
+                }
+            }
+        }
+        Ok(roots)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(selected.to_vec())
+    }
+}
+
+/// A native serialization lock acquired before any transaction-store lock.
+pub struct NativeGuardLock {
+    _store: AssetStore,
+    path: PathBuf,
+}
+
+pub async fn lock_native_guard(
+    process: &Process,
+    root: &Path,
+) -> Result<NativeGuardLock, Diagnostic> {
+    let path = native_guard_lock(process, root).await?;
+    #[cfg(feature = "test-fixtures")]
+    if let Some(marker) = std::env::var_os("SPECGIT_FIXTURE_NATIVE_LOCK_READY") {
+        std::fs::write(marker, b"ready")
+            .map_err(|_| Diagnostic::input("Native lock fixture marker is unavailable."))?;
+    }
+    Ok(NativeGuardLock {
+        path: path.clone(),
+        _store: AssetStore::lock(
+            &path,
+            std::slice::from_ref(&path),
+            std::time::Duration::from_secs(2),
+        )?,
+    })
+}
+
+/// Compatibility entry point. A prelocked store cannot establish the required
+/// native-guard-before-assets order; callers must use the typed locked API.
 pub async fn rollback(
+    _store: &AssetStore,
+    _process: &Process,
+    _root: &Path,
+    _exclude: &Path,
+    _id: &str,
+) -> Result<(Applied, Value), Diagnostic> {
+    Err(Diagnostic::input(
+        "Acquire lock_native_guard before the asset store, then use rollback_with_lock; the prelocked compatibility entry cannot safely establish rollback lock order.",
+    ))
+}
+
+/// Roll back with native serialization held before the transaction-store lock.
+/// Shared consumers and current ownership are rechecked under both locks.
+pub async fn rollback_with_lock(
+    serialization: &NativeGuardLock,
     store: &AssetStore,
     process: &Process,
     root: &Path,
     exclude: &Path,
     id: &str,
 ) -> Result<(Applied, Value), Diagnostic> {
-    let serialization = native_guard_lock(process, root).await?;
-    let _serialization = AssetStore::lock(
-        &serialization,
-        std::slice::from_ref(&serialization),
-        std::time::Duration::from_secs(2),
-    )?;
+    if native_guard_lock(process, root).await? != serialization.path {
+        return Err(Diagnostic::input(
+            "The native guard lock belongs to another repository.",
+        ));
+    }
     let consumers = sibling_consumers(process, root).await?;
     let hook_consumers = sibling_hook_consumers(process, root).await?;
     let mut retain = if sibling_exclusion_consumers(process, root).await?.is_empty() {

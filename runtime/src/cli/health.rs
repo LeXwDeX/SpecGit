@@ -332,10 +332,35 @@ pub(super) async fn inspect(process: &Process, cwd: &Path, source: &Path) -> Ins
     } else {
         result.checks.push(Check::fact("guidance", "not_checked", json!({"reason":"A valid declaration is required to check generated initialization guidance."})));
     }
-    let guard = specgit::guard::health_plan(process, &root)
-        .await
-        .map(|p| p.map(Plan::Guard));
-    result.plan("guard", guard);
+    let guard = specgit::guard::health_plan(process, &root).await;
+    let covered = match &guard {
+        Ok(Some(guard)) => result
+            .plans
+            .iter()
+            .find_map(|(id, plan)| {
+                if *id == "setup"
+                    && let Plan::Assets(plan) = plan
+                {
+                    Some(guard.covered_by(plan))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Ok(false)),
+        _ => Ok(false),
+    };
+    match covered {
+        Ok(true) => result.checks.push(Check {
+            id: "guard",
+            status: "change_required",
+            severity: "warning",
+            repairable: true,
+            evidence: json!({"assets": [], "repair_owner": "setup"}),
+            diagnostic: None,
+        }),
+        Ok(false) => result.plan("guard", guard.map(|p| p.map(Plan::Guard))),
+        Err(diagnostic) => result.checks.push(Check::failed("guard", diagnostic)),
+    }
     if !declaration_valid {
         result.plans.clear();
         for check in &mut result.checks {

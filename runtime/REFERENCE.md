@@ -812,6 +812,11 @@ plan. Existing no-guard callers keep the synchronous entry point. The typed
 `install_with_context` and `install_with_guard_plan` entry points reject rollback
 before writes; use either CLI rollback entry point for Git-aware recovery. The
 legacy synchronous API also rejects transactions that affect native guard assets.
+Library recovery first awaits `config::worktree::lock_native_guard`, then acquires
+the asset store and calls `rollback_with_lock` with that `NativeGuardLock` token.
+All CLI rollback paths follow this order. The previous `config::worktree::rollback`
+signature remains available but returns an actionable diagnostic before writes:
+an already locked asset store cannot safely establish the required lock order.
 
 Project receipts use version 4, explicit per-host purposes and a unique install
 generation. Refresh retains that generation; a later install gets a new one. Valid v1-v3

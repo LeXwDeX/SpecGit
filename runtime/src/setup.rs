@@ -23,27 +23,8 @@ pub enum Scope {
     Project,
 }
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Agent {
-    Generic,
-    Claude,
-    Codex,
-    Opencode,
-}
-
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, clap::ValueEnum,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookPurpose {
-    Guard,
-    Context,
-    Observe,
-    None,
-}
+pub use crate::project_receipt::{Agent, HookPurpose};
+use crate::project_receipt::{HostRegistration, Registration};
 
 /// Additive hook selection. Empty purposes preserve the recorded installation.
 #[derive(Clone, Default)]
@@ -97,15 +78,6 @@ fn recorded_purposes(
     (purposes, wake)
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-struct HostRegistration {
-    root: PathBuf,
-    skill_hash: String,
-    instructions: String,
-    block: String,
-    created_instructions: bool,
-}
 const HOST_START: &str = "<!-- specgit:project:v2:start -->";
 const HOST_END: &str = "<!-- specgit:project:v2:end -->";
 const LEGACY_START: &str = "<!-- specgit:global:v2:start -->";
@@ -325,21 +297,6 @@ fn instruction_change_after(
     Ok((guidance, registration))
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-struct Registration {
-    settings: PathBuf,
-    entries: BTreeMap<String, Value>,
-    #[serde(default)]
-    created_file: bool,
-    #[serde(default)]
-    created_hook_map: bool,
-    #[serde(default)]
-    created_event_keys: Vec<String>,
-    // Persisted 2.3 project receipts contain this null field; project hooks never own an external skill.
-    #[serde(default)]
-    skill: Option<Value>,
-}
 fn skill_bytes() -> Vec<u8> {
     crate::skill::bytes()
 }
