@@ -26,6 +26,24 @@ fn fixture_crash(point: &str) {
     }
 }
 
+/// Pause a fixture writer inside the locked transaction so tests can change
+/// state that SpecGit's lock cannot serialize, such as `git worktree add`.
+#[cfg(feature = "test-fixtures")]
+fn fixture_pause(point: &str) {
+    if std::env::var("SPECGIT_FIXTURE_ASSET_PAUSE").as_deref() != Ok(point) {
+        return;
+    }
+    let Some(directory) = std::env::var_os("SPECGIT_FIXTURE_ASSET_PAUSE_DIR").map(PathBuf::from)
+    else {
+        return;
+    };
+    let _ = fs::write(directory.join("ready"), b"ready");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !directory.join("go").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 fn error(code: Code, message: &str) -> Diagnostic {
     Diagnostic::new(
         code,
@@ -235,6 +253,8 @@ pub struct MaintenancePlan {
     changes: Vec<Change>,
     dependencies: Vec<Change>,
     precondition: Option<Box<dyn Fn() -> Result<(), Diagnostic> + Send + Sync>>,
+    serialization_locks: Vec<PathBuf>,
+    observations: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -267,6 +287,8 @@ impl MaintenancePlan {
             changes,
             dependencies,
             precondition: None,
+            serialization_locks: Vec::new(),
+            observations: Vec::new(),
         }
     }
 
@@ -277,8 +299,43 @@ impl MaintenancePlan {
         mut self,
         check: impl Fn() -> Result<(), Diagnostic> + Send + Sync + 'static,
     ) -> Self {
-        self.precondition = Some(Box::new(check));
+        let previous = self.precondition.take();
+        self.precondition = Some(Box::new(move || {
+            if let Some(previous) = &previous {
+                previous()?;
+            }
+            check()
+        }));
         self
+    }
+
+    pub(crate) fn serialize_with(&mut self, path: PathBuf) {
+        self.serialization_locks.push(path);
+    }
+
+    pub(crate) fn custody_store(&mut self, store: PathBuf) {
+        if self.store != store {
+            self.serialization_locks.push(self.store.clone());
+            self.store = store;
+        }
+    }
+    pub(crate) fn observe(&mut self, paths: Vec<PathBuf>) {
+        self.observations.extend(paths);
+    }
+
+    pub(crate) fn extend(
+        &mut self,
+        changes: Vec<Change>,
+        dependencies: Vec<Change>,
+        allowed: Vec<PathBuf>,
+    ) {
+        self.changes.extend(changes);
+        self.dependencies.extend(dependencies);
+        self.allowed.extend(allowed);
+    }
+
+    pub(crate) fn planned_changes(&self) -> &[Change] {
+        &self.changes
     }
 
     pub fn assets(&self) -> Vec<MaintenanceAsset> {
@@ -417,6 +474,11 @@ impl MaintenancePlan {
                 changes: 0,
             });
         }
+        let _serialization: Vec<_> = self
+            .serialization_locks
+            .iter()
+            .map(|path| AssetStore::lock(path, std::slice::from_ref(path), Duration::from_secs(2)))
+            .collect::<Result<_, _>>()?;
         let store = AssetStore::lock(&self.store, &self.allowed, Duration::from_secs(2))?;
         if !store.pending_transactions()?.is_empty() {
             return Err(error(
@@ -453,7 +515,7 @@ impl MaintenancePlan {
             Ok(())
         };
         recheck(0)?;
-        store.apply_checked(self.changes.clone(), recheck)
+        store.apply_recording_checked(self.changes.clone(), &self.observations, recheck)
     }
 }
 
@@ -620,6 +682,12 @@ impl AssetStore {
                     "A retained transaction journal is damaged.",
                 )
             })?;
+            if !journal.valid() {
+                return Err(error(
+                    Code::RollbackConflict,
+                    "A retained transaction journal has invalid ownership state.",
+                ));
+            }
             if journal.state == "prepared" {
                 pending.push(name);
             }
@@ -664,7 +732,53 @@ impl AssetStore {
         asset: &Snapshot,
         asset_digest: Option<&str>,
     ) -> Result<Option<Vec<Change>>, Diagnostic> {
-        if receipt.bytes.is_none() || (asset.bytes.is_none() && asset_digest.is_none()) {
+        Self::read_pair_history(
+            roots,
+            receipt_path,
+            receipt,
+            asset_path,
+            asset,
+            asset_digest,
+            false,
+        )
+    }
+
+    /// Diagnose a missing selected asset. This proves historical selection only,
+    /// never its lost contents or current permissions, and grants no write proof.
+    pub(crate) fn selected_missing_asset_at(
+        roots: &[PathBuf],
+        receipt_path: &Path,
+        receipt: &Snapshot,
+        asset_path: &Path,
+    ) -> Result<bool, Diagnostic> {
+        let missing = Snapshot::read(asset_path)?;
+        if missing.bytes.is_some() {
+            return Ok(false);
+        }
+        Ok(Self::read_pair_history(
+            roots,
+            receipt_path,
+            receipt,
+            asset_path,
+            &missing,
+            None,
+            true,
+        )?
+        .is_some())
+    }
+
+    fn read_pair_history(
+        roots: &[PathBuf],
+        receipt_path: &Path,
+        receipt: &Snapshot,
+        asset_path: &Path,
+        asset: &Snapshot,
+        asset_digest: Option<&str>,
+        missing_diagnosis: bool,
+    ) -> Result<Option<Vec<Change>>, Diagnostic> {
+        if receipt.bytes.is_none()
+            || (asset.bytes.is_none() && asset_digest.is_none() && !missing_diagnosis)
+        {
             return Ok(None);
         }
         let expected_receipt = receipt_path.canonicalize().map_err(|_| io_error())?;
@@ -714,13 +828,19 @@ impl AssetStore {
                         )
                     },
                 )?;
-            if journal.version != 2 || journal.entries.len() > 100 {
+            if !journal.valid() {
                 return Err(error(
                     Code::RollbackConflict,
                     "A retained transaction journal is unsupported.",
                 ));
             }
-            if journal.state == "committed" {
+            if journal.state == "committed" || journal.state == "rolled_back_retaining" {
+                let mut journal = journal;
+                if journal.state == "rolled_back_retaining" {
+                    journal
+                        .entries
+                        .retain(|entry| journal.retained_paths.contains(&entry.path));
+                }
                 records.push((journal_path, before, journal));
             }
         }
@@ -807,7 +927,13 @@ impl AssetStore {
                     } else {
                         PermissionRecord::capture(asset.permissions.as_ref())
                     };
-                    if entry.after_permissions.as_ref() == Some(&observed) {
+                    if (missing_diagnosis
+                        && entry.after_permissions.as_ref().is_some_and(|permissions| {
+                            permissions.readonly.is_some()
+                                && (!cfg!(unix) || permissions.unix_mode.is_some())
+                        }))
+                        || entry.after_permissions.as_ref() == Some(&observed)
+                    {
                         matched = true;
                     } else {
                         incomplete = true;
@@ -886,15 +1012,16 @@ impl AssetStore {
                         )
                     },
                 )?;
-            if journal.version != 2 || journal.entries.len() > 100 {
+            if !journal.valid() {
                 return Err(error(
                     Code::RollbackConflict,
                     "A retained transaction journal is unsupported.",
                 ));
             }
-            if journal.state == "committed"
+            if (journal.state == "committed" || journal.state == "rolled_back_retaining")
                 && journal.entries.iter().any(|entry| {
-                    safe_path(&entry.path).is_ok()
+                    (journal.state == "committed" || journal.retained_paths.contains(&entry.path))
+                        && safe_path(&entry.path).is_ok()
                         && entry.path.canonicalize().ok().as_ref() == Some(&expected_path)
                         && match recorded_digest {
                             Some(digest) => {
@@ -931,13 +1058,13 @@ impl AssetStore {
         self.apply_checked_recording(changes, &[], &mut before_write)
     }
 
-    /// Record an explicit ownership baseline without rewriting unchanged bytes.
-    pub(crate) fn apply_recording(
+    pub(crate) fn apply_recording_checked(
         &self,
         changes: Vec<Change>,
         observations: &[PathBuf],
+        mut before_write: impl FnMut(usize) -> Result<(), Diagnostic>,
     ) -> Result<Applied, Diagnostic> {
-        self.apply_checked_recording(changes, observations, &mut |_| Ok(()))
+        self.apply_checked_recording(changes, observations, &mut before_write)
     }
 
     fn apply_checked_recording(
@@ -1021,6 +1148,7 @@ impl AssetStore {
             version: 2,
             state: "prepared".into(),
             entries: vec![],
+            retained_paths: vec![],
         };
         for (i, change) in changes.iter().enumerate() {
             let backup = format!("{i}.before");
@@ -1044,6 +1172,8 @@ impl AssetStore {
             let result = (|| {
                 #[cfg(feature = "test-fixtures")]
                 fixture_crash(&format!("before-write:{i}"));
+                #[cfg(feature = "test-fixtures")]
+                fixture_pause(&format!("before-write:{i}"));
                 before_write(i)?;
                 for (path, expected) in &proofs {
                     self.validate(path)?;
@@ -1112,6 +1242,18 @@ impl AssetStore {
         atomic(&directory.join("journal.json"), &bytes, None)
     }
     fn restore(&self, directory: &Path, entries: &[Entry]) -> Result<(), Diagnostic> {
+        self.restore_checked(directory, entries, &|| Ok(()))
+    }
+    /// Restore preimages, running `check` before every write and once after
+    /// the last one. A failed check undoes this call's own writes, so an
+    /// external precondition (such as an unchanged worktree inventory) holds
+    /// for every restored file or for none of them.
+    fn restore_checked(
+        &self,
+        directory: &Path,
+        entries: &[Entry],
+        check: &dyn Fn() -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
         // Validate every preimage before the first restore, including backup hashes.
         for entry in entries {
             self.validate(&entry.path)?;
@@ -1140,6 +1282,9 @@ impl AssetStore {
                 }
             }
         }
+        #[cfg(feature = "test-fixtures")]
+        let mut writes = 0usize;
+        let mut written: Vec<(&Entry, Snapshot)> = Vec::new();
         for entry in entries.iter().rev() {
             let current = Snapshot::read(&entry.path)?;
             if entry.matches(&current, false) {
@@ -1151,6 +1296,15 @@ impl AssetStore {
                     "A concurrent content or permission edit prevents rollback.",
                 ));
             }
+            #[cfg(feature = "test-fixtures")]
+            {
+                fixture_pause(&format!("before-rollback-write:{writes}"));
+                writes += 1;
+            }
+            if let Err(original) = check() {
+                return Err(undo_restore(&written, original));
+            }
+            written.push((entry, current));
             match &entry.before {
                 Some(_) => {
                     let backup = Snapshot::read(&directory.join(&entry.backup))?;
@@ -1166,7 +1320,96 @@ impl AssetStore {
                 None => fs::remove_file(&entry.path).map_err(|_| io_error())?,
             }
         }
+        if let Err(original) = check() {
+            return Err(undo_restore(&written, original));
+        }
         Ok(())
+    }
+    fn rollback_journal(&self, id: &str) -> Result<(PathBuf, Journal), Diagnostic> {
+        if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err(Diagnostic::input("Use an exact reported transaction id."));
+        }
+        let directory = self.root.join("transactions").join(id);
+        let bytes = Snapshot::read(&directory.join("journal.json"))?
+            .bytes
+            .ok_or_else(io_error)?;
+        let journal: Journal =
+            serde_json::from_value(crate::input::json(&bytes, JOURNAL_LIMIT, 20)?)
+                .map_err(|_| io_error())?;
+        if !journal.valid() {
+            return Err(Diagnostic::input("Unsupported transaction journal."));
+        }
+        #[cfg(windows)]
+        for (index, entry) in journal.entries.iter().enumerate() {
+            for other in &journal.entries[..index] {
+                if same_asset_path(&entry.path, &other.path)? {
+                    return Err(error(
+                        Code::RollbackConflict,
+                        "Journal entries alias the same rollback asset.",
+                    ));
+                }
+            }
+        }
+        Ok((directory, journal))
+    }
+    pub(crate) fn rollback_paths(&self, id: &str) -> Result<Vec<PathBuf>, Diagnostic> {
+        let (_, journal) = self.rollback_journal(id)?;
+        if journal.state == "rolled_back" {
+            return Ok(Vec::new());
+        }
+        Ok(journal
+            .entries
+            .iter()
+            .filter(|entry| {
+                journal.state != "rolled_back_retaining"
+                    || journal.retained_paths.contains(&entry.path)
+            })
+            .map(|entry| entry.path.clone())
+            .collect())
+    }
+    /// The target bytes after rollback, if this transaction owns the path.
+    pub(crate) fn rollback_content(
+        &self,
+        id: &str,
+        path: &Path,
+    ) -> Result<Option<Option<Vec<u8>>>, Diagnostic> {
+        let (directory, journal) = self.rollback_journal(id)?;
+        if journal.state == "rolled_back" {
+            return Ok(None);
+        }
+        let mut matched = None;
+        for entry in &journal.entries {
+            if (journal.state != "rolled_back_retaining"
+                || journal.retained_paths.contains(&entry.path))
+                && same_asset_path(&entry.path, path)?
+            {
+                if matched.is_some() {
+                    return Err(error(
+                        Code::RollbackConflict,
+                        "Multiple journal entries resolve to the same rollback asset.",
+                    ));
+                }
+                matched = Some(entry);
+            }
+        }
+        let Some(entry) = matched else {
+            return Ok(None);
+        };
+        self.validate(&entry.path)?;
+        if entry.before.is_none() {
+            return Ok(Some(None));
+        }
+        if entry.backup.contains(['/', '\\']) || entry.backup.starts_with('.') {
+            return Err(error(Code::UnsafePath, "Invalid backup locator."));
+        }
+        let backup = Snapshot::read(&directory.join(&entry.backup))?;
+        if backup.digest() != entry.before {
+            return Err(error(
+                Code::RollbackConflict,
+                "A rollback preimage is missing or changed.",
+            ));
+        }
+        Ok(Some(backup.bytes))
     }
     pub fn rollback(&self, id: &str) -> Result<Applied, Diagnostic> {
         self.rollback_retaining(id, &[]).map(|(applied, _)| applied)
@@ -1179,31 +1422,53 @@ impl AssetStore {
         id: &str,
         retain: &[PathBuf],
     ) -> Result<(Applied, Vec<PathBuf>), Diagnostic> {
-        if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
-            return Err(Diagnostic::input("Use an exact reported transaction id."));
-        }
-        let directory = self.root.join("transactions").join(id);
-        let bytes = Snapshot::read(&directory.join("journal.json"))?
-            .bytes
-            .ok_or_else(io_error)?;
-        if bytes.len() > JOURNAL_LIMIT {
-            return Err(error(
-                Code::InputLimit,
-                "Transaction journal exceeds its size allowance.",
+        self.rollback_retaining_checked(id, retain, &|| Ok(()))
+    }
+    /// [`Self::rollback_retaining`] with `check` run before every restore
+    /// write and before the journal records the rollback. A failed check
+    /// aborts, undoes this rollback's writes and leaves the journal unchanged.
+    pub(crate) fn rollback_retaining_checked(
+        &self,
+        id: &str,
+        retain: &[PathBuf],
+        check: &dyn Fn() -> Result<(), Diagnostic>,
+    ) -> Result<(Applied, Vec<PathBuf>), Diagnostic> {
+        let (directory, mut journal) = self.rollback_journal(id)?;
+        if journal.state == "rolled_back" {
+            return Ok((
+                Applied {
+                    transaction: id.into(),
+                    changes: 0,
+                },
+                Vec::new(),
             ));
         }
-        let mut journal: Journal = serde_json::from_slice(&bytes).map_err(|_| io_error())?;
-        if journal.version != 2 || journal.entries.len() > 100 {
-            return Err(Diagnostic::input("Unsupported transaction journal."));
+        let mut retained = Vec::new();
+        let mut restored = Vec::new();
+        for entry in &journal.entries {
+            if journal.state == "rolled_back_retaining"
+                && !journal.retained_paths.contains(&entry.path)
+            {
+                continue;
+            }
+            let mut keep = false;
+            for selected in retain {
+                keep |= same_asset_path(&entry.path, selected)?;
+            }
+            if keep {
+                retained.push(entry.path.clone());
+            } else {
+                restored.push(entry.clone());
+            }
         }
-        let (retained, restored): (Vec<_>, Vec<_>) = journal
-            .entries
-            .iter()
-            .partition(|entry| retain.contains(&entry.path));
-        let restored: Vec<Entry> = restored.into_iter().cloned().collect();
-        let retained: Vec<PathBuf> = retained.into_iter().map(|e| e.path.clone()).collect();
-        self.restore(&directory, &restored)?;
-        journal.state = "rolled_back".into();
+        self.restore_checked(&directory, &restored, check)?;
+        journal.state = if retained.is_empty() {
+            "rolled_back"
+        } else {
+            "rolled_back_retaining"
+        }
+        .into();
+        journal.retained_paths = retained.clone();
         self.save_journal(&directory, &journal)?;
         Ok((
             Applied {
@@ -1215,12 +1480,115 @@ impl AssetStore {
     }
 }
 
+/// Put back the post-write content that an aborted restore replaced. A file
+/// changed again since that restore belongs to its writer and stops the undo.
+fn undo_restore(written: &[(&Entry, Snapshot)], original: Diagnostic) -> Diagnostic {
+    for (entry, previous) in written.iter().rev() {
+        let undone = Snapshot::read(&entry.path).and_then(|current| {
+            if !entry.matches(&current, false) {
+                return Err(io_error());
+            }
+            match &previous.bytes {
+                Some(bytes) => atomic(&entry.path, bytes, previous.permissions.as_ref()),
+                None => fs::remove_file(&entry.path).map_err(|_| io_error()),
+            }
+        });
+        if undone.is_err() {
+            return error(
+                Code::RollbackConflict,
+                "A rollback precondition changed and the partial restore could not be fully undone; inspect the journal and backups before retrying.",
+            );
+        }
+    }
+    original
+}
+
+// Only Windows spelling aliases are equivalent here. Unix symlinks and
+// unrelated roots never gain identity or authorization through this helper.
+fn same_asset_path(left: &Path, right: &Path) -> Result<bool, Diagnostic> {
+    if left == right {
+        return Ok(true);
+    }
+    #[cfg(windows)]
+    {
+        fn identity(path: &Path) -> Result<PathBuf, Diagnostic> {
+            safe_path(path)?;
+            let mut existing = path;
+            let mut missing = Vec::new();
+            while !existing.try_exists().map_err(|_| io_error())? {
+                missing.push(existing.file_name().ok_or_else(io_error)?.to_os_string());
+                existing = existing.parent().ok_or_else(io_error)?;
+            }
+            let mut resolved = existing.canonicalize().map_err(|_| io_error())?;
+            for component in missing.into_iter().rev() {
+                resolved.push(component);
+            }
+            safe_path(&resolved)?;
+            Ok(resolved)
+        }
+        Ok(identity(left)? == identity(right)?)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
+/// The ordinary spelling of a canonical Windows disk/UNC path. Consumers must
+/// verify it resolves to the selected directory before treating it as a root.
+#[cfg(windows)]
+pub(crate) fn ordinary_windows_path(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::Prefix;
+    let Component::Prefix(prefix) = path.components().next()? else {
+        return None;
+    };
+    let units: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let ordinary = match prefix.kind() {
+        Prefix::VerbatimDisk(_) => units.get(4..)?.to_vec(),
+        Prefix::VerbatimUNC(_, _) => {
+            let mut ordinary = vec![b'\\' as u16, b'\\' as u16];
+            ordinary.extend_from_slice(units.get(8..)?);
+            ordinary
+        }
+        _ => return None,
+    };
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&ordinary)))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
     version: u32,
     state: String,
     entries: Vec<Entry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retained_paths: Vec<PathBuf>,
+}
+impl Journal {
+    fn valid(&self) -> bool {
+        self.version == 2
+            && self.entries.len() <= 100
+            && self
+                .entries
+                .iter()
+                .map(|entry| &entry.path)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == self.entries.len()
+            && self.retained_paths.len() <= 100
+            && self.retained_paths.iter().collect::<BTreeSet<_>>().len()
+                == self.retained_paths.len()
+            && self
+                .retained_paths
+                .iter()
+                .all(|path| self.entries.iter().any(|entry| entry.path == *path))
+            && match self.state.as_str() {
+                "prepared" | "committed" | "rolled_back" => self.retained_paths.is_empty(),
+                "rolled_back_retaining" => !self.retained_paths.is_empty(),
+                _ => false,
+            }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1382,5 +1750,58 @@ fn persist_windows(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod rollback_terminal_tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn ordinary_receipt_lookup_finds_the_canonical_rollback_preimage() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let receipt = root.join("ownership.json");
+        let ordinary = PathBuf::from(receipt.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+        let id = store
+            .apply(vec![
+                Change::new(receipt.clone(), Some(b"current guard demand".to_vec())).unwrap(),
+            ])
+            .unwrap()
+            .transaction;
+        assert_eq!(store.rollback_content(&id, &ordinary).unwrap(), Some(None));
+        std::fs::remove_file(&receipt).unwrap();
+        assert_eq!(store.rollback_content(&id, &ordinary).unwrap(), Some(None));
+    }
+
+    #[test]
+    fn completed_rollback_has_no_remaining_paths_or_preimages() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let path = root.join("asset");
+        let id = store
+            .apply(vec![
+                Change::new(path.clone(), Some(b"owned".to_vec())).unwrap(),
+            ])
+            .unwrap()
+            .transaction;
+        store.rollback(&id).unwrap();
+        std::fs::write(&path, b"owned").unwrap();
+        assert!(store.rollback_paths(&id).unwrap().is_empty());
+        assert!(store.rollback_content(&id, &path).unwrap().is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"owned");
     }
 }

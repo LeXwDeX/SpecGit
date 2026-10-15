@@ -4,6 +4,311 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
+    "installation_id": {
+      "enum": [
+        "project_skill",
+        "instruction_entry",
+        "session_context",
+        "tool_context",
+        "git_guard",
+        "observation",
+        "local_exclusions",
+        "private_state"
+      ]
+    },
+    "installation_command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argv",
+        "mode",
+        "side_effects",
+        "requires_project",
+        "requires_network"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2
+        },
+        "mode": {
+          "enum": [
+            "preview",
+            "apply",
+            "read",
+            "invoke",
+            "observe"
+          ]
+        },
+        "side_effects": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requires_project": {
+          "type": "boolean"
+        },
+        "requires_network": {
+          "type": "boolean"
+        }
+      }
+    },
+    "installation_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "purpose",
+        "requirement",
+        "scope",
+        "owner",
+        "bundle",
+        "locations",
+        "recommendations",
+        "conditions",
+        "depends_on",
+        "commands",
+        "protocol",
+        "verification",
+        "fallback",
+        "lifecycle"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/installation_id"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirement": {
+          "enum": [
+            "recommended",
+            "optional",
+            "conditional"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bundle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "depends_on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/installation_id"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/installation_command"
+          }
+        },
+        "protocol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verification": {
+          "description": "Instructions to verify writing, loading and behavior separately; never live installation evidence.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "written",
+            "loading",
+            "effect"
+          ],
+          "properties": {
+            "written": {
+              "type": "string",
+              "minLength": 1
+            },
+            "loading": {
+              "type": "string",
+              "minLength": 1
+            },
+            "effect": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "fallback": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "refresh",
+            "remove",
+            "rollback"
+          ],
+          "properties": {
+            "refresh": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remove": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rollback": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "installation_catalog": {
+      "description": "Offline capability guidance from the current runtime. It performs neither host discovery nor installation verification.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_version",
+        "runtime_version",
+        "compatibility",
+        "entrypoints",
+        "host_discovery",
+        "installation_verification",
+        "side_effects",
+        "boundaries",
+        "bundles",
+        "items"
+      ],
+      "properties": {
+        "catalog_version": {
+          "const": 1
+        },
+        "runtime_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "catalog_contract",
+            "runtime_contract",
+            "existing_installations"
+          ],
+          "properties": {
+            "catalog_contract": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runtime_contract": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existing_installations": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/installation_command"
+          }
+        },
+        "host_discovery": {
+          "const": "not_performed"
+        },
+        "installation_verification": {
+          "const": "not_performed"
+        },
+        "side_effects": {
+          "const": "none"
+        },
+        "boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "bundles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "members",
+              "selection"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "members": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/installation_id"
+                }
+              },
+              "selection": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/installation_item"
+          }
+        }
+      }
+    },
     "project_context": {
       "type": "object",
       "additionalProperties": false,
@@ -606,7 +911,8 @@
           "type": ["string", "null"]
         },
         "requires_user_authorization": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "The suggested action needs authorization for its scope. Existing user delegation of the current workflow satisfies it; true does not request renewed confirmation. The observer never performs the action."
         }
       }
     },
@@ -991,6 +1297,7 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
+    {"if":{"properties":{"operation":{"const":"setup"},"status":{"const":"catalog"}},"required":["operation","status"]},"then":{"properties":{"ok":{"const":true},"exit":{"const":0},"evidence":{"type":"object","additionalProperties":false,"required":["installation_catalog"],"properties":{"installation_catalog":{"$ref":"#/$defs/installation_catalog"}}}}}},
     {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"status":{"enum":["ready","offline_checked","attention_required","checkpoint_branch_mismatch","unknown","repair_failed","invalid_input","rejected"]},"evidence":{"properties":{"runtime_update":{"$ref":"#/$defs/doctor_runtime_update"},"local":{"$ref":"#/$defs/doctor_local"},"health":{"$ref":"#/$defs/doctor_health"},"repair":{"$ref":"#/$defs/doctor_repair"},"agent_guidance":{"$ref":"#/$defs/doctor_agent_guidance"}}}}}},
     {"if":{"properties":{"operation":{"const":"doctor"},"exit":{"const":0}},"required":["operation","exit"]},"then":{"properties":{"evidence":{"type":"object","required":["local"],"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
     {
@@ -1000,7 +1307,8 @@
           "evidence": {
             "properties": {
               "hook_purposes": {"$ref":"#/$defs/hook_purposes"},
-              "host_delivery": {"$ref":"#/$defs/setup_host_delivery"}
+              "host_delivery": {"$ref":"#/$defs/setup_host_delivery"},
+              "installation_catalog": {"$ref":"#/$defs/installation_catalog"}
             }
           }
         }

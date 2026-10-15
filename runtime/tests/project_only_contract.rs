@@ -1,8 +1,9 @@
 use serde_json::{Value, json};
+use specgit::process::Process;
 use specgit::{
     assets::{AssetStore, Change},
     diagnostic::Code,
-    setup::{Agent, project},
+    setup::{Agent, HookOptions, project},
 };
 use std::{
     fs,
@@ -126,6 +127,23 @@ fn options(agents: Vec<Agent>, custom: bool) -> project::Options {
         rollback: None,
     }
 }
+fn install(
+    options: &project::Options,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Value, specgit::diagnostic::Diagnostic> {
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(project::install_with_context(
+            options,
+            &HookOptions::default(),
+            root,
+            private,
+            source,
+            &Process::default(),
+        ))
+}
 fn value(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
@@ -206,7 +224,7 @@ fn custom_hooks_reject_host_expansion_tokens_before_asset_writes() {
         let reserved_source = directory.join(source.file_name().unwrap());
         fs::copy(&source, &reserved_source).unwrap();
         assert!(
-            project::install(
+            install(
                 &options(vec![Agent::Opencode], true),
                 &root,
                 &private,
@@ -230,17 +248,17 @@ fn custom_hooks_are_project_owned_literal_commands_and_preserve_foreign_events()
     let mut opts = options(vec![Agent::Opencode], true);
     opts.dry_run = true;
     let before = fs::read(&path).unwrap();
-    project::install(&opts, &root, &private, &source).unwrap();
+    install(&opts, &root, &private, &source).unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(!private.exists());
     opts.dry_run = false;
-    let result = project::install(&opts, &root, &private, &source).unwrap();
+    let result = install(&opts, &root, &private, &source).unwrap();
     assert_eq!(result["opencode_claude_hooks"], true);
     assert_eq!(result["host_delivery"]["imported_event"], "not_checked");
     let installed = value(&path);
     assert!(installed.get("hooks").is_none());
     assert_eq!(installed["SessionStart"][0], foreign["SessionStart"][0]);
-    for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+    for event in ["SessionStart", "PreToolUse"] {
         let entry = installed[event].as_array().unwrap().last().unwrap();
         let hook = &entry["hooks"][0];
         assert_eq!(hook["inputFormat"], "claude-code");
@@ -252,7 +270,7 @@ fn custom_hooks_are_project_owned_literal_commands_and_preserve_foreign_events()
     opts.agents.clear();
     opts.opencode_claude_hooks = false;
     assert_eq!(
-        project::install(&opts, &root, &private, &source).unwrap()["transaction"]["changes"],
+        install(&opts, &root, &private, &source).unwrap()["transaction"]["changes"],
         0
     );
     let context = invoke(
@@ -267,18 +285,18 @@ fn custom_hooks_are_project_owned_literal_commands_and_preserve_foreign_events()
         context["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap()
-            .contains("Remote state is not checked")
+            .contains("Use standing task authorization")
     );
     opts.uninstall = true;
-    project::install(&opts, &root, &private, Path::new("missing-executable")).unwrap();
+    install(&opts, &root, &private, Path::new("missing-executable")).unwrap();
     assert_eq!(value(&path), foreign);
     assert!(!private.join("ownership.json").exists());
 }
 
 #[test]
-fn custom_host_protocol_denies_patch_aliases_and_accepts_only_current_checkpoint() {
+fn custom_host_protocol_delivers_current_checkpoint_without_gating_edits() {
     let (_temp, root, private, source) = fixture();
-    project::install(
+    install(
         &options(vec![Agent::Opencode], true),
         &root,
         &private,
@@ -296,35 +314,45 @@ fn custom_host_protocol_denies_patch_aliases_and_accepts_only_current_checkpoint
     ] {
         let payload = json!({"hook_event_name":"PreToolUse","session_id":"ses_native-fork","cwd":root,"tool_name":tool,
             "tool_input":{"file_path":root.join("src/lib.rs"),"patchText":format!("*** Begin Patch\n*** Add File: {}\n+x\n*** End Patch",root.join("src/lib.rs").display())}});
-        assert_eq!(
-            invoke(entry, payload)["hookSpecificOutput"]["permissionDecision"],
-            "deny",
-            "{tool}"
+        let result = invoke(entry, payload);
+        assert!(
+            result.is_null()
+                || result["hookSpecificOutput"]
+                    .get("permissionDecision")
+                    .is_none(),
+            "ordinary edits must remain host-controlled: {tool}: {result}"
         );
     }
-    let readonly = json!({"hook_event_name":"PreToolUse","session_id":"ses_native-fork","cwd":root,"tool_name":"Read","tool_input":{"file_path":"src/lib.rs"}});
-    assert!(invoke(entry, readonly).is_null());
     checkpoint(&root);
-    let allowed = json!({"hook_event_name":"PreToolUse","session_id":"ses_native-fork","cwd":root,"tool_name":"Edit","tool_input":{"file_path":"src/lib.rs"}});
-    let result = invoke(entry, allowed.clone());
-    assert!(
-        result["hookSpecificOutput"]
-            .get("permissionDecision")
-            .is_none()
+    let session_start = &hooks["SessionStart"][0];
+    let result = invoke(
+        session_start,
+        json!({"hook_event_name":"SessionStart","session_id":"ses_current-checkpoint","cwd":root}),
     );
-    assert!(result.is_null());
+    assert!(
+        result["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("selected Issues [41]")
+    );
     git(&root, &["checkout", "-b", "other"]);
-    assert_eq!(
-        invoke(entry, allowed)["hookSpecificOutput"]["permissionDecision"],
-        "deny"
+    let stale = invoke(
+        session_start,
+        json!({"hook_event_name":"SessionStart","session_id":"ses_stale-checkpoint","cwd":root}),
+    );
+    assert!(
+        stale["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("selected Issues []")
     );
 }
 
 #[test]
-fn patch_text_and_move_destination_resolve_the_actual_repository() {
+fn patch_text_and_move_destinations_do_not_gate_host_edits() {
     let (_temp, root, private, source) = fixture();
     let (_other_temp, other, _, _) = fixture();
-    project::install(
+    install(
         &options(vec![Agent::Opencode], true),
         &root,
         &private,
@@ -335,17 +363,21 @@ fn patch_text_and_move_destination_resolve_the_actual_repository() {
     let entry = &value(&root.join(".opencode/hooks.json"))["PreToolUse"][0];
     let cross = json!({"hook_event_name":"PreToolUse","session_id":"ses_patch-target","cwd":root,"tool_name":"functions.apply_patch",
         "tool_input":{"patchText":format!("*** Begin Patch\n*** Update File: {}\n*** Move to: {}\n+x\n*** End Patch",root.join("a.rs").display(),other.join("b.rs").display())}});
+    let cross_result = invoke(entry, cross);
     assert!(
-        invoke(entry, cross)["hookSpecificOutput"]["permissionDecisionReason"]
-            .as_str()
-            .unwrap()
-            .contains("multiple repositories")
+        cross_result.is_null()
+            || cross_result["hookSpecificOutput"]
+                .get("permissionDecision")
+                .is_none()
     );
     let other_only = json!({"hook_event_name":"PreToolUse","session_id":"ses_patch-target","cwd":root,"tool_name":"apply_patch",
         "tool_input":{"patchText":format!("*** Begin Patch\n*** Add File: {}\n+x\n*** End Patch",other.join("b.rs").display())}});
-    assert_eq!(
-        invoke(entry, other_only)["hookSpecificOutput"]["permissionDecision"],
-        "deny"
+    let other_result = invoke(entry, other_only);
+    assert!(
+        other_result.is_null()
+            || other_result["hookSpecificOutput"]
+                .get("permissionDecision")
+                .is_none()
     );
 }
 
@@ -354,7 +386,7 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
     for refresh in [false, true] {
         let (temp, root, private, source) = fixture();
         let mut opts = options(vec![Agent::Claude, Agent::Opencode], false);
-        project::install(&opts, &root, &private, &source).unwrap();
+        install(&opts, &root, &private, &source).unwrap();
         let receipt_path = private.join("ownership.json");
         let mut receipt = value(&receipt_path);
         let global = temp
@@ -366,6 +398,7 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
         fs::write(global.join("user-data"), b"retain legacy data exactly").unwrap();
         receipt["version"] = json!(1);
         receipt.as_object_mut().unwrap().remove("generation");
+        receipt.as_object_mut().unwrap().remove("purposes");
         receipt["shared_root"] = json!(global);
         let mut changes = vec![];
         for host in ["generic", "claude"] {
@@ -394,7 +427,7 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
         }
         let settings = root.join(".claude/settings.json");
         let mut hooks = value(&settings);
-        for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+        for event in ["SessionStart", "PreToolUse"] {
             let group = &mut hooks["hooks"][event][0];
             for hook in group["hooks"].as_array_mut().unwrap() {
                 hook["command"] = json!(global.join("missing-2.3-executable"));
@@ -423,9 +456,9 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
         .unwrap();
         opts.agents.clear();
         if refresh {
-            project::install(&opts, &root, &private, &source).unwrap();
+            install(&opts, &root, &private, &source).unwrap();
             let current = value(&receipt_path);
-            assert_eq!(current["version"], 3);
+            assert_eq!(current["version"], 4);
             assert!(current.get("shared_root").is_none());
             assert!(
                 !fs::read_to_string(root.join("AGENTS.md"))
@@ -439,7 +472,7 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
             );
         }
         opts.uninstall = true;
-        project::install(&opts, &root, &private, Path::new("unavailable-CLI")).unwrap();
+        install(&opts, &root, &private, Path::new("unavailable-CLI")).unwrap();
         assert_eq!(
             fs::read(global.join("user-data")).unwrap(),
             b"retain legacy data exactly"
@@ -455,7 +488,7 @@ fn custom_mode_rejects_foreign_identical_edited_and_duplicate_groups_without_mut
     for fault in ["identical", "edited", "duplicate"] {
         let (_temp, root, private, source) = fixture();
         let mut opts = options(vec![Agent::Opencode], true);
-        project::install(&opts, &root, &private, &source).unwrap();
+        install(&opts, &root, &private, &source).unwrap();
         let path = root.join(".opencode/hooks.json");
         let mut hooks = value(&path);
         match fault {
@@ -473,7 +506,7 @@ fn custom_mode_rejects_foreign_identical_edited_and_duplicate_groups_without_mut
         fs::write(&path, serde_json::to_vec(&hooks).unwrap()).unwrap();
         let before = fs::read(&path).unwrap();
         opts.dry_run = true;
-        let error = project::install(&opts, &root, &private, &source).unwrap_err();
+        let error = install(&opts, &root, &private, &source).unwrap_err();
         assert_eq!(error.code, Code::OwnershipConflict);
         assert!(!error.message.contains("private edited text"));
         assert_eq!(fs::read(&path).unwrap(), before);

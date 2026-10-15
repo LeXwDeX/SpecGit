@@ -4,7 +4,6 @@ mod acceptance;
 #[path = "support/delivery.rs"]
 mod delivery;
 use acceptance::fixture;
-use delivery::executable;
 use serde_json::{Value, json};
 use specgit::watch_store::{self, ActionKind, EventState, Identity, Revision, Store};
 
@@ -589,7 +588,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
     let initial = f.run(&watch("lifecycle"));
     let identity: Identity =
         serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
-    let before = request_reads(&f);
+    let writes = f.writes();
     let mut child = WatchProcess::spawn(
         f.native_command(&[
             "watch",
@@ -625,9 +624,16 @@ fn explicit_watch_values_override_project_observation_defaults() {
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
     assert!(started.elapsed() < Duration::from_secs(4));
-    assert!(
-        request_reads(&f) >= before + 2,
-        "explicit poll_seconds was not applied"
+    assert_eq!(f.writes(), writes);
+    assert_eq!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .events
+            .last()
+            .unwrap()
+            .state,
+        EventState::TimedOut
     );
 }
 
@@ -715,8 +721,21 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
                 "pending" => {
                     assert_eq!(result["status"], "pending", "{provider}: {result}");
                     assert_eq!(next_step["kind"], "wait_for_checks", "{result}");
+                    assert_eq!(next_step["requires_user_authorization"], true, "{result}");
                     assert!(next_step["message"].as_str().unwrap().contains("checks"));
                     assert!(next_step["message"].as_str().unwrap().contains("draft"));
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("while CI runs")
+                    );
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("existing task authorization")
+                    );
                 }
                 "passed" => {
                     assert_eq!(result["status"], "checks_passed", "{provider}: {result}");
@@ -726,6 +745,12 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
                         "{result}"
                     );
                     assert_eq!(next_step["requires_user_authorization"], true, "{result}");
+                    assert!(
+                        next_step["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("seek permission only for missing scope")
+                    );
                     assert!(
                         next_step["message"]
                             .as_str()
@@ -752,6 +777,112 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
             assert_eq!(f.writes(), writes, "{provider}/{check_state}");
         }
     }
+}
+
+#[test]
+fn ready_request_with_pending_checks_keeps_wait_action_read_only() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        set_check_state(&f, provider, "pending");
+        let writes = f.writes();
+        let result = f.run(&watch("lifecycle"));
+        let action = &result["next_actions"][0];
+        assert_eq!(result["status"], "pending", "{provider}: {result}");
+        assert_eq!(action["kind"], "wait_for_checks", "{result}");
+        assert_eq!(action["draft"], false, "{result}");
+        assert_eq!(action["requires_user_authorization"], false, "{result}");
+        assert!(
+            action["message"]
+                .as_str()
+                .unwrap()
+                .contains("no review state is changed")
+        );
+        assert_eq!(f.writes(), writes, "{provider}");
+    }
+}
+
+#[test]
+fn absent_ci_keeps_checks_unobserved_and_lifecycle_guidance_actionable() {
+    for provider in ["github", "gitlab"] {
+        for draft in [true, false] {
+            let f = fixture(provider);
+            f.edit(|state| {
+                state["requests"][0]["draft"] = json!(draft);
+                state["requests"][0]["head_pipeline"] = Value::Null;
+                state["requests"][0]["pipeline"] = Value::Null;
+                state["project"]["only_allow_merge_if_pipeline_succeeds"] = json!(false);
+                for (route, response) in state["read_routes"].as_object_mut().unwrap() {
+                    if route.contains("/check-runs?") {
+                        *response = json!({"total_count":0,"check_runs":[]});
+                    } else if route.contains("/actions/runs?") {
+                        *response = json!({"total_count":0,"workflow_runs":[]});
+                    }
+                }
+            });
+            let writes = f.writes();
+            for goal in ["checks", "lifecycle"] {
+                let result = f.run(&watch(goal));
+                let action = &result["next_actions"][0];
+                assert_eq!(
+                    result["status"], "pending",
+                    "{provider}/{draft}/{goal}: {result}"
+                );
+                assert_eq!(action["check_outcome"], "unobserved", "{result}");
+                assert_eq!(action["kind"], "inspect_checks", "{result}");
+                assert_eq!(action["draft"], draft, "{result}");
+                assert_eq!(
+                    action["requires_user_authorization"],
+                    goal == "lifecycle",
+                    "{result}"
+                );
+                let message = action["message"].as_str().unwrap();
+                if goal == "checks" {
+                    assert!(
+                        message.contains("explicit checks goal remains open"),
+                        "{result}"
+                    );
+                    assert!(
+                        message.contains("absence is not a passing result"),
+                        "{result}"
+                    );
+                } else {
+                    assert!(
+                        message.contains("absent optional CI alone does not prevent"),
+                        "{result}"
+                    );
+                    assert!(message.contains("existing task authorization"), "{result}");
+                    assert!(message.contains("actual platform requirements"), "{result}");
+                }
+            }
+            assert_eq!(f.writes(), writes, "{provider}/{draft}");
+        }
+    }
+}
+
+#[test]
+fn advisory_checks_do_not_infer_native_merge_eligibility() {
+    let f = fixture("github");
+    f.edit(|state| {
+        for (route, response) in state["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/check-runs?") {
+                response["check_runs"][0]["conclusion"] = json!("neutral");
+            }
+        }
+    });
+    let writes = f.writes();
+    let result = f.run(&watch("lifecycle"));
+    assert_eq!(result["status"], "checks_completed", "{result}");
+    assert_eq!(
+        result["next_actions"][0]["kind"], "interpret_checks",
+        "{result}"
+    );
+    assert!(
+        result["next_actions"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no merge eligibility")
+    );
+    assert_eq!(f.writes(), writes);
 }
 
 #[test]
@@ -815,7 +946,7 @@ fn checks_and_lifecycle_goals_keep_their_next_steps_distinct() {
 }
 
 #[test]
-fn merged_open_issues_include_ids_and_hook_text_matches_the_structured_action() {
+fn merged_open_issues_keep_structured_actions_in_explicit_tools_and_hooks_offer_receipt_ids() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
         f.edit(|state| {
@@ -850,30 +981,16 @@ fn merged_open_issues_include_ids_and_hook_text_matches_the_structured_action() 
             inbox_report["next_actions"][0], *next_step,
             "{inbox_report}"
         );
-        let offered = hook_output(&f, "PostToolUse", true);
-        let hook_text = offered["hookSpecificOutput"]["additionalContext"]
+        let calls = f.state()["calls"].as_array().unwrap().len();
+        assert!(hook_output(&f, "PostToolUse", true).is_null());
+        assert_eq!(f.state()["calls"].as_array().unwrap().len(), calls);
+        let recovered = hook_output(&f, "SessionStart", false);
+        let text = recovered["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(
-            hook_text.contains(next_step["message"].as_str().unwrap()),
-            "{offered}"
-        );
-        let offered_label = hook_text
-            .find("SpecGit observation offered (not acknowledged):")
-            .unwrap();
-        let next_steps_label = hook_text.find("Next steps:").unwrap();
-        assert!(
-            offered_label < next_steps_label,
-            "event evidence and next-step text are in the wrong order: {offered}"
-        );
-        assert!(
-            hook_text[offered_label..next_steps_label].contains("events"),
-            "event evidence is missing before the next-step label: {offered}"
-        );
-        assert!(
-            hook_text.contains(&serde_json::to_string(next_step).unwrap()),
-            "{offered}"
-        );
+        assert!(text.contains(event["id"].as_str().unwrap()), "{recovered}");
+        assert!(text.contains("unverified event receipts"));
+        assert!(!text.contains(next_step["message"].as_str().unwrap()));
         assert_eq!(f.writes(), writes, "{provider}");
     }
 }
@@ -972,9 +1089,14 @@ fn attention_only_notifications_deliver_failed_native_observations() {
     );
     f.edit(|s| s["read_failure"] = json!("auth"));
 
-    let offered = hook_output(&f, "PostToolUse", true);
-    let text = offered.to_string();
-    assert!(text.contains("unknown"), "{offered}");
+    let watched = f.run(&watch("lifecycle"));
+    assert_eq!(watched["status"], "unknown", "{watched}");
+    assert!(hook_output(&f, "PostToolUse", true).is_null());
+    let offered = hook_output(&f, "SessionStart", false);
+    assert!(
+        offered.to_string().contains("unverified event receipts"),
+        "{offered}"
+    );
 }
 
 #[test]
@@ -985,7 +1107,10 @@ fn completed_only_notifications_suppress_attention_events() {
     );
     f.edit(|s| s["read_failure"] = json!("auth"));
 
-    let offered = hook_output(&f, "PostToolUse", true);
+    let watched = f.run(&watch("lifecycle"));
+    assert_eq!(watched["status"], "unknown", "{watched}");
+    assert!(hook_output(&f, "PostToolUse", true).is_null());
+    let offered = hook_output(&f, "SessionStart", false);
     let text = offered.to_string();
     assert!(!text.contains("unknown"), "{offered}");
     assert!(!text.contains("unverified event receipts"), "{offered}");
@@ -1501,12 +1626,20 @@ fn hook_output(f: &delivery::Fixture, event: &str, observe: bool) -> Value {
         .spawn()
         .unwrap();
     let payload = json!({"session_id":"session-a","hook_event_name":event,"cwd":f.root,"tool_name":"Bash","tool_input":{"command":"git add --dry-run .specgit.yaml"}});
-    child
+    // Retired callbacks return before reading input, so the child may close
+    // its stdin first; only that broken pipe is an accepted write outcome.
+    if let Err(error) = child
         .stdin
         .take()
         .unwrap()
         .write_all(&serde_json::to_vec(&payload).unwrap())
-        .unwrap();
+    {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "{event}: {error}"
+        );
+    }
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     if out.stdout.is_empty() {
@@ -1516,7 +1649,7 @@ fn hook_output(f: &delivery::Fixture, event: &str, observe: bool) -> Value {
     }
 }
 #[test]
-fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverified_ids() {
+fn explicit_watch_offers_fresh_events_and_allowed_hooks_only_recover_unverified_ids() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
         f.edit(|s| {
@@ -1529,18 +1662,13 @@ fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverifi
             s["issues"][0]["state"] = json!("closed");
         });
         let writes = f.writes();
-        let offered = hook_output(&f, "PostToolUse", true);
-        let text = offered["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        assert!(
-            text.contains("not acknowledged") && text.contains("completed"),
-            "{offered}"
-        );
         let first = f.run(&watch("lifecycle"));
+        assert_eq!(first["status"], "completed", "{first}");
         let id = first["evidence"]["events"][0]["id"].as_str().unwrap();
-        assert!(text.contains(id));
         let calls = f.state()["calls"].as_array().unwrap().len();
+        for event in ["PostToolUse", "Stop"] {
+            assert!(hook_output(&f, event, true).is_null());
+        }
         let recovered = hook_output(&f, "SessionStart", false);
         let text = recovered["hookSpecificOutput"]["additionalContext"]
             .as_str()
@@ -1548,42 +1676,9 @@ fn async_hook_offers_fresh_lifecycle_events_and_sync_hook_only_recovers_unverifi
         assert!(text.contains(id) && text.contains("unverified event receipts"));
         assert!(!text.contains("\"state\":\"completed\""));
         assert_eq!(f.state()["calls"].as_array().unwrap().len(), calls);
+        assert!(hook_output(&f, "SessionStart", false).is_null());
         assert_eq!(f.writes(), writes);
     }
-}
-#[test]
-#[ignore = "Explicit local host qualification; requires real Claude Code and Python, isolated loopback model only"]
-fn real_claude_host_consumes_async_observer_event_on_the_next_model_turn() {
-    let f = fixture("github");
-    f.edit(|s| {
-        s["requests"][0]["state"] = json!("closed");
-        s["requests"][0]["merged"] = json!(true);
-        s["issues"][0]["state"] = json!("closed");
-    });
-    let environment = f.command(&[]);
-    let mut command = std::process::Command::new("python3");
-    for (key, value) in environment.get_envs() {
-        if let Some(value) = value {
-            command.env(key, value);
-        }
-    }
-    let out = command
-        .args([
-            "scripts/claude-local-host-probe.py",
-            "--binary",
-            executable::binary().to_str().unwrap(),
-            "--project",
-            f.root.to_str().unwrap(),
-            "--observe",
-        ])
-        .output()
-        .unwrap();
-    println!("{}", String::from_utf8_lossy(&out.stdout));
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 #[test]
@@ -1759,16 +1854,24 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         "unpushed-commits",
     );
     let started = Instant::now();
+    let mut observer_deadline = None;
     loop {
         let state = watch_store::read(&identity).unwrap().unwrap();
-        if state
-            .lease
-            .is_some_and(|l| l.pid == child.id() && l.polls_completed > 0)
-        {
-            break;
+        if let Some(lease) = state.lease.as_ref().filter(|l| l.pid == child.id()) {
+            observer_deadline = Some(lease.deadline);
+            if lease.polls_completed > 0 {
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "Observer exited before local commits were added: {}",
+                    child.diagnostic()
+                );
+                break;
+            }
         }
         assert!(
-            child.try_wait().unwrap().is_none() && started.elapsed() < poll_budget * 2,
+            child.try_wait().unwrap().is_none()
+                && observer_deadline.is_none_or(|deadline| watch_store::now() < deadline)
+                && (observer_deadline.is_some() || started.elapsed() < poll_budget * 2),
             "{}",
             child.diagnostic()
         );
@@ -1794,7 +1897,6 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
     .unwrap()
     .trim()
     .to_owned();
-    let mut progressed = Instant::now();
     let mut polls = 0;
     let mut first_pending = None;
     loop {
@@ -1804,16 +1906,21 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             && lease.polls_completed > polls
         {
             polls = lease.polls_completed;
-            progressed = Instant::now();
+            observer_deadline = Some(lease.deadline);
             if state.events.last().is_some_and(|e| {
                 e.state == EventState::Pending
                     && e.reason.contains("Local commits are ahead")
                     && e.revision.local_head == new_head
             }) {
+                let pending = state.events.last().unwrap();
+                let next_step = pending.next_step.as_ref().unwrap();
+                assert!(next_step.requires_user_authorization, "{pending:?}");
+                assert!(next_step.message.contains("Push reviewed commits"));
+                assert!(next_step.message.contains("existing task authorization"));
                 let first_poll = *first_pending.get_or_insert(polls);
                 if repeated_pending_poll(
-                    state.lease.as_ref(),
-                    state.events.last(),
+                    Some(lease),
+                    Some(pending),
                     child.id(),
                     &new_head,
                     first_poll + 2,
@@ -1834,8 +1941,8 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             child.diagnostic()
         );
         assert!(
-            progressed.elapsed() < poll_budget,
-            "No multi-poll pending state: {}",
+            observer_deadline.is_some_and(|deadline| watch_store::now() < deadline),
+            "Observer deadline expired before multiple pending revalidations: {}",
             child.diagnostic()
         );
         std::thread::sleep(Duration::from_millis(10));
@@ -1847,13 +1954,12 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
     });
-    let started = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
         assert!(
-            started.elapsed() < poll_budget * 2,
+            observer_deadline.is_some_and(|deadline| watch_store::now() < deadline),
             "Native push did not resume completion: {}",
             child.diagnostic()
         );

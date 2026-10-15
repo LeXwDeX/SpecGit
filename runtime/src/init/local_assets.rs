@@ -89,13 +89,28 @@ impl Paths {
                 "Rollback cannot be combined with initialization changes.",
             ));
         }
-        let store = AssetStore::lock(
-            &private_root.join("assets"),
-            &[root.clone(), private_root.clone(), exclude_parent.clone()],
-            Duration::from_secs(2),
-        )?;
-        let (transaction, retained) =
-            config::worktree::rollback(&store, process, root, exclude, id).await?;
+        let hook_root = config::worktree::hooks(process, root).await?;
+        let serialization = config::worktree::lock_native_guard(process, root).await?;
+        let (store_path, shared) =
+            config::worktree::rollback_store(process, root, id, &[private_root.join("assets")])
+                .await?;
+        let allowed = config::worktree::rollback_allowed_roots(&[
+            root.clone(),
+            private_root.clone(),
+            exclude_parent.clone(),
+            hook_root,
+            shared,
+        ])?;
+        let store = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
+        let (transaction, retained) = config::worktree::rollback_with_lock(
+            &serialization,
+            &store,
+            process,
+            root,
+            exclude,
+            id,
+        )
+        .await?;
         Ok(Report::success(
             "init",
             "rolled_back",
@@ -136,14 +151,23 @@ pub(super) async fn apply(
     let mut changes = vec![declaration_change];
     let crate::setup::project::Initialization {
         changes: integration,
-        observations,
+        mut observations,
         executable,
+        guard_enabled,
     } = crate::setup::project::initialization_changes(
         &root,
         &private_root.join("agent-assets"),
         options.mirror_claude,
     )?;
     changes.extend(integration);
+    let guard_plan = crate::guard::setup_plan(&process, &root, guard_enabled).await?;
+    observations.extend(guard_plan.observations());
+    let custody_store = guard_plan.transaction_store;
+    changes.extend(guard_plan.changes);
+    let native_dependencies = guard_plan.dependencies;
+    let native_allowed = guard_plan.allowed;
+    let native_inventory = guard_plan.inventory;
+    let native_serialization = guard_plan.serialization;
     // Keep init's selection marker without claiming setup's guidance assets.
     let marker_path = private_root.join("guidance.json");
     let marker = Change::new(
@@ -180,9 +204,23 @@ pub(super) async fn apply(
         );
         return Ok(Report::success("init", "dry_run", evidence));
     }
+    let mut allowed = vec![root.clone(), private_root, exclude_parent];
+    allowed.extend(native_allowed);
+    let _native_lock = AssetStore::lock(
+        &native_serialization,
+        std::slice::from_ref(&native_serialization),
+        Duration::from_secs(2),
+    )?;
+    native_inventory.verify()?;
+    let origin_store = context.git_dir.join("specgit-v2/assets");
+    let _origin = custody_store
+        .as_ref()
+        .filter(|p| *p != &origin_store)
+        .map(|_| AssetStore::lock(&origin_store, &allowed, Duration::from_secs(2)))
+        .transpose()?;
     let store = AssetStore::lock(
-        &context.git_dir.join("specgit-v2/assets"),
-        &[root.clone(), private_root, exclude_parent],
+        custody_store.as_ref().unwrap_or(&origin_store),
+        &allowed,
         Duration::from_secs(2),
     )?;
     let pending = store.pending_transactions()?;
@@ -216,7 +254,10 @@ pub(super) async fn apply(
     if let Some((source, expected)) = executable {
         crate::setup::project::recheck_executable(&root, &source, &expected)?;
     }
-    let applied = match store.apply_recording(changes, &observations) {
+    let applied = match store.apply_recording_checked(changes, &observations, |_| {
+        native_inventory.verify()?;
+        crate::setup::project::verify_dependencies(&native_dependencies)
+    }) {
         Ok(a) => a,
         Err(d) => {
             let mut report = Report::failure("init", d);

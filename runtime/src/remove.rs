@@ -118,6 +118,11 @@ struct Plan {
     consumers: Vec<Value>,
     lifecycle: Value,
     git_state_sha256: String,
+    custody_store: Option<PathBuf>,
+    extra_allowed: Vec<PathBuf>,
+    dependencies: Vec<Change>,
+    observations: Vec<PathBuf>,
+    native_inventory: Option<guard::Inventory>,
 }
 impl Plan {
     fn add(&mut self, path: &Path, ownership: &str, result: Result<Vec<Change>, Diagnostic>) {
@@ -184,7 +189,7 @@ impl Plan {
         })).collect();
         let items: Vec<_> = self.items.values().collect();
         json!({"root":layout.root,"private":layout.private,"assets":items,"planned_changes":changes,
-            "git_state_sha256":self.git_state_sha256,
+            "git_state_sha256":self.git_state_sha256,"transaction_store":self.custody_store,"dependencies":self.dependencies.iter().map(|c| json!({"path":c.path,"sha256":c.before.digest(),"permissions":permission(&c.before)})).collect::<Vec<_>>(),
             "shared_consumers":self.consumers,"checkpoint":self.lifecycle,"written":false,"native_writes":false,
             "retained_evidence":"Transaction backups, locks and unknown private files remain for recovery; global assets and remote data are untouched."})
     }
@@ -242,6 +247,9 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
         value["shares_hooks"] = json!(shares_hooks);
         plan.consumers.push(value);
     }
+    let exclusion_consumers =
+        config::worktree::sibling_exclusion_consumers(process, &layout.root).await?;
+    let hook_consumers = config::worktree::sibling_hook_consumers(process, &layout.root).await?;
     let config_path = layout.root.join(".specgit.yaml");
     let declaration = match config::read(&layout.root) {
         Ok(d) => d,
@@ -388,7 +396,7 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             Err(d),
         ),
     }
-    if plan.consumers.is_empty() {
+    if exclusion_consumers.is_empty() {
         plan.add(
             &layout.exclude,
             "exact_shared_exclude_block",
@@ -397,39 +405,69 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
     } else {
         plan.preserve(&layout.exclude, "shared_initialized_worktree");
     }
-    let guard_receipt = layout.private.join("guard-hooks.json");
-    if guard_receipt.exists() {
-        let result = guard::plan(process, &layout.root, true).await;
-        let shared = plan.consumers.iter().any(|c| c["shares_hooks"] == true);
-        match result {
-            Ok((changes, hooks, _)) => {
-                if changes.iter().any(|c| {
-                    c.path != guard_receipt
-                        && c.path != hooks.join("pre-commit")
-                        && c.path != hooks.join("pre-push")
-                }) {
-                    plan.add(
-                        &guard_receipt,
-                        "guard_receipt",
-                        Err(conflict(
+    match guard::retiring_setup_plan(process, &layout.root).await {
+        Ok(native) => {
+            plan.observations.extend(native.observations());
+            plan.custody_store = native.transaction_store;
+            plan.extra_allowed.extend(native.allowed);
+            plan.dependencies.extend(native.dependencies);
+            plan.native_inventory = Some(native.inventory);
+            plan.add(
+                &layout.private.join("setup-guard-hooks.json"),
+                "setup_guard_custody",
+                Ok(native.changes),
+            );
+        }
+        Err(d) => plan.add(
+            &layout.private.join("setup-guard-hooks.json"),
+            "setup_guard_custody",
+            Err(d),
+        ),
+    }
+    for receipt_name in ["guard-hooks.json"] {
+        let guard_receipt = layout.private.join(receipt_name);
+        if guard_receipt.exists() {
+            let result = guard::plan_named(process, &layout.root, true, receipt_name).await;
+            let shared = hook_consumers
+                .iter()
+                .any(|consumer| config::worktree::shares_hooks(consumer, &layout.hooks));
+            match result {
+                Ok((changes, hooks, _)) => {
+                    if changes.iter().any(|c| {
+                        c.path != guard_receipt
+                            && c.path != hooks.join("pre-commit")
+                            && c.path != hooks.join("pre-push")
+                    }) {
+                        plan.add(
                             &guard_receipt,
-                            "Recorded hook paths differ from the effective hook directory.",
-                        )),
-                    );
-                } else if shared {
-                    for c in changes {
-                        plan.preserve(&c.path, "shared_initialized_worktree");
+                            "guard_receipt",
+                            Err(conflict(
+                                &guard_receipt,
+                                "Recorded hook paths differ from the effective hook directory.",
+                            )),
+                        );
+                    } else if shared {
+                        for c in changes {
+                            plan.preserve(&c.path, "shared_initialized_worktree");
+                        }
+                    } else {
+                        plan.add(&guard_receipt, "exact_guard_receipt_block", Ok(changes));
                     }
-                } else {
-                    plan.add(&guard_receipt, "exact_guard_receipt_block", Ok(changes));
+                }
+                Err(d) => plan.add(&guard_receipt, "guard_receipt", Err(d)),
+            }
+        } else {
+            plan.preserve(&guard_receipt, "absent");
+            if !["guard-hooks.json", "setup-guard-hooks.json"]
+                .iter()
+                .any(|name| layout.private.join(name).exists())
+            {
+                for stage in ["pre-commit", "pre-push"] {
+                    if !plan.changes.contains_key(&layout.hooks.join(stage)) {
+                        plan.preserve(&layout.hooks.join(stage), "unowned_hook_preserved");
+                    }
                 }
             }
-            Err(d) => plan.add(&guard_receipt, "guard_receipt", Err(d)),
-        }
-    } else {
-        plan.preserve(&guard_receipt, "absent");
-        for stage in ["pre-commit", "pre-push"] {
-            plan.preserve(&layout.hooks.join(stage), "unowned_hook_preserved");
         }
     }
     for name in [
@@ -446,6 +484,14 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             plan.preserve(&path, "unowned_or_absent_preserved");
         }
     }
+    // Changed assets are checked against their own transaction pre/postimages;
+    // a dependency on their old value must not reject this operation's writes.
+    plan.dependencies.retain(|dependency| {
+        !plan
+            .changes
+            .get(&dependency.path)
+            .is_some_and(|change| !change.unchanged())
+    });
     Ok(plan)
 }
 
@@ -475,19 +521,41 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
     }
     let layout = Layout::read(process, cwd).await?;
     if let Some(id) = options.rollback {
+        let serialization = config::worktree::lock_native_guard(process, &layout.root).await?;
+        let (selected_store, shared) = config::worktree::rollback_store(
+            process,
+            &layout.root,
+            &id,
+            &[layout.private.join("removal")],
+        )
+        .await?;
+        let mut selected = layout.allowed.clone();
+        selected.push(shared);
+        let allowed = config::worktree::rollback_allowed_roots(&selected)?;
         let locks: Vec<_> = layout
             .stores()
             .iter()
-            .map(|p| AssetStore::lock(p, &layout.allowed, Duration::from_secs(2)))
+            .map(|p| AssetStore::lock(p, &allowed, Duration::from_secs(2)))
             .collect::<Result<_, _>>()?;
-        let restored = locks
-            .last()
-            .ok_or_else(|| Diagnostic::input("Removal store is unavailable."))?
-            .rollback(&id)?;
+        let shared_store = (selected_store != layout.private.join("removal"))
+            .then(|| AssetStore::lock(&selected_store, &allowed, Duration::from_secs(2)))
+            .transpose()?;
+        let (restored, retained) = config::worktree::rollback_with_lock(
+            &serialization,
+            shared_store
+                .as_ref()
+                .or_else(|| locks.last())
+                .ok_or_else(|| Diagnostic::input("Removal store is unavailable."))?,
+            process,
+            &layout.root,
+            &layout.exclude,
+            &id,
+        )
+        .await?;
         return Ok(Report::success(
             "remove",
             "rolled_back",
-            json!({"root":layout.root,"transaction":restored,"native_writes":false}),
+            json!({"root":layout.root,"transaction":restored,"retained":retained,"native_writes":false}),
         ));
     }
     let mut planned = plan(&layout, process).await?;
@@ -519,11 +587,24 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
         std::fs::write(marker, b"planned")
             .map_err(|_| Diagnostic::input("Fixture plan marker is unavailable."))?;
     }
+    let serialization = guard::serialization_path(process, &layout.root).await?;
+    let _serialization = AssetStore::lock(
+        &serialization,
+        std::slice::from_ref(&serialization),
+        Duration::from_secs(2),
+    )?;
+    let mut allowed = layout.allowed.clone();
+    allowed.extend(planned.extra_allowed.clone());
     let locks: Vec<_> = layout
         .stores()
         .iter()
-        .map(|p| AssetStore::lock(p, &layout.allowed, Duration::from_secs(2)))
+        .map(|p| AssetStore::lock(p, &allowed, Duration::from_secs(2)))
         .collect::<Result<_, _>>()?;
+    let custody = planned
+        .custody_store
+        .as_ref()
+        .map(|store| AssetStore::lock(store, &allowed, Duration::from_secs(2)))
+        .transpose()?;
     let fresh = plan(&layout, process).await?;
     if !fresh.diagnostics.is_empty() || fresh.evidence(&layout) != planned.evidence(&layout) {
         return Err(Diagnostic::new(
@@ -533,6 +614,10 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
             "Preserve the current assets and preview again.",
         ));
     }
+    if let Some(inventory) = &planned.native_inventory {
+        inventory.verify()?;
+    }
+    setup::project::verify_dependencies(&planned.dependencies)?;
     let changes = std::mem::take(&mut planned.changes)
         .into_values()
         .collect::<Vec<_>>();
@@ -548,10 +633,15 @@ async fn execute(options: Options, process: &Process, cwd: &Path) -> Result<Repo
     }
     let witnesses: Vec<_> = changes.iter().filter(|c| c.unchanged()).cloned().collect();
     evidence["transaction"] = json!(
-        locks
-            .last()
+        custody
+            .as_ref()
+            .or_else(|| locks.last())
             .ok_or_else(|| Diagnostic::input("Removal store is unavailable."))?
-            .apply_checked(changes, |_| {
+            .apply_recording_checked(changes, &planned.observations, |_| {
+                if let Some(inventory) = &planned.native_inventory {
+                    inventory.verify()?;
+                }
+                setup::project::verify_dependencies(&planned.dependencies)?;
                 for witness in &witnesses {
                     let actual = Snapshot::read(&witness.path)?;
                     if actual.bytes != witness.before.bytes

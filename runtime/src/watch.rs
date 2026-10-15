@@ -234,3 +234,31 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
     r.operation = "inbox".into();
     Ok(r)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Options, timing};
+    use crate::{config, watch_store::Goal};
+
+    #[test]
+    fn explicit_timing_values_override_project_observation_defaults() {
+        let configured = config::Observation {
+            poll_seconds: 5,
+            max_wait_seconds: 20,
+            notify: Vec::new(),
+        };
+        let options = Options {
+            request: 41,
+            session: "session".into(),
+            goal: Goal::Lifecycle,
+            timeout_seconds: Some(2),
+            poll_seconds: Some(1),
+            once: false,
+        };
+
+        let selected = timing(&options, &configured).unwrap();
+
+        assert_eq!(selected.max_wait_seconds, 2);
+        assert_eq!(selected.poll_seconds, 1);
+    }
+}

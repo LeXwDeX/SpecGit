@@ -1,6 +1,6 @@
 # Team Workflow
 
-Inspect duplicate WHYs and select complete Issues before implementation. Verify, commit and push real changes. Replace the example IDs below with native IDs. Every write needs existing scope-specific authorization; a preview grants none.
+The Agent plans independently verifiable goals in Issues and larger goals in a Milestone. Inspect duplicate WHYs and select complete Issues before commit/push; ordinary editing has no checkpoint gate. Replace the example IDs below with native IDs. User installation/enablement delegates the current task's required workflow; previews do not expand that scope.
 
 ```sh
 specgit issue 21 22 --dry-run --json

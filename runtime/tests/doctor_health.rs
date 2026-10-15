@@ -1,10 +1,9 @@
 #![cfg(feature = "test-fixtures")]
 
-#[path = "support/executable.rs"]
-mod executable;
+use native_exclude_fixture::executable;
 
 use serde_json::{Value, json};
-use specgit::setup::{Agent, project};
+use specgit::setup::{Agent, HookOptions, HookPurpose, project};
 use std::{
     collections::BTreeMap,
     fs,
@@ -817,7 +816,11 @@ fn doctor_human_escapes_pending_guard_recovery_path() {
     assert_eq!(output.status.code(), Some(3), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stderr.contains("guard transaction journal"), "{stderr}");
+    assert!(stderr.contains("assets/transactions"), "{stderr}");
+    assert!(
+        stderr.contains("legacy transactions/transactions"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("\\nRepair forged: applied\\u{1b}[31m"),
         "{stderr}"
@@ -930,4 +933,366 @@ fn doctor_keeps_committed_transaction_when_postimage_verification_fails() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[allow(dead_code)]
+#[path = "support/delivery.rs"]
+mod native_exclude_fixture;
+
+fn setup_health(report: &Value) -> &Value {
+    report["evidence"]["health"]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "setup")
+        .unwrap()
+}
+fn strip_exclude_block(path: &Path) -> Vec<u8> {
+    let original = fs::read_to_string(path).unwrap();
+    let start = original.find("# specgit:local:v2:start").unwrap();
+    let end = original.find("# specgit:local:v2:end").unwrap() + "# specgit:local:v2:end".len();
+    let next = format!("{}{}", &original[..start], &original[end..]);
+    fs::write(path, &next).unwrap();
+    next.into_bytes()
+}
+
+#[test]
+fn doctor_native_exclude_repairs_missing_block_for_init_and_setup_without_touching_user_rules() {
+    for command in ["init", "setup"] {
+        let f = native_exclude_fixture::Fixture::new("github");
+        let exclude = f.root.join(".git/info/exclude");
+        fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+        let mut original = fs::read(&exclude).unwrap_or_default();
+        original.extend_from_slice(b"\n/user-local-cache\n");
+        fs::write(&exclude, original).unwrap();
+        let installed = if command == "init" {
+            f.run(&["init", "--manual-observe"])
+        } else {
+            f.run(&["setup", "--agent", "generic"])
+        };
+        assert_eq!(installed["exit"], 0, "{installed}");
+        let missing = strip_exclude_block(&exclude);
+        let readonly = f.run(&["doctor", "--offline"]);
+        assert_eq!(
+            setup_health(&readonly)["status"],
+            "change_required",
+            "{command}: {readonly}"
+        );
+        assert_eq!(fs::read(&exclude).unwrap(), missing);
+        let preview = f.run(&["doctor", "--offline", "--fix", "--dry-run"]);
+        assert_eq!(
+            setup_health(&preview)["status"],
+            "change_required",
+            "{preview}"
+        );
+        assert_eq!(fs::read(&exclude).unwrap(), missing);
+        let fixed = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(fixed["exit"], 0, "{fixed}");
+        let repaired = fs::read_to_string(&exclude).unwrap();
+        assert!(repaired.contains("/user-local-cache\n"));
+        assert!(repaired.contains("/.agents/skills/specgit-native/SKILL.md"));
+        assert_eq!(repaired.matches("# specgit:local:v2:start").count(), 1);
+        let settled = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(setup_health(&settled)["status"], "current", "{settled}");
+        assert_eq!(fs::read_to_string(&exclude).unwrap(), repaired);
+    }
+}
+
+#[test]
+fn doctor_native_exclude_rejects_marker_damage_missing_file_and_permission_drift() {
+    for damage in ["damaged", "duplicate", "missing_file", "permissions"] {
+        if damage == "permissions" && !cfg!(unix) {
+            continue;
+        }
+        let f = native_exclude_fixture::Fixture::new("github");
+        assert_eq!(f.run(&["setup", "--agent", "generic"])["exit"], 0);
+        let exclude = f.root.join(".git/info/exclude");
+        let original = fs::read_to_string(&exclude).unwrap();
+        match damage {
+            "damaged" => fs::write(
+                &exclude,
+                original.replace("# specgit:local:v2:end", "# broken-end"),
+            )
+            .unwrap(),
+            "duplicate" => fs::write(
+                &exclude,
+                format!(
+                    "{original}\n# specgit:local:v2:start\n/.specgit.yaml\n# specgit:local:v2:end\n"
+                ),
+            )
+            .unwrap(),
+            "missing_file" => fs::remove_file(&exclude).unwrap(),
+            #[cfg(unix)]
+            "permissions" => {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&exclude, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = fs::read(&exclude).ok();
+        let permissions = fs::metadata(&exclude)
+            .ok()
+            .map(|metadata| metadata.permissions().readonly());
+        let result = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(
+            setup_health(&result)["status"],
+            "unknown",
+            "{damage}: {result}"
+        );
+        assert_eq!(fs::read(&exclude).ok(), before);
+        assert_eq!(
+            fs::metadata(&exclude)
+                .ok()
+                .map(|metadata| metadata.permissions().readonly()),
+            permissions
+        );
+    }
+}
+
+#[test]
+fn doctor_does_not_add_native_exclusions_to_a_library_only_install() {
+    let fixture = Fixture::new();
+    fixture.install_generic();
+    let exclude = fixture.root.join(".git/info/exclude");
+    let original = fs::read(&exclude).ok();
+    let (report, _) = fixture.doctor(&["doctor", "--offline", "--fix"]);
+    assert_eq!(setup_health(&report)["status"], "current", "{report}");
+    assert_eq!(fs::read(&exclude).ok(), original);
+}
+
+#[test]
+fn doctor_native_exclude_rebuilds_shared_rules_only_for_proven_sibling_owners() {
+    for native in [true, false] {
+        let f = native_exclude_fixture::Fixture::new("github");
+        assert_eq!(f.run(&["setup", "--agent", "generic"])["exit"], 0);
+        let sibling = f.root.parent().unwrap().join("claude-consumer");
+        assert!(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args([
+                    "worktree",
+                    "add",
+                    "-b",
+                    "claude-consumer",
+                    "../claude-consumer"
+                ])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        if native {
+            let installed = f
+                .command(&["setup", "--agent", "claude"])
+                .current_dir(&sibling)
+                .output()
+                .unwrap();
+            assert!(installed.status.success(), "{installed:?}");
+        } else {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let process = specgit::process::Process::default();
+            let private = runtime
+                .block_on(specgit::config::worktree::private_root(&process, &sibling))
+                .unwrap()
+                .join("agent-assets");
+            runtime
+                .block_on(project::install_with_context(
+                    &project::Options {
+                        agents: vec![Agent::Claude],
+                        opencode_claude_hooks: false,
+                        uninstall: false,
+                        dry_run: false,
+                        rollback: None,
+                    },
+                    &Default::default(),
+                    &sibling,
+                    &private,
+                    &executable::binary(),
+                    &process,
+                ))
+                .unwrap();
+        }
+        let exclude = f.root.join(".git/info/exclude");
+        strip_exclude_block(&exclude);
+        let fixed = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(fixed["exit"], 0, "{fixed}");
+        let repaired = fs::read_to_string(exclude).unwrap();
+        assert!(repaired.contains("/.agents/skills/specgit-native/SKILL.md"));
+        assert_eq!(
+            repaired.contains("/.claude/skills/specgit-native/SKILL.md"),
+            native,
+            "{repaired}"
+        );
+    }
+}
+
+#[test]
+fn doctor_coordinates_setup_owned_guard_refresh_and_preserves_independent_guard_repairs() {
+    for independent in [false, true] {
+        let f = native_exclude_fixture::Fixture::new("github");
+        let hooks = f.root.join(".git/hooks");
+        for stage in ["pre-commit", "pre-push"] {
+            let path = hooks.join(stage);
+            fs::write(&path, "#!/bin/sh\n# foreign hook kept\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        for args in [
+            vec!["init", "--manual-observe"],
+            vec!["setup", "--hook-purpose", "guard"],
+        ] {
+            let report = f.run(&args);
+            assert_eq!(report["exit"], 0, "{report}");
+        }
+        if independent {
+            let installed = f.command(&["guard", "--install"]).output().unwrap();
+            assert!(installed.status.success(), "{installed:?}");
+        }
+        let private = f.root.join(".git/specgit-v2");
+        let receipt_path = private.join(if independent {
+            "guard-hooks.json"
+        } else {
+            "setup-guard-hooks.json"
+        });
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        let mut changes = vec![];
+        for stage in ["pre-commit", "pre-push"] {
+            let block = receipt["hooks"][stage]["block"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let old = block.replacen('\n', "\n# previous release\n", 1);
+            let path = hooks.join(stage);
+            let script = fs::read_to_string(&path).unwrap();
+            changes.push(
+                specgit::assets::Change::new(
+                    path,
+                    Some(script.replacen(&block, &old, 1).into_bytes()),
+                )
+                .unwrap(),
+            );
+            receipt["hooks"][stage]["block"] = old.into();
+        }
+        changes.push(
+            specgit::assets::Change::new(receipt_path, Some(serde_json::to_vec(&receipt).unwrap()))
+                .unwrap(),
+        );
+        specgit::assets::AssetStore::lock(
+            &private.join("assets"),
+            &[f.root.clone(), private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(changes)
+        .unwrap();
+        let preview = f.run(&["doctor", "--offline", "--fix", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        let mut paths = std::collections::BTreeSet::new();
+        for plan in preview["evidence"]["repair"]["plans"].as_array().unwrap() {
+            for asset in plan["assets"].as_array().unwrap() {
+                assert!(
+                    paths.insert(asset["path"].as_str().unwrap().to_owned()),
+                    "duplicate repair: {preview}"
+                );
+            }
+        }
+        let fixed = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(fixed["exit"], 0, "{fixed}");
+        assert_eq!(fixed["evidence"]["health"]["status"], "healthy", "{fixed}");
+        for stage in ["pre-commit", "pre-push"] {
+            let script = fs::read_to_string(hooks.join(stage)).unwrap();
+            assert!(script.contains("# foreign hook kept"));
+            assert!(!script.contains("# previous release"));
+        }
+        let before = files(&f.root);
+        let again = f.run(&["doctor", "--offline", "--fix"]);
+        assert_eq!(again["exit"], 0, "{again}");
+        assert_eq!(again["evidence"]["health"]["status"], "healthy", "{again}");
+        assert_eq!(files(&f.root), before);
+    }
+}
+
+#[test]
+fn doctor_removes_legacy_guard_only_host_registration_without_leaving_empty_settings() {
+    use specgit::assets::{AssetStore, Change};
+
+    for preserve_foreign_settings in [false, true] {
+        let f = Fixture::new();
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            "version: 2\nprovider: github\nremote: origin\ntarget: main\n",
+        )
+        .unwrap();
+        let private = f.private();
+        let settings_path = f.root.join(".codex/hooks.json");
+        let receipt_path = private.join("ownership.json");
+        project::install_with_hooks(
+            &project::Options {
+                agents: vec![Agent::Codex],
+                opencode_claude_hooks: false,
+                uninstall: false,
+                dry_run: false,
+                rollback: None,
+            },
+            &HookOptions {
+                purposes: vec![HookPurpose::Context],
+                opencode_async_rewake: false,
+            },
+            &f.root,
+            &private,
+            &executable::binary(),
+        )
+        .unwrap();
+
+        let mut settings: Value =
+            serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+        let owned = settings["hooks"]["PreToolUse"][0].clone();
+        settings["hooks"] = json!({"PreToolUse":[owned.clone()]});
+        if preserve_foreign_settings {
+            settings["userSetting"] = json!({"keep": true});
+        }
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        receipt["version"] = json!(3);
+        receipt.as_object_mut().unwrap().remove("purposes");
+        receipt["hooks"]["codex"]["entries"] = json!({"PreToolUse":owned});
+        receipt["hooks"]["codex"]["created_event_keys"] = json!(["PreToolUse"]);
+        AssetStore::lock(
+            &private,
+            &[f.root.clone(), private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(vec![
+            Change::new(
+                settings_path.clone(),
+                Some(serde_json::to_vec_pretty(&settings).unwrap()),
+            )
+            .unwrap(),
+            Change::new(
+                receipt_path.clone(),
+                Some(serde_json::to_vec_pretty(&receipt).unwrap()),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let (report, status) = f.doctor(&["doctor", "--offline", "--fix"]);
+        assert!(status.success(), "{report}");
+        assert_eq!(report["exit"], 0, "{report}");
+        let migrated: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        assert_eq!(migrated["version"], 4, "{report}");
+        assert!(migrated["hooks"].get("codex").is_none(), "{migrated}");
+
+        if preserve_foreign_settings {
+            let retained: Value =
+                serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+            assert_eq!(retained["userSetting"], json!({"keep":true}));
+            assert!(retained.get("hooks").is_none(), "{retained}");
+        } else {
+            assert!(!settings_path.exists(), "SpecGit-created settings remain");
+        }
+    }
 }

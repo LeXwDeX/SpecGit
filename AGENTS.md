@@ -98,9 +98,10 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 用户当次明确的范围限制、暂停或不发布要求优先；只读审计和纯文档任务不触发产品发布。
 
 1. 加载 specgit-native Skill，读取 `.specgit.yaml`、共享 CLI 的 `--help` 和 `--schema`。
-2. 修改已跟踪的产品输入前，先用 `specgit issue --inspect` 查重。
+2. Agent 主动用 `specgit issue --inspect` 查重，并在 commit/push 前完成 Issue checkpoint。
    选择包含 Why / Scope / Approach / Acceptance 的完整相关 Issue，保留其原生 ID。
-   只读审计不需要 Issue；纯文档遵循下方短路径及已安装 hook 的 checkpoint 要求。
+   较大目标主动组织 Milestone；每个 Issue 对应独立可验收目标，不按操作步骤拆 Issue。
+   普通编辑不设 checkpoint 门禁；只读审计不需要 Issue。纯文档采用下方短路径。
 3. 按范围实施和验证。提交使用 Conventional Commit 前缀，PR/MR 目标为 `main`。
    使用[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)，保留用户正文和全部关闭引用。
 4. Issue/PR 写入先做 `--dry-run`，机器输出使用 `--json`。
@@ -120,6 +121,8 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 用 `command -v specgit` 定位，并用 `specgit --human --version` 确认版本。
 不得安装项目内的操作用 CLI。隔离构建和安装验证产物仅用于测试，不替换共享 PATH 入口。
 每个参与项目使用 `specgit init` 初始化。
+先读 `specgit setup --catalog --json`，再由 Agent 按实际环境选择接入。新安装默认共享 Skill 和入口，不添加 hooks。
+分别验证写入、宿主加载和实际效果；Agent 自行接入的宿主配置不属于 SpecGit 的受管资产。
 
 项目集成仅限项目级。setup 不安装全局宿主资产或全局观察状态。唯一的用户级资产是用户显式运行 `specgit skill --user` 安装的 Skill 文件，`specgit update` 只刷新已受管的该文件。
 项目 hooks 直接引用共享 CLI。官方 OpenCode 只安装项目指导和 Skill。
@@ -128,8 +131,11 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 
 checkpoint 是所选 Issue 的本地记录，属于原分支和 worktree。
 独立工作使用独立 worktree，不移动或丢弃其他任务的 checkpoint。
-hooks 和 Git guard 只在已安装并实际运行时检查本地上下文，不是通用文件写入沙箱。
-本地 init/setup 是维护，不是交付，也不授予平台写入权限。
+宿主 hooks 仅用 SessionStart 简述规则、PreToolUse 提供上下文和恢复提示，不拦普通编辑。
+Git guard 仅在已安装并实际运行的 commit/push 边界检查 checkpoint；真实失败由 Agent 根据工具结果处理。
+PostToolUse、Stop 和异步唤醒不再注册。自动观察不可用时，Agent 使用有界 watch/inbox。
+用户安装或启用 SpecGit 委托当前项目、当前任务所需流程。配置和安装记录不扩大任务范围。
+本地 init/setup 不证明交付完成；普通维护请求不自动扩大到产品发布。
 
 若 SpecGit 缺陷阻碍 Issue 选择，先记录命令、版本、退出码和诊断。
 在已有授权下，用认证的原生 gh/glab 查重并创建或认领完整 Issue，再回读 ID 和正文。
@@ -138,6 +144,9 @@ hooks 和 Git guard 只在已安装并实际运行时检查本地上下文，不
 不得全局禁用 guard，也不得绕过授权、平台保护、验证、评审、合并、关闭或发布要求。
 
 ## 验证要求
+
+SpecGit 对通用项目强烈建议行为变更采用 TDD、PR 后跟进 Actions/CI，不把它们设为通用门禁。
+本仓库仍执行以下明确约定的验证和发布检查；Agent 应自行修复可恢复失败并持续推进。
 
 README、Wiki、普通文档和手工项目指导采用[文档短路径](docs/ci-scope.md#documentation-short-path)：
 评审相关内容，并运行 `node scripts/ci-metadata-check.mjs`。

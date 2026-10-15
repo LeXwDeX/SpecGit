@@ -15,7 +15,7 @@ fn layer(module: &str) -> u8 {
     match module {
         "diagnostic" | "input" | "identity" | "label_rules" | "declaration" | "template_rules"
         | "spec" | "delivery_model" | "observation_model" | "forge_routes" | "prompts"
-        | "report" | "i18n" => 0,
+        | "report" | "i18n" | "project_receipt" => 0,
         "assets" | "process" | "cli_contract" => 1,
         "project" | "config" | "templates" | "selection" | "watch_store" | "migration_assets"
         | "local_exclude" | "guidance" | "self_update" | "skill" => 2,
@@ -298,6 +298,10 @@ fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
         ("init", "setup"),
         ("setup", "guidance"),
         ("setup", "local_exclude"),
+        ("setup", "guard"),
+        ("setup", "project_receipt"),
+        ("config", "project_receipt"),
+        ("init", "guard"),
     ] {
         assert!(
             graph[owner].contains(dependency),

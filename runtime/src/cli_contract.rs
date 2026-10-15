@@ -63,8 +63,23 @@ pub fn schema_with_effects(command: &mut Command, effects: impl Fn(&[String]) ->
                 "minimum_values":range.map(|r|r.min_values()), "maximum_values":range.map(|r|r.max_values()),
                 "possible_values":arg.get_possible_values().iter().map(|v|v.get_name()).collect::<Vec<_>>(),
                 "conflicts":command.get_arg_conflicts_with(arg).iter().map(|a|a.get_id().as_str()).collect::<Vec<_>>(),
+                "requires":requirements(arg),
                 "defaults":arg.get_default_values().iter().map(|s|s.to_string_lossy()).collect::<Vec<_>>()})
         }).collect();
+        // A requirement may name a group; publish exactly those groups so a
+        // client can satisfy it with any listed member.
+        let required: Vec<_> = command.get_arguments().flat_map(requirements).collect();
+        let groups: Vec<_> = command
+            .get_groups()
+            .filter(|group| {
+                group.is_required_set() || required.iter().any(|id| id == group.get_id().as_str())
+            })
+            .map(|group| {
+                json!({"id":group.get_id().as_str(),
+                    "arguments":group.get_args().map(|id|id.as_str()).collect::<Vec<_>>(),
+                    "required":group.is_required_set()})
+            })
+            .collect();
         let children: Vec<_> = command
             .get_subcommands()
             .map(|child| {
@@ -75,7 +90,7 @@ pub fn schema_with_effects(command: &mut Command, effects: impl Fn(&[String]) ->
             })
             .collect();
         json!({"name":command.get_name(),"path":path,"about":command.get_about().map(ToString::to_string),
-            "arguments":arguments,"commands":children,"effects":effects(path)})
+            "arguments":arguments,"groups":groups,"commands":children,"effects":effects(path)})
     }
     json!({"schema_version":2,"cli_version":command.get_version(),
         "input":{"format":"json","command":"string or array of command names","options":"object keyed by long option name","args":"array of positional values","maximum_bytes":MAX_INPUT_BYTES,"deadline_ms":INPUT_DEADLINE.as_millis(),"mixed_argv":"only --json, --human, and --cwd; duplicate or conflicting selectors rejected"},
@@ -87,6 +102,58 @@ pub fn schema(command: &mut Command) -> Value {
         command,
         |_| json!({"classification":"unknown","authorization":"declaration does not grant authorization"}),
     )
+}
+
+/// Clap exposes no getter for `Arg::requires`, so read its locked debug form,
+/// `requires: [(IsPresent, "id"), ...]`. The scan skips quoted text such as
+/// help and unescapes each id. Only unconditional requirements can be
+/// published; any other predicate or shape panics so a contract test fails
+/// rather than the schema silently dropping or weakening a requirement.
+fn requirements(arg: &Arg) -> Vec<String> {
+    const FIELD: &str = "requires: [";
+    let debug = format!("{arg:?}");
+    let bytes = debug.as_bytes();
+    let (mut index, mut quoted, mut start) = (0, false, None);
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if quoted => index += 1,
+            b'"' => quoted = !quoted,
+            _ if !quoted && debug[index..].starts_with(FIELD) => {
+                start = Some(index + FIELD.len());
+                break;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    let mut rest = &debug[start.unwrap_or_else(|| panic!("clap debug lacks requires: {debug}"))..];
+    let mut ids = Vec::new();
+    loop {
+        rest = rest.trim_start_matches([',', ' ']);
+        if rest.starts_with(']') {
+            return ids;
+        }
+        rest = rest
+            .strip_prefix("(IsPresent, \"")
+            .unwrap_or_else(|| panic!("unsupported requirement for {}: {rest}", arg.get_id()));
+        let mut id = String::new();
+        let mut chars = rest.char_indices();
+        let end = loop {
+            match chars.next() {
+                Some((_, '\\')) => match chars.next() {
+                    Some((_, c @ ('"' | '\\' | '\''))) => id.push(c),
+                    other => panic!("unsupported escape in requirement id: {other:?}"),
+                },
+                Some((i, '"')) => break i,
+                Some((_, c)) => id.push(c),
+                None => panic!("unterminated requirement id for {}", arg.get_id()),
+            }
+        };
+        rest = rest[end + 1..]
+            .strip_prefix(')')
+            .unwrap_or_else(|| panic!("unsupported requirement for {}", arg.get_id()));
+        ids.push(id);
+    }
 }
 
 fn input_type(arg: &Arg) -> &'static str {

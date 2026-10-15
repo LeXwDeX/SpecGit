@@ -3,6 +3,7 @@
 //! Global setup is removed permanently; see tests/setup.rs for reject-global
 //! command coverage.
 use serde_json::{Value, json};
+use specgit::process::Process;
 use specgit::{
     diagnostic::Code,
     setup::{Agent, project},
@@ -21,6 +22,40 @@ fn selection(purposes: &[specgit::setup::HookPurpose], wake: bool) -> specgit::s
         purposes: purposes.to_vec(),
         opencode_async_rewake: wake,
     }
+}
+
+fn install_with_hooks(
+    options: &project::Options,
+    hooks: &specgit::setup::HookOptions,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Value, specgit::diagnostic::Diagnostic> {
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(project::install_with_context(
+            options,
+            hooks,
+            root,
+            private,
+            source,
+            &Process::default(),
+        ))
+}
+
+fn health_plan(
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Option<specgit::assets::MaintenancePlan>, specgit::diagnostic::Diagnostic> {
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(project::health_plan_with_context(
+            &Process::default(),
+            root,
+            private,
+            source,
+        ))
 }
 
 #[test]
@@ -43,13 +78,12 @@ fn setup_report_schema_validates_real_selection_and_rejects_false_claims() {
     options.opencode_claude_hooks = true;
     let hooks = selection(&[Context, Observe], false);
     options.dry_run = true;
-    let preview = report(
-        project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap(),
-    );
+    let preview =
+        report(install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap());
     assert!(validate(&preview), "{preview}");
     assert_eq!(
         preview["evidence"]["hook_purposes"]["opencode"]["declined"][0]["status"],
-        "unknown"
+        "unsupported"
     );
     assert_eq!(
         preview["evidence"]["hook_purposes"]["generic"]["declined"][0]["status"],
@@ -57,7 +91,7 @@ fn setup_report_schema_validates_real_selection_and_rejects_false_claims() {
     );
     options.dry_run = false;
     let installed = report(
-        project::install_with_hooks(
+        install_with_hooks(
             &options,
             &selection(&[Context, Observe], true),
             &f.root,
@@ -69,7 +103,7 @@ fn setup_report_schema_validates_real_selection_and_rejects_false_claims() {
     assert!(validate(&installed), "{installed}");
     assert_eq!(
         installed["evidence"]["host_delivery"]["idle_wake"],
-        "configured_not_verified"
+        "not_supported"
     );
     for (pointer, value) in [
         (
@@ -120,21 +154,12 @@ fn setup_report_schema_validates_real_selection_and_rejects_false_claims() {
         .remove("reason");
     assert!(!validate(&invalid));
 
-    let rollback = project::Options {
-        agents: vec![],
-        opencode_claude_hooks: false,
-        uninstall: false,
-        dry_run: false,
-        rollback: Some(
-            installed["evidence"]["transaction"]["transaction"]
-                .as_str()
-                .unwrap()
-                .into(),
-        ),
-    };
-    let rolled_back = report(project::install(&rollback, &f.root, &f.private, &f.source).unwrap());
+    let transaction = installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap();
+    let rolled_back = cli(&f.root, &["--rollback", transaction]);
     assert!(validate(&rolled_back));
-    let error = project::install_with_hooks(
+    let error = install_with_hooks(
         &options,
         &selection(&[None, Guard], false),
         &f.root,
@@ -146,7 +171,7 @@ fn setup_report_schema_validates_real_selection_and_rejects_false_claims() {
         &serde_json::to_value(Report::failure("setup", error)).unwrap()
     ));
     let no_hooks = report(
-        project::install_with_hooks(
+        install_with_hooks(
             &options,
             &selection(&[None], false),
             &f.root,
@@ -163,19 +188,14 @@ fn selective_context_none_refresh_and_existing_guard_preservation() {
     use specgit::setup::HookPurpose::*;
     let (f, options) = fixture(vec![Agent::Claude]);
     let install = |hooks: &specgit::setup::HookOptions| {
-        project::install_with_hooks(&options, hooks, &f.root, &f.private, &f.source).unwrap()
+        install_with_hooks(&options, hooks, &f.root, &f.private, &f.source).unwrap()
     };
     install(&selection(&[Context], false));
     let settings = f.root.join(".claude/settings.json");
     let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     assert_eq!(value["hooks"].as_object().unwrap().len(), 2);
-    assert_eq!(
-        value["hooks"]["PostToolUse"][0]["hooks"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    assert!(value["hooks"].get("PostToolUse").is_none());
+    assert_eq!(value["hooks"]["PreToolUse"][0]["matcher"], "*");
     install(&selection(&[Guard], false));
     let before = fs::read(&settings).unwrap();
     let evidence = install(&selection(&[None], false));
@@ -184,17 +204,31 @@ fn selective_context_none_refresh_and_existing_guard_preservation() {
         json!(["guard", "context"])
     );
     assert_eq!(before, fs::read(&settings).unwrap());
-    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
     assert_eq!(before, fs::read(&settings).unwrap());
     let mut uninstall = options.clone();
     uninstall.agents.clear();
     uninstall.uninstall = true;
-    project::install(&uninstall, &f.root, &f.private, &f.source).unwrap();
+    install_with_hooks(
+        &uninstall,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
     assert!(!settings.exists());
 
     let (f, options) = fixture(vec![Agent::Claude]);
     fs::remove_file(&f.source).unwrap();
-    project::install_with_hooks(
+    install_with_hooks(
         &options,
         &selection(&[None], false),
         &f.root,
@@ -202,7 +236,14 @@ fn selective_context_none_refresh_and_existing_guard_preservation() {
         &f.source,
     )
     .unwrap();
-    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
     assert!(!f.root.join(".claude/settings.json").exists());
 }
 
@@ -214,7 +255,7 @@ fn custom_observation_requires_explicit_capability_and_preserves_wake() {
     fs::rename(&f.source, &quoted_source).unwrap();
     f.source = quoted_source;
     options.opencode_claude_hooks = true;
-    let unknown = project::install_with_hooks(
+    let unknown = install_with_hooks(
         &options,
         &selection(&[Context, Observe], false),
         &f.root,
@@ -224,12 +265,12 @@ fn custom_observation_requires_explicit_capability_and_preserves_wake() {
     .unwrap();
     assert_eq!(
         unknown["hook_purposes"]["opencode"]["declined"][0]["status"],
-        "unknown"
+        "unsupported"
     );
     let settings = f.root.join(".opencode/hooks.json");
     let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     assert!(value.get("Stop").is_none());
-    let evidence = project::install_with_hooks(
+    let evidence = install_with_hooks(
         &options,
         &selection(&[Guard, Observe], true),
         &f.root,
@@ -237,36 +278,17 @@ fn custom_observation_requires_explicit_capability_and_preserves_wake() {
         &f.source,
     )
     .unwrap();
-    assert_eq!(
-        evidence["host_delivery"]["idle_wake"],
-        "configured_not_verified"
-    );
+    assert_eq!(evidence["host_delivery"]["idle_wake"], "not_supported");
     let bytes = fs::read(&settings).unwrap();
     let value: Value = serde_json::from_slice(&bytes).unwrap();
-    let stop = &value["Stop"][0]["hooks"];
-    assert_eq!(stop.as_array().unwrap().len(), 2);
-    assert_eq!(stop[1]["asyncRewake"], true);
-    assert_eq!(stop[1]["async"], true);
-    assert_eq!(stop[1]["timeout"], 1830);
-    assert_eq!(stop[1]["shell"], "bash");
-    assert_eq!(stop[1]["inputFormat"], "claude-code");
-    assert!(
-        stop[1]["command"]
-            .as_str()
-            .unwrap()
-            .contains("cli'\\''s binary'")
-    );
-    assert!(
-        stop[1]["command"]
-            .as_str()
-            .unwrap()
-            .ends_with(" hook --event Stop --observe")
-    );
+    assert!(value.get("Stop").is_none());
+    assert!(value.get("SessionStart").is_some());
+    assert!(value.get("PreToolUse").is_some());
     options.opencode_claude_hooks = false;
-    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    install(&options, &f).unwrap();
     assert_eq!(bytes, fs::read(&settings).unwrap());
     fs::write(&settings, b"{\"manual\":true}").unwrap();
-    assert!(project::install(&options, &f.root, &f.private, &f.source).is_err());
+    assert!(install(&options, &f).is_err());
     assert_eq!(fs::read(&settings).unwrap(), b"{\"manual\":true}");
 }
 
@@ -278,26 +300,24 @@ fn selection_rejects_invalid_combinations_without_writes() {
     for hooks in [
         selection(&[None, Guard], false),
         selection(&[Guard, Guard], false),
-        selection(&[Observe], false),
-        selection(&[Context, Observe], true),
     ] {
-        assert!(
-            project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).is_err()
-        );
+        assert!(install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).is_err());
     }
     assert_eq!(before, files(&f.root));
     let (f, mut options) = fixture(vec![Agent::Opencode]);
     options.opencode_claude_hooks = true;
-    assert!(
-        project::install_with_hooks(
-            &options,
-            &selection(&[None], true),
-            &f.root,
-            &f.private,
-            &f.source
-        )
-        .is_err()
-    );
+    let before = files(&f.root);
+    options.dry_run = true;
+    let accepted = install_with_hooks(
+        &options,
+        &selection(&[None], true),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(accepted["host_delivery"]["idle_wake"], "not_supported");
+    assert_eq!(files(&f.root), before);
 }
 
 #[test]
@@ -423,7 +443,7 @@ fn fixture(agents: Vec<Agent>) -> (Fixture, project::Options) {
 fn health_plan_restores_proven_missing_skill_and_keeps_manual_guidance() {
     let (f, options) = fixture(vec![Agent::Generic]);
     assert!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .unwrap()
             .is_none()
     );
@@ -439,7 +459,7 @@ fn health_plan_restores_proven_missing_skill_and_keeps_manual_guidance() {
     .unwrap();
     fs::remove_file(&skill).unwrap();
     let before = files(&f.base);
-    let plan = project::health_plan(&f.root, &f.private, &f.source)
+    let plan = health_plan(&f.root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     assert!(
@@ -453,7 +473,7 @@ fn health_plan_restores_proven_missing_skill_and_keeps_manual_guidance() {
     let after = fs::read_to_string(&guidance).unwrap();
     assert!(after.starts_with("manual prefix\n"));
     assert!(after.ends_with("manual suffix\n"));
-    let settled = project::health_plan(&f.root, &f.private, &f.source)
+    let settled = health_plan(&f.root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     assert!(settled.assets().is_empty());
@@ -474,13 +494,13 @@ fn health_plan_repairs_missing_skill_across_windows_root_spellings() {
     let expected = fs::read(&skill).unwrap();
     fs::remove_file(&skill).unwrap();
 
-    let plan = project::health_plan(&ordinary_root, &f.private, &f.source)
+    let plan = health_plan(&ordinary_root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     assert!(plan.assets().iter().any(|asset| asset.path == skill));
     assert!(plan.apply().unwrap().changes > 0);
     assert_eq!(fs::read(&skill).unwrap(), expected);
-    let settled = project::health_plan(&ordinary_root, &f.private, &f.source)
+    let settled = health_plan(&ordinary_root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     assert!(settled.assets().is_empty());
@@ -492,12 +512,17 @@ fn health_plan_rechecks_shared_executable_ownership_after_lock() {
     let shared = f.base.join("shared-dir");
     fs::create_dir(&shared).unwrap();
     let source = source_fixture(&shared);
-    project::install(&options, &f.root, &f.private, &source).unwrap();
+    install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &source,
+    )
+    .unwrap();
     let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
     fs::remove_file(&skill).unwrap();
-    let plan = project::health_plan(&f.root, &f.private, &source)
-        .unwrap()
-        .unwrap();
+    let plan = health_plan(&f.root, &f.private, &source).unwrap().unwrap();
     assert!(plan.assets().iter().any(|asset| asset.path == skill));
     let original_source = specgit::assets::Snapshot::read(&source).unwrap();
 
@@ -542,7 +567,7 @@ fn health_plan_rechecks_shared_executable_ownership_after_lock() {
         );
     }
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &source)
+        health_plan(&f.root, &f.private, &source)
             .err()
             .unwrap()
             .code,
@@ -564,7 +589,7 @@ fn health_plan_rejects_missing_guidance_and_stale_snapshot() {
     let guidance = f.root.join("AGENTS.md");
     fs::remove_file(&guidance).unwrap();
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -572,7 +597,7 @@ fn health_plan_rejects_missing_guidance_and_stale_snapshot() {
     );
     fs::write(&guidance, "foreign guidance").unwrap();
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -582,7 +607,7 @@ fn health_plan_rejects_missing_guidance_and_stale_snapshot() {
     let (f, options) = fixture(vec![Agent::Generic]);
     install(&options, &f).unwrap();
     fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
-    let plan = project::health_plan(&f.root, &f.private, &f.source)
+    let plan = health_plan(&f.root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     fs::write(
@@ -610,7 +635,7 @@ fn health_plan_restores_only_proven_missing_hook_event() {
         .unwrap()
         .remove("SessionStart");
     fs::write(&settings, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-    let plan = project::health_plan(&f.root, &f.private, &f.source)
+    let plan = health_plan(&f.root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     assert!(
@@ -626,7 +651,7 @@ fn health_plan_restores_only_proven_missing_hook_event() {
     edited["hooks"]["SessionStart"][0]["hooks"][0]["args"] = json!(["foreign"]);
     fs::write(&settings, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -645,7 +670,7 @@ fn health_plan_restores_only_an_owned_missing_hook_map() {
     value.as_object_mut().unwrap().remove("hooks");
     fs::write(&settings, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
     let before = files(&f.base);
-    let plan = project::health_plan(&f.root, &f.private, &f.source)
+    let plan = health_plan(&f.root, &f.private, &f.source)
         .unwrap()
         .unwrap();
     assert_eq!(files(&f.base), before);
@@ -662,7 +687,7 @@ fn health_plan_restores_only_an_owned_missing_hook_map() {
     replaced["hooks"] = Value::Null;
     fs::write(&settings, serde_json::to_vec_pretty(&replaced).unwrap()).unwrap();
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -683,7 +708,7 @@ fn health_plan_restores_only_an_owned_missing_hook_map() {
     fs::write(&settings, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
     let before = files(&f.base);
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -702,7 +727,7 @@ fn health_plan_does_not_reset_changed_permissions() {
     fs::set_permissions(&skill, fs::Permissions::from_mode(0o644)).unwrap();
     let before = files(&f.base);
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -767,7 +792,7 @@ fn permission_drift_rejects_setup_refresh_and_uninstall_without_adopting_changes
         // A requested hook change must not silently adopt the changed mode.
         for dry_run in [true, false] {
             options.dry_run = dry_run;
-            let error = project::install_with_hooks(
+            let error = install_with_hooks(
                 &options,
                 &selection(&[Guard], false),
                 &f.root,
@@ -778,9 +803,7 @@ fn permission_drift_rejects_setup_refresh_and_uninstall_without_adopting_changes
             assert_eq!(error.code, Code::OwnershipConflict, "{relative}: {error}");
             assert_eq!(files(&f.base), before, "{relative}");
         }
-        let error = project::health_plan(&f.root, &f.private, &f.source)
-            .err()
-            .unwrap();
+        let error = health_plan(&f.root, &f.private, &f.source).err().unwrap();
         assert_eq!(error.code, Code::OwnershipConflict);
         assert!(error.message.contains("recorded unix_mode=0600"), "{error}");
         assert!(error.message.contains("observed unix_mode=0644"), "{error}");
@@ -851,9 +874,7 @@ fn ownership_proof_does_not_skip_a_newer_recorded_permission() {
     options.opencode_claude_hooks = false;
     let errors = [
         install(&options, &f).unwrap_err(),
-        project::health_plan(&f.root, &f.private, &f.source)
-            .err()
-            .unwrap(),
+        health_plan(&f.root, &f.private, &f.source).err().unwrap(),
     ];
     for error in errors {
         assert_eq!(error.code, Code::OwnershipConflict, "{error}");
@@ -912,13 +933,12 @@ fn reinstallation_cannot_use_an_older_permission_record_for_the_same_receipt() {
         .unwrap();
     }
     assert!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .unwrap()
             .unwrap()
             .assets()
             .is_empty()
     );
-    options.agents.clear();
     assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
     assert_eq!(
         fs::read(f.private.join("ownership.json")).unwrap(),
@@ -938,7 +958,7 @@ fn reinstallation_cannot_use_an_older_permission_record_for_the_same_receipt() {
         assert_eq!(files(&f.base), before);
     }
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -964,6 +984,7 @@ fn invalid_installation_generations_are_rejected_without_changes() {
         let receipt_path = f.private.join("ownership.json");
         let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
         receipt["version"] = json!(3);
+        receipt.as_object_mut().unwrap().remove("purposes");
         match generation {
             Some(value) => {
                 receipt["generation"] = value;
@@ -983,7 +1004,7 @@ fn invalid_installation_generations_are_rejected_without_changes() {
             );
         }
         assert_eq!(
-            project::health_plan(&f.root, &f.private, &f.source)
+            health_plan(&f.root, &f.private, &f.source)
                 .err()
                 .unwrap()
                 .code,
@@ -1008,6 +1029,7 @@ fn recurring_legacy_receipts_reject_conflicting_permission_records_in_any_order(
         let skill_bytes = fs::read(&skill).unwrap();
         let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
         receipt["version"] = json!(2);
+        receipt.as_object_mut().unwrap().remove("purposes");
         receipt.as_object_mut().unwrap().remove("generation");
         let legacy_bytes = serde_json::to_vec_pretty(&receipt).unwrap();
         options.agents.clear();
@@ -1074,7 +1096,7 @@ fn recurring_legacy_receipts_reject_conflicting_permission_records_in_any_order(
                 }
             }
             assert_eq!(
-                project::health_plan(&f.root, &f.private, &f.source)
+                health_plan(&f.root, &f.private, &f.source)
                     .err()
                     .unwrap()
                     .code,
@@ -1108,7 +1130,7 @@ fn a_receipt_without_transaction_evidence_cannot_authorize_setup() {
         }
     }
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -1158,7 +1180,7 @@ fn coherent_receipt_cycles_keep_every_journal_as_a_lock_dependency() {
     )
     .unwrap();
     for transaction in transactions {
-        let plan = project::health_plan(&f.root, &f.private, &f.source)
+        let plan = health_plan(&f.root, &f.private, &f.source)
             .unwrap()
             .unwrap();
         assert!(!plan.assets().is_empty());
@@ -1255,7 +1277,7 @@ fn health_plan_reports_orphan_project_assets_without_claiming_foreign_files() {
     fs::write(&guidance, "manual rules\n").unwrap();
     fs::write(&foreign_hooks, "{\"manual\":true}").unwrap();
     assert!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .unwrap()
             .is_none()
     );
@@ -1265,7 +1287,7 @@ fn health_plan_reports_orphan_project_assets_without_claiming_foreign_files() {
     fs::write(&skill, "orphaned skill").unwrap();
     let before = files(&f.base);
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -1281,7 +1303,7 @@ fn health_plan_reports_orphan_project_assets_without_claiming_foreign_files() {
     .unwrap();
     let before = files(&f.base);
     assert_eq!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .err()
             .unwrap()
             .code,
@@ -1313,9 +1335,7 @@ fn health_plan_reports_exact_orphan_host_registration() {
             fs::remove_file(f.root.join("AGENTS.md")).unwrap();
         }
         let before = files(&f.base);
-        let error = project::health_plan(&f.root, &f.private, &f.source)
-            .err()
-            .unwrap();
+        let error = health_plan(&f.root, &f.private, &f.source).err().unwrap();
         assert_eq!(error.code, Code::OwnershipConflict, "{agent:?}: {error}");
         assert!(error.message.contains("registration"), "{agent:?}: {error}");
         assert_eq!(files(&f.base), before, "{agent:?}");
@@ -1340,12 +1360,82 @@ fn health_plan_reports_legacy_codex_orphan_without_writing() {
     let moved_source = source_fixture(&replacement);
     let before = files(&f.base);
     for current_source in [&f.source, &moved_source] {
-        let error = project::health_plan(&f.root, &f.private, current_source)
+        let error = health_plan(&f.root, &f.private, current_source)
             .err()
             .expect("legacy Codex registration must remain an ownership conflict");
         assert_eq!(error.code, Code::OwnershipConflict);
         assert!(error.message.contains("registration"), "{error}");
         assert_eq!(files(&f.base), before);
+    }
+}
+
+#[test]
+fn health_plan_reports_receiptless_retired_event_registrations_without_panicking() {
+    // 2.12 wrote PostToolUse (guard + async observer) and Stop groups. Build
+    // them literally rather than from the current generator.
+    let (f, _) = fixture(vec![]);
+    let source = f.source.to_str().unwrap();
+    let hook = |event: &str, observe: bool| {
+        let mut args = vec!["hook", "--event", event];
+        if observe {
+            args.push("--observe");
+        }
+        let mut hook = json!({"type":"command","command":source,"args":args,"timeout":if observe {1830} else {5}});
+        if observe {
+            hook["async"] = json!(true);
+        }
+        hook
+    };
+    // The custom OpenCode protocol runs through bash with a normalized path.
+    let shell_path = if !cfg!(windows) {
+        source.to_owned()
+    } else if let Some(unc) = source.strip_prefix("\\\\?\\UNC\\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else {
+        source
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(source)
+            .replace('\\', "/")
+    };
+    let quoted = format!("'{}'", shell_path.replace('\'', "'\\''"));
+    let opencode = |event: &str| json!({"type":"command","shell":"bash","command":format!("{quoted} hook --event {event}"),"inputFormat":"claude-code","timeout":5});
+    let cases = [
+        (
+            ".claude/settings.json",
+            json!({"hooks":{"PostToolUse":[{"matcher":"*","hooks":[hook("PostToolUse", false), hook("PostToolUse", true)]}]}}),
+        ),
+        (
+            ".claude/settings.json",
+            json!({"hooks":{"PostToolUse":[{"matcher":"*","hooks":[hook("PostToolUse", false)]}]}}),
+        ),
+        (
+            ".claude/settings.json",
+            json!({"hooks":{"Stop":[{"matcher":"","hooks":[hook("Stop", false)]}]}}),
+        ),
+        (
+            ".opencode/hooks.json",
+            json!({"Stop":[{"matcher":"*","hooks":[opencode("Stop")]}]}),
+        ),
+        (
+            ".opencode/hooks.json",
+            json!({"PostToolUse":[{"matcher":"*","hooks":[opencode("PostToolUse")]}]}),
+        ),
+    ];
+    for (relative, settings) in cases {
+        let path = f.root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+        let before = files(&f.base);
+        let error = health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap_or_else(|| panic!("{relative}: retired registration must stay an orphan"));
+        assert_eq!(error.code, Code::OwnershipConflict, "{relative}: {error}");
+        assert!(
+            error.message.contains("registration"),
+            "{relative}: {error}"
+        );
+        assert_eq!(files(&f.base), before);
+        fs::remove_file(&path).unwrap();
     }
 }
 
@@ -1369,7 +1459,7 @@ fn health_plan_reports_orphan_hook_after_shared_cli_moves() {
         fs::create_dir(&replacement).unwrap();
         let moved_source = source_fixture(&replacement);
         let before = files(&f.base);
-        let error = project::health_plan(&f.root, &f.private, &moved_source)
+        let error = health_plan(&f.root, &f.private, &moved_source)
             .err()
             .unwrap();
         assert_eq!(error.code, Code::OwnershipConflict, "{agent:?}: {error}");
@@ -1392,7 +1482,7 @@ fn health_plan_does_not_claim_unrelated_host_settings_without_receipt() {
     }
     let before = files(&f.base);
     assert!(
-        project::health_plan(&f.root, &f.private, &f.source)
+        health_plan(&f.root, &f.private, &f.source)
             .unwrap()
             .is_none()
     );
@@ -1403,7 +1493,13 @@ fn install(
     options: &project::Options,
     f: &Fixture,
 ) -> Result<Value, specgit::diagnostic::Diagnostic> {
-    project::install(options, &f.root, &f.private, &f.source)
+    install_with_hooks(
+        options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
 }
 
 #[test]
@@ -1496,20 +1592,43 @@ fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_ho
         let mut settings: Value =
             serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
         let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
-        // Reconstruct the recorded 2.9.2 registration, including both PostToolUse
-        // handlers. These are fixture-owned assets, not unowned hooks to adopt.
+        // Reconstruct the old four-event Codex protocol, including the
+        // historical write matcher and paired PostToolUse handlers. This
+        // fixture represents an actual v3 receipt, so it has no purposes map.
+        let mut old_events = serde_json::Map::new();
         for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
-            let group = &mut settings["hooks"][event][0];
-            for handler in group["hooks"].as_array_mut().unwrap() {
-                let mut args = vec![json!("hook"), json!("--event"), json!(event)];
-                if handler["async"] == true {
-                    args.push(json!("--observe"));
-                }
-                handler["command"] = json!(f.source);
-                handler["args"] = json!(args);
+            let handler = json!({
+                "type":"command",
+                "command":f.source,
+                "args":["hook", "--event", event],
+                "timeout":5
+            });
+            let mut handlers = vec![handler.clone()];
+            if event == "PostToolUse" {
+                handlers.push(json!({
+                    "type":"command",
+                    "command":f.source,
+                    "args":["hook", "--event", event, "--observe"],
+                    "timeout":1830,
+                    "async":true
+                }));
             }
+            let group = json!({
+                "matcher": if matches!(event, "PreToolUse" | "PostToolUse") {
+                    "Write|Edit|MultiEdit|Bash|PowerShell|apply_patch|functions.apply_patch|mcp__functions__apply_patch"
+                } else {
+                    ""
+                },
+                "hooks":handlers
+            });
             receipt["hooks"]["codex"]["entries"][event] = group.clone();
+            old_events.insert(event.into(), json!([group]));
         }
+        receipt["hooks"]["codex"]["created_event_keys"] =
+            json!(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+        settings["hooks"] = Value::Object(old_events);
+        receipt["version"] = json!(3);
+        receipt.as_object_mut().unwrap().remove("purposes");
         let foreign = json!({"matcher":"Read","hooks":[{"type":"command","command":"foreign-hook","unknown":true}]});
         settings["hooks"]["PreToolUse"]
             .as_array_mut()
@@ -1540,7 +1659,7 @@ fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_ho
         let before = files(&f.base);
         options.agents.clear();
         let transaction = if through_doctor {
-            let preview = project::health_plan(&f.root, &f.private, &f.source)
+            let preview = health_plan(&f.root, &f.private, &f.source)
                 .unwrap()
                 .unwrap();
             assert!(
@@ -1563,7 +1682,7 @@ fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_ho
                 .to_owned()
         };
         let after: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
-        for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+        for event in ["SessionStart", "PreToolUse"] {
             for handler in after["hooks"][event][0]["hooks"].as_array().unwrap() {
                 assert!(handler.get("args").is_none(), "{handler}");
                 let suffix = if handler["async"] == true {
@@ -1576,19 +1695,20 @@ fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_ho
         }
         assert_eq!(after["hooks"]["PreToolUse"][1], foreign);
         assert_eq!(after["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
-        assert_eq!(
-            after["hooks"]["PostToolUse"][0]["hooks"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
+        for retired in ["PostToolUse", "Stop"] {
+            assert!(
+                after["hooks"]
+                    .get(retired)
+                    .is_none_or(|groups| groups.as_array().is_some_and(Vec::is_empty)),
+                "{retired}: {after}"
+            );
+        }
         assert_eq!(
             fs::read(f.root.join(".claude/settings.json")).unwrap(),
             claude
         );
         if through_doctor {
-            let settled = project::health_plan(&f.root, &f.private, &f.source)
+            let settled = health_plan(&f.root, &f.private, &f.source)
                 .unwrap()
                 .unwrap();
             assert!(settled.assets().is_empty());
@@ -1597,7 +1717,11 @@ fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_ho
             assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
         }
         options.rollback = Some(transaction);
-        install(&options, &f).unwrap();
+        let rolled_back = cli(
+            &f.root,
+            &["--rollback", options.rollback.as_deref().unwrap()],
+        );
+        assert_eq!(rolled_back["exit"], 0, "{rolled_back}");
         assert_eq!(fs::read(&settings_path).unwrap(), legacy);
         options.rollback = None;
         install(&options, &f).unwrap();
@@ -1628,7 +1752,7 @@ fn custom_opencode_claude_hooks_are_top_level_native_quoted_commands() {
             .replace('\\', "/")
     };
     let quoted = executable.replace('\'', "'\\''");
-    for event in ["SessionStart", "PreToolUse", "PostToolUse", "Stop"] {
+    for event in ["SessionStart", "PreToolUse"] {
         let entry = &hooks[event][0]["hooks"][0];
         assert_eq!(entry["shell"], "bash", "{event}: {hooks}");
         assert_eq!(
@@ -1637,26 +1761,21 @@ fn custom_opencode_claude_hooks_are_top_level_native_quoted_commands() {
             "{event}: {hooks}"
         );
         assert_eq!(entry["inputFormat"], "claude-code", "{event}: {hooks}");
-        if matches!(event, "PreToolUse" | "PostToolUse") {
-            assert!(
-                hooks[event][0]["matcher"]
-                    .as_str()
-                    .is_some_and(|m| m.contains("apply_patch")),
-                "{event}: {hooks}"
-            );
+        if event == "PreToolUse" {
+            assert_eq!(hooks[event][0]["matcher"], "*", "{event}: {hooks}");
         }
     }
     let receipt: Value =
         serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
-    assert_eq!(receipt["version"], 3);
+    assert_eq!(receipt["version"], 4);
     assert_eq!(receipt["agents"], json!(["opencode"]), "{receipt}");
     assert!(receipt["hooks"].get("opencode").is_some(), "{receipt}");
     // The custom choice persists: a plain refresh keeps the recorded hooks.
     let before = fs::read(&path).unwrap();
     options.opencode_claude_hooks = false;
-    options.agents.clear();
     assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
     assert_eq!(fs::read(&path).unwrap(), before);
+    options.agents.clear();
     options.uninstall = true;
     install(&options, &f).unwrap();
     assert!(!path.exists());
@@ -1725,17 +1844,18 @@ fn guidance_slimming_refreshes_recorded_2_6_2_setup_without_overwriting_manual_t
 }
 
 #[test]
-fn project_receipt_v3_is_written_and_legacy_receipts_stay_readable() {
+fn project_receipt_v4_is_written_and_legacy_receipts_stay_readable() {
     // New integrations identify one installation and contain no shared root.
     let (f, options) = fixture(vec![Agent::Generic]);
     install(&options, &f).unwrap();
     let receipt: Value =
         serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
-    assert_eq!(receipt["version"], 3, "{receipt}");
+    assert_eq!(receipt["version"], 4, "{receipt}");
     assert_eq!(receipt["generation"].as_str().unwrap().len(), 64);
     assert!(receipt.get("shared_root").is_none(), "{receipt}");
     assert_eq!(receipt["root"], json!(f.root.canonicalize().unwrap()));
     assert_eq!(receipt["agents"], json!(["generic"]));
+    assert_eq!(receipt["purposes"]["generic"], json!([]), "{receipt}");
     assert!(
         receipt["skills"]
             .get(".agents/skills/specgit-native/SKILL.md")
@@ -1793,7 +1913,7 @@ fn project_receipt_v3_is_written_and_legacy_receipts_stay_readable() {
             ])
             .unwrap();
             if through_doctor {
-                let plan = project::health_plan(&f.root, &f.private, &f.source)
+                let plan = health_plan(&f.root, &f.private, &f.source)
                     .unwrap()
                     .unwrap();
                 assert_eq!(plan.apply().unwrap().changes, 2);
@@ -1812,7 +1932,7 @@ fn project_receipt_v3_is_written_and_legacy_receipts_stay_readable() {
             let receipt: Value =
                 serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap())
                     .unwrap();
-            assert_eq!(receipt["version"], 3, "{receipt}");
+            assert_eq!(receipt["version"], 4, "{receipt}");
             assert_eq!(receipt["generation"].as_str().unwrap().len(), 64);
             assert!(receipt.get("shared_root").is_none(), "{receipt}");
             options.agents.clear();
@@ -2158,7 +2278,7 @@ fn additive_guidance_refresh_detects_new_codex_shadow_in_both_selection_orders()
             Code::OwnershipConflict
         );
         assert_eq!(files(&f.base), before);
-        let health_error = match project::health_plan(&f.root, &f.private, &f.source) {
+        let health_error = match health_plan(&f.root, &f.private, &f.source) {
             Err(error) => error,
             Ok(_) => panic!("health planning must reject the shadowing Codex override"),
         };
@@ -2277,14 +2397,13 @@ fn setup_rejects_shared_executable_from_a_linked_checkout() {
         .unwrap();
     assert_eq!(error.code, Code::InvalidInput);
     assert_eq!(files(&f.base), before);
-    assert!(project::install(&options, &f.root, &f.private, &f.source).is_ok());
+    assert!(install(&options, &f).is_ok());
 }
 
 #[test]
 fn cli_rejects_ambiguous_or_unsupported_choices_before_writes_and_exports_typed_schema() {
     let (f, _) = fixture(vec![]);
     for args in [
-        vec![],
         vec!["--agent", "unknown"],
         vec!["--scope", "unknown"],
         vec!["--scope", "global"],
@@ -2329,14 +2448,14 @@ fn cli_rejects_ambiguous_or_unsupported_choices_before_writes_and_exports_typed_
 }
 
 #[test]
-fn selective_preview_rollback_and_legacy_refresh_do_not_enable_wake() {
+fn selective_preview_and_legacy_refresh_do_not_enable_wake() {
     use specgit::setup::HookPurpose::*;
     let (f, mut options) = fixture(vec![Agent::Opencode]);
     options.opencode_claude_hooks = true;
-    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    install(&options, &f).unwrap();
     let path = f.root.join(".opencode/hooks.json");
     let legacy = fs::read(&path).unwrap();
-    project::install(&options, &f.root, &f.private, &f.source).unwrap();
+    install(&options, &f).unwrap();
     assert_eq!(legacy, fs::read(&path).unwrap());
     assert!(
         !String::from_utf8(legacy.clone())
@@ -2345,36 +2464,19 @@ fn selective_preview_rollback_and_legacy_refresh_do_not_enable_wake() {
     );
     let before = files(&f.root);
     options.dry_run = true;
-    let hooks = selection(&[Observe], true);
-    let preview =
-        project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+    let hooks = selection(&[Context, Observe], true);
+    let preview = install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
     assert_eq!(preview["written"], false);
     assert_eq!(before, files(&f.root));
     options.dry_run = false;
-    let result =
-        project::install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
-    let rollback = project::Options {
-        agents: vec![],
-        opencode_claude_hooks: false,
-        uninstall: false,
-        dry_run: false,
-        rollback: Some(
-            result["transaction"]["transaction"]
-                .as_str()
-                .unwrap()
-                .into(),
-        ),
-    };
-    assert!(
-        project::install_with_hooks(&rollback, &hooks, &f.root, &f.private, &f.source).is_err()
-    );
-    project::install(&rollback, &f.root, &f.private, &f.source).unwrap();
+    let result = install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+    assert_eq!(result["host_delivery"]["idle_wake"], "not_supported");
     assert_eq!(legacy, fs::read(&path).unwrap());
     options.agents.clear();
     options.opencode_claude_hooks = false;
     options.uninstall = true;
     assert!(
-        project::install_with_hooks(
+        install_with_hooks(
             &options,
             &selection(&[None], false),
             &f.root,
@@ -2520,9 +2622,7 @@ fn health_plan_reports_prepared_first_install_without_a_receipt() {
     let journal: Value = serde_json::from_slice(&fs::read(journal).unwrap()).unwrap();
     assert_eq!(journal["state"], "prepared");
     let before = files(&f.base);
-    let diagnostic = project::health_plan(&f.root, &f.private, &f.source)
-        .err()
-        .unwrap();
+    let diagnostic = health_plan(&f.root, &f.private, &f.source).err().unwrap();
     assert_eq!(diagnostic.code, Code::OwnershipConflict);
     assert!(
         diagnostic
@@ -2575,6 +2675,58 @@ fn a_clone_adopts_only_the_exact_stable_entry_and_records_its_permissions() {
             install(&options, &f).unwrap_err().code,
             Code::OwnershipConflict
         );
+    }
+}
+
+#[test]
+fn fresh_clone_adopts_stable_guidance_with_mixed_line_endings() {
+    let (f, mut options) = fixture(vec![Agent::Generic, Agent::Claude]);
+    install(&options, &f).unwrap();
+    let guidance = [
+        ("generic", f.root.join("AGENTS.md")),
+        ("claude", f.root.join("CLAUDE.md")),
+    ];
+    let manual = b"manual prefix\n\r\n\nmanual tail\r\n";
+    for (_, path) in &guidance {
+        let generated = fs::read_to_string(path).unwrap();
+        let crlf = generated.replace('\n', "\r\n");
+        fs::write(
+            path,
+            [
+                b"manual prefix\n".as_slice(),
+                crlf.as_bytes(),
+                b"\nmanual tail\r\n",
+            ]
+            .concat(),
+        )
+        .unwrap();
+    }
+    fs::remove_file(f.private.join("ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    fs::remove_file(f.root.join(".claude/skills/specgit-native/SKILL.md")).unwrap();
+    // Host hook files are not part of a fresh checkout's guidance clone.
+    fs::remove_file(f.root.join(".claude/settings.json")).unwrap();
+
+    let adopted = install(&options, &f).unwrap();
+    assert!(adopted["transaction"]["changes"].as_u64().unwrap() > 0);
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    for (host, path) in &guidance {
+        let bytes = fs::read(path).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.starts_with("manual prefix\n"), "{host}: {text}");
+        assert!(text.ends_with("\nmanual tail\r\n"), "{host}: {text}");
+        let block = receipt["instructions"][host]["block"].as_str().unwrap();
+        assert!(block.contains("\r\n"), "{host}: {block:?}");
+        assert!(text.contains(block), "{host}: receipt block missing");
+    }
+
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    options.agents.clear();
+    options.uninstall = true;
+    install(&options, &f).unwrap();
+    for (_, path) in guidance {
+        assert_eq!(fs::read(path).unwrap(), manual);
     }
 }
 
@@ -2684,10 +2836,11 @@ fn adopting_a_clone_entry_rollback_preserves_later_manual_content() {
             .into(),
     );
     let before = files(&f.base);
-    assert_eq!(
-        install(&options, &f).unwrap_err().code,
-        Code::RollbackConflict
+    let error = cli(
+        &f.root,
+        &["--rollback", options.rollback.as_deref().unwrap()],
     );
+    assert_ne!(error["exit"], 0, "{error}");
     assert_eq!(fs::read_to_string(&path).unwrap(), manual);
     assert_eq!(files(&f.base), before);
 }
@@ -2771,4 +2924,166 @@ fn generic_setup_does_not_claim_an_unproven_legacy_claude_marker() {
         "{result}"
     );
     assert_eq!(files(&f.base), before);
+}
+
+#[test]
+fn cli_reversed_unowned_guidance_markers_return_conflict_without_writes() {
+    let (f, _) = fixture(vec![]);
+    fs::write(
+        f.root.join("AGENTS.md"),
+        "<!-- specgit:project:v2:end -->\nmanual\n<!-- specgit:project:v2:start -->",
+    )
+    .unwrap();
+    let before = files(&f.base);
+    let output = executable::command()
+        .current_dir(&f.root)
+        .args([
+            "setup",
+            "--agent",
+            "generic",
+            "--hook-purpose",
+            "none",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .expect("setup must return a JSON diagnostic instead of panicking");
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["diagnostics"][0]["code"], "ownership_conflict",
+        "{report}"
+    );
+    assert_eq!(files(&f.base), before);
+}
+
+#[test]
+fn default_setup_previews_and_installs_only_the_shared_baseline() {
+    let (f, _) = fixture(vec![]);
+    let before = files(&f.base);
+    let preview = cli(&f.root, &["--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(preview["evidence"]["agents"], json!(["generic"]));
+    assert_eq!(files(&f.base), before);
+    let applied = cli(&f.root, &[]);
+    assert_eq!(applied["ok"], true, "{applied}");
+    assert!(
+        f.root
+            .join(".agents/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    assert!(f.root.join("AGENTS.md").is_file());
+    for path in [
+        ".claude",
+        ".codex",
+        ".opencode",
+        ".git/hooks/pre-commit",
+        ".git/hooks/pre-push",
+    ] {
+        assert!(
+            !f.root.join(path).exists(),
+            "unexpected integration: {path}"
+        );
+    }
+    let after = files(&f.base);
+    let repeat = cli(&f.root, &["--dry-run"]);
+    assert_eq!(repeat["ok"], true, "{repeat}");
+    assert!(
+        repeat["evidence"]["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|asset| asset["state"] == "unchanged"),
+        "{repeat}"
+    );
+    assert_eq!(files(&f.base), after);
+}
+
+#[test]
+fn default_setup_refresh_preserves_existing_named_host_selection() {
+    let (f, _) = fixture(vec![]);
+    assert_eq!(
+        cli(&f.root, &["--agent", "claude", "--hook-purpose", "none"])["ok"],
+        true
+    );
+    let before = files(&f.base);
+    let report = cli(&f.root, &["--dry-run"]);
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(report["evidence"]["agents"], json!(["claude"]));
+    assert_eq!(files(&f.base), before);
+    assert_eq!(cli(&f.root, &[])["ok"], true);
+    assert!(
+        f.root
+            .join(".claude/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    assert!(f.root.join("CLAUDE.md").is_file());
+    assert!(!f.root.join(".claude/settings.json").exists());
+    assert!(!f.root.join("AGENTS.md").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn canonical_windows_library_setup_keeps_git_metadata_within_selected_roots() {
+    for entry in ["init", "setup", "migrate"] {
+        use specgit::setup::HookPurpose::{Context, Guard};
+        let (f, mut options) = fixture(vec![Agent::Claude]);
+        assert!(f.root.to_string_lossy().starts_with(r"\\?\"));
+        let hooks = selection(&[Guard, Context], false);
+        options.dry_run = true;
+        let before = files(&f.base);
+        let preview = install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+        assert_eq!(preview["written"], false, "{preview}");
+        assert_eq!(files(&f.base), before);
+        options.dry_run = false;
+        let installed =
+            install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+        assert_eq!(installed["written"], true, "{installed}");
+        let owned: BTreeMap<_, _> = files(&f.root)
+            .into_iter()
+            .filter(|(path, _)| {
+                !path
+                    .components()
+                    .any(|component| component.as_os_str() == "transactions")
+            })
+            .collect();
+        options.agents.clear();
+        options.uninstall = true;
+        options.dry_run = true;
+        let before = files(&f.base);
+        let preview = install_with_hooks(
+            &options,
+            &selection(&[], false),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap();
+        assert_eq!(preview["written"], false, "{preview}");
+        assert_eq!(files(&f.base), before);
+        options.dry_run = false;
+        let removed = install_with_hooks(
+            &options,
+            &selection(&[], false),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap();
+        let id = removed["transaction"]["transaction"].as_str().unwrap();
+        let output = executable::command()
+            .current_dir(&f.root)
+            .args([entry, "--rollback", id, "--json"])
+            .output()
+            .unwrap();
+        let rolled: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(output.status.success(), "{entry}: {rolled}");
+        assert_eq!(rolled["status"], "rolled_back", "{entry}: {rolled}");
+        if entry == "setup" {
+            assert_eq!(rolled["evidence"]["scope"], "project", "{rolled}");
+        }
+        for (path, bytes) in owned {
+            assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
+        }
+    }
 }

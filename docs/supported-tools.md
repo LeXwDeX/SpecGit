@@ -1,6 +1,6 @@
 # Supported coding agents
 
-SpecGit 2.12.0 provides a native CLI and managed project guidance. One shared
+SpecGit 2.13.0 provides a native CLI and managed project guidance. One shared
 user-level `specgit` executable serves every repository and worktree. Run
 `specgit init` in every clone and worktree: it installs the common project Skill
 and stable guidance entry points. Local declarations, Skills and private receipts
@@ -17,8 +17,7 @@ Written registration is not proof of host import or notification delivery. Follo
 the [installation guide](agent-install.md) for the matching host registration
 option and verification steps. With the CLI already
 installed, use the [project maintenance guide](agent-project-refresh.md) instead;
-unknown optional remote capability does not block applicable local refresh, but init
-still requires an explicit manual-observation choice where its preference requires one.
+unknown optional remote capability does not block applicable local refresh.
 
 ## Project integration assets
 
@@ -38,15 +37,14 @@ still follows the host's documented paths; installation alone proves no import.
 | `claude` | Root `CLAUDE.md` stable entry to the canonical `.agents` Skill; `.claude/skills/specgit-native/SKILL.md` copy for host discovery and selected `.claude/settings.json` hooks |
 | `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) stable entry to the canonical `.agents` Skill, plus selected `.codex/hooks.json` hooks |
 | `opencode` (official) | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
-| `opencode` custom fork with `--opencode-claude-hooks` | Adds selected compatible hooks in `.opencode/hooks.json` with `inputFormat: claude-code`; idle wake also requires explicit `--opencode-async-rewake`, confirmed capability and observe/context purposes |
+| `opencode` custom fork with `--opencode-claude-hooks` | Adds compatible SessionStart and PreToolUse hooks in `.opencode/hooks.json` with `inputFormat: claude-code` |
 
-In 2.8, select minimal authorized purposes with repeatable `--hook-purpose
-guard|context|observe`, or `none` for no new hooks. Omission preserves exact recorded
+Select supported SessionStart and PreToolUse hooks only. SessionStart gives brief rules and the Skill entry; PreToolUse supplies relevant context or recovery. No PostToolUse, Stop callback or idle wake is supported. `guard` configures native Git commit/push hooks; `context` needs actual host support. `observe` is recognized but declined; use bounded watch/inbox. Omission preserves exact recorded
 modes on ordinary refresh. Explicit purposes apply to all recorded and newly
-selected hosts; purpose changes need authorization for every affected host.
-`none` preserves existing purposes and never uninstalls hooks or Git guard.
-Review/report all affected hosts' asset changes, even with `none`. Claude/Codex
-hook entries in this table depend on that selection. Official OpenCode and generic remain guidance/Skill only. See
+selected hosts; purpose changes apply to all affected hosts and must stay within the current task.
+`none` adds no purposes and preserves valid purposes and native Git guard;
+refresh still removes owned retired PostToolUse/Stop registrations.
+Review/report all affected hosts' asset changes, even with `none`. Host hook entries depend on that selection and actual host support. Generic has no host callbacks; native Git guard is available separately. See
 the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes)
 for per-host declined reasons and older-client downgrade limits.
 
@@ -96,11 +94,7 @@ this integration; it receives the skill and guidance only. The
 `--opencode-claude-hooks` opt-in targets a custom OpenCode fork with
 claude-compatible hooks. Qualification is specific to the installed build,
 not a guarantee of complete semantics or compatibility with every fork. The
-compatibility flag alone enables no asynchronous observer. In 2.8, custom idle
-wake needs real `asyncRewake` capability confirmation, user authorization and
-`--opencode-async-rewake` with observe/context. Upgrade alone never opts in.
-Without verified delivery, use bounded `watch`/`inbox` or manual continuation.
-Configured idle wake is not proof of actual context or idle delivery.
+Only SessionStart and PreToolUse are supported. If automatic observation cannot be delivered through those events, report the limitation and use bounded `watch`/`inbox` or manual continuation. Do not claim idle wake.
 The fork's `/import-claude-hooks` command is an
 interactive LLM prompt that reads the project's Claude settings and asks about
 each entry individually — it is not an automatic read, and entries that native
@@ -119,9 +113,9 @@ same environment; merely having Git available does not select its Bash.
 
 An isolated qualification on 2026-10-03 used custom OpenCode `1.0.57`
 (binary SHA-256 `7db7cb2cd1ba69d7ece113023c2e5aba0f572f9e1d225fece429f295b376d7db`)
-with a loopback fixture model. The actual host imported project hooks, denied a
+with a loopback fixture model. The actual host imported project hooks and denied a
 tracked `write` without a checkpoint, permitted it with a valid fixture
-checkpoint, and delivered PreToolUse/PostToolUse context to the model.
+checkpoint, and delivered PreToolUse/PostToolUse context to the model. This is a dated historical qualification of older behavior, not the current hook contract.
 
 In that build's `opencode run` mode, SessionStart executed but its
 `additionalContext` did not reach the model, including on a continued session.
@@ -139,15 +133,18 @@ the [native runtime reference](../runtime/REFERENCE.md). The installed
 
 ## Delivery flow
 
-Read-only inspection and `--dry-run` previews do not authorize writes. Select
-complete relevant Issues before tracked product edits, then implement, verify,
-commit, and push the actual changes. Create or adopt a draft PR/MR with
+Read-only inspection and `--dry-run` previews do not authorize writes by themselves.
+Installation or enablement delegates the current task workflow within its scope, so
+continue through required Issue, implementation, verification and delivery steps without
+repeated approvals. Select complete Issues before commit/push; ordinary edits are free.
+For larger goals, use a Milestone with Issues split by outcome and dependency. TDD and
+PR Actions/CI follow-up are recommended; project/platform-required checks remain required. Create or adopt a draft PR/MR with
 `specgit pr`, preserving every closing reference.
 
 When review preparation is complete, preview with
 `specgit pr --ready --request <id> --dry-run --json`, then
 `specgit pr --ready --request <id> --json` marks
-the request ready within existing user authorization. Review and merge happen
+the request ready within the task delegation. Review and merge happen
 on GitHub or GitLab; `specgit watch` only observes current evidence. After the
 platform reports a merge, use `specgit pr --status --request <id>` to read back
 the native request and associated Issue state. Exit zero means that operation

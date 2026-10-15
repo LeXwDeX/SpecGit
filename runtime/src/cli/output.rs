@@ -13,7 +13,9 @@ pub(super) fn emit(report: Report, json: bool) {
         for diagnostic in &report.diagnostics {
             eprintln!("{}", terminal_safe(&diagnostic.to_string()));
         }
-        if report.operation == "doctor" {
+        if report.operation == "setup" && report.status == "catalog" {
+            print!("{}", specgit::setup::catalog::human());
+        } else if report.operation == "doctor" {
             doctor_summary(&report);
         } else {
             println!(

@@ -1,9 +1,5 @@
 //! Bounded input and the addressed project/branch context.
-use super::{
-    INPUT_LIMIT, Output,
-    classification::{patch_tool, relevant},
-    deny, notice,
-};
+use super::{INPUT_LIMIT, Output, notice};
 use crate::{
     config::{self, Language},
     diagnostic::Code,
@@ -12,114 +8,17 @@ use crate::{
     project,
 };
 use serde_json::Value;
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 pub(super) struct Prepared {
     pub(super) context: project::Context,
     pub(super) language: Language,
     pub(super) session: String,
-    pub(super) target: Option<String>,
     pub(super) observation: config::Observation,
 }
-fn requested_paths(payload: &Value, cwd: &Path) -> Vec<PathBuf> {
-    let tool = payload
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let input = payload.get("tool_input").unwrap_or(&Value::Null);
-    let mut values = vec![];
-    for key in ["file_path", "filePath", "path"] {
-        if let Some(path) = input.get(key).and_then(Value::as_str) {
-            values.push(path.to_owned());
-        }
-    }
-    if patch_tool(tool) {
-        let patch = input
-            .get("patch")
-            .or_else(|| input.get("patchText"))
-            .or_else(|| input.get("command"))
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        for line in patch.lines() {
-            for marker in [
-                "*** Add File: ",
-                "*** Update File: ",
-                "*** Delete File: ",
-                "*** Move to: ",
-            ] {
-                if let Some(path) = line.strip_prefix(marker) {
-                    values.push(path.trim().to_owned());
-                }
-            }
-        }
-    }
-    values
-        .into_iter()
-        .filter(|path| !path.is_empty() && path.len() <= 4096)
-        .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                cwd.join(path)
-            }
-        })
-        .collect()
-}
-fn existing_anchor(path: &Path) -> Option<PathBuf> {
-    let mut current = if path.is_dir() {
-        path.to_owned()
-    } else {
-        path.parent()?.to_owned()
-    };
-    while !current.exists() {
-        current = current.parent()?.to_owned();
-    }
-    Some(current)
-}
-async fn target_root(
-    process: &Process,
-    payload: &Value,
-    cwd: &Path,
-) -> Result<Option<project::GitState>, Output> {
-    let paths = requested_paths(payload, cwd);
-    let anchors = if paths.is_empty() {
-        vec![cwd.to_owned()]
-    } else {
-        paths
-            .iter()
-            .filter_map(|path| existing_anchor(path))
-            .collect()
-    };
-    let mut selected: Option<project::GitState> = None;
-    let mut seen = BTreeSet::new();
-    for anchor in anchors {
-        if !seen.insert(anchor.clone()) {
-            continue;
-        }
-        let state = match project::git_state(process, &anchor).await {
-            Ok(state) => state,
-            Err(_) => continue,
-        };
-        if selected
-            .as_ref()
-            .is_some_and(|existing| existing.root != state.root)
-        {
-            return Err(deny(
-                "SpecGit cannot authorize one tool call that edits multiple repositories; split the edit by repository.",
-            ));
-        }
-        selected.get_or_insert(state);
-    }
-    Ok(selected)
-}
 pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> {
-    if !["SessionStart", "PreToolUse", "PostToolUse", "Stop"].contains(&event) {
-        return Err(notice("This hook event version is unsupported."));
+    if !matches!(event, "SessionStart" | "PreToolUse") {
+        return Ok(None);
     }
     let payload = match input::json(bytes, INPUT_LIMIT, 32) {
         Ok(v) => v,
@@ -147,12 +46,6 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         }
         _ => return Err(notice("The hook session identity is missing or invalid.")),
     };
-    if event == "Stop" && payload.get("stop_hook_active").and_then(Value::as_bool) == Some(true) {
-        return Ok(None);
-    }
-    if matches!(event, "PreToolUse" | "PostToolUse") && !relevant(event, &payload) {
-        return Ok(None);
-    }
     let cwd = match payload
         .get("cwd")
         .and_then(Value::as_str)
@@ -169,8 +62,9 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         },
         ..Process::default()
     };
-    let Some(state) = target_root(&process, &payload, &cwd).await? else {
-        return Ok(None);
+    let state = match project::git_state(&process, &cwd).await {
+        Ok(state) => state,
+        Err(_) => return Ok(None),
     };
     let root = &state.root;
     let marker = match config::read(root) {
@@ -178,7 +72,6 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         Ok(None) => {
             return match config::worktree::declaration_lost(&process, root).await {
                 Ok(None) => Ok(None),
-                Ok(Some(lost)) if event == "PreToolUse" => Err(deny(&lost.to_string())),
                 Ok(Some(lost)) => Err(notice(&lost)),
                 Err(d) => Err(notice(&d)),
             };
@@ -211,7 +104,196 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         context,
         language: marker.language,
         session: session.to_owned(),
-        target: marker.target,
         observation: marker.observation,
     }))
+}
+
+/// A bounded advisory offer cache; it is neither acknowledgment nor authorization.
+pub(super) fn offer_all(
+    context: &project::Context,
+    session: &str,
+    candidates: &[(&str, &str)],
+) -> Result<String, crate::diagnostic::Diagnostic> {
+    offer_at(&context.git_dir, session, candidates)
+}
+fn offer_at(
+    git_dir: &std::path::Path,
+    session: &str,
+    candidates: &[(&str, &str)],
+) -> Result<String, crate::diagnostic::Diagnostic> {
+    use crate::assets::{AssetStore, Snapshot};
+    use serde::{Deserialize, Serialize};
+    if candidates.is_empty() {
+        return Ok(String::new());
+    }
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Offer {
+        key: String,
+        digest: String,
+    }
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Offers {
+        version: u8,
+        entries: Vec<Offer>,
+    }
+    let directory = git_dir.join("specgit-v2/hook-context");
+    let path = directory.join("offers.json");
+    // A peer callback holds this lock for one small read and a durable write.
+    // Waiting up to one second covers fsync latency on a busy disk while
+    // leaving most of the host's five-second callback budget; a longer hold
+    // still returns LockBusy and the context is offered again next callback.
+    let store = AssetStore::lock(
+        &directory,
+        std::slice::from_ref(&directory),
+        Duration::from_secs(1),
+    )?;
+    let current = Snapshot::read(&path)?;
+    let mut offers = if let Some(bytes) = current.bytes.as_deref() {
+        let offers: Offers = serde_json::from_value(crate::input::json(bytes, 32_768, 6)?)
+            .map_err(|_| {
+                crate::diagnostic::Diagnostic::input(
+                    "Invalid hook context offers; preserve them for inspection.",
+                )
+            })?;
+        let hash = |value: &str| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        };
+        if offers.version != 1
+            || offers.entries.len() > 128
+            || offers
+                .entries
+                .iter()
+                .any(|offer| !hash(&offer.key) || !hash(&offer.digest))
+            || offers
+                .entries
+                .iter()
+                .map(|offer| &offer.key)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != offers.entries.len()
+        {
+            return Err(crate::diagnostic::Diagnostic::input(
+                "Invalid hook context offer identities.",
+            ));
+        }
+        offers
+    } else {
+        Offers {
+            version: 1,
+            entries: vec![],
+        }
+    };
+    let mut selected = vec![];
+    for (kind, text) in candidates {
+        let key = crate::assets::hash(format!("{session}\0{kind}").as_bytes());
+        let digest = crate::assets::hash(text.as_bytes());
+        if offers
+            .entries
+            .iter()
+            .any(|offer| offer.key == key && offer.digest == digest)
+        {
+            continue;
+        }
+        offers.entries.retain(|offer| offer.key != key);
+        if offers.entries.len() == 128 {
+            offers.entries.remove(0);
+        }
+        offers.entries.push(Offer { key, digest });
+        selected.push(*text);
+    }
+    if selected.is_empty() {
+        return Ok(String::new());
+    }
+    let text = selected.join("\n");
+    let bytes = serde_json::to_vec(&offers).map_err(|_| {
+        crate::diagnostic::Diagnostic::input("Hook context offers cannot be represented.")
+    })?;
+    store.checkpoint(&path, &current, &bytes)?;
+    Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn concurrent_sessions_each_receive_their_rules_and_keep_both_offer_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for index in 0..128 {
+            super::offer_at(
+                &root,
+                &format!("older-{index}"),
+                &[("session-rules", "Read Skill")],
+            )
+            .unwrap();
+        }
+        for round in 0..16 {
+            let sessions = [format!("left-{round}"), format!("right-{round}")];
+            let start = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let threads: Vec<_> = sessions
+                    .iter()
+                    .map(|session| {
+                        let root = &root;
+                        let start = &start;
+                        scope.spawn(move || {
+                            start.wait();
+                            super::offer_at(root, session, &[("session-rules", "Read Skill")])
+                        })
+                    })
+                    .collect();
+                for thread in threads {
+                    assert_eq!(thread.join().unwrap().unwrap(), "Read Skill");
+                }
+            });
+            for session in sessions {
+                assert!(
+                    super::offer_at(&root, &session, &[("session-rules", "Read Skill")])
+                        .unwrap()
+                        .is_empty(),
+                    "concurrent callback lost the offer record for {session}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn advisory_offers_remain_bounded_after_more_than_one_thousand_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for index in 0..1005 {
+            assert_eq!(
+                super::offer_at(
+                    &root,
+                    &format!("session-{index}"),
+                    &[("session-rules", "Read Skill")]
+                )
+                .unwrap(),
+                "Read Skill",
+                "session {index} lost its context"
+            );
+        }
+        assert!(
+            super::offer_at(&root, "session-1004", &[("session-rules", "Read Skill")])
+                .unwrap()
+                .is_empty()
+        );
+        let directory = root.join("specgit-v2/hook-context");
+        let entries: Vec<_> = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            entries.len() <= 2,
+            "advisory cache created extra files: {entries:?}"
+        );
+        assert!(!directory.join("assets/transactions").exists());
+        let cache: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.join("offers.json")).unwrap()).unwrap();
+        assert_eq!(cache["entries"].as_array().unwrap().len(), 128);
+    }
 }

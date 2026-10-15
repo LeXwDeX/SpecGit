@@ -23,10 +23,16 @@ pub(super) async fn run(command: &Commands, cwd: &Path) {
         stage,
         install,
         uninstall,
+        dry_run,
     } = command
     {
         if *install || *uninstall {
-            match specgit::guard::install(&Process::default(), cwd, *uninstall).await {
+            let result = if *dry_run {
+                specgit::guard::preview(&Process::default(), cwd, *uninstall).await
+            } else {
+                specgit::guard::install(&Process::default(), cwd, *uninstall).await
+            };
+            match result {
                 Ok(value) => {
                     println!("{value}");
                     std::process::exit(0);

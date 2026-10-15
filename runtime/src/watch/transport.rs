@@ -272,6 +272,10 @@ async fn refresh(
                         ActionKind::RefreshNativeEvidence,
                         "Local commits are ahead of the selected request. Push reviewed commits through the ordinary native workflow, then refresh native evidence.",
                     );
+                    observation.next_step.requires_user_authorization = true;
+                    observation.next_step.message.push_str(
+                        " The Agent can execute this scoped push under existing task authorization; seek permission only for missing scope.",
+                    );
                     observation.revision.local_head = current.head.clone();
                     observation.terminal = false;
                     observation.retryable = false;
