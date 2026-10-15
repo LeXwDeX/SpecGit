@@ -1258,6 +1258,38 @@ async fn setup_plan_inner(
         pinned(&shared_path, &shared_setup),
         pinned(&independent_path, &independent),
     ];
+    // Custody is keyed by the effective hook directory. A moved core.hooksPath
+    // must not turn retained custody into "no ownership" for a worktree whose
+    // setup still selects the guard; keep every receipt as a lock-time pin.
+    let foreign = config::worktree::foreign_setup_guard_custody(process, root).await?;
+    if existing.bytes.is_none()
+        && let Some(custody) = foreign.first()
+        && config::worktree::setup_guard_demand(
+            Snapshot::read(&private.join("agent-assets/ownership.json"))?
+                .bytes
+                .as_deref(),
+            root,
+        )?
+    {
+        return Err(Diagnostic::new(
+            Code::OwnershipConflict,
+            "git_guard",
+            &format!(
+                "Setup selects the native guard, but its retained shared custody {} records the hook directory {} instead of the current core.hooksPath.",
+                custody.directory.display(),
+                custody.hooks.display()
+            ),
+            &format!(
+                "Restore core.hooksPath to {} and rerun setup, or roll back the reported transaction id after restoring it; no setup state or hooks were changed.",
+                custody.hooks.display()
+            ),
+        ));
+    }
+    dependencies.extend(
+        foreign
+            .iter()
+            .map(|custody| pinned(&custody.receipt, &custody.snapshot)),
+    );
     let hooks = config::worktree::hooks(process, root).await?;
     if !enabled && existing.bytes.is_none() {
         return Ok(SetupPlan {

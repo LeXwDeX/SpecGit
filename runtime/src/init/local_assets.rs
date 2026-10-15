@@ -255,6 +255,7 @@ pub(super) async fn apply(
         crate::setup::project::recheck_executable(&root, &source, &expected)?;
     }
     let applied = match store.apply_recording_checked(changes, &observations, |_| {
+        native_inventory.verify()?;
         crate::setup::project::verify_dependencies(&native_dependencies)
     }) {
         Ok(a) => a,

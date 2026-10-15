@@ -92,15 +92,9 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
     if !rules.is_empty() {
         offers.push(("session-rules", rules.as_str()));
     }
-    if let Some(selected) = selected.as_ref()
-        && (selected
-            .intents
-            .iter()
-            .any(|i| i.write_started && i.issue.is_none())
-            || (selected.request_write_started && selected.request.is_none()))
-    {
-        let recovery = "SpecGit retains an uncertain native write. Inspect native candidates and adopt the exact Issue/PR ID before retrying creation; preserve the checkpoint.";
-        offers.push(("write-recovery", recovery));
+    let recovery = selected.as_ref().and_then(write_recovery);
+    if let Some(recovery) = &recovery {
+        offers.push(("write-recovery", recovery.as_str()));
     }
     // Resolve every fallible context source before committing any offer digest.
     // A failed read must leave all context available to the next host callback.
@@ -122,4 +116,26 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
         json: Some(json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":text}})),
         diagnostic: None,
     }
+}
+
+/// Recovery text for unresolved native writes. The short write identity keeps
+/// each distinct uncertain write deliverable in the same host session.
+fn write_recovery(selected: &crate::selection::Selection) -> Option<String> {
+    let mut pending = selected
+        .intents
+        .iter()
+        .filter(|i| i.write_started && i.issue.is_none())
+        .map(|i| json!(["issue", i.title, i.body, i.labels]))
+        .collect::<Vec<_>>();
+    if selected.request_write_started && selected.request.is_none() {
+        pending.push(json!(["request", selected.request_intent]));
+    }
+    if pending.is_empty() {
+        return None;
+    }
+    let identity = crate::assets::hash(json!(pending).to_string().as_bytes());
+    Some(format!(
+        "SpecGit retains an uncertain native write ({}). Inspect native candidates and adopt the exact Issue/PR ID before retrying creation; preserve the checkpoint.",
+        &identity[..12]
+    ))
 }
