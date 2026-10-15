@@ -1626,12 +1626,16 @@ fn hook_output(f: &delivery::Fixture, event: &str, observe: bool) -> Value {
         .spawn()
         .unwrap();
     let payload = json!({"session_id":"session-a","hook_event_name":event,"cwd":f.root,"tool_name":"Bash","tool_input":{"command":"git add --dry-run .specgit.yaml"}});
-    child
+    // Retired callbacks return before reading input, so the child may close
+    // its stdin first; only that broken pipe is an accepted write outcome.
+    if let Err(error) = child
         .stdin
         .take()
         .unwrap()
         .write_all(&serde_json::to_vec(&payload).unwrap())
-        .unwrap();
+    {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{event}: {error}");
+    }
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     if out.stdout.is_empty() {
