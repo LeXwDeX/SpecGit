@@ -81,17 +81,17 @@ pub fn render(d: &Declaration) -> String {
 pub fn render_for_version(d: &Declaration, version: &str) -> String {
     render_as(d, version)
 }
-fn render_as(d: &Declaration, version: &str) -> String {
-    let prompt = crate::prompts::project(d.language);
-    let body = format!(
-        "{START}\n## SpecGit 2\n\nRuntime: {version}. Declaration: `.specgit.yaml` (v2, local configuration).\n\n{}{RULES}{}`\n",
-        prompt.trim_end(),
-        declared(d)
-    );
-    format!("{body}{DIGEST}{}{DIGEST_END}{END}", hash(body.as_bytes()))
+fn render_as(_d: &Declaration, _version: &str) -> String {
+    format!(
+        "{START}\n## SpecGit 2\n\n{}\n{END}",
+        crate::prompts::project(Language::En).trim_end()
+    )
 }
 /// Verify a canonical (LF) block against its own embedded digest.
 fn certified(block: &str) -> bool {
+    if block == render(&Declaration::default()) {
+        return true;
+    }
     block
         .strip_suffix(END)
         .and_then(|b| b.strip_suffix(DIGEST_END))
@@ -218,6 +218,23 @@ pub(crate) fn removal(
     private: &Path,
     declaration: &Declaration,
 ) -> Result<Vec<Change>, Diagnostic> {
+    removal_inner(root, private, declaration, false)
+}
+
+pub(crate) fn migration_removal(
+    root: &Path,
+    private: &Path,
+    declaration: &Declaration,
+) -> Result<Vec<Change>, Diagnostic> {
+    removal_inner(root, private, declaration, true)
+}
+
+fn removal_inner(
+    root: &Path,
+    private: &Path,
+    declaration: &Declaration,
+    refresh: bool,
+) -> Result<Vec<Change>, Diagnostic> {
     let receipt = Change::new(private.join("guidance.json"), None)?;
     let state: Option<Receipt> = receipt
         .before
@@ -237,9 +254,15 @@ pub(crate) fn removal(
             Ok(parsed)
         })
         .transpose()?;
+    if refresh && state.as_ref().is_some_and(|s| s.blocks.is_empty()) {
+        return Ok(vec![]);
+    }
     let mut changes = vec![];
     for name in ["AGENTS.md", "CLAUDE.md"] {
         let path = root.join(name);
+        if path.is_dir() && !state.as_ref().is_some_and(|s| s.blocks.contains_key(name)) {
+            continue;
+        }
         if !has_block(&path)? {
             if state.as_ref().is_some_and(|s| s.blocks.contains_key(name)) {
                 return Err(conflict());
@@ -247,15 +270,28 @@ pub(crate) fn removal(
             continue;
         }
         // Reuse refresh validation without using its replacement content.
-        let mut c = change(
-            &path,
-            declaration,
-            declaration,
-            state
-                .as_ref()
-                .and_then(|s| s.blocks.get(name))
-                .map(String::as_str),
-        )?;
+        let recorded = state
+            .as_ref()
+            .and_then(|s| s.blocks.get(name))
+            .map(String::as_str);
+        let mut c = match change(&path, declaration, declaration, recorded) {
+            Ok(change) => change,
+            Err(error) if refresh && recorded.is_some() => {
+                let snapshot = crate::assets::Snapshot::read(&path)?;
+                let proofs = crate::assets::AssetStore::owned_pair_at(
+                    &private.join("assets"),
+                    &receipt.path,
+                    &receipt.before,
+                    &path,
+                    &snapshot,
+                    None,
+                )?
+                .ok_or(error)?;
+                changes.extend(proofs);
+                change_inner(&path, declaration, declaration, recorded, true)?
+            }
+            Err(error) => return Err(error),
+        };
         let text = std::str::from_utf8(c.before.bytes.as_deref().unwrap_or_default())
             .map_err(|_| conflict())?;
         let start = text.find(START).ok_or_else(conflict)?;
@@ -398,6 +434,13 @@ pub fn health_plan(
         return Ok(None);
     }
     if !agents_block {
+        if let Some(bytes) = receipt.bytes.as_deref() {
+            let state: Receipt = serde_json::from_value(crate::input::json(bytes, 1_048_576, 16)?)
+                .map_err(|_| conflict())?;
+            if state.version == 1 && state.blocks.is_empty() {
+                return Ok(None);
+            }
+        }
         return Err(conflict());
     }
     if let Some(bytes) = receipt.bytes.as_deref() {

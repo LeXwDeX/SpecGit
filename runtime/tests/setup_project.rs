@@ -899,9 +899,15 @@ fn reinstallation_cannot_use_an_older_permission_record_for_the_same_receipt() {
     ] {
         fs::rename(
             f.private
-                .join("transactions")
+                .parent()
+                .unwrap()
+                .join("assets/transactions")
                 .join(result["transaction"]["transaction"].as_str().unwrap()),
-            f.private.join("transactions").join(name),
+            f.private
+                .parent()
+                .unwrap()
+                .join("assets/transactions")
+                .join(name),
         )
         .unwrap();
     }
@@ -1087,7 +1093,7 @@ fn recurring_legacy_receipts_reject_conflicting_permission_records_in_any_order(
 fn a_receipt_without_transaction_evidence_cannot_authorize_setup() {
     let (f, mut options) = fixture(vec![Agent::Generic]);
     install(&options, &f).unwrap();
-    fs::remove_dir_all(f.private.join("transactions")).unwrap();
+    fs::remove_dir_all(f.private.parent().unwrap().join("assets/transactions")).unwrap();
     let before = files(&f.base);
     options.agents.clear();
     for uninstall in [false, true] {
@@ -1148,7 +1154,7 @@ fn coherent_receipt_cycles_keep_every_journal_as_a_lock_dependency() {
     let guidance = fs::read_to_string(&guidance_path).unwrap();
     fs::write(
         &guidance_path,
-        guidance.replace("Project integration", "Stale integration text"),
+        guidance.replace("specgit init", "Stale integration text"),
     )
     .unwrap();
     for transaction in transactions {
@@ -1156,11 +1162,21 @@ fn coherent_receipt_cycles_keep_every_journal_as_a_lock_dependency() {
             .unwrap()
             .unwrap();
         assert!(!plan.assets().is_empty());
-        let journal_path = f
+        let new_path = f
             .private
-            .join("transactions")
-            .join(transaction)
+            .parent()
+            .unwrap()
+            .join("assets/transactions")
+            .join(&transaction)
             .join("journal.json");
+        let journal_path = if new_path.exists() {
+            new_path
+        } else {
+            f.private
+                .join("transactions")
+                .join(transaction)
+                .join("journal.json")
+        };
         let before = fs::read(&journal_path).unwrap();
         let mut altered = before.clone();
         altered.push(b'\n');
@@ -1701,11 +1717,8 @@ fn guidance_slimming_refreshes_recorded_2_6_2_setup_without_overwriting_manual_t
         let after = fs::read_to_string(&path).unwrap();
         assert!(after.starts_with("Manual rules\r\n"));
         assert!(after.ends_with("\nManual tail\r\n"));
-        assert!(after.contains(
-            "Project integration (setup, hooks, observation state and guidance) stays project-only"
-        ));
-        assert!(after.contains("not a general file-write sandbox"));
-        assert!(after.contains("Refresh replaces recorded assets and complete unique blocks"));
+        assert!(after.contains(".agents/skills/specgit-native/SKILL.md"));
+        assert!(after.contains("specgit init"));
         assert!(!after.contains("Before tracked product edits"));
         assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
     }
@@ -1890,7 +1903,7 @@ fn source_executable_faults_are_rejected_before_any_writes() {
 #[test]
 fn additive_selection_coowns_guidance_once_and_preserves_user_content_without_the_executable() {
     let (f, mut options) = fixture(vec![Agent::Generic]);
-    let user = "user guidance\r\n<!-- specgit:v2:start -->\ninit block\n<!-- specgit:v2:end -->\n";
+    let user = "user guidance\r\n";
     fs::write(f.root.join("AGENTS.md"), user).unwrap();
     install(&options, &f).unwrap();
     options.agents = vec![Agent::Codex, Agent::Opencode, Agent::Claude];
@@ -2009,12 +2022,18 @@ fn edited_guidance_needs_a_matching_receipt_and_unique_markers() {
 
 #[test]
 fn project_conflicts_preserve_edited_duplicate_and_foreign_assets() {
-    for fault in ["foreign skill", "duplicate hooks"] {
+    for fault in ["foreign skill", "foreign tracked skill", "duplicate hooks"] {
         let (f, mut options) = fixture(vec![Agent::Claude]);
         let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
-        if fault == "foreign skill" {
+        if fault.starts_with("foreign") {
             fs::create_dir_all(skill.parent().unwrap()).unwrap();
             fs::write(&skill, "private foreign text").unwrap();
+            if fault == "foreign tracked skill" {
+                git(
+                    &f.root,
+                    &["add", "-f", ".agents/skills/specgit-native/SKILL.md"],
+                );
+            }
         } else {
             install(&options, &f).unwrap();
             match fault {
@@ -2053,7 +2072,24 @@ fn project_conflicts_preserve_edited_duplicate_and_foreign_assets() {
             ),
             "{fault}: {error}"
         );
-        assert!(error.remedy.contains("Restore"), "{fault}: {error}");
+        if fault.starts_with("foreign") {
+            for clause in [
+                "Preserve the file and manual content",
+                "verify the original ownership record",
+                "obtaining authorization",
+                "remove that file from the Git index",
+                "move the existing local copy to a safe location",
+                "then run `specgit init`",
+                "Untracking alone leaves the conflicting local file in place",
+            ] {
+                assert!(
+                    error.remedy.contains(clause),
+                    "{fault}: missing {clause}: {error}"
+                );
+            }
+        } else {
+            assert!(error.remedy.contains("Restore"), "{fault}: {error}");
+        }
         assert_eq!(files(&f.base), before, "{fault}");
     }
 }
@@ -2366,7 +2402,7 @@ fn unchanged_project_assets_are_revalidated_after_waiting_for_the_private_lock()
         let receipt = fs::read(f.private.join("ownership.json")).unwrap();
         let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
         let lock = specgit::assets::AssetStore::lock(
-            &f.private,
+            &f.private.parent().unwrap().join("assets"),
             &[f.root.clone(), f.private.clone()],
             Duration::from_secs(1),
         )
@@ -2443,7 +2479,7 @@ fn interrupted_project_install_has_recoverable_private_journal_and_no_outside_wr
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(99));
-    let transaction = fs::read_dir(f.private.join("transactions"))
+    let transaction = fs::read_dir(f.private.parent().unwrap().join("assets/transactions"))
         .unwrap()
         .next()
         .unwrap()
@@ -2474,7 +2510,7 @@ fn health_plan_reports_prepared_first_install_without_a_receipt() {
         .unwrap();
     assert_eq!(output.status.code(), Some(99));
     assert!(!f.private.join("ownership.json").exists());
-    let journal = fs::read_dir(f.private.join("transactions"))
+    let journal = fs::read_dir(f.private.parent().unwrap().join("assets/transactions"))
         .unwrap()
         .next()
         .unwrap()
@@ -2498,4 +2534,241 @@ fn health_plan_reports_prepared_first_install_without_a_receipt() {
         before,
         "inspection attempted recovery or wrote state"
     );
+}
+
+#[test]
+fn a_clone_adopts_only_the_exact_stable_entry_and_records_its_permissions() {
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    let path = f.root.join("AGENTS.md");
+    let original = fs::read(&path).unwrap();
+    fs::remove_file(f.private.join("ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(&path).unwrap().ino()
+    };
+    let adopted = install(&options, &f).unwrap();
+    assert!(adopted["transaction"]["changes"].as_u64().unwrap() > 0);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            fs::metadata(&path).unwrap().ino(),
+            inode,
+            "adoption must only record existing guidance"
+        );
+    }
+    options.agents.clear();
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    install(&options, &f).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        assert_eq!(
+            install(&options, &f).unwrap_err().code,
+            Code::OwnershipConflict
+        );
+    }
+}
+
+#[test]
+fn setup_merges_legacy_init_and_project_blocks_without_changing_manual_bytes() {
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    let path = f.root.join("AGENTS.md");
+    let project = fs::read_to_string(&path).unwrap();
+    let old = include_str!("fixtures/stable-guidance/2.11.1-zh.txt");
+    fs::write(
+        &path,
+        format!("manual prefix\r\n{old}\n{project}manual tail\n"),
+    )
+    .unwrap();
+    options.agents.clear();
+    install(&options, &f).unwrap();
+    let merged = fs::read_to_string(&path).unwrap();
+    assert!(merged.starts_with("manual prefix\r\n"));
+    assert!(merged.ends_with("manual tail\n"));
+    assert!(!merged.contains("<!-- specgit:v2:start -->"));
+    assert_eq!(
+        merged.matches("<!-- specgit:project:v2:start -->").count(),
+        1
+    );
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+}
+
+#[test]
+fn cli_setup_rollback_preserves_exclusions_used_by_a_setup_only_sibling() {
+    let (f, _) = fixture(vec![]);
+    git(
+        &f.root,
+        &["worktree", "add", "--detach", "../linked", "HEAD"],
+    );
+    let sibling = f.root.parent().unwrap().join("linked");
+    let first = cli(&f.root, &["--agent", "generic", "--hook-purpose", "none"]);
+    assert_eq!(first["ok"], true, "{first}");
+    let transaction = first["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        cli(&sibling, &["--agent", "generic", "--hook-purpose", "none"])["ok"],
+        true
+    );
+    let exclude = PathBuf::from(git(
+        &f.root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ],
+    ));
+    let before = fs::read(&exclude).unwrap();
+    let sibling_before = files(&sibling);
+    let rollback = cli(&f.root, &["--rollback", transaction]);
+    assert_eq!(rollback["ok"], true, "{rollback}");
+    assert_eq!(
+        rollback["evidence"]["retained"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(fs::read(&exclude).unwrap(), before);
+    assert_eq!(files(&sibling), sibling_before);
+    assert_eq!(
+        git(
+            &sibling,
+            &["check-ignore", ".agents/skills/specgit-native/SKILL.md"]
+        ),
+        ".agents/skills/specgit-native/SKILL.md"
+    );
+}
+
+#[test]
+fn setup_uninstall_preserves_a_later_edited_legacy_init_block() {
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    let path = f.root.join("AGENTS.md");
+    let project = fs::read_to_string(&path).unwrap();
+    let legacy =
+        include_str!("fixtures/stable-guidance/2.11.1-zh.txt").replace("新任务", "user edit");
+    fs::write(&path, format!("{legacy}{project}")).unwrap();
+    options.agents.clear();
+    options.uninstall = true;
+    install(&options, &f).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+}
+
+#[test]
+fn adopting_a_clone_entry_rollback_preserves_later_manual_content() {
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    fs::remove_file(f.private.join("ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    let adopted = install(&options, &f).unwrap();
+    let path = f.root.join("AGENTS.md");
+    let manual = format!(
+        "{}later manual bytes\r\n",
+        fs::read_to_string(&path).unwrap()
+    );
+    fs::write(&path, &manual).unwrap();
+    options.agents.clear();
+    options.rollback = Some(
+        adopted["transaction"]["transaction"]
+            .as_str()
+            .unwrap()
+            .into(),
+    );
+    let before = files(&f.base);
+    assert_eq!(
+        install(&options, &f).unwrap_err().code,
+        Code::RollbackConflict
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), manual);
+    assert_eq!(files(&f.base), before);
+}
+
+#[test]
+fn first_codex_setup_preserves_override_when_migrating_legacy_init_guidance() {
+    let (f, _) = fixture(vec![]);
+    let legacy = include_str!("fixtures/stable-guidance/2.11.1-zh.txt");
+    fs::write(
+        f.root.join("AGENTS.md"),
+        format!("agents manual\r\n{legacy}agents tail\n"),
+    )
+    .unwrap();
+    let override_manual = "override manual\r\nkeep exact\n";
+    fs::write(f.root.join("AGENTS.override.md"), override_manual).unwrap();
+    let result = cli(&f.root, &["--agent", "codex", "--hook-purpose", "none"]);
+    assert_eq!(result["ok"], true, "{result}");
+    let agents = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
+    let override_text = fs::read_to_string(f.root.join("AGENTS.override.md")).unwrap();
+    assert!(
+        override_text.starts_with(override_manual),
+        "{override_text}"
+    );
+    assert!(agents.starts_with("agents manual\r\n"));
+    assert!(agents.contains("agents tail\n"));
+    for text in [&agents, &override_text] {
+        assert_eq!(
+            text.matches("<!-- specgit:project:v2:start -->").count(),
+            1,
+            "{text}"
+        );
+        assert!(!text.contains("<!-- specgit:v2:start -->"));
+    }
+    assert_eq!(cli(&f.root, &[])["evidence"]["transaction"]["changes"], 0);
+}
+
+#[test]
+fn generic_setup_keeps_proven_legacy_claude_guidance_without_installing_hooks() {
+    let (f, _) = fixture(vec![]);
+    let legacy = include_str!("fixtures/stable-guidance/2.11.1-zh.txt");
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        fs::write(
+            f.root.join(name),
+            format!("{name} manual\r\n{legacy}{name} tail\n"),
+        )
+        .unwrap();
+    }
+    let result = cli(&f.root, &["--agent", "generic"]);
+    assert_eq!(result["ok"], true, "{result}");
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let text = fs::read_to_string(f.root.join(name)).unwrap();
+        assert!(text.starts_with(&format!("{name} manual\r\n")));
+        assert!(text.contains(&format!("{name} tail\n")));
+        assert_eq!(
+            text.matches("<!-- specgit:project:v2:start -->").count(),
+            1,
+            "{text}"
+        );
+    }
+    assert!(
+        f.root
+            .join(".claude/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    assert!(!f.root.join(".claude/settings.json").exists());
+    assert_eq!(cli(&f.root, &[])["evidence"]["transaction"]["changes"], 0);
+}
+
+#[test]
+fn generic_setup_does_not_claim_an_unproven_legacy_claude_marker() {
+    let (f, _) = fixture(vec![]);
+    let legacy = include_str!("fixtures/stable-guidance/2.11.1-zh.txt");
+    fs::write(f.root.join("AGENTS.md"), legacy).unwrap();
+    let edited = legacy.replace("新任务", "unproven manual edit");
+    assert_ne!(edited, legacy);
+    fs::write(f.root.join("CLAUDE.md"), edited).unwrap();
+    let before = files(&f.base);
+    let result = cli(&f.root, &["--agent", "generic"]);
+    assert_eq!(
+        result["diagnostics"][0]["code"], "ownership_conflict",
+        "{result}"
+    );
+    assert_eq!(files(&f.base), before);
 }

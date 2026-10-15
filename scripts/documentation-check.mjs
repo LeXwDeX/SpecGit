@@ -70,7 +70,11 @@ export function checkRepositoryDocumentation(root) {
   const count = checkDocumentation(root, files);
   const read = file => readFileSync(path.join(root, file), 'utf8');
   const version = JSON.parse(read('package.json')).version;
-  assert(read('AGENTS.md').includes(`Runtime: ${version}.`), 'AGENTS runtime version drift');
+  const guidance = read('AGENTS.md');
+  const entry = read('runtime/assets/prompts/host-entry.md').trim();
+  assert(guidance.includes(entry), 'AGENTS must point to the local project Skill');
+  assert.equal((guidance.match(/<!-- specgit:project:v2:start -->/g) ?? []).length, 1, 'AGENTS must contain one stable SpecGit entry');
+  assert(!guidance.includes('<!-- specgit:v2:start -->'), 'Legacy generated guidance must be migrated');
   assert(read('CHANGELOG.md').includes(`# ${version}\n`), 'Current version missing from changelog');
   assert(read('.github/workflows/release-prepare.yml').includes(`default: ${version}\n`), 'Release default version drift');
   for (const file of ['bug_report.md', 'feature_request.md']) {

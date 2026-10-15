@@ -43,7 +43,7 @@ pub(super) enum Commands {
     Watch(specgit::watch::Options),
     /// Refresh pending events or explicitly acknowledge transport receipt.
     Inbox(specgit::watch::InboxOptions),
-    /// Inspect native flow, preserve configuration and replace owned guidance with current templates.
+    /// Inspect native flow, preserve configuration, and prepare the local Skill and stable guidance entry.
     Init {
         #[arg(long)]
         remote: Option<String>,
@@ -72,7 +72,7 @@ pub(super) enum Commands {
         #[arg(long)]
         rollback: Option<String>,
     },
-    /// Install or replace owned project Skills/guidance with current templates; preserve other content.
+    /// Prepare owned local Skills and one stable guidance entry; preserve manual content and selected hooks.
     Setup {
         /// Project is the only supported scope, permanently; the shared CLI is installed separately.
         #[arg(long, value_enum, default_value = "project")]

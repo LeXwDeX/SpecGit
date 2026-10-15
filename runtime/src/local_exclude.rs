@@ -9,6 +9,63 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 const START: &str = "# specgit:local:v2:start";
 const END: &str = "# specgit:local:v2:end";
+/// Generated files only: other Skills and project instructions stay visible.
+pub const SKILL_PATHS: [&str; 2] = [
+    ".agents/skills/specgit-native/SKILL.md",
+    ".claude/skills/specgit-native/SKILL.md",
+];
+
+fn allowed(name: &str) -> bool {
+    [".specgit.yaml", "AGENTS.md", "CLAUDE.md"].contains(&name) || SKILL_PATHS.contains(&name)
+}
+
+fn owned_body(text: &str) -> Option<&str> {
+    text.split_once(START)?
+        .1
+        .split_once(END)
+        .map(|(body, _)| body)
+}
+
+pub(crate) fn excluded_paths(change: &Change) -> Vec<&'static str> {
+    let body = change
+        .after
+        .as_deref()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .and_then(owned_body)
+        .unwrap_or_default();
+    let mut names = vec![".specgit.yaml"];
+    names.extend(SKILL_PATHS.into_iter().filter(|name| {
+        body.lines()
+            .any(|line| line.strip_prefix('/') == Some(*name))
+    }));
+    names
+}
+
+/// Plan against one snapshot. Keep shared Skill rules while sibling worktrees
+/// may still use them, but retire legacy whole-instruction-file exclusions.
+pub fn project_change(
+    root: &Path,
+    exclude: &Path,
+    changes: &[Change],
+) -> Result<Change, Diagnostic> {
+    let current = Change::new(exclude.to_owned(), None)?;
+    let text = std::str::from_utf8(current.before.bytes.as_deref().unwrap_or_default())
+        .map_err(|_| conflict())?;
+    let body = owned_body(text).unwrap_or_default();
+    let mut names = vec![".specgit.yaml"];
+    for name in SKILL_PATHS {
+        if body
+            .lines()
+            .any(|line| line.strip_prefix('/') == Some(name))
+            || changes
+                .iter()
+                .any(|change| change.path == root.join(name) && change.after.is_some())
+        {
+            names.push(name);
+        }
+    }
+    change_from(current, &names)
+}
 
 pub async fn path(process: &Process, root: &Path) -> Result<PathBuf, Diagnostic> {
     let bytes = project::git(
@@ -39,13 +96,13 @@ fn conflict() -> Diagnostic {
 }
 
 pub fn change(path: &Path, names: &[&str]) -> Result<Change, Diagnostic> {
-    if names
-        .iter()
-        .any(|name| ![".specgit.yaml", "AGENTS.md", "CLAUDE.md"].contains(name))
-    {
+    change_from(Change::new(path.to_owned(), None)?, names)
+}
+
+fn change_from(mut change: Change, names: &[&str]) -> Result<Change, Diagnostic> {
+    if names.iter().any(|name| !allowed(name)) {
         return Err(conflict());
     }
-    let mut change = Change::new(path.to_owned(), None)?;
     let before = std::str::from_utf8(change.before.bytes.as_deref().unwrap_or_default())
         .map_err(|_| conflict())?;
     let starts: Vec<_> = before.match_indices(START).collect();
@@ -82,7 +139,7 @@ pub fn change(path: &Path, names: &[&str]) -> Result<Change, Diagnostic> {
                 || lines.last() != Some(&END)
                 || lines[1..lines.len() - 1]
                     .iter()
-                    .any(|line| !["/.specgit.yaml", "/AGENTS.md", "/CLAUDE.md"].contains(line))
+                    .any(|line| !line.strip_prefix('/').is_some_and(allowed))
                 || (*start > 0 && !before[..*start].ends_with('\n'))
                 || !before[*end + END.len()..].starts_with(['\r', '\n'])
                     && *end + END.len() != before.len()
@@ -123,7 +180,7 @@ pub(crate) fn removal(path: &Path) -> Result<Change, Diagnostic> {
 }
 
 /// Committing an untrack deletes the file in other checkouts that cross the commit.
-const TRACKED_REMEDY: &str = "Ignore rules do not untrack existing files. Review generated assets and use authorized git rm --cached for whole generated files; preserve manual guidance and omit generated hunks from commits. Warning: committing git rm --cached .specgit.yaml deletes the local declaration in every other clone or worktree that later fast-forwards, pulls or switches across that commit. Back up .specgit.yaml in those checkouts first; afterwards restore it and rerun specgit init there.";
+const TRACKED_REMEDY: &str = "Ignore rules do not untrack existing files. Review generated assets and use authorized git rm --cached for whole generated files; keep manual guidance tracked. Warning: committing git rm --cached for .specgit.yaml or a generated Skill deletes that file in every other clone or worktree that later fast-forwards, pulls or switches across that commit. Preserve declarations and manual edits before crossing that commit; restore the declaration from its original source and rerun specgit init to regenerate the project Skill. Refresh never changes the Git index.";
 
 fn mixed_guidance(root: &Path, changes: &[Change]) -> Result<Vec<&'static str>, Diagnostic> {
     let mut mixed = vec![];
@@ -131,18 +188,27 @@ fn mixed_guidance(root: &Path, changes: &[Change]) -> Result<Vec<&'static str>, 
         if let Some(c) = changes.iter().find(|c| c.path == root.join(name)) {
             let text = std::str::from_utf8(c.after.as_deref().unwrap_or_default())
                 .map_err(|_| conflict())?;
-            if let Some((prefix, rest)) = text.split_once("<!-- specgit:v2:start -->")
-                && let Some((_, suffix)) = rest.split_once("<!-- specgit:v2:end -->")
-                && (!prefix.trim().is_empty() || !suffix.trim().is_empty())
-            {
-                mixed.push(name);
+            for (start, end) in [
+                ("<!-- specgit:v2:start -->", "<!-- specgit:v2:end -->"),
+                (
+                    "<!-- specgit:project:v2:start -->",
+                    "<!-- specgit:project:v2:end -->",
+                ),
+            ] {
+                if let Some((prefix, rest)) = text.split_once(start)
+                    && let Some((_, suffix)) = rest.split_once(end)
+                    && (!prefix.trim().is_empty() || !suffix.trim().is_empty())
+                {
+                    mixed.push(name);
+                    break;
+                }
             }
         }
     }
     Ok(mixed)
 }
 
-async fn tracked(
+pub(crate) async fn tracked(
     process: &Process,
     root: &Path,
     names: &[&str],
@@ -191,14 +257,17 @@ pub async fn plan(
     changes: &mut Vec<Change>,
 ) -> Result<Value, Diagnostic> {
     // info/exclude is shared by linked worktrees. Guidance ownership is not.
-    let names = vec![".specgit.yaml"];
+    let planned = project_change(root, exclude, changes);
+    let names = planned
+        .as_ref()
+        .map(excluded_paths)
+        .unwrap_or_else(|_| vec![".specgit.yaml"]);
     let mixed = mixed_guidance(root, changes)?;
     let tracked = tracked(process, root, &names).await?;
     let index = changes
         .iter()
         .position(|c| c.path == root.join(".specgit.yaml"))
         .unwrap_or(changes.len());
-    let planned = change(exclude, &names);
     let state = block_state(&planned);
     changes.insert(index, planned?);
     Ok(report(exclude, &names, &mixed, &tracked, state))
@@ -212,10 +281,13 @@ pub async fn inspect(
     exclude: &Path,
     guidance: &[Change],
 ) -> Result<Value, Diagnostic> {
-    let names = vec![".specgit.yaml"];
+    let planned = project_change(root, exclude, guidance);
+    let names = planned
+        .as_ref()
+        .map(excluded_paths)
+        .unwrap_or_else(|_| vec![".specgit.yaml"]);
     let mixed = mixed_guidance(root, guidance)?;
     let tracked = tracked(process, root, &names).await?;
-    let planned = change(exclude, &names);
     let mut value = report(exclude, &names, &mixed, &tracked, block_state(&planned));
     if let Err(d) = planned {
         value["diagnostic"] = json!(d);

@@ -163,38 +163,23 @@ fn distributed_skill_defines_native_goals_environment_and_verification() {
 
 #[test]
 fn generated_goal_entry_is_short_and_points_to_the_skill_in_both_languages() {
-    for (language, clauses) in [
-        (
-            Language::En,
-            [
-                "Use native gh/glab proactively",
-                "Milestone is optional",
-                "PR/MR integrates changes, not a version",
-                "Release needs separate authorization",
-            ],
-        ),
-        (
-            Language::Zh,
-            [
-                "主动使用原生 gh/glab",
-                "Milestone 可选",
-                "PR/MR 集成变更，不代表版本",
-                "Release 需要独立授权",
-            ],
-        ),
-    ] {
+    for language in [Language::En, Language::Zh] {
         let prose = guidance::render(&Declaration {
             language,
             ..Declaration::default()
         });
-        for clause in clauses {
-            assert!(prose.contains(clause), "missing entry rule: {clause}");
+        for clause in [
+            ".agents/skills/specgit-native/SKILL.md",
+            "specgit init",
+            "specgit setup",
+            "https://github.com/LeXwDeX/SpecGit",
+        ] {
+            assert!(prose.contains(clause), "missing bootstrap rule: {clause}");
         }
-        assert!(prose.lines().count() <= 26, "keep the entry short");
-        assert!(
-            !prose.contains("Self-Managed"),
-            "details belong in the Skill"
-        );
+        assert!(prose.lines().count() <= 10);
+        assert!(!prose.contains("Runtime:"));
+        assert!(!prose.contains("Declared rules:"));
+        assert!(!prose.contains("sha256"));
     }
 }
 
@@ -223,13 +208,13 @@ fn refresh_preserves_exact_foreign_bytes_and_detects_damaged_or_edited_markers()
     assert!(
         String::from_utf8(changed)
             .unwrap()
-            .contains("原因、范围、方案")
+            .contains(".agents/skills/specgit-native/SKILL.md")
     );
     std::fs::write(
         &path,
         String::from_utf8(first.clone())
             .unwrap()
-            .replace("Hook notices", "User edit"),
+            .replace("specgit init", "User edit"),
     )
     .unwrap();
     assert!(guidance::change(&path, &en, &zh, None).is_err());
@@ -252,7 +237,9 @@ fn edited_recorded_guidance_refresh_requires_transaction_proof() {
     let private = root.join("private");
     std::fs::create_dir(&private).unwrap();
     let d = Declaration::default();
-    let old = guidance::render(&d).replace(env!("CARGO_PKG_VERSION"), "1.99.0-old");
+    let old = include_str!("fixtures/stable-guidance/2.11.1-zh.txt")
+        .trim_end()
+        .to_owned();
     let guidance_change = Change::new(
         root.join("AGENTS.md"),
         Some(format!("User prose\n{old}\n").into_bytes()),
@@ -271,11 +258,11 @@ fn edited_recorded_guidance_refresh_requires_transaction_proof() {
     assert!(
         String::from_utf8(planned[0].after.clone().unwrap())
             .unwrap()
-            .contains(env!("CARGO_PKG_VERSION"))
+            .contains(".agents/skills/specgit-native/SKILL.md")
     );
     std::fs::write(
         root.join("AGENTS.md"),
-        old.replace("Hook notices", "Edited text"),
+        old.replace("specgit init", "Edited text"),
     )
     .unwrap();
     let refreshed = guidance::changes(&root, &private, &d, &d, false).unwrap();
@@ -372,7 +359,7 @@ fn crlf_owned_block_refresh_preserves_line_endings_and_exact_foreign_bytes() {
     std::fs::write(
         &path,
         block
-            .replace("Hook notices", "User edited")
+            .replace("specgit init", "User edited")
             .replace('\n', "\r\n"),
     )
     .unwrap();
@@ -419,77 +406,46 @@ fn canonical_prompts_allow_receiptless_language_changes_for_lf_and_crlf_blocks()
 
 #[test]
 fn generated_guidance_uses_native_observation_and_preferences_are_not_authority() {
-    let d = Declaration::default();
-    let prose = guidance::render(&d);
-    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
-    assert!(!prose.contains("specgit finish"));
-    assert!(prose.contains("specgit-native Skill"));
-    assert!(skill.contains("Use bounded\n`watch`"));
-    assert!(prose.contains("existing user authorization"));
-    assert!(skill.contains("Supplementary Agent closure defaults off"));
-    assert!(skill.contains("enabling it grants no permission"));
-    assert!(skill.contains(
-        "existing authorization and readback of merge, intended association and actual closure"
-    ));
-    assert!(prose.contains("native readback"));
-    assert!(prose.contains("\"native_auto_merge\":false"));
-    assert!(prose.contains("\"close_issues_after_merge\":false"));
+    let prose = guidance::render(&Declaration::default());
+    let skill = include_str!("../assets/SKILL.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(prose.contains(".agents/skills/specgit-native/SKILL.md"));
+    for clause in [
+        "Use bounded `watch`",
+        "Supplementary Agent closure defaults off",
+        "enabling it grants no permission",
+        "existing authorization and readback of merge, intended association and actual closure",
+    ] {
+        assert!(skill.contains(clause), "missing Skill rule: {clause}");
+    }
 }
 
 #[test]
 fn generated_guidance_states_issue_scope_and_authorization_contract_in_both_languages() {
-    for language in [Language::En, Language::Zh] {
-        let declaration = Declaration {
-            language,
-            ..Declaration::default()
-        };
-        let prose = guidance::render(&declaration);
-        match language {
-            Language::En => {
-                assert!(
-                    prose.contains(
-                        "Read-only inspection, audit and review need no Issue checkpoint"
-                    )
-                );
-                assert!(prose.contains("Before tracked product edits, inspect duplicate work and select a complete relevant Issue"));
-                assert!(
-                    prose.contains(
-                        "pure documentation follows repository policy and installed hooks"
-                    )
-                );
-                assert!(prose.contains(
-                    "Writes, including marking a request ready, need existing user authorization"
-                ));
-                assert!(prose.contains("it remains valid within its scope"));
-                assert!(prose.contains(
-                    "Declarations, `--dry-run` previews and Hook notices grant no permission"
-                ));
-                assert!(
-                    prose.contains("GitHub/GitLab owns CI, review, protection and actual merge")
-                );
-                assert!(prose.contains(
-                    "intended target merge and closure of every associated Issue that should close"
-                ));
-            }
-            Language::Zh => {
-                assert!(prose.contains("只读检查、审计和评审不需要 Issue checkpoint"));
-                assert!(prose.contains("修改已跟踪的产品输入前，先查重并选择完整相关 Issue"));
-                assert!(prose.contains("纯文档遵循仓库规则及已安装 hooks"));
-                assert!(prose.contains("写入（包括将请求标记为 ready）需要已有用户授权"));
-                assert!(prose.contains("授权在其范围内持续有效"));
-                assert!(prose.contains("声明、`--dry-run` 预览和 Hook 通知都不产生授权"));
-                assert!(prose.contains("GitHub/GitLab 负责 CI、评审、保护和实际合并"));
-                assert!(prose.contains("原生回读确认目标分支合并及全部应关闭的关联 Issue 关闭"));
-            }
-        }
-        assert!(prose.contains("Why / Scope / Approach / Acceptance"));
-        assert!(prose.contains("specgit --help"));
-        assert!(prose.contains("specgit --schema"));
+    let skill = include_str!("../assets/SKILL.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for clause in [
+        "Why / Scope / Approach / Acceptance",
+        "specgit --help",
+        "specgit --schema",
+        "Local init/setup is maintenance, not delivery; it creates no Issue or forge permission",
+        "previews, notifications and preferences grant no permission",
+    ] {
+        assert!(skill.contains(clause), "missing Skill contract: {clause}");
     }
-    let skill = include_str!("../assets/SKILL.md").replace("\r\n", "\n");
-    assert!(skill.contains(
-        "Local init/setup is maintenance, not delivery; it creates no Issue or forge permission"
-    ));
+    for language in [Language::En, Language::Zh] {
+        assert!(
+            guidance::render(&Declaration {
+                language,
+                ..Declaration::default()
+            })
+            .contains(".agents/skills/specgit-native/SKILL.md")
+        );
+    }
 }
 
 #[test]
@@ -515,7 +471,8 @@ fn skill_retains_distinct_safety_rules_and_the_explicit_user_asset_exception() {
         "registration is not verified delivery",
         "acknowledgment proves neither human reading nor completion",
         "Refresh replaces recorded assets and complete unique blocks, including edited body text",
-        "Missing/damaged/duplicate markers or unknown ownership conflict",
+        "markers or unknown ownership conflict",
+        "missing generated Skills need verified recovery",
         "Uninstall/rollback preserves later edits",
         "Contract version: {{version}}.",
     ] {
@@ -619,8 +576,8 @@ fn self_hosted_recovery_is_bounded_in_both_languages_and_preserves_user_content(
         );
     }
     for (language, pointer) in [
-        (Language::En, "Follow Skill recovery for blockers"),
-        (Language::Zh, "阻塞恢复见 Skill"),
+        (Language::En, ".agents/skills/specgit-native/SKILL.md"),
+        (Language::Zh, ".agents/skills/specgit-native/SKILL.md"),
     ] {
         let declaration = Declaration {
             language,
@@ -764,17 +721,11 @@ fn released_render_with_non_default_rules_is_recognized_from_its_exact_rules() {
 }
 
 #[test]
-fn generated_block_carries_a_digest_of_its_canonical_content() {
+fn generated_entry_has_no_dynamic_metadata() {
     let block = guidance::render(&Declaration::default());
-    let (body, digest) = block
-        .strip_suffix(" -->\n<!-- specgit:v2:end -->")
-        .unwrap()
-        .rsplit_once("<!-- specgit:v2:sha256 ")
-        .unwrap();
-    assert!(body.starts_with("<!-- specgit:v2:start -->\n## SpecGit 2\n"));
-    assert!(body.ends_with("`\n"));
-    assert_eq!(digest, specgit::assets::hash(body.as_bytes()));
-    assert_eq!(block.lines().count(), body.lines().count() + 2);
+    assert!(!block.contains("sha256"));
+    assert!(!block.contains("Runtime:"));
+    assert!(!block.contains("Declared rules:"));
 }
 
 #[cfg(feature = "test-fixtures")]
@@ -786,7 +737,11 @@ fn digest_verifies_blocks_generated_by_another_runtime_version_without_a_receipt
         ..Declaration::default()
     };
     for (generated, next) in [(&en, &zh), (&zh, &en)] {
-        let old = guidance::render_for_version(generated, "9.8.7-other");
+        let body = "<!-- specgit:v2:start -->\n## SpecGit 2\n\nRuntime: 9.8.7-other.\n";
+        let old = format!(
+            "{body}<!-- specgit:v2:sha256 {} -->\n<!-- specgit:v2:end -->",
+            specgit::assets::hash(body.as_bytes())
+        );
         assert!(old.contains("Runtime: 9.8.7-other."));
         assert_ne!(old, guidance::render(generated));
         let t = tempfile::tempdir().unwrap();
@@ -830,4 +785,18 @@ fn digest_verifies_blocks_generated_by_another_runtime_version_without_a_receipt
             assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
         }
     }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn project_entry_is_stable_across_runtime_and_declaration_changes() {
+    let first = Declaration::default();
+    let mut next = first.clone();
+    next.language = Language::Zh;
+    next.agent.native_auto_merge = true;
+    next.validation.bodies = true;
+    assert_eq!(
+        guidance::render_for_version(&first, "2.11.1"),
+        guidance::render_for_version(&next, "2.12.0")
+    );
 }
