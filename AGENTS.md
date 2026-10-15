@@ -89,6 +89,14 @@ astra 只做交付前终审，审查最终方案和最终代码；纯文档任�
 
 ## 工作与交付
 
+本仓库已有用户持续授权：产品变更应主动完成完整交付流程，再正式发布。
+Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本、提交和推送、标记 ready、
+跟进 CI 与评审、原生合并、必要补关及正式发布，不在这些步骤之间重复索要授权。
+这不免除任何约束：发布前须完成适用验证与终审，确认当前 head 的必需检查成功、
+目标分支已合并且全部应关闭的关联 Issue 已关闭，再通过独立发布检查并回读产物。
+遇到失败或证据不足，先修复或补齐证据；不得跳过检查、弱化平台保护或用旧 head 的结果代替。
+用户当次明确的范围限制、暂停或不发布要求优先；只读审计和纯文档任务不触发产品发布。
+
 1. 加载 specgit-native Skill，读取 `.specgit.yaml`、共享 CLI 的 `--help` 和 `--schema`。
 2. 修改已跟踪的产品输入前，先用 `specgit issue --inspect` 查重。
    选择包含 Why / Scope / Approach / Acceptance 的完整相关 Issue，保留其原生 ID。
@@ -100,7 +108,7 @@ astra 只做交付前终审，审查最终方案和最终代码；纯文档任�
    会话授权在原范围内持续有效，不因流程进入下一步而重复询问。
 5. 用 `specgit pr --status` 和有界 `specgit watch` 获取当前证据。
    退出码 0 只表示操作成功。交付完成须回读确认目标分支合并及全部关联 Issue 关闭。
-   不得弱化平台保护或跳过必需验证。合并不自动授权发布。
+   不得弱化平台保护或跳过必需验证。合并不代表发布完成。
 
 已有 PR/MR 正文不同于拟写正文时，更新选项仅提供 dry-run 预览。
 在原生平台核对并发变化后编辑，再刷新 `pr --status`。
@@ -155,14 +163,14 @@ Linux x64、macOS arm64、Windows x64 的源码和已安装入口。
 `Required verification` 汇总适用检查；`SpecGit Acceptance` 要求其成功且 PR 已 ready、目标为 main。
 本地编译、旧 head 或其他平台的成功不替代当前 head 的适用验证。
 
-发布是单独授权、手动触发且仅面向 main 的签名 GitHub Release 流程。
+发布是独立阶段，使用手动触发且仅面向 main 的签名 GitHub Release 流程；上述持续授权覆盖本仓库的该阶段。
 发布验证与开发 CI 各有范围，不能互相替代。
 具体要求见[CI 范围](docs/ci-scope.md)和[原生发行流程](runtime/distribution/README.md)。
 
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.10.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.11.0. Declaration: `.specgit.yaml` (v2, local configuration).
 
 新任务和已有 PR/MR 的 CI/评审修复都加载 specgit-native Skill。
 完整流程和恢复步骤见 Skill；二进制可选，但不得绕过项目 guard/checkpoint 约束。
@@ -180,5 +188,5 @@ GitHub/GitLab 负责 CI、评审、保护和实际合并。
 已授权刷新时，由 CLI 覆盖所有权已核实的受管文件和完整唯一块内的编辑正文；保留块外字节、配置、checkpoint 和其他 hooks。所有权未知或标记损坏/重复仍冲突。不要手写、恢复旧块或额外手工备份；使用 CLI 恢复。卸载/回滚保留后续编辑。
 
 Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
-<!-- specgit:v2:sha256 d28ba6ea02a26384be7997f91421f3c7cd717c8c648b40a5bbee3496297a9993 -->
+<!-- specgit:v2:sha256 70dc881e73c909ea9f057006074b2de56860431ffb60d2c106af360817601537 -->
 <!-- specgit:v2:end -->
