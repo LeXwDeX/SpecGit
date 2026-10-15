@@ -253,6 +253,7 @@ fn receipt_only_setup_with_guard_purpose_retains_the_borrowed_native_guard() {
     f.assert_excluded(&f.sibling, ".agents/skills/specgit-native/SKILL.md", true);
 }
 
+#[cfg(feature = "test-fixtures")]
 #[test]
 fn rollback_waits_for_native_serialization_before_taking_asset_lock() {
     for operation in ["init", "setup", "remove", "migrate"] {
@@ -283,7 +284,9 @@ fn rollback_waits_for_native_serialization_before_taking_asset_lock() {
         )
         .unwrap();
         let marker = f.root.join("rollback-ready");
-        let child = executable::command()
+        // This observation barrier exists only in the feature-enabled test CLI;
+        // production installed binaries must never expose fixture instrumentation.
+        let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
             .current_dir(&f.root)
             .env("SPECGIT_FIXTURE_NATIVE_LOCK_READY", &marker)
             .args([operation, "--rollback", &id, "--json"])
