@@ -889,6 +889,58 @@ pub async fn rollback(
     ))
 }
 
+/// Bounded witness of the linked-worktree registry (`<common>/worktrees`).
+/// Git adds an entry there when a checkout is registered, before its files
+/// are checked out, so a changed listing means the consumer scan is stale.
+struct WorktreeInventory {
+    path: PathBuf,
+    entries: Vec<std::ffi::OsString>,
+}
+impl WorktreeInventory {
+    const LIMIT: usize = 1024;
+    fn read(path: PathBuf) -> Result<Self, Diagnostic> {
+        let unreadable = || {
+            Diagnostic::new(
+                Code::RollbackConflict,
+                "rollback",
+                "The Git worktree inventory is unreadable.",
+                "Inspect the repository's linked worktrees, then retry the exact rollback; no rollback target was changed.",
+            )
+        };
+        let mut entries = Vec::new();
+        match std::fs::read_dir(&path) {
+            Ok(directory) => {
+                for entry in directory.take(Self::LIMIT + 1) {
+                    entries.push(entry.map_err(|_| unreadable())?.file_name());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unreadable()),
+        }
+        if entries.len() > Self::LIMIT {
+            return Err(Diagnostic::new(
+                Code::RollbackConflict,
+                "rollback",
+                "The Git worktree inventory exceeds its bounded limit.",
+                "Prune unused linked worktrees, then retry the exact rollback; no rollback target was changed.",
+            ));
+        }
+        entries.sort();
+        Ok(Self { path, entries })
+    }
+    fn verify(&self) -> Result<(), Diagnostic> {
+        if Self::read(self.path.clone())?.entries != self.entries {
+            return Err(Diagnostic::new(
+                Code::RollbackConflict,
+                "rollback",
+                "The Git worktree inventory changed after rollback planning.",
+                "Retry the exact rollback so shared consumers are rescanned; this attempt restored nothing and kept the journal.",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Roll back with native serialization held before the transaction-store lock.
 /// Shared consumers and current ownership are rechecked under both locks.
 pub async fn rollback_with_lock(
@@ -904,6 +956,17 @@ pub async fn rollback_with_lock(
             "The native guard lock belongs to another repository.",
         ));
     }
+    // `git worktree add` registers its checkout without SpecGit's lock.
+    // Witness the registry before the consumer scan and require it unchanged
+    // under the lock and before every rollback write.
+    let inventory = WorktreeInventory::read(
+        serialization
+            .path
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| Diagnostic::input("The native guard lock path is malformed."))?
+            .join("worktrees"),
+    )?;
     let consumers = sibling_consumers(process, root).await?;
     let hook_consumers = sibling_hook_consumers(process, root).await?;
     let mut retain = if sibling_exclusion_consumers(process, root).await?.is_empty() {
@@ -977,7 +1040,9 @@ pub async fn rollback_with_lock(
         retain.extend([hook_root.join("pre-commit"), hook_root.join("pre-push")]);
         retain.extend(source_paths);
     }
-    let (applied, retained) = store.rollback_retaining(id, &retain)?;
+    inventory.verify()?;
+    let (applied, retained) =
+        store.rollback_retaining_checked(id, &retain, &|| inventory.verify())?;
     let retained: Vec<_> = retained
         .iter()
         .map(|path| json!({"path":path,"reason":if current_setup_consumer {"setup_guard_purpose"}else{"shared_initialized_worktree"},"shared_consumers":consumers}))

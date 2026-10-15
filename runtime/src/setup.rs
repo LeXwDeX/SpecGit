@@ -333,6 +333,24 @@ fn conflict_at(host: &str, path: &Path, event: Option<&str>, message: &str) -> D
     )
 }
 fn manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    manifest_for(binary, agent, &CURRENT_EVENTS)
+}
+
+/// Host callbacks written by this release.
+const CURRENT_EVENTS: [&str; 2] = ["SessionStart", "PreToolUse"];
+/// Callbacks written through 2.12. Used only to recognize exact receiptless
+/// registrations; recognition grants no ownership and nothing new is written.
+const LEGACY_EVENTS: [&str; 4] = ["SessionStart", "PreToolUse", "PostToolUse", "Stop"];
+
+fn legacy_manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    manifest_for(binary, agent, &LEGACY_EVENTS)
+}
+
+fn manifest_for(
+    binary: &Path,
+    agent: Agent,
+    events: &[&str],
+) -> Result<BTreeMap<String, Value>, Diagnostic> {
     // Claude accepts executable + argv. Codex runs only command through its shell.
     let codex = (agent == Agent::Codex)
         .then(|| codex_executable(binary))
@@ -353,14 +371,16 @@ fn manifest(binary: &Path, agent: Agent) -> Result<BTreeMap<String, Value>, Diag
         }
         hook
     };
-    Ok(["SessionStart", "PreToolUse"]
-        .into_iter()
-        .map(|event| {
-            let hooks = vec![handler(event, false)];
-
+    Ok(events
+        .iter()
+        .map(|&event| {
+            let mut hooks = vec![handler(event, false)];
+            if event == "PostToolUse" {
+                hooks.push(handler(event, true));
+            }
             (
                 event.into(),
-                json!({"matcher":if event == "PreToolUse"{ TOOL_MATCHER }else{""},"hooks":hooks}),
+                json!({"matcher":if matches!(event, "PreToolUse" | "PostToolUse"){ TOOL_MATCHER }else{""},"hooks":hooks}),
             )
         })
         .collect())
@@ -402,6 +422,17 @@ fn codex_windows_executable(binary: &str) -> Result<String, Diagnostic> {
     Ok(format!("\"{binary}\""))
 }
 fn opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    opencode_manifest_for(binary, &CURRENT_EVENTS)
+}
+
+fn legacy_opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnostic> {
+    opencode_manifest_for(binary, &LEGACY_EVENTS)
+}
+
+fn opencode_manifest_for(
+    binary: &Path,
+    events: &[&str],
+) -> Result<BTreeMap<String, Value>, Diagnostic> {
     let binary = binary
         .to_str()
         .ok_or_else(|| Diagnostic::input("Hook executable path must be UTF-8."))?;
@@ -430,8 +461,8 @@ fn opencode_manifest(binary: &Path) -> Result<BTreeMap<String, Value>, Diagnosti
             .replace('\\', "/")
     };
     let quoted = format!("'{}'", binary.replace('\'', "'\\''"));
-    Ok(["SessionStart", "PreToolUse"].into_iter().map(|event| {
-        (event.into(), json!({"matcher":if event == "PreToolUse"{ TOOL_MATCHER }else{"*"},
+    Ok(events.iter().map(|&event| {
+        (event.into(), json!({"matcher":if matches!(event, "PreToolUse" | "PostToolUse"){ TOOL_MATCHER }else{"*"},
             "hooks":[{"type":"command","shell":"bash","command":format!("{quoted} hook --event {event}"),"inputFormat":"claude-code","timeout":5}]}))
     }).collect())
 }

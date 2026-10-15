@@ -765,9 +765,12 @@ can locate an exact transaction ID in the current worktree or this shared store.
 Applying it still requires the original worktree and its allowed paths; ambiguous
 IDs and paths outside those roots remain conflicts. Recovery never recreates
 pruned Git metadata or grants access to another worktree's files.
-If `core.hooksPath` changes while such custody is retained, setup and exact-ID
-recovery report a conflict instead of treating the old custody as absent. Restore
-the recorded hook directory, then uninstall or recover.
+If `core.hooksPath` changes while such custody is retained, setup, `guard`
+install/inspection and exact-ID recovery report a conflict instead of treating the
+old custody as absent. Restore the recorded hook directory, then uninstall or
+recover. An unfinished shared-custody transaction blocks guard ownership transfer
+until it is recovered. Setup, init and exact-ID recovery recheck the Git worktree
+list before each write, so a worktree added concurrently aborts the change.
 Other receipts and transaction histories remain worktree-specific. Legacy
 `agent-assets` journals remain available as bounded ownership/recovery evidence. It writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude adds a managed

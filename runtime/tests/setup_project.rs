@@ -1370,6 +1370,65 @@ fn health_plan_reports_legacy_codex_orphan_without_writing() {
 }
 
 #[test]
+fn health_plan_reports_receiptless_retired_event_registrations_without_panicking() {
+    // 2.12 wrote PostToolUse (guard + async observer) and Stop groups. Build
+    // them literally rather than from the current generator.
+    let (f, _) = fixture(vec![]);
+    let source = f.source.to_str().unwrap();
+    let hook = |event: &str, observe: bool| {
+        let mut args = vec!["hook", "--event", event];
+        if observe {
+            args.push("--observe");
+        }
+        let mut hook = json!({"type":"command","command":source,"args":args,"timeout":if observe {1830} else {5}});
+        if observe {
+            hook["async"] = json!(true);
+        }
+        hook
+    };
+    let quoted = format!("'{}'", source.replace('\'', "'\\''"));
+    let opencode = |event: &str| json!({"type":"command","shell":"bash","command":format!("{quoted} hook --event {event}"),"inputFormat":"claude-code","timeout":5});
+    let cases = [
+        (
+            ".claude/settings.json",
+            json!({"hooks":{"PostToolUse":[{"matcher":"*","hooks":[hook("PostToolUse", false), hook("PostToolUse", true)]}]}}),
+        ),
+        (
+            ".claude/settings.json",
+            json!({"hooks":{"PostToolUse":[{"matcher":"*","hooks":[hook("PostToolUse", false)]}]}}),
+        ),
+        (
+            ".claude/settings.json",
+            json!({"hooks":{"Stop":[{"matcher":"","hooks":[hook("Stop", false)]}]}}),
+        ),
+        (
+            ".opencode/hooks.json",
+            json!({"Stop":[{"matcher":"*","hooks":[opencode("Stop")]}]}),
+        ),
+        (
+            ".opencode/hooks.json",
+            json!({"PostToolUse":[{"matcher":"*","hooks":[opencode("PostToolUse")]}]}),
+        ),
+    ];
+    for (relative, settings) in cases {
+        let path = f.root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+        let before = files(&f.base);
+        let error = health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap_or_else(|| panic!("{relative}: retired registration must stay an orphan"));
+        assert_eq!(error.code, Code::OwnershipConflict, "{relative}: {error}");
+        assert!(
+            error.message.contains("registration"),
+            "{relative}: {error}"
+        );
+        assert_eq!(files(&f.base), before);
+        fs::remove_file(&path).unwrap();
+    }
+}
+
+#[test]
 fn health_plan_reports_orphan_hook_after_shared_cli_moves() {
     for agent in [Agent::Claude, Agent::Codex, Agent::Opencode] {
         let (f, mut options) = fixture(vec![agent]);

@@ -613,6 +613,69 @@ async fn failed_pending_context_read_can_retry_all_offers_in_the_same_session() 
     assert!(text.contains("uncertain native write"), "{text}");
 }
 
+#[tokio::test]
+async fn branch_mismatched_checkpoint_keeps_its_uncertain_write_visible() {
+    use specgit::{
+        identity::Provider,
+        process::Process,
+        selection::{IssueIntent, Locked, Selection},
+    };
+    let f = delivery::Fixture::new("github");
+    let context = specgit::config::resolve(
+        &Process::default(),
+        &f.root,
+        None,
+        Some(Provider::Github),
+        None,
+    )
+    .await
+    .unwrap();
+    let recorded = context.branch.clone().unwrap();
+    Locked::acquire(&context)
+        .unwrap()
+        .save(&Selection {
+            version: 2,
+            repository: context.repository.clone(),
+            project_id: 7,
+            branch: recorded.clone(),
+            target: "main".into(),
+            issues: vec![],
+            intents: vec![IssueIntent {
+                title: "feat: interrupted issue creation".into(),
+                body: "Specification awaiting native reconciliation.".into(),
+                labels: vec![],
+                issue: None,
+                write_started: true,
+            }],
+            adopted: vec![],
+            request: None,
+            request_write_started: false,
+            request_intent: None,
+        })
+        .unwrap();
+    let switched = std::process::Command::new("git")
+        .current_dir(&f.root)
+        .args(["switch", "-q", "-c", "elsewhere"])
+        .output()
+        .unwrap();
+    assert!(switched.status.success(), "{switched:?}");
+    let output = hook(
+        &f,
+        "SessionStart",
+        json!({"session_id":"mismatch","hook_event_name":"SessionStart","cwd":f.root}),
+    );
+    assert!(output.status.success(), "{output:?}");
+    let delivered: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let text = delivered["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("uncertain native write"), "{text}");
+    assert!(text.contains(&format!("\"{recorded}\"")), "{text}");
+    assert!(text.contains("not the current checkpoint"), "{text}");
+    // The foreign checkpoint's Issues are not presented as current.
+    assert!(text.contains("elsewhere"), "{text}");
+}
+
 #[test]
 fn concurrent_session_start_callbacks_deliver_rules_to_both_sessions() {
     let f = delivery::Fixture::new("github");

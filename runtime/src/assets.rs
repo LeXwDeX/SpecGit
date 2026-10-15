@@ -1242,6 +1242,18 @@ impl AssetStore {
         atomic(&directory.join("journal.json"), &bytes, None)
     }
     fn restore(&self, directory: &Path, entries: &[Entry]) -> Result<(), Diagnostic> {
+        self.restore_checked(directory, entries, &|| Ok(()))
+    }
+    /// Restore preimages, running `check` before every write and once after
+    /// the last one. A failed check undoes this call's own writes, so an
+    /// external precondition (such as an unchanged worktree inventory) holds
+    /// for every restored file or for none of them.
+    fn restore_checked(
+        &self,
+        directory: &Path,
+        entries: &[Entry],
+        check: &dyn Fn() -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
         // Validate every preimage before the first restore, including backup hashes.
         for entry in entries {
             self.validate(&entry.path)?;
@@ -1270,6 +1282,9 @@ impl AssetStore {
                 }
             }
         }
+        #[cfg(feature = "test-fixtures")]
+        let mut writes = 0usize;
+        let mut written: Vec<(&Entry, Snapshot)> = Vec::new();
         for entry in entries.iter().rev() {
             let current = Snapshot::read(&entry.path)?;
             if entry.matches(&current, false) {
@@ -1281,6 +1296,15 @@ impl AssetStore {
                     "A concurrent content or permission edit prevents rollback.",
                 ));
             }
+            #[cfg(feature = "test-fixtures")]
+            {
+                fixture_pause(&format!("before-rollback-write:{writes}"));
+                writes += 1;
+            }
+            if let Err(original) = check() {
+                return Err(undo_restore(&written, original));
+            }
+            written.push((entry, current));
             match &entry.before {
                 Some(_) => {
                     let backup = Snapshot::read(&directory.join(&entry.backup))?;
@@ -1295,6 +1319,9 @@ impl AssetStore {
                 }
                 None => fs::remove_file(&entry.path).map_err(|_| io_error())?,
             }
+        }
+        if let Err(original) = check() {
+            return Err(undo_restore(&written, original));
         }
         Ok(())
     }
@@ -1395,6 +1422,17 @@ impl AssetStore {
         id: &str,
         retain: &[PathBuf],
     ) -> Result<(Applied, Vec<PathBuf>), Diagnostic> {
+        self.rollback_retaining_checked(id, retain, &|| Ok(()))
+    }
+    /// [`Self::rollback_retaining`] with `check` run before every restore
+    /// write and before the journal records the rollback. A failed check
+    /// aborts, undoes this rollback's writes and leaves the journal unchanged.
+    pub(crate) fn rollback_retaining_checked(
+        &self,
+        id: &str,
+        retain: &[PathBuf],
+        check: &dyn Fn() -> Result<(), Diagnostic>,
+    ) -> Result<(Applied, Vec<PathBuf>), Diagnostic> {
         let (directory, mut journal) = self.rollback_journal(id)?;
         if journal.state == "rolled_back" {
             return Ok((
@@ -1423,7 +1461,7 @@ impl AssetStore {
                 restored.push(entry.clone());
             }
         }
-        self.restore(&directory, &restored)?;
+        self.restore_checked(&directory, &restored, check)?;
         journal.state = if retained.is_empty() {
             "rolled_back"
         } else {
@@ -1440,6 +1478,29 @@ impl AssetStore {
             retained,
         ))
     }
+}
+
+/// Put back the post-write content that an aborted restore replaced. A file
+/// changed again since that restore belongs to its writer and stops the undo.
+fn undo_restore(written: &[(&Entry, Snapshot)], original: Diagnostic) -> Diagnostic {
+    for (entry, previous) in written.iter().rev() {
+        let undone = Snapshot::read(&entry.path).and_then(|current| {
+            if !entry.matches(&current, false) {
+                return Err(io_error());
+            }
+            match &previous.bytes {
+                Some(bytes) => atomic(&entry.path, bytes, previous.permissions.as_ref()),
+                None => fs::remove_file(&entry.path).map_err(|_| io_error()),
+            }
+        });
+        if undone.is_err() {
+            return error(
+                Code::RollbackConflict,
+                "A rollback precondition changed and the partial restore could not be fully undone; inspect the journal and backups before retrying.",
+            );
+        }
+    }
+    original
 }
 
 // Only Windows spelling aliases are equivalent here. Unix symlinks and

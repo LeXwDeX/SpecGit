@@ -65,9 +65,14 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
         Ok(None) => return Output::default(),
         Err(output) => return output,
     };
-    let selected = match crate::selection::classify(&context) {
-        Ok(crate::selection::ReadOutcome::Current(selected)) => Some(selected),
-        Ok(_) => None,
+    // A checkpoint recorded on another branch is not current, but its
+    // unresolved native write must stay visible to avoid a duplicate retry.
+    let (selected, mismatched) = match crate::selection::classify(&context) {
+        Ok(crate::selection::ReadOutcome::Current(selected)) => (Some(selected), None),
+        Ok(crate::selection::ReadOutcome::BranchMismatch { selection, .. }) => {
+            (None, Some(selection))
+        }
+        Ok(_) => (None, None),
         Err(diagnostic) => return notice(diagnostic),
     };
     let rules = if event == "SessionStart" {
@@ -92,7 +97,19 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
     if !rules.is_empty() {
         offers.push(("session-rules", rules.as_str()));
     }
-    let recovery = selected.as_ref().and_then(write_recovery);
+    let recovery = selected.as_ref().and_then(write_recovery).or_else(|| {
+        mismatched.as_ref().and_then(|selection| {
+            write_recovery(selection).map(|text| {
+                format!(
+                    "{text} The checkpoint belongs to branch {}; switch back to it before adopting or retrying. It is not the current checkpoint.",
+                    serde_json::to_string(
+                        &selection.branch.chars().take(256).collect::<String>()
+                    )
+                    .unwrap_or_default()
+                )
+            })
+        })
+    });
     if let Some(recovery) = &recovery {
         offers.push(("write-recovery", recovery.as_str()));
     }

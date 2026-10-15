@@ -875,3 +875,109 @@ fn worktree_added_during_setup_uninstall_transaction_keeps_shared_hooks() {
     );
     f.assert_guard(true);
 }
+
+/// An exact-ID rollback scans consumers before writing. A checkout added by
+/// Git, which does not take SpecGit's lock, must abort it before the shared
+/// hooks are removed and leave every rollback target unchanged.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn worktree_added_during_exact_rollback_keeps_shared_hooks() {
+    let f = Fixture::new();
+    git(&f.root, &["switch", "-q", "-c", "declared"]);
+    fs::write(f.root.join(".specgit.yaml"), "version: 2\n").unwrap();
+    git(&f.root, &["add", ".specgit.yaml"]);
+    git(
+        &f.root,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "declare",
+        ],
+    );
+    git(&f.root, &["switch", "-q", "feature"]);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    let installed = cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    let id = installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned();
+    f.assert_guard(true);
+    let private =
+        PathBuf::from(git(&f.sibling, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
+    let receipt = private.join("agent-assets/ownership.json");
+    let source = private.join("setup-guard-hooks.json");
+    assert!(source.exists());
+    let snapshot = |path: &Path| fs::read(path).ok();
+    let before: Vec<_> = [
+        f.hooks.join("pre-commit"),
+        f.hooks.join("pre-push"),
+        receipt.clone(),
+        source.clone(),
+    ]
+    .iter()
+    .map(|path| snapshot(path))
+    .collect();
+
+    let pause = tempfile::tempdir().unwrap();
+    // The pause point exists only in the fixture build, never in release binaries.
+    let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.sibling)
+        .args(["setup", "--rollback", &id, "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", "before-rollback-write:1")
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", pause.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !pause.path().join("ready").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "rollback never paused"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    git(&f.root, &["worktree", "add", "-q", "../third", "declared"]);
+    fs::write(pause.path().join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report.to_string().contains("worktree inventory changed"),
+        "{report}"
+    );
+    f.assert_guard(true);
+    let after: Vec<_> = [
+        f.hooks.join("pre-commit"),
+        f.hooks.join("pre-push"),
+        receipt.clone(),
+        source.clone(),
+    ]
+    .iter()
+    .map(|path| snapshot(path))
+    .collect();
+    assert_eq!(
+        after, before,
+        "the aborted rollback must undo its own writes"
+    );
+
+    // With the inventory stable, the same exact rollback now retains the
+    // hooks for the added consumer.
+    let retried = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        !retried["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retried}"))
+            .is_empty(),
+        "{retried}"
+    );
+    f.assert_guard(true);
+}
