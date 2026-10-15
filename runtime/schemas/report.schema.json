@@ -37,6 +37,18 @@
         }
       }
     },
+    "doctor_runtime_update": {
+      "description": "Advisory official release metadata only; never changes health, exit status or update authorization. Signature verification occurs only during an explicit update.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "current_version", "latest_version", "diagnostic"],
+      "properties": {
+        "status": {"enum": ["not_checked", "up_to_date", "update_available", "current_newer", "unknown"]},
+        "current_version": {"type": "string", "minLength": 1},
+        "latest_version": {"type": ["string", "null"]},
+        "diagnostic": {"$ref": "#/$defs/probe/properties/diagnostic"}
+      }
+    },
     "doctor_local": {
       "description": "Read-only local facts. Current means repository and branch ownership only; recorded IDs and target are not native verification or write eligibility.",
       "type": "object",
@@ -979,7 +991,7 @@
   ],
   "description": "One ordinary command stdout JSON document. Exit 0 means the operation or observation succeeded, never acceptance or authorization to merge. Hook output follows its explicit host framing instead. Future fields require the corresponding versioned contract.",
   "allOf": [
-    {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"status":{"enum":["ready","offline_checked","attention_required","checkpoint_branch_mismatch","unknown","repair_failed","invalid_input","rejected"]},"evidence":{"properties":{"local":{"$ref":"#/$defs/doctor_local"},"health":{"$ref":"#/$defs/doctor_health"},"repair":{"$ref":"#/$defs/doctor_repair"},"agent_guidance":{"$ref":"#/$defs/doctor_agent_guidance"}}}}}},
+    {"if":{"properties":{"operation":{"const":"doctor"},"evidence":{"type":"object"}},"required":["operation","evidence"]},"then":{"properties":{"status":{"enum":["ready","offline_checked","attention_required","checkpoint_branch_mismatch","unknown","repair_failed","invalid_input","rejected"]},"evidence":{"properties":{"runtime_update":{"$ref":"#/$defs/doctor_runtime_update"},"local":{"$ref":"#/$defs/doctor_local"},"health":{"$ref":"#/$defs/doctor_health"},"repair":{"$ref":"#/$defs/doctor_repair"},"agent_guidance":{"$ref":"#/$defs/doctor_agent_guidance"}}}}}},
     {"if":{"properties":{"operation":{"const":"doctor"},"exit":{"const":0}},"required":["operation","exit"]},"then":{"properties":{"evidence":{"type":"object","required":["local"],"properties":{"local":{"$ref":"#/$defs/doctor_local"}}}}}},
     {
       "if": {"properties":{"operation":{"const":"setup"},"evidence":{"type":"object"}},"required":["operation","evidence"]},

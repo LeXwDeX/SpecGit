@@ -1529,6 +1529,7 @@ fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() 
         let config = fs::read(f.root.join(".specgit.yaml")).unwrap();
         let files = files_below(&f.root.join(".git/specgit-v2"));
         let writes = f.writes();
+        f.edit(|state| state["record_transport"] = json!(true));
         for branch in ["feature", "other-branch", "detached"] {
             match branch {
                 "other-branch" => git(&f.root, &["switch", "-c", branch]),
@@ -1633,7 +1634,47 @@ fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() 
             }
             let state = f.state();
             let calls = &state["calls"].as_array().unwrap()[calls_before..];
-            assert_eq!(calls.len(), if provider == "github" { 2 } else { 3 });
+            let release_route = "repos/LeXwDeX/SpecGit/releases/latest";
+            let release_calls: Vec<_> = calls
+                .iter()
+                .filter(|call| call["endpoint"] == release_route)
+                .collect();
+            assert_eq!(release_calls.len(), 1, "{calls:?}");
+            assert_eq!(release_calls[0]["method"], "GET");
+            assert_eq!(release_calls[0]["hostname"], "github.com");
+            assert_eq!(release_calls[0]["executable"], "gh");
+            assert!(release_calls[0]["body"].is_null());
+            let platform_calls: Vec<_> = calls
+                .iter()
+                .filter(|call| call["endpoint"] != release_route)
+                .collect();
+            assert_eq!(
+                platform_calls.len(),
+                if provider == "github" { 2 } else { 3 }
+            );
+            assert_eq!(platform_calls[0]["endpoint"], "user");
+            assert_eq!(
+                platform_calls[1]["endpoint"],
+                if provider == "github" {
+                    "repos/fixture/repo"
+                } else {
+                    "projects/fixture%2Frepo"
+                }
+            );
+            if provider == "gitlab" {
+                assert_eq!(platform_calls[2]["endpoint"], "metadata");
+            }
+            assert!(
+                platform_calls
+                    .iter()
+                    .all(|call| call["hostname"] == "forge.example")
+            );
+            assert!(
+                platform_calls
+                    .iter()
+                    .all(|call| call["executable"]
+                        == if provider == "github" { "gh" } else { "glab" })
+            );
             assert!(calls.iter().all(|call| call["method"] == "GET"));
             let human = f.run_human(&["doctor", "--provider", provider]);
             assert_eq!(human.status.code(), Some(0));

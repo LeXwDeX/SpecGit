@@ -275,16 +275,23 @@ pub(super) async fn doctor(process: Process, cwd: &Path, options: DoctorOptions)
         root,
         &source,
     );
+    let runtime_update = specgit::self_update::check_latest(&process, cwd, offline).await;
     let mut report = Report::success(
         "doctor",
         status,
-        json!({"probes":probes,"write_permissions":write_permissions,"environment":environment,"local":local.as_ref().map(LocalInspection::summary).unwrap_or_else(local_not_checked),"health":health.as_ref().map(|h|h.summary()).unwrap_or_else(||json!({"scope":"account_only","status":"not_checked","checks":[],"host_behavior":"not_verified"})),"repair":{"requested":fix,"dry_run":dry_run,"plans":plans,"results":results,"before":before,"recheck":recheck},"agent_guidance":agent_guidance}),
+        json!({"runtime_update":runtime_update,"probes":probes,"write_permissions":write_permissions,"environment":environment,"local":local.as_ref().map(LocalInspection::summary).unwrap_or_else(local_not_checked),"health":health.as_ref().map(|h|h.summary()).unwrap_or_else(||json!({"scope":"account_only","status":"not_checked","checks":[],"host_behavior":"not_verified"})),"repair":{"requested":fix,"dry_run":dry_run,"plans":plans,"results":results,"before":before,"recheck":recheck},"agent_guidance":agent_guidance}),
     );
     if !account_only
         && local.is_none()
         && let Some(evidence) = report.evidence.as_object_mut()
     {
         evidence.remove("local");
+    }
+    if runtime_update.status == specgit::self_update::RuntimeUpdateStatus::UpdateAvailable {
+        report.next_actions.push(json!({
+            "kind":"consider_runtime_update",
+            "remedy":format!("SpecGit {} is available (running {}). The Agent or user may choose to run `specgit update` within existing authorization; doctor never upgrades the runtime.", runtime_update.latest_version.as_deref().unwrap_or("unknown"), runtime_update.current_version)
+        }));
     }
     report.exit = exit;
     let mut effects = specgit::report::Effects::default();

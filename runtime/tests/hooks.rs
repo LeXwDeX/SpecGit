@@ -170,6 +170,180 @@ fn stop_observer_recursion_and_missing_selection_are_silent_without_remote_reads
 }
 
 #[cfg(feature = "test-fixtures")]
+fn observation_files(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>> {
+    let mut files = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.insert(path.clone(), None);
+            files.extend(observation_files(&path));
+        } else {
+            files.insert(path.clone(), Some(fs::read(path).unwrap()));
+        }
+    }
+    files
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn automatic_observation_skips_other_branch_records_and_preserves_guards() {
+    for provider in ["github", "gitlab"] {
+        let f = acceptance::fixture(provider);
+        let pending = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "stop-session",
+            "--goal",
+            "lifecycle",
+            "--once",
+        ]);
+        assert_eq!(pending["exit"], 0, "{pending}");
+        git(&f.root, &["switch", "-c", "main"]);
+        let declaration = f.root.join(".specgit.yaml");
+        let mut bytes = fs::read(&declaration).unwrap();
+        bytes.extend_from_slice(b"\n# Existing local changes are outside the old task.\n");
+        fs::write(&declaration, bytes).unwrap();
+        git(&f.root, &["add", ".specgit.yaml"]);
+        let private = f.root.join(".git/specgit-v2");
+        let before = observation_files(&private);
+        let calls = f.state()["calls"].clone();
+        for event in ["Stop", "PostToolUse"] {
+            let out = observe(&f, event, false);
+            assert!(out.status.success());
+            assert!(
+                out.stdout.is_empty(),
+                "{provider}/{event}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            assert!(out.stderr.is_empty());
+        }
+        for event in ["SessionStart", "PostToolUse", "PreToolUse", "Stop"] {
+            let payload = json!({"session_id":"stop-session","hook_event_name":event,"cwd":f.root,
+                "tool_name":"Edit","tool_input":{"file_path":declaration}});
+            let out = run_command(
+                f.command(&[]),
+                event,
+                &serde_json::to_vec(&payload).unwrap(),
+            );
+            assert!(out.status.success());
+            if event == "PostToolUse" {
+                assert!(
+                    out.stdout.is_empty(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+                continue;
+            }
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            match event {
+                "PreToolUse" => {
+                    assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny")
+                }
+                "Stop" => assert_eq!(value["decision"], "block"),
+                _ => {
+                    let text = value["hookSpecificOutput"]["additionalContext"]
+                        .as_str()
+                        .unwrap();
+                    assert!(text.contains("branch main"), "{value}");
+                    assert!(
+                        !text.contains("unreadable") && !text.contains("unverified event receipts"),
+                        "{value}"
+                    );
+                }
+            }
+        }
+        let status = f.run(&["status"]);
+        assert_eq!(status["status"], "checkpoint_branch_mismatch", "{status}");
+        let doctor = f.run(&["doctor", "--offline"]);
+        assert_eq!(doctor["status"], "checkpoint_branch_mismatch", "{doctor}");
+        let guard = f
+            .command(&["guard", "--stage", "pre-commit"])
+            .output()
+            .unwrap();
+        assert!(!guard.status.success());
+        assert!(String::from_utf8_lossy(&guard.stderr).contains("selection_branch"));
+        assert_eq!(f.state()["calls"], calls);
+        assert_eq!(observation_files(&private), before);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn automatic_observation_keeps_real_record_errors_as_advisory_diagnostics() {
+    for damage in ["malformed", "foreign_repository", "invalid_version"] {
+        let f = acceptance::fixture("github");
+        git(&f.root, &["switch", "-c", "main"]);
+        let private = f.root.join(".git/specgit-v2");
+        let path = private.join("selection.json");
+        if damage == "malformed" {
+            fs::write(&path, b"{").unwrap();
+        } else {
+            let mut selection: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            if damage == "foreign_repository" {
+                selection["repository"]["path"] = json!("another/repository");
+            } else {
+                selection["version"] = json!(0);
+            }
+            fs::write(&path, serde_json::to_vec(&selection).unwrap()).unwrap();
+        }
+        let before = observation_files(&private);
+        let calls = f.state()["calls"].clone();
+        for event in ["Stop", "PostToolUse"] {
+            let out = observe(&f, event, false);
+            assert!(out.status.success());
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let text = value["systemMessage"].as_str().unwrap();
+            assert!(text.contains("specgit doctor"), "{damage}/{event}: {value}");
+            assert!(
+                text.contains(if damage == "malformed" {
+                    "input:"
+                } else {
+                    "selection:"
+                }),
+                "{value}"
+            );
+            assert!(value.get("decision").is_none());
+            assert!(value.get("hookSpecificOutput").is_none());
+            assert!(out.stderr.is_empty());
+        }
+        for event in ["SessionStart", "PostToolUse"] {
+            let payload = json!({"session_id":"stop-session","hook_event_name":event,"cwd":f.root,
+                "tool_name":"Edit","tool_input":{"file_path":f.root.join(".specgit.yaml")}});
+            let out = run_command(
+                f.command(&[]),
+                event,
+                &serde_json::to_vec(&payload).unwrap(),
+            );
+            assert!(out.status.success());
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let text = if event == "SessionStart" {
+                &value["hookSpecificOutput"]["additionalContext"]
+            } else {
+                &value["systemMessage"]
+            }
+            .as_str()
+            .unwrap();
+            assert!(text.contains("specgit doctor"), "{damage}/{event}: {value}");
+            assert!(
+                text.contains(if damage == "malformed" {
+                    "input:"
+                } else {
+                    "selection:"
+                }),
+                "{value}"
+            );
+            assert!(value.get("decision").is_none());
+        }
+        assert_eq!(f.state()["calls"], calls);
+        assert_eq!(observation_files(&private), before);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
 #[test]
 fn stop_observer_lease_conflict_is_silent() {
     let f = acceptance::fixture("github");
@@ -628,6 +802,13 @@ fn malformed_duplicate_and_oversized_hook_inputs_remain_nonblocking() {
         assert!(out.status.success());
         let v: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(v.get("systemMessage").is_some());
+        assert!(
+            v["systemMessage"]
+                .as_str()
+                .unwrap()
+                .contains("specgit doctor")
+        );
+        assert!(v.get("decision").is_none());
     }
 }
 #[test]
