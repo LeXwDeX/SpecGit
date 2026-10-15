@@ -692,17 +692,50 @@ fn owned_elsewhere(hook: &Path, owner: &Path) -> Diagnostic {
     )
 }
 
+/// Prepare native guard changes without creating locks, directories, or assets.
+pub async fn preview(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
+    install_with_preview(process, cwd, uninstall, true).await
+}
+
 pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
+    install_with_preview(process, cwd, uninstall, false).await
+}
+
+async fn install_with_preview(
+    process: &Process,
+    cwd: &Path,
+    uninstall: bool,
+    dry_run: bool,
+) -> Result<Value, Diagnostic> {
     let root = root(process, cwd)
         .await?
         .ok_or_else(|| rejected("Native guard installation requires a Git worktree."))?;
     let serialization = serialization_path(process, &root).await?;
-    let _serialization = AssetStore::lock(
-        &serialization,
-        std::slice::from_ref(&serialization),
-        Duration::from_secs(2),
-    )?;
+    let _serialization = if dry_run {
+        None
+    } else {
+        Some(AssetStore::lock(
+            &serialization,
+            std::slice::from_ref(&serialization),
+            Duration::from_secs(2),
+        )?)
+    };
     let (changes, hook_root, receipt_parent) = plan(process, cwd, uninstall).await?;
+    if dry_run {
+        for change in &changes {
+            assets::safe_path(&change.path)?;
+            if !change.path.starts_with(&hook_root) && !change.path.starts_with(&receipt_parent) {
+                return Err(rejected(
+                    "A recorded Git-hook path is outside the planned asset roots.",
+                ));
+            }
+        }
+        if !AssetStore::pending_at(&receipt_parent.join("assets"))?.is_empty() {
+            return Err(rejected(
+                "An unfinished guard transaction requires recovery.",
+            ));
+        }
+    }
     let mut dependencies = Vec::new();
     let transfer = receipt_parent.join("setup-guard-hooks.json");
     if let Some(change) = changes
@@ -728,6 +761,19 @@ pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<V
                 .filter(|c| c.path.starts_with(&hook_root))
                 .map(|c| &c.path)
                 .collect();
+            if dry_run {
+                return Ok(json!({
+                    "dry_run": true,
+                    "prepared": true,
+                    "hook_root": hook_root,
+                    "changes": [],
+                    "retained": {
+                        "reason": if setup_demand { "setup_guard_purpose" } else { "shared_initialized_worktree" },
+                        "paths": changes.iter().map(|change| &change.path).collect::<Vec<_>>(),
+                        "shared_consumers": consumers
+                    }
+                }));
+            }
             return Ok(json!({
                 "installed": true,
                 "hooks": ["pre-commit", "pre-push"],
@@ -740,6 +786,20 @@ pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<V
                 "transaction": null
             }));
         }
+    }
+    if dry_run {
+        guard_dependencies_unchanged(&dependencies)?;
+        let planned: Vec<_> = changes.iter().map(|change| json!({
+            "path": change.path,
+            "operation": if change.unchanged() { "keep" } else if change.after.is_none() { "remove" } else if change.before.bytes.is_none() { "create" } else { "update" }
+        })).collect();
+        return Ok(json!({
+            "dry_run": true,
+            "prepared": true,
+            "hook_root": hook_root,
+            "changes": planned,
+            "retained": null
+        }));
     }
     let store = AssetStore::lock(
         &receipt_parent.join("assets"),

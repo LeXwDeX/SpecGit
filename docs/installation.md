@@ -1,6 +1,6 @@
 # Installation
 
-To have an agent install and initialize SpecGit, use the [agent guide](agent-install.md).
+To have an agent install and initialize SpecGit, use the [agent installation guide](agent-install.md).
 
 GitHub Releases are the only supported distribution channel. Download from the
 [latest stable Release](https://github.com/LeXwDeX/SpecGit/releases/latest).
@@ -86,33 +86,45 @@ shim can otherwise continue selecting the retired CLI. For a manual upgrade, bac
 up the previous executable before replacing it; restore that file to roll back
 the local upgrade.
 
-In a v2 project, inspect initialization and host integration separately. Every
-clone and linked worktree needs its own `specgit init`; local declarations,
-generated Skill files and private receipts do not travel with Git. `init` installs
-the shared project Skill and stable guidance entry points. It does not install
-host hooks. `setup` is the separate host choice.
+After installing or upgrading the shared CLI, use the [agent installation guide](agent-install.md#4-choose-project-integration-by-capability)
+to discover host constraints and choose project integration. The catalog is
+offline and does not require a Git project. Each clone and linked worktree still
+has its own project assets and private receipt; the CLI binary is shared. The
+following init commands apply to a new project; existing projects use the
+maintenance flow described below.
 
 ```sh
-specgit init --check --json
+specgit setup --catalog --json
+specgit init --inspect --json
 specgit init --dry-run --json
 specgit init --json
 specgit setup --dry-run --json
 specgit setup --json
 specgit status --json
+specgit doctor --offline --json
+```
+
+For a new project, initialize its required declaration with `init` before setup.
+Setup can write project agent assets without a declaration, but that alone does
+not fully initialize the project. The new-project setup default recommends the
+shared Skill and stable guidance entry point without installing agent hooks.
+Existing projects follow the maintenance flow and refresh their recorded
+integration. Review each preview before applying. Add SessionStart or PreToolUse
+context delivery only when supported by the installed CLI and host; in 2.13,
+PostToolUse, Stop and idle-wake integration are unsupported. Preview Git guard
+installation separately with `specgit guard --install --dry-run --json` when
+needed by the project. If policy requires a Git guard, its absence blocks the
+guard-dependent operation; prompts cannot substitute for it.
+
+For provider checks when network and native access are available, for example:
+
+```sh
 specgit doctor --provider github --json
 ```
 
-Apply project changes only after an applicable conflict-free preview. Resolve any
-required manual-observation choice explicitly: `--manual-observe` writes
-`agent.native_auto_merge=false`. An existing true preference needs a specific decision
-before that change; then use consistent options/configuration in check, preview and
-apply and read back the preference. Continue independent reads while blocked.
-Setup refresh includes all recorded hosts plus the `--agent` selection. Omit purposes
-on ordinary refresh; explicit purposes affect the full set and need authorization
-for every affected host. Review all host assets before applying. Registration records
-that files were written; it does not prove that the host loaded hooks or delivered
-context. Verify with the host's documented import/trust flow and a real behavior
-check.
+Read back the generated Skill and guidance, then repeat the same dry-run. Written
+files do not prove host loading; use the documented host trust flow and verify
+actual context delivery. Verify allow/deny behavior for Git guard only.
 From 2.4 on, setup is permanently project-only (`--scope project` is the
 default and only scope): refreshing a 2.3-era project receipt rewrites it into
 the 2.4 format locally without `shared_root` and without reading or writing the
@@ -131,8 +143,10 @@ existing v1 project, follow the migration guide above.
 ### Local generated files
 
 `init` maintains one owned block in Git's local `info/exclude`, resolved by Git
-and shared by linked worktrees. The block excludes `.specgit.yaml` and the generated
-`.agents/skills/specgit-native/SKILL.md`. It adds
+and shared by linked worktrees. The block excludes only `.specgit.yaml` and the
+generated `.agents/skills/specgit-native/SKILL.md`. Project guidance such as
+`AGENTS.md` can contain both manual and generated sections and remains eligible
+for tracking; receipts live in Git-private metadata. It adds
 `.claude/skills/specgit-native/SKILL.md` only when Claude is selected. A v1 migration
 may carry forward legacy exclusion rules; run `init` afterward to reconcile current
 local assets. Rules retained for another initialized worktree can keep a selected
@@ -185,16 +199,17 @@ and an unfinished native delivery blocks removal. Confirm
 
 `init --rollback <transaction>` undoes only its recorded local transaction when
 ownership still matches; it is not a full project uninstall. `guard --uninstall`
-removes recorded Git-hook blocks unless a sibling initialized worktree shares
-the same hook directory; then it keeps the blocks and its receipt and reports
-them under `retained`. `guard --install` in a worktree whose shared hooks
-another worktree owns names that owner instead of changing the hooks.
-SpecGit 2.4 is permanently project-only: `setup --uninstall` removes only the
-current worktree's recorded project agent assets and never touches global or
-host-level integration state. Existing 2.3 global data is preserved; 2.4 ships
-no global cleanup command. If that data must be removed, back it up first and
-use the 2.3 CLI's exact owned cleanup before upgrading — never a blind delete.
-Preserve recovery records and foreign content.
+removes independently owned Git-hook blocks only when no active consumer needs
+them; otherwise it retains the shared blocks and receipt. Setup-owned guard
+blocks remain under setup ownership. `guard --install` in a worktree whose shared
+hooks another worktree owns names that owner instead of changing the hooks.
+SpecGit 2.4 is permanently project-only: `setup --uninstall` removes this
+worktree's recorded project agent assets. Setup-owned guard blocks are retained
+while an active setup or sibling worktree needs them, and independently owned
+guard blocks remain outside setup's uninstall scope. Existing 2.3 global data is
+preserved; 2.4 ships no global cleanup command. If that data must be removed,
+back it up first and use the 2.3 CLI's exact owned cleanup before upgrading —
+never a blind delete. Preserve recovery records and foreign content.
 
 A binary rollback restores the previously backed-up executable. It does not undo
 project migration or host asset refreshes; assess those recorded transactions

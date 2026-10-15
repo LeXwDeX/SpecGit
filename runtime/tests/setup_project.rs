@@ -2334,7 +2334,6 @@ fn setup_rejects_shared_executable_from_a_linked_checkout() {
 fn cli_rejects_ambiguous_or_unsupported_choices_before_writes_and_exports_typed_schema() {
     let (f, _) = fixture(vec![]);
     for args in [
-        vec![],
         vec!["--agent", "unknown"],
         vec!["--scope", "unknown"],
         vec!["--scope", "global"],
@@ -2886,4 +2885,69 @@ fn cli_reversed_unowned_guidance_markers_return_conflict_without_writes() {
         "{report}"
     );
     assert_eq!(files(&f.base), before);
+}
+
+#[test]
+fn default_setup_previews_and_installs_only_the_shared_baseline() {
+    let (f, _) = fixture(vec![]);
+    let before = files(&f.base);
+    let preview = cli(&f.root, &["--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(preview["evidence"]["agents"], json!(["generic"]));
+    assert_eq!(files(&f.base), before);
+    let applied = cli(&f.root, &[]);
+    assert_eq!(applied["ok"], true, "{applied}");
+    assert!(
+        f.root
+            .join(".agents/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    assert!(f.root.join("AGENTS.md").is_file());
+    for path in [
+        ".claude",
+        ".codex",
+        ".opencode",
+        ".git/hooks/pre-commit",
+        ".git/hooks/pre-push",
+    ] {
+        assert!(
+            !f.root.join(path).exists(),
+            "unexpected integration: {path}"
+        );
+    }
+    let after = files(&f.base);
+    let repeat = cli(&f.root, &["--dry-run"]);
+    assert_eq!(repeat["ok"], true, "{repeat}");
+    assert!(
+        repeat["evidence"]["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|asset| asset["state"] == "unchanged"),
+        "{repeat}"
+    );
+    assert_eq!(files(&f.base), after);
+}
+
+#[test]
+fn default_setup_refresh_preserves_existing_named_host_selection() {
+    let (f, _) = fixture(vec![]);
+    assert_eq!(
+        cli(&f.root, &["--agent", "claude", "--hook-purpose", "none"])["ok"],
+        true
+    );
+    let before = files(&f.base);
+    let report = cli(&f.root, &["--dry-run"]);
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(report["evidence"]["agents"], json!(["claude"]));
+    assert_eq!(files(&f.base), before);
+    assert_eq!(cli(&f.root, &[])["ok"], true);
+    assert!(
+        f.root
+            .join(".claude/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    assert!(f.root.join("CLAUDE.md").is_file());
+    assert!(!f.root.join(".claude/settings.json").exists());
+    assert!(!f.root.join("AGENTS.md").exists());
 }

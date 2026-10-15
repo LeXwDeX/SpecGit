@@ -117,9 +117,19 @@ After migration, run `specgit init` in every clone and worktree to install its
 local declaration, common Skill and stable guidance entry points. Migration alone
 does not create these per-checkout assets.
 
-**For a fresh or v2 project:** inspect capabilities, preview initialization, then
-apply the same selected options. Run these in the target repository, replacing
-`<provider>` with `github` or `gitlab`:
+Before project writes, inspect the installed CLI's offline capability catalog.
+It also works outside a Git project and does not initialize or modify one:
+
+```sh
+specgit setup --catalog --json
+```
+
+Use the installed `--help` and `--schema` alongside the catalog. The next section
+covers how the Agent selects project integration from the actual host capabilities.
+
+**For a fresh or v2 project:** inspect, preview and apply initialization with the
+same selected options. Run these in the target repository, replacing `<provider>`
+with `github` or `gitlab`:
 
 ```sh
 specgit init --provider <provider> --check --json
@@ -142,57 +152,117 @@ forge to make initialization pass. An applicable preview with no conflicts is
 sufficient to continue the delegated local setup without another confirmation.
 
 Read back `.specgit.yaml` and the managed project guidance after initialization.
-Run `specgit status --remote <remote> --json` and `specgit doctor --provider <provider> --remote <remote> --json` and preserve their actual
-reported state. Do not create a test Issue or PR to demonstrate installation.
+Run `specgit status --remote <remote> --json` and
+`specgit doctor --offline --json` for local state. When native capability checks
+are relevant and access is available, also run `doctor` with the repository's
+provider and preserve the reported state. Do not create a test Issue or PR to
+demonstrate installation.
 
-## 4. Select the active agent and review the full refresh scope
+## 4. Choose project integration by capability
 
-Select the host running this task; multiple installed host directories do not mean
-the user wants new hosts added, and noninteractive operation never guesses
-a host. Setup also refreshes every previously recorded host; `--agent` does not
-confine its effects to that host. Inspect `specgit setup --help` and preview the integration, passing the
-host explicitly and repeatably through `--agent`:
+Use `setup --catalog` and the active host's documentation to determine what this
+Agent can discover, load, trust and invoke. The Agent chooses the useful
+capabilities and any host-specific glue; SpecGit does not require a particular
+host brand. Keep the installed CLI's `--help` and `--schema` as the command and
+protocol contract. The catalog is offline and independent of project setup.
 
-| Active host | Setup selection |
-| --- | --- |
-| Codex | `--agent codex` |
-| Claude Code | `--agent claude` |
-| OpenCode (official build) | `--agent opencode` |
-| OpenCode custom fork with claude-compatible hooks | `--agent opencode --opencode-claude-hooks` |
-| Host that documents `.agents/skills` discovery | `--agent generic` |
+| Capability | Purpose and scope | Requirement and check |
+| --- | --- | --- |
+| Shared CLI and native tools | One user-level SpecGit executable shared by repositories and worktrees; authenticated `gh`/`glab` for forge work | SpecGit operations require the CLI; native Issue/PR operations also require access |
+| SpecGit Skill | Canonical task workflow | Recommended project Skill at `.agents/skills/specgit-native/SKILL.md` |
+| Static guidance | Stable entry into the Skill | Recommended `AGENTS.md` entry; may contain manual text and remain tracked |
+| Dynamic context | Current task or checkpoint context | Optional; 2.13 delivers through SessionStart and PreToolUse where supported |
+| Agent event hooks | Host protocol that loads guidance/context | Optional; inspect host discovery and trust requirements; 2.13 does not support PostToolUse, Stop or idle wake |
+| Git guard | Native commit/push checkpoint enforcement, independent of the Agent process | Optional unless project policy requires it; verify actual guard behavior |
+| Observation | Bounded `watch`/`inbox` and private event state | Optional; reads native forge state when requested, with no automatic host wake |
+| Local project files | `.specgit.yaml`, generated Skill paths and Git `info/exclude` entries | Exclude only exact local paths; ignore rules never untrack files; mixed guidance may be tracked |
+| Private receipts and checkpoints | Ownership, recovery and selected Issue state in Git-private metadata | Per checkout/worktree; shared Git hook blocks stay while active consumers need them |
 
-For example, in Codex:
+Missing optional capability blocks only operations that depend on it. If policy
+requires the Git guard, its absence blocks guard-dependent commit/push work; a
+prompt or guidance text cannot substitute for enforcement or count as acceptance.
+Offline catalog, `status` and `doctor --offline` support local inspection. Forge
+state remains unknown until the relevant native read succeeds. Missing CLI
+tooling is not a checkpoint exception; report a concrete CLI defect and use the
+documented native recovery path when the selected workflow is blocked.
 
 ```sh
-specgit setup --agent codex --dry-run --json
-specgit setup --agent codex --json
+specgit status --json
+specgit doctor --offline --json
 ```
 
-These calls omit purposes to preserve recorded modes on ordinary refresh. Explicit
-purposes affect every recorded and newly selected host; keep them within current task scope. Review/report every affected host's assets.
-Choose only supported SessionStart/PreToolUse hooks. SessionStart gives brief rules
-and the Skill entry; PreToolUse provides relevant context or recovery. No PostToolUse,
-Stop callback or idle wake is supported. `guard` configures native commit/push hooks.
-`none` adds no purposes and preserves valid purposes and native Git guard.
-Refresh still removes owned retired PostToolUse/Stop registrations.
-It does not skip existing hosts' asset refresh. See the
-[maintenance guide](agent-project-refresh.md#5-review-the-full-host-refresh-scope) for
-capability checks, additive choices and selective-receipt downgrade limits.
+For a new project, initialize the declaration in section 3 first. Then review and
+apply setup's recommended shared Skill and stable guidance entry point. New setup
+does not add Agent hooks. Existing setup choices are retained on refresh. The
+legacy `--agent generic|claude|codex|opencode` selection remains available for
+compatibility and existing host receipts; a compatible custom OpenCode can also
+use `--opencode-claude-hooks`. These options are not required for the recommended
+new-project flow. Review the complete preview before applying:
 
-Project integration remains project-only: `--scope project` is the default and
-the only scope value. Setup writes documented checkout assets with a
-worktree-private receipt, never copies the runtime binary into a project, and
-never installs user-global host assets or state. Project hooks invoke the
-currently installed shared user executable directly, so there is no global setup
-prerequisite. The retired global integration scope and its selectors —
-`--root`, `--provider`, `--api-host`, `--register-claude`,
-`--register-codex`, `--register-opencode`, `--claude-settings`, `--codex-root`
-and `--opencode-root` — are rejected input, not deprecated aliases. Preserve
-foreign skills, hooks and instructions. Refresh replaces complete, proven-owned
-assets and unique managed blocks, including edited body text; preserve outside
-content, config, checkpoints and other hooks. Unknown ownership or damaged/duplicate
-markers still require reconciliation. `watch`, `hook` and `inbox` always use
-Git-private state; their retired `--state-root` option is rejected.
+```sh
+specgit setup --dry-run --json
+specgit setup --json
+```
+
+Add Git guard independently when needed:
+
+```sh
+specgit guard --install --dry-run --json
+specgit guard --install --json
+```
+
+Keep custom host settings and glue under a clear owner. The Agent must verify and
+maintain custom glue; SpecGit manages only recorded SpecGit assets, and `doctor`
+does not validate arbitrary host configuration. Verify each layer separately:
+written files do not prove that the host loaded them, and loading does not prove
+context delivery or enforcement. Follow host import/trust steps, read back the
+Skill and guidance, verify actual context delivery, and verify allow/deny behavior
+for Git guard only. Do not describe PreToolUse context delivery as an edit gate.
+See the [maintenance guide](agent-project-refresh.md#5-review-the-full-host-refresh-scope)
+for refreshing existing host choices and ownership.
+
+## Project scope and removal
+
+Setup remains project-only. It writes selected checkout assets and a worktree
+receipt, never a project-local CLI or user-global host state. Linked worktrees
+have independent project receipts; common Git hook blocks can have multiple
+consumers. Preserve foreign content, manual guidance and unrelated hooks. Use
+`--agent` or host-specific options only when maintaining a compatible existing
+receipt or the installed catalog requires them.
+
+`setup --uninstall` previews and removes only the current worktree's recorded
+setup assets. Setup-owned Git guard blocks remain while an active setup or sibling
+worktree consumes them; setup does not remove independently owned guard blocks.
+The standalone guard commands manage independent guard ownership. Preview before
+uninstalling:
+
+```sh
+specgit setup --uninstall --dry-run --json
+specgit setup --uninstall --json
+specgit guard --uninstall --dry-run --json
+specgit guard --uninstall --json
+```
+
+An independently installed guard stays outside setup's uninstall scope. Shared
+guard blocks remain while consumers need them; ownership or permission ambiguity
+is a conflict to reconcile through the owning CLI transaction. Do not hand-edit
+managed blocks or remove receipts to force cleanup.
+
+Whole-project removal remains a separate operation. Use the installed CLI's
+`remove --help`, preview the exact plan, then apply only that reviewed digest:
+
+```sh
+specgit remove --dry-run --json
+specgit remove --apply --expect <preview_sha256> --json
+specgit remove --rollback <transaction>
+```
+
+Declaration and local-routing removal requires exact bytes and permissions proven
+by a committed init or migration journal; an unowned or edited declaration, a
+tracked `.specgit.yaml`, a pending transaction or an unfinished delivery blocks
+the preview. An existing delivery checkpoint also requires the verified native
+target merge and every selected Issue closed. Sibling worktrees retain shared
+exclude and hook blocks they still consume.
 
 ### Optional user Skill
 
@@ -220,103 +290,6 @@ Refresh failure does not roll back the binary; inspect the update report and run
 refresh its project Skill and stable guidance entry points. See the
 [native reference](../runtime/REFERENCE.md#user-skill) for ownership and reports.
 
-### Project agent integration
-
-`specgit init` installs the common project Skill and stable guidance entry points
-in each checkout; it does not install host hooks. Select the active host separately
-with `specgit setup`. Stable entry points are in root `AGENTS.md` for generic and
-official OpenCode, root `CLAUDE.md` for Claude, and root `AGENTS.md` or an existing
-nonempty `AGENTS.override.md` for Codex. Each points to the canonical
-`.agents/skills/specgit-native/SKILL.md`; Claude also gets
-`.claude/skills/specgit-native/SKILL.md` for host discovery. Inside the actual
-target repository:
-
-```sh
-specgit setup --agent codex --dry-run --json
-specgit setup --agent codex --json
-```
-
-Project scope resolves the Git checkout and private absolute Git directory,
-writes selected host assets and records the receipt at
-`<git_dir>/specgit-v2/agent-assets/ownership.json`. New transaction journals are
-stored under `<git_dir>/specgit-v2/assets/`; older journals in `agent-assets/`
-serve only as migration evidence or for recovery. Each linked worktree integrates
-independently. The 2.4 receipt format omits `shared_root`.
-A 2.3-era project receipt is refreshed, removed or recovered locally with
-foreign content and manual edits preserved, and setup never reads or writes the
-retired 2.3 global root. That global 2.3 data stays preserved: 2.4 ships no
-global cleanup command. If it must be removed, back it up first and use the 2.3
-CLI's exact owned cleanup before upgrading; never blind-delete.
-Selection is additive: refresh preserves previously recorded agents and
-explicit choices, and a new project integration fails unless at least one
-`--agent` is selected. Project uninstall removes every recorded project asset
-of the current worktree and must omit `--agent`; `--rollback` restores from the
-project journal only:
-
-```sh
-specgit setup --uninstall --dry-run --json
-specgit setup --uninstall --json
-specgit setup --rollback <transaction>
-```
-
-`setup --uninstall` is deliberately narrow: it removes only this
-worktree's recorded agent assets and keeps the declaration, guidance blocks,
-guard hooks and local routing. Removing a whole project's SpecGit integration
-is the separate `specgit remove` command, not part of `setup`. That command is
-introduced in the 2.3 runtime contract; confirm `specgit remove --help` on the
-installed executable before offering it. It previews first, applies only the
-exact inspected preview digest, and rolls back a transaction offline:
-
-```sh
-specgit remove --dry-run --json
-specgit remove --apply --expect <preview_sha256> --json
-specgit remove --rollback <transaction>
-```
-
-Declaration and local-routing removal requires exact bytes and permissions
-proven by a committed init or migration journal; an unowned or edited declaration, a tracked
-`.specgit.yaml` (removal never changes the Git index), a pending transaction or
-an unfinished delivery blocks the preview with listed conflicts and no writes.
-An existing delivery checkpoint additionally requires the verified native
-target merge with every selected Issue closed before any removal can proceed. Sibling initialized worktrees
-keep shared exclude and hook blocks they still consume.
-
-When Codex is selected, project hooks live in `<repo>/.codex/hooks.json`, and
-Codex runs them only after the user reviews and trusts the project `.codex/`
-layer in the host's `/hooks` menu. Setup reports
-`codex_trust: review_in_host_required`; never mark that review as done, and do
-not automate, bypass or assume host trust.
-
-### OpenCode integration boundaries
-
-The official OpenCode build receives the `.agents` skill and `AGENTS.md`
-guidance. A custom OpenCode fork with claude-compatible
-hook support can opt in through `--opencode-claude-hooks` (requires
-`--agent opencode`): setup then generates project `.opencode/hooks.json` with
-top-level event entries, one single-quoted command string
-(`<executable> hook --event <event>`, no separate args entries) and
-`inputFormat: claude-code`. Only SessionStart and PreToolUse are supported; do not configure PostToolUse, Stop
-or idle wake. If observation cannot be delivered through allowed host events, use
-bounded `specgit watch`/`inbox` or manual continuation. Verify actual behavior before
-relying on registration.
-The fork's
-`/import-claude-hooks` command is an interactive LLM prompt that reads the
-project's Claude settings and asks about each entry individually — it is not an
-automatic read. Do not import hook entries that native setup already owns as
-unmanaged duplicates.
-
-For other hosts, report CLI/project setup separately and use the native reference
-rather than inventing an unsupported registration flag.
-
-Verify that the active host discovers the installed `specgit-native` entry point
-and project guidance. If discovery requires a reload or next turn, report
-registration as written but not yet verified and name that remaining action.
-File existence alone does not prove host import or hook delivery;
-the setup report itself lists registration as `written_not_verified` and host
-delivery facts as `not_checked`. After CLI upgrades, repeat the binary checks
-and preview the existing project/host
-refresh; do not replace their settings with fresh defaults.
-
 ## Completion report
 
 Report the installed version, Release URL, binary path, verified ZIP and binary
@@ -330,8 +303,10 @@ A failed or unknown check remains failed or unknown.
 ### Local generated files
 
 `init` maintains one owned block in Git's local `info/exclude`, resolved by Git
-and shared by linked worktrees. The block excludes `.specgit.yaml` and the generated
-`.agents/skills/specgit-native/SKILL.md`. It adds
+and shared by linked worktrees. The block excludes only `.specgit.yaml` and the
+generated `.agents/skills/specgit-native/SKILL.md`. Project guidance such as
+`AGENTS.md` and `CLAUDE.md` can contain manual and generated sections and remain
+eligible for tracking. It adds
 `.claude/skills/specgit-native/SKILL.md` only when Claude is selected. A v1 migration
 may carry forward legacy exclusion rules; run `init` afterward to reconcile current
 local assets. Rules retained for another initialized worktree can keep a selected

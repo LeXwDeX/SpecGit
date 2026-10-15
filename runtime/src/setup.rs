@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub mod catalog;
 pub mod project;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
