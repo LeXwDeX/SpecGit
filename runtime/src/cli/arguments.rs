@@ -113,7 +113,7 @@ pub(super) enum Commands {
         #[arg(long, conflicts_with_all = ["stage", "install"])]
         uninstall: bool,
     },
-    /// Check project health; repair only recorded integrations with --fix.
+    /// Check project health and online release reminders; --fix repairs only recorded integrations.
     Doctor {
         #[arg(long, value_enum)]
         provider: Option<Provider>,
@@ -121,10 +121,10 @@ pub(super) enum Commands {
         remote: Option<String>,
         #[arg(long)]
         api_host: Option<String>,
-        /// Probe only an account; local context and project access remain not_checked.
+        /// Probe an account and official runtime releases; local context and project access remain not_checked.
         #[arg(long, requires = "provider")]
         account_only: bool,
-        /// Skip authentication and all platform/network probes.
+        /// Skip authentication, release checks and all platform/network probes.
         #[arg(long, conflicts_with = "account_only")]
         offline: bool,
         /// Repair only proven owned project assets, then check them again.

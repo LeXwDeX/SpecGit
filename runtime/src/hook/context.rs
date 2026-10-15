@@ -2,7 +2,7 @@
 use super::{
     INPUT_LIMIT, Output,
     classification::{patch_tool, relevant},
-    deny, info,
+    deny, notice,
 };
 use crate::{
     config::{self, Language},
@@ -119,24 +119,22 @@ async fn target_root(
 }
 pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared>, Output> {
     if !["SessionStart", "PreToolUse", "PostToolUse", "Stop"].contains(&event) {
-        return Err(info("SpecGit does not support this hook event version."));
+        return Err(notice("This hook event version is unsupported."));
     }
     let payload = match input::json(bytes, INPUT_LIMIT, 32) {
         Ok(v) => v,
-        Err(_) => return Err(info("SpecGit received invalid or oversized hook input.")),
+        Err(d) => return Err(notice(&d)),
     };
     if payload.get("hook_event_name").and_then(Value::as_str) != Some(event) {
-        return Err(info(
-            "SpecGit hook event identity does not match the registered event.",
+        return Err(notice(
+            "The hook event identity does not match the registered event.",
         ));
     }
     if payload
         .get("schema_version")
         .is_some_and(|v| v.as_u64() != Some(1))
     {
-        return Err(info(
-            "SpecGit does not support this hook input schema version.",
-        ));
+        return Err(notice("This hook input schema version is unsupported."));
     }
     let session = match payload.get("session_id").and_then(Value::as_str) {
         Some(s)
@@ -147,7 +145,7 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         {
             s
         }
-        _ => return Err(info("SpecGit hook session identity is missing or invalid.")),
+        _ => return Err(notice("The hook session identity is missing or invalid.")),
     };
     if event == "Stop" && payload.get("stop_hook_active").and_then(Value::as_bool) == Some(true) {
         return Ok(None);
@@ -161,7 +159,7 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         .map(PathBuf::from)
     {
         Some(p) if p.is_absolute() => p,
-        _ => return Err(info("SpecGit hook cwd is missing or invalid.")),
+        _ => return Err(notice("The hook cwd is missing or invalid.")),
     };
     let process = Process {
         limits: Limits {
@@ -181,18 +179,12 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
             return match config::worktree::declaration_lost(&process, root).await {
                 Ok(None) => Ok(None),
                 Ok(Some(lost)) if event == "PreToolUse" => Err(deny(&lost.to_string())),
-                Ok(Some(lost)) => Err(info(&lost.to_string())),
-                Err(_) => Err(info(
-                    "SpecGit could not inspect this worktree's private state; use explicit diagnostics.",
-                )),
+                Ok(Some(lost)) => Err(notice(&lost)),
+                Err(d) => Err(notice(&d)),
             };
         }
         Err(d) if d.code == Code::MigrationRequired => return Ok(None),
-        Err(_) => {
-            return Err(info(
-                "SpecGit project declaration is invalid; use explicit diagnostics.",
-            ));
-        }
+        Err(d) => return Err(notice(&d)),
     };
     let context = match project::resolve_git_state(
         &process,
@@ -209,19 +201,11 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
             match config::read_routing(&c) {
                 Ok(Some(routing)) => c.repository.host = routing.api_host,
                 Ok(None) => {}
-                Err(_) => {
-                    return Err(info(
-                        "SpecGit local identity is unavailable; remote state remains unknown.",
-                    ));
-                }
+                Err(d) => return Err(notice(&d)),
             }
             c
         }
-        Err(_) => {
-            return Err(info(
-                "SpecGit local identity is unavailable; remote state remains unknown.",
-            ));
-        }
+        Err(d) => return Err(notice(&d)),
     };
     Ok(Some(Prepared {
         context,
