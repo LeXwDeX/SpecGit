@@ -126,13 +126,13 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Install/update versioned project agent assets for explicitly selected agents. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--agent generic|claude|codex|opencode` repeats, and a new project integration requires at least one explicit `--agent`. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
+| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; an existing installation retains recorded choices. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. |
 | `hook` | Advisory host context with `--event SessionStart\|PreToolUse`. SessionStart briefly states rules and points to the project Skill; PreToolUse adds pending context and recovery guidance without tool denial. Retired PostToolUse/Stop callbacks return quietly before input is read. `--observe` does not launch automatic observation; use bounded watch/inbox. State is Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
-| `guard` | Local Git-hook entrypoint. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while a sibling initialized worktree shares the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
+| `guard` | Local Git-hook entrypoint. `--install --dry-run` and `--uninstall --dry-run` preview the same plans without creating hooks, state, directories or locks; use `--json` for machine output. Dry-run requires an install/uninstall operation and conflicts with `--stage`. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while an active setup or sibling hook consumer needs the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
 | `doctor` | Check local project health and, unless offline, read tool/account/project capability and derive basic Issue/request role permissions from the project response. `--provider` is optional when it can be derived from the selected remote/declaration; `--remote` and `--api-host` are optional overrides. `--offline` skips authentication, APIs, and provider CLI execution. `--fix` repairs only selected, recorded project integrations; `--dry-run` requires `--fix` and previews local changes. `--account-only` requires `--provider` and conflicts with offline/fix/dry-run. Help success does not prove API access, mutation permission, or host behavior. |
@@ -599,7 +599,9 @@ uses them. Its journal preserves the complete original history and records the
 exact retained entries in `retained_paths` with state `rolled_back_retaining`.
 Only those entries can still prove ownership; a later rollback checks consumers,
 content and permissions again and processes only the remaining retained entries.
-An empty retained set completes ordinary rollback. Invalid or ambiguous journal
+An empty retained set completes ordinary rollback. Once the journal is
+`rolled_back`, repeating that transaction reports zero changes and never replays
+its entries against later files. Invalid or ambiguous journal
 state remains a conflict, never permission to restore unrelated paths.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
@@ -712,10 +714,33 @@ duplicate its workflow. A review or local repair is not a platform-delivery
 claim; a platform-delivery goal requires current evidence and native readback
 of merge and closure of the associated Issues that should close.
 
+`setup --catalog --json` returns `status: "catalog"` and
+`evidence.installation_catalog`. Discovery is offline, needs no project or
+external CLI, and performs no project reads, host probes or writes. `--human`
+renders the same typed catalog. Catalog mode conflicts with `--agent`, `--hook-purpose`,
+`--opencode-claude-hooks`, `--opencode-async-rewake`, `--uninstall`, `--rollback`
+and `--dry-run`.
+
+The versioned catalog describes eight capabilities: `project_skill`,
+`instruction_entry`, `session_context`, `tool_context`, `git_guard`, `observation`,
+`local_exclusions` and `private_state`. Each item records its purpose, requirement
+level, scope/location, prerequisites, commands, protocol, ownership, verification,
+fallback and lifecycle. `shared_baseline` groups the project Skill and stable
+instruction entry; its members are installed and maintained together, not exposed
+as independent file switches. `.agents/` is the recommended shared project area;
+its presence does not prove that a host loads it. Verify written assets, host
+loading and actual effects separately, and re-read the Skill after compaction when
+needed. Agent-managed custom host configuration remains outside SpecGit receipts,
+refresh/removal and doctor checks. Existing recorded named-host integrations retain
+their ownership lifecycle. Setup alone does not create the declaration or prove
+initialization; run `init` for each clone/worktree.
+
 `setup` records repeatable `--agent generic|claude|codex|opencode` under
 `--scope project` (the default and only scope value). Unsupported or duplicated
-choices fail before any write, noninteractive operation never guesses a host,
-and a new project integration requires at least one explicit `--agent`. The
+choices fail before any write. Without a named selector, a new installation uses
+the shared project Skill/entry and adds no hooks; a recorded installation refreshes
+its existing choices. These selectors remain compatibility paths rather than a
+requirement to name a host. The
 retired global integration scope and its selectors — `--root`, `--provider`,
 `--api-host`, `--register-claude`, `--register-codex`, `--register-opencode`,
 `--claude-settings`, `--codex-root` and `--opencode-root` — are rejected input,

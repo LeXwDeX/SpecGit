@@ -121,6 +121,8 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 用 `command -v specgit` 定位，并用 `specgit --human --version` 确认版本。
 不得安装项目内的操作用 CLI。隔离构建和安装验证产物仅用于测试，不替换共享 PATH 入口。
 每个参与项目使用 `specgit init` 初始化。
+先读 `specgit setup --catalog --json`，再由 Agent 按实际环境选择接入。新安装默认共享 Skill 和入口，不添加 hooks。
+分别验证写入、宿主加载和实际效果；Agent 自行接入的宿主配置不属于 SpecGit 的受管资产。
 
 项目集成仅限项目级。setup 不安装全局宿主资产或全局观察状态。唯一的用户级资产是用户显式运行 `specgit skill --user` 安装的 Skill 文件，`specgit update` 只刷新已受管的该文件。
 项目 hooks 直接引用共享 CLI。官方 OpenCode 只安装项目指导和 Skill。
