@@ -188,11 +188,9 @@ context and idle delivery; registration is not verified delivery. Do not duplica
 Omitted purposes preserve recorded modes; `none` never removes hooks/Git guard. State stays worktree Git-private.
 Keep notices pending until transport receipt; acknowledgment proves neither human reading nor completion.
 
-After CLI replacement, preview `setup --dry-run` and refresh project Skills/entry guidance, not manual copies.
-Refresh replaces recorded assets and complete unique blocks, including edited body text;
-preserve outside bytes, declarations, checkpoints and other hooks. Missing/damaged/duplicate
-markers or unknown ownership conflict. Never handwrite, restore/move old blocks or add manual
-backups; CLI transactions handle recovery. Uninstall/rollback preserves later edits. Names prove nothing.
-After all init/setup updates, run `status` and `doctor`, read back generated Skill/guidance, then repeat dry-runs; `init --dry-run` lists planned paths only.
+After CLI replacement, preview `setup --dry-run` and refresh project Skills/guidance, not manual copies. Refresh replaces recorded assets and complete unique blocks, including edited body text; preserve outside bytes, declarations, checkpoints and other hooks.
+Missing/damaged/duplicate markers or unknown ownership conflict. Refresh, including a no-op, and uninstall verify recorded permissions for every managed file; mismatch conflicts and leaves the asset and receipt unchanged.
+Do not automatically restore permissions or adopt observed state; resolve mismatches through a separate explicit maintenance choice. Never handwrite/restore blocks or add backups; transactions handle recovery.
+Uninstall/rollback preserves later edits to content and permissions. After all init/setup updates, run `status`, `doctor`, read back generated Skill/guidance and repeat dry-runs; `init --dry-run` lists planned paths only. Names prove nothing.
 
 Contract version: {{version}}.

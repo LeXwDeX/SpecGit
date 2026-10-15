@@ -4,6 +4,13 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.11.1
+
+- Verify recorded permissions and transaction ownership before every project setup refresh or uninstall, including unchanged assets. A permission change now fails consistently with doctor and leaves files, permissions and receipts intact.
+- Report the recorded and observed permissions in ownership conflicts. A newer permission record cannot be bypassed by an older matching mode in the same receipt chain; automatic permission restoration and ownership adoption remain unsupported.
+
+Scope: [#730](https://github.com/LeXwDeX/SpecGit/issues/730).
+
 # 2.11.0
 
 - Scope automatic Stop observation and pending-notice reads to the current branch checkpoint. A valid checkpoint for another branch in the same repository is skipped without changing it; PreToolUse, Git guards and ordinary synchronous Stop protection remain in place.

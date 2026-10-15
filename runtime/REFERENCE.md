@@ -644,12 +644,19 @@ manually edited hooks and foreign content instead.
 
 ## Assets, migration and installation
 
-Setup uses exact asset hashes and recorded host groups. Foreign content, hook
-ordering and file permissions survive refresh/uninstall. Dry-run performs no
-mkdir, asset lock or write. Real apply rechecks content/permissions after locking,
-uses atomic replacement and saves restorable private preimages. Edited ownership
-or interrupted transactions require explicit recovery. Rollback refuses later
-conflicting edits; uninstall retains backups and unrelated directories.
+Setup uses exact asset hashes and recorded host groups. Before refresh (including
+a no-op) or uninstall, it proves transaction ownership and recorded permissions
+for every managed Skill, guidance file and hook settings file. A permission
+mismatch is an ownership conflict; the operation leaves the asset and receipt
+unchanged and does not restore permissions or adopt the current state. This
+tightens behavior for existing integrations whose recorded and current
+permissions differ; resolve that state through a separate explicit maintenance
+decision before retrying setup. Foreign content and hook ordering survive
+refresh/uninstall. Dry-run performs no mkdir, asset lock or write. Real apply
+rechecks content/permissions after locking, uses atomic replacement and saves
+restorable private preimages. Edited ownership or interrupted transactions
+require explicit recovery. Rollback refuses later conflicting edits; uninstall
+retains backups and unrelated directories.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
 facts; successful setup is not verified host registration or delivery.

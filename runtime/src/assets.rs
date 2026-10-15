@@ -709,6 +709,7 @@ impl AssetStore {
             Vec::new(),
         )]);
         let mut visited = std::collections::HashSet::new();
+        let mut permission_conflicts = BTreeSet::new();
         while let Some((current, proofs)) = queue.pop_front() {
             if !visited.insert(current.clone()) {
                 continue;
@@ -725,16 +726,25 @@ impl AssetStore {
                     && receipt_entry.after_permissions.as_ref()
                         != Some(&PermissionRecord::capture(receipt.permissions.as_ref()))
                 {
+                    if let Some(recorded) = &receipt_entry.after_permissions {
+                        permission_conflicts.insert(format!(
+                            "Recorded permissions do not match the observed permissions for {}: recorded {}; observed {}.",
+                            receipt_path.display(), recorded.description(),
+                            PermissionRecord::capture(receipt.permissions.as_ref()).description()
+                        ));
+                    }
                     continue;
                 }
                 let mut chain = proofs.clone();
-                chain.push(Change {
-                    path: path.clone(),
-                    before: snapshot.clone(),
-                    after: snapshot.bytes.clone(),
-                    permissions: snapshot.permissions.clone(),
-                });
-                if journal.entries.iter().any(|e| {
+                if !chain.iter().any(|proof: &Change| proof.path == *path) {
+                    chain.push(Change {
+                        path: path.clone(),
+                        before: snapshot.clone(),
+                        after: snapshot.bytes.clone(),
+                        permissions: snapshot.permissions.clone(),
+                    });
+                }
+                let asset_entry = journal.entries.iter().find(|e| {
                     safe_path(&e.path).is_ok()
                         && if asset.bytes.is_some() {
                             e.path.canonicalize().ok().as_deref() == Some(expected_asset.as_path())
@@ -748,17 +758,35 @@ impl AssetStore {
                                 e.path == expected_asset
                             }
                         }
-                        && e.after.is_some()
-                        && asset_digest.is_none_or(|digest| e.after.as_deref() == Some(digest))
-                        && if asset.bytes.is_none() {
-                            e.after_permissions.as_ref()
-                                == Some(&PermissionRecord::after(true, None))
-                        } else {
-                            e.after_permissions.as_ref()
-                                == Some(&PermissionRecord::capture(asset.permissions.as_ref()))
-                        }
-                }) {
-                    return Ok(Some(chain));
+                });
+                if let Some(entry) = asset_entry {
+                    // A newer removal or different recorded digest also ends
+                    // this branch; an older asset cannot override that change.
+                    if entry.after.is_none()
+                        || asset_digest.is_some_and(|digest| entry.after.as_deref() != Some(digest))
+                    {
+                        continue;
+                    }
+                    let observed = if asset.bytes.is_none() {
+                        PermissionRecord::after(true, None)
+                    } else {
+                        PermissionRecord::capture(asset.permissions.as_ref())
+                    };
+                    if entry.after_permissions.as_ref() == Some(&observed) {
+                        return Ok(Some(chain));
+                    }
+                    if asset.bytes.is_some()
+                        && let Some(recorded) = &entry.after_permissions
+                    {
+                        permission_conflicts.insert(format!(
+                            "Recorded permissions do not match the observed permissions for {}: recorded {}; observed {}.",
+                            asset_path.display(), recorded.description(), observed.description()
+                        ));
+                    }
+                    // This is the nearest asset write on this receipt chain. A
+                    // still older mode cannot authorize its current permissions.
+                    // Missing post-write permissions are incomplete proof too.
+                    continue;
                 }
                 if let Some(previous) = &receipt_entry.before
                     && previous != &current
@@ -767,6 +795,17 @@ impl AssetStore {
                     queue.push_back((previous.clone(), chain));
                 }
             }
+        }
+        if !permission_conflicts.is_empty() {
+            return Err(Diagnostic::new(
+                Code::OwnershipConflict,
+                "owned_assets",
+                &permission_conflicts
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                "Keep the existing files and permissions. Reconcile the recorded and observed permissions explicitly, then preview again; no permission change or ownership adoption was authorized.",
+            ));
         }
         Ok(None)
     }
@@ -1152,6 +1191,15 @@ struct PermissionRecord {
     unix_mode: Option<u32>,
 }
 impl PermissionRecord {
+    fn description(&self) -> String {
+        let readonly = self
+            .readonly
+            .map_or_else(|| "unknown".into(), |value| value.to_string());
+        match self.unix_mode {
+            Some(mode) => format!("unix_mode={mode:04o}, readonly={readonly}"),
+            None => format!("readonly={readonly}"),
+        }
+    }
     fn after(present: bool, permissions: Option<&Permissions>) -> Self {
         if !present {
             return Self::capture(None);

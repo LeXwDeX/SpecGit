@@ -715,6 +715,244 @@ fn health_plan_does_not_reset_changed_permissions() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn permission_drift_rejects_setup_refresh_and_uninstall_without_adopting_changes() {
+    use specgit::setup::HookPurpose::Guard;
+    use std::os::unix::fs::PermissionsExt;
+
+    for relative in [
+        ".opencode/hooks.json",
+        ".agents/skills/specgit-native/SKILL.md",
+        "AGENTS.md",
+        ".git/specgit-v2/agent-assets/ownership.json",
+    ] {
+        let (f, mut options) = fixture(vec![Agent::Opencode]);
+        options.opencode_claude_hooks = true;
+        install(&options, &f).unwrap();
+        let path = f.root.join(relative);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let before = files(&f.base);
+        let modes: BTreeMap<_, _> = before
+            .keys()
+            .map(|path| {
+                (
+                    path.clone(),
+                    fs::metadata(path).unwrap().permissions().mode(),
+                )
+            })
+            .collect();
+        options.agents.clear();
+        options.opencode_claude_hooks = false;
+        for uninstall in [false, true] {
+            options.uninstall = uninstall;
+            for dry_run in [true, false] {
+                options.dry_run = dry_run;
+                let error = install(&options, &f).expect_err(relative);
+                assert_eq!(error.code, Code::OwnershipConflict, "{relative}: {error}");
+                assert!(error.message.contains("recorded unix_mode=0600"), "{error}");
+                assert!(error.message.contains("observed unix_mode=0644"), "{error}");
+                assert!(
+                    error.message.contains(&path.to_string_lossy().to_string()),
+                    "{error}"
+                );
+                assert_eq!(files(&f.base), before, "{relative}");
+            }
+        }
+        options.uninstall = false;
+        // A requested hook change must not silently adopt the changed mode.
+        for dry_run in [true, false] {
+            options.dry_run = dry_run;
+            let error = project::install_with_hooks(
+                &options,
+                &selection(&[Guard], false),
+                &f.root,
+                &f.private,
+                &f.source,
+            )
+            .unwrap_err();
+            assert_eq!(error.code, Code::OwnershipConflict, "{relative}: {error}");
+            assert_eq!(files(&f.base), before, "{relative}");
+        }
+        let error = project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap();
+        assert_eq!(error.code, Code::OwnershipConflict);
+        assert!(error.message.contains("recorded unix_mode=0600"), "{error}");
+        assert!(error.message.contains("observed unix_mode=0644"), "{error}");
+        assert_eq!(files(&f.base), before);
+        for (path, mode) in modes {
+            assert_eq!(fs::metadata(path).unwrap().permissions().mode(), mode);
+        }
+    }
+}
+
+#[test]
+fn readonly_permission_drift_is_rejected_before_setup_writes() {
+    let (f, mut options) = fixture(vec![Agent::Codex]);
+    install(&options, &f).unwrap();
+    let path = f.root.join(".codex/hooks.json");
+    let original = fs::metadata(&path).unwrap().permissions();
+    let mut changed = original.clone();
+    changed.set_readonly(true);
+    fs::set_permissions(&path, changed).unwrap();
+    let before = files(&f.base);
+    options.agents.clear();
+    let result = install(&options, &f);
+    let after = files(&f.base);
+    let kept_readonly = fs::metadata(&path).unwrap().permissions().readonly();
+    // Restore only the disposable fixture so Windows can remove its directory.
+    fs::set_permissions(&path, original).unwrap();
+    let error = result.unwrap_err();
+    assert_eq!(error.code, Code::OwnershipConflict, "{error}");
+    assert!(error.message.contains("readonly=false"), "{error}");
+    assert!(error.message.contains("readonly=true"), "{error}");
+    assert_eq!(after, before);
+    assert!(kept_readonly);
+}
+
+#[cfg(unix)]
+#[test]
+fn ownership_proof_does_not_skip_a_newer_recorded_permission() {
+    use specgit::assets::{AssetStore, Change};
+    use std::os::unix::fs::PermissionsExt;
+    let (f, mut options) = fixture(vec![Agent::Opencode]);
+    options.opencode_claude_hooks = true;
+    install(&options, &f).unwrap();
+    let path = f.root.join(".opencode/hooks.json");
+    let receipt_path = f.private.join("ownership.json");
+    let receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    // A new receipt revision with the same semantics links the permission-only
+    // transaction to its predecessor.
+    let updated_receipt = serde_json::to_vec(&receipt).unwrap();
+    assert_ne!(fs::read(&receipt_path).unwrap(), updated_receipt);
+    let mut change = Change::new(path.clone(), Some(fs::read(&path).unwrap())).unwrap();
+    change.permissions = Some(fs::Permissions::from_mode(0o640));
+    AssetStore::lock(
+        &f.private,
+        &[f.root.clone(), f.private.clone()],
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap()
+    .apply(vec![
+        change,
+        Change::new(receipt_path, Some(updated_receipt)).unwrap(),
+    ])
+    .unwrap();
+    // This matches the older transaction, but not the most recent record in
+    // the current receipt chain. An older mode must not erase that conflict.
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let before = files(&f.base);
+    options.agents.clear();
+    options.opencode_claude_hooks = false;
+    let errors = [
+        install(&options, &f).unwrap_err(),
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap(),
+    ];
+    for error in errors {
+        assert_eq!(error.code, Code::OwnershipConflict, "{error}");
+        assert!(error.message.contains("recorded unix_mode=0640"), "{error}");
+        assert!(error.message.contains("observed unix_mode=0600"), "{error}");
+    }
+    assert_eq!(files(&f.base), before);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
+#[test]
+fn a_receipt_without_transaction_evidence_cannot_authorize_setup() {
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    install(&options, &f).unwrap();
+    fs::remove_dir_all(f.private.join("transactions")).unwrap();
+    let before = files(&f.base);
+    options.agents.clear();
+    for uninstall in [false, true] {
+        options.uninstall = uninstall;
+        for dry_run in [true, false] {
+            options.dry_run = dry_run;
+            assert_eq!(
+                install(&options, &f).unwrap_err().code,
+                Code::OwnershipConflict
+            );
+            assert_eq!(files(&f.base), before);
+        }
+    }
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_setup_and_doctor_report_recorded_and_observed_hook_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, mut options) = fixture(vec![Agent::Opencode]);
+    options.opencode_claude_hooks = true;
+    fs::write(
+        f.root.join(".specgit.yaml"),
+        "version: 2\nprovider: github\nremote: origin\ntarget: main\n",
+    )
+    .unwrap();
+    git(
+        &f.root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/fixture/repo.git",
+        ],
+    );
+    install(&options, &f).unwrap();
+    let path = f.root.join(".opencode/hooks.json");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    let before = files(&f.base);
+    for args in [
+        vec!["setup", "--dry-run"],
+        vec!["setup"],
+        vec!["setup", "--uninstall", "--dry-run"],
+        vec!["setup", "--uninstall"],
+        vec!["doctor", "--offline"],
+        vec!["doctor", "--offline", "--fix", "--dry-run"],
+        vec!["doctor", "--offline", "--fix"],
+    ] {
+        let output = executable::command()
+            .current_dir(&f.root)
+            .args(&args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.code(), Some(3), "{args:?}: {report}");
+        let diagnostics = report["diagnostics"].to_string();
+        for expected in [
+            "ownership_conflict",
+            "recorded unix_mode=0600",
+            "observed unix_mode=0644",
+            ".opencode/hooks.json",
+        ] {
+            assert!(diagnostics.contains(expected), "{args:?}: {report}");
+        }
+        assert_eq!(files(&f.base), before, "{args:?}");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+    }
+}
+
 #[test]
 fn health_plan_reports_orphan_project_assets_without_claiming_foreign_files() {
     let (f, _) = fixture(vec![]);
@@ -1156,31 +1394,43 @@ fn guidance_slimming_refreshes_recorded_2_6_2_setup_without_overwriting_manual_t
         let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
         let old = include_str!("fixtures/managed-setup-2.6.2.txt");
         receipt["instructions"]["generic"]["block"] = json!(old);
-        fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+        let path = f.root.join("AGENTS.md");
+        // An older registration must have real transaction evidence; replacing
+        // only its receipt bytes is not a legitimate migration fixture.
+        specgit::assets::AssetStore::lock(
+            &f.private,
+            &[f.root.clone(), f.private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(vec![
+            specgit::assets::Change::new(
+                receipt_path,
+                Some(serde_json::to_vec_pretty(&receipt).unwrap()),
+            )
+            .unwrap(),
+            specgit::assets::Change::new(path.clone(), Some(old.as_bytes().to_vec())).unwrap(),
+        ])
+        .unwrap();
         let old = if edited {
             old.replace("Read this project's", "User changed project's")
         } else {
             old.to_owned()
         };
-        let path = f.root.join("AGENTS.md");
         let before = format!("Manual rules\r\n{old}\nManual tail\r\n");
         fs::write(&path, &before).unwrap();
         options.agents.clear();
-        if edited {
-            let error = install(&options, &f).unwrap_err();
-            assert_eq!(error.code, Code::OwnershipConflict);
-            assert_eq!(fs::read_to_string(&path).unwrap(), before);
-        } else {
-            assert!(install(&options, &f).is_ok());
-            let after = fs::read_to_string(&path).unwrap();
-            assert!(after.starts_with("Manual rules\r\n"));
-            assert!(after.ends_with("\nManual tail\r\n"));
-            assert!(after.contains("Project integration (setup, hooks, observation state and guidance) stays project-only"));
-            assert!(after.contains("not a general file-write sandbox"));
-            assert!(after.contains("Refresh replaces recorded assets and complete unique blocks"));
-            assert!(!after.contains("Before tracked product edits"));
-            assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
-        }
+        assert!(install(&options, &f).is_ok());
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.starts_with("Manual rules\r\n"));
+        assert!(after.ends_with("\nManual tail\r\n"));
+        assert!(after.contains(
+            "Project integration (setup, hooks, observation state and guidance) stays project-only"
+        ));
+        assert!(after.contains("not a general file-write sandbox"));
+        assert!(after.contains("Refresh replaces recorded assets and complete unique blocks"));
+        assert!(!after.contains("Before tracked product edits"));
+        assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
     }
 }
 
@@ -1207,11 +1457,8 @@ fn project_receipt_v2_is_written_and_legacy_v1_receipts_stay_readable() {
     let (f, mut options) = fixture(vec![]);
     let skill = skill_text();
     let skill_path = f.root.join(".agents/skills/specgit-native/SKILL.md");
-    fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
-    fs::write(&skill_path, &skill).unwrap();
     let block = "<!-- specgit:global:v2:start -->\n## SpecGit 2\n\nlegacy 2.3 guidance\n<!-- specgit:global:v2:end -->\n";
     let user = "user rules\n\n";
-    fs::write(f.root.join("AGENTS.md"), format!("{user}{block}")).unwrap();
     let legacy = json!({
         "version": 1,
         "owner": "specgit",
@@ -1228,11 +1475,25 @@ fn project_receipt_v2_is_written_and_legacy_v1_receipts_stay_readable() {
         }},
         "hooks": {},
     });
-    fs::create_dir_all(&f.private).unwrap();
-    fs::write(
-        f.private.join("ownership.json"),
-        serde_json::to_vec_pretty(&legacy).unwrap(),
+    specgit::assets::AssetStore::lock(
+        &f.private,
+        &[f.root.clone(), f.private.clone()],
+        std::time::Duration::from_secs(2),
     )
+    .unwrap()
+    .apply(vec![
+        specgit::assets::Change::new(skill_path.clone(), Some(skill.as_bytes().to_vec())).unwrap(),
+        specgit::assets::Change::new(
+            f.root.join("AGENTS.md"),
+            Some(format!("{user}{block}").into_bytes()),
+        )
+        .unwrap(),
+        specgit::assets::Change::new(
+            f.private.join("ownership.json"),
+            Some(serde_json::to_vec_pretty(&legacy).unwrap()),
+        )
+        .unwrap(),
+    ])
     .unwrap();
     let result = install(&options, &f).unwrap();
     assert_eq!(result["agents"], json!(["generic"]));
