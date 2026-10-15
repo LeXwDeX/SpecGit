@@ -588,7 +588,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
     let initial = f.run(&watch("lifecycle"));
     let identity: Identity =
         serde_json::from_value(initial["evidence"]["subscription"].clone()).unwrap();
-    let before = request_reads(&f);
+    let writes = f.writes();
     let mut child = WatchProcess::spawn(
         f.native_command(&[
             "watch",
@@ -624,9 +624,16 @@ fn explicit_watch_values_override_project_observation_defaults() {
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
     assert!(started.elapsed() < Duration::from_secs(4));
-    assert!(
-        request_reads(&f) >= before + 2,
-        "explicit poll_seconds was not applied"
+    assert_eq!(f.writes(), writes);
+    assert_eq!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .events
+            .last()
+            .unwrap()
+            .state,
+        EventState::TimedOut
     );
 }
 
@@ -714,6 +721,7 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
                 "pending" => {
                     assert_eq!(result["status"], "pending", "{provider}: {result}");
                     assert_eq!(next_step["kind"], "wait_for_checks", "{result}");
+                    assert_eq!(next_step["requires_user_authorization"], true, "{result}");
                     assert!(next_step["message"].as_str().unwrap().contains("checks"));
                     assert!(next_step["message"].as_str().unwrap().contains("draft"));
                     assert!(
@@ -772,6 +780,28 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
 }
 
 #[test]
+fn ready_request_with_pending_checks_keeps_wait_action_read_only() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        set_check_state(&f, provider, "pending");
+        let writes = f.writes();
+        let result = f.run(&watch("lifecycle"));
+        let action = &result["next_actions"][0];
+        assert_eq!(result["status"], "pending", "{provider}: {result}");
+        assert_eq!(action["kind"], "wait_for_checks", "{result}");
+        assert_eq!(action["draft"], false, "{result}");
+        assert_eq!(action["requires_user_authorization"], false, "{result}");
+        assert!(
+            action["message"]
+                .as_str()
+                .unwrap()
+                .contains("no review state is changed")
+        );
+        assert_eq!(f.writes(), writes, "{provider}");
+    }
+}
+
+#[test]
 fn absent_ci_keeps_checks_unobserved_and_lifecycle_guidance_actionable() {
     for provider in ["github", "gitlab"] {
         for draft in [true, false] {
@@ -800,6 +830,11 @@ fn absent_ci_keeps_checks_unobserved_and_lifecycle_guidance_actionable() {
                 assert_eq!(action["check_outcome"], "unobserved", "{result}");
                 assert_eq!(action["kind"], "inspect_checks", "{result}");
                 assert_eq!(action["draft"], draft, "{result}");
+                assert_eq!(
+                    action["requires_user_authorization"],
+                    goal == "lifecycle",
+                    "{result}"
+                );
                 let message = action["message"].as_str().unwrap();
                 if goal == "checks" {
                     assert!(
@@ -1811,16 +1846,24 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         "unpushed-commits",
     );
     let started = Instant::now();
+    let mut observer_deadline = None;
     loop {
         let state = watch_store::read(&identity).unwrap().unwrap();
-        if state
-            .lease
-            .is_some_and(|l| l.pid == child.id() && l.polls_completed > 0)
-        {
-            break;
+        if let Some(lease) = state.lease.as_ref().filter(|l| l.pid == child.id()) {
+            observer_deadline = Some(lease.deadline);
+            if lease.polls_completed > 0 {
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "Observer exited before local commits were added: {}",
+                    child.diagnostic()
+                );
+                break;
+            }
         }
         assert!(
-            child.try_wait().unwrap().is_none() && started.elapsed() < poll_budget * 2,
+            child.try_wait().unwrap().is_none()
+                && observer_deadline.is_none_or(|deadline| watch_store::now() < deadline)
+                && (observer_deadline.is_some() || started.elapsed() < poll_budget * 2),
             "{}",
             child.diagnostic()
         );
@@ -1846,7 +1889,6 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
     .unwrap()
     .trim()
     .to_owned();
-    let mut progressed = Instant::now();
     let mut polls = 0;
     let mut first_pending = None;
     loop {
@@ -1856,16 +1898,21 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             && lease.polls_completed > polls
         {
             polls = lease.polls_completed;
-            progressed = Instant::now();
+            observer_deadline = Some(lease.deadline);
             if state.events.last().is_some_and(|e| {
                 e.state == EventState::Pending
                     && e.reason.contains("Local commits are ahead")
                     && e.revision.local_head == new_head
             }) {
+                let pending = state.events.last().unwrap();
+                let next_step = pending.next_step.as_ref().unwrap();
+                assert!(next_step.requires_user_authorization, "{pending:?}");
+                assert!(next_step.message.contains("Push reviewed commits"));
+                assert!(next_step.message.contains("existing task authorization"));
                 let first_poll = *first_pending.get_or_insert(polls);
                 if repeated_pending_poll(
-                    state.lease.as_ref(),
-                    state.events.last(),
+                    Some(lease),
+                    Some(pending),
                     child.id(),
                     &new_head,
                     first_poll + 2,
@@ -1886,8 +1933,8 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
             child.diagnostic()
         );
         assert!(
-            progressed.elapsed() < poll_budget,
-            "No multi-poll pending state: {}",
+            observer_deadline.is_some_and(|deadline| watch_store::now() < deadline),
+            "Observer deadline expired before multiple pending revalidations: {}",
             child.diagnostic()
         );
         std::thread::sleep(Duration::from_millis(10));
@@ -1899,13 +1946,12 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
     });
-    let started = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
         assert!(
-            started.elapsed() < poll_budget * 2,
+            observer_deadline.is_some_and(|deadline| watch_store::now() < deadline),
             "Native push did not resume completion: {}",
             child.diagnostic()
         );

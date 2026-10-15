@@ -90,18 +90,27 @@ impl Paths {
             ));
         }
         let hook_root = config::worktree::hooks(process, root).await?;
+        let serialization = config::worktree::lock_native_guard(process, root).await?;
+        let allowed = config::worktree::rollback_allowed_roots(&[
+            root.clone(),
+            private_root.clone(),
+            exclude_parent.clone(),
+            hook_root,
+        ])?;
         let store = AssetStore::lock(
             &private_root.join("assets"),
-            &[
-                root.clone(),
-                private_root.clone(),
-                exclude_parent.clone(),
-                hook_root,
-            ],
+            &allowed,
             Duration::from_secs(2),
         )?;
-        let (transaction, retained) =
-            config::worktree::rollback(&store, process, root, exclude, id).await?;
+        let (transaction, retained) = config::worktree::rollback_with_lock(
+            &serialization,
+            &store,
+            process,
+            root,
+            exclude,
+            id,
+        )
+        .await?;
         Ok(Report::success(
             "init",
             "rolled_back",

@@ -351,6 +351,42 @@ impl GuardHealthPlan {
             .collect()
     }
 
+    /// Coordinate a guard repair with a composite setup plan. Delegation is
+    /// allowed only when every guard write has the same preimage, postimage and
+    /// permissions; partial or inconsistent overlap is a planning conflict.
+    pub fn covered_by(&self, plan: &assets::MaintenancePlan) -> Result<bool, Diagnostic> {
+        let writes: Vec<_> = self
+            .changes
+            .iter()
+            .filter(|change| !change.unchanged())
+            .collect();
+        let setup = plan.planned_changes();
+        if !writes.iter().any(|guard| {
+            setup
+                .iter()
+                .any(|change| change.path == guard.path && !change.unchanged())
+        }) {
+            return Ok(false);
+        }
+        if writes.iter().all(|guard| {
+            setup.iter().any(|change| {
+                change.path == guard.path
+                    && change.before.bytes == guard.before.bytes
+                    && change.before.permissions.as_ref().map(permission_bits)
+                        == guard.before.permissions.as_ref().map(permission_bits)
+                    && change.after == guard.after
+                    && change.permissions.as_ref().map(permission_bits)
+                        == guard.permissions.as_ref().map(permission_bits)
+            })
+        }) {
+            Ok(true)
+        } else {
+            Err(rejected(
+                "Setup and Git guard repair plans overlap without identical ownership snapshots and target contents; inspect again before repair.",
+            ))
+        }
+    }
+
     /// Hold the guard transaction lock while re-reading the effective Git
     /// path, ownership receipt, sibling consumers and hook permissions.
     pub async fn apply(self, process: &Process) -> Result<assets::Applied, Diagnostic> {
@@ -1012,43 +1048,8 @@ fn new_generation() -> Result<String, Diagnostic> {
     Ok(crate::assets::hash(&bytes))
 }
 fn setup_wants_guard(private: &Path, root: &Path) -> Result<bool, Diagnostic> {
-    #[derive(Deserialize)]
-    struct DemandReceipt {
-        version: u8,
-        owner: String,
-        root: PathBuf,
-        #[serde(default)]
-        purposes: BTreeMap<String, Vec<String>>,
-    }
-    let Some(bytes) = Snapshot::read(&private.join("agent-assets/ownership.json"))?.bytes else {
-        return Ok(false);
-    };
-    let value = crate::input::json(&bytes, 1_048_576, 20)?;
-    let receipt: DemandReceipt = serde_json::from_value(value).map_err(|_| {
-        rejected("The setup guard demand receipt is malformed; preserve both integrations.")
-    })?;
-    let actual_root = root
-        .canonicalize()
-        .map_err(|_| rejected("The setup guard demand root cannot be resolved."))?;
-    if ![1, 2, 3, 4].contains(&receipt.version)
-        || receipt.owner != "specgit"
-        || receipt.root.canonicalize().ok().as_ref() != Some(&actual_root)
-        || receipt.purposes.len() > 4
-        || receipt.purposes.iter().any(|(host, purposes)| {
-            !["generic", "claude", "codex", "opencode"].contains(&host.as_str())
-                || purposes
-                    .iter()
-                    .any(|p| !["guard", "context"].contains(&p.as_str()))
-        })
-    {
-        return Err(rejected(
-            "The setup guard demand ownership is unsupported; preserve both integrations.",
-        ));
-    }
-    Ok(receipt
-        .purposes
-        .values()
-        .any(|purposes| purposes.iter().any(|p| p == "guard")))
+    let snapshot = Snapshot::read(&private.join("agent-assets/ownership.json"))?;
+    crate::config::worktree::setup_guard_demand(snapshot.bytes.as_deref(), root)
 }
 
 #[derive(Clone)]
@@ -1341,7 +1342,54 @@ pub async fn setup_plan(
         enabled,
         changes,
         dependencies,
-        allowed: vec![hook_root],
+        // Git may spell its metadata root differently from a caller's
+        // canonical Windows checkout path. Authorize the discovered receipt
+        // directory explicitly, alongside the discovered hook directory.
+        allowed: vec![hook_root, private],
         evidence: json!({"selected":enabled,"ownership":"setup"}),
     })
+}
+
+#[cfg(test)]
+mod coordinated_health_tests {
+    use super::*;
+
+    #[test]
+    fn composite_guard_repair_requires_complete_identical_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let hook = Change::new(root.join("pre-commit"), Some(b"canonical hook".to_vec())).unwrap();
+        let receipt = Change::new(
+            root.join("setup-guard-hooks.json"),
+            Some(b"receipt".to_vec()),
+        )
+        .unwrap();
+        let guard = GuardHealthPlan {
+            root: root.clone(),
+            hook_root: root.clone(),
+            receipt_parent: root.clone(),
+            changes: vec![hook.clone(), receipt.clone()],
+            dependencies: vec![],
+        };
+        let plan = |changes| {
+            assets::MaintenancePlan::new(root.join("assets"), vec![root.clone()], changes, vec![])
+        };
+        assert!(
+            guard
+                .covered_by(&plan(vec![hook.clone(), receipt.clone()]))
+                .unwrap()
+        );
+        assert!(!guard.covered_by(&plan(vec![])).unwrap());
+        assert!(guard.covered_by(&plan(vec![hook.clone()])).is_err());
+        let mut drifted = receipt.clone();
+        drifted.before.bytes = Some(b"concurrent receipt".to_vec());
+        assert!(
+            guard
+                .covered_by(&plan(vec![hook.clone(), drifted]))
+                .is_err()
+        );
+        let mut different = receipt;
+        different.after = Some(b"different target".to_vec());
+        assert!(guard.covered_by(&plan(vec![hook, different])).is_err());
+    }
 }

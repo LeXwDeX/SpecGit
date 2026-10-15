@@ -220,10 +220,22 @@ fn checks_action(
             Vec::new(),
         ),
         EventState::Pending if check_outcome == CheckOutcome::Pending => {
-            let draft_context = if request.is_some_and(|request| request.draft) {
-                "This request remains a draft."
-            } else {
-                "The request is not marked as a draft."
+            let (draft_context, draft_action, requires_user_authorization) = match request {
+                Some(request) if request.draft => (
+                    "This request remains a draft.",
+                    "The Agent can prepare review and mark a reviewed draft ready under existing task authorization while CI runs, where the platform allows it.",
+                    true,
+                ),
+                Some(_) => (
+                    "The request is not marked as a draft.",
+                    "This next step only refreshes status; no review state is changed while checks run.",
+                    false,
+                ),
+                None => (
+                    "The request's draft/ready state is unknown.",
+                    "Refresh the native request before choosing a review action.",
+                    false,
+                ),
             };
             let goal_context = if goal == Goal::Checks {
                 "The checks goal remains open."
@@ -232,9 +244,9 @@ fn checks_action(
             };
             (
                 ActionKind::WaitForChecks,
-                format!("Native checks are still running. {draft_context} Keep observing their result. The Agent can prepare review and mark a reviewed draft ready under existing task authorization while CI runs, where the platform allows it. Actual native required checks and review still govern merge. {goal_context}"),
+                format!("Native checks are still running. {draft_context} Keep observing their result. {draft_action} Actual native required checks and review still govern merge. {goal_context}"),
                 Some(format!("specgit pr --status --request {request_id} --json")),
-                false,
+                requires_user_authorization,
                 Vec::new(),
             )
         }
@@ -243,10 +255,10 @@ fn checks_action(
             if goal == Goal::Checks {
                 "The explicit checks goal remains open: no usable native check result is available. Refresh native evidence; absence is not a passing result."
             } else {
-                "No usable native check result is available yet. Inspect the native check configuration and actual platform requirements; absent optional CI alone does not prevent review preparation, ready or authorized native delivery. The Agent can continue those steps under existing task authorization. This observation proves neither passing checks nor lifecycle completion."
+                "No usable native check result is available yet. Inspect the native check configuration and actual platform requirements; absent optional CI alone does not prevent review preparation, ready or authorized native delivery. This observation proves neither passing checks nor lifecycle completion."
             }.into(),
             Some(format!("specgit pr --status --request {request_id} --json")),
-            false,
+            goal == Goal::Lifecycle,
             Vec::new(),
         ),
         _ => return None,

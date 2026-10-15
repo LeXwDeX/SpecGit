@@ -2951,3 +2951,69 @@ fn default_setup_refresh_preserves_existing_named_host_selection() {
     assert!(!f.root.join(".claude/settings.json").exists());
     assert!(!f.root.join("AGENTS.md").exists());
 }
+
+#[cfg(windows)]
+#[test]
+fn canonical_windows_library_setup_keeps_git_metadata_within_selected_roots() {
+    for entry in ["init", "setup", "migrate"] {
+        use specgit::setup::HookPurpose::{Context, Guard};
+        let (f, mut options) = fixture(vec![Agent::Claude]);
+        assert!(f.root.to_string_lossy().starts_with(r"\\?\"));
+        let hooks = selection(&[Guard, Context], false);
+        options.dry_run = true;
+        let before = files(&f.base);
+        let preview = install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+        assert_eq!(preview["written"], false, "{preview}");
+        assert_eq!(files(&f.base), before);
+        options.dry_run = false;
+        let installed =
+            install_with_hooks(&options, &hooks, &f.root, &f.private, &f.source).unwrap();
+        assert_eq!(installed["written"], true, "{installed}");
+        let owned: BTreeMap<_, _> = files(&f.root)
+            .into_iter()
+            .filter(|(path, _)| {
+                !path
+                    .components()
+                    .any(|component| component.as_os_str() == "transactions")
+            })
+            .collect();
+        options.agents.clear();
+        options.uninstall = true;
+        options.dry_run = true;
+        let before = files(&f.base);
+        let preview = install_with_hooks(
+            &options,
+            &selection(&[], false),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap();
+        assert_eq!(preview["written"], false, "{preview}");
+        assert_eq!(files(&f.base), before);
+        options.dry_run = false;
+        let removed = install_with_hooks(
+            &options,
+            &selection(&[], false),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap();
+        let id = removed["transaction"]["transaction"].as_str().unwrap();
+        let output = executable::command()
+            .current_dir(&f.root)
+            .args([entry, "--rollback", id, "--json"])
+            .output()
+            .unwrap();
+        let rolled: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(output.status.success(), "{entry}: {rolled}");
+        assert_eq!(rolled["status"], "rolled_back", "{entry}: {rolled}");
+        if entry == "setup" {
+            assert_eq!(rolled["evidence"]["scope"], "project", "{rolled}");
+        }
+        for (path, bytes) in owned {
+            assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
+        }
+    }
+}

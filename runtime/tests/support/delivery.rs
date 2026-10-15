@@ -58,6 +58,14 @@ impl Fixture {
             assert!(
                 Command::new("git")
                     .current_dir(&root)
+                    // Finish fixture maintenance before tests snapshot .git.
+                    // Detached maintenance can create/remove files after commit exits.
+                    .args([
+                        "-c",
+                        "maintenance.autoDetach=false",
+                        "-c",
+                        "gc.autoDetach=false"
+                    ])
                     .args(args)
                     .output()
                     .unwrap()

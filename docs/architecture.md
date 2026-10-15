@@ -80,6 +80,8 @@ flowchart TD
   setup --> local_exclude
   setup --> assets
   setup --> guard
+  setup --> project_receipt
+  config --> project_receipt
   guard --> config
   guard --> project_git
   guard --> selection
@@ -133,6 +135,7 @@ The intended boundaries are:
 
 - `declaration` owns schema and validation rules. `identity` owns repository,
   host, and object-ID rules. `label_rules` and `template_rules` own vocabulary.
+- `project_receipt` owns the pure, complete project receipt decoder and selected-agent/purpose invariants. Setup, guard and shared rollback use this one contract; file reads and root-path resolution stay in adapters.
 - `config` is the local read and routing facade. It may keep compatibility
   aliases. Pure rules stay in their owner modules.
 - `project` owns Git process interaction. Its identity re-exports preserve
@@ -249,3 +252,5 @@ node scripts/ci-metadata-check.mjs
 For module or runtime changes, use the pinned Rust checks and the applicable
 native CI matrix in [CI scope](ci-scope.md). A diagram or a local compile does
 not replace the complete-source architecture test or three-platform CI.
+
+Native rollback acquires the shared native guard serialization lock before any asset-store lock. `config::worktree::lock_native_guard` returns the token required by `rollback_with_lock`; both locks remain held while consumers and transaction targets are rechecked. The old prelocked-store `rollback` signature returns an explicit migration diagnostic without writes because it cannot safely establish that order.

@@ -7,11 +7,11 @@ and [release procedure](runtime/distribution/README.md).
 # 2.13.0
 
 - Discover offline installation capabilities with `setup --catalog`, use a shared project Skill/entry by default, and preview independent Git guard changes. Agents select supported integrations and verify loading and effects separately. (#737)
-
 - Guide Agents through the delegated task with complete Issues and Milestones for larger goals. Treat TDD and PR CI as strong recommendations while respecting each project's required checks. (#735)
 - Limit host callbacks to SessionStart and PreToolUse. Keep checkpoint enforcement at native Git commit/push, migrate owned integrations, and retire Stop/PostToolUse reminders and idle wake. (#734)
 - Give actionable delivery advice without imposing installed-runtime acceptance on every project or requesting repeated approval for delegated steps. (#736)
 - Preserve initialization markers during legacy migration, recognize CRLF guidance in new clones, distinguish shared hook and exclusion consumers, and check owned local exclusions in doctor. Retained rollback assets keep their ownership evidence. (#734)
+- Validate complete project receipts before retiring guards, coordinate doctor repairs, keep rollback lock order consistent, and preserve retryable host context. Support Windows Git/library path spellings without widening ownership. (#734)
 
 # 2.12.0
 
