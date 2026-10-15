@@ -1634,7 +1634,11 @@ fn hook_output(f: &delivery::Fixture, event: &str, observe: bool) -> Value {
         .unwrap()
         .write_all(&serde_json::to_vec(&payload).unwrap())
     {
-        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{event}: {error}");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "{event}: {error}"
+        );
     }
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
