@@ -1190,22 +1190,32 @@ async fn reject_foreign_custody(
 
 /// An unfinished transaction in the current shared custody store may still
 /// restore the shared receipt, so ownership must not move until it is recovered.
+/// Every custody bucket is checked, so a moved `core.hooksPath` cannot hide an
+/// interrupted transaction whose receipt was already removed.
 fn reject_shared_pending(shared: &Path, operation: &str) -> Result<(), Diagnostic> {
-    let pending = AssetStore::pending_at(&shared.join("assets"))?;
+    let namespace = shared
+        .parent()
+        .ok_or_else(|| Diagnostic::input("Shared guard custody is malformed."))?;
+    let pending = config::worktree::pending_custody_transactions(namespace)?;
     if pending.is_empty() {
         return Ok(());
     }
+    let ids = pending
+        .iter()
+        .flat_map(|(_, ids)| ids.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let stores = pending
+        .iter()
+        .map(|(bucket, _)| bucket.join("assets/transactions").display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     Err(Diagnostic::new(
         Code::RollbackConflict,
         operation,
+        &format!("Unfinished shared setup guard transaction(s) require recovery: {ids}."),
         &format!(
-            "Unfinished shared setup guard transaction(s) require recovery: {}.",
-            pending.join(", ")
-        ),
-        &format!(
-            "Preserve {} and recover each exact transaction id ({}) with specgit setup --rollback before installing or transferring guard ownership; no receipts or hooks were changed.",
-            shared.join("assets/transactions").display(),
-            pending.join(", ")
+            "Preserve {stores} and recover each exact transaction id ({ids}) with specgit setup --rollback, restoring the recorded core.hooksPath first if needed, before changing guard ownership; no receipts or hooks were changed."
         ),
     ))
 }
@@ -1294,11 +1304,7 @@ async fn setup_plan_inner(
     let serialization = common.join("specgit-v2/native-guard-lock");
     let inventory = Inventory::read(common.join("worktrees"))?;
     let shared = config::worktree::shared_setup_guard_private(process, root).await?;
-    if !AssetStore::pending_at(&shared.join("assets"))?.is_empty() {
-        return Err(rejected(
-            "An interrupted shared setup guard transaction requires exact-id recovery first.",
-        ));
-    }
+    reject_shared_pending(&shared, "git_guard")?;
     // Decide ownership and pin dependencies from one set of snapshots. A
     // concurrent owner retirement then invalidates this plan at lock time.
     let local_path = private.join("setup-guard-hooks.json");
