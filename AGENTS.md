@@ -170,7 +170,7 @@ Linux x64、macOS arm64、Windows x64 的源码和已安装入口。
 <!-- specgit:v2:start -->
 ## SpecGit 2
 
-Runtime: 2.11.0. Declaration: `.specgit.yaml` (v2, local configuration).
+Runtime: 2.11.1. Declaration: `.specgit.yaml` (v2, local configuration).
 
 新任务和已有 PR/MR 的 CI/评审修复都加载 specgit-native Skill。
 完整流程和恢复步骤见 Skill；二进制可选，但不得绕过项目 guard/checkpoint 约束。
@@ -188,5 +188,5 @@ GitHub/GitLab 负责 CI、评审、保护和实际合并。
 已授权刷新时，由 CLI 覆盖所有权已核实的受管文件和完整唯一块内的编辑正文；保留块外字节、配置、checkpoint 和其他 hooks。所有权未知或标记损坏/重复仍冲突。不要手写、恢复旧块或额外手工备份；使用 CLI 恢复。卸载/回滚保留后续编辑。
 
 Declared rules: `{"agent":{"close_issues_after_merge":false,"native_auto_merge":false},"issue_template":"builtin","language":"zh","pr_template":"builtin","validation":{"bodies":false,"labels":"off","titles":false}}`
-<!-- specgit:v2:sha256 70dc881e73c909ea9f057006074b2de56860431ffb60d2c106af360817601537 -->
+<!-- specgit:v2:sha256 6238ce781505e9a9b66db5ff4a54138586ddbaf6682dca0678f561a8398118eb -->
 <!-- specgit:v2:end -->

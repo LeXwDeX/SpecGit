@@ -644,12 +644,24 @@ manually edited hooks and foreign content instead.
 
 ## Assets, migration and installation
 
-Setup uses exact asset hashes and recorded host groups. Foreign content, hook
-ordering and file permissions survive refresh/uninstall. Dry-run performs no
-mkdir, asset lock or write. Real apply rechecks content/permissions after locking,
-uses atomic replacement and saves restorable private preimages. Edited ownership
-or interrupted transactions require explicit recovery. Rollback refuses later
-conflicting edits; uninstall retains backups and unrelated directories.
+Setup uses exact asset hashes and recorded host groups. Before refresh (including
+a no-op) or uninstall, it proves transaction ownership and recorded permissions
+for every managed Skill, guidance file and hook settings file. A permission
+mismatch is an ownership conflict; the operation leaves the asset and receipt
+unchanged and does not restore permissions or adopt the current state. This
+tightens behavior for existing integrations whose recorded and current
+permissions differ; resolve that state through a separate explicit maintenance
+decision before retrying setup. Foreign content and hook ordering survive
+refresh/uninstall. Dry-run performs no mkdir, asset lock or write. Real apply
+rechecks content/permissions after locking, uses atomic replacement and saves
+restorable private preimages. Edited ownership or interrupted transactions
+require explicit recovery. Rollback refuses later conflicting edits; uninstall
+retains backups and unrelated directories.
+The same paired receipt/permission proof governs whole-project `remove`: its
+read-only preview reports conflicts without writes, and apply requires the exact
+reviewed `preview_sha256`. Any edited managed content rejects the whole removal;
+preserve it for reconciliation. Removal rollback still refuses later edits and
+restores only when its transaction evidence matches.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
 facts; successful setup is not verified host registration or delivery.
@@ -813,10 +825,15 @@ async observation without a claim of idle wake. Per-host `hook_purposes` reports
 `reason`. Unsupported and unknown remain distinct; use bounded watch/inbox or
 manual continuation for declined capability, not guessed support.
 
-Receipts remain version 2, with selective/no-hook host records. Older 2.7 clients
-may reject a newer selective receipt (fail closed). Preserve the receipt and
-assets; use a supporting CLI's owned uninstall or restore a compatible backup
-before downgrade. Never force-overwrite ownership or delete the receipt to bypass it.
+Project receipts use version 3 and a unique install generation. Refresh retains
+that generation; a later install gets a new one. Consistent, valid v1/v2
+ownership evidence can migrate. Permission or history ambiguity is an ownership
+conflict: older matching records cannot cancel newer evidence. Older published
+CLIs cannot read v3. Upgrade every checkout that may refresh the project to a
+supporting published CLI version before refreshing; preserve the receipt and
+assets during any downgrade. Never force-overwrite ownership or delete the
+receipt to bypass it. These proof rules also apply to whole-project `remove`;
+its apply requires the reviewed preview digest.
 
 Project scope never installs a runtime binary inside the checkout and never
 edits global agent settings. Project hooks invoke the currently installed

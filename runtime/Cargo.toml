@@ -1,6 +1,6 @@
 [package]
 name = "specgit-runtime"
-version = "2.11.0"
+version = "2.11.1"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -26,6 +26,7 @@ tempfile = "3"
 serde_yaml_ng = "0.10"
 regex = "1"
 base64 = "0.23.1"
+getrandom = "0.4.3"
 zip = { version = "=9.0.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
