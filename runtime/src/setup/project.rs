@@ -517,21 +517,21 @@ pub fn install_with_hooks(
     for relative in skills {
         let change = Change::new(root.join(&relative), (!options.uninstall).then(skill_bytes))?;
         if let Some(hash) = previous.skills.get(&relative) {
-            if change.before.digest().as_ref() != Some(hash) {
-                if options.uninstall || change.before.bytes.is_none() {
-                    return Err(conflict_at(
-                        "project",
-                        &change.path,
-                        None,
-                        "The owned project skill was edited or removed.",
-                    ));
-                }
-                let proof = AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &change.path, &change.before, Some(hash))?
-                    .ok_or_else(|| conflict_at("project", &change.path, None, "The project skill permissions or transaction ownership changed; retain it for reconciliation."))?;
-                for journal in proof {
-                    if !changes.iter().any(|c: &Change| c.path == journal.path) {
-                        changes.push(journal);
-                    }
+            if change.before.digest().as_ref() != Some(hash)
+                && (options.uninstall || change.before.bytes.is_none())
+            {
+                return Err(conflict_at(
+                    "project",
+                    &change.path,
+                    None,
+                    "The owned project skill was edited or removed.",
+                ));
+            }
+            let proof = AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &change.path, &change.before, Some(hash))?
+                .ok_or_else(|| conflict_at("project", &change.path, None, "The project skill permissions or transaction ownership cannot be proved; retain it for reconciliation."))?;
+            for journal in proof {
+                if !changes.iter().any(|c: &Change| c.path == journal.path) {
+                    changes.push(journal);
                 }
             }
         } else if change.before.bytes.is_some() {
@@ -594,16 +594,32 @@ pub fn install_with_hooks(
         {
             continue;
         }
-        let proof = if let Some(old) = old.filter(|_| !options.uninstall) {
-            let path = root.join(&old.instructions);
-            let current = Snapshot::read(&path)?;
-            AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &path, &current, None)?
-        } else {
-            None
-        };
-        let (change, registration) =
-            instruction_change(host, root, old, options.uninstall, proof.is_some())?;
-        if let Some(proofs) = proof {
+        // This is a pure plan. Any recorded asset must prove this exact
+        // before-snapshot before the plan can be returned or applied.
+        let (change, registration) = instruction_change(
+            host,
+            root,
+            old,
+            options.uninstall,
+            old.is_some() && !options.uninstall,
+        )?;
+        if old.is_some() {
+            let proofs = AssetStore::owned_pair_at(
+                private,
+                &receipt_path,
+                &snapshot,
+                &change.path,
+                &change.before,
+                None,
+            )?
+            .ok_or_else(|| {
+                conflict_at(
+                    host,
+                    &change.path,
+                    None,
+                    "Guidance ownership or permissions cannot be proved.",
+                )
+            })?;
             for journal in proofs {
                 if !changes.iter().any(|c| c.path == journal.path) {
                     changes.push(journal);
@@ -633,6 +649,29 @@ pub fn install_with_hooks(
             continue;
         }
         let change = registration_change(host, &path, old, entries)?;
+        if old.is_some() {
+            let proofs = AssetStore::owned_pair_at(
+                private,
+                &receipt_path,
+                &snapshot,
+                &path,
+                &change.before,
+                None,
+            )?
+            .ok_or_else(|| {
+                conflict_at(
+                    host,
+                    &path,
+                    None,
+                    "Host settings ownership or permissions cannot be proved.",
+                )
+            })?;
+            for journal in proofs {
+                if !changes.iter().any(|c| c.path == journal.path) {
+                    changes.push(journal);
+                }
+            }
+        }
         if let Some(entries) = entries {
             let mut registration = if let Some(old) = old {
                 old.clone()
