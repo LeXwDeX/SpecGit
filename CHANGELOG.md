@@ -4,6 +4,13 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.11.0
+
+- Scope automatic Stop observation and pending-notice reads to the current branch checkpoint. A valid checkpoint for another branch in the same repository is skipped without changing it; PreToolUse, Git guards and ordinary synchronous Stop protection remain in place.
+- Preserve specific hook errors and recommend `specgit doctor` for diagnosis. Add a read-only stable-release check to `doctor`; offline checks do not access the network, and check failures do not affect health or exit status. Doctor only reminds the user or Agent that an update is available and never updates automatically.
+
+Scope: [#726](https://github.com/LeXwDeX/SpecGit/issues/726), [#727](https://github.com/LeXwDeX/SpecGit/pull/727).
+
 # 2.10.0
 
 - Add project health checks, offline inspection, repair previews and ownership-checked repairs to `doctor`. Inspect selected Skills, guidance, host hooks, Git guard and interrupted transactions, and report bounded Agent guidance with explicit unknown and unverified states.
