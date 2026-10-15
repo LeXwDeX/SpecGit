@@ -335,7 +335,34 @@ pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagno
     if snapshot.bytes.is_none() {
         return Ok(vec![]);
     }
+    let receipt_path = private.join("ownership.json");
     let mut changes = vec![];
+    let mut add_proven_change =
+        |change: Change, digest: Option<&str>, host: &str| -> Result<(), Diagnostic> {
+            let proofs = AssetStore::owned_pair_at(
+                private,
+                &receipt_path,
+                &snapshot,
+                &change.path,
+                &change.before,
+                digest,
+            )?
+            .ok_or_else(|| {
+                conflict_at(
+                    host,
+                    &change.path,
+                    None,
+                    "Project asset ownership or permissions cannot be proved.",
+                )
+            })?;
+            for proof in proofs {
+                if !changes.iter().any(|old: &Change| old.path == proof.path) {
+                    changes.push(proof);
+                }
+            }
+            changes.push(change);
+            Ok(())
+        };
     for (relative, digest) in &receipt.skills {
         let c = Change::new(root.join(relative), None)?;
         if c.before.digest().as_ref() != Some(digest) {
@@ -346,20 +373,24 @@ pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagno
                 "The owned project skill was edited or removed.",
             ));
         }
-        let proof = AssetStore::owned_at(private, &c.path, &c.before)?.ok_or_else(|| {
-            conflict_at("project", &c.path, None, "The project skill permissions or transaction ownership changed; retain it for reconciliation.")
-        })?;
-        changes.push(c);
-        changes.push(proof);
+        add_proven_change(c, Some(digest), "project")?;
     }
     for (host, old) in &receipt.instructions {
-        changes.push(instruction_change(host, root, Some(old), true, false)?.0);
+        add_proven_change(
+            instruction_change(host, root, Some(old), true, false)?.0,
+            None,
+            host,
+        )?;
     }
     for (host, old) in &receipt.hooks {
-        changes.push(registration_change(host, &old.settings, Some(old), None)?);
+        add_proven_change(
+            registration_change(host, &old.settings, Some(old), None)?,
+            None,
+            host,
+        )?;
     }
     changes.push(Change {
-        path: private.join("ownership.json"),
+        path: receipt_path,
         permissions: snapshot.permissions.clone(),
         before: snapshot,
         after: None,
