@@ -232,43 +232,67 @@ fn refresh_preserves_exact_foreign_bytes_and_detects_damaged_or_edited_markers()
 fn edited_recorded_guidance_refresh_requires_transaction_proof() {
     use specgit::assets::{AssetStore, Change};
     use std::time::Duration;
-    let t = tempfile::tempdir().unwrap();
-    let root = t.path().canonicalize().unwrap();
-    let private = root.join("private");
-    std::fs::create_dir(&private).unwrap();
-    let d = Declaration::default();
-    let old = include_str!("fixtures/stable-guidance/2.11.1-zh.txt")
-        .trim_end()
-        .to_owned();
-    let guidance_change = Change::new(
-        root.join("AGENTS.md"),
-        Some(format!("User prose\n{old}\n").into_bytes()),
-    )
-    .unwrap();
-    let receipt_change = Change::new(private.join("guidance.json"), Some(serde_json::json!({"version":1,"generator":"1.99.0-old","blocks":{"AGENTS.md":specgit::assets::hash(old.as_bytes())}}).to_string().into_bytes())).unwrap();
-    AssetStore::lock(
-        &private.join("assets"),
-        &[root.clone(), private.clone()],
-        Duration::from_secs(1),
-    )
-    .unwrap()
-    .apply(vec![guidance_change, receipt_change])
-    .unwrap();
-    let planned = guidance::changes(&root, &private, &d, &d, false).unwrap();
-    assert!(
-        String::from_utf8(planned[0].after.clone().unwrap())
-            .unwrap()
-            .contains(".agents/skills/specgit-native/SKILL.md")
-    );
-    std::fs::write(
-        root.join("AGENTS.md"),
-        old.replace("specgit init", "Edited text"),
-    )
-    .unwrap();
-    let refreshed = guidance::changes(&root, &private, &d, &d, false).unwrap();
-    let after = String::from_utf8(refreshed[0].after.clone().unwrap()).unwrap();
-    assert!(after.contains(&guidance::render(&d)));
-    assert!(!after.contains("Edited text"));
+    let canonical = include_str!("fixtures/stable-guidance/2.11.1-zh.txt").replace("\r\n", "\n");
+    for newline in ["\n", "\r\n"] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().canonicalize().unwrap();
+        let private = root.join("private");
+        std::fs::create_dir(&private).unwrap();
+        let d = Declaration::default();
+        let path = root.join("AGENTS.md");
+        let old = canonical.trim_end().replace('\n', newline);
+        let recorded_hash = specgit::assets::hash(old.as_bytes());
+        let prefix = "User CRLF\r\nUser LF\n";
+        let suffix = "\nUser tail\r\n";
+        let expected_block = guidance::render(&d).replace('\n', newline);
+        let expected = format!("{prefix}{expected_block}{suffix}").into_bytes();
+        let guidance_change = Change::new(
+            path.clone(),
+            Some(format!("{prefix}{old}{suffix}").into_bytes()),
+        )
+        .unwrap();
+        let receipt_change = Change::new(private.join("guidance.json"), Some(serde_json::json!({"version":1,"generator":"2.11.1","blocks":{"AGENTS.md":recorded_hash}}).to_string().into_bytes())).unwrap();
+        AssetStore::lock(
+            &private.join("assets"),
+            &[root.clone(), private.clone()],
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .apply(vec![guidance_change, receipt_change])
+        .unwrap();
+        let planned = guidance::changes(&root, &private, &d, &d, false).unwrap();
+        assert_eq!(
+            planned
+                .iter()
+                .find(|change| change.path == path)
+                .unwrap()
+                .after
+                .as_deref(),
+            Some(expected.as_slice()),
+            "newline: {newline:?}"
+        );
+        let edited = old.replace("Runtime: 2.11.1.", "Runtime: edited.");
+        assert_ne!(
+            edited, old,
+            "the fixture must actually edit the managed block"
+        );
+        std::fs::write(&path, format!("{prefix}{edited}{suffix}")).unwrap();
+        assert!(
+            guidance::change(&path, &d, &d, Some(&recorded_hash)).is_err(),
+            "edited content requires the committed transaction proof"
+        );
+        let refreshed = guidance::changes(&root, &private, &d, &d, false).unwrap();
+        assert_eq!(
+            refreshed
+                .iter()
+                .find(|change| change.path == path)
+                .unwrap()
+                .after
+                .as_deref(),
+            Some(expected.as_slice()),
+            "newline: {newline:?}"
+        );
+    }
 }
 
 #[test]
