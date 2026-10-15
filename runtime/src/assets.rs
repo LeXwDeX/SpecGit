@@ -704,16 +704,21 @@ impl AssetStore {
                 records.push((journal_path, before, journal));
             }
         }
+        let initial_digest = receipt.digest().expect("present receipt");
         let mut queue = std::collections::VecDeque::from([(
-            receipt.digest().expect("present receipt"),
-            Vec::new(),
+            initial_digest.clone(),
+            PermissionRecord::capture(receipt.permissions.as_ref()),
         )]);
         let mut visited = std::collections::HashSet::new();
+        let mut dependencies = Vec::new();
         let mut permission_conflicts = BTreeSet::new();
-        while let Some((current, proofs)) = queue.pop_front() {
-            if !visited.insert(current.clone()) {
+        let mut matched = false;
+        let mut incomplete = false;
+        while let Some((current, expected_permissions)) = queue.pop_front() {
+            if !visited.insert((current.clone(), expected_permissions.clone())) {
                 continue;
             }
+            let mut receipt_found = false;
             for (path, snapshot, journal) in &records {
                 let Some(receipt_entry) = journal.entries.iter().find(|e| {
                     safe_path(&e.path).is_ok()
@@ -722,27 +727,36 @@ impl AssetStore {
                 }) else {
                     continue;
                 };
-                if proofs.is_empty()
-                    && receipt_entry.after_permissions.as_ref()
-                        != Some(&PermissionRecord::capture(receipt.permissions.as_ref()))
+                receipt_found = true;
+                // Every reachable candidate matters: a matching branch cannot
+                // hide a contradictory one, and all are lock-time dependencies.
+                if !dependencies
+                    .iter()
+                    .any(|proof: &Change| proof.path == *path)
                 {
-                    if let Some(recorded) = &receipt_entry.after_permissions {
-                        permission_conflicts.insert(format!(
-                            "Recorded permissions do not match the observed permissions for {}: recorded {}; observed {}.",
-                            receipt_path.display(), recorded.description(),
-                            PermissionRecord::capture(receipt.permissions.as_ref()).description()
-                        ));
-                    }
-                    continue;
-                }
-                let mut chain = proofs.clone();
-                if !chain.iter().any(|proof: &Change| proof.path == *path) {
-                    chain.push(Change {
+                    dependencies.push(Change {
                         path: path.clone(),
                         before: snapshot.clone(),
                         after: snapshot.bytes.clone(),
                         permissions: snapshot.permissions.clone(),
                     });
+                }
+                if receipt_entry.after_permissions.as_ref() != Some(&expected_permissions) {
+                    incomplete = true;
+                    if let Some(recorded) = &receipt_entry.after_permissions {
+                        permission_conflicts.insert(if current == initial_digest {
+                            format!(
+                                "Recorded permissions do not match the observed permissions for {}: recorded {}; observed {}.",
+                                receipt_path.display(), recorded.description(), expected_permissions.description()
+                            )
+                        } else {
+                            format!(
+                                "Receipt permission records disagree for {}: earlier write {}; later preimage {}.",
+                                receipt_path.display(), recorded.description(), expected_permissions.description()
+                            )
+                        });
+                    }
+                    continue;
                 }
                 let asset_entry = journal.entries.iter().find(|e| {
                     safe_path(&e.path).is_ok()
@@ -760,11 +774,12 @@ impl AssetStore {
                         }
                 });
                 if let Some(entry) = asset_entry {
-                    // A newer removal or different recorded digest also ends
-                    // this branch; an older asset cannot override that change.
+                    // A removal, different digest or missing permissions ends
+                    // this branch. Never fall back to a still older asset.
                     if entry.after.is_none()
                         || asset_digest.is_some_and(|digest| entry.after.as_deref() != Some(digest))
                     {
+                        incomplete = true;
                         continue;
                     }
                     let observed = if asset.bytes.is_none() {
@@ -773,28 +788,27 @@ impl AssetStore {
                         PermissionRecord::capture(asset.permissions.as_ref())
                     };
                     if entry.after_permissions.as_ref() == Some(&observed) {
-                        return Ok(Some(chain));
+                        matched = true;
+                    } else {
+                        incomplete = true;
+                        if asset.bytes.is_some()
+                            && let Some(recorded) = &entry.after_permissions
+                        {
+                            permission_conflicts.insert(format!(
+                                "Recorded permissions do not match the observed permissions for {}: recorded {}; observed {}.",
+                                asset_path.display(), recorded.description(), observed.description()
+                            ));
+                        }
                     }
-                    if asset.bytes.is_some()
-                        && let Some(recorded) = &entry.after_permissions
-                    {
-                        permission_conflicts.insert(format!(
-                            "Recorded permissions do not match the observed permissions for {}: recorded {}; observed {}.",
-                            asset_path.display(), recorded.description(), observed.description()
-                        ));
-                    }
-                    // This is the nearest asset write on this receipt chain. A
-                    // still older mode cannot authorize its current permissions.
-                    // Missing post-write permissions are incomplete proof too.
                     continue;
                 }
-                if let Some(previous) = &receipt_entry.before
-                    && previous != &current
-                    && !visited.contains(previous)
-                {
-                    queue.push_back((previous.clone(), chain));
+                if let Some(previous) = &receipt_entry.before {
+                    queue.push_back((previous.clone(), receipt_entry.permissions.clone()));
+                } else {
+                    incomplete = true;
                 }
             }
+            incomplete |= !receipt_found;
         }
         if !permission_conflicts.is_empty() {
             return Err(Diagnostic::new(
@@ -807,8 +821,9 @@ impl AssetStore {
                 "Keep the existing files and permissions. Reconcile the recorded and observed permissions explicitly, then preview again; no permission change or ownership adoption was authorized.",
             ));
         }
-        Ok(None)
+        Ok((matched && !incomplete).then_some(dependencies))
     }
+
     fn owned_matching_at(
         root: &Path,
         path: &Path,
@@ -1185,7 +1200,7 @@ impl Entry {
             && permissions == Some(&PermissionRecord::capture(snapshot.permissions.as_ref()))
     }
 }
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 struct PermissionRecord {
     readonly: Option<bool>,
     unix_mode: Option<u32>,

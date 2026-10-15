@@ -820,10 +820,14 @@ async observation without a claim of idle wake. Per-host `hook_purposes` reports
 `reason`. Unsupported and unknown remain distinct; use bounded watch/inbox or
 manual continuation for declined capability, not guessed support.
 
-Receipts remain version 2, with selective/no-hook host records. Older 2.7 clients
-may reject a newer selective receipt (fail closed). Preserve the receipt and
-assets; use a supporting CLI's owned uninstall or restore a compatible backup
-before downgrade. Never force-overwrite ownership or delete the receipt to bypass it.
+Project receipts use version 3 and a unique install generation. Refresh retains
+that generation; a later install gets a new one. Consistent, valid v1/v2
+ownership evidence can migrate. Permission or history ambiguity is an ownership
+conflict: older matching records cannot cancel newer evidence. Older published
+CLIs cannot read v3. Upgrade every checkout that may refresh the project to a
+supporting published CLI version before refreshing; preserve the receipt and
+assets during any downgrade. Never force-overwrite ownership or delete the
+receipt to bypass it.
 
 Project scope never installs a runtime binary inside the checkout and never
 edits global agent settings. Project hooks invoke the currently installed

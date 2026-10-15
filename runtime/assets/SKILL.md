@@ -191,6 +191,7 @@ Keep notices pending until transport receipt; acknowledgment proves neither huma
 After CLI replacement, preview `setup --dry-run` and refresh project Skills/guidance, not manual copies. Refresh replaces recorded assets and complete unique blocks, including edited body text; preserve outside bytes, declarations, checkpoints and other hooks.
 Missing/damaged/duplicate markers or unknown ownership conflict. Refresh, including a no-op, and uninstall verify recorded permissions for every managed file; mismatch conflicts and leaves the asset and receipt unchanged.
 Do not automatically restore permissions or adopt observed state; resolve mismatches through a separate explicit maintenance choice. Never handwrite/restore blocks or add backups; transactions handle recovery.
+Project receipts use v3 with a unique install generation: refresh retains it and a later install gets a new one. Valid, consistent v1/v2 ownership evidence can migrate; permission or history ambiguity conflicts. Older published CLIs cannot read v3, so upgrade every checkout that may refresh the project to a supporting version first.
 Uninstall/rollback preserves later edits to content and permissions. After all init/setup updates, run `status`, `doctor`, read back generated Skill/guidance and repeat dry-runs; `init --dry-run` lists planned paths only. Names prove nothing.
 
 Contract version: {{version}}.
