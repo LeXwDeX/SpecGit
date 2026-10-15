@@ -792,9 +792,14 @@ fn install_plan(
         selected.insert(*agent);
     }
     if selected.is_empty() {
-        return Err(Diagnostic::input(
-            "Select at least one --agent for a new project integration; no host is guessed.",
-        ));
+        if options.uninstall {
+            return Err(Diagnostic::input(
+                "No recorded project integration is available to uninstall.",
+            ));
+        }
+        // A shared Skill and stable entry require no host discovery. Existing
+        // receipts retain their selected integrations instead of gaining a host.
+        selected.insert(Agent::Generic);
     }
     if options.uninstall && (!options.agents.is_empty() || options.opencode_claude_hooks) {
         return Err(Diagnostic::input(

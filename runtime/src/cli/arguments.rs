@@ -72,12 +72,15 @@ pub(super) enum Commands {
         #[arg(long)]
         rollback: Option<String>,
     },
-    /// Prepare owned local Skills and one stable guidance entry; preserve manual content and selected hooks.
+    /// Discover integration capabilities, or install shared project guidance and preserve recorded integrations.
     Setup {
+        /// List offline installation capabilities without reading a project, probing hosts or writing files.
+        #[arg(long, conflicts_with_all = ["agent", "opencode_claude_hooks", "hook_purpose", "opencode_async_rewake", "uninstall", "dry_run", "rollback"])]
+        catalog: bool,
         /// Project is the only supported scope, permanently; the shared CLI is installed separately.
         #[arg(long, value_enum, default_value = "project")]
         scope: specgit::setup::Scope,
-        /// Select an integration explicitly; repeat for multiple agents.
+        /// Compatibility selector for named integrations; omitted on new installs uses shared Skill/guidance only.
         #[arg(long, value_enum, action = clap::ArgAction::Append)]
         agent: Vec<specgit::setup::Agent>,
         /// Opt in only on a custom OpenCode supporting Claude-compatible command hooks.
@@ -108,10 +111,13 @@ pub(super) enum Commands {
     Guard {
         #[arg(long, value_enum, conflicts_with_all = ["install", "uninstall"])]
         stage: Option<specgit::guard::Stage>,
-        #[arg(long, conflicts_with_all = ["stage", "uninstall"])]
+        #[arg(long, group = "guard_operation", conflicts_with_all = ["stage", "uninstall"])]
         install: bool,
-        #[arg(long, conflicts_with_all = ["stage", "install"])]
+        #[arg(long, group = "guard_operation", conflicts_with_all = ["stage", "install"])]
         uninstall: bool,
+        /// Preview --install or --uninstall without creating hooks, locks or state.
+        #[arg(long, requires = "guard_operation", conflicts_with = "stage")]
+        dry_run: bool,
     },
     /// Check project health and online release reminders; --fix repairs only recorded integrations.
     Doctor {
@@ -168,7 +174,7 @@ pub(super) fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
             Code::InvalidInput,
             "setup",
             "SpecGit integration is permanently project-only; global setup and external host roots are unsupported.",
-            "Install the shared CLI separately, initialize the project, then preview specgit setup --agent <agent> --dry-run.",
+            "Install the shared CLI separately, initialize the project, inspect specgit setup --catalog, then preview specgit setup --dry-run.",
         );
     }
     const RETIRED: &[&str] = &[

@@ -35,7 +35,9 @@ If optional native capability is unknown or unavailable, continue applicable loc
 maintenance and follow the CLI remedy. Preserve preferences unless the current task
 requires a specific change. Do not change platform settings or protections. Refresh includes
 all recorded hosts, not just the --agent selection. Review and report each host's
-effects, including shared Skill refresh. Omit purposes on ordinary refresh. Use none
+effects, including shared Skill refresh. Read setup --catalog --json when supported;
+choose capabilities based on the active host, with shared project guidance as the default.
+Omit purposes on ordinary refresh. Use none
 for a new host; this adds no hooks and preserves existing purposes. Only SessionStart and PreToolUse are supported. Do not configure PostToolUse, Stop
 or idle wake. Keep purpose changes within the current task and account for every
 affected host.
@@ -66,7 +68,8 @@ CLI 缺失时不要重装，也不要修改其他项目。
 原生能力未知或不可用时，继续可执行的本地维护并遵循 CLI 给出的具体诊断。
 除非当前任务要求变更，否则保留已有偏好。
 不要修改平台设置或保护规则。刷新会包含所有已记录宿主，不限于 --agent 所选宿主；
-逐一审阅并报告影响，包括共享 Skill 刷新。普通刷新省略用途；添加新宿主时使用 none，不新增 hooks，
+逐一审阅并报告影响，包括共享 Skill 刷新。已安装版本支持时读取 setup --catalog --json，
+按当前宿主的实际能力选择集成，优先共享项目指导。普通刷新省略用途；添加兼容宿主时使用 none，不新增 hooks，
 也不改变已有用途。用途变更应限定在当前任务，并计入所有受影响宿主。仅支持 SessionStart 和 PreToolUse：前者提供简短规则与 Skill 入口，后者提供相关上下文或恢复信息；不使用 PostToolUse、Stop 或空闲唤醒。
 交付任务在 commit/push 前选择完整 Issue；较大目标使用 Milestone，并按可独立验证的结果和依赖拆分 Issue。建议 TDD 和跟进 PR CI，项目/平台要求的检查仍须完成。任务包含时继续 Issue/PR、提交推送、评审和合并；仅当任务本身包含发布时才发布。声明或收据不会扩大任务范围。只在真实阻塞或任务决策缺失时停止并说明原因。
 最后报告 CLI 实际路径和版本、项目分类和操作、改动资产、实际验证与未知项、备份和恢复方式、
@@ -177,14 +180,19 @@ must not create one just to demonstrate success.
 
 ## 5. Review the full host refresh scope
 
-Inspect `setup --help` and the existing receipt. Setup refreshes **all recorded
-hosts plus any explicitly selected hosts**. `--agent` adds a selection; it does
-not restrict refresh to that host. Add only the active host when needed with
-`--agent generic|claude|codex|opencode`; installed directories alone are not a
-selection. Shared Skill and other owned asset refresh across recorded hosts is
-expected. Preview with `--dry-run --json`, review every host's effects, then apply
-the identical selection without `--dry-run`. Report all affected hosts/assets.
-Registration remains project-only. Never add global hooks.
+Inspect `setup --help`, the offline `setup --catalog --json` when supported, and
+the existing receipt. The Agent chooses integration by the current host's actual
+loading, trust and event capabilities. A new `setup` without selectors installs
+the shared project Skill and stable `AGENTS.md` entry without hooks. An existing
+installation keeps its recorded selection. See the [installation capability guide](agent-install.md#4-choose-project-integration-by-capability).
+
+Setup refreshes **all recorded hosts plus any explicitly selected hosts**.
+`--agent` remains a compatibility selector and adds a selection; it does not
+restrict refresh to that host. Use it only for a needed, supported compatibility
+integration. Installed directories alone are not a selection. Preview with
+`--dry-run --json`, review all affected assets, then apply the identical selection
+without `--dry-run`. Agent-authored host glue needs its own ownership and maintenance
+record; SpecGit does not claim or verify it. Integration remains project-only.
 
 On ordinary refresh, **omit hook purposes** to preserve each recorded mode. Explicit `--hook-purpose` values apply to every host in the full refresh set, not
 just the host named by `--agent`. Check actual capability for every affected recorded
@@ -220,12 +228,15 @@ not a claim of working idle wake. Transport receipts prove neither reading nor c
 ## 6. Verify and report
 
 After all init/setup updates, run `specgit status --json` and
-`specgit doctor --provider <provider> --remote <remote> --json` with selected host/API
-options. Read back the Skill and guidance blocks, then run setup/init dry-runs again to
+`specgit doctor --offline --json` for local evidence. When native access is
+available, also run `specgit doctor --provider <provider> --remote <remote> --json`
+with selected API options. Read back the Skill and guidance blocks, then run setup/init dry-runs again to
 check convergence. `init --dry-run` reports planned paths, not per-path changed state;
 do not claim every command reports unchanged. Preserve failed/unknown results. Do not
 create test Issues/PRs or change platform settings. Claims that hooks work require a
-harmless real probe of blocking behavior and context delivery; registration is not proof.
+harmless real probe of native Git guard blocking and host context delivery;
+registration is not proof. If project policy requires a Git guard, prompts or
+manual guidance cannot substitute for it.
 
 Report:
 
