@@ -228,3 +228,44 @@ fn catalog_schema_rejects_installation_claims_and_malformed_commands() {
     invalid["evidence"] = serde_json::json!({"installed": true});
     assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
 }
+
+/// A declaration may poll less often than any fixed catalog deadline, so an
+/// advertised non-`--once` watch must pin a compatible poll interval itself.
+#[test]
+fn catalog_watch_commands_are_valid_for_any_declared_poll_interval() {
+    let out = executable::command()
+        .args(["setup", "--catalog", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let mut checked = 0;
+    for item in report["evidence"]["installation_catalog"]["items"]
+        .as_array()
+        .unwrap()
+    {
+        for command in item["commands"].as_array().into_iter().flatten() {
+            let argv: Vec<_> = command["argv"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            if argv.get(1) != Some(&"watch") || argv.contains(&"--once") {
+                continue;
+            }
+            let value = |flag: &str| {
+                argv.iter()
+                    .position(|arg| *arg == flag)
+                    .map(|i| argv[i + 1].parse::<u64>().unwrap())
+            };
+            if let Some(timeout) = value("--timeout-seconds") {
+                let poll = value("--poll-seconds")
+                    .unwrap_or_else(|| panic!("fixed deadline needs a poll interval: {argv:?}"));
+                assert!((1..=timeout).contains(&poll), "{argv:?}");
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "the catalog advertises a watch command");
+}

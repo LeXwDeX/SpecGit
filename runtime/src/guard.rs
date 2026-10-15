@@ -485,6 +485,8 @@ pub async fn health_plan(
         ));
     }
     let shared = config::worktree::shared_setup_guard_private(process, &root).await?;
+    // Incomplete shared custody state is never current, whichever receipt exists.
+    reject_shared_pending(&shared, "git_guard_health")?;
     let setup_path = setup_source(&private, &shared)?;
     let receipt_name = if Snapshot::read(&private.join("guard-hooks.json"))?
         .bytes
@@ -505,7 +507,6 @@ pub async fn health_plan(
         // Read-only: report hidden custody or an unfinished shared transaction
         // instead of "no guard ownership".
         reject_foreign_custody(process, &root, "git_guard_health").await?;
-        reject_shared_pending(&shared, "git_guard_health")?;
         let hook_root = config::worktree::hooks(process, &root).await?;
         for stage in ["pre-commit", "pre-push"] {
             let path = hook_root.join(stage);

@@ -66,7 +66,8 @@ explicitly reviewed migration; platform protection rules remain on the forge.
 Git, forge executables or credentials. `specgit <command> --schema` narrows the
 contract. `-h` and `-V` are short help/version forms. The schema comes from the
 same command definitions as argv and includes types, choices, bounds, defaults,
-conflicts and side-effect classification. Engineering qualification generates
+conflicts, required options (`requires`, with any named
+group listed under the command's `groups`) and side-effect classification. Engineering qualification generates
 `schemas/` from this contract and compares them with the installed executable.
 Public ZIPs contain only the executable; use its embedded offline `--schema`.
 

@@ -310,7 +310,7 @@ pub fn catalog() -> InstallationCatalog {
             conditions: vec!["项目声明有效；原生 request ID 与 session 明确；联网刷新须有有效平台只读凭据。", "自动观察使用显式有界 watch/inbox；不使用宿主 PostToolUse、Stop 或异步唤醒。"],
             depends_on: vec![InstallationId::PrivateState],
             commands: vec![
-                command(&["specgit", "watch", "--request", "<request>", "--session", "<session>", "--goal", "checks", "--timeout-seconds", "60", "--json"], CommandMode::Observe, "只读平台状态；写项目内有界订阅与事件状态，不写远端。", true),
+                command(&["specgit", "watch", "--request", "<request>", "--session", "<session>", "--goal", "checks", "--timeout-seconds", "60", "--poll-seconds", "30", "--json"], CommandMode::Observe, "只读平台状态；写项目内有界订阅与事件状态，不写远端。", true),
                 command(&["specgit", "inbox", "--request", "<request>", "--session", "<session>", "--goal", "checks", "--no-refresh", "--json"], CommandMode::Read, "读本地收据 ID；缓存终态不是当前远端完成证据。", false),
             ],
             protocol: "普通单份 JSON report；goal 为 checks 或 lifecycle。timeout-seconds 为 1..86400，poll-seconds 为 1..3600；非 once 观察期限须不短于轮询间隔。检查当前 head 与报告状态，退出 0 仅说明操作成功。",
