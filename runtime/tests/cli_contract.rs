@@ -472,12 +472,19 @@ fn schema_requirements_ignore_quoted_text_and_keep_exact_ids() {
         serde_json::json!([])
     );
 }
+// A plain test (not `should_panic`) keeps libtest names parseable by the
+// installed-profile qualification.
 #[test]
-#[should_panic(expected = "unsupported requirement")]
 fn schema_refuses_to_publish_conditional_requirements_as_unconditional() {
     let command = Command::new("fixture")
         .arg(Arg::new("mode").long("mode"))
         .arg(Arg::new("plain").long("plain").action(ArgAction::SetTrue))
         .arg(Arg::new("x").long("x").requires_if("strict", "plain"));
-    let _ = schema_arg(command, "x");
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| schema_arg(command, "x")))
+        .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .unwrap_or_default();
+    assert!(message.contains("unsupported requirement"), "{message}");
 }
