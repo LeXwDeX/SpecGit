@@ -26,6 +26,24 @@ fn fixture_crash(point: &str) {
     }
 }
 
+/// Pause a fixture writer inside the locked transaction so tests can change
+/// state that SpecGit's lock cannot serialize, such as `git worktree add`.
+#[cfg(feature = "test-fixtures")]
+fn fixture_pause(point: &str) {
+    if std::env::var("SPECGIT_FIXTURE_ASSET_PAUSE").as_deref() != Ok(point) {
+        return;
+    }
+    let Some(directory) = std::env::var_os("SPECGIT_FIXTURE_ASSET_PAUSE_DIR").map(PathBuf::from)
+    else {
+        return;
+    };
+    let _ = fs::write(directory.join("ready"), b"ready");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !directory.join("go").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 fn error(code: Code, message: &str) -> Diagnostic {
     Diagnostic::new(
         code,
@@ -1154,6 +1172,8 @@ impl AssetStore {
             let result = (|| {
                 #[cfg(feature = "test-fixtures")]
                 fixture_crash(&format!("before-write:{i}"));
+                #[cfg(feature = "test-fixtures")]
+                fixture_pause(&format!("before-write:{i}"));
                 before_write(i)?;
                 for (path, expected) in &proofs {
                     self.validate(path)?;

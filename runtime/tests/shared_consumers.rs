@@ -605,6 +605,152 @@ fn borrower_can_take_independent_ownership_from_retained_shared_custody() {
     f.assert_guard(false);
 }
 
+fn failure(root: &Path, args: &[&str]) -> Value {
+    let output = executable::command()
+        .current_dir(root)
+        .args(args)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{args:?}: {output:?}");
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"))
+}
+
+/// A, the original setup guard owner, retires into shared custody and is pruned;
+/// B, the surviving borrower, then moves `core.hooksPath`.
+struct MovedCustody {
+    f: Fixture,
+    moved: PathBuf,
+    receipt: PathBuf,
+}
+
+impl MovedCustody {
+    fn new() -> Self {
+        let f = Fixture::new();
+        git(&f.root, &["worktree", "add", "-b", "second", "../second"]);
+        let owner = f.root.parent().unwrap().join("second");
+        cli(
+            &owner,
+            &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+        );
+        cli(
+            &f.sibling,
+            &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+        );
+        cli(&owner, &["setup", "--uninstall"]);
+        f.assert_guard(true);
+        fs::remove_dir_all(&owner).unwrap();
+        git(&f.root, &["worktree", "prune", "--expire", "now"]);
+        let common = PathBuf::from(git(
+            &f.root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ));
+        let receipts: Vec<_> = fs::read_dir(common.join("specgit-v2/shared-setup-guard"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("setup-guard-hooks.json"))
+            .filter(|path| path.exists())
+            .collect();
+        assert_eq!(receipts.len(), 1, "{receipts:?}");
+        let moved = common.join("moved-hooks");
+        fs::create_dir(&moved).unwrap();
+        Self {
+            receipt: receipts[0].clone(),
+            f,
+            moved,
+        }
+    }
+
+    fn move_hooks(&self) {
+        git(
+            &self.f.sibling,
+            &["config", "core.hooksPath", self.moved.to_str().unwrap()],
+        );
+    }
+
+    fn restore_hooks(&self) {
+        git(&self.f.sibling, &["config", "--unset", "core.hooksPath"]);
+    }
+
+    fn setup_state(&self) -> PathBuf {
+        PathBuf::from(git(&self.f.sibling, &["rev-parse", "--absolute-git-dir"]))
+            .join("specgit-v2/agent-assets/ownership.json")
+    }
+}
+
+#[test]
+fn moved_hook_path_cannot_hide_retained_setup_custody_from_borrower_uninstall() {
+    let m = MovedCustody::new();
+    let f = &m.f;
+    let state = m.setup_state();
+    let skill = f.sibling.join(".agents/skills/specgit-native/SKILL.md");
+    let state_before = fs::read(&state).unwrap();
+    let receipt_before = fs::read(&m.receipt).unwrap();
+    let hooks_before: Vec<_> = ["pre-commit", "pre-push"]
+        .map(|stage| fs::read(f.hooks.join(stage)).unwrap())
+        .into();
+    assert!(skill.is_file());
+    m.move_hooks();
+    for args in [
+        vec!["setup", "--uninstall", "--dry-run"],
+        vec!["setup", "--uninstall"],
+    ] {
+        let report = failure(&f.sibling, &args);
+        let message = report.to_string();
+        assert!(
+            message.contains("core.hooksPath") && message.contains(f.hooks.to_str().unwrap()),
+            "{report}"
+        );
+        assert_eq!(fs::read(&state).unwrap(), state_before);
+        assert!(skill.is_file());
+        assert_eq!(fs::read(&m.receipt).unwrap(), receipt_before);
+        for (stage, expected) in ["pre-commit", "pre-push"].iter().zip(&hooks_before) {
+            assert_eq!(fs::read(f.hooks.join(stage)).unwrap(), *expected);
+        }
+        assert!(fs::read_dir(&m.moved).unwrap().next().is_none());
+    }
+    m.restore_hooks();
+    cli(&f.sibling, &["setup", "--uninstall"]);
+    f.assert_guard(false);
+    assert!(!m.receipt.exists());
+    assert!(!state.exists());
+}
+
+#[test]
+fn moved_hook_path_rollback_finds_retained_custody_journal_and_fails_closed() {
+    let m = MovedCustody::new();
+    let f = &m.f;
+    let retired = cli(&f.sibling, &["setup", "--uninstall"]);
+    let id = retired["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        m.receipt
+            .parent()
+            .unwrap()
+            .join("assets/transactions")
+            .join(&id)
+            .join("journal.json")
+            .exists(),
+        "the last consumer's cleanup is recorded in shared custody"
+    );
+    f.assert_guard(false);
+    m.move_hooks();
+    let report = failure(&f.sibling, &["setup", "--rollback", &id]);
+    let message = report.to_string();
+    assert!(
+        message.contains(&id) && message.contains("core.hooksPath"),
+        "{report}"
+    );
+    f.assert_guard(false);
+    assert!(!m.receipt.exists());
+    m.restore_hooks();
+    cli(&f.sibling, &["setup", "--rollback", &id]);
+    f.assert_guard(true);
+    assert!(m.receipt.exists());
+}
+
 #[cfg(feature = "test-fixtures")]
 #[test]
 fn concurrent_owner_and_borrower_uninstall_never_leave_unowned_hooks() {
@@ -667,4 +813,65 @@ fn concurrent_owner_and_borrower_uninstall_never_leave_unowned_hooks() {
         }
     }
     f.assert_guard(false);
+}
+
+/// Git does not take SpecGit's lock, so a checkout added during the locked
+/// uninstall transaction must abort it before the shared hooks are removed.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn worktree_added_during_setup_uninstall_transaction_keeps_shared_hooks() {
+    let f = Fixture::new();
+    git(&f.root, &["switch", "-q", "-c", "declared"]);
+    fs::write(f.root.join(".specgit.yaml"), "version: 2\n").unwrap();
+    git(&f.root, &["add", ".specgit.yaml"]);
+    git(
+        &f.root,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "declare",
+        ],
+    );
+    git(&f.root, &["switch", "-q", "feature"]);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    f.assert_guard(true);
+
+    let pause = tempfile::tempdir().unwrap();
+    // The pause point exists only in the fixture build, never in release binaries.
+    let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.sibling)
+        .args(["setup", "--uninstall", "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", "before-write:0")
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", pause.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !pause.path().join("ready").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "uninstall never paused"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    git(&f.root, &["worktree", "add", "-q", "../third", "declared"]);
+    fs::write(pause.path().join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report.to_string().contains("worktree inventory changed"),
+        "{report}"
+    );
+    f.assert_guard(true);
 }

@@ -12,7 +12,7 @@ and [release procedure](runtime/distribution/README.md).
 - Give actionable delivery advice without imposing installed-runtime acceptance on every project or requesting repeated approval for delegated steps. (#736)
 - Preserve initialization markers during legacy migration, recognize CRLF guidance in new clones, distinguish shared hook and exclusion consumers, and check owned local exclusions in doctor. Retained rollback assets keep their ownership evidence. (#734)
 - Validate complete project receipts before retiring guards, coordinate doctor repairs, keep rollback lock order consistent, and deliver retryable context to concurrent host sessions. Support Windows Git/library path spellings without widening ownership. (#734)
-- Keep shared setup-guard ownership and recovery evidence after its worktree retires and is pruned, so the last setup consumer can clean up. Remove owned empty host settings during legacy guard migration. (#734)
+- Keep shared setup-guard ownership and recovery evidence after its worktree retires and is pruned, so the last setup consumer can clean up; a moved `core.hooksPath` is reported as a conflict. Recheck the worktree inventory inside setup/init transactions, deliver each distinct uncertain-write recovery, and remove owned empty host settings during legacy guard migration. (#734)
 
 # 2.12.0
 

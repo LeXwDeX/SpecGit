@@ -585,9 +585,7 @@ pub(crate) fn shared_setup_guard_stores(root: &Path) -> Result<Vec<PathBuf>, Dia
     Ok(stores)
 }
 
-/// Stable custody for setup-owned hooks after their worktree owner retires.
-/// The namespace is bounded to the current effective hook directory.
-pub(crate) async fn shared_setup_guard_private(
+async fn shared_setup_guard_namespace(
     process: &Process,
     root: &Path,
 ) -> Result<PathBuf, Diagnostic> {
@@ -600,7 +598,12 @@ pub(crate) async fn shared_setup_guard_private(
         .await?,
         "common metadata",
     )?;
-    let hooks = hooks(process, root).await?;
+    Ok(common.join("specgit-v2/shared-setup-guard"))
+}
+
+/// The custody key of one effective hook directory. Every bucket name is
+/// derived by this single rule, so recorded receipts can be verified against it.
+fn shared_setup_guard_key(hooks: &Path) -> Result<String, Diagnostic> {
     let identity = if hooks
         .try_exists()
         .map_err(|_| Diagnostic::input("The shared hook directory cannot be inspected."))?
@@ -609,15 +612,177 @@ pub(crate) async fn shared_setup_guard_private(
             .canonicalize()
             .map_err(|_| Diagnostic::input("The shared hook directory cannot be resolved."))?
     } else {
-        hooks
+        hooks.to_owned()
     };
     crate::assets::safe_path(&identity)?;
-    let key = crate::assets::hash(identity.as_os_str().as_encoded_bytes());
-    Ok(common.join("specgit-v2/shared-setup-guard").join(key))
+    Ok(crate::assets::hash(identity.as_os_str().as_encoded_bytes()))
 }
 
-/// Resolve an exact journal in the caller's ordinary stores or fixed shared
-/// custody. Ambiguous IDs never select a history by search order.
+/// Stable custody for setup-owned hooks after their worktree owner retires.
+/// The namespace is bounded to the current effective hook directory.
+pub(crate) async fn shared_setup_guard_private(
+    process: &Process,
+    root: &Path,
+) -> Result<PathBuf, Diagnostic> {
+    let namespace = shared_setup_guard_namespace(process, root).await?;
+    let hooks = hooks(process, root).await?;
+    Ok(namespace.join(shared_setup_guard_key(&hooks)?))
+}
+
+const CUSTODY_LIMIT: usize = 128;
+
+/// One custody bucket that holds a receipt or a transaction history.
+struct CustodyBucket {
+    directory: PathBuf,
+    receipt: bool,
+}
+
+/// Bounded inventory of every custody bucket, independent of the current
+/// hook path. Unreadable entries fail closed instead of hiding custody.
+fn custody_buckets(namespace: &Path) -> Result<Vec<CustodyBucket>, Diagnostic> {
+    crate::assets::safe_path(namespace)?;
+    if !namespace
+        .try_exists()
+        .map_err(|_| Diagnostic::input("Shared guard custody cannot be inspected."))?
+    {
+        return Ok(vec![]);
+    }
+    let mut buckets = Vec::new();
+    for (index, entry) in std::fs::read_dir(namespace)
+        .map_err(|_| Diagnostic::input("Shared guard custody cannot be read."))?
+        .enumerate()
+    {
+        if index >= CUSTODY_LIMIT {
+            return Err(Diagnostic::input(
+                "Shared guard custody inventory exceeds its bound.",
+            ));
+        }
+        let path = entry
+            .map_err(|_| Diagnostic::input("A shared guard custody entry cannot be read."))?
+            .path();
+        let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        if name.len() != 64 || !name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            continue;
+        }
+        crate::assets::safe_path(&path)?;
+        let receipt = present(&path.join("setup-guard-hooks.json"))?;
+        if receipt || present(&path.join("assets/transactions"))? {
+            buckets.push(CustodyBucket {
+                directory: path,
+                receipt,
+            });
+        }
+    }
+    buckets.sort_by(|a, b| a.directory.cmp(&b.directory));
+    Ok(buckets)
+}
+
+fn custody_conflict(message: &str, remedy: &str) -> Diagnostic {
+    Diagnostic::new(Code::OwnershipConflict, "git_guard", message, remedy)
+}
+
+/// Read a custody receipt, derive the hook directory it records and prove that
+/// the bucket name is that directory's custody key.
+fn verified_custody_hooks(bucket: &Path) -> Result<(PathBuf, crate::assets::Snapshot), Diagnostic> {
+    let path = bucket.join("setup-guard-hooks.json");
+    let snapshot = crate::assets::Snapshot::read(&path)?;
+    let unverifiable = || {
+        custody_conflict(
+            &format!(
+                "The retained shared setup guard receipt {} cannot be verified.",
+                path.display()
+            ),
+            "Preserve the receipt and its transactions; inspect them before setup, removal or rollback.",
+        )
+    };
+    let value = crate::input::json(
+        snapshot.bytes.as_deref().ok_or_else(unverifiable)?,
+        1_048_576,
+        16,
+    )
+    .map_err(|_| unverifiable())?;
+    let hooks = value
+        .get("hooks")
+        .and_then(Value::as_object)
+        .ok_or_else(unverifiable)?;
+    if hooks.len() != 2 {
+        return Err(unverifiable());
+    }
+    let mut directory: Option<PathBuf> = None;
+    for stage in ["pre-commit", "pre-push"] {
+        let recorded = PathBuf::from(
+            hooks
+                .get(stage)
+                .and_then(|hook| hook.get("path"))
+                .and_then(Value::as_str)
+                .ok_or_else(unverifiable)?,
+        );
+        if !recorded.is_absolute() || recorded.file_name().and_then(|n| n.to_str()) != Some(stage) {
+            return Err(unverifiable());
+        }
+        let parent = recorded.parent().ok_or_else(unverifiable)?.to_owned();
+        if directory.as_ref().is_some_and(|known| *known != parent) {
+            return Err(unverifiable());
+        }
+        directory = Some(parent);
+    }
+    let directory = directory.ok_or_else(unverifiable)?;
+    let name = bucket.file_name().and_then(|n| n.to_str());
+    if name != Some(shared_setup_guard_key(&directory)?.as_str()) {
+        return Err(custody_conflict(
+            &format!(
+                "The shared setup guard custody {} does not match the hook directory {} recorded by its receipt.",
+                bucket.display(),
+                directory.display()
+            ),
+            "Preserve the custody directory and its transactions; inspect them before setup, removal or rollback.",
+        ));
+    }
+    Ok((directory, snapshot))
+}
+
+/// Retained setup guard custody recorded for another effective hook directory.
+pub(crate) struct ForeignCustody {
+    pub(crate) directory: PathBuf,
+    pub(crate) hooks: PathBuf,
+    pub(crate) receipt: PathBuf,
+    pub(crate) snapshot: crate::assets::Snapshot,
+}
+
+/// Every verified custody receipt whose key differs from the current hook
+/// directory's key. Unverifiable receipts are conflicts, never "no custody".
+pub(crate) async fn foreign_setup_guard_custody(
+    process: &Process,
+    root: &Path,
+) -> Result<Vec<ForeignCustody>, Diagnostic> {
+    let current = shared_setup_guard_private(process, root).await?;
+    let namespace = current
+        .parent()
+        .ok_or_else(|| Diagnostic::input("Shared guard custody is malformed."))?;
+    let mut foreign = Vec::new();
+    for bucket in custody_buckets(namespace)? {
+        if !bucket.receipt || bucket.directory.file_name() == current.file_name() {
+            continue;
+        }
+        let (hooks, snapshot) = verified_custody_hooks(&bucket.directory)?;
+        foreign.push(ForeignCustody {
+            receipt: bucket.directory.join("setup-guard-hooks.json"),
+            directory: bucket.directory,
+            hooks,
+            snapshot,
+        });
+    }
+    Ok(foreign)
+}
+
+/// Resolve an exact journal in the caller's ordinary stores or any shared
+/// custody bucket. Ambiguous IDs never select a history by search order.
+/// The returned shared root is the matched bucket's directory, or the current
+/// key's bucket for an ordinary store. A journal retained for another hook
+/// directory is found but fails closed: rollback safety checks and callers'
+/// writable roots are derived from the current hook path.
 pub(crate) async fn rollback_store(
     process: &Process,
     root: &Path,
@@ -628,19 +793,26 @@ pub(crate) async fn rollback_store(
         return Err(Diagnostic::input("Use an exact reported transaction id."));
     }
     let shared = shared_setup_guard_private(process, root).await?;
-    let mut candidates = local.to_vec();
-    candidates.push(shared.join("assets"));
+    let namespace = shared
+        .parent()
+        .ok_or_else(|| Diagnostic::input("Shared guard custody is malformed."))?;
+    let mut candidates: Vec<(PathBuf, Option<PathBuf>)> =
+        local.iter().map(|store| (store.clone(), None)).collect();
+    candidates.push((shared.join("assets"), Some(shared.clone())));
+    for bucket in custody_buckets(namespace)? {
+        candidates.push((bucket.directory.join("assets"), Some(bucket.directory)));
+    }
     candidates.sort();
     candidates.dedup();
     let mut matching = Vec::new();
-    for store in candidates {
+    for (store, bucket) in candidates {
         let journal = store.join("transactions").join(id).join("journal.json");
         crate::assets::safe_path(&journal)?;
         if journal
             .try_exists()
             .map_err(|_| Diagnostic::input("The rollback journal cannot be inspected."))?
         {
-            matching.push(store);
+            matching.push((store, bucket));
         }
     }
     if matching.len() != 1 {
@@ -648,7 +820,33 @@ pub(crate) async fn rollback_store(
             "Use an exact, unique local or shared-custody transaction id; missing or duplicate histories require inspection.",
         ));
     }
-    Ok((matching.remove(0), shared))
+    let (store, bucket) = matching.remove(0);
+    let Some(bucket) = bucket else {
+        return Ok((store, shared));
+    };
+    if bucket.file_name() != shared.file_name() {
+        let recorded = if present(&bucket.join("setup-guard-hooks.json"))? {
+            let (hooks, _) = verified_custody_hooks(&bucket)?;
+            format!(
+                " Its receipt records the hook directory {}.",
+                hooks.display()
+            )
+        } else {
+            String::new()
+        };
+        return Err(Diagnostic::new(
+            Code::RollbackConflict,
+            "rollback",
+            &format!(
+                "Transaction {id} is recorded in shared setup guard custody {} for a different effective hook directory than the current core.hooksPath.{recorded}",
+                bucket.display()
+            ),
+            &format!(
+                "Restore core.hooksPath to the hook directory that transaction {id} changed, then retry the exact rollback; the journal and its custody were preserved."
+            ),
+        ));
+    }
+    Ok((store, bucket))
 }
 
 /// A native serialization lock acquired before any transaction-store lock.
@@ -816,6 +1014,60 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join(".git"), vec![b'a'; 4097]).unwrap();
         assert!(git_dir(&root).unwrap_err().message.contains("too large"));
+    }
+
+    #[test]
+    fn custody_receipt_must_name_its_own_bucket_key() {
+        use super::{custody_buckets, shared_setup_guard_key, verified_custody_hooks};
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let hooks = base.join("hooks");
+        fs::create_dir(&hooks).unwrap();
+        let receipt = serde_json::to_vec(&serde_json::json!({
+            "version": 2,
+            "hooks": {
+                "pre-commit": {"path": hooks.join("pre-commit")},
+                "pre-push": {"path": hooks.join("pre-push")},
+            }
+        }))
+        .unwrap();
+        let namespace = base.join("shared-setup-guard");
+        let good = namespace.join(shared_setup_guard_key(&hooks).unwrap());
+        let wrong = namespace.join("0".repeat(64));
+        let history = namespace.join("f".repeat(64));
+        for bucket in [&good, &wrong] {
+            fs::create_dir_all(bucket).unwrap();
+            fs::write(bucket.join("setup-guard-hooks.json"), &receipt).unwrap();
+        }
+        fs::create_dir_all(history.join("assets/transactions")).unwrap();
+        fs::create_dir_all(namespace.join("not-a-key")).unwrap();
+        fs::create_dir_all(namespace.join("e".repeat(64))).unwrap();
+        let found: Vec<_> = custody_buckets(&namespace)
+            .unwrap()
+            .into_iter()
+            .map(|b| (b.directory, b.receipt))
+            .collect();
+        let mut expected = vec![
+            (wrong.clone(), true),
+            (history, false),
+            (good.clone(), true),
+        ];
+        expected.sort();
+        assert_eq!(found, expected);
+        assert_eq!(verified_custody_hooks(&good).unwrap().0, hooks);
+        assert!(
+            verified_custody_hooks(&wrong)
+                .unwrap_err()
+                .message
+                .contains("does not match")
+        );
+        fs::write(good.join("setup-guard-hooks.json"), b"{}").unwrap();
+        assert!(
+            verified_custody_hooks(&good)
+                .unwrap_err()
+                .message
+                .contains("cannot be verified")
+        );
     }
 
     #[cfg(unix)]

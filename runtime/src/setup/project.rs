@@ -1165,11 +1165,15 @@ fn apply_prepared(
         }
     }
     verify_dependencies(&dependencies)?;
-    evidence["transaction"] = json!(store.apply_recording_checked(
-        changes,
-        &observations,
-        |_| verify_dependencies(&dependencies)
-    )?);
+    // Git does not take SpecGit's lock, so a concurrent `git worktree add`
+    // must abort and roll back the transaction before hook writes commit.
+    evidence["transaction"] =
+        json!(store.apply_recording_checked(changes, &observations, |_| {
+            if let Some(inventory) = &native_inventory {
+                inventory.verify()?;
+            }
+            verify_dependencies(&dependencies)
+        })?);
     evidence["written"] = json!(true);
     evidence["registration"] = json!(if uninstall {
         "not_registered"

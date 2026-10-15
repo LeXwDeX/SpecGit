@@ -566,6 +566,51 @@ async fn failed_pending_context_read_can_retry_all_offers_in_the_same_session() 
     assert!(repeated.stderr.is_empty());
     assert_eq!(fs::read(&state).unwrap(), valid);
     assert!(f.state()["calls"].as_array().unwrap().is_empty());
+
+    // The first write is adopted and a different native write becomes uncertain
+    // in the same host session; its recovery must still be delivered.
+    Locked::acquire(&context)
+        .unwrap()
+        .save(&Selection {
+            version: 2,
+            repository: context.repository.clone(),
+            project_id: 7,
+            branch: context.branch.clone().unwrap(),
+            target: "main".into(),
+            issues: vec![],
+            intents: vec![
+                IssueIntent {
+                    title: "feat: interrupted issue creation".into(),
+                    body: "Specification awaiting native reconciliation.".into(),
+                    labels: vec![],
+                    issue: Some(11),
+                    write_started: true,
+                },
+                IssueIntent {
+                    title: "feat: second interrupted issue".into(),
+                    body: "Another specification awaiting reconciliation.".into(),
+                    labels: vec![],
+                    issue: None,
+                    write_started: true,
+                },
+            ],
+            adopted: vec![],
+            request: Some(7),
+            request_write_started: false,
+            request_intent: None,
+        })
+        .unwrap();
+    let later = hook(
+        &f,
+        "SessionStart",
+        json!({"session_id":session,"hook_event_name":"SessionStart","cwd":f.root}),
+    );
+    assert!(later.status.success());
+    let output: Value = serde_json::from_slice(&later.stdout).unwrap();
+    let text = output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("uncertain native write"), "{text}");
 }
 
 #[test]
