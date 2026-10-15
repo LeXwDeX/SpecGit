@@ -238,26 +238,29 @@ fn orphan_hook_registration(root: &Path) -> Result<Option<PathBuf>, Diagnostic> 
                 let Some(executable) = orphan_hook_executable(host, event, candidate) else {
                     return false;
                 };
+                // Retired events still identify receiptless registrations
+                // written through 2.12, so compare with the legacy shape.
                 let expected = if host == "opencode" {
-                    opencode_manifest(&executable)
+                    legacy_opencode_manifest(&executable)
                 } else {
-                    manifest(&executable, agent)
+                    legacy_manifest(&executable, agent)
                 };
                 let mut recognized: Vec<_> = expected.into_iter().collect();
                 if agent == Agent::Codex {
                     // Recognize 2.9.2's executable + argv protocol only to
                     // report an orphan. Exact comparison grants no ownership.
-                    recognized.extend(manifest(&executable, Agent::Claude));
+                    recognized.extend(legacy_manifest(&executable, Agent::Claude));
                 }
                 recognized.iter().any(|expected| {
-                    let group = &expected[event];
+                    let Some(group) = expected.get(event) else {
+                        return false;
+                    };
                     candidate == group
                         || (event == "PostToolUse" && host != "opencode" && {
                             let mut without_observer = group.clone();
-                            without_observer["hooks"]
-                                .as_array_mut()
-                                .expect("manifest hooks")
-                                .truncate(1);
+                            if let Some(hooks) = without_observer["hooks"].as_array_mut() {
+                                hooks.truncate(1);
+                            }
                             candidate == &without_observer
                         })
                 })

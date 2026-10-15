@@ -144,6 +144,14 @@ pub(crate) async fn plan_named(
         git_dir.join("specgit-v2").join(name)
     };
     let receipt_snapshot = Snapshot::read(&receipt_path)?;
+    // Independent installation, transfer and an ownerless uninstall would
+    // otherwise conclude "no setup source" from the current custody key only.
+    if name == "guard-hooks.json" && (!uninstall || receipt_snapshot.bytes.is_none()) {
+        reject_foreign_custody(process, &root, "git_guard").await?;
+        if !uninstall {
+            reject_shared_pending(&shared, "git_guard")?;
+        }
+    }
     let transfer_path = setup_path;
     if name == "setup-guard-hooks.json"
         && receipt_snapshot.bytes.is_some()
@@ -494,6 +502,10 @@ pub async fn health_plan(
     };
     let receipt_snapshot = Snapshot::read(&receipt_path)?;
     let Some(bytes) = receipt_snapshot.bytes.as_deref() else {
+        // Read-only: report hidden custody or an unfinished shared transaction
+        // instead of "no guard ownership".
+        reject_foreign_custody(process, &root, "git_guard_health").await?;
+        reject_shared_pending(&shared, "git_guard_health")?;
         let hook_root = config::worktree::hooks(process, &root).await?;
         for stage in ["pre-commit", "pre-push"] {
             let path = hook_root.join(stage);
@@ -868,6 +880,16 @@ async fn install_with_preview(
         &roots,
         Duration::from_secs(2),
     )?;
+    if !uninstall {
+        // Re-check after locking: setup writers retain or retire shared
+        // custody under the same native serialization lock.
+        reject_foreign_custody(process, &root, "git_guard").await?;
+        reject_shared_pending(&shared, "git_guard")?;
+    }
+    let custody = shared
+        .parent()
+        .map(|namespace| Inventory::read(namespace.to_owned()))
+        .transpose()?;
     let observations: Vec<_> = changes
         .iter()
         .filter(|c| {
@@ -884,7 +906,11 @@ async fn install_with_preview(
         .collect();
     guard_dependencies_unchanged(&dependencies)?;
     let applied = store.apply_recording_checked(changes, &observations, |_| {
-        guard_dependencies_unchanged(&dependencies)
+        guard_dependencies_unchanged(&dependencies)?;
+        if !uninstall {
+            reject_shared_pending(&shared, "git_guard")?;
+        }
+        custody.as_ref().map_or(Ok(()), Inventory::verify)
     })?;
     Ok(json!({
         "installed": !uninstall,
@@ -1135,6 +1161,55 @@ fn setup_source(private: &Path, shared: &Path) -> Result<PathBuf, Diagnostic> {
     }
     Ok(if common_exists { common } else { local })
 }
+/// Custody is keyed by the effective hook directory, so an empty current key
+/// does not prove "no setup source". Retained setup custody recorded for
+/// another hook directory is an ownership conflict, never "no ownership".
+async fn reject_foreign_custody(
+    process: &Process,
+    root: &Path,
+    operation: &str,
+) -> Result<(), Diagnostic> {
+    let foreign = config::worktree::foreign_setup_guard_custody(process, root).await?;
+    let Some(custody) = foreign.first() else {
+        return Ok(());
+    };
+    Err(Diagnostic::new(
+        Code::OwnershipConflict,
+        operation,
+        &format!(
+            "Retained shared setup guard custody {} records the hook directory {} instead of the current core.hooksPath.",
+            custody.directory.display(),
+            custody.hooks.display()
+        ),
+        &format!(
+            "Restore core.hooksPath to {} before installing, transferring or inspecting guard ownership; no receipts or hooks were changed.",
+            custody.hooks.display()
+        ),
+    ))
+}
+
+/// An unfinished transaction in the current shared custody store may still
+/// restore the shared receipt, so ownership must not move until it is recovered.
+fn reject_shared_pending(shared: &Path, operation: &str) -> Result<(), Diagnostic> {
+    let pending = AssetStore::pending_at(&shared.join("assets"))?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        Code::RollbackConflict,
+        operation,
+        &format!(
+            "Unfinished shared setup guard transaction(s) require recovery: {}.",
+            pending.join(", ")
+        ),
+        &format!(
+            "Preserve {} and recover each exact transaction id ({}) with specgit setup --rollback before installing or transferring guard ownership; no receipts or hooks were changed.",
+            shared.join("assets/transactions").display(),
+            pending.join(", ")
+        ),
+    ))
+}
+
 fn source_stores(private: &Path, shared: &Path) -> [PathBuf; 2] {
     [private.join("assets"), shared.join("assets")]
 }
@@ -1262,14 +1337,16 @@ async fn setup_plan_inner(
     // must not turn retained custody into "no ownership" for a worktree whose
     // setup still selects the guard; keep every receipt as a lock-time pin.
     let foreign = config::worktree::foreign_setup_guard_custody(process, root).await?;
+    // Installing a new setup guard here would also create a second owner.
     if existing.bytes.is_none()
         && let Some(custody) = foreign.first()
-        && config::worktree::setup_guard_demand(
-            Snapshot::read(&private.join("agent-assets/ownership.json"))?
-                .bytes
-                .as_deref(),
-            root,
-        )?
+        && (enabled
+            || config::worktree::setup_guard_demand(
+                Snapshot::read(&private.join("agent-assets/ownership.json"))?
+                    .bytes
+                    .as_deref(),
+                root,
+            )?)
     {
         return Err(Diagnostic::new(
             Code::OwnershipConflict,
