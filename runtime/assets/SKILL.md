@@ -165,7 +165,7 @@ explicitly installed with `specgit skill --user` at `~/.agents/skills/specgit-na
 Choose the least hook purposes supported by the host and task. `setup --hook-purpose guard` configures native
 pre-commit/pre-push checks; `specgit guard --install --dry-run` and `specgit guard --uninstall --dry-run` preview
 independent guard changes. Setup verifies/reuses independent guards without taking ownership. Preserve unsupported non-shell
-hooks. Uninstall removes only recorded blocks while respecting active consumers.
+hooks. Uninstall preserves active consumers; retired setup-guard ownership stays in shared Git metadata until its last setup consumer leaves.
 
 Init/setup maintain one Git-local `info/exclude` block for `.specgit.yaml` and generated SpecGit Skill files. Keep manual
 instructions and other Skills visible; never exclude entire agent directories. Inspect repository/user ignore rules;

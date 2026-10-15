@@ -175,7 +175,15 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
     let store_root = private.join("assets");
     if let Some(id) = &options.rollback {
         let serialization = config::worktree::lock_native_guard(&process, &root).await?;
+        let (store_root, shared) = config::worktree::rollback_store(
+            &process,
+            &root,
+            id,
+            std::slice::from_ref(&store_root),
+        )
+        .await?;
         let allowed = config::worktree::rollback_allowed_roots(&[
+            shared,
             root.clone(),
             private.clone(),
             exclude_parent.clone(),

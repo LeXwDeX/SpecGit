@@ -206,7 +206,10 @@ hooks another worktree owns names that owner instead of changing the hooks.
 SpecGit 2.4 is permanently project-only: `setup --uninstall` removes this
 worktree's recorded project agent assets. Setup-owned guard blocks are retained
 while an active setup or sibling worktree needs them, and independently owned
-guard blocks remain outside setup's uninstall scope. Existing 2.3 global data is
+guard blocks remain outside setup's uninstall scope. When a setup owner retires,
+remaining guard ownership and recovery evidence stay in shared Git metadata, so
+pruning that worktree does not prevent the last setup consumer from cleaning up.
+Existing 2.3 global data is
 preserved; 2.4 ships no global cleanup command. If that data must be removed,
 back it up first and use the 2.3 CLI's exact owned cleanup before upgrading —
 never a blind delete. Preserve recovery records and foreign content.

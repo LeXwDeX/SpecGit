@@ -176,7 +176,7 @@ protocol contract. The catalog is offline and independent of project setup.
 | Git guard | Native commit/push checkpoint enforcement, independent of the Agent process | Optional unless project policy requires it; verify actual guard behavior |
 | Observation | Bounded `watch`/`inbox` and private event state | Optional; reads native forge state when requested, with no automatic host wake |
 | Local project files | `.specgit.yaml`, generated Skill paths and Git `info/exclude` entries | Exclude only exact local paths; ignore rules never untrack files; mixed guidance may be tracked |
-| Private receipts and checkpoints | Ownership, recovery and selected Issue state in Git-private metadata | Per checkout/worktree; shared Git hook blocks stay while active consumers need them |
+| Private receipts and checkpoints | Ownership, recovery and selected Issue state in Git-private metadata | Checkpoints and project receipts stay per worktree; a retired setup guard's ownership and recovery evidence stay in shared Git metadata while consumers remain |
 
 Missing optional capability blocks only operations that depend on it. If policy
 requires the Git guard, its absence blocks guard-dependent commit/push work; a
@@ -245,7 +245,9 @@ specgit guard --uninstall --json
 
 An independently installed guard stays outside setup's uninstall scope. Shared
 guard blocks remain while consumers need them; ownership or permission ambiguity
-is a conflict to reconcile through the owning CLI transaction. Do not hand-edit
+is a conflict to reconcile through the owning CLI transaction. Retiring a setup
+owner retains guard proof in shared Git metadata; the last setup consumer can clean up
+even after the former owner's worktree is pruned. Do not hand-edit
 managed blocks or remove receipts to force cleanup.
 
 Whole-project removal remains a separate operation. Use the installed CLI's

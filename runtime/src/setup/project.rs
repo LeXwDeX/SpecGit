@@ -26,14 +26,13 @@ fn owned_pair(
     asset: &Snapshot,
     digest: Option<&str>,
 ) -> Result<Option<Vec<Change>>, Diagnostic> {
-    AssetStore::owned_pair_across_at(
-        &[transaction_store(private), private.to_owned()],
-        receipt_path,
-        receipt,
-        asset_path,
-        asset,
-        digest,
-    )
+    let mut stores = vec![transaction_store(private), private.to_owned()];
+    if let Some(bytes) = &receipt.bytes {
+        stores.extend(crate::config::worktree::shared_setup_guard_stores(
+            &crate::project_receipt::decode(bytes)?.root,
+        )?);
+    }
+    AssetStore::owned_pair_across_at(&stores, receipt_path, receipt, asset_path, asset, digest)
 }
 
 fn installation_generation() -> Result<String, Diagnostic> {
@@ -465,6 +464,7 @@ fn merge_guard(
                 .map(|c| c.path.clone()),
         );
     }
+    prepared.custody_store = native.transaction_store;
     prepared.native_serialization = Some(native.serialization);
     prepared.native_inventory = Some(native.inventory);
     prepared.allowed.extend(native.allowed);
@@ -506,6 +506,7 @@ struct Prepared {
     guard_enabled: bool,
     native_serialization: Option<PathBuf>,
     native_inventory: Option<crate::guard::Inventory>,
+    custody_store: Option<PathBuf>,
 }
 
 pub(crate) struct Initialization {
@@ -1047,6 +1048,7 @@ fn install_plan(
             guard_enabled,
             native_serialization: None,
             native_inventory: None,
+            custody_store: None,
         });
         return Ok(evidence);
     }
@@ -1078,6 +1080,7 @@ fn install_plan(
             guard_enabled,
             native_serialization: None,
             native_inventory: None,
+            custody_store: None,
         },
         evidence,
         options.uninstall,
@@ -1102,6 +1105,7 @@ fn apply_prepared(
         guard_enabled: _,
         native_serialization,
         native_inventory,
+        custody_store,
     } = prepared;
     let store_path = transaction_store(private);
     #[cfg(feature = "test-fixtures")]
@@ -1116,7 +1120,21 @@ fn apply_prepared(
     if let Some(inventory) = &native_inventory {
         inventory.verify()?;
     }
-    let store = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
+    let _origin = custody_store
+        .as_ref()
+        .filter(|path| *path != &store_path)
+        .map(|_| AssetStore::lock(&store_path, &allowed, Duration::from_secs(2)))
+        .transpose()?;
+    let store = AssetStore::lock(
+        custody_store.as_ref().unwrap_or(&store_path),
+        &allowed,
+        Duration::from_secs(2),
+    )?;
+    if !store.pending_transactions()?.is_empty() {
+        return Err(conflict(
+            "A shared or local transaction requires recovery first.",
+        ));
+    }
     if Snapshot::read(&private.join("ownership.json"))?.digest() != snapshot.digest() {
         return Err(Diagnostic::new(
             Code::ConcurrentEdit,
@@ -1408,7 +1426,7 @@ fn health_plan_inner(
             host,
             path,
             Some(old),
-            Some(&entries),
+            (!entries.is_empty()).then_some(&entries),
             &recover_missing,
         )?;
         let mut registration = old.clone();
@@ -1473,7 +1491,8 @@ async fn exclusion_health(
     let exclude = crate::local_exclude::path(process, root).await?;
     let observed = Snapshot::read(&exclude)?;
     let state = private.parent().unwrap_or(private);
-    let stores = [transaction_store(private), private.to_owned()];
+    let mut stores = vec![transaction_store(private), private.to_owned()];
+    stores.extend(crate::config::worktree::shared_setup_guard_stores(root)?);
     let mut dependencies = None;
     for receipt in [private.join("ownership.json"), state.join("guidance.json")] {
         let snapshot = Snapshot::read(&receipt)?;
@@ -1605,7 +1624,11 @@ pub async fn health_plan_with_context(
             vec![exclusion.allowed],
         );
     }
+    plan.observe(native.observations());
     plan.serialize_with(native.serialization);
+    if let Some(store) = native.transaction_store {
+        plan.custody_store(store);
+    }
     let inventory = native.inventory;
     plan = plan.with_precondition(move || inventory.verify());
     plan.extend(native.changes, native.dependencies, native.allowed);
@@ -1645,17 +1668,11 @@ pub async fn run_with_hooks(
             if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
                 return Err(Diagnostic::input("Use an exact reported transaction id."));
             }
-            let store_path = transaction_store(&private);
-            let allowed = vec![crate::config::worktree::hooks(&process, &root).await?, root.clone(), git_dir.join("specgit-v2"), exclude.parent().ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?.to_owned()];
-            let allowed = crate::config::worktree::rollback_allowed_roots(&allowed)?;
             let serialization = crate::config::worktree::lock_native_guard(&process, &root).await?;
-            let shared = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
-            let (rolled_back, retained) = if store_path.join("transactions").join(id).exists() {
-                crate::config::worktree::rollback_with_lock(&serialization, &shared, &process, &root, &exclude, id).await?
-            } else {
-                let legacy = AssetStore::lock(&private, &allowed, Duration::from_secs(2))?;
-                crate::config::worktree::rollback_with_lock(&serialization, &legacy, &process, &root, &exclude, id).await?
-            };
+            let (store_path, shared) = crate::config::worktree::rollback_store(&process, &root, id, &[transaction_store(&private), private.clone()]).await?;
+            let allowed = crate::config::worktree::rollback_allowed_roots(&[shared, crate::config::worktree::hooks(&process, &root).await?, root.clone(), git_dir.join("specgit-v2"), exclude.parent().ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?.to_owned()])?;
+            let store = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
+            let (rolled_back, retained) = crate::config::worktree::rollback_with_lock(&serialization, &store, &process, &root, &exclude, id).await?;
             return Ok(json!({"scope":"project","root":root,"private":private,"rolled_back":rolled_back,"retained":retained}));
         }
         let mut prepared = None;
