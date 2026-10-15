@@ -265,6 +265,20 @@ fn pending_shared_custody_transaction_blocks_standalone_guard_transfer() {
         preview_code(&r.borrower),
         specgit::diagnostic::Code::RollbackConflict
     );
+    // The receipt still exists, but read-only health must not call it current.
+    let health = block_on(specgit::guard::health_plan(
+        &specgit::process::Process::default(),
+        &r.borrower,
+    ));
+    let Err(diagnostic) = health else {
+        panic!("health must require recovery of the pending shared transaction");
+    };
+    assert_eq!(
+        diagnostic.code,
+        specgit::diagnostic::Code::RollbackConflict,
+        "{diagnostic:?}"
+    );
+    assert!(diagnostic.message.contains(&id), "{diagnostic:?}");
 }
 
 /// A worktree that never selected the guard must not become a second setup

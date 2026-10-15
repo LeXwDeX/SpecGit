@@ -1386,7 +1386,16 @@ fn health_plan_reports_receiptless_retired_event_registrations_without_panicking
         }
         hook
     };
-    let quoted = format!("'{}'", source.replace('\'', "'\\''"));
+    // The custom OpenCode protocol runs through bash with a normalized path.
+    let shell_path = if cfg!(windows) {
+        source
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(source)
+            .replace('\\', "/")
+    } else {
+        source.to_owned()
+    };
+    let quoted = format!("'{}'", shell_path.replace('\'', "'\\''"));
     let opencode = |event: &str| json!({"type":"command","shell":"bash","command":format!("{quoted} hook --event {event}"),"inputFormat":"claude-code","timeout":5});
     let cases = [
         (

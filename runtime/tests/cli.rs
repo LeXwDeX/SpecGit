@@ -299,3 +299,66 @@ fn successful_help_never_substitutes_for_account_api_evidence() {
         }
     }
 }
+
+/// `--schema` must publish every option dependency, including one on a group,
+/// so a machine client never builds an input that clap is certain to reject.
+#[test]
+fn schema_publishes_option_requirements_and_the_groups_they_name() {
+    let out = executable::command()
+        .args(["--schema", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let root = &report["evidence"]["command"];
+    let find = |name: &str| {
+        root["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in schema"))
+            .clone()
+    };
+    let requires = |command: &serde_json::Value, long: &str| {
+        command["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["long"] == long)
+            .unwrap_or_else(|| panic!("{long}"))["requires"]
+            .clone()
+    };
+    let guard = find("guard");
+    assert_eq!(
+        requires(&guard, "dry-run"),
+        serde_json::json!(["guard_operation"])
+    );
+    assert_eq!(requires(&guard, "install"), serde_json::json!([]));
+    let group = guard["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["id"] == "guard_operation")
+        .expect("the named group is published");
+    assert_eq!(
+        group["arguments"],
+        serde_json::json!(["install", "uninstall"])
+    );
+    let doctor = find("doctor");
+    assert_eq!(requires(&doctor, "dry-run"), serde_json::json!(["fix"]));
+    assert_eq!(
+        requires(&doctor, "account-only"),
+        serde_json::json!(["provider"])
+    );
+    for (command, long, target) in [
+        ("remove", "apply", "expect"),
+        ("migrate", "apply", "expect"),
+    ] {
+        assert_eq!(
+            requires(&find(command), long),
+            serde_json::json!([target]),
+            "{command}"
+        );
+    }
+}
