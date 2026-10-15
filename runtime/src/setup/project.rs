@@ -27,6 +27,29 @@ struct ProjectReceipt {
     hooks: BTreeMap<String, Registration>,
 }
 
+/// New init and setup transactions share one lock and history. Existing setup
+/// journals remain read-only evidence for installations created before migration.
+fn transaction_store(private: &Path) -> PathBuf {
+    private.parent().unwrap_or(private).join("assets")
+}
+fn owned_pair(
+    private: &Path,
+    receipt_path: &Path,
+    receipt: &Snapshot,
+    asset_path: &Path,
+    asset: &Snapshot,
+    digest: Option<&str>,
+) -> Result<Option<Vec<Change>>, Diagnostic> {
+    AssetStore::owned_pair_across_at(
+        &[transaction_store(private), private.to_owned()],
+        receipt_path,
+        receipt,
+        asset_path,
+        asset,
+        digest,
+    )
+}
+
 fn installation_generation() -> Result<String, Diagnostic> {
     let mut nonce = [0u8; 32];
     getrandom::fill(&mut nonce).map_err(|_| {
@@ -339,7 +362,7 @@ pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagno
     let mut changes = vec![];
     let mut add_proven_change =
         |change: Change, digest: Option<&str>, host: &str| -> Result<(), Diagnostic> {
-            let proofs = AssetStore::owned_pair_at(
+            let proofs = owned_pair(
                 private,
                 &receipt_path,
                 &snapshot,
@@ -414,6 +437,95 @@ pub fn install_with_hooks(
     private: &Path,
     source: &Path,
 ) -> Result<Value, Diagnostic> {
+    install_plan(options, hooks, root, private, source, None, None)
+}
+
+struct Prepared {
+    changes: Vec<Change>,
+    observations: Vec<PathBuf>,
+    snapshot: Snapshot,
+    executable: Option<Snapshot>,
+    allowed: Vec<PathBuf>,
+}
+
+pub(crate) struct Initialization {
+    pub changes: Vec<Change>,
+    pub observations: Vec<PathBuf>,
+    pub executable: Option<(PathBuf, Snapshot)>,
+}
+
+pub(crate) fn recheck_executable(
+    root: &Path,
+    source: &Path,
+    expected: &Snapshot,
+) -> Result<(), Diagnostic> {
+    let current = shared_executable(source, root)?;
+    if !(Change {
+        path: source.to_owned(),
+        before: expected.clone(),
+        after: current.bytes,
+        permissions: current.permissions,
+    })
+    .unchanged()
+    {
+        return Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "setup",
+            "The installed executable changed while acquiring the project lock.",
+            "Preview again with the current installed shared CLI.",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn initialization_changes(
+    root: &Path,
+    private: &Path,
+    mirror: bool,
+) -> Result<Initialization, Diagnostic> {
+    let mut prepared = None;
+    let mut agents = vec![Agent::Generic];
+    if mirror {
+        agents.push(Agent::Claude);
+    }
+    let options = Options {
+        agents,
+        opencode_claude_hooks: false,
+        uninstall: false,
+        dry_run: false,
+        rollback: None,
+    };
+    let source = std::env::current_exe()
+        .map_err(|_| Diagnostic::input("Current executable is unavailable."))?;
+    install_plan(
+        &options,
+        &HookOptions {
+            purposes: vec![HookPurpose::None],
+            opencode_async_rewake: false,
+        },
+        root,
+        private,
+        &source,
+        Some(&mut prepared),
+        None,
+    )?;
+    let prepared = prepared.expect("initialization plan");
+    Ok(Initialization {
+        changes: prepared.changes,
+        observations: prepared.observations,
+        executable: prepared.executable.map(|snapshot| (source, snapshot)),
+    })
+}
+
+fn install_plan(
+    options: &Options,
+    hooks: &HookOptions,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+    planned: Option<&mut Option<Prepared>>,
+    exclude: Option<&Path>,
+) -> Result<Value, Diagnostic> {
     let requested: BTreeSet<_> = hooks.purposes.iter().copied().collect();
     if requested.len() != hooks.purposes.len()
         || (requested.contains(&HookPurpose::None) && requested.len() > 1)
@@ -443,14 +555,56 @@ pub fn install_with_hooks(
     }
     assets::safe_path(root)?;
     assets::safe_path(private)?;
-    let allowed = vec![root.to_owned(), private.to_owned()];
+    let store_path = transaction_store(private);
+    let mut allowed = vec![
+        root.to_owned(),
+        private.parent().unwrap_or(private).to_owned(),
+        store_path.clone(),
+    ];
+    if let Some(parent) = exclude.and_then(Path::parent) {
+        allowed.push(parent.to_owned());
+    }
     if let Some(id) = &options.rollback {
+        if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err(Diagnostic::input("Use an exact reported transaction id."));
+        }
+        let shared = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
+        let rolled_back = if store_path.join("transactions").join(id).exists() {
+            shared.rollback(id)?
+        } else {
+            // Hold the new shared lock while recovering a pre-migration journal.
+            AssetStore::lock(private, &allowed, Duration::from_secs(2))?.rollback(id)?
+        };
         return Ok(
-            json!({"scope":"project","root":root,"private":private,"rolled_back":AssetStore::lock(private, &allowed, Duration::from_secs(2))?.rollback(id)?}),
+            json!({"scope":"project","root":root,"private":private,"rolled_back":rolled_back}),
         );
     }
+    if !AssetStore::pending_at(private)?.is_empty()
+        || !AssetStore::pending_at(&store_path)?.is_empty()
+    {
+        return Err(conflict(
+            "An interrupted project asset transaction requires recovery first.",
+        ));
+    }
     let (snapshot, previous) = read(root, private)?;
+    let migration = if options.uninstall {
+        Vec::new()
+    } else {
+        let declaration = crate::config::read(root)?.unwrap_or_default();
+        crate::guidance::migration_removal(root, private.parent().unwrap_or(private), &declaration)?
+    };
     let mut selected = previous.agents.clone();
+    // Successfully verified legacy init entries retain their selected host.
+    // Migration changes exist only after every old block proved ownership.
+    for (name, agent) in [("AGENTS.md", Agent::Generic), ("CLAUDE.md", Agent::Claude)] {
+        if migration
+            .iter()
+            .any(|change| change.path == root.join(name))
+        {
+            selected.insert(agent);
+        }
+    }
+
     for agent in &options.agents {
         if options.agents.iter().filter(|a| *a == agent).count() != 1 {
             return Err(Diagnostic::input("Select each agent only once."));
@@ -492,7 +646,8 @@ pub fn install_with_hooks(
         }
         let (mut effective, old_wake) = recorded_purposes(previous.hooks.get(host));
         let mut wanted = requested.clone();
-        if wanted.is_empty() && !previous.agents.contains(&agent) {
+        if wanted.is_empty() && !previous.agents.contains(&agent) && options.agents.contains(&agent)
+        {
             wanted.extend([HookPurpose::Guard, HookPurpose::Context]);
             if matches!(agent, Agent::Claude | Agent::Codex) {
                 wanted.insert(HookPurpose::Observe);
@@ -563,7 +718,7 @@ pub fn install_with_hooks(
         instructions: BTreeMap::new(),
         hooks: BTreeMap::new(),
     };
-    let mut changes = vec![];
+    let mut changes = migration;
     let receipt_path = private.join("ownership.json");
     let mut skills: BTreeSet<String> = previous.skills.keys().cloned().collect();
     if !options.uninstall {
@@ -575,9 +730,7 @@ pub fn install_with_hooks(
     for relative in skills {
         let change = Change::new(root.join(&relative), (!options.uninstall).then(skill_bytes))?;
         if let Some(hash) = previous.skills.get(&relative) {
-            if change.before.digest().as_ref() != Some(hash)
-                && (options.uninstall || change.before.bytes.is_none())
-            {
+            if change.before.digest().as_ref() != Some(hash) && options.uninstall {
                 return Err(conflict_at(
                     "project",
                     &change.path,
@@ -585,7 +738,7 @@ pub fn install_with_hooks(
                     "The owned project skill was edited or removed.",
                 ));
             }
-            let proof = AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &change.path, &change.before, Some(hash))?
+            let proof = owned_pair(private, &receipt_path, &snapshot, &change.path, &change.before, Some(hash))?
                 .ok_or_else(|| conflict_at("project", &change.path, None, "The project skill permissions or transaction ownership cannot be proved; retain it for reconciliation."))?;
             for journal in proof {
                 if !changes.iter().any(|c: &Change| c.path == journal.path) {
@@ -593,12 +746,14 @@ pub fn install_with_hooks(
                 }
             }
         } else if change.before.bytes.is_some() {
-            return Err(conflict_at(
+            let mut diagnostic = conflict_at(
                 "project",
                 &change.path,
                 None,
                 "The project skill is unowned; preserve it and reconcile ownership first.",
-            ));
+            );
+            diagnostic.remedy = "Preserve the file and manual content; verify the original ownership record. A clone may contain an old generated Skill tracked by Git. Only after confirming it is generated and obtaining authorization, remove that file from the Git index and move the existing local copy to a safe location, then run `specgit init` to generate a managed local Skill. Untracking alone leaves the conflicting local file in place. Never adopt or overwrite unknown content automatically.".into();
+            return Err(diagnostic);
         }
         if !options.uninstall {
             receipt
@@ -620,6 +775,7 @@ pub fn install_with_hooks(
             hosts.insert("claude".into());
         }
     }
+    let mut observations = Vec::new();
     let mut planned_paths = BTreeSet::new();
     for host in ["codex", "generic", "claude"] {
         if !hosts.contains(host) {
@@ -654,15 +810,21 @@ pub fn install_with_hooks(
         }
         // This is a pure plan. Any recorded asset must prove this exact
         // before-snapshot before the plan can be returned or applied.
-        let (change, registration) = instruction_change(
+        let target = root.join(instruction_target(host, root, old)?);
+        let migration_change = changes.iter().find(|change| change.path == target);
+        let (change, registration) = instruction_change_after(
             host,
             root,
             old,
             options.uninstall,
             old.is_some() && !options.uninstall,
+            migration_change,
         )?;
+        if old.is_none() && change.unchanged() {
+            observations.push(change.path.clone());
+        }
         if old.is_some() {
-            let proofs = AssetStore::owned_pair_at(
+            let proofs = owned_pair(
                 private,
                 &receipt_path,
                 &snapshot,
@@ -690,6 +852,7 @@ pub fn install_with_hooks(
         if let Some(registration) = registration {
             receipt.instructions.insert(host.into(), registration);
         }
+        changes.retain(|c| c.path != change.path);
         changes.push(change);
     }
     for (agent, host, relative) in [
@@ -708,7 +871,7 @@ pub fn install_with_hooks(
         }
         let change = registration_change(host, &path, old, entries)?;
         if old.is_some() {
-            let proofs = AssetStore::owned_pair_at(
+            let proofs = owned_pair(
                 private,
                 &receipt_path,
                 &snapshot,
@@ -799,21 +962,68 @@ pub fn install_with_hooks(
             )
         },
     });
+    if let Some(exclude) = exclude {
+        changes.push(crate::local_exclude::project_change(
+            root, exclude, &changes,
+        )?);
+    }
     let summary: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"opencode_claude_hooks":custom_opencode,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
     evidence["hook_purposes"] = Value::Object(purpose_evidence);
     if any_wake {
         evidence["host_delivery"]["idle_wake"] = json!("configured_not_verified");
     }
+    if let Some(planned) = planned {
+        *planned = Some(Prepared {
+            changes,
+            observations,
+            snapshot,
+            executable,
+            allowed,
+        });
+        return Ok(evidence);
+    }
     if options.dry_run {
         return Ok(evidence);
     }
+    apply_prepared(
+        root,
+        private,
+        source,
+        Prepared {
+            changes,
+            observations,
+            snapshot,
+            executable,
+            allowed,
+        },
+        evidence,
+        options.uninstall,
+    )
+}
+
+fn apply_prepared(
+    root: &Path,
+    private: &Path,
+    source: &Path,
+    prepared: Prepared,
+    mut evidence: Value,
+    uninstall: bool,
+) -> Result<Value, Diagnostic> {
+    let Prepared {
+        changes,
+        observations,
+        snapshot,
+        executable,
+        allowed,
+    } = prepared;
+    let store_path = transaction_store(private);
     #[cfg(feature = "test-fixtures")]
     if let Some(marker) = std::env::var_os("SPECGIT_FIXTURE_SETUP_PLAN_READY") {
         std::fs::write(marker, b"planned")
             .map_err(|_| Diagnostic::input("Fixture plan marker is unavailable."))?;
     }
-    let store = AssetStore::lock(private, &allowed, Duration::from_secs(2))?;
+    let store = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
     if Snapshot::read(&private.join("ownership.json"))?.digest() != snapshot.digest() {
         return Err(Diagnostic::new(
             Code::ConcurrentEdit,
@@ -823,22 +1033,7 @@ pub fn install_with_hooks(
         ));
     }
     if let Some(executable) = executable {
-        let current = shared_executable(source, root)?;
-        if !(Change {
-            path: source.to_owned(),
-            before: executable,
-            after: current.bytes,
-            permissions: current.permissions,
-        })
-        .unchanged()
-        {
-            return Err(Diagnostic::new(
-                Code::ConcurrentEdit,
-                "setup",
-                "The installed executable changed while acquiring the project lock.",
-                "Preview setup again with the current installed shared CLI.",
-            ));
-        }
+        recheck_executable(root, source, &executable)?;
     }
     // apply filters unchanged entries; they still need fresh ownership evidence.
     for change in &changes {
@@ -858,9 +1053,9 @@ pub fn install_with_hooks(
             ));
         }
     }
-    evidence["transaction"] = json!(store.apply(changes)?);
+    evidence["transaction"] = json!(store.apply_recording(changes, &observations)?);
     evidence["written"] = json!(true);
-    evidence["registration"] = json!(if options.uninstall {
+    evidence["registration"] = json!(if uninstall {
         "not_registered"
     } else {
         "written_not_verified"
@@ -877,7 +1072,9 @@ pub fn health_plan(
 ) -> Result<Option<assets::MaintenancePlan>, Diagnostic> {
     assets::safe_path(root)?;
     assets::safe_path(private)?;
-    if !AssetStore::pending_at(private)?.is_empty() {
+    if !AssetStore::pending_at(private)?.is_empty()
+        || !AssetStore::pending_at(&transaction_store(private))?.is_empty()
+    {
         return Err(conflict(
             "An interrupted project asset transaction requires recovery first.",
         ));
@@ -966,7 +1163,7 @@ pub fn health_plan(
     for (relative, digest) in &previous.skills {
         let path = root.join(relative);
         let mut change = Change::new(path.clone(), Some(skill_bytes()))?;
-        let proof = AssetStore::owned_pair_at(
+        let proof = owned_pair(
             private,
             &receipt_path,
             &snapshot,
@@ -1003,16 +1200,15 @@ pub fn health_plan(
                 "Missing guidance may contain manual content and cannot be reconstructed.",
             ));
         }
-        let proof =
-            AssetStore::owned_pair_at(private, &receipt_path, &snapshot, &path, &current, None)?
-                .ok_or_else(|| {
-                    conflict_at(
-                        host,
-                        &path,
-                        None,
-                        "Guidance ownership or permissions cannot be proved.",
-                    )
-                })?;
+        let proof = owned_pair(private, &receipt_path, &snapshot, &path, &current, None)?
+            .ok_or_else(|| {
+                conflict_at(
+                    host,
+                    &path,
+                    None,
+                    "Guidance ownership or permissions cannot be proved.",
+                )
+            })?;
         add_proofs(proof);
         let (change, registration) = instruction_change(host, root, Some(old), false, true)?;
         next.instructions.insert(
@@ -1037,16 +1233,15 @@ pub fn health_plan(
                 "Missing host settings may contain manual content and cannot be reconstructed.",
             ));
         }
-        let proof =
-            AssetStore::owned_pair_at(private, &receipt_path, &snapshot, path, &current, None)?
-                .ok_or_else(|| {
-                    conflict_at(
-                        host,
-                        path,
-                        None,
-                        "Host settings ownership or permissions cannot be proved.",
-                    )
-                })?;
+        let proof = owned_pair(private, &receipt_path, &snapshot, path, &current, None)?
+            .ok_or_else(|| {
+                conflict_at(
+                    host,
+                    path,
+                    None,
+                    "Host settings ownership or permissions cannot be proved.",
+                )
+            })?;
         add_proofs(proof);
         let (purposes, wake) = recorded_purposes(Some(old));
         let agent = match host.as_str() {
@@ -1109,8 +1304,12 @@ pub fn health_plan(
         permissions: snapshot.permissions.clone(),
     });
     let mut plan = assets::MaintenancePlan::new(
-        private.into(),
-        vec![root.into(), private.into()],
+        transaction_store(private),
+        vec![
+            root.into(),
+            private.parent().unwrap_or(private).into(),
+            transaction_store(private),
+        ],
         changes,
         dependencies,
     );
@@ -1149,12 +1348,49 @@ pub async fn run_with_hooks(
             path(crate::project::git(&process, cwd, &["rev-parse", "--absolute-git-dir"]).await?)?;
         let source = std::env::current_exe()
             .map_err(|_| Diagnostic::input("Current executable is unavailable."))?;
-        install_with_hooks(
+        let exclude = crate::local_exclude::path(&process, &root).await?;
+        let private = git_dir.join("specgit-v2/agent-assets");
+        if let Some(id) = &options.rollback {
+            if options.dry_run || options.uninstall || !options.agents.is_empty() || options.opencode_claude_hooks || !hooks.purposes.is_empty() || hooks.opencode_async_rewake {
+                return Err(Diagnostic::input("Rollback restores a recorded transaction; omit installation changes."));
+            }
+            if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+                return Err(Diagnostic::input("Use an exact reported transaction id."));
+            }
+            let store_path = transaction_store(&private);
+            let allowed = vec![root.clone(), git_dir.join("specgit-v2"), exclude.parent().ok_or_else(|| Diagnostic::input("Invalid exclude parent."))?.to_owned()];
+            let shared = AssetStore::lock(&store_path, &allowed, Duration::from_secs(2))?;
+            let (rolled_back, retained) = if store_path.join("transactions").join(id).exists() {
+                crate::config::worktree::rollback(&shared, &process, &root, &exclude, id).await?
+            } else {
+                let legacy = AssetStore::lock(&private, &allowed, Duration::from_secs(2))?;
+                crate::config::worktree::rollback(&legacy, &process, &root, &exclude, id).await?
+            };
+            return Ok(json!({"scope":"project","root":root,"private":private,"rolled_back":rolled_back,"retained":retained}));
+        }
+        let mut prepared = None;
+        let mut evidence = install_plan(
             &options,
             &hooks,
             &root,
-            &git_dir.join("specgit-v2/agent-assets"),
+            &private,
             &source,
+            Some(&mut prepared),
+            Some(&exclude),
+        )?;
+        let prepared = prepared.expect("project plan");
+        evidence["local_exclusion"] =
+            crate::local_exclude::inspect(&process, &root, &exclude, &prepared.changes).await?;
+        if options.dry_run {
+            return Ok(evidence);
+        }
+        apply_prepared(
+            &root,
+            &private,
+            &source,
+            prepared,
+            evidence,
+            options.uninstall,
         )
     }
     .await;

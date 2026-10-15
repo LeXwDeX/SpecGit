@@ -5,7 +5,6 @@ use crate::{
     assets::{AssetStore, Change},
     config::{self, Declaration},
     diagnostic::{Code, Diagnostic},
-    guidance,
     process::Process,
     project::{self, Context},
     report::Report,
@@ -108,7 +107,6 @@ impl Paths {
 pub(super) struct Plan {
     pub paths: Paths,
     pub declaration_change: Change,
-    pub previous: Declaration,
     pub declaration: Declaration,
     pub context: Context,
     pub native: Native,
@@ -123,7 +121,6 @@ pub(super) async fn apply(
     let Plan {
         paths,
         declaration_change,
-        previous,
         declaration,
         context,
         native,
@@ -137,13 +134,29 @@ pub(super) async fn apply(
     let mut declaration_change = declaration_change;
     declaration_change.after = Some(declaration.bytes()?);
     let mut changes = vec![declaration_change];
-    changes.extend(guidance::changes(
+    let crate::setup::project::Initialization {
+        changes: integration,
+        observations,
+        executable,
+    } = crate::setup::project::initialization_changes(
         &root,
-        &private_root,
-        &previous,
-        &declaration,
+        &private_root.join("agent-assets"),
         options.mirror_claude,
-    )?);
+    )?;
+    changes.extend(integration);
+    // Keep init's selection marker without claiming setup's guidance assets.
+    let marker_path = private_root.join("guidance.json");
+    let marker = Change::new(
+        marker_path.clone(),
+        Some(
+            serde_json::to_vec_pretty(
+                &json!({"version":1,"generator":env!("CARGO_PKG_VERSION"),"blocks":{}}),
+            )
+            .map_err(|_| Diagnostic::input("Initialization marker cannot be represented."))?,
+        ),
+    )?;
+    changes.retain(|c| c.path != marker_path);
+    changes.push(marker);
     // Routing is a local asset; no native write capability is available.
     if let Some(host) = &options.api_host {
         let base = project::resolve(
@@ -182,7 +195,28 @@ pub(super) async fn apply(
         ));
     }
     unchanged(options, &process, &root, &declaration, &context, &native).await?;
-    let applied = match store.apply(changes) {
+    for change in &changes {
+        let current = crate::assets::Snapshot::read(&change.path)?;
+        if !(Change {
+            path: change.path.clone(),
+            before: change.before.clone(),
+            after: current.bytes,
+            permissions: current.permissions,
+        })
+        .unchanged()
+        {
+            return Err(Diagnostic::new(
+                Code::ConcurrentEdit,
+                "init",
+                "A project asset or its permissions changed while acquiring the lock.",
+                "Preview initialization again.",
+            ));
+        }
+    }
+    if let Some((source, expected)) = executable {
+        crate::setup::project::recheck_executable(&root, &source, &expected)?;
+    }
+    let applied = match store.apply_recording(changes, &observations) {
         Ok(a) => a,
         Err(d) => {
             let mut report = Report::failure("init", d);

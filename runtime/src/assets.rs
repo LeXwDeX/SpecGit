@@ -646,12 +646,25 @@ impl AssetStore {
         asset: &Snapshot,
         asset_digest: Option<&str>,
     ) -> Result<Option<Vec<Change>>, Diagnostic> {
+        Self::owned_pair_across_at(
+            &[root.to_owned()],
+            receipt_path,
+            receipt,
+            asset_path,
+            asset,
+            asset_digest,
+        )
+    }
+
+    pub(crate) fn owned_pair_across_at(
+        roots: &[PathBuf],
+        receipt_path: &Path,
+        receipt: &Snapshot,
+        asset_path: &Path,
+        asset: &Snapshot,
+        asset_digest: Option<&str>,
+    ) -> Result<Option<Vec<Change>>, Diagnostic> {
         if receipt.bytes.is_none() || (asset.bytes.is_none() && asset_digest.is_none()) {
-            return Ok(None);
-        }
-        let directory = root.join("transactions");
-        safe_path(&directory)?;
-        if !directory.exists() {
             return Ok(None);
         }
         let expected_receipt = receipt_path.canonicalize().map_err(|_| io_error())?;
@@ -664,14 +677,21 @@ impl AssetStore {
             asset_path.to_owned()
         };
         let mut paths = Vec::new();
-        for (i, entry) in fs::read_dir(directory).map_err(|_| io_error())?.enumerate() {
-            if i >= 1000 {
-                return Err(error(
-                    Code::OutputLimit,
-                    "Transaction inventory exceeds its bound.",
-                ));
+        for root in roots {
+            let directory = root.join("transactions");
+            safe_path(&directory)?;
+            if !directory.exists() {
+                continue;
             }
-            paths.push(entry.map_err(|_| io_error())?.path());
+            for entry in fs::read_dir(directory).map_err(|_| io_error())? {
+                if paths.len() >= 1000 {
+                    return Err(error(
+                        Code::OutputLimit,
+                        "Transaction inventory exceeds its bound.",
+                    ));
+                }
+                paths.push(entry.map_err(|_| io_error())?.path());
+            }
         }
         paths.sort();
         let mut records = Vec::new();
@@ -908,6 +928,24 @@ impl AssetStore {
         changes: Vec<Change>,
         mut before_write: impl FnMut(usize) -> Result<(), Diagnostic>,
     ) -> Result<Applied, Diagnostic> {
+        self.apply_checked_recording(changes, &[], &mut before_write)
+    }
+
+    /// Record an explicit ownership baseline without rewriting unchanged bytes.
+    pub(crate) fn apply_recording(
+        &self,
+        changes: Vec<Change>,
+        observations: &[PathBuf],
+    ) -> Result<Applied, Diagnostic> {
+        self.apply_checked_recording(changes, observations, &mut |_| Ok(()))
+    }
+
+    fn apply_checked_recording(
+        &self,
+        changes: Vec<Change>,
+        observations: &[PathBuf],
+        before_write: &mut impl FnMut(usize) -> Result<(), Diagnostic>,
+    ) -> Result<Applied, Diagnostic> {
         let pending = self.pending_transactions()?;
         if !pending.is_empty() {
             return Err(error(
@@ -935,7 +973,10 @@ impl AssetStore {
             .filter(|c| c.unchanged())
             .map(|c| (c.path.clone(), c.before.clone()))
             .collect();
-        let changes: Vec<_> = changes.into_iter().filter(|c| !c.unchanged()).collect();
+        let changes: Vec<_> = changes
+            .into_iter()
+            .filter(|c| !c.unchanged() || observations.contains(&c.path))
+            .collect();
         if changes
             .iter()
             .map(|c| {
@@ -1010,6 +1051,9 @@ impl AssetStore {
                 }
                 self.validate(&change.path)?;
                 self.expected_snapshot(&change.path, &change.before)?;
+                if change.unchanged() {
+                    return Ok(());
+                }
                 match &change.after {
                     Some(bytes) => atomic(&change.path, bytes, change.permissions.as_ref()),
                     None => fs::remove_file(&change.path).map_err(|_| io_error()),

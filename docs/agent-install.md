@@ -112,7 +112,9 @@ success alone does not prove native API access.
 A complete v2 declaration and a reviewed migration preview are required before
 activation. Old workflow retirement, unknown ownership or missing native evidence
 may block migration; report the exact result and keep the old integration intact.
-Installing a binary is still distinct from completing that project migration.
+After migration, run `specgit init` in every clone and worktree to install its
+local declaration, common Skill and stable guidance entry points. Migration alone
+does not create these per-checkout assets.
 
 **For a fresh or v2 project:** inspect capabilities, preview initialization, then
 apply the same selected options. Run these in the target repository, replacing
@@ -170,8 +172,8 @@ specgit setup --agent codex --json
 
 These calls omit purposes to preserve recorded modes on ordinary refresh. Explicit
 purposes affect every recorded and newly selected host, so purpose changes need
-authorization for all affected hosts. Review/report every host's asset changes,
-including shared Skill refresh. On 2.8, choose minimal authorized
+authorization for all affected hosts. Review/report every affected host's assets.
+On 2.8, choose minimal authorized
 purposes for a new host with `--hook-purpose guard|context|observe` (repeatable),
 or `--hook-purpose none` for guidance/Skill only in both preview and apply.
 `none` adds no hooks, preserves existing purposes and never removes hooks or Git guard.
@@ -216,14 +218,20 @@ reported by the CLI. Symlink paths below home are refused.
 After a successful `specgit update`, an already managed user Skill is refreshed
 through the newly installed executable. No user Skill means no automatic install.
 Refresh failure does not roll back the binary; inspect the update report and run
-`specgit skill --user` to recover. Existing project Skills still need a separate
-`specgit setup` refresh in each project. See the
+`specgit skill --user` to recover. Run `specgit init` in each checkout to
+refresh its project Skill and stable guidance entry points. See the
 [native reference](../runtime/REFERENCE.md#user-skill) for ownership and reports.
 
 ### Project agent integration
 
-`specgit init` stays unchanged and project-scoped; agent integration is
-optional and separate. Inside the actual target repository:
+`specgit init` installs the common project Skill and stable guidance entry points
+in each checkout; it does not install host hooks. Select the active host separately
+with `specgit setup`. Stable entry points are in root `AGENTS.md` for generic and
+official OpenCode, root `CLAUDE.md` for Claude, and root `AGENTS.md` or an existing
+nonempty `AGENTS.override.md` for Codex. Each points to the canonical
+`.agents/skills/specgit-native/SKILL.md`; Claude also gets
+`.claude/skills/specgit-native/SKILL.md` for host discovery. Inside the actual
+target repository:
 
 ```sh
 specgit setup --agent codex --dry-run --json
@@ -231,10 +239,11 @@ specgit setup --agent codex --json
 ```
 
 Project scope resolves the Git checkout and private absolute Git directory,
-writes only documented checkout assets (the canonical `.agents/skills` skill
-plus each selected host's skill copy, guidance and hook files), and records its
-receipt and journal under `<git_dir>/specgit-v2/agent-assets/`, so each linked
-worktree integrates independently. The 2.4 receipt format omits `shared_root`.
+writes selected host assets and records the receipt at
+`<git_dir>/specgit-v2/agent-assets/ownership.json`. New transaction journals are
+stored under `<git_dir>/specgit-v2/assets/`; older journals in `agent-assets/`
+serve only as migration evidence or for recovery. Each linked worktree integrates
+independently. The 2.4 receipt format omits `shared_root`.
 A 2.3-era project receipt is refreshed, removed or recovered locally with
 foreign content and manual edits preserved, and setup never reads or writes the
 retired 2.3 global root. That global 2.3 data stays preserved: 2.4 ships no
@@ -327,10 +336,13 @@ A failed or unknown check remains failed or unknown.
 
 ### Local generated files
 
-`init` and v2 migration maintain one owned block in Git's local `info/exclude`,
-resolved by Git and shared by linked worktrees. Since 2.2 it excludes only
-`.specgit.yaml`. SpecGit does not add exclusions for project `AGENTS.md` /
-`CLAUDE.md`: one worktree cannot establish ownership of another worktree's guidance.
+`init` maintains one owned block in Git's local `info/exclude`, resolved by Git
+and shared by linked worktrees. The block excludes `.specgit.yaml` and the generated
+`.agents/skills/specgit-native/SKILL.md`. It adds
+`.claude/skills/specgit-native/SKILL.md` only when Claude is selected. A v1 migration
+may carry forward legacy exclusion rules; run `init` afterward to reconcile current
+local assets. Rules retained for another initialized worktree can keep a selected
+Claude Skill excluded. The block does not hide `.agents/` or `.claude/` directories.
 Repository or user ignore rules still apply; use `git check-ignore -v <path>` to
 identify them and review their purpose before changing them. Repeated initialization
 refreshes the block without duplicating it and preserves surrounding user rules.

@@ -1613,7 +1613,7 @@ fn both_forges_init_refresh_reject_settings_writes_and_preserve_user_content() {
         assert!(
             fs::read_to_string(f.root.join("CLAUDE.md"))
                 .unwrap()
-                .contains("select a complete relevant Issue")
+                .contains(".agents/skills/specgit-native/SKILL.md")
         );
         let state = f.state();
         assert_eq!(state["project"]["unrelated"], "keep");
@@ -1951,25 +1951,21 @@ fn manual_declaration_edits_refresh_owned_blocks_and_rollback_receipt_together()
         assert!(
             fs::read_to_string(f.root.join(name))
                 .unwrap()
-                .contains("原因、范围、方案")
+                .contains(".agents/skills/specgit-native/SKILL.md")
         );
     }
-    let transaction = result["evidence"]["transaction"]["transaction"]
-        .as_str()
-        .unwrap();
-    let rollback = f.run(&["init", "--rollback", transaction]);
-    assert_eq!(rollback["exit"], 0, "{rollback}");
+    assert_eq!(result["evidence"]["transaction"]["changes"], 0);
     assert_eq!(fs::read(&receipt_path).unwrap(), before_receipt);
     assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), before_agents);
     assert_eq!(f.run(&["init"])["exit"], 0);
     let agents = f.root.join("AGENTS.md");
     let edited = fs::read_to_string(&agents)
         .unwrap()
-        .replace("原因、范围、方案", "用户编辑");
+        .replace("specgit init", "用户编辑");
     fs::write(&agents, &edited).unwrap();
     assert_eq!(f.run(&["init"])["exit"], 0);
     let refreshed = fs::read_to_string(agents).unwrap();
-    assert!(refreshed.contains("原因、范围、方案"));
+    assert!(refreshed.contains(".agents/skills/specgit-native/SKILL.md"));
     assert!(!refreshed.contains("用户编辑"));
 }
 
@@ -1980,7 +1976,7 @@ fn cli_init_refreshes_edited_recorded_block_using_real_asset_journal() {
     fs::write(&agents, "manual prefix\n").unwrap();
     let first = f.run(&["init", "--provider", "github"]);
     assert_eq!(first["exit"], 0, "{first}");
-    let receipt = f.root.join(".git/specgit-v2/guidance.json");
+    let receipt = f.root.join(".git/specgit-v2/agent-assets/ownership.json");
     let declaration = fs::read(f.root.join(".specgit.yaml")).unwrap();
     let original = fs::read_to_string(&agents).unwrap();
     let edited = original.replace("SpecGit 2", "edited managed block");
@@ -2034,7 +2030,7 @@ fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration()
     assert!(
         fs::read_to_string(f.root.join("AGENTS.md"))
             .unwrap()
-            .contains("原因、范围、方案")
+            .contains(".agents/skills/specgit-native/SKILL.md")
     );
 }
 
@@ -2043,6 +2039,8 @@ fn receiptless_worktree_refreshes_unmodified_earlier_release_guidance_only() {
     let f = Fixture::new();
     assert_eq!(f.run(&["init", "--provider", "github"])["exit"], 0);
     let receipt = f.root.join(".git/specgit-v2/guidance.json");
+    fs::remove_file(f.root.join(".git/specgit-v2/agent-assets/ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
     let agents = f.root.join("AGENTS.md");
     let old = include_str!("fixtures/guidance-2.4.0-en.txt");
     // A fresh clone or linked worktree has the committed block but no receipt.
@@ -2051,12 +2049,14 @@ fn receiptless_worktree_refreshes_unmodified_earlier_release_guidance_only() {
     let r = f.run(&["init"]);
     assert_eq!(r["exit"], 0, "{r}");
     let text = fs::read_to_string(&agents).unwrap();
-    assert!(text.starts_with("User rules\n\n<!-- specgit:v2:start -->"));
-    assert!(text.contains(&format!("Runtime: {}.", env!("CARGO_PKG_VERSION"))));
-    assert!(text.contains("<!-- specgit:v2:sha256 "));
+    assert!(text.starts_with("User rules\n\n"));
+    assert!(!text.contains("Runtime:"));
+    assert!(text.contains("<!-- specgit:project:v2:start -->"));
     let edited = format!("User rules\n\n{}\n", old.replacen("SpecGit", "Spec Git", 2));
     fs::write(&agents, &edited).unwrap();
     fs::remove_file(&receipt).unwrap();
+    fs::remove_file(f.root.join(".git/specgit-v2/agent-assets/ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
     let r = f.run(&["init"]);
     assert_eq!(r["exit"], 3, "{r}");
     assert_eq!(r["diagnostics"][0]["code"], "ownership_conflict", "{r}");
@@ -2071,14 +2071,16 @@ fn missing_declaration_uses_the_supplied_config_file_as_previous_declaration() {
     let config = f.root.parent().unwrap().join("original.yaml");
     fs::rename(f.root.join(".specgit.yaml"), &config).unwrap();
     fs::remove_file(f.root.join(".git/specgit-v2/guidance.json")).unwrap();
+    fs::remove_file(f.root.join(".git/specgit-v2/agent-assets/ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
     let agents = f.root.join("AGENTS.md");
     let old = include_str!("fixtures/guidance-2.5.0-zh.txt");
     fs::write(&agents, format!("{old}\n")).unwrap();
     let r = f.run(&["init", "--config-file", config.to_str().unwrap()]);
     assert_eq!(r["exit"], 0, "{r}");
     let text = fs::read_to_string(&agents).unwrap();
-    assert!(text.contains("<!-- specgit:v2:sha256 "));
-    assert!(text.contains("\"language\":\"zh\""));
+    assert!(text.contains("<!-- specgit:project:v2:start -->"));
+    assert!(text.contains(".agents/skills/specgit-native/SKILL.md"));
     assert_eq!(
         fs::read(f.root.join(".specgit.yaml")).unwrap(),
         fs::read(&config).unwrap()
@@ -2526,7 +2528,10 @@ fn local_exclusions_are_idempotent_and_preserve_user_rules() {
     assert_eq!(again["exit"], 0, "{again}");
     assert_eq!(fs::read(&exclude).unwrap(), bytes);
     let agents = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
-    assert_eq!(agents.matches("<!-- specgit:v2:start -->").count(), 1);
+    assert_eq!(
+        agents.matches("<!-- specgit:project:v2:start -->").count(),
+        1
+    );
     assert_eq!(
         String::from_utf8(bytes)
             .unwrap()
@@ -2796,7 +2801,10 @@ fn rollback_counts_a_sibling_with_private_state_but_no_declaration() {
     assert_eq!(rollback["exit"], 0, "{rollback}");
     let consumer = &rollback["evidence"]["retained"][0]["shared_consumers"][0];
     assert_eq!(consumer["declaration_sha256"], Value::Null, "{rollback}");
-    assert_eq!(consumer["private_state"], json!(["guidance.json"]));
+    assert_eq!(
+        consumer["private_state"],
+        json!(["guidance.json", "agent-assets/ownership.json"])
+    );
     assert!(git_ok(&sibling, &["check-ignore", "-q", ".specgit.yaml"]));
 }
 
@@ -2995,4 +3003,68 @@ fn doctor_preserves_repository_root_with_trailing_newline() {
     let status = f.run_raw(&["status"]);
     assert_eq!(status["exit"], 0, "{status}");
     assert_eq!(status["evidence"]["context"]["root"], json!(f.root));
+}
+
+#[test]
+fn init_prepares_the_project_local_workflow_body() {
+    let f = Fixture::new();
+    let report = f.run(&["init", "--provider", "github"]);
+    assert_eq!(report["status"], "initialized", "{report}");
+    assert!(
+        f.root
+            .join(".agents/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn init_restores_a_clone_skill_and_preserves_the_committed_stable_entry() {
+    let f = Fixture::new();
+    assert_eq!(f.run(&["init", "--provider", "github"])["exit"], 0);
+    let entry = fs::read(f.root.join("AGENTS.md")).unwrap();
+    fs::remove_file(f.root.join(".git/specgit-v2/agent-assets/ownership.json")).unwrap();
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    assert_eq!(f.run(&["init"])["exit"], 0);
+    assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), entry);
+    assert_eq!(f.run(&["init"])["evidence"]["transaction"]["changes"], 0);
+    fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    assert_eq!(f.run(&["init"])["exit"], 0);
+    assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), entry);
+    assert!(
+        f.root
+            .join(".agents/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn default_init_keeps_proven_legacy_claude_guidance_without_repeating_mirror() {
+    let f = Fixture::new();
+    let legacy = include_str!("fixtures/stable-guidance/2.11.1-zh.txt");
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        fs::write(
+            f.root.join(name),
+            format!("{name} manual\r\n{legacy}{name} tail\n"),
+        )
+        .unwrap();
+    }
+    let result = f.run(&["init", "--provider", "github"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let text = fs::read_to_string(f.root.join(name)).unwrap();
+        assert!(text.starts_with(&format!("{name} manual\r\n")));
+        assert!(text.contains(&format!("{name} tail\n")));
+        assert_eq!(
+            text.matches("<!-- specgit:project:v2:start -->").count(),
+            1,
+            "{text}"
+        );
+    }
+    assert!(
+        f.root
+            .join(".claude/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    assert!(!f.root.join(".claude/settings.json").exists());
+    assert_eq!(f.run(&["init"])["evidence"]["transaction"]["changes"], 0);
 }

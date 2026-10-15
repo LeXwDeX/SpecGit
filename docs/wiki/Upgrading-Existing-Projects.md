@@ -29,7 +29,18 @@ specgit init --json
 specgit status --json
 ```
 
-Resolve reported capability choices explicitly; do not ignore diagnostics. Since 2.2 the SpecGit-owned exclusion block contains only `.specgit.yaml`; other repository/user ignore rules still apply. Review AGENTS/CLAUDE under repository policy. Select native Issues again on the original branch for older adoption-only checkpoints; do not delete or rewrite another branch's checkpoint.
+Resolve reported capability choices explicitly; do not ignore diagnostics. Run
+`specgit init` in every clone and worktree: the declaration, common Skill and
+private records are local and do not travel with Git. Init installs the common
+`.agents/skills/specgit-native/SKILL.md` and stable guidance entry points, but does
+not install host hooks. Its Git-local `info/exclude` block covers `.specgit.yaml`
+and the generated `.agents/skills/specgit-native/SKILL.md`; it adds
+`.claude/skills/specgit-native/SKILL.md` only when Claude is selected. A v1
+migration can carry forward legacy exclusion rules, so run init afterward to
+reconcile current local assets. Rules retained for another initialized worktree
+can keep a selected Claude Skill excluded. Review AGENTS/CLAUDE under repository
+policy. Select native Issues again on the original branch for older adoption-only
+checkpoints; do not delete or rewrite another branch's checkpoint.
 
 After all updates, run status and doctor, read back generated Skill/guidance, then
 repeat dry-runs. An init dry-run lists planned paths, not per-path changed state.
@@ -37,9 +48,11 @@ Only claim host hooks work after a harmless real behavior/context probe.
 
 For v1 use the [explicit migration guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md), not retired `init --force`, `finish` or `bind`. Replacing the binary does not migrate the project.
 
-Add only the active host when needed. Setup also refreshes all recorded hosts;
-`--agent` does not restrict refresh to that host. Review/report every host's asset
-changes, including shared Skill refresh. Since 2.4 setup is permanently project-only:
+Add only the active host when needed. Initialization installs the common project
+Skill and stable guidance entries; it does not install host hooks. Setup selects
+host-specific assets and also refreshes all recorded hosts; `--agent` does not
+restrict refresh to that host. Review/report every affected host's asset changes.
+Since 2.4 setup is permanently project-only:
 `--scope project` is the default and the only scope value, hooks invoke the
 installed shared executable directly with no global setup prerequisite, and the
 retired global options (`--root`, `--provider`, `--api-host`, `--register-*`,
@@ -51,6 +64,12 @@ uses `--agent claude`, OpenCode `--agent opencode`, generic `.agents` hosts
 specgit setup --agent codex --dry-run --json
 specgit setup --agent codex --json
 ```
+
+Stable guidance entry points are root `AGENTS.md` for generic and official
+OpenCode, root `CLAUDE.md` for Claude, and root `AGENTS.md` or an existing
+nonempty `AGENTS.override.md` for Codex. Each points to the canonical
+`.agents/skills/specgit-native/SKILL.md`; Claude also gets
+`.claude/skills/specgit-native/SKILL.md` for host discovery.
 
 Preserve existing settings, manual guidance outside managed blocks and foreign
 hooks. Refresh replaces edited body text only inside a proven, complete managed

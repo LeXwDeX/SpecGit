@@ -294,6 +294,16 @@ fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
             "The CLI doctor maintenance path must use typed {dependency} plans"
         );
     }
+    for (owner, dependency) in [
+        ("init", "setup"),
+        ("setup", "guidance"),
+        ("setup", "local_exclude"),
+    ] {
+        assert!(
+            graph[owner].contains(dependency),
+            "Stable project guidance uses the shared typed plan: {owner} -> {dependency}"
+        );
+    }
     for (owner, dependencies) in &graph {
         for dependency in dependencies {
             assert!(

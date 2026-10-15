@@ -10,11 +10,8 @@ fn canonical(resource: &'static str) -> Cow<'static, str> {
     }
 }
 
-pub(crate) fn project(language: Language) -> Cow<'static, str> {
-    canonical(match language {
-        Language::En => include_str!("../assets/prompts/project-en.md"),
-        Language::Zh => include_str!("../assets/prompts/project-zh.md"),
-    })
+pub(crate) fn project(_language: Language) -> Cow<'static, str> {
+    host_entry()
 }
 
 pub(crate) fn host_entry() -> Cow<'static, str> {
@@ -50,7 +47,7 @@ mod tests {
             let text = project(language);
             assert!(text.lines().count() <= 14, "init is a Skill entry point");
             for line in host.lines().filter(|line| !line.trim().is_empty()) {
-                assert!(!text.lines().any(|project_line| project_line == line));
+                assert!(text.lines().any(|project_line| project_line == line));
             }
         }
         let skill = canonical(include_str!("../assets/SKILL.md"));

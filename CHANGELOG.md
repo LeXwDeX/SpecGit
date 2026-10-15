@@ -4,6 +4,14 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.12.0
+
+- Keep one stable project Skill entry in agent instruction files. Runtime upgrades and declaration changes no longer rewrite versions, rules or content hashes in tracked guidance; manual project instructions stay intact.
+- Initialize a local project Skill in each clone/worktree and refresh selected host integrations through the same ownership lifecycle. Migrate proven legacy init/setup blocks, retain permission and rollback protections, and diagnose missing or foreign assets.
+- Exclude only the declaration and generated SpecGit Skill files through Git-local rules. Preserve other Skills and shared worktree rules; report tracked generated files without changing the index.
+
+Scope: [#732](https://github.com/LeXwDeX/SpecGit/issues/732).
+
 # 2.11.1
 
 - Give project receipts a unique install generation so older ownership history cannot cancel newer permission evidence. Migrate only consistent v1/v2 records; ambiguous evidence remains an ownership conflict. Refreshing v3 receipts requires a supporting published CLI version.
