@@ -679,6 +679,22 @@ fn custody_buckets(namespace: &Path) -> Result<Vec<CustodyBucket>, Diagnostic> {
     Ok(buckets)
 }
 
+/// Unfinished transactions in every shared custody bucket, including buckets
+/// whose receipt was already removed by an interrupted transaction. Unreadable
+/// or malformed journals are errors, never "nothing pending".
+pub(crate) fn pending_custody_transactions(
+    namespace: &Path,
+) -> Result<Vec<(PathBuf, Vec<String>)>, Diagnostic> {
+    let mut pending = Vec::new();
+    for bucket in custody_buckets(namespace)? {
+        let ids = AssetStore::pending_at(&bucket.directory.join("assets"))?;
+        if !ids.is_empty() {
+            pending.push((bucket.directory, ids));
+        }
+    }
+    Ok(pending)
+}
+
 fn custody_conflict(message: &str, remedy: &str) -> Diagnostic {
     Diagnostic::new(Code::OwnershipConflict, "git_guard", message, remedy)
 }

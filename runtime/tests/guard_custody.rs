@@ -307,3 +307,79 @@ fn moved_hook_path_blocks_a_new_setup_guard_owner() {
     cli(&root, &["setup", "--agent", "generic"]);
     assert!(!setup_receipt.exists());
 }
+
+/// An interrupted last-consumer uninstall can remove the shared receipt before
+/// its journal commits. Moving `core.hooksPath` must not hide that bucket.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn moved_hook_path_cannot_hide_receiptless_pending_custody_transaction() {
+    let r = Retained::new();
+    let crashed = std::process::Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&r.borrower)
+        .args(["setup", "--uninstall", "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", "before-commit")
+        .output()
+        .unwrap();
+    assert_eq!(crashed.status.code(), Some(99), "{crashed:?}");
+    assert!(
+        !r.receipt.exists(),
+        "the receipt removal must precede commit"
+    );
+    let pending = r.shared_pending();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let journal = fs::read(&pending[0]).unwrap();
+    let moved = r.common.join("moved-hooks");
+    fs::create_dir(&moved).unwrap();
+    let root = r.borrower.parent().unwrap().join("checkout");
+    for checkout in [&r.borrower, &root] {
+        git(
+            checkout,
+            &["config", "core.hooksPath", moved.to_str().unwrap()],
+        );
+    }
+    let independent = r.private().join("guard-hooks.json");
+    let attempts: [(&Path, Vec<&str>); 4] = [
+        (&r.borrower, vec!["guard", "--install", "--dry-run"]),
+        (&r.borrower, vec!["guard", "--install"]),
+        (
+            &root,
+            vec![
+                "setup",
+                "--agent",
+                "generic",
+                "--hook-purpose",
+                "guard",
+                "--dry-run",
+            ],
+        ),
+        (
+            &root,
+            vec!["setup", "--agent", "generic", "--hook-purpose", "guard"],
+        ),
+    ];
+    for (checkout, args) in attempts {
+        let output = executable::command()
+            .current_dir(checkout)
+            .args(&args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?}: {output:?}");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(text.contains("--rollback"), "{args:?}: {text}");
+        assert!(!independent.exists(), "{args:?}");
+        for stage in ["pre-commit", "pre-push"] {
+            let hook = fs::read_to_string(moved.join(stage)).unwrap_or_default();
+            assert!(
+                !hook.contains("specgit-v2:pre-"),
+                "{args:?} {stage}: {hook}"
+            );
+        }
+        assert_eq!(fs::read(&pending[0]).unwrap(), journal, "{args:?}");
+        assert!(!r.receipt.exists());
+    }
+}
