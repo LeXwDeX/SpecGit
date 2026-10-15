@@ -365,6 +365,7 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
         fs::create_dir(&global).unwrap();
         fs::write(global.join("user-data"), b"retain legacy data exactly").unwrap();
         receipt["version"] = json!(1);
+        receipt.as_object_mut().unwrap().remove("generation");
         receipt["shared_root"] = json!(global);
         let mut changes = vec![];
         for host in ["generic", "claude"] {
@@ -424,7 +425,7 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
         if refresh {
             project::install(&opts, &root, &private, &source).unwrap();
             let current = value(&receipt_path);
-            assert_eq!(current["version"], 2);
+            assert_eq!(current["version"], 3);
             assert!(current.get("shared_root").is_none());
             assert!(
                 !fs::read_to_string(root.join("AGENTS.md"))

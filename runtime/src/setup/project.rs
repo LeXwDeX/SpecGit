@@ -19,10 +19,25 @@ struct ProjectReceipt {
     root: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shared_root: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<String>,
     agents: BTreeSet<Agent>,
     skills: BTreeMap<String, String>,
     instructions: BTreeMap<String, HostRegistration>,
     hooks: BTreeMap<String, Registration>,
+}
+
+fn installation_generation() -> Result<String, Diagnostic> {
+    let mut nonce = [0u8; 32];
+    getrandom::fill(&mut nonce).map_err(|_| {
+        Diagnostic::new(
+            Code::IoFailed,
+            "setup",
+            "A unique installation identity could not be generated.",
+            "Retry when operating-system randomness is available; no installation was accepted.",
+        )
+    })?;
+    Ok(nonce.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn same_project_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic> {
@@ -49,8 +64,18 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
     let receipt = if let Some(bytes) = &snapshot.bytes {
         let mut r: ProjectReceipt = serde_json::from_value(input::json(bytes, 1_048_576, 20)?)
             .map_err(|_| conflict("The project integration receipt is malformed."))?;
-        if ![1, 2].contains(&r.version)
+        if ![1, 2, 3].contains(&r.version)
             || (r.version == 1) != r.shared_root.is_some()
+            || if r.version == 3 {
+                !r.generation.as_ref().is_some_and(|generation| {
+                    generation.len() == 64
+                        && generation
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+            } else {
+                r.generation.is_some()
+            }
             || r.owner != "specgit"
             || !same_project_root(&r.root, root)?
             || r.agents.is_empty()
@@ -133,10 +158,11 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
         r
     } else {
         ProjectReceipt {
-            version: 2,
+            version: 3,
             owner: "specgit".into(),
             root: root.into(),
             shared_root: None,
+            generation: None,
             agents: BTreeSet::new(),
             skills: BTreeMap::new(),
             instructions: BTreeMap::new(),
@@ -496,10 +522,11 @@ pub fn install_with_hooks(
         .then(|| shared_executable(source, root))
         .transpose()?;
     let mut receipt = ProjectReceipt {
-        version: 2,
+        version: 3,
         owner: "specgit".into(),
         root: root.into(),
         shared_root: None,
+        generation: previous.generation.clone(),
         agents: selected.clone(),
         skills: BTreeMap::new(),
         instructions: BTreeMap::new(),
@@ -723,6 +750,11 @@ pub fn install_with_hooks(
         }
         changes.push(change);
     }
+    // Mint an identity only after every existing asset proved its ownership.
+    // Refresh keeps it stable; a later reinstall starts a distinct history.
+    if !options.uninstall && receipt.generation.is_none() {
+        receipt.generation = Some(installation_generation()?);
+    }
     changes.push(Change {
         path: private.join("ownership.json"),
         permissions: snapshot.permissions.clone(),
@@ -876,10 +908,11 @@ pub fn health_plan(
         ));
     }
     let mut next = ProjectReceipt {
-        version: 2,
+        version: 3,
         owner: "specgit".into(),
         root: root.into(),
         shared_root: None,
+        generation: previous.generation.clone(),
         agents: previous.agents.clone(),
         skills: BTreeMap::new(),
         instructions: BTreeMap::new(),
@@ -1032,6 +1065,9 @@ pub fn health_plan(
             after: executable.bytes.clone(),
             permissions: executable.permissions.clone(),
         });
+    }
+    if next.generation.is_none() {
+        next.generation = Some(installation_generation()?);
     }
     let receipt_bytes = serde_json::to_vec_pretty(&next)
         .map_err(|_| conflict("Project receipt cannot be represented."))?;

@@ -867,6 +867,222 @@ fn ownership_proof_does_not_skip_a_newer_recorded_permission() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn reinstallation_cannot_use_an_older_permission_record_for_the_same_receipt() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    let guidance = f.root.join("AGENTS.md");
+    fs::write(&guidance, "Manual rules\n").unwrap();
+    fs::set_permissions(&guidance, fs::Permissions::from_mode(0o644)).unwrap();
+    let installed = install(&options, &f).unwrap();
+    let first_receipt = fs::read(f.private.join("ownership.json")).unwrap();
+    options.agents.clear();
+    options.uninstall = true;
+    let removed = install(&options, &f).unwrap();
+    assert_eq!(fs::read_to_string(&guidance).unwrap(), "Manual rules\n");
+    fs::set_permissions(&guidance, fs::Permissions::from_mode(0o600)).unwrap();
+    options.agents = vec![Agent::Generic];
+    options.uninstall = false;
+    let reinstalled = install(&options, &f).unwrap();
+    let second_receipt = fs::read(f.private.join("ownership.json")).unwrap();
+    assert_ne!(
+        first_receipt, second_receipt,
+        "Reinstall must identify a new installation"
+    );
+    // Journal names carry no chronological contract. Put the older record
+    // first deterministically instead of relying on random tempdir ordering.
+    for (result, name) in [
+        (&installed, "tx-000-old"),
+        (&removed, "tx-100-uninstalled"),
+        (&reinstalled, "tx-999-new"),
+    ] {
+        fs::rename(
+            f.private
+                .join("transactions")
+                .join(result["transaction"]["transaction"].as_str().unwrap()),
+            f.private.join("transactions").join(name),
+        )
+        .unwrap();
+    }
+    assert!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .unwrap()
+            .unwrap()
+            .assets()
+            .is_empty()
+    );
+    options.agents.clear();
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    assert_eq!(
+        fs::read(f.private.join("ownership.json")).unwrap(),
+        second_receipt
+    );
+    fs::set_permissions(&guidance, fs::Permissions::from_mode(0o644)).unwrap();
+    let before = files(&f.base);
+    for dry_run in [true, false] {
+        options.dry_run = dry_run;
+        let result = install(&options, &f);
+        assert!(
+            result.is_err(),
+            "An older permission was accepted; identical receipts: {}",
+            first_receipt == second_receipt
+        );
+        assert_eq!(result.unwrap_err().code, Code::OwnershipConflict);
+        assert_eq!(files(&f.base), before);
+    }
+    assert_eq!(
+        project::health_plan(&f.root, &f.private, &f.source)
+            .err()
+            .unwrap()
+            .code,
+        Code::OwnershipConflict
+    );
+    assert_eq!(files(&f.base), before);
+    assert_eq!(
+        fs::metadata(&guidance).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+}
+
+#[test]
+fn invalid_installation_generations_are_rejected_without_changes() {
+    for generation in [
+        None,
+        Some(json!("")),
+        Some(json!("0".repeat(63))),
+        Some(json!("G".repeat(64))),
+    ] {
+        let (f, mut options) = fixture(vec![Agent::Generic]);
+        install(&options, &f).unwrap();
+        let receipt_path = f.private.join("ownership.json");
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        receipt["version"] = json!(3);
+        match generation {
+            Some(value) => {
+                receipt["generation"] = value;
+            }
+            None => {
+                receipt.as_object_mut().unwrap().remove("generation");
+            }
+        }
+        fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+        let before = files(&f.base);
+        options.agents.clear();
+        for uninstall in [false, true] {
+            options.uninstall = uninstall;
+            assert_eq!(
+                install(&options, &f).unwrap_err().code,
+                Code::OwnershipConflict
+            );
+        }
+        assert_eq!(
+            project::health_plan(&f.root, &f.private, &f.source)
+                .err()
+                .unwrap()
+                .code,
+            Code::OwnershipConflict
+        );
+        assert_eq!(files(&f.base), before);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn recurring_legacy_receipts_reject_conflicting_permission_records_in_any_order() {
+    use specgit::assets::{AssetStore, Change};
+    use std::os::unix::fs::PermissionsExt;
+    for older_first in [false, true] {
+        let (f, mut options) = fixture(vec![Agent::Generic]);
+        install(&options, &f).unwrap();
+        let receipt_path = f.private.join("ownership.json");
+        let guidance = f.root.join("AGENTS.md");
+        let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+        let guidance_bytes = fs::read(&guidance).unwrap();
+        let skill_bytes = fs::read(&skill).unwrap();
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        receipt["version"] = json!(2);
+        receipt.as_object_mut().unwrap().remove("generation");
+        let legacy_bytes = serde_json::to_vec_pretty(&receipt).unwrap();
+        options.agents.clear();
+        options.uninstall = true;
+        install(&options, &f).unwrap();
+        // Two genuine legacy transaction histories reuse identical receipt bytes
+        // across uninstall, while recording different permissions for the asset.
+        let mut transactions = Vec::new();
+        for mode in [0o644, 0o600] {
+            let mut change = Change::new(guidance.clone(), Some(guidance_bytes.clone())).unwrap();
+            change.permissions = Some(fs::Permissions::from_mode(mode));
+            let result = AssetStore::lock(
+                &f.private,
+                &[f.root.clone(), f.private.clone()],
+                std::time::Duration::from_secs(2),
+            )
+            .unwrap()
+            .apply(vec![
+                Change::new(skill.clone(), Some(skill_bytes.clone())).unwrap(),
+                change,
+                Change::new(receipt_path.clone(), Some(legacy_bytes.clone())).unwrap(),
+            ])
+            .unwrap();
+            transactions.push(result.transaction);
+            if mode == 0o644 {
+                AssetStore::lock(
+                    &f.private,
+                    &[f.root.clone(), f.private.clone()],
+                    std::time::Duration::from_secs(2),
+                )
+                .unwrap()
+                .apply(vec![
+                    Change::new(skill.clone(), None).unwrap(),
+                    Change::new(guidance.clone(), None).unwrap(),
+                    Change::new(receipt_path.clone(), None).unwrap(),
+                ])
+                .unwrap();
+            }
+        }
+        for (index, transaction) in transactions.iter().enumerate() {
+            let name = if (index == 0) == older_first {
+                "tx-000-first"
+            } else {
+                "tx-999-last"
+            };
+            fs::rename(
+                f.private.join("transactions").join(transaction),
+                f.private.join("transactions").join(name),
+            )
+            .unwrap();
+        }
+        // Matching either permission cannot make ambiguous legacy proof safe.
+        for mode in [0o600, 0o644] {
+            fs::set_permissions(&guidance, fs::Permissions::from_mode(mode)).unwrap();
+            let before = files(&f.base);
+            for uninstall in [false, true] {
+                options.uninstall = uninstall;
+                for dry_run in [true, false] {
+                    options.dry_run = dry_run;
+                    let error = install(&options, &f).unwrap_err();
+                    assert_eq!(error.code, Code::OwnershipConflict, "{error}");
+                    assert!(error.message.contains("recorded unix_mode="), "{error}");
+                    assert_eq!(files(&f.base), before);
+                }
+            }
+            assert_eq!(
+                project::health_plan(&f.root, &f.private, &f.source)
+                    .err()
+                    .unwrap()
+                    .code,
+                Code::OwnershipConflict
+            );
+            assert_eq!(files(&f.base), before);
+            assert_eq!(
+                fs::metadata(&guidance).unwrap().permissions().mode() & 0o777,
+                mode
+            );
+        }
+    }
+}
+
 #[test]
 fn a_receipt_without_transaction_evidence_cannot_authorize_setup() {
     let (f, mut options) = fixture(vec![Agent::Generic]);
@@ -893,6 +1109,67 @@ fn a_receipt_without_transaction_evidence_cannot_authorize_setup() {
         Code::OwnershipConflict
     );
     assert_eq!(files(&f.base), before);
+}
+
+#[test]
+fn coherent_receipt_cycles_keep_every_journal_as_a_lock_dependency() {
+    use specgit::assets::{AssetStore, Change};
+    let (f, mut options) = fixture(vec![Agent::Generic]);
+    let installed = install(&options, &f).unwrap();
+    let receipt_path = f.private.join("ownership.json");
+    let original = fs::read(&receipt_path).unwrap();
+    let receipt: Value = serde_json::from_slice(&original).unwrap();
+    let compact = serde_json::to_vec(&receipt).unwrap();
+    assert_ne!(original, compact);
+    let mut transactions = vec![
+        installed["transaction"]["transaction"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    ];
+    // A valid receipt can return to its previous bytes during refresh. Cycles
+    // with consistent evidence remain usable and every candidate matters.
+    for bytes in [compact, original] {
+        let result = AssetStore::lock(
+            &f.private,
+            &[f.root.clone(), f.private.clone()],
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap()
+        .apply(vec![
+            Change::new(receipt_path.clone(), Some(bytes)).unwrap(),
+        ])
+        .unwrap();
+        transactions.push(result.transaction);
+    }
+    options.agents.clear();
+    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+    let guidance_path = f.root.join("AGENTS.md");
+    let guidance = fs::read_to_string(&guidance_path).unwrap();
+    fs::write(
+        &guidance_path,
+        guidance.replace("Project integration", "Stale integration text"),
+    )
+    .unwrap();
+    for transaction in transactions {
+        let plan = project::health_plan(&f.root, &f.private, &f.source)
+            .unwrap()
+            .unwrap();
+        assert!(!plan.assets().is_empty());
+        let journal_path = f
+            .private
+            .join("transactions")
+            .join(transaction)
+            .join("journal.json");
+        let before = fs::read(&journal_path).unwrap();
+        let mut altered = before.clone();
+        altered.push(b'\n');
+        fs::write(&journal_path, &altered).unwrap();
+        let unchanged = files(&f.base);
+        assert_eq!(plan.apply().unwrap_err().code, Code::ConcurrentEdit);
+        assert_eq!(files(&f.base), unchanged);
+        fs::write(journal_path, before).unwrap();
+    }
 }
 
 #[cfg(unix)]
@@ -1355,7 +1632,7 @@ fn custom_opencode_claude_hooks_are_top_level_native_quoted_commands() {
     }
     let receipt: Value =
         serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
-    assert_eq!(receipt["version"], 2);
+    assert_eq!(receipt["version"], 3);
     assert_eq!(receipt["agents"], json!(["opencode"]), "{receipt}");
     assert!(receipt["hooks"].get("opencode").is_some(), "{receipt}");
     // The custom choice persists: a plain refresh keeps the recorded hooks.
@@ -1435,13 +1712,14 @@ fn guidance_slimming_refreshes_recorded_2_6_2_setup_without_overwriting_manual_t
 }
 
 #[test]
-fn project_receipt_v2_is_written_and_legacy_v1_receipts_stay_readable() {
-    // New integrations record a version 2 receipt with no shared root at all.
+fn project_receipt_v3_is_written_and_legacy_receipts_stay_readable() {
+    // New integrations identify one installation and contain no shared root.
     let (f, options) = fixture(vec![Agent::Generic]);
     install(&options, &f).unwrap();
     let receipt: Value =
         serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
-    assert_eq!(receipt["version"], 2, "{receipt}");
+    assert_eq!(receipt["version"], 3, "{receipt}");
+    assert_eq!(receipt["generation"].as_str().unwrap().len(), 64);
     assert!(receipt.get("shared_root").is_none(), "{receipt}");
     assert_eq!(receipt["root"], json!(f.root.canonicalize().unwrap()));
     assert_eq!(receipt["agents"], json!(["generic"]));
@@ -1452,70 +1730,87 @@ fn project_receipt_v2_is_written_and_legacy_v1_receipts_stay_readable() {
     );
     assert!(receipt["instructions"].get("generic").is_some());
 
-    // A 2.x v1 receipt with a shared root stays readable: refresh migrates it
-    // to v2 without adopting foreign content, and uninstall still honors it.
-    let (f, mut options) = fixture(vec![]);
-    let skill = skill_text();
-    let skill_path = f.root.join(".agents/skills/specgit-native/SKILL.md");
-    let block = "<!-- specgit:global:v2:start -->\n## SpecGit 2\n\nlegacy 2.3 guidance\n<!-- specgit:global:v2:end -->\n";
-    let user = "user rules\n\n";
-    let legacy = json!({
-        "version": 1,
-        "owner": "specgit",
-        "root": serde_json::to_value(&f.root).unwrap(),
-        "shared_root": serde_json::to_value(f.base.join("shared")).unwrap(),
-        "agents": ["generic"],
-        "skills": {".agents/skills/specgit-native/SKILL.md": specgit::assets::hash(skill.as_bytes())},
-        "instructions": {"generic": {
-            "root": serde_json::to_value(&f.root).unwrap(),
-            "skill_hash": specgit::assets::hash(skill.as_bytes()),
-            "instructions": "AGENTS.md",
-            "block": block,
-            "created_instructions": false,
-        }},
-        "hooks": {},
-    });
-    specgit::assets::AssetStore::lock(
-        &f.private,
-        &[f.root.clone(), f.private.clone()],
-        std::time::Duration::from_secs(2),
-    )
-    .unwrap()
-    .apply(vec![
-        specgit::assets::Change::new(skill_path.clone(), Some(skill.as_bytes().to_vec())).unwrap(),
-        specgit::assets::Change::new(
-            f.root.join("AGENTS.md"),
-            Some(format!("{user}{block}").into_bytes()),
-        )
-        .unwrap(),
-        specgit::assets::Change::new(
-            f.private.join("ownership.json"),
-            Some(serde_json::to_vec_pretty(&legacy).unwrap()),
-        )
-        .unwrap(),
-    ])
-    .unwrap();
-    let result = install(&options, &f).unwrap();
-    assert_eq!(result["agents"], json!(["generic"]));
-    assert_eq!(result["transaction"]["changes"], 2, "{result}");
-    let guidance = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
-    assert!(guidance.starts_with(user), "{guidance}");
-    assert!(
-        guidance.contains("<!-- specgit:project:v2:start -->"),
-        "{guidance}"
-    );
-    assert!(!guidance.contains("specgit:global:v2"), "{guidance}");
-    let receipt: Value =
-        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
-    assert_eq!(receipt["version"], 2, "{receipt}");
-    assert!(receipt.get("shared_root").is_none(), "{receipt}");
-    options.agents.clear();
-    assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
-    options.uninstall = true;
-    install(&options, &f).unwrap();
-    assert_eq!(fs::read_to_string(f.root.join("AGENTS.md")).unwrap(), user);
-    assert!(!skill_path.exists());
-    assert!(!f.private.join("ownership.json").exists());
+    // Both historical formats remain readable when transaction evidence is
+    // complete. Setup and doctor migrate without losing manual text.
+    for version in [1, 2] {
+        for through_doctor in [false, true] {
+            let (f, mut options) = fixture(vec![]);
+            let skill = skill_text();
+            let skill_path = f.root.join(".agents/skills/specgit-native/SKILL.md");
+            let block = "<!-- specgit:global:v2:start -->\n## SpecGit 2\n\nlegacy 2.3 guidance\n<!-- specgit:global:v2:end -->\n";
+            let user = "user rules\n\n";
+            let mut legacy = json!({
+                "version": version,
+                "owner": "specgit",
+                "root": serde_json::to_value(&f.root).unwrap(),
+                "shared_root": serde_json::to_value(f.base.join("shared")).unwrap(),
+                "agents": ["generic"],
+                "skills": {".agents/skills/specgit-native/SKILL.md": specgit::assets::hash(skill.as_bytes())},
+                "instructions": {"generic": {
+                    "root": serde_json::to_value(&f.root).unwrap(),
+                    "skill_hash": specgit::assets::hash(skill.as_bytes()),
+                    "instructions": "AGENTS.md",
+                    "block": block,
+                    "created_instructions": false,
+                }},
+                "hooks": {},
+            });
+            if version == 2 {
+                legacy.as_object_mut().unwrap().remove("shared_root");
+            }
+            specgit::assets::AssetStore::lock(
+                &f.private,
+                &[f.root.clone(), f.private.clone()],
+                std::time::Duration::from_secs(2),
+            )
+            .unwrap()
+            .apply(vec![
+                specgit::assets::Change::new(skill_path.clone(), Some(skill.as_bytes().to_vec()))
+                    .unwrap(),
+                specgit::assets::Change::new(
+                    f.root.join("AGENTS.md"),
+                    Some(format!("{user}{block}").into_bytes()),
+                )
+                .unwrap(),
+                specgit::assets::Change::new(
+                    f.private.join("ownership.json"),
+                    Some(serde_json::to_vec_pretty(&legacy).unwrap()),
+                )
+                .unwrap(),
+            ])
+            .unwrap();
+            if through_doctor {
+                let plan = project::health_plan(&f.root, &f.private, &f.source)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(plan.apply().unwrap().changes, 2);
+            } else {
+                let result = install(&options, &f).unwrap();
+                assert_eq!(result["agents"], json!(["generic"]));
+                assert_eq!(result["transaction"]["changes"], 2, "{result}");
+            }
+            let guidance = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
+            assert!(guidance.starts_with(user), "{guidance}");
+            assert!(
+                guidance.contains("<!-- specgit:project:v2:start -->"),
+                "{guidance}"
+            );
+            assert!(!guidance.contains("specgit:global:v2"), "{guidance}");
+            let receipt: Value =
+                serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap())
+                    .unwrap();
+            assert_eq!(receipt["version"], 3, "{receipt}");
+            assert_eq!(receipt["generation"].as_str().unwrap().len(), 64);
+            assert!(receipt.get("shared_root").is_none(), "{receipt}");
+            options.agents.clear();
+            assert_eq!(install(&options, &f).unwrap()["transaction"]["changes"], 0);
+            options.uninstall = true;
+            install(&options, &f).unwrap();
+            assert_eq!(fs::read_to_string(f.root.join("AGENTS.md")).unwrap(), user);
+            assert!(!skill_path.exists());
+            assert!(!f.private.join("ownership.json").exists());
+        }
+    }
 }
 
 #[test]

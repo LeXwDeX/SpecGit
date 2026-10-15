@@ -6,6 +6,7 @@ and [release procedure](runtime/distribution/README.md).
 
 # 2.11.1
 
+- Give project receipts a unique install generation so older ownership history cannot cancel newer permission evidence. Migrate only consistent v1/v2 records; ambiguous evidence remains an ownership conflict. Refreshing v3 receipts requires a supporting published CLI version.
 - Verify recorded permissions and transaction ownership before every project setup refresh or uninstall, including unchanged assets. A permission change now fails consistently with doctor and leaves files, permissions and receipts intact.
 - Report the recorded and observed permissions in ownership conflicts. A newer permission record cannot be bypassed by an older matching mode in the same receipt chain; automatic permission restoration and ownership adoption remain unsupported.
 
