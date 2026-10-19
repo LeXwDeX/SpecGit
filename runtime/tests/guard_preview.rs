@@ -14,9 +14,14 @@ async fn install_preview_never_creates_hooks_or_private_state() {
             .success()
     );
     let process = specgit::process::Process::default();
-    let result = specgit::guard::preview(&process, temp.path(), false)
-        .await
-        .unwrap();
+    let result = specgit::guard::preview_with_executable(
+        &process,
+        temp.path(),
+        false,
+        &executable::binary(),
+    )
+    .await
+    .unwrap();
     assert_eq!(result["dry_run"], true);
     assert_eq!(result["prepared"], true);
     assert!(result.get("installed").is_none());
@@ -24,15 +29,20 @@ async fn install_preview_never_creates_hooks_or_private_state() {
     assert!(!temp.path().join(".git/specgit-v2").exists());
     let hook = temp.path().join(".git/hooks/pre-commit");
     fs::write(&hook, "#!/bin/sh\necho user\n").unwrap();
-    specgit::guard::preview(&process, temp.path(), false)
+    specgit::guard::preview_with_executable(&process, temp.path(), false, &executable::binary())
         .await
         .unwrap();
     assert_eq!(fs::read_to_string(&hook).unwrap(), "#!/bin/sh\necho user\n");
     fs::write(&hook, "#!/usr/bin/python3\nprint(1)\n").unwrap();
     assert!(
-        specgit::guard::preview(&process, temp.path(), false)
-            .await
-            .is_err()
+        specgit::guard::preview_with_executable(
+            &process,
+            temp.path(),
+            false,
+            &executable::binary()
+        )
+        .await
+        .is_err()
     );
     assert_eq!(
         fs::read_to_string(hook).unwrap(),
@@ -53,7 +63,7 @@ async fn uninstall_preview_keeps_hooks_receipt_and_transaction_inventory() {
             .success()
     );
     let process = specgit::process::Process::default();
-    specgit::guard::install(&process, temp.path(), false)
+    specgit::guard::install_with_executable(&process, temp.path(), false, &executable::binary())
         .await
         .unwrap();
     let paths = [
@@ -67,9 +77,10 @@ async fn uninstall_preview_keeps_hooks_receipt_and_transaction_inventory() {
         .collect();
     let journal = temp.path().join(".git/specgit-v2/assets");
     let entries = fs::read_dir(&journal).unwrap().count();
-    let result = specgit::guard::preview(&process, temp.path(), true)
-        .await
-        .unwrap();
+    let result =
+        specgit::guard::preview_with_executable(&process, temp.path(), true, &executable::binary())
+            .await
+            .unwrap();
     assert_eq!(result["changes"].as_array().unwrap().len(), 3);
     for (path, before) in paths.iter().zip(before) {
         assert_eq!(fs::read(temp.path().join(path)).unwrap(), before);
@@ -117,14 +128,17 @@ async fn uninstall_preview_reports_initialized_shared_consumers() {
     )
     .unwrap();
     let process = specgit::process::Process::default();
-    specgit::guard::install(&process, root, false)
+    specgit::guard::install_with_executable(&process, root, false, &executable::binary())
         .await
         .unwrap();
     let hook = root.join(".git/hooks/pre-commit");
     let before = fs::read(&hook).unwrap();
     let receipt = root.join(".git/specgit-v2/guard-hooks.json");
     let receipt_before = fs::read(&receipt).unwrap();
-    let result = specgit::guard::preview(&process, root, true).await.unwrap();
+    let result =
+        specgit::guard::preview_with_executable(&process, root, true, &executable::binary())
+            .await
+            .unwrap();
     assert_eq!(result["retained"]["reason"], "shared_initialized_worktree");
     assert_eq!(
         result["retained"]["shared_consumers"]
@@ -357,5 +371,49 @@ fn transferred_guard_rejects_incomplete_setup_demand_without_writes() {
             );
             assert_eq!(git_inventory(root), before, "missing {field}");
         }
+    }
+}
+
+#[tokio::test]
+async fn explicit_guard_executable_must_exist_and_be_executable_before_installation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    assert!(
+        Command::new("git")
+            .current_dir(&root)
+            .args(["init", "-b", "feature"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let process = specgit::process::Process::default();
+    for source in [
+        root.join("missing"),
+        root.clone(),
+        std::path::PathBuf::from("relative-cli"),
+    ] {
+        assert!(
+            specgit::guard::preview_with_executable(&process, &root, false, &source)
+                .await
+                .is_err(),
+            "{}",
+            source.display()
+        );
+        assert!(!root.join(".git/hooks/pre-commit").exists());
+        assert!(!root.join(".git/specgit-v2").exists());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let source = root.join("non-executable");
+        fs::write(&source, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            specgit::guard::preview_with_executable(&process, &root, false, &source)
+                .await
+                .is_err()
+        );
+        assert!(!root.join(".git/hooks/pre-commit").exists());
     }
 }

@@ -27,11 +27,29 @@ pub(super) async fn run(command: &Commands, cwd: &Path) {
     } = command
     {
         if *install || *uninstall {
-            let result = if *dry_run {
-                specgit::guard::preview(&Process::default(), cwd, *uninstall).await
-            } else {
-                specgit::guard::install(&Process::default(), cwd, *uninstall).await
-            };
+            let result = async {
+                let executable = std::env::current_exe().map_err(|_| {
+                    specgit::diagnostic::Diagnostic::input("The running CLI path is unavailable.")
+                })?;
+                if *dry_run {
+                    specgit::guard::preview_with_executable(
+                        &Process::default(),
+                        cwd,
+                        *uninstall,
+                        &executable,
+                    )
+                    .await
+                } else {
+                    specgit::guard::install_with_executable(
+                        &Process::default(),
+                        cwd,
+                        *uninstall,
+                        &executable,
+                    )
+                    .await
+                }
+            }
+            .await;
             match result {
                 Ok(value) => {
                     println!("{value}");

@@ -430,7 +430,9 @@ pub async fn install_with_context(
         None,
     )?;
     let mut prepared = prepared.expect("project plan");
-    let native = crate::guard::setup_plan(process, root, prepared.guard_enabled).await?;
+    let native =
+        crate::guard::setup_plan_with_executable(process, root, prepared.guard_enabled, source)
+            .await?;
     merge_guard(root, &mut prepared, &mut evidence, native)?;
     if options.dry_run {
         return Ok(evidence);
@@ -824,7 +826,7 @@ fn install_plan_with_removals(
     let guard_enabled = receipt_purposes
         .values()
         .any(|purposes| purposes.contains(&HookPurpose::Guard));
-    let needs_executable = !plans.is_empty();
+    let needs_executable = !plans.is_empty() || guard_enabled;
     let executable = needs_executable
         .then(|| shared_executable(source, root))
         .transpose()?;
@@ -1680,7 +1682,9 @@ pub async fn health_plan_with_context(
     let Some(mut plan) = health_plan_inner(root, private, source)? else {
         return Ok(None);
     };
-    let native = crate::guard::setup_plan(process, root, wants_guard(&previous)).await?;
+    let native =
+        crate::guard::setup_plan_with_executable(process, root, wants_guard(&previous), source)
+            .await?;
     if let Some(exclusion) =
         exclusion_health(process, root, private, plan.planned_changes()).await?
     {
@@ -1764,7 +1768,7 @@ pub async fn run_with_hook_removals(
             Some(&exclude),
         )?;
         let mut prepared = prepared.expect("project plan");
-        let native = crate::guard::setup_plan(&process, &root, prepared.guard_enabled).await?;
+        let native = crate::guard::setup_plan_with_executable(&process, &root, prepared.guard_enabled, &source).await?;
         merge_guard(&root, &mut prepared, &mut evidence, native)?;
         if options.uninstall {
             let consumers = crate::config::worktree::sibling_exclusion_consumers(&process, &root).await?;

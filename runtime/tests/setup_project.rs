@@ -3532,3 +3532,169 @@ fn cli_uninstall_preserves_user_recreated_directories_across_install_cycles() {
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn library_setup_guard_without_path_cli_child() {
+    if std::env::var_os("SPECGIT_TEST_LIBRARY_GUARD_NO_PATH").is_none() {
+        return;
+    }
+    assert!(specgit::process::resolve_executable("specgit").is_err());
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let process = Process::default();
+    let result = install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Guard], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        result["native_guard"]["executable_binding"],
+        "absolute_shared"
+    );
+    let script = fs::read_to_string(f.root.join(".git/hooks/pre-commit")).unwrap();
+    assert!(script.contains(f.source.to_str().unwrap()), "{script}");
+    fs::write(
+        f.root.join(".specgit.yaml"),
+        "version: 2\nprovider: github\nremote: origin\ntarget: main\n",
+    )
+    .unwrap();
+    git(
+        &f.root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/fixture/project.git",
+        ],
+    );
+    git(&f.root, &["add", ".specgit.yaml"]);
+    let commit = Command::new("git")
+        .current_dir(&f.root)
+        .args([
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "blocked",
+        ])
+        .output()
+        .unwrap();
+    assert!(!commit.status.success());
+    assert!(
+        String::from_utf8_lossy(&commit.stderr).contains("checkpoint"),
+        "{commit:?}"
+    );
+
+    let sibling = f.base.join("guard-consumer");
+    git(
+        &f.root,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            sibling.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let sibling_private = PathBuf::from(git(&sibling, &["rev-parse", "--absolute-git-dir"]))
+        .join("specgit-v2/agent-assets");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime
+        .block_on(project::install_with_context(
+            &options,
+            &selection(&[specgit::setup::HookPurpose::Guard], false),
+            &sibling,
+            &sibling_private,
+            &f.source,
+            &process,
+        ))
+        .unwrap();
+    fs::remove_file(&f.source).unwrap();
+    let mut uninstall = options.clone();
+    uninstall.agents.clear();
+    uninstall.uninstall = true;
+    let retained = runtime
+        .block_on(project::install_with_context(
+            &uninstall,
+            &Default::default(),
+            &f.root,
+            &f.private,
+            &f.source,
+            &process,
+        ))
+        .unwrap();
+    assert!(
+        retained["native_guard"].to_string().contains("retained"),
+        "{retained}"
+    );
+
+    let (independent, _) = fixture(vec![]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    assert!(
+        runtime
+            .block_on(specgit::guard::preview(&process, &independent.root, false))
+            .is_err(),
+        "unknown shared CLI must fail closed"
+    );
+    runtime
+        .block_on(specgit::guard::install_with_executable(
+            &process,
+            &independent.root,
+            false,
+            &independent.source,
+        ))
+        .unwrap();
+    fs::remove_file(&independent.source).unwrap();
+    runtime
+        .block_on(specgit::guard::preview(&process, &independent.root, false))
+        .unwrap();
+
+    // A renamed real CLI supplies its own path through the dispatch boundary.
+    let (renamed, _) = fixture(vec![]);
+    let renamed_binary = renamed.base.join("renamed-runtime");
+    fs::rename(&renamed.source, &renamed_binary).unwrap();
+    let output = Command::new(&renamed_binary)
+        .current_dir(&renamed.root)
+        .args(["guard", "--install"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let script = fs::read_to_string(renamed.root.join(".git/hooks/pre-commit")).unwrap();
+    assert!(
+        script.contains(renamed_binary.to_str().unwrap()),
+        "{script}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn library_setup_and_renamed_cli_guard_do_not_require_specgit_in_path() {
+    use std::os::unix::fs::symlink;
+    let tools = tempfile::tempdir().unwrap();
+    for name in ["git", "sh", "bash"] {
+        let source = specgit::process::resolve_executable(name).unwrap();
+        symlink(source, tools.path().join(name)).unwrap();
+    }
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "library_setup_guard_without_path_cli_child",
+            "--nocapture",
+        ])
+        .env("SPECGIT_TEST_LIBRARY_GUARD_NO_PATH", "1")
+        .env("PATH", tools.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -401,9 +401,14 @@ fn setup_rollback_keeps_native_guard_owned_for_a_linked_worktree() {
 async fn typed_guard_plan_rejects_changed_git_layout_before_any_setup_write() {
     let f = delivery::Fixture::new("github");
     let process = specgit::process::Process::default();
-    let native = specgit::guard::setup_plan(&process, &f.root, true)
-        .await
-        .unwrap();
+    let native = specgit::guard::setup_plan_with_executable(
+        &process,
+        &f.root,
+        true,
+        &delivery::executable::binary(),
+    )
+    .await
+    .unwrap();
     let options = specgit::setup::project::Options {
         agents: vec![specgit::setup::Agent::Generic],
         opencode_claude_hooks: false,
@@ -966,9 +971,14 @@ async fn typed_install_rollback_is_rejected_without_side_effects_for_plain_and_g
         )
         .await;
         assert!(result.is_err());
-        let native = specgit::guard::setup_plan(&process, &f.root, purposes == "guard")
-            .await
-            .unwrap();
+        let native = specgit::guard::setup_plan_with_executable(
+            &process,
+            &f.root,
+            purposes == "guard",
+            &delivery::executable::binary(),
+        )
+        .await
+        .unwrap();
         let result = specgit::setup::project::install_with_guard_plan(
             &options,
             &Default::default(),
