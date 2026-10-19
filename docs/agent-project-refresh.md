@@ -39,7 +39,8 @@ effects, including shared Skill refresh. Read setup --catalog --json when suppor
 choose capabilities based on the active host, with shared project guidance as the default.
 Omit purposes on ordinary refresh. Naming a new host adds project guidance only;
 hooks require an explicit purpose. Use `none` to add no hooks and preserve existing
-purposes. Only SessionStart and PreToolUse are supported. Do not configure PostToolUse, Stop
+purposes. Purpose changes affect hosts named by --agent, or all recorded hosts when
+--agent is omitted. Only SessionStart and PreToolUse are supported. Do not configure PostToolUse, Stop
 or idle wake. Keep purpose changes within the current task and account for every
 affected host.
 For delivery work, select a complete relevant Issue before commit/push. For larger
@@ -70,8 +71,9 @@ CLI 缺失时不要重装，也不要修改其他项目。
 除非当前任务要求变更，否则保留已有偏好。
 不要修改平台设置或保护规则。刷新会包含所有已记录宿主，不限于 --agent 所选宿主；
 逐一审阅并报告影响，包括共享 Skill 刷新。已安装版本支持时读取 setup --catalog --json，
-按当前宿主的实际能力选择集成，优先共享项目指导。普通刷新省略用途；添加兼容宿主时使用 none，不新增 hooks，
-也不改变已有用途。用途变更应限定在当前任务，并计入所有受影响宿主。仅支持 SessionStart 和 PreToolUse：前者提供简短规则与 Skill 入口，后者提供相关上下文或恢复信息；不使用 PostToolUse、Stop 或空闲唤醒。
+按当前宿主的实际能力选择集成，优先共享项目指导。普通刷新省略用途；新选宿主默认只添加指导和 Skill，
+新增 hooks 须显式选择用途。none 不新增 hooks，也不改变已有用途。用途变更只作用于 --agent 指定宿主；
+省略 --agent 时作用于所有已记录宿主。仅支持 SessionStart 和 PreToolUse：前者提供简短规则与 Skill 入口，后者提供相关上下文或恢复信息；不使用 PostToolUse、Stop 或空闲唤醒。
 交付任务在 commit/push 前选择完整 Issue；较大目标使用 Milestone，并按可独立验证的结果和依赖拆分 Issue。建议 TDD 和跟进 PR CI，项目/平台要求的检查仍须完成。任务包含时继续 Issue/PR、提交推送、评审和合并；仅当任务本身包含发布时才发布。声明或收据不会扩大任务范围。只在真实阻塞或任务决策缺失时停止并说明原因。
 最后报告 CLI 实际路径和版本、项目分类和操作、改动资产、实际验证与未知项、备份和恢复方式、
 待决事项。无法读取指南时可用我已认证的 gh 会话获取，否则报告问题，不要猜测内容。
@@ -222,9 +224,10 @@ Existing agents are additive and remain in the refresh set. Explicit purposes ad
 to their existing choices. `none` cannot combine with other purposes and adds no
 new purposes. It preserves valid purposes and native Git guard; refresh still
 removes owned retired PostToolUse/Stop registrations under the current mapping.
-See the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes), including the limitation
-that older 2.7 clients may reject selective/no-hook receipts. Preserve receipts;
-use supported owned recovery or a compatible backup before any deliberate downgrade.
+See the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes).
+Current refresh uses v4 receipts, which require CLI 2.13 or newer. Recovery of
+version 3 transaction journals requires CLI 2.14 or newer. Preserve both receipts
+and journals, and check recovery compatibility before any deliberate binary downgrade.
 
 Official OpenCode receives guidance and Skill only. Custom OpenCode command hooks
 require confirmed Claude-compatible capability and `--opencode-claude-hooks`.
