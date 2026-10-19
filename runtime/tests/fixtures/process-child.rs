@@ -202,6 +202,10 @@ fn main() {
             std::process::exit(0);
         }
         "spawn-closed-pipes" => {
+            // Redirecting the child's standard streams does not prevent Windows
+            // from copying other inheritable handles, including our own pipes.
+            #[cfg(windows)]
+            prevent_stdio_inheritance();
             let child = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["heartbeat", &args[1]])
                 .stdin(std::process::Stdio::null())
@@ -262,6 +266,27 @@ fn main() {
             }
         }
         _ => std::process::exit(2),
+    }
+}
+
+#[cfg(windows)]
+fn prevent_stdio_inheritance() {
+    use windows_sys::Win32::{
+        Foundation::{HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation},
+        System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
+    };
+    for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: this single-threaded fixture only borrows its own valid standard
+        // handles. Clearing the inheritance flag neither closes nor transfers them;
+        // the nested child explicitly receives null standard streams instead.
+        let handle = unsafe { GetStdHandle(stream) };
+        assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
+        assert_ne!(
+            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) },
+            0,
+            "{}",
+            std::io::Error::last_os_error()
+        );
     }
 }
 

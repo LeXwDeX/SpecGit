@@ -3331,7 +3331,10 @@ fn cli_submodule_setup_guard_round_trip_has_no_self_dependency() {
             "protocol.file.allow=always",
             "submodule",
             "add",
-            f.root.to_str().unwrap(),
+            // Git for Windows interprets a canonical \\?\ drive path as
+            // a remote URL. Resolve this local clone through the fixture's
+            // known relative layout instead of passing a verbatim path.
+            "../checkout",
             "lib",
         ],
     );
@@ -3343,7 +3346,7 @@ fn cli_submodule_setup_guard_round_trip_has_no_self_dependency() {
             "worktree",
             "add",
             "--detach",
-            linked.to_str().unwrap(),
+            "../../submodule-linked",
             "HEAD",
         ],
     );
@@ -3355,7 +3358,10 @@ fn cli_submodule_setup_guard_round_trip_has_no_self_dependency() {
         ))
         .unwrap();
     assert_eq!(siblings.len(), 1);
-    assert_eq!(siblings[0].root, linked);
+    assert_eq!(
+        siblings[0].root.canonicalize().unwrap(),
+        linked.canonicalize().unwrap()
+    );
     let result = cli(&submodule, &["--agent", "codex", "--hook-purpose", "guard"]);
     assert_eq!(result["ok"], true, "{result}");
     assert!(
