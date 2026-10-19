@@ -171,8 +171,8 @@ protocol contract. The catalog is offline and independent of project setup.
 | Shared CLI and native tools | One user-level SpecGit executable shared by repositories and worktrees; authenticated `gh`/`glab` for forge work | SpecGit operations require the CLI; native Issue/PR operations also require access |
 | SpecGit Skill | Canonical task workflow | Recommended project Skill at `.agents/skills/specgit-native/SKILL.md` |
 | Static guidance | Stable entry into the Skill | Recommended `AGENTS.md` entry; may contain manual text and remain tracked |
-| Dynamic context | Current task or checkpoint context | Optional; 2.13 delivers through SessionStart and PreToolUse where supported |
-| Agent event hooks | Host protocol that loads guidance/context | Optional; inspect host discovery and trust requirements; 2.13 does not support PostToolUse, Stop or idle wake |
+| Dynamic context | Current task or checkpoint context | Optional; delivered through SessionStart and PreToolUse where supported |
+| Agent event hooks | Host protocol that loads guidance/context | Optional; inspect host discovery and trust requirements; PostToolUse, Stop and idle wake are unsupported |
 | Git guard | Native commit/push checkpoint enforcement, independent of the Agent process | Optional unless project policy requires it; verify actual guard behavior |
 | Observation | Bounded `watch`/`inbox` and private event state | Optional; reads native forge state when requested, with no automatic host wake |
 | Local project files | `.specgit.yaml`, generated Skill paths and Git `info/exclude` entries | Exclude only exact local paths; ignore rules never untrack files; mixed guidance may be tracked |
@@ -226,9 +226,11 @@ for refreshing existing host choices and ownership.
 Setup remains project-only. It writes selected checkout assets and a worktree
 receipt, never a project-local CLI or user-global host state. Linked worktrees
 have independent project receipts; common Git hook blocks can have multiple
-consumers. Preserve foreign content, manual guidance and unrelated hooks. Use
-`--agent` or host-specific options only when maintaining a compatible existing
-receipt or the installed catalog requires them.
+consumers. Preserve foreign content, manual guidance and unrelated hooks. A new
+host selected with `--agent` receives guidance and the Skill only. Add supported
+hooks with explicit `--hook-purpose guard` and/or `--hook-purpose context`.
+Purpose changes affect the named hosts, or all recorded hosts when `--agent` is
+omitted; asset refresh still includes every recorded host.
 
 `setup --uninstall` previews and removes only the current worktree's recorded
 setup assets. Setup-owned Git guard blocks remain while an active setup or sibling

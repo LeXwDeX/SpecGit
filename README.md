@@ -16,11 +16,15 @@ Open your coding agent in the repository you want to use with SpecGit, then past
 
 ```text
 Read https://raw.githubusercontent.com/LeXwDeX/SpecGit/main/docs/agent-install.md
-and carry out the installation and initialization described there for this machine
-and the current repository. Install the latest stable SpecGit ZIP from GitHub
-Releases, verify its signature and SHA-256, extract it, initialize the project with specgit init, and configure the
-integration for the agent running this task. Use manual observation when required by
-detected capabilities and preserve other settings. Installation and enablement delegate
+and follow it to install or update the shared native CLI on this machine, then
+initialize this repository. Use the latest stable signed GitHub Release and verify
+its signature and SHA-256. In this project, `setup` installs the shared Skill and
+guidance baseline without host hooks; add `--hook-purpose guard` or `context` only
+when the active host supports that integration and the task needs it. When native
+capability is unsupported or unknown and an operating choice is required, use manual
+observation; it records `native_auto_merge=false`. Preserve an explicit true preference
+unless the current task delegates a necessary change.
+Installation and enablement delegate
 the SpecGit workflow required for this project and task; carry it through without asking
 again at each step. Use repository and agent context already available; ask only when
 a task decision or real blocker requires user input. Finish the
@@ -40,8 +44,9 @@ SpecGit is distributed **only through GitHub Releases** as native macOS arm64,
 Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
 Sigstore signature bundle. End-user installation needs no Node.js,
 npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `glab`.
-From 2.6 on, `specgit update` upgrades the shared executable from GitHub Releases
-with the same signature and checksum verification and keeps a backup.
+`specgit update` upgrades the shared executable from GitHub Releases with signature
+and checksum verification and keeps a backup. One user-level executable serves all
+repositories and worktrees; initialize each clone or worktree separately.
 
 ## Already installed? Inspect and refresh your project
 
@@ -50,23 +55,20 @@ procedure. Open your Agent in the target repository and copy its
 [English request](docs/agent-project-refresh.md#english-request) or
 [中文请求](docs/agent-project-refresh.md#中文请求). The request asks the Agent to
 actually inspect and apply safe local maintenance, with a separate verified stable
-CLI update when needed. It preserves project settings and checkpoints. Manual
-observation sets `native_auto_merge=false`; preserve configured preferences unless a
-specific change is required by the task. Setup refresh includes all recorded hosts
-and any named `--agent` host. Ordinary refresh omits purposes and reviews every
-host's effects; hook-purpose changes apply to named hosts, or all recorded hosts
-when `--agent` is omitted.
-Selecting a new host with `--agent` installs its guidance and Skill only. Add
-`--hook-purpose guard` and/or `--hook-purpose context` to opt into those hooks;
-`--hook-purpose none` adds no hooks and preserves recorded choices.
+CLI update when needed. It preserves project settings and checkpoints. When native
+capability is unsupported or unknown and an operating choice is required,
+`--manual-observe` records `native_auto_merge=false`. Preserve an explicit true
+preference unless the current task delegates a necessary change. Setup refreshes all recorded hosts and any named `--agent`
+host, but explicit purpose changes apply only to the named host or hosts; without
+`--agent`, they apply to all recorded hosts. Omit purposes on ordinary refresh to
+preserve recorded choices. A newly named host gets guidance and Skill only. Hooks
+require explicit `--hook-purpose guard` and/or `context`; `none` adds no hooks.
 Enablement delegates task-related Issue, implementation, verification, commit/push,
 PR/MR, review, merge and closure work. Publication is included only when the task
 itself includes release work. A declaration or old receipt cannot expand task scope.
-On a new host, `--agent` selects guidance and the Skill only. Hooks require an
-explicit `--hook-purpose guard` and/or `--hook-purpose context`. Use
-`--remove-hook-purpose guard` or `--remove-hook-purpose context` to remove one
-recorded purpose while keeping the other; `setup --uninstall` removes all recorded project integrations in this
-worktree.
+Use `--remove-hook-purpose guard` or `--remove-hook-purpose context` to remove one
+recorded purpose while keeping the other; omitting `--agent` targets all recorded
+hosts. `setup --uninstall` removes this worktree's recorded project integrations.
 
 ## How delivery works
 
@@ -126,18 +128,18 @@ Auto-merge preferences do not grant permission to change native protections.
 
 ## Agent integration and upgrades
 
-Project integration remains **project-only**. Run `specgit init` in every clone
-and worktree because the declaration, Skill and private records are local; it
-installs the common project Skill and stable guidance entry points. Those entry points direct agents to the Skill and to the official install
-guide when the shared CLI is missing; with the CLI installed, use `specgit init`
-to recover local project state. Initialization does not install host hooks. Run
-`specgit setup` to install or refresh the shared project Skill and guidance baseline;
-add `--agent` for named host guidance and `--hook-purpose guard` or `context` for
-explicit hook opt-in. A newly named host adds guidance only. Setup never copies the executable
-into a project or scans other repositories. Hooks invoke the shared user-installed
-executable. The 2.3 global integration scope and its `--root`,
-`--provider`, `--api-host`, `--register-*` and per-host root/settings options
-are removed; `watch`, `hook` and `inbox` state is always Git-private. A custom
+The native CLI is installed once in a user-owned PATH directory and shared by
+repositories and worktrees. Run `specgit init` in every clone and worktree to
+maintain its project declaration, Skill, guidance entry and local records. Init
+does not install host hooks. `specgit setup` is project-only and installs or
+refreshes the shared project Skill and guidance baseline; it never copies the CLI
+into a project or scans other repositories. A new `--agent` selection adds that
+host's guidance and Skill only. Hooks require explicit `--hook-purpose guard` or
+`context`. Omitted purposes preserve recorded choices; explicit purposes apply to
+the named host or hosts, or to every recorded host when `--agent` is omitted.
+`observe` is recognized but declined; use bounded `watch`/`inbox` instead. Only
+SessionStart and PreToolUse context hooks are supported. PostToolUse, Stop and idle
+wake are retired. A custom
 OpenCode fork can opt in to claude-code-format project hooks with the explicit
 `--opencode-claude-hooks` choice (requires `--agent opencode`); official
 OpenCode keeps the skill and guidance only. Refresh migrates recorded, uniquely
@@ -145,10 +147,8 @@ owned legacy guidance blocks; unknown ownership or damaged/duplicate markers
 remain conflicts. Manual text outside managed blocks is preserved. Registration
 is reported separately from actual host discovery or event delivery; a reload,
 a host trust review (Codex `/hooks`), or another turn may be needed to verify the
-host. Coordinated removal
-of a whole project's SpecGit integration is the separate `specgit remove` command (preview,
-digest-bound apply, offline rollback), introduced in the 2.3 runtime contract;
-project-scope `--uninstall` covers only the recorded agent assets.
+host. Use `specgit remove` to preview and reversibly remove the whole project's
+proven owned integration; `setup --uninstall` removes only recorded agent assets.
 
 The only user-level asset is the explicitly installed Skill file; no global
 hooks, state or receipts. To opt in, preview `specgit skill --user --dry-run --json`,
@@ -160,11 +160,6 @@ foreign files; `--refresh-only` skips missing or foreign files. After a successf
 installs one by default. Refresh failure retains the binary and reports the
 remedy `specgit skill --user`. Project Skill refresh remains separate.
 
-During the 2.3-to-2.4 migration, project receipts were refreshed in place
-without reading or writing the retired global root. The 2.3 global data was
-preserved because 2.4 had no global cleanup command; any required cleanup used
-the 2.3 CLI's exact owned cleanup before upgrading, never a blind delete.
-
 Host integration uses SessionStart for brief rules and the Skill entry, and
 PreToolUse for relevant context or recovery. It does not gate ordinary edits.
 `specgit guard --install` adds owned pre-commit and pre-push blocks
@@ -173,11 +168,10 @@ to the effective native/custom hook path, including Husky user scripts, and
 and replays Git's standard ref stdin for the existing user hook.
 
 After CLI upgrades, use the [project maintenance guide](docs/agent-project-refresh.md)
-to verify the executable selected by PATH and refresh the existing project and host
-integration. Omit hook purposes to preserve recorded modes; explicit purposes affect
-all recorded and newly selected hosts. Review the effects for every affected host.
-Only SessionStart and PreToolUse are supported; use bounded `watch`/`inbox` where
-automatic observation is unavailable. The current runtime is 2.14.0. After project updates, run status and doctor, read back
+to verify the executable selected by PATH and refresh each project integration.
+Omit hook purposes to preserve recorded modes; review all hosts whose assets will
+refresh. Only SessionStart and PreToolUse are supported; `observe` is declined and
+bounded `watch`/`inbox` is the fallback. The current runtime is 2.14.0. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before

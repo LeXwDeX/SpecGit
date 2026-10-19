@@ -1,49 +1,67 @@
-# 老项目升级与 Agent 集成
+# 更新共享 CLI 并刷新已有项目
 
-**共享 CLI 已安装：** 使用统一的
-[项目维护指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md)。
-在目标仓库打开 Agent，复制其中的
-[中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
-或 [English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)，
-要求实际检查并完成所有权边界明确的维护，而不是重做安装。请求单独授权必要的稳定版验证升级；
-可选能力未知不阻止适用的本地维护，init 仅在新项目默认 false 或已有 false 的 `native_auto_merge` 下选择手动观察。
-该参数会设为 false；已有 true 偏好需先取得具体变更决策。安装/启用会委托当前任务所需流程，无需逐步重复确认。明确的任务限制仍然有效；声明或旧收据不会扩大范围。仅当任务本身包含发布时才发布。
-核对 CLI 的实际路径和版本；缺失时不要静默重装。
+在目标仓库使用统一的[项目维护指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md)。
+指南会在项目写入前区分全新项目、已有 v2、v1 迁移与冲突状态，并保留声明、收据、
+checkpoint、用户编辑和其他工具资产。
 
-执行下方简写的 v2 流程前，先按指南分类。声明丢失但私有状态仍在时不是全新项目，
-应恢复原配置或备份。保留配置、收据、checkpoint、块外改动及外部资产；边界完整且所有权可信的受管内容即使正文被编辑，也会刷新为当前模板。不要删除状态或 hooks 来强行刷新。
-检查、预览和执行应使用同一套配置、远程和能力选项。
+## 1. 按需更新共享 CLI
 
-对于 v2 项目，保留现有声明并在目标仓库预览、应用刷新：
+SpecGit 使用一个用户级原生可执行文件，供本机各项目和 worktree 共用。更新时通过
+签名验证的 GitHub Release：
+
+```sh
+specgit update --check --json
+specgit update --dry-run --json
+specgit update --json
+```
+
+check 只读取发行信息；dry-run 下载并验证但不替换可执行文件；apply 只替换当前运行文件，
+并保留备份。更新后用 `command -v specgit` 和 `specgit --human --version` 回读，确认 PATH
+没有继续选中旧入口。前置依赖、恢复方式和平台限制见维护指南。
+
+## 2. 分别刷新每个项目
+
+共享二进制不会在仓库之间传递项目声明、指导、收据或 checkpoint。每个 clone 和 worktree
+都应保留当前声明与私有状态，检查并刷新本地项目：
 
 ```sh
 specgit init --check --json
 specgit init --dry-run --json
 specgit init --json
+specgit setup --catalog --json
+specgit setup --dry-run --json
+specgit setup --json
 specgit status --json
+specgit doctor --offline --json
 ```
 
-若报告需要能力选择，先明确选择手动观察或在已有授权内配置平台，不要忽略诊断。当前 Git 本地排除区块仅覆盖 `.specgit.yaml` 和生成的 SpecGit Skill 文件；仓库/用户自己的 ignore 规则仍有效，手写 AGENTS/CLAUDE 内容按仓库规则审阅。旧的 adoption-only checkpoint 在原分支重新选择原生 Issue，不能删除或改写其他分支的 checkpoint。全部更新后运行 status/doctor，读回生成指导与 Skill，再次 dry-run；init dry-run 只列计划路径，不表示逐项改变状态。仅支持 SessionStart 和 PreToolUse：简短规则/Skill 入口及相关上下文/恢复信息；不配置 PostToolUse、Stop 或空闲唤醒。声称 hook 生效前须做无副作用的实际行为/上下文探针。
+只应用当前且适用的预览。init 维护项目声明、Skill、指导和精确本地排除项，不安装宿主
+hooks。默认 setup 安装或刷新共享项目 Skill 和稳定指导入口；新 setup 不添加 Agent hooks。
+setup 会刷新全部已记录宿主及任何 `--agent` 指定的新宿主，因此应用前要审阅所有受影响资产。
+若声明缺失但私有状态仍在，应恢复状态，不要当成全新项目接入。
 
-v1 项目先执行[显式迁移](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md)，不要使用已退役的 `init --force`、`finish`、`bind`。二进制替换不会完成项目迁移。
+## 3. 仅在需要时添加或调整宿主集成
 
-仅按需添加实际使用的宿主。setup 仍会刷新所有已记录宿主，`--agent` 不会将影响限于该宿主。
-逐一审阅并报告资产变化，包括共享 Skill 刷新。自 2.4 版本发布以来，setup 仅支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，hooks 直接调用已安装的共享二进制，无需先做全局 setup；已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。以下为 Codex 示例，Claude 用 `--agent claude`，OpenCode 用 `--agent opencode`，通用 `.agents` 宿主用 `--agent generic`：
+用 `--agent` 新选宿主只添加它的指导和 Skill。要安装 hooks，必须显式指定
+`--hook-purpose guard` 和/或 `--hook-purpose context`；`none` 不添加 hooks 并保留已有选择。
+普通刷新省略用途以保留已记录选择。显式用途只作用于 `--agent` 指定宿主；省略
+`--agent` 时才作用于所有已记录宿主。`--remove-hook-purpose guard` 或 `context` 仅移除
+指定用途，宿主范围规则相同。
 
-```sh
-specgit setup --agent codex --hook-purpose none --dry-run --json
-specgit setup --agent codex --hook-purpose none --json
-```
+仅支持 SessionStart 和 PreToolUse 上下文 hooks。`observe` 用途会被识别但拒绝；改用有界
+`watch` 或 `inbox`。PostToolUse、Stop 回调和空闲唤醒已退役。`guard` 安装原生 Git
+pre-commit/pre-push checkpoint 检查。写入注册不代表宿主已加载或行为有效；依赖前要验证
+真实宿主和 Git 入口。
 
-保留原有配置、受管块外手工指导和外部 hooks；所有权可信且边界完整唯一的 SpecGit 标准正文由 CLI 覆盖更新。受管理 hooks 仅提供 SessionStart 和 PreToolUse。不注册 PostToolUse、Stop 回调或空闲唤醒。若无法自动观察，使用有界 watch/inbox 或手动继续。不要把 Claude settings hooks 复制成未经验证的 OpenCode 集成。写入注册不证明上下文送达，需实际验证。
+原生能力不支持或未知，且必须选择运行方式时，可将手动观察作为 init 选项；
+`--manual-observe` 会写入 `native_auto_merge=false`。除非当前任务授权了必要变更，
+否则保留显式 true 偏好。不要为了让初始化通过而修改平台设置。
 
-新选宿主只安装项目指导和 Skill。要启用 hooks，显式添加 `--hook-purpose guard` 和/或 `--hook-purpose context`；用 `none` 保持新宿主不安装 hooks。`guard` 配置原生 commit/push 检查，`context` 提供两个受支持事件的上下文；`observe` 明确报告不支持，改用有界 watch/inbox。
-普通刷新省略用途以保留已有选择。显式用途作用于 `--agent` 指定宿主；省略 `--agent` 时作用于所有已记录宿主，并应处于当前任务范围内。
-`none` 不新增用途，保留有效用途和原生 Git guard；刷新仍会移除已退役的受管 PostToolUse/Stop 注册。宿主选择是叠加的。
-仅选择任务所需、真实能力支持的用途。用 `--remove-hook-purpose context` 或 `--remove-hook-purpose guard` 可移除一个已记录用途并保留其他用途；可用 `--agent` 限定宿主，省略时作用于所有已记录宿主。`setup --uninstall` 会移除此 worktree 的全部已记录项目集成。选择性收据的降级限制与验证步骤见维护指南。
+## 4. 谨慎迁移或移除
 
-在 2.3 到 2.4 的迁移中，已有项目收据曾在本地刷新为不含 `shared_root` 的格式，保留外部内容，且不读取或写入已退役的全局根目录。由于 2.4 没有清理命令，2.3 全局数据被保留；确需清理时，应在升级前用 2.3 CLI 精确清理自己名下的数据，切勿盲目删除。
+v1 项目先按[v1 到 v2 迁移指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md)
+迁移，再替换声明或生命周期。要移除单个已记录用途，使用 `--remove-hook-purpose` 并先审阅预览。
+`setup --uninstall` 会移除当前 worktree 中全部已记录集成。整体移除项目集成使用 `specgit remove`，见
+[移除与回滚参考](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback)。
 
-仓库要求 Git 门禁时用 `specgit guard --install --json`，一次安装两个受管理区块并保留现有 hooks；`guard --uninstall` 只移除这些区块。
-
-`setup --uninstall` 只移除当前 worktree 记录的项目级 agent 资产（2.4 版本没有全局用户级 setup）；`init --rollback <transaction>` 只回滚该项目事务。2.2 没有通用的项目 remove 命令；2.3 引入 `specgit remove`（预览、按摘要应用、离线回滚），用于整体移除一个项目的本地集成。见[移除边界](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback)。
+参阅[快速开始](Getting-Started-zh)、[团队工作流](Team-Workflow-zh)和[CLI 参考](CLI-Reference-zh)。

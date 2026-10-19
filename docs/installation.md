@@ -48,12 +48,12 @@ is the canonical Agent procedure, with English/Chinese copyable requests. It
 separates binary update from project refresh, classifies missing declarations and
 legacy/conflicting assets, and preserves receipts, checkpoints and host choices.
 Do not replay first installation or delete private state to repair a project.
-Since 2.9.0, refresh updates recorded assets and complete unique managed blocks even
+Refresh updates recorded assets and complete unique managed blocks even
 when their body text was edited; malformed/duplicate markers or unknown ownership
 remain conflicts. Follow the maintenance guide's final status, doctor, readback and
 dry-run checks after all updates.
 
-From 2.6 on, prefer the built-in update. It needs an authenticated `gh` session
+Use the built-in update. It needs an authenticated `gh` session
 and Cosign, and enforces the verification above:
 
 ```sh
@@ -103,7 +103,7 @@ purposes on refresh preserves existing choices. Use `--remove-hook-purpose guard
 or `--remove-hook-purpose context` to remove one recorded purpose while keeping
 the rest. The selector affects `--agent` hosts, or all recorded hosts when omitted.
 Existing projects follow the maintenance flow and refresh their recorded integration. Review each preview before applying. Add SessionStart or PreToolUse
-context delivery only when supported by the installed CLI and host; as of the 2.13 release,
+context delivery only when supported by the installed CLI and host.
 PostToolUse, Stop and idle-wake integration are unsupported. Preview Git guard
 installation separately with `specgit guard --install --dry-run --json` when
 needed by the project. If policy requires a Git guard, its absence blocks the
@@ -118,10 +118,11 @@ specgit doctor --provider github --json
 Read back the generated Skill and guidance, then repeat the same dry-run. Written
 files do not prove host loading; use the documented host trust flow and verify
 actual context delivery. Verify allow/deny behavior for Git guard only.
-Since the 2.4 release, setup has been permanently project-only (`--scope project` is the
-default and only scope). CLI 2.13 introduced local migration of consistent legacy
-receipts to v4 without `shared_root` or access to the retired global root; current
-CLI versions retain that migration and recovery support.
+Setup is project-only (`--scope project` is the default and only scope). It
+migrates consistent legacy receipts locally to v4 without reading or writing the
+retired global root. V4 receipts require CLI 2.13 or newer; recovering version 3
+transaction journals requires CLI 2.14 or newer. Check both formats before a
+binary downgrade, which does not undo receipt, journal or asset changes.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.
 For a v1 project, follow the [migration guide](migration-v2.md): prepare a complete
 v2 declaration, inspect `specgit migrate --config-file <file> --json`, resolve old
@@ -171,8 +172,8 @@ or checkpoint) remains is not treated as uninitialized: Git guard fails closed,
 host hooks offer recovery context, and `init --check` reports its `private_state`
 without claiming `initial_adoption`, and `remove` in a sibling still counts it as
 a consumer of shared assets. Project `setup` writes documented checkout assets
-and keeps its receipt under that worktree's Git directory; the 2.4 release
-removed global setup assets.
+and keeps its receipt under that worktree's Git directory. It installs no global
+host assets.
 
 ## Removal and rollback
 
@@ -180,7 +181,7 @@ Use one shared user-level executable for operational work across repositories an
 worktrees. Each participating project has its own initialization. Isolated test
 installations used by maintainers do not replace that shared PATH entry.
 
-SpecGit 2.3 introduces the `specgit remove` command for coordinated removal of
+Use `specgit remove` for coordinated removal of
 one project's owned local integration: it previews by default (`--dry-run`),
 `--apply --expect <preview_sha256>` applies exactly the inspected digest, and
 `--rollback <transaction>` restores that transaction offline. Removal never
@@ -196,7 +197,7 @@ removes independently owned Git-hook blocks only when no active consumer needs
 them; otherwise it retains the shared blocks and receipt. Setup-owned guard
 blocks remain under setup ownership. `guard --install` in a worktree whose shared
 hooks another worktree owns names that owner instead of changing the hooks.
-Since the 2.4 release, setup has been project-only: `setup --uninstall` removes this
+`setup --uninstall` removes this
 worktree's recorded project agent assets. `setup --remove-hook-purpose guard`
 and `setup --remove-hook-purpose context` remove only the selected recorded
 purpose, preserving the other purpose and unrelated host entries. Setup-owned guard blocks are retained
@@ -204,9 +205,8 @@ while an active setup or sibling worktree needs them, and independently owned
 guard blocks remain outside setup's uninstall scope. When a setup owner retires,
 remaining guard ownership and recovery evidence stay in shared Git metadata, so
 pruning that worktree does not prevent the last setup consumer from cleaning up.
-For a 2.3-to-2.4 migration, existing global data remained preserved because the
-2.4 CLI had no cleanup command. Required cleanup used the 2.3 CLI's exact owned
-cleanup before upgrading; never delete it blindly. Preserve recovery records and foreign content.
+Any legacy global data remains outside the current CLI's cleanup scope. Preserve
+its recovery records and foreign content; do not delete it as a project repair.
 
 A binary rollback restores the previously backed-up executable. It does not undo
 project migration or host asset refreshes; assess those recorded transactions
