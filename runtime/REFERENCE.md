@@ -1083,3 +1083,17 @@ them for each machine rather than treating them as portable configuration.
 Unix process cleanup signals the owned process group while its exited leader is
 still unreaped, then reaps the leader. A descendant that deliberately calls `setsid`
 is outside that boundary. Windows uses an owned Job Object.
+
+Rust embedding callers that create Git metadata hooks should use
+`guard::preview_with_executable` / `guard::install_with_executable`, or pass an
+explicit CLI path to `guard::setup_plan_with_executable`. The path must be
+absolute, UTF-8 and free of CR, LF and NUL; the caller must keep that shared CLI
+available. The existing `guard::preview`, `guard::install` and `guard::setup_plan`
+signatures remain; new Git-metadata hooks outside the worktree resolve `specgit`
+from PATH when no explicit path is supplied, and return a diagnostic if it cannot
+be resolved. They do not create an unbound metadata hook. Maintenance retains a
+proven absolute pin without requiring the old executable to remain installed. CLI guard commands
+pass their current executable, and project setup passes its shared executable
+after checking it is readable, executable on Unix, and outside the repository's
+checkouts. A `core.hooksPath` inside the worktree remains portable and uses PATH,
+as described above.
