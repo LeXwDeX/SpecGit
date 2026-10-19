@@ -44,6 +44,16 @@ fn fixture_pause(point: &str) {
     }
 }
 
+#[cfg(feature = "test-fixtures")]
+fn fixture_atomic_pause(path: &Path, point: &str) {
+    if std::env::var_os("SPECGIT_FIXTURE_ASSET_PAUSE_TARGET")
+        .is_some_and(|selected| Path::new(&selected) != path)
+    {
+        return;
+    }
+    fixture_pause(point);
+}
+
 fn error(code: Code, message: &str) -> Diagnostic {
     Diagnostic::new(
         code,
@@ -555,7 +565,7 @@ impl AssetStore {
                 "The checkpoint changed outside the held operation lock.",
             ));
         }
-        atomic(path, bytes, actual.permissions.as_ref())
+        atomic_expected(path, bytes, actual.permissions.as_ref(), &actual)
     }
     pub fn lock(root: &Path, allowed: &[PathBuf], timeout: Duration) -> Result<Self, Diagnostic> {
         if timeout.is_zero() || timeout > Duration::from_secs(30) {
@@ -1189,7 +1199,14 @@ impl AssetStore {
                     Some(bytes) => {
                         self.create_asset_parents(&change.path, &mut journal)?;
                         self.save_journal(&directory, &journal)?;
-                        atomic(&change.path, bytes, change.permissions.as_ref())
+                        #[cfg(feature = "test-fixtures")]
+                        fixture_atomic_pause(&change.path, "before-atomic-write");
+                        atomic_expected(
+                            &change.path,
+                            bytes,
+                            change.permissions.as_ref(),
+                            &change.before,
+                        )
                     }
                     None => fs::remove_file(&change.path).map_err(|_| io_error()),
                 }
@@ -1424,13 +1441,14 @@ impl AssetStore {
             match &entry.before {
                 Some(_) => {
                     let backup = Snapshot::read(&directory.join(&entry.backup))?;
-                    atomic(
+                    atomic_expected(
                         &entry.path,
                         backup.bytes.as_deref().ok_or_else(io_error)?,
                         entry
                             .permissions
                             .restore(backup.permissions.as_ref())
                             .as_ref(),
+                        &written.last().expect("restore snapshot").1,
                     )?;
                 }
                 None => fs::remove_file(&entry.path).map_err(|_| io_error())?,
@@ -1606,7 +1624,9 @@ fn undo_restore(written: &[(&Entry, Snapshot)], original: Diagnostic) -> Diagnos
                 return Err(io_error());
             }
             match &previous.bytes {
-                Some(bytes) => atomic(&entry.path, bytes, previous.permissions.as_ref()),
+                Some(bytes) => {
+                    atomic_expected(&entry.path, bytes, previous.permissions.as_ref(), &current)
+                }
                 None => fs::remove_file(&entry.path).map_err(|_| io_error()),
             }
         });
@@ -1875,11 +1895,19 @@ fn private_directory(path: &Path) -> Result<(), Diagnostic> {
     Ok(())
 }
 fn atomic(path: &Path, bytes: &[u8], permissions: Option<&Permissions>) -> Result<(), Diagnostic> {
+    let expected = Snapshot::read(path)?;
+    atomic_expected(path, bytes, permissions, &expected)
+}
+
+fn atomic_expected(
+    path: &Path,
+    bytes: &[u8],
+    permissions: Option<&Permissions>,
+    expected: &Snapshot,
+) -> Result<(), Diagnostic> {
     let parent = path.parent().ok_or_else(io_error)?;
     ensure_directory(parent)?;
     safe_path(path)?;
-    #[cfg(windows)]
-    let expected = Snapshot::read(path)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| filesystem_error("temporary_create", &e))?;
     temp.write_all(bytes)
@@ -1900,15 +1928,30 @@ fn atomic(path: &Path, bytes: &[u8], permissions: Option<&Permissions>) -> Resul
         .sync_all()
         .map_err(|e| filesystem_error("temporary_sync", &e))?;
     safe_path(path)?;
+    check_atomic_destination(path, expected)?;
     #[cfg(not(windows))]
     temp.persist(path)
         .map_err(|e| filesystem_error("atomic_replace", &e.error))?;
     #[cfg(windows)]
-    persist_windows(temp, path, &expected)?;
+    persist_windows(temp, path, expected)?;
     #[cfg(unix)]
     File::open(parent)
         .and_then(|f| f.sync_all())
         .map_err(|e| filesystem_error("directory_sync", &e))?;
+    Ok(())
+}
+
+fn check_atomic_destination(path: &Path, expected: &Snapshot) -> Result<(), Diagnostic> {
+    let actual = Snapshot::read(path)?;
+    if actual.bytes != expected.bytes
+        || PermissionRecord::capture(actual.permissions.as_ref())
+            != PermissionRecord::capture(expected.permissions.as_ref())
+    {
+        return Err(error(
+            Code::ConcurrentEdit,
+            "The destination changed before its atomic replacement completed.",
+        ));
+    }
     Ok(())
 }
 
@@ -1920,11 +1963,17 @@ fn persist_windows(
 ) -> Result<(), Diagnostic> {
     let started = Instant::now();
     loop {
+        check_atomic_destination(path, expected)?;
         match temp.persist(path) {
             Ok(_) => return Ok(()),
             Err(failure) => {
-                // Windows can refuse replacement while another handle is open.
-                // Retain the same synced staging file and preserve the target.
+                // Keep the original caller snapshot across all retry attempts.
+                // Classify an edit before a terminal filesystem error as well.
+                #[cfg(feature = "test-fixtures")]
+                if matches!(failure.error.raw_os_error(), Some(5 | 32 | 33)) {
+                    fixture_atomic_pause(path, "atomic-replace-blocked");
+                }
+                check_atomic_destination(path, expected)?;
                 if !matches!(failure.error.raw_os_error(), Some(5 | 32 | 33))
                     || started.elapsed() >= Duration::from_secs(1)
                 {
@@ -1932,16 +1981,6 @@ fn persist_windows(
                 }
                 temp = failure.file;
                 std::thread::sleep(Duration::from_millis(20));
-                let actual = Snapshot::read(path)?;
-                if actual.bytes != expected.bytes
-                    || PermissionRecord::capture(actual.permissions.as_ref())
-                        != PermissionRecord::capture(expected.permissions.as_ref())
-                {
-                    return Err(error(
-                        Code::ConcurrentEdit,
-                        "The destination changed while its atomic replacement was blocked.",
-                    ));
-                }
             }
         }
     }
