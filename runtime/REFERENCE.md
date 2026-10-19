@@ -1056,9 +1056,12 @@ identities or results invalidate the observation. Every result remains a dated
 snapshot, not a promise about future reruns. GitHub observations also read the
 bounded native workflow-run list for this head (Actions read access is required).
 Only suites superseded within the same workflow, event, branch and associated PR
-set are discarded. Independent check suites remain distinct. A replacement with
-no visible checks is unknown, and a running workflow cannot inherit old success.
-Unavailable or incomplete run identities never fall back to old green checks.
+set are discarded. Independent check suites remain distinct. When a replacement
+workflow has no visible check runs, use its own status and conclusion: queued or
+running is pending, and completed with native `conclusion: "success"` can establish
+passing evidence. Other completed conclusions do not establish passing checks.
+Missing or incomplete run identities remain unavailable and never fall back to old
+green checks. A running workflow cannot inherit old success.
 This reads execution identities, not workflow jobs or dependency graphs.
 Explicit watch/inbox delivers actionable check results before lifecycle completion
 and preserves the subscription for resumption. Host hooks do not launch observation.
