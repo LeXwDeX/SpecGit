@@ -40,15 +40,108 @@ struct Receipt {
     hooks: BTreeMap<String, HookReceipt>,
 }
 
-fn hook_block(stage: &str) -> String {
+fn hook_block(stage: &str, executable: &str) -> String {
     if stage == "pre-push" {
         return format!(
-            "# >>> specgit-v2:{stage}:start >>>\nspecgit_input=$(mktemp /tmp/specgit-pre-push.XXXXXX) || exit 1\ntrap 'rm -f \"$specgit_input\"' EXIT HUP INT TERM\ncat > \"$specgit_input\"\nspecgit guard --stage pre-push < \"$specgit_input\" || exit $?\nexec < \"$specgit_input\"\nrm -f \"$specgit_input\"\ntrap - EXIT HUP INT TERM\n# <<< specgit-v2:{stage}:end <<<"
+            "# >>> specgit-v2:{stage}:start >>>\nspecgit_input=$(mktemp \"${{TMPDIR:-/tmp}}/specgit-pre-push.XXXXXX\") || exit 1\ntrap 'rm -f \"$specgit_input\"' EXIT HUP INT TERM\ncat > \"$specgit_input\"\n{executable} guard --stage pre-push < \"$specgit_input\" || exit $?\nexec < \"$specgit_input\"\nrm -f \"$specgit_input\"\ntrap - EXIT HUP INT TERM\n# <<< specgit-v2:{stage}:end <<<"
         );
     }
     format!(
-        "# >>> specgit-v2:{stage}:start >>>\nspecgit guard --stage {stage} || exit $?\n# <<< specgit-v2:{stage}:end <<<"
+        "# >>> specgit-v2:{stage}:start >>>\n{executable} guard --stage {stage} || exit $?\n# <<< specgit-v2:{stage}:end <<<"
     )
+}
+
+fn hook_executable(
+    old: Option<&HookReceipt>,
+    hook_root: &Path,
+    common: &Path,
+    source: Option<&Path>,
+) -> Result<String, Diagnostic> {
+    // A hooksPath inside the worktree can be committed. Keep it portable;
+    // the returned operation evidence reports its deliberate PATH dependency.
+    if !hook_root.starts_with(common) {
+        return Ok("specgit".into());
+    }
+    let executable = if let Some(source) = source {
+        source.to_owned()
+    } else {
+        // Maintenance retains a proven pin without requiring its old target
+        // to remain installed. Fresh library plans resolve the shared CLI.
+        if let Some(command) = old.and_then(|old| {
+            old.block.lines().find_map(|line| {
+                line.split_once(" guard --stage ")
+                    .map(|(command, _)| command)
+            })
+        }) && command.starts_with('\'')
+            && command.ends_with('\'')
+        {
+            return Ok(command.to_owned());
+        }
+        crate::process::resolve_executable("specgit")?
+    };
+    if source.is_some() {
+        assets::safe_path(&executable)?;
+        let metadata = std::fs::metadata(&executable)
+            .map_err(|_| rejected("The explicit shared CLI executable is unavailable."))?;
+        if !metadata.is_file() {
+            return Err(rejected("The explicit shared CLI must be a regular file."));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err(rejected(
+                    "The explicit shared CLI lacks execute permission.",
+                ));
+            }
+        }
+    }
+    let binary = executable
+        .to_str()
+        .ok_or_else(|| rejected("The shared CLI path must be UTF-8."))?;
+    if !executable.is_absolute() || binary.contains(['\n', '\r', '\0']) {
+        return Err(rejected(
+            "The shared CLI path must be absolute and contain no line breaks.",
+        ));
+    }
+    #[cfg(windows)]
+    let binary = if let Some(unc) = binary.strip_prefix("\\\\?\\UNC\\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else {
+        binary
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(binary)
+            .replace('\\', "/")
+    };
+    Ok(format!("'{}'", binary.replace('\'', "'\\''")))
+}
+
+fn executable_binding(changes: &[Change]) -> &'static str {
+    if changes
+        .iter()
+        .filter(|change| {
+            matches!(
+                change.path.file_name().and_then(|name| name.to_str()),
+                Some("pre-commit" | "pre-push")
+            )
+        })
+        .any(|change| {
+            change
+                .after
+                .as_deref()
+                .or(change.before.bytes.as_deref())
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .is_some_and(|script| {
+                    script
+                        .lines()
+                        .any(|line| line.starts_with('\'') && line.contains(" guard --stage "))
+                })
+        })
+    {
+        "absolute_shared"
+    } else {
+        "path_lookup"
+    }
 }
 
 fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic> {
@@ -95,6 +188,16 @@ pub(crate) async fn plan_named(
     cwd: &Path,
     uninstall: bool,
     name: &str,
+) -> Result<(Vec<Change>, PathBuf, PathBuf), Diagnostic> {
+    plan_named_with_executable(process, cwd, uninstall, name, None).await
+}
+
+pub(crate) async fn plan_named_with_executable(
+    process: &Process,
+    cwd: &Path,
+    uninstall: bool,
+    name: &str,
+    source: Option<&Path>,
 ) -> Result<(Vec<Change>, PathBuf, PathBuf), Diagnostic> {
     let Some(root) = root(process, cwd).await? else {
         return Err(Diagnostic::new(
@@ -221,7 +324,12 @@ pub(crate) async fn plan_named(
         let mut change = Change::new(path.clone(), None)?;
         let before = std::str::from_utf8(change.before.bytes.as_deref().unwrap_or_default())
             .map_err(|_| rejected("The existing Git hook is not UTF-8 and was preserved."))?;
-        let next_block = format!("{}\n", hook_block(stage));
+        let next_block = if uninstall {
+            String::new()
+        } else {
+            let executable = hook_executable(old, &hook_root, &common_dir, source)?;
+            format!("{}\n", hook_block(stage, &executable))
+        };
         let original_empty = old.map_or(before.is_empty(), |old| old.original_empty);
         let exact_generated = old.is_some_and(|old| before == format!("#!/bin/sh\n{}", old.block));
         let (after, created) = if let Some(old) = old {
@@ -560,16 +668,7 @@ pub async fn health_plan(
             .hooks
             .get(stage)
             .ok_or_else(|| rejected("The Git-hook ownership receipt inventory is incomplete."))?;
-        if !hook
-            .block
-            .starts_with(&format!("# >>> specgit-v2:{stage}:start >>>\n"))
-            || !hook
-                .block
-                .ends_with(&format!("# <<< specgit-v2:{stage}:end <<<\n"))
-            || !hook
-                .block
-                .contains(&format!("specgit guard --stage {stage}"))
-        {
+        if !valid_block(stage, &hook.block) {
             return Err(rejected(
                 "The recorded Git-hook block has an invalid format.",
             ));
@@ -718,15 +817,7 @@ async fn owner(process: &Process, root: &Path, hook: &Path) -> Result<Option<Pat
         });
             if same_path
                 && same_root
-                && recorded
-                    .block
-                    .starts_with(&format!("# >>> specgit-v2:{stage}:start >>>\n"))
-                && recorded
-                    .block
-                    .ends_with(&format!("# <<< specgit-v2:{stage}:end <<<\n"))
-                && recorded
-                    .block
-                    .contains(&format!("specgit guard --stage {stage}"))
+                && valid_block(stage, &recorded.block)
                 && current
                     .windows(recorded.block.len())
                     .filter(|part| *part == recorded.block.as_bytes())
@@ -758,11 +849,31 @@ fn owned_elsewhere(hook: &Path, owner: &Path) -> Diagnostic {
 
 /// Prepare native guard changes without creating locks, directories, or assets.
 pub async fn preview(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
-    install_with_preview(process, cwd, uninstall, true).await
+    install_with_preview(process, cwd, uninstall, true, None).await
 }
 
 pub async fn install(process: &Process, cwd: &Path, uninstall: bool) -> Result<Value, Diagnostic> {
-    install_with_preview(process, cwd, uninstall, false).await
+    install_with_preview(process, cwd, uninstall, false, None).await
+}
+
+/// Preview using the caller's explicit shared CLI instead of PATH discovery.
+pub async fn preview_with_executable(
+    process: &Process,
+    cwd: &Path,
+    uninstall: bool,
+    executable: &Path,
+) -> Result<Value, Diagnostic> {
+    install_with_preview(process, cwd, uninstall, true, Some(executable)).await
+}
+
+/// Install using the caller's explicit shared CLI instead of PATH discovery.
+pub async fn install_with_executable(
+    process: &Process,
+    cwd: &Path,
+    uninstall: bool,
+    executable: &Path,
+) -> Result<Value, Diagnostic> {
+    install_with_preview(process, cwd, uninstall, false, Some(executable)).await
 }
 
 async fn install_with_preview(
@@ -770,6 +881,7 @@ async fn install_with_preview(
     cwd: &Path,
     uninstall: bool,
     dry_run: bool,
+    source: Option<&Path>,
 ) -> Result<Value, Diagnostic> {
     let root = root(process, cwd)
         .await?
@@ -785,7 +897,19 @@ async fn install_with_preview(
         )?)
     };
     let shared = config::worktree::shared_setup_guard_private(process, &root).await?;
-    let (changes, hook_root, receipt_parent) = plan(process, cwd, uninstall).await?;
+    let (changes, hook_root, receipt_parent) = if let Some(executable) = source {
+        plan_named_with_executable(
+            process,
+            cwd,
+            uninstall,
+            "guard-hooks.json",
+            Some(executable),
+        )
+        .await?
+    } else {
+        plan(process, cwd, uninstall).await?
+    };
+    let executable_binding = executable_binding(&changes);
     // A transfer from retained shared custody removes exactly that receipt; its
     // fixed custody directory is the only extra root this operation may write.
     let transfer = setup_source(&receipt_parent, &shared)?;
@@ -838,16 +962,17 @@ async fn install_with_preview(
                 .collect();
             if dry_run {
                 return Ok(json!({
-                    "dry_run": true,
-                    "prepared": true,
-                    "hook_root": hook_root,
-                    "changes": [],
-                    "retained": {
-                        "reason": if setup_demand { "setup_guard_purpose" } else { "shared_initialized_worktree" },
-                        "paths": changes.iter().map(|change| &change.path).collect::<Vec<_>>(),
-                        "shared_consumers": consumers
-                    }
-                }));
+                        "dry_run": true,
+                        "prepared": true,
+                        "hook_root": hook_root,
+                "executable_binding": executable_binding,
+                        "changes": [],
+                        "retained": {
+                            "reason": if setup_demand { "setup_guard_purpose" } else { "shared_initialized_worktree" },
+                            "paths": changes.iter().map(|change| &change.path).collect::<Vec<_>>(),
+                            "shared_consumers": consumers
+                        }
+                    }));
             }
             return Ok(json!({
                 "installed": true,
@@ -872,6 +997,7 @@ async fn install_with_preview(
             "dry_run": true,
             "prepared": true,
             "hook_root": hook_root,
+            "executable_binding": executable_binding,
             "changes": planned,
             "retained": null
         }));
@@ -915,6 +1041,7 @@ async fn install_with_preview(
     })?;
     Ok(json!({
         "installed": !uninstall,
+        "executable_binding": executable_binding,
         "hooks": if uninstall { vec![] } else { vec!["pre-commit", "pre-push"] },
         "transaction": applied
     }))
@@ -1081,7 +1208,10 @@ fn read_dependency(path: &Path) -> Result<Change, Diagnostic> {
 fn valid_block(stage: &str, block: &str) -> bool {
     block.starts_with(&format!("# >>> specgit-v2:{stage}:start >>>\n"))
         && block.ends_with(&format!("# <<< specgit-v2:{stage}:end <<<\n"))
-        && block.contains(&format!("specgit guard --stage {stage}"))
+        && block.lines().any(|line| {
+            line.starts_with("specgit guard --stage ")
+                || (line.starts_with('\'') && line.contains(&format!("\' guard --stage {stage}")))
+        })
 }
 
 fn valid_receipt(receipt: &Receipt) -> bool {
@@ -1266,19 +1396,31 @@ pub async fn setup_plan(
     root: &Path,
     enabled: bool,
 ) -> Result<SetupPlan, Diagnostic> {
-    setup_plan_inner(process, root, enabled, !enabled).await
+    setup_plan_inner(process, root, enabled, !enabled, None).await
 }
+/// Plan a setup guard using the embedding caller's separately installed CLI.
+/// Existing APIs retain a proven pin or resolve the shared CLI through PATH.
+pub async fn setup_plan_with_executable(
+    process: &Process,
+    root: &Path,
+    enabled: bool,
+    executable: &Path,
+) -> Result<SetupPlan, Diagnostic> {
+    setup_plan_inner(process, root, enabled, !enabled, Some(executable)).await
+}
+
 pub(crate) async fn retiring_setup_plan(
     process: &Process,
     root: &Path,
 ) -> Result<SetupPlan, Diagnostic> {
-    setup_plan_inner(process, root, false, true).await
+    setup_plan_inner(process, root, false, true, None).await
 }
 async fn setup_plan_inner(
     process: &Process,
     root: &Path,
     enabled: bool,
     retiring: bool,
+    source: Option<&Path>,
 ) -> Result<SetupPlan, Diagnostic> {
     let private = config::worktree::private_root(process, root).await?;
     let legacy_pending = AssetStore::pending_at(&private.join("transactions"))?;
@@ -1510,7 +1652,9 @@ async fn setup_plan_inner(
             .iter()
             .any(|c| config::worktree::shares_hooks(c, &hooks))
     {
-        let (current, _, _) = plan_named(process, root, false, "setup-guard-hooks.json").await?;
+        let (current, _, _) =
+            plan_named_with_executable(process, root, false, "setup-guard-hooks.json", None)
+                .await?;
         for change in current.iter().filter(|c| c.path != own) {
             dependencies.extend(
                 AssetStore::owned_pair_across_at(
@@ -1585,7 +1729,8 @@ async fn setup_plan_inner(
         });
     }
     let (changes, hook_root, _) =
-        plan_named(process, root, !enabled, "setup-guard-hooks.json").await?;
+        plan_named_with_executable(process, root, !enabled, "setup-guard-hooks.json", source)
+            .await?;
     if existing.bytes.is_some() {
         for change in changes.iter().filter(|c| c.path != own) {
             let proofs = AssetStore::owned_pair_across_at(
@@ -1603,6 +1748,7 @@ async fn setup_plan_inner(
         }
     }
     dependencies.retain(|d| !changes.iter().any(|c| c.path == d.path && !c.unchanged()));
+    let executable_binding = executable_binding(&changes);
     Ok(SetupPlan {
         transaction_store: (own.starts_with(&shared) && changes.iter().any(|c| !c.unchanged()))
             .then(|| shared.join("assets")),
@@ -1616,7 +1762,7 @@ async fn setup_plan_inner(
         // canonical Windows checkout path. Authorize the discovered receipt
         // directory explicitly, alongside the discovered hook directory.
         allowed: vec![hook_root, private, shared],
-        evidence: json!({"selected":enabled,"ownership":"setup"}),
+        evidence: json!({"selected":enabled,"ownership":"setup","executable_binding":executable_binding}),
     })
 }
 

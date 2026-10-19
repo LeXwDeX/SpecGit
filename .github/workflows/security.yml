@@ -84,5 +84,5 @@ jobs:
           package-manager-cache: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Audit private verification tooling
-        continue-on-error: true
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: pnpm audit --audit-level high

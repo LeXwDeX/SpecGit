@@ -55,7 +55,7 @@ pub fn schema_with_effects(command: &mut Command, effects: impl Fn(&[String]) ->
     ) -> Value {
         let arguments: Vec<_> = command.get_arguments().map(|arg| {
             let range = arg.get_num_args();
-            json!({"id":arg.get_id().as_str(), "long":arg.get_long(), "short":arg.get_short(),
+            json!({"id":arg.get_id().as_str(), "long":arg.get_long(), "aliases":arg.get_visible_aliases().unwrap_or_default(), "short":arg.get_short(),
                 "position":arg.get_index(), "required":arg.is_required_set(), "global":arg.is_global_set(),
                 "help":arg.get_help().map(ToString::to_string), "input_type":input_type(arg),
                 "action":format!("{:?}", arg.get_action()),

@@ -496,6 +496,9 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
 }
 
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
+    if let Err(diagnostic) = crate::project::require_local_repository_environment() {
+        return Report::failure("remove", diagnostic);
+    }
     match tokio::time::timeout(Duration::from_secs(180), execute(options, &process, cwd)).await {
         Ok(Ok(report)) => report,
         Ok(Err(d)) => Report::failure("remove", d),

@@ -328,14 +328,26 @@ impl ForgeRead {
                     .and_then(Value::as_bool),
                 pull: value.pointer("/permissions/pull").and_then(Value::as_bool),
             },
-            Provider::Gitlab => crate::delivery_model::ProjectRolePermissions::Gitlab {
-                issues_enabled: value.get("issues_enabled").and_then(Value::as_bool),
-                merge_requests_enabled: value
-                    .get("merge_requests_enabled")
-                    .and_then(Value::as_bool),
-                project_access_level: access_level(value.pointer("/permissions/project_access")),
-                group_access_level: access_level(value.pointer("/permissions/group_access")),
-            },
+            Provider::Gitlab => {
+                let project = value.pointer("/permissions/project_access");
+                let group = value.pointer("/permissions/group_access");
+                // Both-null appears in the Projects API examples. It carries no
+                // positive or negative evidence about effective role permissions.
+                let both_null =
+                    project.is_some_and(Value::is_null) && group.is_some_and(Value::is_null);
+                crate::delivery_model::ProjectRolePermissions::Gitlab {
+                    issues_enabled: value.get("issues_enabled").and_then(Value::as_bool),
+                    merge_requests_enabled: value
+                        .get("merge_requests_enabled")
+                        .and_then(Value::as_bool),
+                    project_access_level: if both_null {
+                        None
+                    } else {
+                        access_level(project)
+                    },
+                    group_access_level: if both_null { None } else { access_level(group) },
+                }
+            }
         };
         Ok((
             ProjectFacts {

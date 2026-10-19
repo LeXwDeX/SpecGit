@@ -29,8 +29,10 @@ If the document is inaccessible, retrieve it through my authenticated gh session
 or report the access problem; do not guess its contents.
 ```
 
-The [agent installation document](docs/agent-install.md) covers signatures, checksums,
-PATH, existing installations, project initialization and agent registration.
+SpecGit is installed through the coding agent, which reads the [agent installation
+guide](docs/agent-install.md), verifies the signed release and selects project
+capabilities. The guide covers signatures, checksums, PATH, existing installations,
+project initialization and host registration.
 It works with Codex, Claude Code and OpenCode through their supported integrations;
 other agents can use the CLI and project guidance directly.
 
@@ -38,7 +40,6 @@ SpecGit is distributed **only through GitHub Releases** as native macOS arm64,
 Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
 Sigstore signature bundle. End-user installation needs no Node.js,
 npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `glab`.
-For installation without an agent, see the [manual guide](docs/installation.md).
 From 2.6 on, `specgit update` upgrades the shared executable from GitHub Releases
 with the same signature and checksum verification and keeps a backup.
 
@@ -51,11 +52,21 @@ procedure. Open your Agent in the target repository and copy its
 actually inspect and apply safe local maintenance, with a separate verified stable
 CLI update when needed. It preserves project settings and checkpoints. Manual
 observation sets `native_auto_merge=false`; preserve configured preferences unless a
-specific change is required by the task. Setup refresh includes all recorded hosts, not only the
-`--agent` selection. Ordinary refresh omits purposes and reviews every host's effects.
+specific change is required by the task. Setup refresh includes all recorded hosts
+and any named `--agent` host. Ordinary refresh omits purposes and reviews every
+host's effects; hook-purpose changes apply to named hosts, or all recorded hosts
+when `--agent` is omitted.
+Selecting a new host with `--agent` installs its guidance and Skill only. Add
+`--hook-purpose guard` and/or `--hook-purpose context` to opt into those hooks;
+`--hook-purpose none` adds no hooks and preserves recorded choices.
 Enablement delegates task-related Issue, implementation, verification, commit/push,
 PR/MR, review, merge and closure work. Publication is included only when the task
 itself includes release work. A declaration or old receipt cannot expand task scope.
+On a new host, `--agent` selects guidance and the Skill only. Hooks require an
+explicit `--hook-purpose guard` and/or `--hook-purpose context`. Use
+`--remove-hook-purpose guard` or `--remove-hook-purpose context` to remove one
+recorded purpose while keeping the other; `setup --uninstall` removes all recorded project integrations in this
+worktree.
 
 ## How delivery works
 
@@ -120,8 +131,9 @@ and worktree because the declaration, Skill and private records are local; it
 installs the common project Skill and stable guidance entry points. Those entry points direct agents to the Skill and to the official install
 guide when the shared CLI is missing; with the CLI installed, use `specgit init`
 to recover local project state. Initialization does not install host hooks. Run
-`specgit setup` only when selecting a host integration; it refreshes the recorded
-host assets and hooks for the current project. Setup never copies the executable
+`specgit setup` to install or refresh the shared project Skill and guidance baseline;
+add `--agent` for named host guidance and `--hook-purpose guard` or `context` for
+explicit hook opt-in. A newly named host adds guidance only. Setup never copies the executable
 into a project or scans other repositories. Hooks invoke the shared user-installed
 executable. The 2.3 global integration scope and its `--root`,
 `--provider`, `--api-host`, `--register-*` and per-host root/settings options
@@ -148,11 +160,10 @@ foreign files; `--refresh-only` skips missing or foreign files. After a successf
 installs one by default. Refresh failure retains the binary and reports the
 remedy `specgit skill --user`. Project Skill refresh remains separate.
 
-Upgrading from 2.3 refreshes existing project receipts in place (the 2.4
-receipt omits `shared_root`) without reading or writing the retired global
-root. Existing 2.3 global data is preserved; 2.4 ships no global cleanup
-command — back up first and use the 2.3 CLI's exact owned cleanup before
-upgrading if that data must go, never a blind delete.
+During the 2.3-to-2.4 migration, project receipts were refreshed in place
+without reading or writing the retired global root. The 2.3 global data was
+preserved because 2.4 had no global cleanup command; any required cleanup used
+the 2.3 CLI's exact owned cleanup before upgrading, never a blind delete.
 
 Host integration uses SessionStart for brief rules and the Skill entry, and
 PreToolUse for relevant context or recovery. It does not gate ordinary edits.
@@ -166,7 +177,7 @@ to verify the executable selected by PATH and refresh the existing project and h
 integration. Omit hook purposes to preserve recorded modes; explicit purposes affect
 all recorded and newly selected hosts. Review the effects for every affected host.
 Only SessionStart and PreToolUse are supported; use bounded `watch`/`inbox` where
-automatic observation is unavailable. The current runtime is 2.13.0. After project updates, run status and doctor, read back
+automatic observation is unavailable. The current runtime is 2.14.0. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before
@@ -180,7 +191,7 @@ repository-specific cutover; retired v1 command workflows are no longer maintain
 - [Agent installation and initialization](docs/agent-install.md)
 - [Installed-CLI project maintenance — English / 中文 Agent requests](docs/agent-project-refresh.md)
 - [Supported coding agents and delivery flow](docs/supported-tools.md)
-- [Manual installation](docs/installation.md)
+- [Release asset verification reference](docs/installation.md)
 - [Native commands, configuration and JSON contract](runtime/REFERENCE.md)
 - [Migration from v1](docs/migration-v2.md)
 - [Release procedure and recovery](runtime/distribution/README.md)

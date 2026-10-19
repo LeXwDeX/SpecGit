@@ -75,20 +75,23 @@ pub(super) enum Commands {
     /// Discover integration capabilities, or install shared project guidance and preserve recorded integrations.
     Setup {
         /// List offline installation capabilities without reading a project, probing hosts or writing files.
-        #[arg(long, conflicts_with_all = ["agent", "opencode_claude_hooks", "hook_purpose", "opencode_async_rewake", "uninstall", "dry_run", "rollback"])]
+        #[arg(long, conflicts_with_all = ["agent", "opencode_claude_hooks", "hook_purpose", "remove_hook_purpose", "opencode_async_rewake", "uninstall", "dry_run", "rollback"])]
         catalog: bool,
         /// Project is the only supported scope, permanently; the shared CLI is installed separately.
         #[arg(long, value_enum, default_value = "project")]
         scope: specgit::setup::Scope,
-        /// Compatibility selector for named integrations; omitted on new installs uses shared Skill/guidance only.
+        /// Select named project guidance; hooks require an explicit --hook-purpose, including for new hosts.
         #[arg(long, value_enum, action = clap::ArgAction::Append)]
         agent: Vec<specgit::setup::Agent>,
         /// Opt in only on a custom OpenCode supporting Claude-compatible command hooks.
         #[arg(long, conflicts_with_all = ["uninstall", "rollback"])]
         opencode_claude_hooks: bool,
-        /// Select native Git guard or SessionStart/PreToolUse context; observe is declined. None preserves selected purposes.
+        /// Explicitly add native Git guard or SessionStart/PreToolUse context to selected agents (all recorded agents if omitted); none preserves choices.
         #[arg(long, value_enum, action = clap::ArgAction::Append, conflicts_with_all = ["uninstall", "rollback"])]
         hook_purpose: Vec<specgit::setup::HookPurpose>,
+        /// Remove guard or context from selected recorded agents (all recorded agents if omitted), preserving other integrations.
+        #[arg(long, value_enum, action = clap::ArgAction::Append, conflicts_with_all = ["uninstall", "rollback"])]
+        remove_hook_purpose: Vec<specgit::setup::RemovableHookPurpose>,
         /// Legacy flag, retained for compatibility; no Stop callback or idle wake is installed.
         #[arg(long, conflicts_with_all = ["uninstall", "rollback"])]
         opencode_async_rewake: bool,
@@ -204,4 +207,60 @@ pub(super) fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
         );
     }
     Diagnostic::input("Invalid command arguments; run specgit --help.")
+}
+
+#[cfg(test)]
+mod catalog_contract_tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    #[test]
+    fn catalog_commands_parse_and_publish_every_flag() {
+        let catalog = specgit::setup::catalog::catalog();
+        let mut definition = Cli::command();
+        let schema = specgit::cli_contract::schema(&mut definition);
+        for item in &catalog.items {
+            if matches!(
+                item.id,
+                specgit::setup::catalog::InstallationId::SessionContext
+                    | specgit::setup::catalog::InstallationId::ToolContext
+                    | specgit::setup::catalog::InstallationId::GitGuard
+            ) {
+                assert!(
+                    item.commands
+                        .iter()
+                        .any(|command| command.argv.contains(&"--hook-purpose"))
+                );
+            }
+        }
+        for command in catalog
+            .entrypoints
+            .iter()
+            .chain(catalog.items.iter().flat_map(|item| &item.commands))
+        {
+            let argv: Vec<_> = command
+                .argv
+                .iter()
+                .map(|argument| match *argument {
+                    "<agent>" => "claude",
+                    "<request>" => "1",
+                    "<session>" => "catalog-contract",
+                    other => other,
+                })
+                .collect();
+            Cli::command()
+                .try_get_matches_from(&argv)
+                .unwrap_or_else(|error| panic!("{argv:?}: {error}"));
+            let schema_text = serde_json::to_string(&schema).unwrap();
+            for argument in argv
+                .iter()
+                .filter_map(|argument| argument.strip_prefix("--"))
+            {
+                assert!(
+                    schema_text.contains(&format!("\"long\":\"{argument}\"")),
+                    "schema omits {argument}"
+                );
+            }
+        }
+    }
 }

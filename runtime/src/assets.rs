@@ -1145,10 +1145,11 @@ impl AssetStore {
             .ok_or_else(io_error)?
             .to_owned();
         let mut journal = Journal {
-            version: 2,
+            version: 3,
             state: "prepared".into(),
             entries: vec![],
             retained_paths: vec![],
+            created_directories: vec![],
         };
         for (i, change) in changes.iter().enumerate() {
             let backup = format!("{i}.before");
@@ -1185,7 +1186,11 @@ impl AssetStore {
                     return Ok(());
                 }
                 match &change.after {
-                    Some(bytes) => atomic(&change.path, bytes, change.permissions.as_ref()),
+                    Some(bytes) => {
+                        self.create_asset_parents(&change.path, &mut journal)?;
+                        self.save_journal(&directory, &journal)?;
+                        atomic(&change.path, bytes, change.permissions.as_ref())
+                    }
                     None => fs::remove_file(&change.path).map_err(|_| io_error()),
                 }
             })();
@@ -1204,6 +1209,7 @@ impl AssetStore {
                         ),
                     ));
                 }
+                self.prune_directories(&journal.created_directories, None)?;
                 journal.state = "rolled_back".into();
                 self.save_journal(&directory, &journal)?;
                 return Err(original);
@@ -1218,6 +1224,116 @@ impl AssetStore {
             changes: changes.len(),
         })
     }
+    fn validate_directory(&self, path: &Path) -> Result<(), Diagnostic> {
+        safe_path(path)?;
+        if self.allowed.iter().any(|root| path.starts_with(root)) {
+            Ok(())
+        } else {
+            Err(error(
+                Code::UnsafePath,
+                "The asset directory is outside the explicitly selected roots.",
+            ))
+        }
+    }
+
+    fn create_asset_parents(&self, path: &Path, journal: &mut Journal) -> Result<(), Diagnostic> {
+        let mut missing = Vec::new();
+        for parent in path.ancestors().skip(1) {
+            if parent.exists() {
+                break;
+            }
+            self.validate_directory(parent)?;
+            missing.push(parent.to_owned());
+        }
+        for path in missing.into_iter().rev() {
+            match fs::create_dir(&path) {
+                Ok(()) => journal.created_directories.push(CreatedDirectory {
+                    identity: DirectoryIdentity::capture(
+                        &path,
+                        &fs::metadata(&path).map_err(|_| io_error())?,
+                    ),
+                    permissions: PermissionRecord::capture(Some(
+                        &fs::metadata(&path).map_err(|_| io_error())?.permissions(),
+                    )),
+                    path,
+                }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    safe_path(&path)?
+                }
+                Err(_) => return Err(io_error()),
+            }
+        }
+        Ok(())
+    }
+
+    fn prune_directories(
+        &self,
+        directories: &[CreatedDirectory],
+        root: Option<&Path>,
+    ) -> Result<(), Diagnostic> {
+        let mut directories: Vec<_> = directories.iter().collect();
+        directories.sort_by_key(|directory| std::cmp::Reverse(directory.path.components().count()));
+        for directory in directories {
+            if root.is_some_and(|root| directory.path == root || !directory.path.starts_with(root))
+            {
+                continue;
+            }
+            self.validate_directory(&directory.path)?;
+            let metadata = match fs::symlink_metadata(&directory.path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Err(io_error()),
+            };
+            if !metadata.is_dir()
+                || directory.identity.is_none()
+                || DirectoryIdentity::capture(&directory.path, &metadata) != directory.identity
+                || PermissionRecord::capture(Some(&metadata.permissions())) != directory.permissions
+            {
+                continue;
+            }
+            match fs::remove_dir(&directory.path) {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+                    ) => {}
+                Err(_) => return Err(io_error()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Reclaim only empty project directories whose creation was recorded.
+    /// Existing user directories and private journal evidence are retained.
+    pub(crate) fn prune_empty_project_directories(&self, root: &Path) -> Result<(), Diagnostic> {
+        let transactions = self.root.join("transactions");
+        if !transactions.exists() {
+            return Ok(());
+        }
+        for (index, entry) in fs::read_dir(&transactions)
+            .map_err(|_| io_error())?
+            .enumerate()
+        {
+            if index >= 1000 {
+                return Err(error(
+                    Code::OutputLimit,
+                    "Transaction inventory exceeds its bound.",
+                ));
+            }
+            let entry = entry.map_err(|_| io_error())?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with("tx-") {
+                continue;
+            }
+            let (_, journal) = self.rollback_journal(&name)?;
+            if journal.state != "prepared" {
+                self.prune_directories(&journal.created_directories, Some(root))?;
+            }
+        }
+        Ok(())
+    }
+
     fn expected_snapshot(&self, path: &Path, expected: &Snapshot) -> Result<(), Diagnostic> {
         let actual = Snapshot::read(path)?;
         if actual.digest() != expected.digest()
@@ -1470,6 +1586,7 @@ impl AssetStore {
         .into();
         journal.retained_paths = retained.clone();
         self.save_journal(&directory, &journal)?;
+        self.prune_directories(&journal.created_directories, None)?;
         Ok((
             Applied {
                 transaction: id.into(),
@@ -1564,10 +1681,87 @@ struct Journal {
     entries: Vec<Entry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retained_paths: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    created_directories: Vec<CreatedDirectory>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreatedDirectory {
+    path: PathBuf,
+    permissions: PermissionRecord,
+    // Missing identity in an older v3 proof never authorizes directory removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<DirectoryIdentity>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct DirectoryIdentity {
+    device: u64,
+    inode: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows_id: Option<String>,
+    created_seconds: u64,
+    created_nanoseconds: u32,
+}
+impl DirectoryIdentity {
+    #[cfg(unix)]
+    fn capture(_path: &Path, metadata: &fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let created = metadata
+            .created()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            windows_id: None,
+            created_seconds: created.as_secs(),
+            created_nanoseconds: created.subsec_nanos(),
+        })
+    }
+    #[cfg(windows)]
+    fn capture(path: &Path, metadata: &fs::Metadata) -> Option<Self> {
+        let created = metadata
+            .created()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        let (device, inode, windows_id) = match file_id::get_file_id(path).ok()? {
+            file_id::FileId::HighRes {
+                volume_serial_number,
+                file_id,
+            } => (volume_serial_number, 0, format!("high:{file_id:032x}")),
+            file_id::FileId::LowRes {
+                volume_serial_number,
+                file_index,
+            } => (u64::from(volume_serial_number), file_index, "low".into()),
+            file_id::FileId::Inode { .. } => return None,
+        };
+        Some(Self {
+            device,
+            inode,
+            windows_id: Some(windows_id),
+            created_seconds: created.as_secs(),
+            created_nanoseconds: created.subsec_nanos(),
+        })
+    }
+    #[cfg(not(any(unix, windows)))]
+    fn capture(_path: &Path, _metadata: &fs::Metadata) -> Option<Self> {
+        None
+    }
 }
 impl Journal {
     fn valid(&self) -> bool {
-        self.version == 2
+        matches!(self.version, 2 | 3)
+            && (self.version == 3 || self.created_directories.is_empty())
+            && self.created_directories.len() <= 1000
+            && self.created_directories.iter().all(|directory| {
+                self.entries.iter().any(|entry| {
+                    entry.path != directory.path && entry.path.starts_with(&directory.path)
+                })
+            })
             && self.entries.len() <= 100
             && self
                 .entries
@@ -1756,6 +1950,124 @@ fn persist_windows(
 #[cfg(test)]
 mod rollback_terminal_tests {
     use super::*;
+
+    #[test]
+    fn historical_directory_proofs_preserve_user_recreated_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let parent = root.join("owned");
+        let asset = parent.join("file");
+        store
+            .apply(vec![
+                Change::new(asset.clone(), Some(b"first".to_vec())).unwrap(),
+            ])
+            .unwrap();
+        store
+            .apply(vec![Change::new(asset.clone(), None).unwrap()])
+            .unwrap();
+        store.prune_empty_project_directories(&root).unwrap();
+        // A filesystem without reliable identity evidence preserves directories.
+        if parent.exists() {
+            fs::remove_dir(&parent).unwrap();
+        }
+        fs::create_dir(&parent).unwrap();
+        let user_identity = fs::metadata(&parent).unwrap();
+        store
+            .apply(vec![
+                Change::new(asset.clone(), Some(b"second".to_vec())).unwrap(),
+            ])
+            .unwrap();
+        store
+            .apply(vec![Change::new(asset.clone(), None).unwrap()])
+            .unwrap();
+        store.prune_empty_project_directories(&root).unwrap();
+        assert!(
+            parent.is_dir(),
+            "an old proof must not own a later user directory"
+        );
+        assert_eq!(
+            DirectoryIdentity::capture(&parent, &fs::metadata(&parent).unwrap()),
+            DirectoryIdentity::capture(&parent, &user_identity)
+        );
+    }
+
+    #[test]
+    fn active_directory_proofs_preserve_replacements_and_identityless_proofs() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let parent = root.join("owned");
+        let asset = parent.join("file");
+        let applied = store
+            .apply(vec![Change::new(asset, Some(b"first".to_vec())).unwrap()])
+            .unwrap();
+        fs::rename(&parent, root.join("retained-original")).unwrap();
+        fs::create_dir(&parent).unwrap();
+        store.prune_empty_project_directories(&root).unwrap();
+        assert!(
+            parent.is_dir(),
+            "a replacement during the install lifecycle belongs to its creator"
+        );
+        let (directory, mut journal) = store.rollback_journal(&applied.transaction).unwrap();
+        for proof in &mut journal.created_directories {
+            proof.identity = None;
+        }
+        store.save_journal(&directory, &journal).unwrap();
+        store.prune_empty_project_directories(&root).unwrap();
+        assert!(
+            parent.is_dir(),
+            "old v3 proofs lacking identity cannot authorize cleanup"
+        );
+    }
+
+    #[test]
+    fn version_two_journals_remain_recoverable_without_directory_claims() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let asset = root.join("owned/nested/file");
+        let id = store
+            .apply(vec![
+                Change::new(asset.clone(), Some(b"owned".to_vec())).unwrap(),
+            ])
+            .unwrap()
+            .transaction;
+        let journal_path = root
+            .join("state/transactions")
+            .join(&id)
+            .join("journal.json");
+        let mut journal: serde_json::Value =
+            serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+        assert_eq!(journal["version"], 3);
+        journal["version"] = 2.into();
+        journal
+            .as_object_mut()
+            .unwrap()
+            .remove("created_directories");
+        fs::write(&journal_path, serde_json::to_vec(&journal).unwrap()).unwrap();
+        store.rollback(&id).unwrap();
+        assert!(!asset.exists());
+        assert!(
+            root.join("owned/nested").exists(),
+            "v2 has no evidence permitting directory cleanup"
+        );
+    }
 
     #[cfg(windows)]
     #[test]

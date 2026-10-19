@@ -209,6 +209,59 @@ fn cycle(graph: &Graph) -> Option<Vec<String>> {
     None
 }
 
+fn verify_documentation(documentation: &str, graph: &Graph) -> Result<(), String> {
+    let table = documentation
+        .split_once("<!-- runtime-components:start -->")
+        .and_then(|(_, rest)| rest.split_once("<!-- runtime-components:end -->"))
+        .map(|(table, _)| table)
+        .ok_or("Missing runtime component table")?;
+    let mut documented = Graph::new();
+    for line in table.lines().filter(|line| line.starts_with("| `")) {
+        let fields: Vec<_> = line.split('|').map(str::trim).collect();
+        if fields.len() != 5 {
+            return Err(format!("Malformed component row: {line}"));
+        }
+        let module = fields[1].trim_matches('`');
+        if !graph.contains_key(module) {
+            return Err(format!("Unknown documented component {module}"));
+        }
+        if fields[2].parse::<u8>().ok() != Some(layer(module)) {
+            return Err(format!("Wrong documented layer for {module}"));
+        }
+        let dependencies = if fields[3] == "—" {
+            BTreeSet::new()
+        } else {
+            fields[3]
+                .split(',')
+                .map(|name| name.trim().trim_matches('`').to_owned())
+                .collect()
+        };
+        if documented.insert(module.to_owned(), dependencies).is_some() {
+            return Err(format!("Duplicate documented component {module}"));
+        }
+    }
+    if &documented != graph {
+        return Err("Runtime component table differs from source dependencies".into());
+    }
+    let diagram = documentation
+        .split_once("```mermaid")
+        .and_then(|(_, rest)| rest.split_once("```"))
+        .map(|(diagram, _)| diagram)
+        .ok_or("Missing module dependency diagram")?;
+    for line in diagram.lines() {
+        if let Some((owner, dependency)) = line.trim().split_once(" --> ")
+            && !graph
+                .get(owner)
+                .is_some_and(|edges| edges.contains(dependency))
+        {
+            return Err(format!(
+                "Diagram edge is absent from source: {owner} -> {dependency}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -260,6 +313,8 @@ fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
                         "std::fs",
                         "std::process",
                         "std::net",
+                        "std::env",
+                        "std::thread",
                         "tokio::",
                         "crate::process"
                     ]
@@ -324,6 +379,8 @@ fn all_runtime_components_follow_an_acyclic_layered_dependency_graph() {
     if let Some(cycle) = cycle(&graph) {
         panic!("Runtime component cycle: {}", cycle.join(" -> "));
     }
+    let documentation = fs::read_to_string(root.join("../../docs/architecture.md")).unwrap();
+    verify_documentation(&documentation, &graph).unwrap_or_else(|error| panic!("{error}"));
     println!(
         "Verified {} runtime components in {} source files: no cycles or layer violations",
         graph.len(),
@@ -367,5 +424,32 @@ fn dependency_scanner_covers_grouped_aliases_macros_and_platform_code() {
     assert_eq!(
         cycle(&graph),
         Some(vec!["a".into(), "b".into(), "a".into()])
+    );
+}
+
+#[test]
+fn architecture_documentation_rejects_missing_modules_false_edges_and_layers() {
+    let graph = BTreeMap::from([
+        ("spec".into(), BTreeSet::from(["identity".into()])),
+        ("identity".into(), BTreeSet::new()),
+    ]);
+    let document = "<!-- runtime-components:start -->\n| `spec` | 0 | `identity` |\n| `identity` | 0 | — |\n<!-- runtime-components:end -->\n```mermaid\nflowchart TD\nspec --> identity\n```";
+    assert!(verify_documentation(document, &graph).is_ok());
+    assert!(
+        verify_documentation(&document.replace("| `identity` | 0 | — |\n", ""), &graph).is_err()
+    );
+    assert!(
+        verify_documentation(
+            &document.replace("spec --> identity", "identity --> spec"),
+            &graph
+        )
+        .is_err()
+    );
+    assert!(
+        verify_documentation(&document.replace("| `spec` | 0", "| `spec` | 1"), &graph).is_err()
+    );
+    assert!(
+        cycle(&graph).is_none(),
+        "same-layer dependencies can be acyclic"
     );
 }

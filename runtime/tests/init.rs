@@ -3071,3 +3071,37 @@ fn default_init_keeps_proven_legacy_claude_guidance_without_repeating_mirror() {
     assert!(!f.root.join(".claude/settings.json").exists());
     assert_eq!(f.run(&["init"])["evidence"]["transaction"]["changes"], 0);
 }
+
+#[test]
+fn setup_uninstall_preserves_initialized_worktree_exclusions_until_project_remove() {
+    let f = Fixture::new();
+    let exclude = f.root.join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    let manual = b"# user exclusion\r\n/private-user-file\r\n";
+    fs::write(&exclude, manual).unwrap();
+    let initialized = f.run(&["init", "--provider", "github"]);
+    assert_eq!(initialized["ok"], true, "{initialized}");
+    let declaration = fs::read(f.root.join(".specgit.yaml")).unwrap();
+    assert_eq!(f.run(&["setup", "--agent", "claude"])["ok"], true);
+    let preview = f.run(&["setup", "--uninstall", "--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    let uninstalled = f.run(&["setup", "--uninstall"]);
+    assert_eq!(uninstalled["ok"], true, "{uninstalled}");
+    assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), declaration);
+    let preserved = fs::read(&exclude).unwrap();
+    assert!(preserved.starts_with(manual));
+    assert!(String::from_utf8_lossy(&preserved).contains("/.specgit.yaml"));
+    let ignored = Command::new("git")
+        .current_dir(&f.root)
+        .args(["check-ignore", ".specgit.yaml"])
+        .output()
+        .unwrap();
+    assert!(ignored.status.success(), "{ignored:?}");
+    let prepared = f.run(&["remove"]);
+    assert_eq!(prepared["status"], "prepared", "{prepared}");
+    let digest = prepared["evidence"]["preview_sha256"].as_str().unwrap();
+    let removed = f.run(&["remove", "--apply", "--expect", digest]);
+    assert_eq!(removed["ok"], true, "{removed}");
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert_eq!(fs::read(exclude).unwrap(), manual);
+}

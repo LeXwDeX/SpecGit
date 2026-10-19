@@ -458,7 +458,7 @@ fn install_refresh_and_uninstall_preserve_native_and_custom_shell_hooks() {
         fs::write(hooks.join("pre-push"), original).unwrap();
         assert!(manage(temp.path(), "--install").status.success());
         let installed = fs::read_to_string(hooks.join("pre-push")).unwrap();
-        assert!(installed.find("specgit guard").unwrap() < installed.find("echo user").unwrap());
+        assert!(installed.find(" guard --stage").unwrap() < installed.find("echo user").unwrap());
         let first = installed.clone();
         assert!(manage(temp.path(), "--install").status.success());
         assert_eq!(fs::read_to_string(hooks.join("pre-push")).unwrap(), first);
@@ -485,7 +485,7 @@ fn install_uses_husky_user_scripts_and_rejects_non_shell_hooks() {
     assert!(
         fs::read_to_string(temp.path().join(".husky/pre-commit"))
             .unwrap()
-            .contains("specgit guard --stage pre-commit")
+            .contains(" guard --stage pre-commit")
     );
     assert!(!temp.path().join(".husky/_/pre-commit").exists());
     assert!(manage(temp.path(), "--uninstall").status.success());
@@ -723,4 +723,104 @@ fn shared_hooks_stay_installed_for_sibling_worktrees_and_name_their_owner() {
     let report: serde_json::Value = serde_json::from_slice(&removed.stdout).unwrap();
     assert_eq!(report["installed"], false);
     assert!(hooks.iter().all(|hook| !hook.exists()));
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn metadata_hooks_pin_the_cli_and_ignore_shadowed_or_missing_path_entries() {
+    let temp = fixture();
+    assert!(manage(temp.path(), "--install").status.success());
+    let hook = hook_path(temp.path(), "pre-commit");
+    let bytes = fs::read_to_string(&hook).unwrap();
+    assert!(
+        bytes
+            .lines()
+            .any(|line| line.starts_with('\'') && line.contains("' guard --stage pre-commit")),
+        "{bytes}"
+    );
+    let fake = tempfile::tempdir().unwrap();
+    let fake_name = if cfg!(windows) {
+        "specgit.exe"
+    } else {
+        "specgit"
+    };
+    fs::copy(
+        env!("CARGO_BIN_EXE_specgit-process-fixture"),
+        fake.path().join(fake_name),
+    )
+    .unwrap();
+    let binary = executable::binary().canonicalize().unwrap();
+    let paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .filter(|path| path.canonicalize().ok().as_deref() != binary.parent())
+        .collect();
+    let git_binary = specgit::process::resolve_executable("git").unwrap();
+    for shadow in [false, true] {
+        let mut environment = paths.clone();
+        if shadow {
+            environment.insert(0, fake.path().to_owned());
+        }
+        let out = Command::new(&git_binary)
+            .current_dir(temp.path())
+            .env("PATH", std::env::join_paths(environment).unwrap())
+            .args(["hook", "run", "pre-commit"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    }
+    git(
+        temp.path(),
+        &["config", "core.hooksPath", ".portable-hooks"],
+    );
+    // Use a separate repository so the previous receipt correctly remains tied
+    // to its original hook directory.
+    let portable = fixture();
+    git(
+        portable.path(),
+        &["config", "core.hooksPath", ".portable-hooks"],
+    );
+    let out = manage(portable.path(), "--install");
+    assert!(out.status.success(), "{out:?}");
+    let bytes = fs::read_to_string(portable.path().join(".portable-hooks/pre-commit")).unwrap();
+    assert!(bytes.contains("\nspecgit guard --stage pre-commit"));
+    assert!(!bytes.contains(binary.to_str().unwrap()));
+}
+
+#[test]
+fn refresh_migrates_owned_bare_guard_blocks_to_the_shared_cli() {
+    let temp = fixture();
+    assert!(manage(temp.path(), "--install").status.success());
+    let receipt_path = temp.path().join(".git/specgit-v2/guard-hooks.json");
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    for stage in ["pre-commit", "pre-push"] {
+        let old = receipt["hooks"][stage]["block"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let line = old
+            .lines()
+            .find(|line| line.contains(" guard --stage "))
+            .unwrap();
+        let command = line.split_once(" guard --stage ").unwrap().0;
+        let legacy = old.replace(command, "specgit").replace(
+            "\"${TMPDIR:-/tmp}/specgit-pre-push.XXXXXX\"",
+            "/tmp/specgit-pre-push.XXXXXX",
+        );
+        receipt["hooks"][stage]["block"] = legacy.clone().into();
+        let path = hook_path(temp.path(), stage);
+        fs::write(
+            &path,
+            fs::read_to_string(&path).unwrap().replace(&old, &legacy),
+        )
+        .unwrap();
+    }
+    fs::write(receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    let out = manage(temp.path(), "--install");
+    assert!(out.status.success(), "{out:?}");
+    let text = fs::read_to_string(hook_path(temp.path(), "pre-push")).unwrap();
+    assert!(text.contains("${TMPDIR:-/tmp}"));
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with('\'') && line.contains("' guard --stage pre-push"))
+    );
 }

@@ -24,6 +24,17 @@ export function requireMain(source, lookup = () => api(`repos/${repository}/git/
   const main = lookup();
   need(main.ref === 'refs/heads/main' && main.object?.type === 'commit' && main.object.sha === source, 'Publication source must be the current verified main commit.');
 }
+export function requireChecks(source, request = api) {
+  need(/^[a-f0-9]{40}$/.test(source ?? ''), 'An exact source SHA is required.');
+  const pages = request(`repos/${repository}/commits/${source}/check-runs?filter=latest&per_page=100`, ['--paginate', '--slurp']);
+  need(Array.isArray(pages) && pages.length > 0 && pages.every(page => Number.isSafeInteger(page.total_count) && page.total_count >= 0 && Array.isArray(page.check_runs)), 'Source check pagination is incomplete.');
+  const checks = pages.flatMap(page => page.check_runs);
+  need(pages.every(page => page.total_count === pages[0].total_count) && checks.length === pages[0].total_count && new Set(checks.map(check => check.id)).size === checks.length, 'Source check pagination is incomplete or changed.');
+  for (const name of ['Required verification', 'SpecGit Acceptance']) {
+    const matches = checks.filter(check => check.name === name);
+    need(matches.length === 1 && matches[0].head_sha === source && matches[0].app?.slug === 'github-actions' && matches[0].status === 'completed' && matches[0].conclusion === 'success', `${name} must succeed on the exact release source SHA before signing or publication.`);
+  }
+}
 export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
   const owned = run.head_sha === source && run.head_branch === 'main' && run.head_repository?.full_name === repository && run.repository?.full_name === repository && run.path === '.github/workflows/release-prepare.yml' && run.event === 'workflow_dispatch';
   const completed = run.status === 'completed' && run.conclusion === 'success';
@@ -59,7 +70,7 @@ export function verifySignature(directory, execute = command) {
 export function releaseNotes(release, buildRun) {
   return `SpecGit v${release.version}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.
 
-Download the matching ZIP, SHA256SUMS and SHA256SUMS.sigstore.json from this same Release. Verify the Sigstore signature on SHA256SUMS using the exact main Release workflow identity, then check the ZIP SHA-256 before extracting specgit (specgit.exe on Windows) into a directory on PATH. See https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md for verification commands. No Node.js, npm or Rust installation is required.
+Ask your coding agent to install SpecGit using https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md. The agent verifies the Sigstore signature and ZIP SHA-256 and selects the project capabilities. No Node.js, npm or Rust installation is required to run SpecGit.
 
 | ZIP | SHA-256 |
 | --- | --- |
@@ -141,7 +152,13 @@ export function publishGithub(release, directory, { request = api, cli = gh, bui
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { directory: { type: 'string' }, version: { type: 'string' }, source: { type: 'string' }, github: { type: 'boolean', default: false }, preflight: { type: 'boolean', default: false }, 'build-run': { type: 'string' } } });
+    const { values } = parseArgs({ options: { directory: { type: 'string' }, version: { type: 'string' }, source: { type: 'string' }, github: { type: 'boolean', default: false }, preflight: { type: 'boolean', default: false }, 'verify-source': { type: 'boolean', default: false }, 'build-run': { type: 'string' } } });
+    if (values['verify-source']) {
+      need(!values.directory && !values.github && !values.preflight && !values['build-run'] && !values.version, 'Source verification cannot be combined with publication selectors.');
+      requireMain(values.source);
+      requireChecks(values.source);
+      process.stdout.write(JSON.stringify({ source: values.source, source_verified: true, publication_performed: false }) + '\n');
+    } else {
     need(values.directory, 'Use --directory <native bundle> --version <stable version> --source <commit> [--github --build-run <id>] [--preflight].');
     const directory = path.resolve(values.directory);
     const release = verifyNativeBundle(directory, values.version, values.source);
@@ -152,9 +169,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const jobs = activeRun || run.conclusion === 'failure' ? api(`repos/${repository}/actions/runs/${values['build-run']}/jobs?per_page=100`, ['--paginate', '--slurp']).flatMap(page => page.jobs) : [];
       verifyBuildRun(run, release.source, { activeRun, jobs });
       requireMain(release.source);
+      requireChecks(release.source);
     }
     if (values.github && values.preflight) { githubFiles(release, directory); verifySignature(directory); }
     const github = values.github && !values.preflight ? publishGithub(release, directory, { buildRun: values['build-run'] }) : undefined;
     process.stdout.write(JSON.stringify({ version: release.version, source: release.source, bundle_verified: true, ...(github ? { github } : {}), publication_performed: Boolean(github) }) + '\n');
+    }
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }
 }

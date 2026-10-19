@@ -49,7 +49,7 @@ fn checkpoint_path(fixture: &Fixture) -> PathBuf {
 fn candidate_route(provider: &str, closed: bool) -> String {
     if provider == "github" {
         format!(
-            "search/issues?q=repo%3Afixture%2Frepo+is%3Aissue+is%3A{}+fix%3A+history&per_page={}&page=1",
+            "search/issues?q=repo%3Afixture%2Frepo+is%3Aissue+is%3A{}+in%3Atitle+%22history%22&per_page={}&page=1",
             if closed { "closed" } else { "open" },
             if closed { 20 } else { 100 },
         )
@@ -64,7 +64,7 @@ fn candidate_route(provider: &str, closed: bool) -> String {
 }
 
 fn native_issue(provider: &str, number: u64, closed: bool) -> serde_json::Value {
-    json!({"number":number,"iid":number,"project_id":7,"title":"fix: history","body":"Current WHY","description":"Current WHY","labels":[],"state":if closed {"closed"} else if provider == "github" {"open"} else {"opened"},"state_reason":"completed","updated_at":"2026-10-01T00:00:00Z","html_url":format!("https://forge.example/fixture/repo/issues/{number}"),"web_url":format!("https://forge.example/fixture/repo/-/issues/{number}")})
+    json!({"repository_url":"https://forge.example/api/v3/repos/fixture/repo","number":number,"iid":number,"project_id":7,"title":"fix: history","body":"Current WHY","description":"Current WHY","labels":[],"state":if closed {"closed"} else if provider == "github" {"open"} else {"opened"},"state_reason":"completed","updated_at":"2026-10-01T00:00:00Z","html_url":format!("https://forge.example/fixture/repo/issues/{number}"),"web_url":format!("https://forge.example/fixture/repo/-/issues/{number}")})
 }
 
 #[test]
@@ -1711,5 +1711,114 @@ fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() 
             "checkpoint_branch_mismatch"
         );
         assert_eq!(fs::read(&checkpoint).unwrap(), before);
+    }
+}
+
+#[test]
+fn duplicate_search_quotes_title_syntax_and_rejects_foreign_repository_rows() {
+    let f = Fixture::new("github");
+    let result = f.run(&[
+        "issue",
+        "--inspect",
+        "fix: handle repo:other/proj is:closed -label:bug \\",
+    ]);
+    assert_eq!(result["exit"], 0, "{result}");
+    let state = f.state();
+    let queries: Vec<_> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["endpoint"].as_str())
+        .filter(|route| route.starts_with("search/issues?"))
+        .collect();
+    assert!(!queries.is_empty());
+    for query in queries {
+        assert!(
+            query.contains("in%3Atitle+%22handle+repo+other%2Fproj+is+closed+-label+bug%22"),
+            "{query}"
+        );
+        assert!(!query.contains("repo%3Aother"), "{query}");
+        assert!(!query.contains("is%3Aclosed+-label"), "{query}");
+    }
+    for repository_url in [
+        "https://forge.example/api/v3/repos/other/repo",
+        "https://forge.example/api/v3/repos/prefixfixture/repo",
+        "https://forge.example/api/v3/repos/fixture/repo-extra",
+        "https://forge.example/api/v3/repos/fixture/repo?other=1",
+        "https://forge.example/api/v3/notrepos/fixture/repo",
+    ] {
+        f.edit(|s| {
+            let mut foreign = native_issue("github", 1, false);
+            foreign["repository_url"] = json!(repository_url);
+            s["issues"] = json!([foreign]);
+        });
+        let result = f.run(&["issue", "--inspect", "fix: history"]);
+        assert_eq!(result["exit"], 3, "{repository_url}: {result}");
+        assert_eq!(
+            result["diagnostics"][0]["code"], "malformed_response",
+            "{repository_url}: {result}"
+        );
+    }
+}
+
+#[test]
+fn github_uses_existing_label_case_for_pool_and_issue_readback() {
+    let f = Fixture::new("github");
+    f.edit(|s| s["labels"] = json!([{"name":"Kind::Feat","color":"112233"}]));
+    let result = f.run(&["issue", "feat: native label case"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    let state = f.state();
+    assert_eq!(state["issues"][0]["labels"][0]["name"], "Kind::Feat");
+    assert!(
+        !state["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["method"] == "POST"
+                && call["endpoint"].as_str().unwrap().ends_with("/labels"))
+    );
+    let gitlab = Fixture::new("gitlab");
+    gitlab.edit(|s| s["labels"] = json!([{"name":"Kind::Feat","color":"112233"}]));
+    let result = gitlab.run(&["issue", "feat: native label case"]);
+    assert_eq!(result["exit"], 2, "{result}");
+}
+
+#[test]
+fn github_duplicate_search_accepts_canonical_repository_casing() {
+    for (remote_path, native_path) in [
+        ("FiXtUrE/RePo", "fixture/repo"),
+        ("fixture/repo", "FiXtUrE/RePo"),
+    ] {
+        let f = Fixture::new("github");
+        git(
+            &f.root,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                &format!("https://forge.example/{remote_path}.git"),
+            ],
+        );
+        f.edit(|s| {
+            let mut open = native_issue("github", 1, false);
+            let mut closed = native_issue("github", 2, true);
+            for issue in [&mut open, &mut closed] {
+                issue["repository_url"] = json!(format!("https://forge.example/api/v3/repos/{native_path}"));
+            }
+            let encoded = remote_path.replace('/', "%2F");
+            s["read_routes"] = json!({
+                format!("repos/{remote_path}"): s["project"].clone(),
+                format!("repos/{remote_path}/labels?per_page=100&page=1"): [],
+                format!("repos/{remote_path}/issues/1"): open.clone(),
+                candidate_route("github", false).replace("fixture%2Frepo", &encoded): {"incomplete_results":false,"items":[open]},
+                candidate_route("github", true).replace("fixture%2Frepo", &encoded): {"incomplete_results":false,"items":[closed]},
+            });
+        });
+        let report = f.run(&["issue", "--inspect", "fix: history"]);
+        assert_eq!(report["exit"], 0, "{remote_path}: {report}");
+        let candidate = &report["evidence"]["candidates"][0];
+        assert_eq!(candidate["issues"][0]["id"], 1, "{report}");
+        assert_eq!(candidate["history"][0]["id"], 2, "{report}");
+        assert_eq!(f.writes(), 0);
     }
 }

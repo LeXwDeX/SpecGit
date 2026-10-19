@@ -37,8 +37,9 @@ requires a specific change. Do not change platform settings or protections. Refr
 all recorded hosts, not just the --agent selection. Review and report each host's
 effects, including shared Skill refresh. Read setup --catalog --json when supported;
 choose capabilities based on the active host, with shared project guidance as the default.
-Omit purposes on ordinary refresh. Use none
-for a new host; this adds no hooks and preserves existing purposes. Only SessionStart and PreToolUse are supported. Do not configure PostToolUse, Stop
+Omit purposes on ordinary refresh. Naming a new host adds project guidance only;
+hooks require an explicit purpose. Use `none` to add no hooks and preserve existing
+purposes. Only SessionStart and PreToolUse are supported. Do not configure PostToolUse, Stop
 or idle wake. Keep purpose changes within the current task and account for every
 affected host.
 For delivery work, select a complete relevant Issue before commit/push. For larger
@@ -194,15 +195,28 @@ integration. Installed directories alone are not a selection. Preview with
 without `--dry-run`. Agent-authored host glue needs its own ownership and maintenance
 record; SpecGit does not claim or verify it. Integration remains project-only.
 
-On ordinary refresh, **omit hook purposes** to preserve each recorded mode. Explicit `--hook-purpose` values apply to every host in the full refresh set, not
-just the host named by `--agent`. Check actual capability for every affected recorded
-host and choose supported purposes: `guard` installs native Git commit/push checks,
+On ordinary refresh, **omit hook purposes** to preserve each recorded mode.
+`--hook-purpose` changes apply to hosts named by `--agent`, or to all recorded hosts
+when `--agent` is omitted. Check actual capability for every affected recorded host
+and choose supported purposes: `guard` installs native Git commit/push checks,
 and `context` supplies SessionStart/PreToolUse context. `observe` is recognized but
-declined; use bounded watch/inbox instead. For a **new** host, the request selects guidance/Skill only,
-for example `setup --agent codex --hook-purpose none --dry-run --json`, then the
-same command without `--dry-run`. `none` adds no purposes to existing hosts, so this
-also preserves their purposes when adding a new host. It does not skip their asset
-refresh. Do not use unsupported flags on older clients.
+declined; use bounded watch/inbox instead. For a **new** host, the request selects
+guidance/Skill only unless it explicitly requests hooks. Preview, for example,
+`setup --agent codex --dry-run --json`, then apply the same command without
+`--dry-run`. Add `--hook-purpose guard` and/or `--hook-purpose context` only when
+those capabilities are selected. `none` adds no purposes and preserves existing
+hosts’ choices. It does not skip their asset refresh. Do not use unsupported flags
+on older clients.
+
+To remove one recorded purpose, preview and apply with
+`--remove-hook-purpose guard` or `--remove-hook-purpose context`. The selector
+affects only hosts named by `--agent`; without it, all recorded hosts are affected.
+It cannot target an unrecorded host. The same purpose cannot be added and removed
+in one command, and duplicate removal values are invalid. Distinct purposes may
+be added and removed together; `--hook-purpose none` is inert and may accompany
+removal. Repeating a completed removal is unchanged. A shared Git guard remains
+when a sibling worktree still consumes it and is reported as retained. Use
+`setup --uninstall` to remove all recorded integration assets for this worktree.
 
 Existing agents are additive and remain in the refresh set. Explicit purposes add
 to their existing choices. `none` cannot combine with other purposes and adds no

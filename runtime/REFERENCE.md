@@ -66,7 +66,7 @@ explicitly reviewed migration; platform protection rules remain on the forge.
 Git, forge executables or credentials. `specgit <command> --schema` narrows the
 contract. `-h` and `-V` are short help/version forms. The schema comes from the
 same command definitions as argv and includes types, choices, bounds, defaults,
-conflicts, required options (`requires`, with any named
+visible long aliases for argv, conflicts, required options (`requires`, with any named
 group listed under the command's `groups`) and side-effect classification. Engineering qualification generates
 `schemas/` from this contract and compares them with the installed executable.
 Public ZIPs contain only the executable; use its embedded offline `--schema`.
@@ -76,7 +76,9 @@ Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--human` forces text. `--json` and `--human` conflict. `hook` uses host-specific
 framing and `guard` uses Git-hook exit semantics regardless of ordinary output selection.
 
-Explicit JSON input is one object with `command`, `options` and optional `args`:
+Explicit JSON input is one object with `command`, `options` and optional `args`.
+The schema's `aliases` array lists visible long aliases accepted in argv; JSON
+`options` keys remain the canonical long option names:
 
 ```json
 {
@@ -127,7 +129,7 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; an existing installation retains recorded choices. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
+| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. |
@@ -218,7 +220,9 @@ or `permissions.admin`. GitLab uses the
 maximum of `permissions.project_access.access_level` and
 `permissions.group_access.access_level`. Issue writes need `issues_enabled` and
 level >= 10; MR writes need `merge_requests_enabled` and level >= 30. An explicit
-null GitLab membership is absent (level 0), not a missing permission field.
+null GitLab membership paired with a known membership is absent (level 0).
+When both memberships are null, effective role evidence is `unknown`; the
+response does not establish the user's access through other mechanisms.
 
 The project probe and account probe (when project data was read), plus doctor's
 `evidence.write_permissions`, contain `issue` and `request` records with
@@ -392,6 +396,28 @@ search, not the bounded history sample. The invocation budget and cancellation
 still apply. History is reference evidence, not a complete or authoritative
 record of all closed Issues.
 
+Implicit source-branch request lookup prefers open requests and rejects several
+open matches as ambiguous. Terminal requests are considered only when no open
+request exists and their head equals local `HEAD`. A reused branch with new
+commits can therefore prepare a new request. Explicit `--request` and recorded
+request identities remain available for delivery readback. GitLab candidates
+must belong to the configured project on both source and target; fork MRs do not
+participate. GitHub candidates with a deleted source repository are skipped.
+
+GitHub duplicate queries remove a recognized Conventional type prefix, neutralize
+qualifier syntax in the remaining title, and search it as a quoted `in:title`
+phrase. Open and historical search rows must identify the configured repository.
+GitHub label pool lookup and write readback compare ASCII case without changing
+native label spelling in reports. New labels use the selected canonical spelling.
+GitLab label comparisons remain case-sensitive.
+
+Closing references use each provider's default keyword set. GitLab additionally
+recognizes `Implement`, `Implements`, `Implemented` and `Implementing`.
+GitHub treats those words as ordinary prose. Custom GitLab closing patterns remain
+unconfirmed. Fenced code and HTML comments cannot contribute references; comment
+markers inside fenced code or a closed inline code span do not hide later prose.
+Unsupported closing-like prose still requires explicit reconciliation.
+
 GitLab description readback permits its CRLF-to-LF conversion and removal of
 trailing ASCII spaces, tabs and line endings after a write. Leading indentation,
 Unicode whitespace and other content changes are not treated as equivalent.
@@ -476,6 +502,12 @@ is the local configured target. A native `completed` status does not certify the
 Without an explicit ID, status remains local-checkpoint/branch scoped. `watch`
 also stays bound to the current worktree; use `pr --status --request <id>` for
 cross-branch reads. Fork and cross-project reads are unsupported.
+
+A GitHub workflow without visible check runs contributes its own status: queued
+or running remains pending, and a completed workflow succeeds only with native
+`conclusion: "success"`. GitLab `canceling` and `waiting_for_callback` remain
+pending. Unknown native check states remain unavailable and retryable within the
+watch budget; they never prove passing checks.
 
 Issue associations retain per-Issue sources: `native_closing`, `body_reference`
 and `local_selection`. The native source comes from the platform's closing-Issue
@@ -604,6 +636,16 @@ An empty retained set completes ordinary rollback. Once the journal is
 `rolled_back`, repeating that transaction reports zero changes and never replays
 its entries against later files. Invalid or ambiguous journal
 state remains a conflict, never permission to restore unrelated paths.
+CLI 2.14 writes journal version 3 with `created_directories`, recorded
+permissions and directory identity. On Unix, identity uses device/inode and
+birth time; on Windows it uses the safe file ID and birth time. Cleanup requires
+the identity, permissions and emptiness to match. Only CLI 2.14 or newer can
+recover version 3 transactions. If identity is absent from an older version 3
+journal or cannot be read, rollback keeps the directory; a crash before the
+identity is saved can also leave a safe empty directory behind.
+Version 2 journals remain recoverable, but contain no created-directory proof.
+Do not infer which directories an older transaction created or remove them during
+rollback; retain them when ownership cannot be proven.
 Project setup is local and does not probe account readiness or forge write
 permissions. Use explicit `doctor` and native delivery inspection for those
 facts; successful setup is not verified host registration or delivery.
@@ -805,6 +847,20 @@ SessionStart and PreToolUse advisory context on a supported host. Observe is
 recognized but declined because automatic callbacks are retired; use bounded
 watch/inbox. Per-host `hook_purposes` reports requested, installed and declined
 purposes with their reason. Never infer support from the selected host name.
+
+Naming a new host with `--agent` installs project guidance and the Skill only.
+Pass `--hook-purpose guard` and/or `--hook-purpose context` to opt into hooks.
+Omitting purposes preserves recorded choices. To remove a single purpose, repeat
+`setup --remove-hook-purpose guard|context`; it affects only hosts named with
+`--agent`, or all recorded hosts when `--agent` is omitted. Removal cannot target
+a host without an existing receipt. The same purpose cannot be added and removed
+in one command; distinct purposes can be changed together. Repeating the same
+removal value is invalid. `--hook-purpose none` adds nothing and removes nothing;
+it can accompany a removal selector. Use `setup --uninstall` to remove all
+recorded project integration assets for this worktree.
+If a sibling worktree still consumes shared Git hooks, setup retains the guard
+blocks and reports them under `retained`; the last consumer can remove them.
+Repeating an already completed purpose removal is an unchanged successful plan.
 
 Preview with `--dry-run` and apply within the existing task delegation. Init adds
 no new hooks. `none` cannot combine with other purposes and requests no new hooks;
@@ -1012,3 +1068,32 @@ A differing tested SHA must be the MR's head pipeline on its merge ref, and the
 native commit must have exactly the current source and target commits as parents.
 Unknown ancestry, stale source/target results and merge-train ancestry that cannot
 meet this proof are rejected; no SHA comparison is simply disabled.
+
+### Git guard executable binding
+
+New guard blocks in Git metadata pin the absolute shared CLI path and quote it for
+POSIX/Git Bash. `guard --install` (or the recorded setup refresh) migrates owned
+bare-command blocks after ownership checks. Pre-push temporary files use `TMPDIR`
+when set. A `core.hooksPath` inside the worktree keeps a portable `specgit` PATH
+lookup, reported as `executable_binding: path_lookup`; it never embeds a local
+absolute executable path in that potentially committed hook. Host context settings
+remain machine-local integrations and contain absolute executable paths; regenerate
+them for each machine rather than treating them as portable configuration.
+
+Unix process cleanup signals the owned process group while its exited leader is
+still unreaped, then reaps the leader. A descendant that deliberately calls `setsid`
+is outside that boundary. Windows uses an owned Job Object.
+
+Rust embedding callers that create Git metadata hooks should use
+`guard::preview_with_executable` / `guard::install_with_executable`, or pass an
+explicit CLI path to `guard::setup_plan_with_executable`. The path must be
+absolute, UTF-8 and free of CR, LF and NUL; the caller must keep that shared CLI
+available. The existing `guard::preview`, `guard::install` and `guard::setup_plan`
+signatures remain; new Git-metadata hooks outside the worktree resolve `specgit`
+from PATH when no explicit path is supplied, and return a diagnostic if it cannot
+be resolved. They do not create an unbound metadata hook. Maintenance retains a
+proven absolute pin without requiring the old executable to remain installed. CLI guard commands
+pass their current executable, and project setup passes its shared executable
+after checking it is readable, executable on Unix, and outside the repository's
+checkouts. A `core.hooksPath` inside the worktree remains portable and uses PATH,
+as described above.

@@ -430,7 +430,9 @@ pub async fn install_with_context(
         None,
     )?;
     let mut prepared = prepared.expect("project plan");
-    let native = crate::guard::setup_plan(process, root, prepared.guard_enabled).await?;
+    let native =
+        crate::guard::setup_plan_with_executable(process, root, prepared.guard_enabled, source)
+            .await?;
     merge_guard(root, &mut prepared, &mut evidence, native)?;
     if options.dry_run {
         return Ok(evidence);
@@ -473,6 +475,12 @@ fn merge_guard(
     prepared.allowed.extend(native.allowed);
     prepared.dependencies.extend(native.dependencies);
     prepared.changes.extend(native.changes);
+    prepared.dependencies.retain(|dependency| {
+        !prepared
+            .changes
+            .iter()
+            .any(|change| change.path == dependency.path)
+    });
     evidence["native_guard"] = native.evidence;
     evidence["assets"] = json!(prepared.changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect::<Vec<_>>());
     Ok(())
@@ -592,6 +600,38 @@ fn install_plan(
     planned: Option<&mut Option<Prepared>>,
     exclude: Option<&Path>,
 ) -> Result<Value, Diagnostic> {
+    install_plan_with_removals(
+        options,
+        HookChanges {
+            options: hooks,
+            removals: &[],
+        },
+        root,
+        private,
+        source,
+        planned,
+        exclude,
+    )
+}
+
+struct HookChanges<'a> {
+    options: &'a HookOptions,
+    removals: &'a [super::RemovableHookPurpose],
+}
+
+fn install_plan_with_removals(
+    options: &Options,
+    selection: HookChanges<'_>,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+    planned: Option<&mut Option<Prepared>>,
+    exclude: Option<&Path>,
+) -> Result<Value, Diagnostic> {
+    let HookChanges {
+        options: hooks,
+        removals,
+    } = selection;
     let requested: BTreeSet<_> = hooks.purposes.iter().copied().collect();
     if requested.len() != hooks.purposes.len()
         || (requested.contains(&HookPurpose::None) && requested.len() > 1)
@@ -600,8 +640,15 @@ fn install_plan(
             "Hook purposes must be unique; none cannot be combined with other purposes.",
         ));
     }
+    let removed: BTreeSet<HookPurpose> = removals.iter().copied().map(Into::into).collect();
+    if removed.len() != removals.len() || removed.iter().any(|purpose| requested.contains(purpose))
+    {
+        return Err(Diagnostic::input(
+            "Hook removals must be unique and cannot also be added.",
+        ));
+    }
     if (options.uninstall || options.rollback.is_some())
-        && (!requested.is_empty() || hooks.opencode_async_rewake)
+        && (!requested.is_empty() || !removed.is_empty() || hooks.opencode_async_rewake)
     {
         return Err(Diagnostic::input(
             "Uninstall and rollback cannot be combined with hook selection.",
@@ -655,13 +702,6 @@ fn install_plan(
             json!({"scope":"project","root":root,"private":private,"rolled_back":rolled_back}),
         );
     }
-    if !AssetStore::pending_at(private)?.is_empty()
-        || !AssetStore::pending_at(&store_path)?.is_empty()
-    {
-        return Err(conflict(
-            "An interrupted project asset transaction requires recovery first.",
-        ));
-    }
     let (snapshot, previous) = read(root, private)?;
     let migration = if options.uninstall {
         Vec::new()
@@ -707,6 +747,17 @@ fn install_plan(
             "Custom OpenCode Claude-compatible hooks require --agent opencode.",
         ));
     }
+    if !removed.is_empty()
+        && (snapshot.bytes.is_none()
+            || options
+                .agents
+                .iter()
+                .any(|agent| !previous.agents.contains(agent)))
+    {
+        return Err(Diagnostic::input(
+            "Hook removal requires recorded project integrations; select only recorded agents.",
+        ));
+    }
     let custom_opencode = options.opencode_claude_hooks || previous.hooks.contains_key("opencode");
 
     let mut plans = BTreeMap::new();
@@ -722,18 +773,22 @@ fn install_plan(
             continue;
         }
         let (mut effective, _old_wake) = purposes_for(&previous, host);
-        let mut wanted = requested.clone();
-        if wanted.is_empty() && !previous.agents.contains(&agent) && options.agents.contains(&agent)
-        {
-            if matches!(agent, Agent::Claude | Agent::Codex)
-                || (agent == Agent::Opencode && custom_opencode)
-            {
-                wanted.extend([HookPurpose::Guard, HookPurpose::Context]);
-            }
-            if matches!(agent, Agent::Claude | Agent::Codex) {
-                wanted.insert(HookPurpose::Observe);
-            }
-        }
+        // Naming a host selects guidance only. Hook changes apply only to the
+        // explicitly selected hosts, or all recorded hosts when no host is given.
+        let targeted = options.agents.is_empty() || options.agents.contains(&agent);
+        let wanted = if targeted {
+            requested.clone()
+        } else {
+            BTreeSet::new()
+        };
+        let removed_here = if targeted {
+            removed.clone()
+        } else {
+            BTreeSet::new()
+        };
+        let changed_removals: BTreeSet<_> =
+            effective.intersection(&removed_here).copied().collect();
+        effective.retain(|purpose| !removed_here.contains(purpose));
         effective.extend(wanted.iter().copied().filter(|p| *p != HookPurpose::None));
         let mut declined = vec![];
         for purpose in effective.clone() {
@@ -760,7 +815,7 @@ fn install_plan(
         if hooks.opencode_async_rewake {
             declined.push(json!({"purpose":"observe","status":"unsupported","reason":"The legacy async-rewake flag is retained for parsing only; no Stop callback or idle wake is installed. Use bounded specgit watch/inbox."}));
         }
-        purpose_evidence.insert(host.into(), json!({"requested":wanted,"installed":if options.uninstall { BTreeSet::new() } else { effective.clone() },"declined":declined}));
+        purpose_evidence.insert(host.into(), json!({"requested":wanted,"removed":changed_removals,"removal_requested":removed_here,"removal_status":if changed_removals.is_empty(){"unchanged"}else{"removed"},"installed":if options.uninstall { BTreeSet::new() } else { effective.clone() },"declined":declined}));
         if !options.uninstall {
             receipt_purposes.insert(host.to_owned(), effective.clone());
         }
@@ -771,7 +826,7 @@ fn install_plan(
     let guard_enabled = receipt_purposes
         .values()
         .any(|purposes| purposes.contains(&HookPurpose::Guard));
-    let needs_executable = !plans.is_empty();
+    let needs_executable = !plans.is_empty() || guard_enabled;
     let executable = needs_executable
         .then(|| shared_executable(source, root))
         .transpose()?;
@@ -1133,7 +1188,10 @@ fn apply_prepared(
         &allowed,
         Duration::from_secs(2),
     )?;
-    if !store.pending_transactions()?.is_empty() {
+    if !store.pending_transactions()?.is_empty()
+        || !AssetStore::pending_at(private)?.is_empty()
+        || !AssetStore::pending_at(&store_path)?.is_empty()
+    {
         return Err(conflict(
             "A shared or local transaction requires recovery first.",
         ));
@@ -1177,6 +1235,9 @@ fn apply_prepared(
             }
             verify_dependencies(&dependencies)
         })?);
+    if uninstall {
+        store.prune_empty_project_directories(root)?;
+    }
     evidence["written"] = json!(true);
     evidence["registration"] = json!(if uninstall {
         "not_registered"
@@ -1621,7 +1682,9 @@ pub async fn health_plan_with_context(
     let Some(mut plan) = health_plan_inner(root, private, source)? else {
         return Ok(None);
     };
-    let native = crate::guard::setup_plan(process, root, wants_guard(&previous)).await?;
+    let native =
+        crate::guard::setup_plan_with_executable(process, root, wants_guard(&previous), source)
+            .await?;
     if let Some(exclusion) =
         exclusion_health(process, root, private, plan.planned_changes()).await?
     {
@@ -1652,7 +1715,19 @@ pub async fn run_with_hooks(
     process: Process,
     cwd: &Path,
 ) -> Report {
+    run_with_hook_removals(options, hooks, Vec::new(), process, cwd).await
+}
+
+/// Apply additive hook choices and explicit removals while preserving guidance.
+pub async fn run_with_hook_removals(
+    options: Options,
+    hooks: HookOptions,
+    removals: Vec<super::RemovableHookPurpose>,
+    process: Process,
+    cwd: &Path,
+) -> Report {
     let result = async {
+        crate::project::require_local_repository_environment()?;
         let path = |bytes: Vec<u8>| -> Result<PathBuf, Diagnostic> {
             let text = std::str::from_utf8(&bytes)
                 .map_err(|_| Diagnostic::input("Git path is not UTF-8."))?;
@@ -1669,7 +1744,7 @@ pub async fn run_with_hooks(
         let exclude = crate::local_exclude::path(&process, &root).await?;
         let private = git_dir.join("specgit-v2/agent-assets");
         if let Some(id) = &options.rollback {
-            if options.dry_run || options.uninstall || !options.agents.is_empty() || options.opencode_claude_hooks || !hooks.purposes.is_empty() || hooks.opencode_async_rewake {
+            if options.dry_run || options.uninstall || !options.agents.is_empty() || options.opencode_claude_hooks || !hooks.purposes.is_empty() || !removals.is_empty() || hooks.opencode_async_rewake {
                 return Err(Diagnostic::input("Rollback restores a recorded transaction; omit installation changes."));
             }
             if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
@@ -1683,9 +1758,9 @@ pub async fn run_with_hooks(
             return Ok(json!({"scope":"project","root":root,"private":private,"rolled_back":rolled_back,"retained":retained}));
         }
         let mut prepared = None;
-        let mut evidence = install_plan(
+        let mut evidence = install_plan_with_removals(
             &options,
-            &hooks,
+            HookChanges { options: &hooks, removals: &removals },
             &root,
             &private,
             &source,
@@ -1693,8 +1768,34 @@ pub async fn run_with_hooks(
             Some(&exclude),
         )?;
         let mut prepared = prepared.expect("project plan");
-        let native = crate::guard::setup_plan(&process, &root, prepared.guard_enabled).await?;
+        let native = crate::guard::setup_plan_with_executable(&process, &root, prepared.guard_enabled, &source).await?;
         merge_guard(&root, &mut prepared, &mut evidence, native)?;
+        if options.uninstall {
+            // Setup retires only its integration. This worktree's declaration
+            // and init/checkpoint state continue to consume local exclusions.
+            // Classify each consumer from the same snapshots pinned below.
+            let mut worktrees = vec![(root.clone(), git_dir.join("specgit-v2"), true)];
+            worktrees.extend(crate::config::worktree::siblings(&process, &root).await?.into_iter().map(|sibling| (sibling.root, sibling.private_root, false)));
+            let mut retained_exclusions = false;
+            for (checkout, state_root, current) in worktrees {
+                let paths = std::iter::once((checkout.join(".specgit.yaml"), true))
+                    .chain(crate::config::worktree::INITIALIZED_MARKERS.into_iter().map(|name| (state_root.join(name), true)))
+                    .chain(crate::config::worktree::RECEIPT_MARKERS.into_iter().filter(|_| !current).map(|name| (state_root.join(name), name == "agent-assets/ownership.json")));
+                for (path, consumes) in paths {
+                    let before = Snapshot::read(&path)?;
+                    retained_exclusions |= consumes && before.bytes.is_some();
+                    if !prepared.dependencies.iter().any(|dependency| dependency.path == path) {
+                        prepared.dependencies.push(Change { path, after: before.bytes.clone(), permissions: before.permissions.clone(), before });
+                    }
+                }
+            }
+            if !retained_exclusions {
+                let change = crate::local_exclude::removal(&exclude)?;
+                prepared.changes.retain(|change| change.path != exclude);
+                prepared.changes.push(change);
+            }
+            evidence["assets"] = json!(prepared.changes.iter().map(|change| json!({"path":change.path,"state":if change.unchanged(){"unchanged"}else if change.after.is_none(){"removed"}else if change.before.bytes.is_none(){"created"}else{"updated"}})).collect::<Vec<_>>());
+        }
         evidence["local_exclusion"] =
             crate::local_exclude::inspect(&process, &root, &exclude, &prepared.changes).await?;
         if options.dry_run {

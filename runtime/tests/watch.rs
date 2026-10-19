@@ -2137,3 +2137,58 @@ fn state_root_is_not_a_supported_watch_or_inbox_argument() {
         assert_eq!(f.writes(), writes, "{args:?}");
     }
 }
+
+#[test]
+fn scheduling_windows_remain_pending_and_unknown_statuses_remain_retryable() {
+    let f = fixture("github");
+    f.edit(|s| {
+        for (route, response) in s["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/check-runs?") {
+                *response = json!({"total_count":0,"check_runs":[]});
+            }
+            if route.contains("/actions/runs?") {
+                response["workflow_runs"][0]["status"] = json!("queued");
+                response["workflow_runs"][0]["conclusion"] = Value::Null;
+            }
+        }
+    });
+    let observed = f.run(&["pr", "--status"]);
+    assert_eq!(observed["exit"], 0, "{observed}");
+    let pending = f.run(&watch("checks"));
+    assert_eq!(pending["status"], "pending", "{pending}");
+    assert_eq!(
+        pending["next_actions"][0]["kind"], "wait_for_checks",
+        "{pending}"
+    );
+    f.edit(|s| {
+        for (route, response) in s["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/actions/runs?") {
+                response["workflow_runs"][0]["status"] = json!("completed");
+                response["workflow_runs"][0]["conclusion"] = json!("success");
+            }
+        }
+    });
+    // A completed native workflow also proves success before check-run visibility.
+    let passed = f.run(&watch("checks"));
+    assert_eq!(passed["status"], "checks_passed", "{passed}");
+    for status in ["canceling", "waiting_for_callback", "future_status"] {
+        let f = fixture("gitlab");
+        f.edit(|s| {
+            s["read_routes"]["projects/7/pipelines/71"]["status"] = json!(status);
+        });
+        let result = f.run(&watch("checks"));
+        if status == "future_status" {
+            assert_eq!(result["status"], "unknown", "{result}");
+            let mut child = polling(&f, "unknown-check-status-retries");
+            wait_for_poll(&f, &mut child, 2);
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "unknown checks stopped the watch"
+            );
+            child.kill().unwrap();
+            child.wait().unwrap();
+        } else {
+            assert_eq!(result["status"], "pending", "{result}");
+        }
+    }
+}

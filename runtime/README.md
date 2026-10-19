@@ -24,14 +24,13 @@ Installation does not migrate a project.
 ```sh
 specgit --schema
 specgit init --provider github --check --json
-specgit init --provider github --manual-observe --dry-run --json
-specgit init --provider github --manual-observe --json
 specgit issue 21 22 --dry-run --json
 specgit issue 21 22 --json
 ```
 
-Commit and push actual implementation through Git, then preview and create or
-resume its request:
+Select `--manual-observe` only when `init --check` reports unknown or unavailable
+native capabilities. Commit and push actual implementation through Git, then preview
+and create or resume its request:
 
 ```sh
 specgit pr --title 'feat: implement selected specs' --body-file /absolute/request.md --dry-run --json
@@ -109,14 +108,20 @@ On Windows, a blocked atomic replacement retries the same staged file for up to
 one second. Content or permission changes stop the retry; a persistent failure
 keeps the destination intact and returns an error.
 
-Claude registration exports SessionStart, PreToolUse, PostToolUse and Stop;
-relevant PostToolUse can start a bounded asynchronous observer. Project hooks
-invoke the currently installed shared user executable directly, with no global
-setup prerequisite. The host adapter uses its own event framing, not the
-ordinary report envelope. Registration reports
+Host registration uses SessionStart and PreToolUse only. Selecting a new host
+with `setup --agent` adds project guidance; hooks require explicit
+`--hook-purpose guard` and/or `--hook-purpose context`. Project hooks invoke the
+currently installed shared user executable directly, with no global setup
+prerequisite. The host adapter uses its own event framing, not the ordinary
+report envelope. Registration reports
 `written_not_verified`. Import, context injection, visible messages, next-turn
 delivery and human reading are distinct evidence. Immediate idle wake is not
 supported; pending notices remain available through explicit observation.
+Use `--remove-hook-purpose guard` or `--remove-hook-purpose context` to remove
+one recorded hook purpose while preserving other purposes. The selector applies
+to hosts named by `--agent`; without `--agent`, it applies to all recorded hosts.
+`setup --uninstall` removes all recorded project integration assets for the
+current worktree.
 
 ## Development and qualification
 

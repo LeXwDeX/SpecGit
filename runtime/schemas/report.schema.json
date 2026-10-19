@@ -618,6 +618,9 @@
       "required": ["requested", "installed", "declined"],
       "properties": {
         "requested": {"type":"array","uniqueItems":true,"items":{"enum":["guard","context","observe","none"]}},
+        "removal_status": {"enum":["unchanged","removed"]},
+        "removal_requested": {"type":"array","uniqueItems":true,"items":{"enum":["guard","context"]}},
+        "removed": {"type":"array","uniqueItems":true,"items":{"enum":["guard","context"]}},
         "installed": {"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/hook_purpose"}},
         "declined": {
           "type": "array",
