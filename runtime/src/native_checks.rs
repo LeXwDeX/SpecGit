@@ -16,6 +16,14 @@ pub fn malformed() -> Diagnostic {
         "Read the exact current head and complete native result pages; unavailable facts are not successful observations.",
     )
 }
+fn unknown_state() -> Diagnostic {
+    Diagnostic::new(
+        Code::MalformedResponse,
+        "checks_state",
+        "The native check status is unknown.",
+        "Retry within the observation budget; an unknown status is never success.",
+    )
+}
 pub fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, Diagnostic> {
     v.get(key)
         .and_then(Value::as_str)
@@ -92,7 +100,7 @@ fn github_result(v: &Value) -> Result<(String, Option<String>), Diagnostic> {
     ]
     .contains(&status)
     {
-        return Err(malformed());
+        return Err(unknown_state());
     }
     let conclusion = match v.get("conclusion") {
         Some(Value::Null) if status != "completed" => None,
@@ -113,6 +121,7 @@ fn github_result(v: &Value) -> Result<(String, Option<String>), Diagnostic> {
         {
             Some(s.clone())
         }
+        Some(Value::String(_)) if status == "completed" => return Err(unknown_state()),
         _ => return Err(malformed()),
     };
     Ok((status.into(), conclusion))
@@ -181,16 +190,12 @@ async fn github_workflows(
     for run in contexts.into_values() {
         let suite = number(&run, "check_suite_id")?;
         suites.remove(&suite);
-        // Missing checks are not a successful empty observation. This also
-        // fences a queued replacement before its first check run is visible.
-        if !checks
+        // Workflow identity remains evidence while its first check run is scheduled.
+        let missing_checks = !checks
             .iter()
-            .any(|check| check["check_suite"]["id"].as_u64() == Some(suite))
-        {
-            return Err(malformed());
-        }
+            .any(|check| check["check_suite"]["id"].as_u64() == Some(suite));
         let (status, conclusion) = github_result(&run)?;
-        if status != "completed" || conclusion.as_deref() != Some("success") {
+        if missing_checks || status != "completed" || conclusion.as_deref() != Some("success") {
             pending.push(Check {
                 name: text(&run, "name")?.to_owned(),
                 source: "workflow".into(),
@@ -321,8 +326,10 @@ fn gitlab_result(value: &str) -> Result<(String, Option<String>), Diagnostic> {
         | "pending"
         | "running"
         | "manual"
-        | "scheduled" => (value.into(), None),
-        _ => return Err(malformed()),
+        | "scheduled"
+        | "canceling"
+        | "waiting_for_callback" => (value.into(), None),
+        _ => return Err(unknown_state()),
     })
 }
 /// Observe the MR's native head_pipeline; the forge owns downstream aggregation.

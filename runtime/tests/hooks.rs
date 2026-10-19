@@ -347,7 +347,14 @@ fn project_setup_registers_a_working_native_hook_adapter() {
     let t = fixture();
     let out = executable::command()
         .current_dir(t.path())
-        .args(["setup", "--agent", "claude", "--json"])
+        .args([
+            "setup",
+            "--agent",
+            "claude",
+            "--hook-purpose",
+            "context",
+            "--json",
+        ])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));

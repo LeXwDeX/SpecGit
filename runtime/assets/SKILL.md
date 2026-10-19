@@ -162,8 +162,7 @@ fallback while preserving the auto-merge preference unless a change is selected.
 explicitly installed with `specgit skill --user` at `~/.agents/skills/specgit-native/SKILL.md` (`%USERPROFILE%` on Windows).
 `specgit update` refreshes it only when managed; it does not install it by default. No global hooks or state are installed.
 
-Choose the least hook purposes supported by the host and task. `setup --hook-purpose guard` configures native
-pre-commit/pre-push checks; `specgit guard --install --dry-run` and `specgit guard --uninstall --dry-run` preview
+A new host selected by `--agent` gets guidance and the Skill only; opt into supported hooks explicitly. Choose the least hook purposes needed for the current task. `setup --hook-purpose guard` configures native pre-commit/pre-push checks; `specgit guard --install --dry-run` and `specgit guard --uninstall --dry-run` preview
 independent guard changes. Setup verifies/reuses independent guards without taking ownership. Preserve unsupported non-shell
 hooks. Uninstall preserves active consumers; retired setup-guard ownership stays in shared Git metadata until its last setup consumer leaves.
 
@@ -180,8 +179,11 @@ Official OpenCode keeps guidance/Skill; custom callbacks require `--opencode-cla
 purposes and reasons. Unsupported automatic observation falls back to Agent-run bounded watch/inbox. Read context only for
 the current branch; preserve other checkpoints. Repair real commit/push failures from tool results without turning dirty
 state or missing selection into dialogue prompts. Verify actual behavior; registration alone is insufficient. Do not
-duplicate managed hooks by import. Omitted purposes preserve choices; `none` adds no new hooks. Refresh migrates retired
-events. State stays worktree Git-private. Notice receipts prove transport delivery, not human reading or task completion.
+duplicate managed hooks by import. Omitted purposes preserve recorded choices; `none` adds no hooks.
+`--remove-hook-purpose guard|context` removes one purpose while retaining the rest, for named `--agent`
+hosts or all recorded hosts when omitted. `setup --uninstall` removes all worktree integrations.
+Refresh migrates retired events. State stays worktree Git-private. Notice receipts prove transport
+delivery, not human reading or task completion.
 
 After CLI replacement, preview init or recorded setup, then refresh the Skill and stable entry. Refresh replaces recorded
 assets and complete unique blocks, including edited body text; preserve outside bytes, declarations, checkpoints and other

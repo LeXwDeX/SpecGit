@@ -436,6 +436,58 @@ fn schema_descendants_keep_global_options_and_effects_path() {
             .any(|a| a["long"] == "cwd")
     );
 }
+
+#[test]
+fn schema_lists_every_visible_long_argument_alias() {
+    let mut definition = Command::new("fixture")
+        .arg(
+            Arg::new("input")
+                .long("input")
+                .visible_alias("source")
+                .alias("hidden-input"),
+        )
+        .subcommand(
+            Command::new("nested").arg(
+                Arg::new("ready")
+                    .long("ready")
+                    .visible_alias("go")
+                    .visible_alias("confirm"),
+            ),
+        );
+    let schema = cli_contract::schema(&mut definition);
+
+    fn assert_aliases(command: &Command, schema: &serde_json::Value) {
+        for arg in command.get_arguments() {
+            let actual = schema["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["id"] == arg.get_id().as_str())
+                .unwrap_or_else(|| panic!("{} in schema", arg.get_id()));
+            let expected = arg.get_visible_aliases().unwrap_or_default();
+            assert_eq!(actual["aliases"], serde_json::json!(expected));
+        }
+        for child in command.get_subcommands() {
+            let child_schema = schema["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["name"] == child.get_name())
+                .unwrap_or_else(|| panic!("{} in schema", child.get_name()));
+            assert_aliases(child, child_schema);
+        }
+    }
+
+    assert_aliases(&definition, &schema["command"]);
+    let input = schema["command"]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|arg| arg["id"] == "input")
+        .unwrap();
+    assert_eq!(input["aliases"], serde_json::json!(["source"]));
+}
+
 fn schema_arg(command: Command, long: &str) -> serde_json::Value {
     let mut command = command;
     cli_contract::schema(&mut command)["command"]["arguments"]

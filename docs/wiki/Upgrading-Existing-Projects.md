@@ -53,7 +53,7 @@ Add only the active host when needed. Initialization installs the common project
 Skill and stable guidance entries; it does not install host hooks. Setup selects
 host-specific assets and also refreshes all recorded hosts; `--agent` does not
 restrict refresh to that host. Review/report every affected host's asset changes.
-Since 2.4 setup is permanently project-only:
+Since the 2.4 release, setup has been project-only:
 `--scope project` is the default and the only scope value, hooks invoke the
 installed shared executable directly with no global setup prerequisite, and the
 retired global options (`--root`, `--provider`, `--api-host`, `--register-*`,
@@ -62,8 +62,8 @@ uses `--agent claude`, OpenCode `--agent opencode`, generic `.agents` hosts
 `--agent generic`:
 
 ```sh
-specgit setup --agent codex --dry-run --json
-specgit setup --agent codex --json
+specgit setup --agent codex --hook-purpose none --dry-run --json
+specgit setup --agent codex --hook-purpose none --json
 ```
 
 Stable guidance entry points are root `AGENTS.md` for generic and official
@@ -80,23 +80,30 @@ automatic observation is unavailable. Do not copy Claude settings hooks into an 
 integration. Written registration is not proof of import, event triggering or
 notification delivery; reload and verify where needed.
 
-Use only supported SessionStart and PreToolUse hooks; `guard` configures native
+Naming a new host installs its project guidance and Skill only. To opt into hooks,
+include `--hook-purpose guard` and/or `--hook-purpose context`; use `none` to keep
+the new host hook-free. Use only supported SessionStart and PreToolUse hooks; `guard` configures native
 commit/push checks, while `context` supplies relevant context/recovery. Omit purposes on ordinary refresh to preserve exact recorded modes.
-Explicit purposes apply to all recorded and newly selected hosts within the current
-task. `none` adds no purposes and preserves valid purposes/native Git guard, while
+Explicit purposes apply to hosts named by `--agent`, or all recorded hosts when
+`--agent` is omitted. `none` adds no purposes and preserves valid purposes/native Git guard, while
 refresh removes owned retired PostToolUse/Stop registrations. Hosts remain additive.
-Choose only purposes supported by the host and needed in the current task. See the guide for selective-receipt downgrade limits and checks.
+Choose only purposes supported by the host and needed in the current task. Use
+`--remove-hook-purpose context` or `--remove-hook-purpose guard` to remove one
+recorded purpose while preserving the others; scope it with `--agent` or omit
+`--agent` to affect all recorded hosts. `setup --uninstall` removes all recorded
+project integrations for this worktree. See the guide for selective-receipt
+downgrade limits and checks.
 
-Upgrading from 2.3: existing project receipts are refreshed into the 2.4
-format (which omits `shared_root`) locally, preserving foreign content and
-without reading or writing the retired global root. 2.3 global data stays
-preserved; 2.4 ships no global cleanup command — back up first and use the 2.3
-CLI's exact owned cleanup before upgrading if it must go, never a blind delete.
+During the 2.3-to-2.4 migration, existing project receipts were refreshed
+locally into the format without `shared_root`, preserving foreign content and
+without reading or writing the retired global root. The 2.3 global data was
+preserved because 2.4 had no cleanup command; required cleanup used the 2.3
+CLI's exact owned cleanup before upgrading, never a blind delete.
 
 When repository policy requires Git enforcement, `specgit guard --install --json` installs both owned blocks while preserving existing hooks. `guard --uninstall` removes only those blocks.
 
 `setup --uninstall` removes only the current worktree's recorded project agent
-assets (2.4 has no global user-level setup to uninstall); `init --rollback
+assets (there was no global user-level setup to uninstall in 2.4); `init --rollback
 <transaction>` undoes only that project transaction. 2.2 had no general project
 remove command; 2.3 introduces `specgit remove` (preview, digest-bound apply,
 offline rollback) to retire one project's whole local integration. See

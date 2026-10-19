@@ -50,7 +50,7 @@ pub(super) async fn prepare(
     let missing_labels: Vec<_> = intended
         .labels
         .iter()
-        .filter(|label| !pool.contains(label))
+        .filter(|label| !spec::label_contains(w.context.repository.provider, &pool, label))
         .cloned()
         .collect();
     if o.inspect || o.dry_run {
@@ -99,7 +99,10 @@ async fn discover(o: &Options, w: &Workspace) -> Result<Discovery, Diagnostic> {
     let request = if let Some(number) = number {
         Some(native_delivery::pull_request(&w.reader, repo, number).await?)
     } else {
-        let candidates = native_delivery::request_candidates(&w.reader, repo, branch).await?;
+        let candidates = native_delivery::current_request_candidates(
+            native_delivery::request_candidates(&w.reader, repo, branch).await?,
+            &w.context.head,
+        );
         if candidates.len() > 1 {
             return Err(Diagnostic::new(
                 Code::AmbiguousRequest,
@@ -132,7 +135,7 @@ async fn discover(o: &Options, w: &Workspace) -> Result<Discovery, Diagnostic> {
         ));
     }
     if let Some(r) = &request {
-        let refs = spec::references(&r.body)?;
+        let refs = spec::references_for(w.context.repository.provider, &r.body)?;
         if selected.issues.is_empty() {
             selected.issues = refs.into_iter().collect();
         }
@@ -152,6 +155,7 @@ async fn discover(o: &Options, w: &Workspace) -> Result<Discovery, Diagnostic> {
         let issue = native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?;
         validate(
             w.specification(),
+            w.context.repository.provider,
             true,
             &issue.title,
             &issue.body,
@@ -184,11 +188,12 @@ async fn content(
     } else {
         (draft_content(o, w, selected, issues, pool)?, None)
     };
-    for id in spec::references(&intended.body)? {
+    for id in spec::references_for(w.context.repository.provider, &intended.body)? {
         if !selected.issues.contains(&id) {
             let issue = native_delivery::issue(&w.reader, repo, w.facts.id, id).await?;
             validate(
                 w.specification(),
+                w.context.repository.provider,
                 true,
                 &issue.title,
                 &issue.body,
@@ -200,6 +205,7 @@ async fn content(
     }
     validate(
         w.specification(),
+        w.context.repository.provider,
         false,
         &intended.title,
         &intended.body,
@@ -271,12 +277,16 @@ async fn existing_content(
         ));
     }
     let mut ids: BTreeSet<_> = selected.issues.iter().copied().collect();
-    ids.extend(spec::references(&r.body)?);
+    ids.extend(spec::references_for(
+        w.context.repository.provider,
+        &r.body,
+    )?);
     for id in &ids {
         if !selected.issues.contains(id) {
             let issue = native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?;
             validate(
                 w.specification(),
+                w.context.repository.provider,
                 true,
                 &issue.title,
                 &issue.body,
@@ -293,15 +303,15 @@ async fn existing_content(
         } else {
             r.body.clone()
         };
-        replacement = Some(spec::with_references(
+        replacement = Some(spec::with_references_for(
+            w.context.repository.provider,
             &input,
             &ids.into_iter().collect::<Vec<_>>(),
         )?);
-    } else if !selected
-        .issues
-        .iter()
-        .all(|id| spec::references(&r.body).is_ok_and(|refs| refs.contains(id)))
-    {
+    } else if !selected.issues.iter().all(|id| {
+        spec::references_for(w.context.repository.provider, &r.body)
+            .is_ok_and(|refs| refs.contains(id))
+    }) {
         return Err(Diagnostic::input(
             "The native request lacks selected closing references; use --update-references --dry-run to preview, then reconcile its body on the native platform.",
         ));
@@ -311,7 +321,7 @@ async fn existing_content(
     let mut labels = r.labels.clone();
     if let Some(intent) = &selected.request_intent {
         for label in &intent.labels {
-            if !labels.contains(label) {
+            if !spec::label_contains(repo.provider, &labels, label) {
                 labels.push(label.clone());
             }
         }
@@ -368,7 +378,8 @@ fn draft_content(
         &vars,
     )?;
     let title = p.title.unwrap_or(title);
-    let labels = w.specification().selected_labels(
+    let labels = w.specification().selected_labels_for(
+        w.context.repository.provider,
         &title,
         o.tags
             .as_deref()
@@ -378,7 +389,7 @@ fn draft_content(
     Ok(RequestIntent {
         head: w.context.head.clone(),
         title,
-        body: spec::with_references(&p.body, &selected.issues)?,
+        body: spec::with_references_for(w.context.repository.provider, &p.body, &selected.issues)?,
         labels,
     })
 }

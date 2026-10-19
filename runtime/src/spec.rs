@@ -3,6 +3,7 @@ pub use crate::label_rules::label_name;
 use crate::{
     declaration::{Declaration, Labels, Language, MAX_BYTES, Tag, Template},
     diagnostic::Diagnostic,
+    identity::Provider,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +30,15 @@ impl<'a> Specification<'a> {
         pool: &[String],
     ) -> Result<Vec<String>, Diagnostic> {
         selected_labels(self.declaration, title, explicit, pool)
+    }
+    pub fn selected_labels_for(
+        self,
+        provider: Provider,
+        title: &str,
+        explicit: Option<&[String]>,
+        pool: &[String],
+    ) -> Result<Vec<String>, Diagnostic> {
+        selected_labels_for(provider, self.declaration, title, explicit, pool)
     }
     pub fn issue_template(self) -> &'a Template {
         &self.declaration.templates.issue
@@ -103,6 +113,33 @@ pub fn selected_labels(
     explicit: Option<&[String]>,
     pool: &[String],
 ) -> Result<Vec<String>, Diagnostic> {
+    selected_labels_for(Provider::Gitlab, d, title, explicit, pool)
+}
+pub fn label_contains(provider: Provider, pool: &[String], name: &str) -> bool {
+    pool.iter().any(|existing| match provider {
+        Provider::Github => existing.eq_ignore_ascii_case(name),
+        Provider::Gitlab => existing == name,
+    })
+}
+pub fn canonical_labels(provider: Provider, labels: &[String]) -> Vec<String> {
+    labels
+        .iter()
+        .map(|name| {
+            if provider == Provider::Github {
+                name.to_ascii_lowercase()
+            } else {
+                name.clone()
+            }
+        })
+        .collect()
+}
+pub fn selected_labels_for(
+    provider: Provider,
+    d: &Declaration,
+    title: &str,
+    explicit: Option<&[String]>,
+    pool: &[String],
+) -> Result<Vec<String>, Diagnostic> {
     let values = match explicit {
         Some(labels) => labels.to_vec(),
         None if d.validation.labels == Labels::Kind => vec![format!("kind::{}", kind(title)?)],
@@ -111,9 +148,10 @@ pub fn selected_labels(
     let selected: BTreeSet<_> = values.into_iter().collect();
     let known = catalog(d);
     if selected.len() > 100
-        || selected
-            .iter()
-            .any(|name| !label_name(name) || (!known.contains_key(name) && !pool.contains(name)))
+        || selected.iter().any(|name| {
+            !label_name(name)
+                || (!known.contains_key(name) && !label_contains(provider, pool, name))
+        })
     {
         return Err(Diagnostic::input(
             "Select labels from the declared vocabulary, built-in catalog or conforming existing pool.",
@@ -178,6 +216,28 @@ pub fn prose(body: &str, code_evidence: bool) -> String {
     let mut code_present = false;
     let mut comment = false;
     for raw in body.lines() {
+        // Fenced code is opaque, including HTML comment delimiters.
+        if let Some((c, n)) = fence {
+            let trimmed = raw.trim_start_matches(' ');
+            let run = trimmed.chars().take_while(|x| *x == c).count();
+            if raw.len() - trimmed.len() <= 3 && run >= n && trimmed[run..].trim().is_empty() {
+                fence = None;
+            } else if code_evidence && !code_present && !raw.trim().is_empty() {
+                out.push("[code evidence]".into());
+                code_present = true;
+            }
+            continue;
+        }
+        let trimmed = raw.trim_start_matches(' ');
+        let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
+        let run = marker
+            .map(|c| trimmed.chars().take_while(|x| *x == c).count())
+            .unwrap_or(0);
+        if !comment && raw.len() - trimmed.len() <= 3 && run >= 3 {
+            fence = Some((marker.unwrap(), run));
+            code_present = false;
+            continue;
+        }
         let mut line = String::new();
         let mut rest = raw;
         while !rest.is_empty() {
@@ -188,13 +248,35 @@ pub fn prose(body: &str, code_evidence: bool) -> String {
                 } else {
                     break;
                 }
-            } else if let Some(i) = rest.find("<!--") {
-                line.push_str(&rest[..i]);
-                rest = &rest[i + 4..];
+            } else if rest.starts_with("<!--") {
+                rest = &rest[4..];
                 comment = true;
+            } else if rest.starts_with('`') {
+                let run = rest.bytes().take_while(|b| *b == b'`').count();
+                let marker = &rest[..run];
+                let mut search = run;
+                let mut closing = None;
+                while let Some(i) = rest[search..].find(marker) {
+                    let start = search + i;
+                    let count = rest[start..].bytes().take_while(|b| *b == b'`').count();
+                    if count == run {
+                        closing = Some(start + run);
+                        break;
+                    }
+                    search = start + count;
+                }
+                if let Some(end) = closing {
+                    // Preserve inline code for body validation; its contents cannot open comments.
+                    line.push_str(&rest[..end]);
+                    rest = &rest[end..];
+                } else {
+                    line.push_str(marker);
+                    rest = &rest[run..];
+                }
             } else {
-                line.push_str(rest);
-                break;
+                let c = rest.chars().next().unwrap();
+                line.push(c);
+                rest = &rest[c.len_utf8()..];
             }
         }
         let trimmed = line.trim_start_matches(' ');
@@ -203,14 +285,7 @@ pub fn prose(body: &str, code_evidence: bool) -> String {
             .map(|c| trimmed.chars().take_while(|x| *x == c).count())
             .unwrap_or(0);
         let is_fence = line.len() - trimmed.len() <= 3 && run >= 3;
-        if let Some((c, n)) = fence {
-            if is_fence && marker == Some(c) && run >= n && trimmed[run..].trim().is_empty() {
-                fence = None;
-            } else if code_evidence && !code_present && !line.trim().is_empty() {
-                out.push("[code evidence]".into());
-                code_present = true;
-            }
-        } else if is_fence {
+        if is_fence {
             fence = Some((marker.unwrap(), run));
             code_present = false;
         } else {
@@ -310,6 +385,10 @@ pub fn check(
 }
 /// Standalone native closing forms; unsupported closing-like prose fails closed.
 pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
+    references_for(Provider::Github, body)
+}
+/// Default native closing keywords for the selected provider; custom GitLab patterns are unknown.
+pub fn references_for(provider: Provider, body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
     use std::sync::LazyLock;
     static EXACT: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"(?i)^(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#([0-9]+)$").unwrap()
@@ -317,10 +396,26 @@ pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
     static CLOSING: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"(?i)\b(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving)\s*:?\s*(?:#|https?://|[^\s]+#)").unwrap()
     });
+    static GITLAB_EXACT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)^(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving|implement(?:s|ed|ing)?)\s+#([0-9]+)$").unwrap()
+    });
+    static GITLAB_CLOSING: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(?:close[sd]?|closing|fix(?:es|ed|ing)?|resolve[sd]?|resolving|implement(?:s|ed|ing)?)\s*:?\s*(?:#|https?://|[^\s]+#)").unwrap()
+    });
+    let exact = if provider == Provider::Gitlab {
+        &*GITLAB_EXACT
+    } else {
+        &*EXACT
+    };
+    let closing = if provider == Provider::Gitlab {
+        &*GITLAB_CLOSING
+    } else {
+        &*CLOSING
+    };
     let mut refs = BTreeSet::new();
     for line in prose(body, false).lines() {
         let line = line.trim();
-        if let Some(captures) = EXACT.captures(line) {
+        if let Some(captures) = exact.captures(line) {
             let id = captures[1]
                 .parse::<u64>()
                 .ok()
@@ -331,7 +426,7 @@ pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
                     )
                 })?;
             refs.insert(id);
-        } else if CLOSING.is_match(line) {
+        } else if closing.is_match(line) {
             return Err(Diagnostic::input(
                 "Reconcile unsupported closing references explicitly; use one same-repository 'Closes #n' association per line.",
             ));
@@ -343,7 +438,14 @@ pub fn references(body: &str) -> Result<BTreeSet<u64>, Diagnostic> {
     Ok(refs)
 }
 pub fn with_references(body: &str, issues: &[u64]) -> Result<String, Diagnostic> {
-    let refs = references(body)?;
+    with_references_for(Provider::Github, body, issues)
+}
+pub fn with_references_for(
+    provider: Provider,
+    body: &str,
+    issues: &[u64],
+) -> Result<String, Diagnostic> {
+    let refs = references_for(provider, body)?;
     let mut result = body.to_owned();
     let selected: BTreeSet<_> = issues.iter().copied().collect();
     for id in &selected {
@@ -357,7 +459,7 @@ pub fn with_references(body: &str, issues: &[u64]) -> Result<String, Diagnostic>
     if result.len() > MAX_BYTES {
         return Err(Diagnostic::input("Request body exceeds 1 MiB."));
     }
-    let actual = references(&result)?;
+    let actual = references_for(provider, &result)?;
     if !selected.is_subset(&actual) {
         return Err(Diagnostic::input(
             "An unclosed Markdown fence or comment hides required closing references.",

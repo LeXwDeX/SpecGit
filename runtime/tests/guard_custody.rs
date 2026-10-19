@@ -131,7 +131,7 @@ impl Retained {
         for stage in ["pre-commit", "pre-push"] {
             let bytes = fs::read_to_string(self.hooks.join(stage)).unwrap_or_default();
             assert_eq!(
-                bytes.contains("specgit guard --stage"),
+                bytes.contains(" guard --stage"),
                 installed,
                 "{stage}: {bytes}"
             );

@@ -4,6 +4,15 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.14.0
+
+- Require explicit `setup --hook-purpose guard|context` for new hosts. Naming `--agent` only selects guidance and Skill assets; existing receipts keep their purposes. Agents that relied on implicit hooks must now select them explicitly. The catalog lists native preview/apply commands, and `--remove-hook-purpose guard|context` removes one selected purpose while preserving user entries and shared guard consumers. (#740–#742)
+- Ignore empty and relative executable search paths. Git guards in Git metadata pin the shared executable and use `TMPDIR`; guards in worktree hook directories remain portable PATH lookups. Refresh existing owned blocks with the current CLI. Unix process cleanup retains the group leader until its group is signalled; descendants that create a new session remain outside the process-group boundary. (#746–#748)
+- Resolve reused branches against open or matching-head requests, exclude GitLab fork candidates, and keep observing queued checks. Escape GitHub title searches and verify their repository identity; handle fenced comments, GitLab closing keywords, native label casing and unknown GitLab role evidence. (#749–#756)
+- Support submodule guard installation, reject repository environment overrides before project writes, remove exclusions after the final consumer, check pending transactions under the lock, and preserve CRLF instruction files. Remove only proven-created empty directories during recovery and uninstall. New directory-tracking journals require CLI 2.14 or newer for recovery. (#757–#761)
+- Publish visible long-option aliases in schema, enforce architecture documentation against source dependencies, and direct installation guidance and release notes to the agent workflow. (#743–#745, #762–#763)
+- Require successful verification and acceptance checks on the exact main source before signing and publication. Scheduled Node audits now fail on high-severity advisories. (#764–#765)
+
 # 2.13.0
 
 - Discover offline installation capabilities with `setup --catalog`, use a shared project Skill/entry by default, and preview independent Git guard changes. Agents select supported integrations and verify loading and effects separately. (#737)

@@ -516,7 +516,11 @@ impl Process {
                 drop(stdin);
                 Ok::<(), Diagnostic>(())
             };
-            let wait = async { child.wait().await.map_err(|_| io_error(operation)) };
+            let wait = async {
+                tree::observe(&mut child)
+                    .await
+                    .map_err(|_| io_error(operation))
+            };
             let ((), stdout, stderr, status) = tokio::try_join!(
                 write,
                 bounded_read(stdout, self.limits.output_bytes, operation),
@@ -582,10 +586,13 @@ fn cancelled(operation: &str) -> Diagnostic {
 
 pub fn resolve_executable(name: &str) -> Result<PathBuf, Diagnostic> {
     let path = Path::new(name);
-    let candidates = if path.components().count() > 1 || path.is_absolute() {
+    let candidates = if path.is_absolute() {
         vec![path.to_path_buf()]
+    } else if name.is_empty() || path.components().count() != 1 || name.contains(['/', '\\']) {
+        Vec::new()
     } else {
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|dir| dir.is_absolute())
             .flat_map(|dir| {
                 #[cfg(windows)]
                 {

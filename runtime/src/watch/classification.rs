@@ -53,16 +53,20 @@ pub(super) fn classify(
     } else {
         EventState::Pending
     };
-    let retryable = codes.iter().any(|c| {
-        matches!(
-            c,
-            Code::NetworkFailed
-                | Code::RateLimited
-                | Code::Timeout
-                | Code::ProcessFailed
-                | Code::ConcurrentEdit
-        )
-    });
+    let retryable = assessment
+        .diagnostics
+        .iter()
+        .any(|d| d.code == Code::MalformedResponse && d.operation == "checks_state")
+        || codes.iter().any(|c| {
+            matches!(
+                c,
+                Code::NetworkFailed
+                    | Code::RateLimited
+                    | Code::Timeout
+                    | Code::ProcessFailed
+                    | Code::ConcurrentEdit
+            )
+        });
     let terminal = matches!(
         state,
         EventState::Completed

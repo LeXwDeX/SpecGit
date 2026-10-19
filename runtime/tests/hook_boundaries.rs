@@ -837,7 +837,18 @@ fn changed_hooks_path_rejects_refresh_before_changing_any_project_asset() {
         );
     };
     configure(".husky");
-    assert_eq!(f.run(&["setup", "--agent", "codex"])["exit"], 0);
+    assert_eq!(
+        f.run(&[
+            "setup",
+            "--agent",
+            "codex",
+            "--hook-purpose",
+            "guard",
+            "--hook-purpose",
+            "context",
+        ])["exit"],
+        0
+    );
     let paths = [
         "AGENTS.md",
         ".agents/skills/specgit-native/SKILL.md",

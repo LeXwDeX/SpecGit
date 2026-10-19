@@ -65,6 +65,20 @@ export function checkDocumentation(root, files) {
   return documents.length;
 }
 
+// The repository integration follows the installed shared CLI. Accept only
+// exact current or published 2.13 stable blocks while the new CLI is developed;
+// product generation tests still require the current asset verbatim.
+export function checkStableEntry(guidance, entries) {
+  const start = '<!-- specgit:project:v2:start -->';
+  const end = '<!-- specgit:project:v2:end -->';
+  assert.equal(guidance.split(start).length - 1, 1, 'AGENTS must contain one stable SpecGit start');
+  assert.equal(guidance.split(end).length - 1, 1, 'AGENTS must contain one stable SpecGit end');
+  const first = guidance.indexOf(start), last = guidance.indexOf(end);
+  assert(last > first, 'AGENTS stable entry markers must be ordered');
+  const block = guidance.slice(first, last + end.length);
+  assert(entries.some(entry => block === `${start}\n## SpecGit 2\n\n${entry.trim()}\n${end}`), 'AGENTS must contain an exact supported local Skill entry');
+}
+
 export function checkRepositoryDocumentation(root) {
   const files = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean))];
   const count = checkDocumentation(root, files);
@@ -72,8 +86,7 @@ export function checkRepositoryDocumentation(root) {
   const version = JSON.parse(read('package.json')).version;
   const guidance = read('AGENTS.md');
   const entry = read('runtime/assets/prompts/host-entry.md').trim();
-  assert(guidance.includes(entry), 'AGENTS must point to the local project Skill');
-  assert.equal((guidance.match(/<!-- specgit:project:v2:start -->/g) ?? []).length, 1, 'AGENTS must contain one stable SpecGit entry');
+  checkStableEntry(guidance, [entry, read('runtime/tests/fixtures/host-entry-2.13.md')]);
   assert(!guidance.includes('<!-- specgit:v2:start -->'), 'Legacy generated guidance must be migrated');
   assert(read('CHANGELOG.md').includes(`# ${version}\n`), 'Current version missing from changelog');
   assert(read('.github/workflows/release-prepare.yml').includes(`default: ${version}\n`), 'Release default version drift');

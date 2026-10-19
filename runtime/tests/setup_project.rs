@@ -514,7 +514,7 @@ fn health_plan_rechecks_shared_executable_ownership_after_lock() {
     let source = source_fixture(&shared);
     install_with_hooks(
         &options,
-        &specgit::setup::HookOptions::default(),
+        &selection(&[specgit::setup::HookPurpose::Context], false),
         &f.root,
         &f.private,
         &source,
@@ -1495,7 +1495,25 @@ fn install(
 ) -> Result<Value, specgit::diagnostic::Diagnostic> {
     install_with_hooks(
         options,
-        &specgit::setup::HookOptions::default(),
+        &specgit::setup::HookOptions {
+            // These ownership/recovery fixtures explicitly exercise hook assets.
+            purposes: if !options.uninstall
+                && options.rollback.is_none()
+                && (options
+                    .agents
+                    .iter()
+                    .any(|agent| matches!(agent, Agent::Claude | Agent::Codex))
+                    || options.opencode_claude_hooks)
+            {
+                vec![
+                    specgit::setup::HookPurpose::Guard,
+                    specgit::setup::HookPurpose::Context,
+                ]
+            } else {
+                Vec::new()
+            },
+            opencode_async_rewake: false,
+        },
         &f.root,
         &f.private,
         &f.source,
@@ -1996,7 +2014,14 @@ fn source_executable_faults_are_rejected_before_any_writes() {
             }
         };
         let before = files(&f.base);
-        let error = project::install(&options, &f.root, &f.private, &source).unwrap_err();
+        let error = install_with_hooks(
+            &options,
+            &selection(&[specgit::setup::HookPurpose::Context], false),
+            &f.root,
+            &f.private,
+            &source,
+        )
+        .unwrap_err();
         match fault {
             "relative" => {
                 assert_eq!(error.code, Code::UnsafePath, "{fault}: {error}");
@@ -2385,16 +2410,28 @@ fn setup_rejects_shared_executable_from_a_linked_checkout() {
     let source = source_fixture(&linked);
     options.dry_run = true;
     let before = files(&f.base);
-    let error = project::install(&options, &f.root, &f.private, &source)
-        .err()
-        .unwrap();
+    let error = install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &source,
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.code, Code::InvalidInput);
     assert_eq!(files(&f.base), before);
     fs::remove_file(linked.join(".git")).unwrap();
     let before = files(&f.base);
-    let error = project::install(&options, &f.root, &f.private, &source)
-        .err()
-        .unwrap();
+    let error = install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &source,
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.code, Code::InvalidInput);
     assert_eq!(files(&f.base), before);
     assert!(install(&options, &f).is_ok());
@@ -3085,5 +3122,413 @@ fn canonical_windows_library_setup_keeps_git_metadata_within_selected_roots() {
         for (path, bytes) in owned {
             assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
         }
+    }
+}
+
+#[test]
+fn cli_named_hosts_require_explicit_hooks_and_preserve_recorded_choices() {
+    for (host, settings) in [
+        ("claude", ".claude/settings.json"),
+        ("codex", ".codex/hooks.json"),
+    ] {
+        let (f, _) = fixture(vec![]);
+        let before = files(&f.base);
+        let preview = cli(&f.root, &["--agent", host, "--dry-run"]);
+        assert_eq!(preview["ok"], true, "{preview}");
+        assert_eq!(
+            preview["evidence"]["hook_purposes"][host]["requested"],
+            json!([])
+        );
+        assert_eq!(
+            preview["evidence"]["hook_purposes"][host]["installed"],
+            json!([])
+        );
+        assert_eq!(files(&f.base), before);
+        assert_eq!(cli(&f.root, &["--agent", host])["ok"], true);
+        assert!(!f.root.join(settings).exists());
+        assert!(!f.root.join(".git/hooks/pre-commit").exists());
+        let context = cli(&f.root, &["--agent", host, "--hook-purpose", "context"]);
+        assert_eq!(
+            context["evidence"]["hook_purposes"][host]["installed"],
+            json!(["context"])
+        );
+        assert!(f.root.join(settings).exists());
+        assert!(!f.root.join(".git/hooks/pre-commit").exists());
+        let refresh = cli(&f.root, &["--agent", host]);
+        assert_eq!(
+            refresh["evidence"]["hook_purposes"][host]["installed"],
+            json!(["context"])
+        );
+    }
+}
+
+#[test]
+fn cli_removes_each_hook_purpose_without_removing_guidance_or_foreign_hooks() {
+    for first in ["guard", "context"] {
+        let (f, _) = fixture(vec![]);
+        fs::create_dir(f.root.join(".claude")).unwrap();
+        let foreign = json!({"env":{"MANUAL":"keep"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo manual"}]}]}});
+        fs::write(
+            f.root.join(".claude/settings.json"),
+            serde_json::to_vec(&foreign).unwrap(),
+        )
+        .unwrap();
+        let installed = cli(
+            &f.root,
+            &[
+                "--agent",
+                "claude",
+                "--hook-purpose",
+                "guard",
+                "--hook-purpose",
+                "context",
+            ],
+        );
+        assert_eq!(installed["ok"], true, "{installed}");
+        let before = files(&f.base);
+        let preview = cli(
+            &f.root,
+            &[
+                "--agent",
+                "claude",
+                "--remove-hook-purpose",
+                first,
+                "--dry-run",
+            ],
+        );
+        assert_eq!(preview["ok"], true, "{preview}");
+        assert_eq!(files(&f.base), before);
+        let removed = cli(
+            &f.root,
+            &["--agent", "claude", "--remove-hook-purpose", first],
+        );
+        assert_eq!(removed["ok"], true, "{removed}");
+        assert_eq!(
+            removed["evidence"]["hook_purposes"]["claude"]["removed"],
+            json!([first])
+        );
+        assert!(
+            f.root
+                .join(".agents/skills/specgit-native/SKILL.md")
+                .exists()
+        );
+        assert!(f.root.join("CLAUDE.md").exists());
+        assert_eq!(
+            f.root.join(".git/hooks/pre-commit").exists(),
+            first == "context"
+        );
+        let repeated = cli(&f.root, &["--remove-hook-purpose", first]);
+        assert_eq!(repeated["ok"], true, "{repeated}");
+        assert_eq!(
+            repeated["evidence"]["hook_purposes"]["claude"]["removal_status"],
+            "unchanged"
+        );
+        assert_eq!(repeated["evidence"]["transaction"]["changes"], 0);
+        let second = if first == "context" {
+            "guard"
+        } else {
+            "context"
+        };
+        let removed = cli(&f.root, &["--remove-hook-purpose", second]);
+        assert_eq!(removed["ok"], true, "{removed}");
+        let current: Value =
+            serde_json::from_slice(&fs::read(f.root.join(".claude/settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(current, foreign);
+        assert_eq!(
+            cli(&f.root, &[])["ok"],
+            true,
+            "receipt must remain consistent"
+        );
+    }
+}
+
+#[test]
+fn cli_hook_changes_target_only_selected_recorded_host() {
+    let (f, _) = fixture(vec![]);
+    assert_eq!(
+        cli(
+            &f.root,
+            &[
+                "--agent",
+                "claude",
+                "--agent",
+                "codex",
+                "--hook-purpose",
+                "context"
+            ]
+        )["ok"],
+        true
+    );
+    let codex = fs::read(f.root.join(".codex/hooks.json")).unwrap();
+    let result = cli(
+        &f.root,
+        &["--agent", "claude", "--remove-hook-purpose", "context"],
+    );
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(
+        result["evidence"]["hook_purposes"]["codex"]["installed"],
+        json!(["context"])
+    );
+    assert_eq!(fs::read(f.root.join(".codex/hooks.json")).unwrap(), codex);
+    let result = cli(&f.root, &["--agent", "claude", "--hook-purpose", "guard"]);
+    assert_eq!(
+        result["evidence"]["hook_purposes"]["codex"]["installed"],
+        json!(["context"])
+    );
+    for args in [
+        vec!["--remove-hook-purpose", "none"],
+        vec![
+            "--remove-hook-purpose",
+            "context",
+            "--remove-hook-purpose",
+            "context",
+        ],
+        vec!["--remove-hook-purpose", "guard", "--hook-purpose", "guard"],
+        vec!["--agent", "opencode", "--remove-hook-purpose", "context"],
+    ] {
+        let before = files(&f.base);
+        assert_eq!(cli(&f.root, &args)["ok"], false, "{args:?}");
+        assert_eq!(files(&f.base), before);
+    }
+}
+
+#[test]
+fn cli_guard_removal_retains_shared_sibling_consumer() {
+    let (f, _) = fixture(vec![]);
+    git(
+        &f.root,
+        &["worktree", "add", "--detach", "../linked", "HEAD"],
+    );
+    let sibling = f.base.join("linked");
+    for root in [&f.root, &sibling] {
+        let result = cli(root, &["--agent", "claude", "--hook-purpose", "guard"]);
+        assert_eq!(result["ok"], true, "{result}");
+    }
+    let removed = cli(&f.root, &["--remove-hook-purpose", "guard"]);
+    assert_eq!(removed["ok"], true, "{removed}");
+    assert!(f.root.join(".git/hooks/pre-commit").exists());
+    assert!(
+        removed["evidence"]["native_guard"]
+            .to_string()
+            .contains("retained"),
+        "{removed}"
+    );
+    assert_eq!(
+        cli(&sibling, &["--remove-hook-purpose", "guard"])["ok"],
+        true
+    );
+    assert!(!f.root.join(".git/hooks/pre-commit").exists());
+}
+
+#[test]
+fn cli_submodule_setup_guard_round_trip_has_no_self_dependency() {
+    let (f, _) = fixture(vec![]);
+    git(
+        &f.root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            f.root.to_str().unwrap(),
+            "lib",
+        ],
+    );
+    let submodule = f.root.join("lib");
+    let linked = f.base.join("submodule-linked");
+    git(
+        &submodule,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let siblings = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(specgit::config::worktree::siblings(
+            &Process::default(),
+            &submodule,
+        ))
+        .unwrap();
+    assert_eq!(siblings.len(), 1);
+    assert_eq!(siblings[0].root, linked);
+    let result = cli(&submodule, &["--agent", "codex", "--hook-purpose", "guard"]);
+    assert_eq!(result["ok"], true, "{result}");
+    assert!(
+        !submodule.join(".codex/hooks.json").exists(),
+        "guard selection must not add context hooks"
+    );
+    assert_eq!(cli(&submodule, &["--uninstall"])["ok"], true);
+    assert!(!submodule.join(".agents").exists());
+    assert!(!submodule.join(".codex").exists());
+}
+
+#[test]
+fn cli_project_asset_commands_reject_repository_location_overrides_without_writes() {
+    let (a, _) = fixture(vec![]);
+    let (b, _) = fixture(vec![]);
+    for (variable, value) in [
+        ("GIT_DIR", b.root.join(".git")),
+        ("GIT_WORK_TREE", b.root.clone()),
+        ("GIT_COMMON_DIR", b.root.join(".git")),
+    ] {
+        for operation in ["setup", "init", "remove", "migrate"] {
+            let before_a = files(&a.base);
+            let before_b = files(&b.base);
+            let output = executable::command()
+                .current_dir(&a.root)
+                .env(variable, &value)
+                .args([operation, "--json"])
+                .output()
+                .unwrap();
+            let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(result["ok"], false, "{variable} {operation}: {result}");
+            assert!(
+                result.to_string().contains("repository-location overrides"),
+                "{result}"
+            );
+            assert_eq!(files(&a.base), before_a);
+            assert_eq!(files(&b.base), before_b);
+        }
+    }
+}
+
+#[test]
+fn cli_last_uninstall_retires_exclusions_and_only_empty_created_directories() {
+    let (f, _) = fixture(vec![]);
+    git(
+        &f.root,
+        &["worktree", "add", "--detach", "../linked", "HEAD"],
+    );
+    let sibling = f.base.join("linked");
+    let exclude = f.root.join(".git/info/exclude");
+    let manual = b"# manual rule\n/user-data\n".to_vec();
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(&exclude, &manual).unwrap();
+    // This directory predates setup and must survive uninstall.
+    fs::create_dir(sibling.join(".agents")).unwrap();
+    for root in [&f.root, &sibling] {
+        assert_eq!(cli(root, &["--agent", "claude"])["ok"], true);
+    }
+    assert_eq!(cli(&f.root, &["--uninstall"])["ok"], true);
+    assert!(
+        fs::read_to_string(&exclude)
+            .unwrap()
+            .contains("specgit:local:v2:start")
+    );
+    assert!(!f.root.join(".agents").exists());
+    assert!(!f.root.join(".claude").exists());
+    assert_eq!(cli(&sibling, &["--uninstall"])["ok"], true);
+    assert_eq!(fs::read(&exclude).unwrap(), manual);
+    assert!(sibling.join(".agents").is_dir());
+    assert!(!sibling.join(".agents/skills").exists());
+    assert!(!sibling.join(".claude").exists());
+}
+
+#[test]
+fn cli_instruction_blocks_preserve_crlf_and_restore_original_bytes() {
+    for newline in ["\n", "\r\n"] {
+        let (f, _) = fixture(vec![]);
+        let path = f.root.join("CLAUDE.md");
+        let original = format!("# Manual{newline}keep this{newline}");
+        fs::write(&path, &original).unwrap();
+        assert_eq!(cli(&f.root, &["--agent", "claude"])["ok"], true);
+        let installed = fs::read_to_string(&path).unwrap();
+        if newline == "\r\n" {
+            assert!(!installed.replace("\r\n", "").contains('\n'));
+        }
+        assert_eq!(cli(&f.root, &[])["ok"], true);
+        assert_eq!(cli(&f.root, &["--uninstall"])["ok"], true);
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn cli_rollback_removes_only_directories_recorded_as_created() {
+    let (f, _) = fixture(vec![]);
+    let output = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.root)
+        .args(["setup", "--agent", "claude", "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_CRASH", "before-write:1")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(99));
+    let transactions = f.private.parent().unwrap().join("assets/transactions");
+    let id = fs::read_dir(transactions)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(cli(&f.root, &["--rollback", &id])["ok"], true);
+    assert!(!f.root.join(".agents").exists());
+    assert!(!f.root.join(".claude").exists());
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn cli_live_setup_transaction_is_lock_busy_instead_of_interrupted() {
+    use std::time::{Duration, Instant};
+    let (f, _) = fixture(vec![]);
+    let pause = f.base.join("pause");
+    fs::create_dir(&pause).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.root)
+        .args(["setup", "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", "before-write:0")
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", &pause)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !pause.join("ready").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(pause.join("ready").exists());
+    let output = cli(&f.root, &[]);
+    fs::write(pause.join("go"), b"go").unwrap();
+    let first = child.wait_with_output().unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+    assert_eq!(output["ok"], false, "{output}");
+    assert!(output.to_string().contains("lock_busy"), "{output}");
+    assert!(
+        !output.to_string().contains("requires recovery"),
+        "{output}"
+    );
+}
+
+#[test]
+fn cli_uninstall_preserves_user_recreated_directories_across_install_cycles() {
+    for replace_during_install in [false, true] {
+        let (f, _) = fixture(vec![]);
+        assert_eq!(cli(&f.root, &[])["ok"], true);
+        if !replace_during_install {
+            assert_eq!(cli(&f.root, &["--uninstall"])["ok"], true);
+        }
+        let directory = f.root.join(".agents/skills/specgit-native");
+        if f.root.join(".agents").exists() {
+            fs::remove_dir_all(f.root.join(".agents")).unwrap();
+        }
+        fs::create_dir_all(&directory).unwrap();
+        assert_eq!(cli(&f.root, &[])["ok"], true);
+        let uninstalled = cli(&f.root, &["--uninstall"]);
+        assert_eq!(uninstalled["ok"], true, "{uninstalled}");
+        assert!(
+            directory.is_dir(),
+            "later user directories must survive removal, replacement during install={replace_during_install}"
+        );
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
     }
 }

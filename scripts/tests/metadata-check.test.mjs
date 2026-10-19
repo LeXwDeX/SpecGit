@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { checkStableEntry } from '../documentation-check.mjs';
 import { checkRepositoryMetadata } from '../ci-metadata-check.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -125,4 +126,15 @@ test('malformed hooks configuration fails closed', () => {
 test('the real metadata script entry accepts the current repository', () => {
   assert.equal(execFileSync(process.execPath, [path.join(repositoryRoot, 'scripts/ci-metadata-check.mjs')],
     { cwd: repositoryRoot, encoding: 'utf8' }).includes('passed'), true);
+});
+
+test('stable instruction compatibility accepts only complete exact published blocks', () => {
+  const entries = ['runtime/assets/prompts/host-entry.md', 'runtime/tests/fixtures/host-entry-2.13.md'].map(file => readFileSync(path.join(repositoryRoot, file), 'utf8').trim());
+  const start = '<!-- specgit:project:v2:start -->', end = '<!-- specgit:project:v2:end -->';
+  for (const entry of entries) {
+    const block = `${start}\n## SpecGit 2\n\n${entry}\n${end}`;
+    checkStableEntry(`manual\n${block}\nmanual`, entries);
+    for (const bad of [block.replace(end, ''), block + end, start + block, block.replace(entry, 'arbitrary body'), entry + block.replace(entry, ''), `${end}\n${start}`]) assert.throws(() => checkStableEntry(bad, entries));
+  }
+  assert(entries[0].includes('/docs/agent-install.md'));
 });

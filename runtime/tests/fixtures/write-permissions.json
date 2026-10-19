@@ -16,7 +16,7 @@
   {"provider":"gitlab","name":"group_developer","fields":{"issues_enabled":true,"merge_requests_enabled":true,"permissions":{"project_access":{"access_level":10},"group_access":{"access_level":30}}},"issue":"supported","request":"supported"},
   {"provider":"gitlab","name":"project_developer","fields":{"issues_enabled":true,"merge_requests_enabled":true,"permissions":{"project_access":{"access_level":30},"group_access":{"access_level":10}}},"issue":"supported","request":"supported"},
   {"provider":"gitlab","name":"reporter","fields":{"issues_enabled":true,"merge_requests_enabled":true,"permissions":{"project_access":null,"group_access":{"access_level":20}}},"issue":"supported","request":"unsupported"},
-  {"provider":"gitlab","name":"no_role","fields":{"issues_enabled":true,"merge_requests_enabled":true,"permissions":{"project_access":null,"group_access":null}},"issue":"unsupported","request":"unsupported"},
+  {"provider":"gitlab","name":"null_memberships_unknown_effective_role","fields":{"issues_enabled":true,"merge_requests_enabled":true,"permissions":{"project_access":null,"group_access":null}},"issue":"unknown","request":"unknown"},
   {"provider":"gitlab","name":"disabled","fields":{"issues_enabled":false,"merge_requests_enabled":false,"permissions":{"project_access":{"access_level":40},"group_access":null}},"issue":"unsupported","request":"unsupported"},
   {"provider":"gitlab","name":"missing","fields":{},"issue":"unknown","request":"unknown"},
   {"provider":"gitlab","name":"malformed","fields":{"issues_enabled":true,"merge_requests_enabled":true,"permissions":{"project_access":{"access_level":"30"},"group_access":null}},"issue":"unknown","request":"unknown"},

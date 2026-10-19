@@ -28,22 +28,22 @@ specgit status --json
 v1 项目先执行[显式迁移](https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md)，不要使用已退役的 `init --force`、`finish`、`bind`。二进制替换不会完成项目迁移。
 
 仅按需添加实际使用的宿主。setup 仍会刷新所有已记录宿主，`--agent` 不会将影响限于该宿主。
-逐一审阅并报告资产变化，包括共享 Skill 刷新。自 2.4 起 setup 永久只支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，hooks 直接调用已安装的共享二进制，无需先做全局 setup；已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。以下为 Codex 示例，Claude 用 `--agent claude`，OpenCode 用 `--agent opencode`，通用 `.agents` 宿主用 `--agent generic`：
+逐一审阅并报告资产变化，包括共享 Skill 刷新。自 2.4 版本发布以来，setup 仅支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，hooks 直接调用已安装的共享二进制，无需先做全局 setup；已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。以下为 Codex 示例，Claude 用 `--agent claude`，OpenCode 用 `--agent opencode`，通用 `.agents` 宿主用 `--agent generic`：
 
 ```sh
-specgit setup --agent codex --dry-run --json
-specgit setup --agent codex --json
+specgit setup --agent codex --hook-purpose none --dry-run --json
+specgit setup --agent codex --hook-purpose none --json
 ```
 
 保留原有配置、受管块外手工指导和外部 hooks；所有权可信且边界完整唯一的 SpecGit 标准正文由 CLI 覆盖更新。受管理 hooks 仅提供 SessionStart 和 PreToolUse。不注册 PostToolUse、Stop 回调或空闲唤醒。若无法自动观察，使用有界 watch/inbox 或手动继续。不要把 Claude settings hooks 复制成未经验证的 OpenCode 集成。写入注册不证明上下文送达，需实际验证。
 
-`guard` 配置原生 commit/push 检查，`context` 提供两个受支持事件的上下文；`observe` 明确报告不支持，改用有界 watch/inbox。
-普通刷新省略用途以保留已有选择。显式用途作用于所有已记录及新选宿主，应处于当前任务范围内。
+新选宿主只安装项目指导和 Skill。要启用 hooks，显式添加 `--hook-purpose guard` 和/或 `--hook-purpose context`；用 `none` 保持新宿主不安装 hooks。`guard` 配置原生 commit/push 检查，`context` 提供两个受支持事件的上下文；`observe` 明确报告不支持，改用有界 watch/inbox。
+普通刷新省略用途以保留已有选择。显式用途作用于 `--agent` 指定宿主；省略 `--agent` 时作用于所有已记录宿主，并应处于当前任务范围内。
 `none` 不新增用途，保留有效用途和原生 Git guard；刷新仍会移除已退役的受管 PostToolUse/Stop 注册。宿主选择是叠加的。
-仅选择任务所需、真实能力支持的用途。选择性收据的降级限制与验证步骤见维护指南。
+仅选择任务所需、真实能力支持的用途。用 `--remove-hook-purpose context` 或 `--remove-hook-purpose guard` 可移除一个已记录用途并保留其他用途；可用 `--agent` 限定宿主，省略时作用于所有已记录宿主。`setup --uninstall` 会移除此 worktree 的全部已记录项目集成。选择性收据的降级限制与验证步骤见维护指南。
 
-从 2.3 升级：已有项目收据会在本地刷新为 2.4 格式（不再包含 `shared_root`），保留外部内容，不读取也不写入已退役的全局根目录。2.3 全局数据保持原样；2.4 不提供全局清理命令——确需清理时先备份，并在升级前用 2.3 CLI 精确清理自己名下的数据，切勿盲目删除。
+在 2.3 到 2.4 的迁移中，已有项目收据曾在本地刷新为不含 `shared_root` 的格式，保留外部内容，且不读取或写入已退役的全局根目录。由于 2.4 没有清理命令，2.3 全局数据被保留；确需清理时，应在升级前用 2.3 CLI 精确清理自己名下的数据，切勿盲目删除。
 
 仓库要求 Git 门禁时用 `specgit guard --install --json`，一次安装两个受管理区块并保留现有 hooks；`guard --uninstall` 只移除这些区块。
 
-`setup --uninstall` 只移除当前 worktree 记录的项目级 agent 资产（2.4 没有可卸载的全局用户级 setup）；`init --rollback <transaction>` 只回滚该项目事务。2.2 没有通用的项目 remove 命令；2.3 引入 `specgit remove`（预览、按摘要应用、离线回滚），用于整体移除一个项目的本地集成。见[移除边界](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback)。
+`setup --uninstall` 只移除当前 worktree 记录的项目级 agent 资产（2.4 版本没有全局用户级 setup）；`init --rollback <transaction>` 只回滚该项目事务。2.2 没有通用的项目 remove 命令；2.3 引入 `specgit remove`（预览、按摘要应用、离线回滚），用于整体移除一个项目的本地集成。见[移除边界](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md#removal-and-rollback)。

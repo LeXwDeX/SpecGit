@@ -133,16 +133,42 @@ fn install(
     private: &Path,
     source: &Path,
 ) -> Result<Value, specgit::diagnostic::Diagnostic> {
+    install_with_hooks(options, &HookOptions::default(), root, private, source)
+}
+fn install_with_hooks(
+    options: &project::Options,
+    hooks: &HookOptions,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Value, specgit::diagnostic::Diagnostic> {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(project::install_with_context(
             options,
-            &HookOptions::default(),
+            hooks,
             root,
             private,
             source,
             &Process::default(),
         ))
+}
+fn install_custom_context_hooks(
+    options: &project::Options,
+    root: &Path,
+    private: &Path,
+    source: &Path,
+) -> Result<Value, specgit::diagnostic::Diagnostic> {
+    install_with_hooks(
+        options,
+        &HookOptions {
+            purposes: vec![specgit::setup::HookPurpose::Context],
+            ..HookOptions::default()
+        },
+        root,
+        private,
+        source,
+    )
 }
 fn value(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
@@ -224,7 +250,7 @@ fn custom_hooks_reject_host_expansion_tokens_before_asset_writes() {
         let reserved_source = directory.join(source.file_name().unwrap());
         fs::copy(&source, &reserved_source).unwrap();
         assert!(
-            install(
+            install_custom_context_hooks(
                 &options(vec![Agent::Opencode], true),
                 &root,
                 &private,
@@ -248,11 +274,11 @@ fn custom_hooks_are_project_owned_literal_commands_and_preserve_foreign_events()
     let mut opts = options(vec![Agent::Opencode], true);
     opts.dry_run = true;
     let before = fs::read(&path).unwrap();
-    install(&opts, &root, &private, &source).unwrap();
+    install_custom_context_hooks(&opts, &root, &private, &source).unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(!private.exists());
     opts.dry_run = false;
-    let result = install(&opts, &root, &private, &source).unwrap();
+    let result = install_custom_context_hooks(&opts, &root, &private, &source).unwrap();
     assert_eq!(result["opencode_claude_hooks"], true);
     assert_eq!(result["host_delivery"]["imported_event"], "not_checked");
     let installed = value(&path);
@@ -296,7 +322,7 @@ fn custom_hooks_are_project_owned_literal_commands_and_preserve_foreign_events()
 #[test]
 fn custom_host_protocol_delivers_current_checkpoint_without_gating_edits() {
     let (_temp, root, private, source) = fixture();
-    install(
+    install_custom_context_hooks(
         &options(vec![Agent::Opencode], true),
         &root,
         &private,
@@ -352,7 +378,7 @@ fn custom_host_protocol_delivers_current_checkpoint_without_gating_edits() {
 fn patch_text_and_move_destinations_do_not_gate_host_edits() {
     let (_temp, root, private, source) = fixture();
     let (_other_temp, other, _, _) = fixture();
-    install(
+    install_custom_context_hooks(
         &options(vec![Agent::Opencode], true),
         &root,
         &private,
@@ -386,7 +412,17 @@ fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
     for refresh in [false, true] {
         let (temp, root, private, source) = fixture();
         let mut opts = options(vec![Agent::Claude, Agent::Opencode], false);
-        install(&opts, &root, &private, &source).unwrap();
+        install_with_hooks(
+            &opts,
+            &HookOptions {
+                purposes: vec![specgit::setup::HookPurpose::Context],
+                ..HookOptions::default()
+            },
+            &root,
+            &private,
+            &source,
+        )
+        .unwrap();
         let receipt_path = private.join("ownership.json");
         let mut receipt = value(&receipt_path);
         let global = temp
@@ -488,7 +524,7 @@ fn custom_mode_rejects_foreign_identical_edited_and_duplicate_groups_without_mut
     for fault in ["identical", "edited", "duplicate"] {
         let (_temp, root, private, source) = fixture();
         let mut opts = options(vec![Agent::Opencode], true);
-        install(&opts, &root, &private, &source).unwrap();
+        install_custom_context_hooks(&opts, &root, &private, &source).unwrap();
         let path = root.join(".opencode/hooks.json");
         let mut hooks = value(&path);
         match fault {

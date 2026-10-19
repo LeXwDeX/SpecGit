@@ -288,3 +288,109 @@ fn unsupported_native_closing_forms_cannot_be_erased_by_body_replacement() {
         }
     }
 }
+
+#[test]
+fn branch_lookup_prefers_open_and_only_adopts_terminal_requests_at_local_head() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        let selection = f.root.join(".git/specgit-v2/selection.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
+        saved["request"] = json!(null);
+        saved["request_write_started"] = json!(false);
+        saved["request_intent"] = json!(null);
+        fs::write(&selection, serde_json::to_vec(&saved).unwrap()).unwrap();
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+        });
+        let preview = f.run(&["pr", "--dry-run"]);
+        assert_eq!(preview["evidence"]["create_request"], false, "{preview}");
+        f.edit(|s| {
+            s["requests"][0]["head"]["sha"] = json!("b".repeat(40));
+            s["requests"][0]["sha"] = json!("b".repeat(40));
+        });
+        let preview = f.run(&["pr", "--dry-run"]);
+        assert_eq!(preview["evidence"]["create_request"], true, "{preview}");
+        let status = f.run(&["pr", "--status"]);
+        assert_ne!(status["status"], "merged", "{status}");
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
+        saved["request"] = json!(null);
+        saved["request_write_started"] = json!(false);
+        saved["request_intent"] = json!(null);
+        fs::write(&selection, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let preview = f.run(&["pr", "--dry-run"]);
+        assert_eq!(preview["evidence"]["request"]["id"], 42, "{preview}");
+        assert_eq!(preview["evidence"]["create_request"], false);
+    }
+}
+
+#[test]
+fn branch_lookup_ignores_fork_mrs_and_deleted_github_forks() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        let selection = f.root.join(".git/specgit-v2/selection.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
+        saved["request"] = json!(null);
+        saved["request_write_started"] = json!(false);
+        saved["request_intent"] = json!(null);
+        fs::write(&selection, serde_json::to_vec(&saved).unwrap()).unwrap();
+        f.edit(|s| {
+            let mut fork = s["requests"][0].clone();
+            fork["number"] = json!(99);
+            fork["iid"] = json!(99);
+            if provider == "gitlab" {
+                fork["source_project_id"] = json!(99);
+            } else {
+                fork["head"]["repo"] = json!(null);
+            }
+            s["requests"].as_array_mut().unwrap().push(fork);
+        });
+        let preview = f.run(&["pr", "--dry-run"]);
+        assert_eq!(preview["evidence"]["request"]["id"], 41, "{preview}");
+        f.edit(|s| {
+            s["requests"].as_array_mut().unwrap().remove(0);
+        });
+        let preview = f.run(&["pr", "--dry-run"]);
+        assert_eq!(preview["evidence"]["create_request"], true, "{preview}");
+    }
+}
+
+#[test]
+fn github_existing_request_labels_keep_native_case_without_duplicate_writes() {
+    let f = fixture("github", 1);
+    f.edit(|s| s["labels"][0]["name"] = json!("Kind::Feat"));
+    let result = f.run(&["pr"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    f.edit(|s| s["requests"][0]["labels"][0]["name"] = json!("Kind::Feat"));
+    let writes = f.writes();
+    let result = f.run(&["pr"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    assert_eq!(
+        result["evidence"]["request"]["labels"][0], "Kind::Feat",
+        "{result}"
+    );
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn gitlab_implement_references_are_adopted_and_preserved() {
+    let f = fixture("gitlab", 1);
+    assert_eq!(f.run(&["pr"])["exit"], 0);
+    f.edit(|s| s["requests"][0]["description"] = json!("Implements #1"));
+    let result = f.run(&["pr", "--update-references", "--dry-run"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    assert_eq!(
+        result["evidence"]["intent"]["body"], "Implements #1",
+        "{result}"
+    );
+}

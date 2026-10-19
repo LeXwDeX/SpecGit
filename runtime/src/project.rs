@@ -35,6 +35,23 @@ fn trim_line(bytes: Vec<u8>) -> Result<String, Diagnostic> {
     }
     Ok(s)
 }
+/// Project asset writes require the repository rooted at the selected checkout.
+/// Preserve Git's environment semantics for read-only probes and native guards.
+pub fn require_local_repository_environment() -> Result<(), Diagnostic> {
+    if ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+    {
+        return Err(Diagnostic::new(
+            Code::InvalidInput,
+            "project_environment",
+            "Project asset operations do not support GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR overrides.",
+            "Run the operation from its checkout without repository-location overrides; keep Git hook environment intact for guard.",
+        ));
+    }
+    Ok(())
+}
+
 pub async fn git(process: &Process, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
     let mut request =
         Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied());

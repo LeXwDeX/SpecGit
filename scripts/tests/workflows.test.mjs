@@ -73,3 +73,18 @@ test('CI and release use GitHub-hosted native runners for all platforms', () => 
     assert(check.run.includes('test "$RUNNER_ARCH" = ARM64'));
   }
 });
+
+test('release checks precede signing and scheduled Node audits enforce failures', () => {
+  const doc = parse(release);
+  assert.equal(doc.jobs.assemble.permissions.checks, 'read');
+  const steps = doc.jobs.assemble.steps;
+  const check = steps.findIndex(step => step.run?.endsWith('--verify-source'));
+  const sign = steps.findIndex(step => step.run?.includes('cosign sign-blob'));
+  assert(check >= 0 && check < sign);
+  assert.throws(() => assertReleaseActorCredentials(release.replace('      checks: read\n', ''), 'missing checks permission'));
+  assert.throws(() => assertReleaseActorCredentials(release.replace('--verify-source', '--preflight'), 'missing source gate'));
+  const security = parse(workflow('security.yml'));
+  const audits = Object.values(security.jobs).flatMap(job => job.steps ?? []).filter(step => step.run?.includes('pnpm audit'));
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]['continue-on-error'], "${{ github.event_name == 'pull_request' }}");
+});
