@@ -55,7 +55,9 @@ read back the merged request plus every associated Issue. A successful observati
 is not delivery completion.
 
 Merging does not authorize publication. The explicitly dispatched Release workflow
-builds all three platforms from main, signs SHA256SUMS with the trusted workflow
+builds all three platforms from main, requires successful `Required verification` and
+`SpecGit Acceptance` checks on that exact source SHA before signing and again before
+publication, then signs SHA256SUMS with the trusted workflow
 identity, verifies the signature and uploaded bytes, and preserves immutable
 releases. See the [native release procedure](../runtime/distribution/README.md).
 

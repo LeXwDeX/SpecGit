@@ -366,3 +366,41 @@ fn schema_publishes_option_requirements_and_the_groups_they_name() {
         );
     }
 }
+
+#[test]
+fn init_check_visible_alias_is_published_and_accepted_by_the_real_cli() {
+    let schema_out = executable::command()
+        .args(["--schema", "--json"])
+        .output()
+        .unwrap();
+    assert!(schema_out.status.success());
+    let schema: serde_json::Value = serde_json::from_slice(&schema_out.stdout).unwrap();
+    let init = schema["evidence"]["command"]["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|command| command["name"] == "init")
+        .unwrap();
+    let inspect = init["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|argument| argument["long"] == "inspect")
+        .unwrap();
+    assert_eq!(inspect["aliases"], serde_json::json!(["check"]));
+
+    let temp = tempfile::tempdir().unwrap();
+    let output = executable::command()
+        .current_dir(temp.path())
+        .args(["init", "--check", "--json"])
+        .output()
+        .unwrap();
+    assert_ne!(
+        output.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["operation"], "init");
+}

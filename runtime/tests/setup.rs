@@ -119,7 +119,25 @@ fn install(options: &project::Options, f: &Fixture) -> Result<Value, Diagnostic>
         .unwrap()
         .block_on(project::install_with_context(
             options,
-            &specgit::setup::HookOptions::default(),
+            &specgit::setup::HookOptions {
+                // These ownership/recovery fixtures explicitly exercise hook assets.
+                purposes: if !options.uninstall
+                    && options.rollback.is_none()
+                    && (options
+                        .agents
+                        .iter()
+                        .any(|agent| matches!(agent, Agent::Claude | Agent::Codex))
+                        || options.opencode_claude_hooks)
+                {
+                    vec![
+                        specgit::setup::HookPurpose::Guard,
+                        specgit::setup::HookPurpose::Context,
+                    ]
+                } else {
+                    Vec::new()
+                },
+                opencode_async_rewake: false,
+            },
             &f.root,
             &f.private,
             &f.source,

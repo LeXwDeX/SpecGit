@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { requireMain, verifyBuildRun } from './publish.mjs';
+import { requireMain, requireChecks, verifyBuildRun } from './publish.mjs';
 
 const source = 'a'.repeat(40);
 const run = { id: 123, head_sha: source, head_branch: 'main', head_repository: { full_name: 'LeXwDeX/SpecGit' }, repository: { full_name: 'LeXwDeX/SpecGit' }, path: '.github/workflows/release-prepare.yml', event: 'workflow_dispatch', status: 'completed', conclusion: 'success' };
@@ -50,5 +50,24 @@ test('active publication rejects mismatched hosted labels and self-hosted platfo
     assert.throws(() => verifyBuildRun(active, source, { activeRun: '123',
       jobs: jobs.map((job, i) => i === index ? { ...job, labels } : job),
     }), /three successful/);
+  }
+});
+
+const greenChecks = () => ['Required verification', 'SpecGit Acceptance'].map((name, id) => ({ id: id + 1, name, head_sha: source, app: { slug: 'github-actions' }, status: 'completed', conclusion: 'success' }));
+test('exact source gates require complete paginated current successful checks', () => {
+  const checks = greenChecks();
+  requireChecks(source, (route, args) => {
+    assert(route.includes(`/commits/${source}/check-runs?filter=latest&per_page=100`));
+    assert.deepEqual(args, ['--paginate', '--slurp']);
+    return checks.map(check => ({ total_count: 2, check_runs: [check] }));
+  });
+  for (const rows of [[], checks.slice(1), [...checks, checks[0]],
+    ...['failure', 'cancelled', 'skipped', null].map(conclusion => checks.map((c, i) => i ? c : { ...c, conclusion })),
+    checks.map((c, i) => i ? c : { ...c, status: 'in_progress' }),
+    checks.map((c, i) => i ? c : { ...c, head_sha: 'b'.repeat(40) }),
+    checks.map((c, i) => i ? c : { ...c, app: { slug: 'untrusted' } }),
+  ]) assert.throws(() => requireChecks(source, () => [{ total_count: rows.length, check_runs: rows }]), /verification|Acceptance|pagination/);
+  for (const pages of [[], {}, [{ total_count: 3, check_runs: checks }], [{ total_count: 2, check_runs: [checks[0]] }, { total_count: 1, check_runs: [checks[1]] }], [{ check_runs: checks }]]) {
+    assert.throws(() => requireChecks(source, () => pages), /pagination/);
   }
 });

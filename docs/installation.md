@@ -1,9 +1,11 @@
-# Installation
+# Agent reference: release asset verification
 
-To have an agent install and initialize SpecGit, use the [agent installation guide](agent-install.md).
+The [agent installation guide](agent-install.md) is the operational procedure for
+installing SpecGit through the coding agent. This page records the supported release
+assets and signature/SHA-256 verification contract; it is not an end-user manual install path.
 
-GitHub Releases are the only supported distribution channel. Download from the
-[latest stable Release](https://github.com/LeXwDeX/SpecGit/releases/latest).
+GitHub Releases are the only supported distribution channel. The latest stable
+Release is listed at [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest).
 
 | Platform | Download |
 | --- | --- |
@@ -11,45 +13,33 @@ GitHub Releases are the only supported distribution channel. Download from the
 | Linux x64 glibc | `specgit-<version>-linux-x64-gnu.zip` |
 | Windows x64 | `specgit-<version>-win32-x64.zip` |
 
-Use the version without the tag's `v` prefix. Download the matching ZIP,
-`SHA256SUMS` and `SHA256SUMS.sigstore.json` from that same Release. Older Releases
-with only bare executables do not meet this signed-package contract.
+The agent selects the matching ZIP, `SHA256SUMS` and
+`SHA256SUMS.sigstore.json` from one Release, using the version without its `v` tag.
+Older Releases with only bare executables do not meet this signed-package contract.
 
-Install [Cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-(3.1.3 or compatible newer), then verify the manifest:
+The required manifest verification uses [Cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+(3.1.3 or compatible newer):
 
 ```sh
 cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' SHA256SUMS
 ```
 
-After verification succeeds, calculate the ZIP's SHA-256 using
+After successful signature verification, the agent calculates the ZIP SHA-256 using
 `shasum -a 256 <file.zip>` on macOS, `sha256sum <file.zip>` on Linux or
 `Get-FileHash <file.zip> -Algorithm SHA256` in PowerShell. Compare it with the exact
 filename's single row in the signed manifest. Stop on missing or mismatched
 signatures or hashes; do not disable verification.
 
-Extract with `unzip <file.zip> -d <fresh-directory>` or
-`Expand-Archive -LiteralPath <file.zip> -DestinationPath <fresh-directory>`.
-The ZIP contains `specgit` (`specgit.exe` on Windows). Back up any existing
-installation and copy the executable into a user-owned directory on PATH.
-Run `chmod +x specgit` on macOS/Linux. Confirm the installed executable hash equals
-the extracted executable hash; it is different from the archive hash.
+The archive contains `specgit` (`specgit.exe` on Windows). The agent preserves any
+existing executable, installs the binary in a user-owned PATH directory, sets Unix
+execute permission, and confirms the installed executable hash matches the extracted
+binary hash. This hash differs from the ZIP archive hash.
 
-Installation does not require Node.js, npm or a Rust compiler. Git and an
-already authenticated `gh` or `glab` session are required for repository work.
-Unsupported platform binaries are not supplied by npm as a fallback.
-
-```sh
-specgit --human --version
-specgit --help
-specgit --schema
-specgit status --json
-specgit doctor --provider github --json
-```
-
-Help/schema checks are offline; they do not prove forge access. `doctor` probes
-read-only native capabilities and authentication in the target repository. Use
-`--provider gitlab` and the appropriate `--api-host` for GitLab.
+Installation needs no Node.js, npm or Rust compiler. Git and an authenticated
+`gh` or `glab` session are required for repository work. Unsupported platform
+binaries are not supplied by npm as a fallback. The agent verifies the selected
+executable with `--version`, `--help` and `--schema`; help/schema are offline and
+do not prove forge access. `doctor` reads native capabilities and authentication.
 
 ## Upgrade and refresh
 
@@ -58,7 +48,7 @@ is the canonical Agent procedure, with English/Chinese copyable requests. It
 separates binary update from project refresh, classifies missing declarations and
 legacy/conflicting assets, and preserves receipts, checkpoints and host choices.
 Do not replay first installation or delete private state to repair a project.
-In 2.9.0, refresh updates recorded assets and complete unique managed blocks even
+Since 2.9.0, refresh updates recorded assets and complete unique managed blocks even
 when their body text was edited; malformed/duplicate markers or unknown ownership
 remain conflicts. Follow the maintenance guide's final status, doctor, readback and
 dry-run checks after all updates.
@@ -77,14 +67,13 @@ release without replacement. The default replaces only the running executable,
 keeps `specgit.backup-<previous-version>` beside it and reports that path; move
 the backup back to roll back. Use `--version <x.y.z>` for an exact release,
 including a deliberate downgrade. See [self-update](../runtime/REFERENCE.md#self-update).
-The manual download, verification and replacement above remain the fallback,
-for example for 2.5 and older executables or a directory you cannot write.
+For installed users, `specgit update` is the upgrade entry point; the agent guide
+covers legacy executable cases and permissions that block an update.
 
 After CLI upgrades, verify the executable and its selected PATH first:
 `command -v specgit` on Unix or `Get-Command specgit` in PowerShell. An older npm
-shim can otherwise continue selecting the retired CLI. For a manual upgrade, back
-up the previous executable before replacing it; restore that file to roll back
-the local upgrade.
+shim can otherwise continue selecting the retired CLI. The agent preserves the previous executable before any explicit replacement and
+can restore that backup to roll back the local upgrade.
 
 After installing or upgrading the shared CLI, use the [agent installation guide](agent-install.md#4-choose-project-integration-by-capability)
 to discover host constraints and choose project integration. The catalog is
@@ -108,9 +97,13 @@ For a new project, initialize its required declaration with `init` before setup.
 Setup can write project agent assets without a declaration, but that alone does
 not fully initialize the project. The new-project setup default recommends the
 shared Skill and stable guidance entry point without installing agent hooks.
-Existing projects follow the maintenance flow and refresh their recorded
-integration. Review each preview before applying. Add SessionStart or PreToolUse
-context delivery only when supported by the installed CLI and host; in 2.13,
+Selecting a new host with `--agent` adds its guidance and Skill only. Explicitly
+pass `--hook-purpose guard` and/or `--hook-purpose context` to add hooks; omitting
+purposes on refresh preserves existing choices. Use `--remove-hook-purpose guard`
+or `--remove-hook-purpose context` to remove one recorded purpose while keeping
+the rest. The selector affects `--agent` hosts, or all recorded hosts when omitted.
+Existing projects follow the maintenance flow and refresh their recorded integration. Review each preview before applying. Add SessionStart or PreToolUse
+context delivery only when supported by the installed CLI and host; as of the 2.13 release,
 PostToolUse, Stop and idle-wake integration are unsupported. Preview Git guard
 installation separately with `specgit guard --install --dry-run --json` when
 needed by the project. If policy requires a Git guard, its absence blocks the
@@ -125,10 +118,10 @@ specgit doctor --provider github --json
 Read back the generated Skill and guidance, then repeat the same dry-run. Written
 files do not prove host loading; use the documented host trust flow and verify
 actual context delivery. Verify allow/deny behavior for Git guard only.
-From 2.4 on, setup is permanently project-only (`--scope project` is the
-default and only scope). In 2.13, refreshing a consistent legacy project receipt
-migrates it to v4 locally without `shared_root` and without reading or writing
-the retired global root. Use CLI 2.13 or newer after that migration.
+Since the 2.4 release, setup has been permanently project-only (`--scope project` is the
+default and only scope). CLI 2.13 introduced local migration of consistent legacy
+receipts to v4 without `shared_root` or access to the retired global root; current
+CLI versions retain that migration and recovery support.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.
 For a v1 project, follow the [migration guide](migration-v2.md): prepare a complete
 v2 declaration, inspect `specgit migrate --config-file <file> --json`, resolve old
@@ -178,8 +171,8 @@ or checkpoint) remains is not treated as uninitialized: Git guard fails closed,
 host hooks offer recovery context, and `init --check` reports its `private_state`
 without claiming `initial_adoption`, and `remove` in a sibling still counts it as
 a consumer of shared assets. Project `setup` writes documented checkout assets
-and keeps its receipt under that worktree's Git directory; 2.4 has no global
-setup assets.
+and keeps its receipt under that worktree's Git directory; the 2.4 release
+removed global setup assets.
 
 ## Removal and rollback
 
@@ -203,16 +196,17 @@ removes independently owned Git-hook blocks only when no active consumer needs
 them; otherwise it retains the shared blocks and receipt. Setup-owned guard
 blocks remain under setup ownership. `guard --install` in a worktree whose shared
 hooks another worktree owns names that owner instead of changing the hooks.
-SpecGit 2.4 is permanently project-only: `setup --uninstall` removes this
-worktree's recorded project agent assets. Setup-owned guard blocks are retained
+Since the 2.4 release, setup has been project-only: `setup --uninstall` removes this
+worktree's recorded project agent assets. `setup --remove-hook-purpose guard`
+and `setup --remove-hook-purpose context` remove only the selected recorded
+purpose, preserving the other purpose and unrelated host entries. Setup-owned guard blocks are retained
 while an active setup or sibling worktree needs them, and independently owned
 guard blocks remain outside setup's uninstall scope. When a setup owner retires,
 remaining guard ownership and recovery evidence stay in shared Git metadata, so
 pruning that worktree does not prevent the last setup consumer from cleaning up.
-Existing 2.3 global data is
-preserved; 2.4 ships no global cleanup command. If that data must be removed,
-back it up first and use the 2.3 CLI's exact owned cleanup before upgrading —
-never a blind delete. Preserve recovery records and foreign content.
+For a 2.3-to-2.4 migration, existing global data remained preserved because the
+2.4 CLI had no cleanup command. Required cleanup used the 2.3 CLI's exact owned
+cleanup before upgrading; never delete it blindly. Preserve recovery records and foreign content.
 
 A binary rollback restores the previously backed-up executable. It does not undo
 project migration or host asset refreshes; assess those recorded transactions

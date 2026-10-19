@@ -214,3 +214,48 @@ fn ordinary_closing_verbs_are_not_issue_associations() {
         );
     }
 }
+
+#[test]
+fn code_comment_markers_do_not_hide_real_closing_references() {
+    for body in [
+        "```\n<!--\n```\n\nCloses #5\n",
+        "~~~html\n<!--\n~~~\nCloses #5",
+        "```html <!--\ncode\n```\nCloses #5",
+        "`<!--`\nCloses #5",
+        "``a ` <!-- b``\nCloses #5",
+        "<!-- outside\n```\nCloses #6\n```\n-->\nCloses #5",
+    ] {
+        assert_eq!(
+            spec::references(body).unwrap(),
+            [5].into_iter().collect(),
+            "{body}"
+        );
+        assert!(spec::with_references(body, &[5]).is_ok(), "{body}");
+    }
+    assert!(spec::references("<!--\nCloses #5").unwrap().is_empty());
+}
+
+#[test]
+fn closing_keywords_follow_provider_defaults() {
+    use specgit::identity::Provider;
+    for keyword in ["Implement", "Implements", "Implemented", "Implementing"] {
+        let body = format!("{keyword} #5");
+        assert_eq!(
+            spec::references_for(Provider::Gitlab, &body).unwrap(),
+            [5].into_iter().collect()
+        );
+        assert!(
+            spec::references_for(Provider::Github, &body)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            spec::with_references_for(Provider::Gitlab, &body, &[5]).unwrap(),
+            body
+        );
+        assert!(
+            spec::references_for(Provider::Gitlab, &format!("{keyword} other/project#5")).is_err()
+        );
+    }
+    assert!(spec::references("Implements #5").unwrap().is_empty());
+}

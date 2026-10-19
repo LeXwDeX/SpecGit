@@ -144,7 +144,7 @@ fn baseline_commands() -> Vec<InstallationCommand> {
         command(
             &["specgit", "setup", "--json"],
             CommandMode::Apply,
-            "安装或刷新受管 shared_baseline；新安装不添加 hooks，刷新保留已记录选择；同时维护所需私有状态和精确本地排除。",
+            "安装或刷新受管 shared_baseline；新安装（含 --agent）不添加 hooks；须显式 --hook-purpose guard 或 context，刷新保留已记录选择；同时维护所需私有状态和精确本地排除。",
             false,
         ),
         command(
@@ -162,6 +162,69 @@ fn baseline_lifecycle() -> Lifecycle {
         remove: "先 specgit setup --uninstall --dry-run，再显式 specgit setup --uninstall；移除本 worktree 全部已记录 integration，不能按本清单 capability 独立卸载。保留后续编辑与共享消费者仍需的资产。",
         rollback: "specgit setup --rollback <transaction> 按原生事务证据恢复；内容、权限或共享消费者冲突须先解决。",
     }
+}
+
+fn setup_hook_commands(purpose: &'static str) -> Vec<InstallationCommand> {
+    vec![
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--hook-purpose",
+                purpose,
+                "--dry-run",
+                "--json",
+            ],
+            CommandMode::Preview,
+            "只读原生 hook 安装计划；<agent> 替换为 claude 或 codex。",
+            false,
+        ),
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--hook-purpose",
+                purpose,
+                "--json",
+            ],
+            CommandMode::Apply,
+            "显式安装所选宿主的受管 hook；<agent> 替换为 claude 或 codex。",
+            false,
+        ),
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--remove-hook-purpose",
+                purpose,
+                "--dry-run",
+                "--json",
+            ],
+            CommandMode::Preview,
+            "只读单项移除计划；保留其他 purpose、指导和共享消费者。",
+            false,
+        ),
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--remove-hook-purpose",
+                purpose,
+                "--json",
+            ],
+            CommandMode::Apply,
+            "仅移除所选宿主的受管 purpose；共享 guard 仍有消费者时保留。",
+            false,
+        ),
+    ]
 }
 
 fn host_item(id: InstallationId, event: &'static str, purpose: &'static str) -> InstallationItem {
@@ -184,12 +247,16 @@ fn host_item(id: InstallationId, event: &'static str, purpose: &'static str) -> 
             InstallationId::ProjectSkill,
             InstallationId::InstructionEntry,
         ],
-        commands: vec![command(
+        commands: {
+            let mut commands = setup_hook_commands("context");
+            commands.push(command(
             &["specgit", "hook", "--event", event],
             CommandMode::Invoke,
             "消费宿主 stdin JSON 并返回原生事件协议；按需写本 worktree hook-context 去重状态；不执行 checkpoint 强制检查，不写平台。",
             false,
-        )],
+        ));
+            commands
+        },
         protocol: "stdin JSON 上限 1 MiB、读取限时 2 秒；普通事件处理限时 2.5 秒。输出使用已安装原生事件契约，不是普通 report；退出码与响应须查 hook --help、--schema 和原生参考。",
         verification: Verification {
             written: "回读事件配置和绝对 CLI 路径；Agent 记录自定义文件及维护责任。",
@@ -198,8 +265,8 @@ fn host_item(id: InstallationId, event: &'static str, purpose: &'static str) -> 
         },
         fallback: "宿主不支持时，Agent 在新会话、压缩或恢复后按需重读固定 Skill 和项目指导，并手动执行相关命令。",
         lifecycle: Lifecycle {
-            refresh: "Agent 维护自定义映射；原生 setup 只刷新其已有收据证明的资产。",
-            remove: "Agent 按自身记录删除自定义胶水；原生 setup --uninstall 只移除自身受管资产，保留其他 hooks。",
+            refresh: "原生 setup --agent <agent> --hook-purpose context 安装或刷新受管上下文事件；自定义映射由 Agent 维护。",
+            remove: "setup --agent <agent> --remove-hook-purpose context 单独移除受管上下文事件，保留其他目的和指导；自定义胶水由 Agent 按自身记录删除。",
             rollback: "自定义胶水由 Agent 依据记录恢复；SpecGit 事务不管理任意宿主路径。",
         },
     }
@@ -279,12 +346,16 @@ pub fn catalog() -> InstallationCatalog {
             recommendations: vec!["先 preview；保持已有 shell hook 正文和第三方 hooks；由原生计划核实当前所有者、共享保留记录和消费者后维护。"],
             conditions: vec!["共享 CLI 可执行；真实 Git 操作会调用有效 hooks。", "路径、收据、内容和权限符合原生计划；不支持的脚本或未知所有权冲突须先解决。"],
             depends_on: vec![InstallationId::PrivateState],
-            commands: vec![
+            commands: {
+                let mut commands = setup_hook_commands("guard");
+                commands.extend([
                 command(&["specgit", "guard", "--install", "--dry-run", "--json"], CommandMode::Preview, "只读安装计划与共享消费者信息。", false),
                 command(&["specgit", "guard", "--install", "--json"], CommandMode::Apply, "写受管 Git hook 块、worktree 收据与资产事务。", false),
                 command(&["specgit", "guard", "--uninstall", "--dry-run", "--json"], CommandMode::Preview, "只读卸载计划；有共享消费者时报告保留。", false),
                 command(&["specgit", "guard", "--uninstall", "--json"], CommandMode::Apply, "卸载自身受管块；共享消费者仍依赖时保留块和收据。", false),
-            ],
+                ]);
+                commands
+            },
             protocol: "由 Git 调用共享 CLI guard --stage；pre-push 使用 Git ref 更新 stdin。使用实际 guard 契约与退出码；不执行平台合并或关闭 Issue。",
             verification: Verification {
                 written: "回读有效 hook_root、两个 hook、当前 worktree 或固定共享目录的 guard 收据及 doctor 本地证据。",
@@ -293,8 +364,8 @@ pub fn catalog() -> InstallationCatalog {
             },
             fallback: "未安装或未触发时由 Agent 在相关 Git 操作前手动检查 Issue；若项目明确要求 guard，须完成安装与真实验证，提示词不能代替该验收。guard 不构成通用文件写入沙箱。",
             lifecycle: Lifecycle {
-                refresh: "guard --install 在核实所有权后刷新；apply 加锁并复核计划快照。",
-                remove: "guard --uninstall 保留人工正文、第三方 hook 与仍被 sibling 消费的共享块；退役 setup guard 的共享保留记录由最后消费者的 setup 卸载清理。",
+                refresh: "独立 guard 用 guard --install；setup 管理的 guard 用 setup --agent <agent> --hook-purpose guard；均核实所有权、加锁并复核计划快照。",
+                remove: "独立 guard 用 guard --uninstall；setup 管理的 guard 用 setup --agent <agent> --remove-hook-purpose guard。保留人工正文、第三方 hook 与仍被 sibling 消费的共享块；最后消费者释放共享 guard。",
                 rollback: "保留并检查原生事务恢复证据；当前无独立 guard rollback 命令，不手写旧块或猜测所有权。",
             },
         },

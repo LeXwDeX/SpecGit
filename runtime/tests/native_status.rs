@@ -904,20 +904,55 @@ fn github_running_replacement_cannot_reuse_old_success() {
         let f = fixture("github");
         replacement_workflow(&f, None, with_checks, true);
         let r = f.run(&["pr", "--status"]);
-        if with_checks {
-            assert_eq!(r["exit"], 0, "{r}");
-            assert!(
-                r["evidence"]["checks"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|c| c["source"] == "workflow" && c["status"] == "in_progress"),
-                "{r}"
-            );
-        } else {
-            assert_eq!(r["exit"], 3, "{r}");
-            assert!(r["evidence"]["checks"].is_null(), "{r}");
-        }
+        // #751 observes the running workflow before its first check becomes
+        // visible. This is pending evidence, never a successful empty result.
+        assert_eq!(r["exit"], 0, "{r}");
+        let checks = r["evidence"]["checks"].as_array().unwrap();
+        assert!(
+            checks.iter().any(|c| c["id"] == 72
+                && c["source"] == "workflow"
+                && c["status"] == "in_progress"
+                && c["conclusion"].is_null()),
+            "{r}"
+        );
+        assert!(
+            !checks.iter().any(|c| c["id"] == 81 || c["id"] == 71),
+            "{r}"
+        );
+        let pending = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "replacement",
+            "--goal",
+            "checks",
+            "--once",
+        ]);
+        assert_eq!(pending["status"], "pending", "{pending}");
+        assert_eq!(
+            pending["next_actions"][0]["kind"], "wait_for_checks",
+            "{pending}"
+        );
+        f.edit(|s| {
+            for (route, response) in s["read_routes"].as_object_mut().unwrap() {
+                if route.contains("/actions/runs?head_sha=") {
+                    response["workflow_runs"][1]["status"] = json!("completed");
+                    response["workflow_runs"][1]["conclusion"] = json!("success");
+                }
+            }
+        });
+        let passed = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "replacement",
+            "--goal",
+            "checks",
+            "--once",
+        ]);
+        assert_eq!(passed["status"], "checks_passed", "{passed}");
     }
 }
 

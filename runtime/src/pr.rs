@@ -99,12 +99,18 @@ fn identity(w: &Workspace, r: &PullRequest) -> Result<(), Diagnostic> {
 }
 fn validate(
     d: spec::Specification<'_>,
+    provider: crate::identity::Provider,
     issue: bool,
     title: &str,
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let violations = d.check(issue, title, body, labels);
+    let violations = d.check(
+        issue,
+        title,
+        body,
+        &spec::canonical_labels(provider, labels),
+    );
     if let Some(v) = violations.first() {
         Err(Diagnostic::input(&v.message))
     } else {

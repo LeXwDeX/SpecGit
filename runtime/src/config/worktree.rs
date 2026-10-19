@@ -376,14 +376,28 @@ pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, D
             last.1 = true;
         }
     }
+    let current_private = private_root(process, root).await?;
+    let common = common_dir(root)?;
     let mut worktrees = vec![];
     for (path, skipped) in records {
         // A bare entry has no checkout; a prunable or missing one cannot consume assets.
         if skipped || !path.is_dir() || same(&path, root) {
             continue;
         }
+        // Submodules may report their own Git metadata directory as a worktree.
+        // It is neither a checkout nor an independent consumer.
+        if common
+            .as_ref()
+            .is_some_and(|common| path.starts_with(common))
+        {
+            continue;
+        }
+        let sibling_private = private_root(process, &path).await?;
+        if same(&sibling_private, &current_private) {
+            continue;
+        }
         worktrees.push(Worktree {
-            private_root: private_root(process, &path).await?,
+            private_root: sibling_private,
             hooks: hooks(process, &path).await?,
             root: path,
         });
@@ -1041,8 +1055,8 @@ pub async fn rollback_with_lock(
         };
         preserves_hooks &= target.as_deref().is_some_and(|bytes| {
             bytes
-                .windows(b"specgit guard --stage ".len())
-                .any(|part| part == b"specgit guard --stage ")
+                .windows(b" guard --stage ".len())
+                .any(|part| part == b" guard --stage ")
         });
     }
     let restores_complete_source = restores_source && source_count == 1 && preserves_hooks;

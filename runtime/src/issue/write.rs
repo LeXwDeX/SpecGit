@@ -79,7 +79,13 @@ pub(super) async fn apply(
     for number in &selection.issues {
         let issue =
             native_delivery::issue(&w.reader, &w.context.repository, w.facts.id, *number).await?;
-        validate(w.specification(), &issue.title, &issue.body, &issue.labels)?;
+        validate(
+            w.specification(),
+            w.context.repository.provider,
+            &issue.title,
+            &issue.body,
+            &issue.labels,
+        )?;
         issues.push(issue);
     }
     Ok(Report::success(
@@ -99,7 +105,7 @@ async fn ensure_labels(
 ) -> Result<(), Diagnostic> {
     for label in &intent.labels {
         let pool = native_delivery::label_pool(&w.reader, &w.context.repository).await?;
-        if !pool.contains(label) {
+        if !spec::label_contains(w.context.repository.provider, &pool, label) {
             if !options.create_labels {
                 return Err(Diagnostic::new(
                     Code::ConfirmationRequired,
@@ -120,10 +126,11 @@ async fn ensure_labels(
             );
             w.unchanged_issue().await?;
             writer.create_label(tag).await?;
-            if !native_delivery::label_pool(&w.reader, &w.context.repository)
-                .await?
-                .contains(label)
-            {
+            if !spec::label_contains(
+                w.context.repository.provider,
+                &native_delivery::label_pool(&w.reader, &w.context.repository).await?,
+                label,
+            ) {
                 return Err(Diagnostic::new(
                     Code::MalformedResponse,
                     "label",
@@ -180,7 +187,10 @@ async fn create_issue(
             &intent.body,
             &observed.body,
         )
-        || !intent.labels.iter().all(|l| observed.labels.contains(l))
+        || !intent
+            .labels
+            .iter()
+            .all(|l| spec::label_contains(w.context.repository.provider, &observed.labels, l))
     {
         return Err(Diagnostic::new(
             Code::ConcurrentEdit,

@@ -138,6 +138,36 @@ fn milestone_context(raw: &Value, repo: &Repository) -> crate::delivery_model::M
         .map(|milestone| MilestoneContext::Linked { milestone })
         .unwrap_or_else(unknown)
 }
+fn title_query(query: &str) -> String {
+    let summary = if crate::spec::kind(query).is_ok() {
+        query.split_once(':').map_or(query, |(_, summary)| summary)
+    } else {
+        query
+    };
+    let summary: String = summary
+        .chars()
+        .map(|c| {
+            if matches!(c, ':' | '"' | '\\') || c.is_control() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    format!(
+        "in:title \"{}\"",
+        summary.split_whitespace().collect::<Vec<_>>().join(" ")
+    )
+}
+fn verify_search_repository(row: &Value, repo: &Repository) -> Result<(), Diagnostic> {
+    if !text(row, "repository_url")?
+        .rsplit_once("/repos/")
+        .is_some_and(|(_, path)| path.eq_ignore_ascii_case(&repo.path))
+    {
+        return Err(malformed());
+    }
+    Ok(())
+}
 pub(crate) async fn candidates(
     reader: &ForgeRead,
     repo: &Repository,
@@ -146,7 +176,11 @@ pub(crate) async fn candidates(
 ) -> Result<CandidateSearch, Diagnostic> {
     let route = format!(
         "search/issues?q={}",
-        encode(&format!("repo:{} is:issue is:open {query}", repo.path))
+        encode(&format!(
+            "repo:{} is:issue is:open {}",
+            repo.path,
+            title_query(query)
+        ))
     );
     const PAGE_LIMIT: usize = 10;
     reader.pagination_started(PAGE_LIMIT);
@@ -199,6 +233,7 @@ pub(crate) async fn candidates(
     }
     let mut out = vec![];
     for row in rows {
+        verify_search_repository(&row, repo)?;
         let candidate = issue(reader, repo, project_id, id(&row, "number")?).await?;
         // Search rows can lag behind an issue being closed.
         if candidate.state != "closed" {
@@ -233,7 +268,11 @@ async fn history(
     let value = reader
         .get(&format!(
             "search/issues?q={}&per_page=20&page=1",
-            encode(&format!("repo:{} is:issue is:closed {query}", repo.path))
+            encode(&format!(
+                "repo:{} is:issue is:closed {}",
+                repo.path,
+                title_query(query)
+            ))
         ))
         .await?;
     if value.get("incomplete_results").and_then(Value::as_bool) != Some(false) {
@@ -253,6 +292,7 @@ async fn history(
     }
     rows.iter()
         .map(|row| {
+            verify_search_repository(row, repo)?;
             if row.get("pull_request").is_some() || text(row, "state")? != "closed" {
                 return Err(malformed());
             }
@@ -352,6 +392,10 @@ pub(crate) async fn request_candidates(
     let rows = reader.list(&route, None, 10).await?;
     let mut results = vec![];
     for row in rows {
+        // GitHub retains pull requests whose source fork has been deleted.
+        if row.pointer("/head/repo").is_some_and(Value::is_null) {
+            continue;
+        }
         results.push(pull_request(reader, repo, id(&row, "number")?).await?);
     }
     Ok(results)

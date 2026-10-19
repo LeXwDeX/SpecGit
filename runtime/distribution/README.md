@@ -9,7 +9,7 @@ publication still has the recovery procedure below.
 After the intended changes are merged, dispatch the workflow on `main`:
 
 ```sh
-gh workflow run release-prepare.yml --ref main -f release_version=2.13.0
+gh workflow run release-prepare.yml --ref main -f release_version=2.14.0
 ```
 
 The version must match Cargo and the private development workspace. The workflow
@@ -33,9 +33,13 @@ OIDC. It publishes exactly these assets:
 - `SHA256SUMS.sigstore.json`
 
 Only the final job has repository write and OIDC token permissions, and only its publisher step
-receives the workflow's `GH_TOKEN`. The publishing runner needs GitHub CLI 2.99 or newer (including `gh api --slurp`).
+and the read-only source check step receive the workflow's `GH_TOKEN`. The publishing runner needs GitHub CLI 2.99 or newer (including `gh api --slurp`).
 No custom release credential is needed. The
-publisher checks current `main` and the three successful build jobs before writing,
+publisher checks current `main` and the three successful build jobs before writing.
+Before signing and again before publication, the source check gate reads all check-run
+pages and requires exactly one successful `Required verification` and `SpecGit Acceptance`
+from GitHub Actions for the exact source SHA. Missing, pending, failed, ambiguous or
+incomplete checks stop the release. The main CI run supplies both checks. It then
 verifies the signature against the exact main Release workflow identity, creates a
 draft, uploads missing assets, verifies downloaded bytes, then makes the Release
 stable/latest. Checksums also appear with the source/build link in Release notes.
@@ -61,7 +65,7 @@ through the existing authenticated `gh` session:
 ```sh
 node runtime/distribution/publish.mjs \
   --directory /absolute/native-bundle \
-  --version 2.13.0 --source <current-main-sha> --build-run <qualified-run-id> \
+  --version 2.14.0 --source <current-main-sha> --build-run <qualified-run-id> \
   --github
 ```
 
@@ -72,7 +76,7 @@ the publisher verifies provenance and current main but performs no publication.
 Retired `--npm` and npm recovery flags are rejected. Existing public npm versions
 are historical; this workflow does not change or delete them.
 
-See [manual installation](../../docs/installation.md) and
+See [agent installation](../../docs/agent-install.md) and
 [v2 migration](../../docs/migration-v2.md).
 
 ## Private engineering compatibility

@@ -50,7 +50,14 @@ pub(super) async fn apply(
     }
     r = update_body(&w, &writer, r, replacement, effects).await?;
     r = add_labels(o, &w, &writer, r, &intended, effects).await?;
-    validate(w.specification(), false, &r.title, &r.body, &r.labels)?;
+    validate(
+        w.specification(),
+        w.context.repository.provider,
+        false,
+        &r.title,
+        &r.body,
+        &r.labels,
+    )?;
     r = mark_ready(o, &w, &writer, r, effects).await?;
     selected.request_intent = None;
     let local_effect = effects.begin(
@@ -158,16 +165,17 @@ async fn add_labels(
     let missing: Vec<_> = intended
         .labels
         .iter()
-        .filter(|name| !r.labels.contains(name))
+        .filter(|name| !spec::label_contains(repo.provider, &r.labels, name))
         .cloned()
         .collect();
     if !missing.is_empty() {
         let catalog = w.specification().catalog();
         for label in &missing {
-            if !native_delivery::label_pool(&w.reader, repo)
-                .await?
-                .contains(label)
-            {
+            if !spec::label_contains(
+                w.context.repository.provider,
+                &native_delivery::label_pool(&w.reader, repo).await?,
+                label,
+            ) {
                 if !o.create_labels {
                     return Err(Diagnostic::new(
                         Code::ConfirmationRequired,
@@ -183,10 +191,11 @@ async fn add_labels(
                         Diagnostic::input("A required existing label disappeared from its pool.")
                     })?)
                     .await?;
-                if !native_delivery::label_pool(&w.reader, repo)
-                    .await?
-                    .contains(label)
-                {
+                if !spec::label_contains(
+                    w.context.repository.provider,
+                    &native_delivery::label_pool(&w.reader, repo).await?,
+                    label,
+                ) {
                     return Err(changed());
                 }
                 effects.applied(label_effect);
@@ -205,8 +214,14 @@ async fn add_labels(
             || after.title != r.title
             || after.state != r.state
             || after.draft != r.draft
-            || !intended.labels.iter().all(|n| after.labels.contains(n))
-            || !r.labels.iter().all(|n| after.labels.contains(n))
+            || !intended
+                .labels
+                .iter()
+                .all(|n| spec::label_contains(repo.provider, &after.labels, n))
+            || !r
+                .labels
+                .iter()
+                .all(|n| spec::label_contains(repo.provider, &after.labels, n))
         {
             return Err(changed());
         }

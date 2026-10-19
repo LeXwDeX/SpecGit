@@ -1,39 +1,19 @@
-# 快速开始：手工安装与项目初始化
+# 快速开始：Agent 安装与项目初始化
 
-SpecGit 的共享二进制、每个项目的初始化、Codex 等宿主的注册是三个独立步骤。只想在项目中使用命令行时，完成前两步即可。
+SpecGit 通过 coding agent 安装。Agent 按[安装指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md)
+验证签名 Release，并为目标项目选择所需能力。支持的发行渠道和签名/SHA-256
+证据见[Agent 参考](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md)。
 
 **CLI 已安装？** 在目标仓库打开 Agent，复制
 [中文维护请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)
 （[English request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)）。
-该请求要求 Agent 实际检查并完成安全维护，包括全新项目接入，而不是重做安装或只给命令。
-启用 SpecGit 会委托当前任务所需工作流，无需逐步重复确认。指南将稳定版 CLI 升级与 init/setup 分开，保留配置、checkpoint 和收据。
-声明缺失但私有状态仍在时不是全新项目：先恢复原配置，不要删除状态。
+该请求要求 Agent 检查并完成安全维护，包括全新项目接入，而不是重做安装；
+指南单独处理稳定版 CLI 升级，并保留配置、checkpoint 和收据。声明缺失但私有状态仍在时不是新项目，应恢复原配置，不能删除状态。
 
-## 1. 安装二进制
+## 1. 通过 coding agent 安装
 
-正式分发渠道是 [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest)。按照[安装指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md)，下载**同一稳定 Release** 的平台 ZIP、`SHA256SUMS` 和 `SHA256SUMS.sigstore.json`；先验证签名身份，再用签名清单核对 ZIP 的 SHA-256，最后解压并将 `specgit`（Windows 为 `specgit.exe`）放到用户级 PATH。支持 macOS arm64、Linux x64 glibc 和 Windows x64。正式包运行时无需 Node.js、npm 或 Rust。
-
-如果要手工安装**自己检出的项目源码**，可在 macOS/Linux 上本地构建。此路径用于开发或验证检出的提交，不代替上述签名 Release 验证。先确认当前 Git 提交及工作区内容，再运行：
-
-```sh
-cd /path/to/SpecGit/runtime
-cargo build --locked --release --bin specgit
-
-mkdir -p "$HOME/.local/bin"
-# 已有旧版时先备份；时间戳和 -n 避免覆盖已有备份。
-if [ -f "$HOME/.local/bin/specgit" ]; then cp -np "$HOME/.local/bin/specgit" "$HOME/.local/bin/specgit.backup.$(date +%Y%m%d-%H%M%S)"; fi
-install -m 755 target/release/specgit "$HOME/.local/bin/specgit"
-cmp target/release/specgit "$HOME/.local/bin/specgit"
-```
-
-构建依赖 `runtime/rust-toolchain.toml` 指定的 Rust 工具链。无论使用哪种安装方式，都核对实际选中的命令；如果 PATH 中有旧版 shim 或另一个 `specgit`，先解决路径冲突：
-
-```sh
-command -v specgit
-specgit --human --version
-specgit --help
-specgit --schema
-```
+按目标机器和仓库使用当前[Agent 安装指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md)。
+指南涵盖签名 Release 验证、共享 CLI、项目初始化和可选宿主集成。源码构建属于维护/开发流程，不是终端用户的安装路径。
 
 ## 2. 在目标项目内初始化
 
@@ -78,6 +58,6 @@ Hooks 用途选择与宿主实际验证见
 [维护指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-review-the-full-host-refresh-scope)。
 仅支持 SessionStart 和 PreToolUse：前者提供简短规则与 Skill 入口，后者提供相关上下文或恢复信息。不配置 PostToolUse、Stop 或空闲唤醒。`guard` 配置原生 Git commit/push hooks。若支持事件无法自动观察，使用有界 watch/inbox 或手动继续。setup 包含所有已记录宿主及 `--agent` 新选宿主；逐一审阅并报告影响，包括共享 Skill 刷新。
 
-项目初始化**不等于**宿主注册。只有决定给当前宿主安装集成时，才单独查看 `specgit setup --help` 并预览相应的 `--agent codex`、`--agent claude`、`--agent opencode` 或 `--agent generic` 选择。自 2.4 起 setup 永久只支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，资产写入检出目录并使用 worktree 私有收据，hooks 直接调用已安装的共享二进制（无需先做全局 setup），已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。只安装二进制并初始化项目时，无需运行 `setup`。
+项目初始化**不等于**宿主注册。用 `setup --agent` 新选宿主时，只安装项目指导和 Skill。要启用 hooks，显式添加 `--hook-purpose guard` 和/或 `--hook-purpose context`；用 `none` 保持宿主不安装 hooks。自 2.4 版本发布以来，setup 仅支持项目级：`--scope project` 是默认值也是唯一的 scope 取值，资产写入检出目录并使用 worktree 私有收据，hooks 直接调用已安装的共享二进制（无需先做全局 setup），已退役的全局选项（`--root`、`--provider`、`--api-host`、`--register-*`、各宿主根路径）会被拒绝。只安装二进制并初始化项目时，无需运行 `setup`。
 
 参阅[老项目升级](Upgrading-Existing-Projects-zh)、[团队工作流](Team-Workflow-zh)和[CLI 参考](CLI-Reference-zh)。
