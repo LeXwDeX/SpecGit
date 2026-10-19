@@ -95,6 +95,22 @@ pub async fn request_candidates(
         Provider::Gitlab => gitlab::request_candidates(reader, repo, source).await,
     }
 }
+/// Resolve a local branch without adopting terminal work from an earlier head.
+pub fn current_request_candidates(candidates: Vec<PullRequest>, head: &str) -> Vec<PullRequest> {
+    let has_open = candidates
+        .iter()
+        .any(|r| matches!(r.state.as_str(), "open" | "opened"));
+    candidates
+        .into_iter()
+        .filter(|r| {
+            if has_open {
+                matches!(r.state.as_str(), "open" | "opened")
+            } else {
+                r.head == head
+            }
+        })
+        .collect()
+}
 pub async fn branch_head(
     reader: &ForgeRead,
     repo: &Repository,

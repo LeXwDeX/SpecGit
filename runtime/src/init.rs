@@ -29,6 +29,9 @@ pub use crate::delivery_model::Flow;
 pub use crate::delivery_model::flow;
 
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
+    if let Err(diagnostic) = crate::project::require_local_repository_environment() {
+        return Report::failure("init", diagnostic);
+    }
     let mut language = options.language.unwrap_or_default();
     let inspect_only = options.inspect_only;
     let process = if inspect_only {

@@ -194,3 +194,54 @@ async fn dropped_operation_stops_owned_descendants() {
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(std::fs::read(&heartbeat).unwrap(), value);
 }
+
+#[test]
+fn executable_lookup_ignores_empty_and_relative_path_entries() {
+    let root = tempfile::tempdir().unwrap();
+    let trusted = tempfile::tempdir().unwrap();
+    let name = if cfg!(windows) { "git.exe" } else { "git" };
+    let fixture = env!("CARGO_BIN_EXE_specgit-process-fixture");
+    std::fs::copy(fixture, root.path().join(name)).unwrap();
+    std::fs::copy(fixture, trusted.path().join(name)).unwrap();
+    let expected = trusted.path().join(name).canonicalize().unwrap();
+    for entry in ["", ".", "relative"] {
+        let path = std::env::join_paths([std::path::Path::new(entry), trusted.path()]).unwrap();
+        let out = std::process::Command::new(fixture)
+            .current_dir(root.path())
+            .env("PATH", path)
+            .args(["resolve-executable", "git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert_eq!(
+            PathBuf::from(String::from_utf8(out.stdout).unwrap().trim()),
+            expected
+        );
+    }
+    for name in ["./git", "relative/git", ""] {
+        let out = std::process::Command::new(fixture)
+            .current_dir(root.path())
+            .args(["resolve-executable", name])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn normal_exit_stops_descendants_with_closed_pipes_and_preserves_status() {
+    let root = tempfile::tempdir().unwrap();
+    let heartbeat = root.path().join("normal-heartbeat");
+    let result = process()
+        .run(request(&[
+            "spawn-closed-pipes",
+            heartbeat.to_str().unwrap(),
+        ]))
+        .await
+        .unwrap();
+    assert_eq!(result.code, 7);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let value = std::fs::read(&heartbeat).unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(std::fs::read(&heartbeat).unwrap(), value);
+}

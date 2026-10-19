@@ -138,6 +138,9 @@ async fn shares_v1_hook(process: &Process, root: &Path, hook: &Path) -> Result<b
     Ok(false)
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
+    if let Err(diagnostic) = crate::project::require_local_repository_environment() {
+        return Report::failure("migrate", diagnostic);
+    }
     let cancellation = process.cancellation.clone();
     let operation = execute(options, process, cwd);
     tokio::select! {

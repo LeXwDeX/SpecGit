@@ -33,6 +33,21 @@ pub struct HookOptions {
     pub opencode_async_rewake: bool,
 }
 
+/// Purposes that can be independently removed without removing project guidance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum RemovableHookPurpose {
+    Guard,
+    Context,
+}
+impl From<RemovableHookPurpose> for HookPurpose {
+    fn from(value: RemovableHookPurpose) -> Self {
+        match value {
+            RemovableHookPurpose::Guard => Self::Guard,
+            RemovableHookPurpose::Context => Self::Context,
+        }
+    }
+}
+
 fn purpose_manifest(
     binary: &Path,
     agent: Agent,
@@ -170,7 +185,13 @@ fn instruction_change_after(
     })?;
     let prompt = crate::prompts::host_entry();
     let entry = prompt.trim_end();
-    let generated = format!("{HOST_START}\n## SpecGit 2\n\n{entry}\n{HOST_END}");
+    let canonical = format!("{HOST_START}\n## SpecGit 2\n\n{entry}\n{HOST_END}");
+    let newline = if before.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let generated = canonical.replace('\n', newline);
     let (after, block) = if let Some(old) = old {
         // 2.3 used a global-labelled marker even in proven project receipts.
         let (start, end, other_start, other_end) = if old.block.contains(HOST_START) {
@@ -209,17 +230,25 @@ fn instruction_change_after(
             ));
         }
         if before.matches(&old.block).count() == 1 {
-            let block = if old.block.replace("\r\n", "\n") == generated {
-                old.block.clone()
+            let block = if old.block.replace("\r\n", "\n").trim() == canonical {
+                old.block.replace("\r\n", "\n").replace('\n', newline)
             } else {
                 format!(
                     "{}{generated}{}",
-                    if old.block.starts_with("\n\n") {
-                        "\n\n"
+                    if old.block.replace("\r\n", "\n").starts_with("\n\n") {
+                        if newline == "\r\n" {
+                            "\r\n\r\n"
+                        } else {
+                            "\n\n"
+                        }
                     } else {
                         ""
                     },
-                    if old.block.ends_with('\n') { "\n" } else { "" }
+                    if old.block.ends_with('\n') {
+                        newline
+                    } else {
+                        ""
+                    }
                 )
             };
             (
@@ -251,7 +280,7 @@ fn instruction_change_after(
                 ));
             }
             let raw_block = &before[start_at..end_at];
-            if raw_block.replace("\r\n", "\n") == generated {
+            if raw_block.replace("\r\n", "\n") == canonical {
                 (before.to_owned(), raw_block.to_owned())
             } else {
                 return Err(conflict_at(
@@ -274,8 +303,14 @@ fn instruction_change_after(
                 ));
             }
             let block = format!(
-                "{}{generated}\n",
-                if before.is_empty() { "" } else { "\n\n" }
+                "{}{generated}{newline}",
+                if before.is_empty() {
+                    ""
+                } else if newline == "\r\n" {
+                    "\r\n\r\n"
+                } else {
+                    "\n\n"
+                }
             );
             (format!("{before}{block}"), block)
         }
@@ -680,7 +715,7 @@ mod tests {
         std::fs::write(&path, foreign).unwrap();
         let (first, registration) = instruction_change("codex", &root, None, false, false).unwrap();
         let registration = registration.unwrap();
-        assert!(!registration.block.contains('\r'));
+        assert!(registration.block.contains("\r\n"));
         let first = first.after.unwrap();
         assert!(first.starts_with(foreign));
         std::fs::write(&path, &first).unwrap();
@@ -705,6 +740,32 @@ mod tests {
                 .code,
             Code::OwnershipConflict,
         );
+    }
+
+    #[test]
+    fn host_prompt_refresh_recognizes_a_legacy_lf_block_in_crlf_guidance() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = root.join("CLAUDE.md");
+        let (change, old) = instruction_change("claude", &root, None, false, false).unwrap();
+        let old = old.unwrap();
+        let prefix = "# Manual\r\nkeep\r\n";
+        std::fs::write(
+            &path,
+            [prefix.as_bytes(), change.after.as_ref().unwrap()].concat(),
+        )
+        .unwrap();
+        let (change, next) = instruction_change("claude", &root, Some(&old), false, true).unwrap();
+        let bytes = change.after.unwrap();
+        assert!(
+            !String::from_utf8(bytes.clone())
+                .unwrap()
+                .replace("\r\n", "")
+                .contains('\n')
+        );
+        std::fs::write(&path, bytes).unwrap();
+        let (removed, _) = instruction_change("claude", &root, next.as_ref(), true, false).unwrap();
+        assert_eq!(removed.after.unwrap(), prefix.as_bytes());
     }
 
     #[test]

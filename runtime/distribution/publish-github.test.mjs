@@ -57,6 +57,11 @@ test('new release is created as draft and only published after all byte readback
   for (const binary of f.release.archives) assert(notes.includes(binary.sha256));
   assert(notes.includes(source));
   assert(notes.includes('/actions/runs/123'));
+  assert(notes.includes('/docs/agent-install.md'));
+  assert(!notes.includes('into a directory on PATH'));
+  const guide = readFileSync(new URL('../../docs/agent-install.md', import.meta.url), 'utf8');
+  assert(guide.includes('cosign verify-blob'));
+  assert(/sha256|SHA-256/.test(guide));
   assert.equal(f.remote.draft, false);
   assert.equal(f.calls.filter(call => call[1] === 'create').length, 1);
   const edit = f.calls.findIndex(call => call[1] === 'edit');

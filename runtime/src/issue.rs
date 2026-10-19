@@ -113,11 +113,12 @@ fn candidate_review_digest(
 }
 fn validate(
     d: spec::Specification<'_>,
+    provider: crate::identity::Provider,
     title: &str,
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let errors = d.check(true, title, body, labels);
+    let errors = d.check(true, title, body, &spec::canonical_labels(provider, labels));
     if errors.is_empty() {
         Ok(())
     } else {

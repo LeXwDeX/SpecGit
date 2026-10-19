@@ -181,7 +181,10 @@ async fn collect_in_scope(
     let number = if let Some(n) = request.or(selected_candidate.as_ref().and_then(|s| s.request)) {
         n
     } else {
-        let rows = native_delivery::request_candidates(&w.reader, repo, w.branch()?).await?;
+        let rows = native_delivery::current_request_candidates(
+            native_delivery::request_candidates(&w.reader, repo, w.branch()?).await?,
+            &w.context.head,
+        );
         if rows.len() != 1 {
             return Err(Diagnostic::new(
                 Code::AmbiguousRequest,
@@ -243,7 +246,7 @@ async fn collect_in_scope(
         }
         Err(d) => diagnostics.push(d),
     }
-    let body_ids = match spec::references(&r.body) {
+    let body_ids = match spec::references_for(repo.provider, &r.body) {
         Ok(ids) => ids,
         Err(d) => {
             diagnostics.push(d);

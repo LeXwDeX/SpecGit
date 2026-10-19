@@ -33,13 +33,69 @@ state before it reports delivery completion.
 
 ## Module dependency DAG
 
-The graph shows the key module dependencies. An arrow means “depends on”. The
-architecture test checks the complete Rust source dependency graph and its
-layer rules.
+The table records every runtime component, its layer, and all direct component
+dependencies. Internal module edges and unit-test modules are excluded. The
+architecture test parses every production source file, including platform code,
+and requires this table to match that graph. Same-layer dependencies are allowed
+only while the complete graph remains acyclic. A component may otherwise depend
+only on a lower layer. Layer 0 contains pure rules and models.
+
+<!-- runtime-components:start -->
+| Component | Layer | Direct dependencies |
+| --- | --- | --- |
+| `assets` | 1 | `diagnostic`, `input` |
+| `cli` | 10 | `assets`, `cli_contract`, `config`, `diagnostic`, `forge`, `guard`, `guidance`, `hook`, `init`, `issue`, `migrate`, `pr`, `probe`, `process`, `project`, `remove`, `report`, `selection`, `self_update`, `setup`, `skill`, `watch` |
+| `cli_contract` | 1 | — |
+| `config` | 2 | `assets`, `declaration`, `diagnostic`, `identity`, `input`, `process`, `project`, `project_receipt` |
+| `declaration` | 0 | `diagnostic`, `identity`, `label_rules` |
+| `delivery_context` | 7 | `config`, `diagnostic`, `probe`, `process`, `project`, `spec` |
+| `delivery_model` | 0 | `diagnostic`, `identity` |
+| `diagnostic` | 0 | — |
+| `forge` | 5 | `declaration`, `delivery_model`, `diagnostic`, `forge_read`, `forge_routes`, `identity`, `input`, `native_checks`, `process`, `project`, `spec` |
+| `forge_read` | 3 | `delivery_model`, `diagnostic`, `forge_routes`, `identity`, `input`, `process` |
+| `forge_routes` | 0 | `identity` |
+| `guard` | 8 | `assets`, `config`, `diagnostic`, `input`, `process`, `project`, `selection` |
+| `guidance` | 2 | `assets`, `declaration`, `diagnostic`, `input`, `prompts` |
+| `hook` | 9 | `assets`, `config`, `declaration`, `diagnostic`, `input`, `process`, `project`, `selection`, `watch`, `watch_store` |
+| `i18n` | 0 | `declaration`, `diagnostic`, `report` |
+| `identity` | 0 | `diagnostic` |
+| `init` | 8 | `assets`, `config`, `delivery_model`, `diagnostic`, `forge`, `forge_read`, `guard`, `i18n`, `local_exclude`, `migration_assets`, `probe`, `process`, `project`, `report`, `setup`, `templates` |
+| `input` | 0 | `diagnostic` |
+| `issue` | 8 | `assets`, `config`, `delivery_context`, `delivery_model`, `diagnostic`, `identity`, `native_delivery`, `process`, `project`, `report`, `selection`, `spec`, `templates` |
+| `label_rules` | 0 | — |
+| `local_exclude` | 2 | `assets`, `diagnostic`, `process`, `project` |
+| `migrate` | 8 | `assets`, `config`, `diagnostic`, `guidance`, `local_exclude`, `migration_assets`, `migration_remote`, `probe`, `process`, `project`, `report`, `templates` |
+| `migration_assets` | 2 | `assets`, `config`, `diagnostic`, `input` |
+| `migration_remote` | 6 | `config`, `diagnostic`, `native_delivery`, `native_file`, `probe`, `project` |
+| `native_checks` | 4 | `delivery_model`, `diagnostic`, `forge_read`, `forge_routes`, `identity` |
+| `native_delivery` | 6 | `declaration`, `delivery_model`, `diagnostic`, `forge`, `forge_read`, `forge_routes`, `identity`, `process` |
+| `native_file` | 4 | `declaration`, `diagnostic`, `forge_read`, `forge_routes`, `identity` |
+| `observation` | 8 | `assets`, `delivery_context`, `delivery_model`, `diagnostic`, `forge`, `native_delivery`, `observation_model`, `process`, `project`, `selection`, `spec` |
+| `observation_model` | 0 | `delivery_model`, `diagnostic`, `identity` |
+| `pr` | 8 | `delivery_context`, `delivery_model`, `diagnostic`, `identity`, `init`, `native_delivery`, `observation`, `process`, `project`, `report`, `selection`, `spec`, `templates` |
+| `probe` | 4 | `assets`, `delivery_model`, `diagnostic`, `forge_read`, `identity`, `process`, `project` |
+| `process` | 1 | `diagnostic` |
+| `project` | 2 | `diagnostic`, `identity`, `process` |
+| `project_receipt` | 0 | `diagnostic`, `input` |
+| `prompts` | 0 | `declaration` |
+| `remove` | 9 | `assets`, `config`, `delivery_context`, `diagnostic`, `guard`, `guidance`, `local_exclude`, `observation`, `process`, `project`, `report`, `selection`, `setup` |
+| `report` | 0 | `diagnostic`, `observation_model` |
+| `selection` | 2 | `assets`, `declaration`, `delivery_model`, `diagnostic`, `identity`, `input`, `project` |
+| `self_update` | 2 | `diagnostic`, `process`, `report`, `skill` |
+| `setup` | 8 | `assets`, `config`, `diagnostic`, `guard`, `guidance`, `input`, `local_exclude`, `process`, `project`, `project_receipt`, `prompts`, `report`, `skill` |
+| `skill` | 2 | `assets`, `diagnostic`, `report` |
+| `spec` | 0 | `declaration`, `diagnostic`, `identity`, `label_rules`, `template_rules` |
+| `template_rules` | 0 | `declaration` |
+| `templates` | 2 | `assets`, `declaration`, `diagnostic`, `label_rules`, `template_rules` |
+| `watch` | 8 | `assets`, `config`, `delivery_model`, `diagnostic`, `observation`, `process`, `project`, `report`, `watch_store` |
+| `watch_store` | 2 | `assets`, `declaration`, `delivery_model`, `diagnostic`, `identity`, `input`, `observation_model`, `project` |
+<!-- runtime-components:end -->
+
+The diagram shows selected edges from the table. Every arrow means “depends on”
+and is checked against the same source graph. `main` only starts `cli`.
 
 ```mermaid
 flowchart TD
-  main --> cli
   cli --> init
   cli --> setup
   cli --> issue
@@ -52,7 +108,15 @@ flowchart TD
   cli --> guidance
   cli --> guard
   cli --> config
-  cli --> project_git[project Git boundary]
+  cli --> migrate
+  cli --> remove
+  cli --> hook
+  cli --> forge
+  cli --> process
+  cli --> selection
+  cli --> report
+  cli --> cli_contract
+  cli --> project
   self_update --> process
   self_update --> report
   self_update --> skill
@@ -61,17 +125,18 @@ flowchart TD
   setup --> skill
   setup --> config
 
-  issue --> workspace[delivery_context::Workspace]
-  pr --> workspace
+  issue --> delivery_context
+  pr --> delivery_context
   issue --> spec
   pr --> spec
   issue --> native_delivery
   pr --> native_delivery
-  workspace --> config
-  workspace --> project_git[project Git boundary]
-  workspace --> forge_read
+  pr --> init
+  pr --> observation
+  delivery_context --> config
+  delivery_context --> project
+  delivery_context --> probe
 
-  init --> guidance
   init --> setup
   init --> guard
   init --> config
@@ -83,18 +148,19 @@ flowchart TD
   setup --> project_receipt
   config --> project_receipt
   guard --> config
-  guard --> project_git
+  guard --> project
   guard --> selection
   guard --> assets
   hook --> config
-  hook --> project_git
+  hook --> project
   hook --> selection
   hook --> watch_store
+  hook --> watch
   guidance --> prompts
   config --> declaration
   config --> identity
-  config --> project_git
-  project_git --> identity
+  config --> project
+  project --> identity
   spec --> declaration
   templates --> declaration
   templates --> template_rules
@@ -103,8 +169,9 @@ flowchart TD
   probe --> forge_read
   watch --> observation
   watch --> watch_store
-  observation --> workspace
+  observation --> delivery_context
   observation --> forge
+  observation --> native_delivery
   observation --> observation_model
   watch_store --> observation_model
   report --> observation_model
@@ -117,10 +184,24 @@ flowchart TD
   forge --> forge_read
   forge --> identity
   forge --> delivery_model
+  forge --> project
+  forge --> native_checks
   native_delivery --> forge
   native_delivery --> forge_read
+  migration_remote --> native_file
+  migrate --> migration_remote
+  migrate --> migration_assets
+  remove --> setup
+  templates --> assets
 
   subgraph pure[Pure rules and models]
+    diagnostic
+    input
+    forge_routes
+    prompts
+    report
+    i18n
+    project_receipt
     declaration
     identity
     label_rules

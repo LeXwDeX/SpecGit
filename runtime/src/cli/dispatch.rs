@@ -56,6 +56,7 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             agent,
             opencode_claude_hooks,
             hook_purpose,
+            remove_hook_purpose,
             opencode_async_rewake,
             uninstall,
             dry_run,
@@ -64,7 +65,7 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             if catalog {
                 return specgit::setup::catalog::report();
             }
-            specgit::setup::project::run_with_hooks(
+            specgit::setup::project::run_with_hook_removals(
                 specgit::setup::project::Options {
                     agents: agent,
                     opencode_claude_hooks,
@@ -76,6 +77,7 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
                     purposes: hook_purpose,
                     opencode_async_rewake,
                 },
+                remove_hook_purpose,
                 process,
                 &cwd,
             )

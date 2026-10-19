@@ -157,7 +157,13 @@ impl Fixture {
                     dry_run: false,
                     rollback: None,
                 },
-                &specgit::setup::HookOptions::default(),
+                &specgit::setup::HookOptions {
+                    purposes: vec![
+                        specgit::setup::HookPurpose::Guard,
+                        specgit::setup::HookPurpose::Context,
+                    ],
+                    opencode_async_rewake: false,
+                },
                 &self.root,
                 &self.private.join("agent-assets"),
                 &executable::binary().canonicalize().unwrap(),

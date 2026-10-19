@@ -137,7 +137,7 @@ impl Fixture {
         for stage in ["pre-commit", "pre-push"] {
             let bytes = fs::read_to_string(self.hooks.join(stage)).unwrap_or_default();
             assert_eq!(
-                bytes.contains("specgit guard --stage"),
+                bytes.contains(" guard --stage"),
                 installed,
                 "{stage}: {bytes}"
             );
@@ -801,7 +801,7 @@ fn concurrent_owner_and_borrower_uninstall_never_leave_unowned_hooks() {
         .collect();
     let guard_left = fs::read_to_string(f.hooks.join("pre-commit"))
         .unwrap_or_default()
-        .contains("specgit guard --stage");
+        .contains(" guard --stage");
     assert!(
         !(outcomes.iter().all(|ok| *ok) && guard_left),
         "both stale uninstalls succeeded but left unowned hooks"

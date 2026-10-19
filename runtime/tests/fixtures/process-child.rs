@@ -167,6 +167,10 @@ fn main() {
                 Ok(())
             });
         }
+        "resolve-executable" => match specgit::process::resolve_executable(&args[1]) {
+            Ok(path) => println!("{}", path.display()),
+            Err(_) => std::process::exit(3),
+        },
         "echo" => {
             let mut bytes = vec![];
             std::io::stdin().read_to_end(&mut bytes).unwrap();
@@ -196,6 +200,20 @@ fn main() {
             std::fs::write(format!("{}.pid", args[1]), child.id().to_string()).unwrap();
             // The child inherits pipes and remains active after its parent exits.
             std::process::exit(0);
+        }
+        "spawn-closed-pipes" => {
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["heartbeat", &args[1]])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            std::fs::write(format!("{}.pid", args[1]), child.id().to_string()).unwrap();
+            while !std::path::Path::new(&args[1]).exists() {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            std::process::exit(7);
         }
         "heartbeat" => {
             let mut n = 0;
@@ -1110,7 +1128,16 @@ fn delivery_api(
         }
     };
     let response = if method == "GET" && endpoint.starts_with("search/issues?") {
-        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":issue_rows()})
+        let mut rows = issue_rows();
+        if let Some(items) = rows.as_array_mut() {
+            for item in items {
+                item.as_object_mut()
+                    .unwrap()
+                    .entry("repository_url")
+                    .or_insert(json!("https://forge.example/api/v3/repos/fixture/repo"));
+            }
+        }
+        json!({"incomplete_results":state["search_incomplete"].as_bool().unwrap_or(false),"items":rows})
     } else if method == "GET" && route.ends_with("/issues") {
         issue_rows()
     } else if method == "GET" && route.contains("/issues/") {
@@ -1147,7 +1174,16 @@ fn delivery_api(
                     .as_array()
                     .unwrap()
                     .iter()
-                    .map(|v| json!({"name":v}))
+                    .map(|v| {
+                        let name = state["labels"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|l| l["name"].as_str())
+                            .find(|name| v.as_str().is_some_and(|v| name.eq_ignore_ascii_case(v)))
+                            .map_or(v.clone(), |name| json!(name));
+                        json!({"name":name})
+                    })
                     .collect(),
             )
         } else {

@@ -307,6 +307,7 @@ pub(crate) async fn request_candidates(
     repo: &Repository,
     source: &str,
 ) -> Result<Vec<PullRequest>, Diagnostic> {
+    let project_id = reader.project(repo).await?.id;
     let route = format!(
         "{}/merge_requests?scope=all&source_branch={}",
         prefix(repo),
@@ -315,7 +316,15 @@ pub(crate) async fn request_candidates(
     let rows = reader.list(&route, None, 10).await?;
     let mut results = vec![];
     for row in rows {
-        results.push(pull_request(reader, repo, id(&row, "iid")?).await?);
+        if id(&row, "source_project_id")? != project_id
+            || id(&row, "target_project_id")? != project_id
+        {
+            continue;
+        }
+        let request = pull_request(reader, repo, id(&row, "iid")?).await?;
+        if request.source_project == project_id && request.target_project == project_id {
+            results.push(request);
+        }
     }
     Ok(results)
 }

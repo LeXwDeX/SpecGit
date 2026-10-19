@@ -94,7 +94,7 @@ pub(super) async fn inspect(options: &Options, p: &Prepared) -> Result<Option<Re
         .iter()
         .filter(|i| i.issue.is_none())
         .flat_map(|i| &i.labels)
-        .filter(|label| !pool.contains(label))
+        .filter(|label| !spec::label_contains(w.context.repository.provider, pool, label))
         .cloned()
         .collect();
     if options.inspect || options.dry_run {
@@ -144,12 +144,17 @@ async fn review(
     let pool = &p.pool;
     validate(
         w.specification(),
+        w.context.repository.provider,
         &intent.title,
         &intent.body,
         &intent.labels,
     )?;
-    w.specification()
-        .selected_labels(&intent.title, Some(&intent.labels), pool)?;
+    w.specification().selected_labels_for(
+        w.context.repository.provider,
+        &intent.title,
+        Some(&intent.labels),
+        pool,
+    )?;
     if w.context.repository.provider == project::Provider::Gitlab {
         templates::reject_quick_actions(&intent.body)?;
     }

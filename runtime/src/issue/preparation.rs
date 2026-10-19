@@ -114,7 +114,13 @@ pub(super) async fn prepare(
                 .await?;
         milestones.insert(*number, read.milestone);
         let issue = read.issue;
-        validate(w.specification(), &issue.title, &issue.body, &issue.labels)?;
+        validate(
+            w.specification(),
+            w.context.repository.provider,
+            &issue.title,
+            &issue.body,
+            &issue.labels,
+        )?;
     }
     reconcile(&mut selection, adopted, prepared)?;
     if selection.issues.len()
@@ -216,7 +222,13 @@ async fn submitted(
                     .await?;
             milestones.insert(number, read.milestone);
             let issue = read.issue;
-            validate(w.specification(), &issue.title, &issue.body, &issue.labels)?;
+            validate(
+                w.specification(),
+                w.context.repository.provider,
+                &issue.title,
+                &issue.body,
+                &issue.labels,
+            )?;
             adopted.push(issue);
             continue;
         }
@@ -236,8 +248,19 @@ async fn submitted(
             .tags
             .as_deref()
             .or_else(|| (!p.labels.is_empty()).then_some(p.labels.as_slice()));
-        let labels = w.specification().selected_labels(&title, explicit, pool)?;
-        validate(w.specification(), &title, &p.body, &labels)?;
+        let labels = w.specification().selected_labels_for(
+            w.context.repository.provider,
+            &title,
+            explicit,
+            pool,
+        )?;
+        validate(
+            w.specification(),
+            w.context.repository.provider,
+            &title,
+            &p.body,
+            &labels,
+        )?;
         if w.context.repository.provider == project::Provider::Gitlab {
             templates::reject_quick_actions(&p.body)?;
         }

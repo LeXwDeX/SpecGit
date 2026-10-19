@@ -266,10 +266,17 @@ fn codex_setup_preview_refresh_uninstall_and_rollback_preserve_foreign_assets() 
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
         }
-        let preview = f.run(&["setup", "--agent", "codex", "--dry-run"]);
+        let preview = f.run(&[
+            "setup",
+            "--agent",
+            "codex",
+            "--hook-purpose",
+            "context",
+            "--dry-run",
+        ]);
         assert_eq!(preview["exit"], 0, "{preview}");
         assert_eq!(fs::read(&path).unwrap(), original);
-        let installed = f.run(&["setup", "--agent", "codex"]);
+        let installed = f.run(&["setup", "--agent", "codex", "--hook-purpose", "context"]);
         assert_eq!(installed["exit"], 0, "{installed}");
         let bytes = fs::read(&path).unwrap();
         let settings: Value = serde_json::from_slice(&bytes).unwrap();
@@ -300,7 +307,7 @@ fn codex_setup_preview_refresh_uninstall_and_rollback_preserve_foreign_assets() 
             &serde_json::to_vec(&payload(&f, "SessionStart")).unwrap(),
         );
         assert!(value(&out)["hookSpecificOutput"]["additionalContext"].is_string());
-        let noop = f.run(&["setup", "--agent", "codex"]);
+        let noop = f.run(&["setup", "--agent", "codex", "--hook-purpose", "context"]);
         assert_eq!(noop["exit"], 0, "{noop}");
         assert_eq!(noop["evidence"]["transaction"]["changes"], 0, "{noop}");
         assert_eq!(fs::read(&path).unwrap(), bytes);

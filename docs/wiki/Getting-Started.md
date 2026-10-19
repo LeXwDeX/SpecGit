@@ -1,41 +1,25 @@
-# Getting Started: Manual Installation and Project Initialization
+# Getting Started: Agent Installation and Project Initialization
 
-The shared SpecGit executable, initialization of each project, and registration with a host such as Codex are separate steps. The first two steps are enough to use the CLI in a project.
+SpecGit is installed through the coding agent. The agent reads the
+[installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md),
+verifies the signed release and selects capabilities for the target project. The
+supported release channel and signature/SHA-256 evidence are documented in the
+[agent reference](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md).
 
-**Already installed?** Open your Agent in the target repository and copy the
+**Already installed?** Open the Agent in the target repository and copy the
 [English maintenance request](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#english-request)
 ([中文请求](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#中文请求)).
 It asks the Agent to inspect and perform safe project maintenance, including fresh
-adoption, rather than repeat installation or just suggest commands. Enabling SpecGit
-delegates the current task workflow without repeated step approvals. The guide covers
-stable CLI updates separately and preserves configuration, checkpoints and receipts. Missing declaration plus private state
-is not a fresh project; restore the original configuration, never delete state.
+adoption, rather than repeat installation. It covers stable CLI updates separately
+and preserves configuration, checkpoints and receipts. Missing declaration plus
+private state is not a fresh project; restore the original configuration, never delete state.
 
-## 1. Install the executable
+## 1. Install through the coding agent
 
-The supported public distribution channel is [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases/latest). Follow the [installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md): download the platform ZIP, `SHA256SUMS`, and `SHA256SUMS.sigstore.json` from the **same stable Release**; verify the signer, check the ZIP SHA-256 against the signed manifest, then extract `specgit` (`specgit.exe` on Windows) into a user-owned PATH directory. Supported targets are macOS arm64, Linux x64 glibc, and Windows x64. Running a release executable requires no Node.js, npm, or Rust compiler.
-
-To install **your own checked-out source** manually on macOS/Linux, build it locally. This is a development or commit-verification path, not a substitute for verifying a signed Release. Check the selected Git commit and worktree contents first:
-
-```sh
-cd /path/to/SpecGit/runtime
-cargo build --locked --release --bin specgit
-
-mkdir -p "$HOME/.local/bin"
-# Back up an existing binary; the timestamp and -n preserve earlier backups.
-if [ -f "$HOME/.local/bin/specgit" ]; then cp -np "$HOME/.local/bin/specgit" "$HOME/.local/bin/specgit.backup.$(date +%Y%m%d-%H%M%S)"; fi
-install -m 755 target/release/specgit "$HOME/.local/bin/specgit"
-cmp target/release/specgit "$HOME/.local/bin/specgit"
-```
-
-Building uses the Rust toolchain pinned in `runtime/rust-toolchain.toml`. For either installation method, check which command PATH selects. Resolve an older shim or competing `specgit` path before proceeding:
-
-```sh
-command -v specgit
-specgit --human --version
-specgit --help
-specgit --schema
-```
+Use the current [agent installation guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md)
+for the target machine and repository. It covers signed Release verification,
+shared CLI setup, project initialization and optional host integration. A source
+build is a maintainer/development workflow and is not the end-user installation path.
 
 ## 2. Initialize the target project
 
@@ -89,6 +73,6 @@ automatic observation is unavailable through supported events, use bounded watch
 or continue manually. Setup includes all recorded hosts plus the `--agent` selection;
 review/report every host's effects, including shared Skill refresh.
 
-Project initialization **does not register any host**. Only when you decide to integrate the active host should you separately inspect `specgit setup --help` and preview the relevant `--agent codex`, `--agent claude`, `--agent opencode`, or `--agent generic` selection. Since 2.4, setup is permanently project-only: `--scope project` is the default and the only scope value, assets live in the checkout with a worktree-private receipt, hooks invoke the installed shared executable directly (no global setup prerequisite), and the retired global options (`--root`, `--provider`, `--api-host`, `--register-*`, per-host roots) are rejected. Installing the executable and initializing a project does not require `setup`.
+Project initialization **does not register any host**. When you select a host with `setup --agent`, a new host receives project guidance and the Skill only. To opt into hooks, add `--hook-purpose guard` and/or `--hook-purpose context`; use `none` to keep the host hook-free. Since the 2.4 release, setup has been project-only: `--scope project` is the default and the only scope value, assets live in the checkout with a worktree-private receipt, hooks invoke the installed shared executable directly (no global setup prerequisite), and the retired global options (`--root`, `--provider`, `--api-host`, `--register-*`, per-host roots) are rejected. Installing the executable and initializing a project does not require `setup`.
 
 See [Upgrading Existing Projects](Upgrading-Existing-Projects), [Team Workflow](Team-Workflow), and [CLI Reference](CLI-Reference).

@@ -1,6 +1,6 @@
 # Supported coding agents
 
-SpecGit 2.13.0 provides a native CLI and managed project guidance. One shared
+SpecGit 2.14.0 provides a native CLI and managed project guidance. One shared
 user-level `specgit` executable serves every repository and worktree. Run
 `specgit init` in every clone and worktree: it installs the common project Skill
 and stable guidance entry points. Local declarations, Skills and private receipts
@@ -31,6 +31,12 @@ content, or `--refresh-only` to refresh only an existing managed file. A success
 retain the binary and give `specgit skill --user` as the remedy. Host discovery
 still follows the host's documented paths; installation alone proves no import.
 
+Naming a new host with `--agent` selects its project guidance and Skill only.
+Hooks are opt-in: add `--hook-purpose guard` for native Git commit/push checks
+or `--hook-purpose context` for supported SessionStart/PreToolUse context. An
+omitted purpose leaves existing recorded choices unchanged. Use
+`--hook-purpose none` when adding guidance without hooks.
+
 | Agent | Project assets |
 | --- | --- |
 | `generic` | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
@@ -40,10 +46,12 @@ still follows the host's documented paths; installation alone proves no import.
 | `opencode` custom fork with `--opencode-claude-hooks` | Adds compatible SessionStart and PreToolUse hooks in `.opencode/hooks.json` with `inputFormat: claude-code` |
 
 Select supported SessionStart and PreToolUse hooks only. SessionStart gives brief rules and the Skill entry; PreToolUse supplies relevant context or recovery. No PostToolUse, Stop callback or idle wake is supported. `guard` configures native Git commit/push hooks; `context` needs actual host support. `observe` is recognized but declined; use bounded watch/inbox. Omission preserves exact recorded
-modes on ordinary refresh. Explicit purposes apply to all recorded and newly
-selected hosts; purpose changes apply to all affected hosts and must stay within the current task.
+modes on ordinary refresh. Explicit purposes apply to hosts named by `--agent`,
+or all recorded hosts when `--agent` is omitted; keep changes within the current task.
 `none` adds no purposes and preserves valid purposes and native Git guard;
 refresh still removes owned retired PostToolUse/Stop registrations.
+`--remove-hook-purpose guard` or `--remove-hook-purpose context` removes only
+that recorded purpose, keeping the other purpose and unrelated host entries.
 Review/report all affected hosts' asset changes, even with `none`. Host hook entries depend on that selection and actual host support. Generic has no host callbacks; native Git guard is available separately. See
 the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes)
 for per-host declined reasons and older-client downgrade limits.
@@ -56,15 +64,13 @@ the Git checkout and private absolute Git directory. The receipt remains at
 `<git_dir>/specgit-v2/agent-assets/ownership.json`; new transaction journals are
 stored under `<git_dir>/specgit-v2/assets/`. Older journals under `agent-assets/`
 are used only as migration evidence or for recovery. This state keeps each linked
-worktree's integration independent. The 2.4 receipt omits `shared_root`; a
-2.3-era project receipt is refreshed, removed or recovered locally with foreign
-content and manual edits preserved.
-Setup never reads or writes the retired 2.3 global root. Existing 2.3 global data
-stays preserved; 2.4 ships no global cleanup command. If that data must go, back
-it up first and use the 2.3 CLI's exact owned cleanup before upgrading.
-Selection is additive on refresh, a new project integration requires an
-explicit `--agent`, and `--uninstall` (without `--agent`) removes exactly the
-recorded project assets of that worktree.
+worktree's integration independent. The 2.4 receipt omitted `shared_root`; current CLIs refresh, remove or recover
+2.3-era receipts locally while preserving foreign content and manual edits. Setup
+does not access the retired 2.3 global root. During a 2.3-to-2.4 migration, old
+global data remained untouched because 2.4 had no cleanup command; required cleanup
+used the 2.3 CLI's exact owned cleanup before upgrading. New projects need no `--agent`:
+`setup` installs the shared Skill and guidance baseline. `--agent` remains a compatibility
+selector for named hosts. `--uninstall` without it removes this worktree's recorded assets.
 
 ## Discovery boundaries
 
