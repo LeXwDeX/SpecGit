@@ -12,6 +12,7 @@ and [release procedure](runtime/distribution/README.md).
 - Support submodule guard installation, reject repository environment overrides before project writes, remove exclusions after the final consumer, check pending transactions under the lock, and preserve CRLF instruction files. Remove only proven-created empty directories during recovery and uninstall. New directory-tracking journals require CLI 2.14 or newer for recovery. (#757–#761)
 - Publish visible long-option aliases in schema, enforce architecture documentation against source dependencies, and direct installation guidance and release notes to the agent workflow. (#743–#745, #762–#763)
 - Require successful verification and acceptance checks on the exact main source before signing and publication. Scheduled Node audits now fail on high-severity advisories. (#764–#765)
+- Fix a Windows atomic-replacement race discovered before release: retain the initially authorized destination snapshot and preserve concurrent content or permission edits detected during sharing-conflict retries. This is an additional pre-release fix beyond the 26 audit findings. (#767)
 
 # 2.13.0
 

@@ -385,17 +385,19 @@ fn windows_atomic_replace_preserves_an_edit_during_the_sharing_conflict() {
     let change = Change::new(path.clone(), Some(b"after".to_vec())).unwrap();
     let mut blocker = windows_atomic_blocker(&path);
     let (send, receive) = std::sync::mpsc::channel();
+    let (edited, edited_receive) = std::sync::mpsc::channel();
     let edit = std::thread::spawn(move || {
         receive.recv().unwrap();
-        std::thread::sleep(Duration::from_millis(200));
         blocker.seek(SeekFrom::Start(0)).unwrap();
         blocker.write_all(b"user edit").unwrap();
         blocker.set_len(9).unwrap();
         blocker.sync_all().unwrap();
         drop(blocker);
+        edited.send(()).unwrap();
     });
     let result = locked.apply_checked(vec![change], |_| {
         send.send(()).unwrap();
+        edited_receive.recv().unwrap();
         Ok(())
     });
     edit.join().unwrap();
@@ -417,14 +419,16 @@ fn windows_atomic_replace_preserves_a_permission_edit_during_the_conflict() {
     let mut readonly = original.clone();
     readonly.set_readonly(true);
     let (send, receive) = std::sync::mpsc::channel();
+    let (edited, edited_receive) = std::sync::mpsc::channel();
     let edit = std::thread::spawn(move || {
         receive.recv().unwrap();
-        std::thread::sleep(Duration::from_millis(200));
         fs::set_permissions(&edited_path, readonly).unwrap();
         drop(blocker);
+        edited.send(()).unwrap();
     });
     let result = locked.apply_checked(vec![change], |_| {
         send.send(()).unwrap();
+        edited_receive.recv().unwrap();
         Ok(())
     });
     edit.join().unwrap();
@@ -449,5 +453,103 @@ fn persisted_sha256_format_matches_known_vectors() {
         ),
     ] {
         assert_eq!(specgit::assets::hash(input), expected);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn atomic_expected_conflict_child() {
+    let Some(root) = std::env::var_os("SPECGIT_TEST_ATOMIC_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let change = Change::new(root.join("checkpoint.json"), Some(b"after".to_vec())).unwrap();
+    assert_eq!(
+        store(&root).apply(vec![change]).unwrap_err().code,
+        Code::ConcurrentEdit
+    );
+}
+
+#[cfg(feature = "test-fixtures")]
+fn edit_at_atomic_barrier(point: &str, readonly_edit: bool, sharing_blocked: bool) {
+    use std::{
+        process::{Command, Stdio},
+        time::Instant,
+    };
+    let (_temp, root) = fixture();
+    let path = root.join("checkpoint.json");
+    fs::write(&path, b"before").unwrap();
+    let original = fs::metadata(&path).unwrap().permissions();
+    let pause = root.join("pause");
+    fs::create_dir(&pause).unwrap();
+    #[cfg(windows)]
+    let blocker = sharing_blocked.then(|| windows_atomic_blocker(&path));
+    #[cfg(not(windows))]
+    assert!(!sharing_blocked);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "atomic_expected_conflict_child", "--nocapture"])
+        .env("SPECGIT_TEST_ATOMIC_ROOT", &root)
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", point)
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", &pause)
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_TARGET", &path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !pause.join("ready").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if !pause.join("ready").exists() {
+        let _ = child.kill();
+        let output = child.wait_with_output().unwrap();
+        panic!("writer did not reach {point}: {output:?}");
+    }
+    if readonly_edit {
+        let mut permissions = original.clone();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).unwrap();
+    } else {
+        fs::write(&path, b"user edit").unwrap();
+    }
+    #[cfg(windows)]
+    drop(blocker);
+    fs::write(pause.join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let kept_readonly = fs::metadata(&path).unwrap().permissions().readonly();
+    let kept_bytes = fs::read(&path).unwrap();
+    fs::set_permissions(&path, original).unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        kept_bytes,
+        if readonly_edit {
+            &b"before"[..]
+        } else {
+            &b"user edit"[..]
+        }
+    );
+    if readonly_edit {
+        assert!(kept_readonly);
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn atomic_replace_preserves_edits_after_validation_before_staging() {
+    for readonly in [false, true] {
+        edit_at_atomic_barrier("before-atomic-write", readonly, false);
+    }
+}
+
+#[cfg(all(windows, feature = "test-fixtures"))]
+#[test]
+fn windows_atomic_replace_preserves_edits_after_a_confirmed_sharing_failure() {
+    for readonly in [false, true] {
+        edit_at_atomic_barrier("atomic-replace-blocked", readonly, true);
     }
 }
