@@ -3704,3 +3704,79 @@ fn library_setup_and_renamed_cli_guard_do_not_require_specgit_in_path() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn cli_setup_uninstall_preserves_exclusions_for_current_initialization_markers() {
+    for marker in specgit::config::worktree::INITIALIZED_MARKERS {
+        let (f, _) = fixture(vec![]);
+        assert_eq!(cli(&f.root, &[])["ok"], true);
+        fs::write(f.private.parent().unwrap().join(marker), b"{}").unwrap();
+        let exclude = f.root.join(".git/info/exclude");
+        let before = fs::read(&exclude).unwrap();
+        let result = cli(&f.root, &["--uninstall"]);
+        assert_eq!(result["ok"], true, "{marker}: {result}");
+        assert_eq!(fs::read(exclude).unwrap(), before, "{marker}");
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn cli_setup_uninstall_rechecks_new_current_exclusion_consumers_after_planning() {
+    use std::time::{Duration, Instant};
+    for marker in [
+        ".specgit.yaml",
+        "guidance.json",
+        "local-routing.json",
+        "selection.json",
+    ] {
+        let (f, _) = fixture(vec![]);
+        assert_eq!(cli(&f.root, &[])["ok"], true);
+        let receipt = fs::read(f.private.join("ownership.json")).unwrap();
+        let exclude = f.root.join(".git/info/exclude");
+        let before = fs::read(&exclude).unwrap();
+        let lock = specgit::assets::AssetStore::lock(
+            &f.private.parent().unwrap().join("assets"),
+            &[f.root.clone(), f.private.clone()],
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let ready = f.base.join("uninstall-planned");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+            .current_dir(&f.root)
+            .args(["setup", "--uninstall", "--json"])
+            .env("SPECGIT_FIXTURE_SETUP_PLAN_READY", &ready)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if !ready.exists() {
+            let _ = child.kill();
+            panic!("uninstall did not finish planning");
+        }
+        let path = if marker == ".specgit.yaml" {
+            f.root.join(marker)
+        } else {
+            f.private.parent().unwrap().join(marker)
+        };
+        fs::write(path, b"{}").unwrap();
+        drop(lock);
+        let output = child.wait_with_output().unwrap();
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["ok"], false, "{marker}: {result}");
+        assert!(
+            result.to_string().contains("concurrent_edit"),
+            "{marker}: {result}"
+        );
+        assert_eq!(fs::read(f.private.join("ownership.json")).unwrap(), receipt);
+        assert_eq!(fs::read(exclude).unwrap(), before);
+        assert!(
+            f.root
+                .join(".agents/skills/specgit-native/SKILL.md")
+                .exists()
+        );
+    }
+}

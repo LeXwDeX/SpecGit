@@ -282,6 +282,8 @@ fn prevent_stdio_inheritance() {
         let handle = unsafe { GetStdHandle(stream) };
         assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
         assert_ne!(
+            // SAFETY: the validated handle remains borrowed and open; only its
+            // inheritance flag changes in this single-threaded child fixture.
             unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) },
             0,
             "{}",

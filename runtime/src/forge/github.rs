@@ -160,7 +160,10 @@ fn title_query(query: &str) -> String {
     )
 }
 fn verify_search_repository(row: &Value, repo: &Repository) -> Result<(), Diagnostic> {
-    if !text(row, "repository_url")?.ends_with(&format!("/repos/{}", repo.path)) {
+    if !text(row, "repository_url")?
+        .rsplit_once("/repos/")
+        .is_some_and(|(_, path)| path.eq_ignore_ascii_case(&repo.path))
+    {
         return Err(malformed());
     }
     Ok(())

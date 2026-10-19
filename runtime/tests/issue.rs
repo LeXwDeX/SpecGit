@@ -1740,17 +1740,25 @@ fn duplicate_search_quotes_title_syntax_and_rejects_foreign_repository_rows() {
         assert!(!query.contains("repo%3Aother"), "{query}");
         assert!(!query.contains("is%3Aclosed+-label"), "{query}");
     }
-    f.edit(|s| {
-        let mut foreign = native_issue("github", 1, false);
-        foreign["repository_url"] = json!("https://forge.example/api/v3/repos/other/repo");
-        s["issues"] = json!([foreign]);
-    });
-    let result = f.run(&["issue", "--inspect", "fix: history"]);
-    assert_eq!(result["exit"], 3, "{result}");
-    assert_eq!(
-        result["diagnostics"][0]["code"], "malformed_response",
-        "{result}"
-    );
+    for repository_url in [
+        "https://forge.example/api/v3/repos/other/repo",
+        "https://forge.example/api/v3/repos/prefixfixture/repo",
+        "https://forge.example/api/v3/repos/fixture/repo-extra",
+        "https://forge.example/api/v3/repos/fixture/repo?other=1",
+        "https://forge.example/api/v3/notrepos/fixture/repo",
+    ] {
+        f.edit(|s| {
+            let mut foreign = native_issue("github", 1, false);
+            foreign["repository_url"] = json!(repository_url);
+            s["issues"] = json!([foreign]);
+        });
+        let result = f.run(&["issue", "--inspect", "fix: history"]);
+        assert_eq!(result["exit"], 3, "{repository_url}: {result}");
+        assert_eq!(
+            result["diagnostics"][0]["code"], "malformed_response",
+            "{repository_url}: {result}"
+        );
+    }
 }
 
 #[test]
@@ -1773,4 +1781,44 @@ fn github_uses_existing_label_case_for_pool_and_issue_readback() {
     gitlab.edit(|s| s["labels"] = json!([{"name":"Kind::Feat","color":"112233"}]));
     let result = gitlab.run(&["issue", "feat: native label case"]);
     assert_eq!(result["exit"], 2, "{result}");
+}
+
+#[test]
+fn github_duplicate_search_accepts_canonical_repository_casing() {
+    for (remote_path, native_path) in [
+        ("FiXtUrE/RePo", "fixture/repo"),
+        ("fixture/repo", "FiXtUrE/RePo"),
+    ] {
+        let f = Fixture::new("github");
+        git(
+            &f.root,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                &format!("https://forge.example/{remote_path}.git"),
+            ],
+        );
+        f.edit(|s| {
+            let mut open = native_issue("github", 1, false);
+            let mut closed = native_issue("github", 2, true);
+            for issue in [&mut open, &mut closed] {
+                issue["repository_url"] = json!(format!("https://forge.example/api/v3/repos/{native_path}"));
+            }
+            let encoded = remote_path.replace('/', "%2F");
+            s["read_routes"] = json!({
+                format!("repos/{remote_path}"): s["project"].clone(),
+                format!("repos/{remote_path}/labels?per_page=100&page=1"): [],
+                format!("repos/{remote_path}/issues/1"): open.clone(),
+                candidate_route("github", false).replace("fixture%2Frepo", &encoded): {"incomplete_results":false,"items":[open]},
+                candidate_route("github", true).replace("fixture%2Frepo", &encoded): {"incomplete_results":false,"items":[closed]},
+            });
+        });
+        let report = f.run(&["issue", "--inspect", "fix: history"]);
+        assert_eq!(report["exit"], 0, "{remote_path}: {report}");
+        let candidate = &report["evidence"]["candidates"][0];
+        assert_eq!(candidate["issues"][0]["id"], 1, "{report}");
+        assert_eq!(candidate["history"][0]["id"], 2, "{report}");
+        assert_eq!(f.writes(), 0);
+    }
 }

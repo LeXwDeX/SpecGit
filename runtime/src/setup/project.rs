@@ -1771,16 +1771,25 @@ pub async fn run_with_hook_removals(
         let native = crate::guard::setup_plan_with_executable(&process, &root, prepared.guard_enabled, &source).await?;
         merge_guard(&root, &mut prepared, &mut evidence, native)?;
         if options.uninstall {
-            let consumers = crate::config::worktree::sibling_exclusion_consumers(&process, &root).await?;
-            for sibling in crate::config::worktree::siblings(&process, &root).await? {
-                for path in std::iter::once(sibling.root.join(".specgit.yaml")).chain(crate::config::worktree::INITIALIZED_MARKERS.into_iter().chain(crate::config::worktree::RECEIPT_MARKERS).map(|name| sibling.private_root.join(name))) {
+            // Setup retires only its integration. This worktree's declaration
+            // and init/checkpoint state continue to consume local exclusions.
+            // Classify each consumer from the same snapshots pinned below.
+            let mut worktrees = vec![(root.clone(), git_dir.join("specgit-v2"), true)];
+            worktrees.extend(crate::config::worktree::siblings(&process, &root).await?.into_iter().map(|sibling| (sibling.root, sibling.private_root, false)));
+            let mut retained_exclusions = false;
+            for (checkout, state_root, current) in worktrees {
+                let paths = std::iter::once((checkout.join(".specgit.yaml"), true))
+                    .chain(crate::config::worktree::INITIALIZED_MARKERS.into_iter().map(|name| (state_root.join(name), true)))
+                    .chain(crate::config::worktree::RECEIPT_MARKERS.into_iter().filter(|_| !current).map(|name| (state_root.join(name), name == "agent-assets/ownership.json")));
+                for (path, consumes) in paths {
+                    let before = Snapshot::read(&path)?;
+                    retained_exclusions |= consumes && before.bytes.is_some();
                     if !prepared.dependencies.iter().any(|dependency| dependency.path == path) {
-                        let before = Snapshot::read(&path)?;
                         prepared.dependencies.push(Change { path, after: before.bytes.clone(), permissions: before.permissions.clone(), before });
                     }
                 }
             }
-            if consumers.is_empty() {
+            if !retained_exclusions {
                 let change = crate::local_exclude::removal(&exclude)?;
                 prepared.changes.retain(|change| change.path != exclude);
                 prepared.changes.push(change);
