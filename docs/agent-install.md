@@ -137,6 +137,13 @@ specgit init --provider <provider> --dry-run --json
 specgit init --provider <provider> --json
 ```
 
+On a new project, init also installs the native Git guard (pre-commit/pre-push) in
+the main worktree when Git uses hooks inside the Git directory; Husky, external
+hook paths and linked worktrees need `setup --hook-purpose guard`. With the guard,
+every commit needs a selected Issue checkpoint, and pushed commits carry an
+`Issue: #N` trailer. The dry-run lists the hook paths. An existing installation
+keeps its recorded choices; `doctor` reports a missing guard.
+
 Include `--remote`, `--target`, `--language` or `--api-host` only when selected or
 needed by the actual repository and supported by the installed schema. Existing
 configuration is authoritative for a refresh. For fresh setup, leave automatic

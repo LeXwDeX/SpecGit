@@ -83,11 +83,11 @@ pub async fn handle(event: &str, bytes: &[u8]) -> Output {
             .unwrap_or_default();
         if language == Language::Zh {
             format!(
-                "读取项目 `.agents/skills/specgit-native/SKILL.md`。在当前任务持续授权内主动处理 Issue/Milestone，先自修复错误；TDD 与 PR 后 CI 强烈推荐，遵守平台必需检查。提交或推送前准备有效 Issue checkpoint。分支 {branch}；选定 Issue {issues:?}。"
+                "读取项目 `.agents/skills/specgit-native/SKILL.md`。在当前任务持续授权内主动处理 Issue/Milestone，先自修复错误；TDD 与 PR 后 CI 强烈推荐，遵守平台必需检查。每次提交都绑定选定 Issue：提交或推送前准备有效 checkpoint，提交加 `Issue: #N` trailer，不用 --no-verify。分支 {branch}；选定 Issue {issues:?}。"
             )
         } else {
             format!(
-                "Read project `.agents/skills/specgit-native/SKILL.md`. Use standing task authorization to handle Issues/Milestones and repair errors proactively. TDD and post-PR CI are strongly recommended; respect platform-required checks. Prepare an Issue checkpoint before commit/push. Branch {branch}; selected Issues {issues:?}."
+                "Read project `.agents/skills/specgit-native/SKILL.md`. Use standing task authorization to handle Issues/Milestones and repair errors proactively. TDD and post-PR CI are strongly recommended; respect platform-required checks. Every commit binds a selected Issue: prepare a valid checkpoint before commit/push, add an `Issue: #N` trailer, never use --no-verify. Branch {branch}; selected Issues {issues:?}."
             )
         }
     } else {

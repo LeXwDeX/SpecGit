@@ -128,6 +128,7 @@ async fn discover(o: &Options, w: &Workspace) -> Result<Discovery, Diagnostic> {
         request: None,
         request_write_started: false,
         request_intent: None,
+        delivered_request: None,
     });
     if selected.project_id != w.facts.id || selected.target != w.target {
         return Err(Diagnostic::input(

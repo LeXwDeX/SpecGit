@@ -4,7 +4,7 @@
 
 | 命令 | 用途 |
 | --- | --- |
-| `init` | 初始化或检查单个项目的声明和本地指导；不安装宿主 hooks |
+| `init` | 初始化或检查单个项目的声明和本地指导；新项目安装原生 Git guard，不安装宿主 hooks |
 | `setup` | 安装/刷新项目 Skill 和指导基线；新选 `--agent` 只添加指导，hooks 须显式指定 `--hook-purpose guard` 和/或 `--hook-purpose context` |
 | `update` | 检查、验证或应用签名 GitHub Release，以更新共享可执行文件 |
 | `issue` / `pr` | 选择完整规格 / 汇聚原生草稿请求；写入须已有授权 |

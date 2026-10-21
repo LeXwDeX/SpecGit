@@ -158,6 +158,7 @@ pub(super) async fn apply(
         &root,
         &private_root.join("agent-assets"),
         options.mirror_claude,
+        crate::guard::default_eligible(&process, &root).await?,
     )?;
     changes.extend(integration);
     let guard_plan = crate::guard::setup_plan(&process, &root, guard_enabled).await?;

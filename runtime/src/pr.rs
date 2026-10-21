@@ -47,11 +47,27 @@ pub struct Options {
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     if options.status {
         let observation = if let Some(request) = options.request {
-            crate::observation::observe_explicit(request, process, cwd).await
+            crate::observation::observe_explicit(request, process.clone(), cwd).await
         } else {
-            crate::observation::observe(None, process, cwd).await
+            crate::observation::observe(None, process.clone(), cwd).await
         };
-        return Report::observation("pr.status", observation);
+        let retired = retire_delivered(&process, cwd, &observation).await;
+        let mut report = Report::observation("pr.status", observation);
+        match retired {
+            Ok(Some((branch, request))) => {
+                let mut effects = Effects::default();
+                let index = effects.begin(
+                    "local",
+                    "record_delivered_checkpoint",
+                    serde_json::json!({"branch":branch,"request":request}),
+                );
+                effects.applied(index);
+                report.effects = Some(effects);
+            }
+            Ok(None) => {}
+            Err(d) => report.diagnostics.push(d),
+        }
+        return report;
     }
     let mut effects = Effects::default();
     let mut report = match execute(options, process, cwd, &mut effects).await {
@@ -63,6 +79,51 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
 }
 mod preparation;
 mod write;
+
+/// Record that this worktree's checkpoint was delivered when the verified read
+/// shows its own request merged. The record only stops new commits.
+async fn retire_delivered(
+    process: &Process,
+    cwd: &Path,
+    observation: &crate::observation::Observation,
+) -> Result<Option<(String, u64)>, Diagnostic> {
+    use crate::observation::Status;
+    let (Some(request), Some(project_id)) = (
+        observation.evidence.request.as_ref(),
+        observation.evidence.project_id,
+    ) else {
+        return Ok(None);
+    };
+    if !matches!(
+        observation.status,
+        Status::Merged | Status::Completed | Status::MergedIssuesOpen
+    ) || !observation.diagnostics.is_empty()
+    {
+        return Ok(None);
+    }
+    let bytes = crate::project::git(process, cwd, &["rev-parse", "--show-toplevel"]).await?;
+    let root = PathBuf::from(
+        String::from_utf8(bytes)
+            .map_err(|_| Diagnostic::input("Invalid Git root."))?
+            .trim_end_matches(['\r', '\n']),
+    );
+    let Some(declaration) = crate::config::read(&root)? else {
+        return Ok(None);
+    };
+    let context = crate::config::resolve(
+        process,
+        &root,
+        declaration.remote.as_deref(),
+        declaration.provider,
+        None,
+    )
+    .await?;
+    if observation.evidence.repository.as_ref() != Some(&context.repository) {
+        return Ok(None);
+    }
+    Ok(selection::record_delivery(&context, project_id, request)?
+        .map(|id| (request.source.clone(), id)))
+}
 
 async fn execute(
     mut o: Options,

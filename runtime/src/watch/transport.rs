@@ -54,6 +54,7 @@ async fn observe(
     let assessment = match result {
         Ok(Ok((assessment, fingerprint))) => {
             *verified = fingerprint;
+            retire_delivered(context, &assessment);
             assessment
         }
         Ok(Err(d)) => {
@@ -77,6 +78,26 @@ async fn observe(
         identity.request,
         cycle.digest.as_deref(),
     )
+}
+
+/// A verified merged read of this checkpoint's own request retires it. The
+/// record is best effort: a failed write leaves the checkpoint unchanged.
+fn retire_delivered(context: &Context, assessment: &NativeObservation) {
+    use crate::observation::Status;
+    if !matches!(
+        assessment.status,
+        Status::Merged | Status::Completed | Status::MergedIssuesOpen
+    ) || !assessment.diagnostics.is_empty()
+        || assessment.evidence.repository.as_ref() != Some(&context.repository)
+    {
+        return;
+    }
+    if let (Some(request), Some(project_id)) = (
+        assessment.evidence.request.as_ref(),
+        assessment.evidence.project_id,
+    ) {
+        let _ = crate::selection::record_delivery(context, project_id, request);
+    }
 }
 
 struct Cycle<'a> {

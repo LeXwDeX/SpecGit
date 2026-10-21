@@ -47,6 +47,7 @@ pub(super) async fn prepare_and_run(
             &root,
             &paths.private_root.join("agent-assets"),
             options.mirror_claude,
+            false,
         )
         .map(|prepared| prepared.changes)
         .unwrap_or_default();
