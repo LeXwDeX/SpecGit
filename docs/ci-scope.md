@@ -6,8 +6,9 @@ are retired. Historical v1 documents are not active development instructions.
 
 ## Documentation short path
 
-For README, Wiki, ordinary docs and manual project guidance, review the relevant
-content and run `node scripts/ci-metadata-check.mjs`. Install locked Node tooling
+The short path only shortens verification. Documentation changes still need a
+selected Issue and a PR. For README, Wiki, ordinary docs and manual project
+guidance, review the relevant content and run `node scripts/ci-metadata-check.mjs`. Install locked Node tooling
 with `pnpm install --frozen-lockfile --ignore-scripts` if needed. No Rust rebuild
 is required for a documentation-only change. Executable workflows, shipped
 runtime references, schemas, templates and scripts are product inputs even when

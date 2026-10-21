@@ -383,11 +383,39 @@ fn pre_commit_requires_a_checkpoint_only_when_tracked_changes_are_staged() {
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 }
 
+fn head(root: &Path) -> String {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Mark the fixture base as already published, then add one bound commit.
+fn published_base_with_bound_commit(root: &Path) -> String {
+    git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(
+        root,
+        &[
+            "commit",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "bound",
+            "--trailer",
+            "Issue: #41",
+        ],
+    );
+    head(root)
+}
+
 #[test]
 fn pre_push_checks_each_branch_but_allows_deletions_and_tags() {
     let temp = fixture();
     checkpoint(temp.path(), "feature");
-    let oid = "1111111111111111111111111111111111111111";
+    let oid = &published_base_with_bound_commit(temp.path());
     let zero = "0000000000000000000000000000000000000000";
     assert!(
         guard(
@@ -417,6 +445,166 @@ fn pre_push_checks_each_branch_but_allows_deletions_and_tags() {
         )
         .status
         .success()
+    );
+}
+
+#[test]
+fn pre_push_requires_new_commits_to_name_a_selected_issue() {
+    let temp = fixture();
+    let root = temp.path();
+    checkpoint(root, "feature");
+    let base = published_base_with_bound_commit(root);
+    let zero = "0000000000000000000000000000000000000000";
+    let push = |oid: &str| {
+        guard(
+            root,
+            "pre-push",
+            &format!("refs/heads/feature {oid} refs/heads/feature {zero}\n"),
+        )
+    };
+    assert!(push(&base).status.success());
+
+    // Trailer keys are case-insensitive and one selected Issue is enough.
+    git(
+        root,
+        &[
+            "commit",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "lower",
+            "--trailer",
+            "issue: #99",
+            "--trailer",
+            "issue: #41",
+        ],
+    );
+    assert!(push(&head(root)).status.success());
+
+    git(
+        root,
+        &["commit", "--no-verify", "--allow-empty", "-m", "unbound"],
+    );
+    let unbound = head(root);
+    let denied = push(&unbound);
+    assert_eq!(denied.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(stderr.contains(&unbound[..12]), "{stderr}");
+    assert!(stderr.contains("Issue: #N"), "{stderr}");
+    assert!(stderr.contains("#41"), "{stderr}");
+
+    git(root, &["reset", "-q", "--hard", &base]);
+    git(
+        root,
+        &[
+            "commit",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "other",
+            "--trailer",
+            "Issue: #99",
+        ],
+    );
+    let foreign = head(root);
+    let denied = push(&foreign);
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains(&foreign[..12]));
+
+    // A merge commit carries no authored change of its own and is exempt; the
+    // merged side's new commits still need their own binding.
+    git(root, &["reset", "-q", "--hard", &base]);
+    git(root, &["checkout", "-q", "-b", "side"]);
+    git(
+        root,
+        &[
+            "commit",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "side",
+            "--trailer",
+            "Issue: #41",
+        ],
+    );
+    git(root, &["checkout", "-q", "feature"]);
+    git(
+        root,
+        &[
+            "commit",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "main line",
+            "--trailer",
+            "Issue: #41",
+        ],
+    );
+    git(
+        root,
+        &[
+            "merge",
+            "--no-ff",
+            "--no-verify",
+            "-q",
+            "-m",
+            "merge side",
+            "side",
+        ],
+    );
+    assert!(push(&head(root)).status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn installed_guard_rejects_a_real_push_of_unbound_commits() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    checkpoint(&root, "feature");
+    assert!(manage(&root, "--install").status.success());
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--bare", "-q"]);
+    git(
+        &root,
+        &["remote", "add", "local", remote.path().to_str().unwrap()],
+    );
+    git(
+        &root,
+        &["push", "--no-verify", "-q", "local", "feature:main"],
+    );
+    git(&root, &["fetch", "-q", "local"]);
+    fs::write(root.join("source.rs"), "change").unwrap();
+    git(&root, &["add", "source.rs"]);
+    let commit = hooked_git(&root, &["commit", "-q", "-m", "change"]);
+    assert!(
+        commit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    assert!(!push.status.success());
+    assert!(String::from_utf8_lossy(&push.stderr).contains("Issue: #N"));
+    let amended = hooked_git(
+        &root,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--no-edit",
+            "--trailer",
+            "Issue: #41",
+        ],
+    );
+    assert!(
+        amended.status.success(),
+        "{}",
+        String::from_utf8_lossy(&amended.stderr)
+    );
+    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    assert!(
+        push.status.success(),
+        "{}",
+        String::from_utf8_lossy(&push.stderr)
     );
 }
 

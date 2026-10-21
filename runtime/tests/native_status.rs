@@ -969,3 +969,125 @@ fn github_missing_workflow_identity_is_unknown_instead_of_old_green() {
     assert_eq!(r["exit"], 3, "{r}");
     assert!(r["evidence"]["checks"].is_null(), "{r}");
 }
+
+fn checkpoint(f: &delivery::Fixture) -> Value {
+    serde_json::from_slice(&fs::read(f.root.join(".git/specgit-v2/selection.json")).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn a_merged_read_retires_the_checkpoint_until_new_issues_are_selected() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        let open = f.run(&["pr", "--status"]);
+        assert_eq!(open["status"], "open", "{provider}: {open}");
+        assert!(open["effects"].is_null(), "{provider}: {open}");
+        assert!(checkpoint(&f).get("delivered_request").is_none());
+
+        complete_request(&f, provider);
+        // A cross-branch read never retires another branch's checkpoint.
+        git(&f, &["switch", "-q", "-c", "elsewhere"]);
+        let foreign = f.run(&["pr", "--status", "--request", "41"]);
+        assert_eq!(foreign["status"], "completed", "{provider}: {foreign}");
+        assert!(foreign["effects"].is_null(), "{provider}: {foreign}");
+        assert_eq!(foreign["diagnostics"], json!([]), "{provider}: {foreign}");
+        git(&f, &["switch", "-q", "feature"]);
+        assert!(checkpoint(&f).get("delivered_request").is_none());
+
+        let writes = f.writes();
+        let merged = f.run(&["pr", "--status"]);
+        assert_eq!(merged["status"], "completed", "{provider}: {merged}");
+        assert_eq!(
+            merged["effects"]["operations"][0]["action"], "record_delivered_checkpoint",
+            "{provider}: {merged}"
+        );
+        assert_eq!(merged["effects"]["outcome"], "applied");
+        assert_eq!(f.writes(), writes, "the record is local only");
+        assert_eq!(checkpoint(&f)["delivered_request"], 41);
+        let again = f.run(&["pr", "--status"]);
+        assert!(again["effects"].is_null(), "{provider}: {again}");
+
+        // New commits cannot bind the delivered Issues.
+        fs::write(f.root.join("after.txt"), "later work").unwrap();
+        git(&f, &["add", "after.txt"]);
+        let denied = f
+            .command(&["guard", "--stage", "pre-commit"])
+            .output()
+            .unwrap();
+        assert_eq!(denied.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&denied.stderr);
+        assert!(stderr.contains("merged request #41"), "{stderr}");
+        assert!(stderr.contains("--branch"), "{stderr}");
+        git(&f, &["reset", "-q", "--hard"]);
+        fs::remove_file(f.root.join("after.txt")).ok();
+
+        let same_branch = f.run(&["issue", "--create-labels", "feat: next spec"]);
+        assert_ne!(same_branch["exit"], 0, "{provider}: {same_branch}");
+        assert!(
+            same_branch["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("--branch"),
+            "{provider}: {same_branch}"
+        );
+        let next = f.run(&[
+            "issue",
+            "--create-labels",
+            "--branch",
+            "next",
+            "feat: next spec",
+        ]);
+        assert_eq!(next["exit"], 0, "{provider}: {next}");
+        let current = checkpoint(&f);
+        assert_eq!(current["branch"], "next", "{provider}: {current}");
+        assert!(current.get("delivered_request").is_none());
+        assert_ne!(current["issues"], json!([1]));
+    }
+}
+
+#[test]
+fn a_merged_lifecycle_watch_also_retires_the_checkpoint() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+        "--once",
+    ]);
+    assert_eq!(watched["exit"], 0, "{watched}");
+    assert_eq!(f.writes(), writes);
+    assert_eq!(checkpoint(&f)["delivered_request"], 41, "{watched}");
+}
+
+#[test]
+fn a_checkpoint_without_its_recorded_request_is_never_retired() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let path = f.root.join(".git/specgit-v2/selection.json");
+    let mut saved = checkpoint(&f);
+    saved["request"] = Value::Null;
+    fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    for args in [
+        vec!["pr", "--status", "--request", "41"],
+        vec![
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+            "--once",
+        ],
+    ] {
+        let read = f.run(&args);
+        assert!(read["effects"].is_null(), "{read}");
+        assert!(checkpoint(&f).get("delivered_request").is_none(), "{read}");
+    }
+}

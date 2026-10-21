@@ -37,6 +37,10 @@ pub struct Selection {
     pub request_write_started: bool,
     #[serde(default)]
     pub request_intent: Option<RequestIntent>,
+    /// The checkpoint's own request was read back merged. The checkpoint then
+    /// admits no new commits; it is a local fact, never write authorization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_request: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,12 +82,24 @@ fn invalid() -> Diagnostic {
 }
 impl Selection {
     pub fn checkpoint_valid(&self, target: Option<&str>) -> bool {
-        !self.issues.is_empty()
+        self.delivered_request.is_none()
+            && !self.issues.is_empty()
             && target.is_none_or(|target| target == self.target)
             && self.issues.iter().all(|id| {
                 self.intents.iter().any(|intent| intent.issue == Some(*id))
                     || self.adopted.iter().any(|issue| issue.id == *id)
             })
+    }
+    /// An unconfirmed native write that must stay visible until it is adopted.
+    pub fn pending_write(&self) -> bool {
+        self.intents
+            .iter()
+            .any(|intent| intent.write_started && intent.issue.is_none())
+            || (self.request_write_started && self.request.is_none())
+    }
+    /// A delivered checkpoint without pending writes may give way to new work.
+    pub fn replaceable(&self) -> bool {
+        self.delivered_request.is_some() && !self.pending_write()
     }
     pub fn record_adopted(&mut self, issue: crate::delivery_model::Issue) {
         self.adopted.retain(|old| old.id != issue.id);
@@ -112,6 +128,7 @@ pub fn read_path(path: &Path) -> Result<Option<Selection>, Diagnostic> {
             .any(|i| i.id == 0 || !s.issues.contains(&i.id) || i.title.trim().is_empty())
         || s.intents.len() > 100
         || s.request == Some(0)
+        || s.delivered_request == Some(0)
         || s.issues
             .iter()
             .enumerate()
@@ -216,4 +233,42 @@ impl Locked {
         self.expected = Snapshot::read(&self.path)?;
         Ok(())
     }
+}
+
+/// Retire the current branch's checkpoint after its recorded request was read
+/// back merged into the recorded target. Returns the request ID, or `None` when
+/// the checkpoint has no recorded request or the facts identify another one.
+pub fn record_delivery(
+    context: &Context,
+    project_id: u64,
+    request: &crate::delivery_model::PullRequest,
+) -> Result<Option<u64>, Diagnostic> {
+    let matches = |s: &Selection| {
+        request.state == "merged"
+            && request.id != 0
+            && s.delivered_request.is_none()
+            && !s.pending_write()
+            && s.project_id == project_id
+            && request.source_project == project_id
+            && request.target_project == project_id
+            && request.source == s.branch
+            && request.target == s.target
+            && s.request == Some(request.id)
+    };
+    // Only this branch's own checkpoint can be retired; others stay untouched.
+    let current = || match classify(context)? {
+        ReadOutcome::Current(selection) if matches(&selection) => Ok(Some(selection)),
+        _ => Ok::<_, Diagnostic>(None),
+    };
+    if current()?.is_none() {
+        return Ok(None);
+    }
+    let mut locked = Locked::acquire(context)?;
+    // Recheck under the lock; a concurrent selection change wins.
+    let Some(mut selection) = current()? else {
+        return Ok(None);
+    };
+    selection.delivered_request = Some(request.id);
+    locked.save(&selection)?;
+    Ok(Some(request.id))
 }

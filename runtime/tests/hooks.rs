@@ -229,6 +229,10 @@ fn session_start_is_brief_context_and_pre_tool_use_does_not_gate_edits() {
         "{text}"
     );
     assert!(text.contains("commit/push"), "{text}");
+    assert!(
+        text.contains("Issue: #N") && text.contains("--no-verify"),
+        "{text}"
+    );
     assert!(text.contains("TDD") && text.contains("CI"), "{text}");
     assert!(
         text.len() < 1200,

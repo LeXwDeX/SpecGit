@@ -130,8 +130,11 @@ Auto-merge preferences do not grant permission to change native protections.
 
 The native CLI is installed once in a user-owned PATH directory and shared by
 repositories and worktrees. Run `specgit init` in every clone and worktree to
-maintain its project declaration, Skill, guidance entry and local records. Init
-does not install host hooks. `specgit setup` is project-only and installs or
+maintain its project declaration, Skill, guidance entry and local records. On a
+new project's main worktree with hooks in the Git directory, init also installs the
+native Git guard: every commit needs a selected
+Issue, and pushed commits carry an `Issue: #N` trailer. Init does not install host
+hooks. `specgit setup` is project-only and installs or
 refreshes the shared project Skill and guidance baseline; it never copies the CLI
 into a project or scans other repositories. A new `--agent` selection adds that
 host's guidance and Skill only. Hooks require explicit `--hook-purpose guard` or
@@ -171,7 +174,7 @@ After CLI upgrades, use the [project maintenance guide](docs/agent-project-refre
 to verify the executable selected by PATH and refresh each project integration.
 Omit hook purposes to preserve recorded modes; review all hosts whose assets will
 refresh. Only SessionStart and PreToolUse are supported; `observe` is declined and
-bounded `watch`/`inbox` is the fallback. The current runtime is 2.14.0. After project updates, run status and doctor, read back
+bounded `watch`/`inbox` is the fallback. The current runtime is 2.15.0. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before

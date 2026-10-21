@@ -2023,11 +2023,12 @@ fn branch_switch_recognizes_pristine_guidance_from_the_checked_out_declaration()
     };
     git(&["config", "core.autocrlf", "true"]);
     git(&["add", "-f", ".specgit.yaml", "AGENTS.md"]);
-    git(&["commit", "-m", "Chinese branch"]);
+    // Fixture commits only; the default Git guard is covered by its own tests.
+    git(&["commit", "--no-verify", "-m", "Chinese branch"]);
     git(&["checkout", "-b", "english"]);
     assert_eq!(f.run(&["init", "--language", "en"])["exit"], 0);
     git(&["add", "-f", ".specgit.yaml", "AGENTS.md"]);
-    git(&["commit", "-m", "English branch"]);
+    git(&["commit", "--no-verify", "-m", "English branch"]);
     git(&["checkout", "feature"]);
     assert_eq!(f.run(&["init"])["exit"], 0);
     assert!(
@@ -2764,8 +2765,29 @@ fn rollback_keeps_the_shared_exclusion_block_while_a_sibling_is_initialized() {
         assert!(!main.join(".specgit.yaml").exists());
         let retained = rollback["evidence"]["retained"].as_array().unwrap();
         if sibling_initialized {
-            assert_eq!(retained.len(), 1, "{rollback}");
-            assert_eq!(retained[0]["reason"], "shared_initialized_worktree");
+            // The exclusion block and the default Git guard are both shared.
+            let mut names: Vec<_> = retained
+                .iter()
+                .map(|entry| {
+                    assert_eq!(entry["reason"], "shared_initialized_worktree", "{rollback}");
+                    PathBuf::from(entry["path"].as_str().unwrap())
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            names.sort();
+            assert_eq!(
+                names,
+                [
+                    "exclude",
+                    "pre-commit",
+                    "pre-push",
+                    "setup-guard-hooks.json"
+                ],
+                "{rollback}"
+            );
             assert_eq!(
                 PathBuf::from(retained[0]["shared_consumers"][0]["root"].as_str().unwrap())
                     .canonicalize()
@@ -3104,4 +3126,177 @@ fn setup_uninstall_preserves_initialized_worktree_exclusions_until_project_remov
     assert_eq!(removed["ok"], true, "{removed}");
     assert!(!f.root.join(".specgit.yaml").exists());
     assert_eq!(fs::read(exclude).unwrap(), manual);
+}
+
+#[test]
+fn new_projects_bind_commits_to_issues_through_the_default_git_guard() {
+    let f = Fixture::new();
+    let hooks = f.root.join(".git/hooks");
+    let preview = f.run(&["init", "--provider", "github", "--dry-run"]);
+    assert_eq!(preview["exit"], 0, "{preview}");
+    let planned = preview["evidence"].to_string();
+    for stage in ["pre-commit", "pre-push"] {
+        assert!(planned.contains(stage), "{preview}");
+        assert!(!hooks.join(stage).exists());
+    }
+    let applied = f.run(&["init", "--provider", "github"]);
+    assert_eq!(applied["exit"], 0, "{applied}");
+    for stage in ["pre-commit", "pre-push"] {
+        let hook = fs::read_to_string(hooks.join(stage)).unwrap();
+        assert!(
+            hook.contains(&format!("specgit-v2:{stage}:start")),
+            "{hook}"
+        );
+    }
+    let health = f.run_raw(&["doctor", "--offline"]);
+    let guard = health["evidence"]["health"]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "guard")
+        .cloned()
+        .unwrap();
+    assert_ne!(guard["status"], "not_installed", "{health}");
+
+    // A staged change without an Issue checkpoint cannot be committed.
+    fs::write(f.root.join("change.txt"), "unbound\n").unwrap();
+    assert!(git_ok(&f.root, &["add", "change.txt"]));
+    let mut paths = vec![f.bin.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let commit = Command::new("git")
+        .current_dir(&f.root)
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .args(["commit", "-m", "unbound change"])
+        .output()
+        .unwrap();
+    assert!(!commit.status.success());
+    assert!(
+        String::from_utf8_lossy(&commit.stderr).contains("checkpoint"),
+        "{}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+}
+
+#[test]
+fn recorded_projects_keep_an_explicit_guard_removal_and_doctor_reports_it() {
+    let f = Fixture::new();
+    assert_eq!(f.run(&["init", "--provider", "github"])["exit"], 0);
+    let removed = f.run_raw(&["setup", "--remove-hook-purpose", "guard"]);
+    assert_eq!(removed["exit"], 0, "{removed}");
+    let hooks = f.root.join(".git/hooks");
+    let unguarded = |stage: &str| {
+        fs::read_to_string(hooks.join(stage))
+            .map(|hook| !hook.contains("specgit-v2"))
+            .unwrap_or(true)
+    };
+    assert!(unguarded("pre-commit") && unguarded("pre-push"));
+    let refreshed = f.run(&["init"]);
+    assert_eq!(refreshed["exit"], 0, "{refreshed}");
+    assert!(unguarded("pre-commit") && unguarded("pre-push"));
+
+    let health = f.run_raw(&["doctor", "--offline"]);
+    assert_report_matches_schema(&health);
+    assert_eq!(
+        health["evidence"]["health"]["status"], "attention",
+        "{health}"
+    );
+    let checks = health["evidence"]["health"]["checks"].as_array().unwrap();
+    let guard = checks.iter().find(|check| check["id"] == "guard").unwrap();
+    assert_eq!(guard["status"], "not_installed", "{health}");
+    assert_eq!(guard["severity"], "warning");
+    assert!(
+        guard["evidence"]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("--hook-purpose guard")
+    );
+    let task = health["evidence"]["agent_guidance"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["check"] == "guard")
+        .unwrap();
+    assert_eq!(task["finding"], "not_installed");
+}
+
+fn guard_check(f: &Fixture) -> Value {
+    let health = f.run_raw(&["doctor", "--offline"]);
+    health["evidence"]["health"]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "guard")
+        .cloned()
+        .unwrap()
+}
+
+#[test]
+fn init_skips_the_default_guard_for_external_or_tracked_hook_directories() {
+    for tracked in [false, true] {
+        let f = Fixture::new();
+        let hooks = if tracked {
+            // Husky keeps user scripts in the worktree and points Git at `.husky/_`.
+            let husky = f.root.join(".husky");
+            fs::create_dir_all(husky.join("_")).unwrap();
+            fs::write(husky.join("pre-commit"), "#!/bin/sh\nnpm test\n").unwrap();
+            assert!(git_ok(&f.root, &["config", "core.hooksPath", ".husky/_"]));
+            husky
+        } else {
+            let external = f.root.parent().unwrap().join("external-hooks");
+            fs::create_dir_all(&external).unwrap();
+            assert!(git_ok(
+                &f.root,
+                &["config", "core.hooksPath", external.to_str().unwrap()]
+            ));
+            external
+        };
+        let before = files(&hooks);
+        let preview = f.run(&["init", "--provider", "github", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        let applied = f.run(&["init", "--provider", "github"]);
+        assert_eq!(applied["exit"], 0, "{applied}");
+        assert_eq!(files(&hooks), before, "tracked={tracked}");
+        assert!(!f.root.join(".git/hooks/pre-commit").exists());
+        assert_eq!(
+            guard_check(&f)["status"],
+            "not_installed",
+            "tracked={tracked}"
+        );
+    }
+}
+
+fn files(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut found = vec![];
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            found.push((path.clone(), fs::read(&path).unwrap()));
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn a_linked_worktree_init_keeps_the_main_worktree_guard_choice() {
+    let mut f = Fixture::new();
+    let main = f.root.clone();
+    assert_eq!(f.run(&["init", "--provider", "github"])["exit"], 0);
+    let removed = f.run_raw(&["setup", "--remove-hook-purpose", "guard"]);
+    assert_eq!(removed["exit"], 0, "{removed}");
+    let unguarded = || {
+        fs::read_to_string(main.join(".git/hooks/pre-commit"))
+            .map(|hook| !hook.contains("specgit-v2"))
+            .unwrap_or(true)
+    };
+    assert!(unguarded());
+    f.root = linked(&f);
+    let sibling = f.run(&["init", "--provider", "github"]);
+    assert_eq!(sibling["exit"], 0, "{sibling}");
+    assert!(
+        unguarded(),
+        "a linked worktree must not reinstall shared hooks"
+    );
 }

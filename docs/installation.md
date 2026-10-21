@@ -94,6 +94,8 @@ specgit doctor --offline --json
 ```
 
 For a new project, initialize its required declaration with `init` before setup.
+Init also installs the native Git guard on a new project, so every commit binds a
+selected Issue and pushed commits carry an `Issue: #N` trailer.
 Setup can write project agent assets without a declaration, but that alone does
 not fully initialize the project. The new-project setup default recommends the
 shared Skill and stable guidance entry point without installing agent hooks.

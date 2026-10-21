@@ -42,6 +42,8 @@ specgit init --provider github --remote origin --json
 ```
 
 `--check` 读取项目和原生能力；`--dry-run` 预览本地写入，两者都不会初始化项目。
+新项目执行 init 时还会安装原生 Git guard：每次提交都需要选定的 Issue，推送的提交须带
+`Issue: #N` trailer，例如 `git commit --trailer "Issue: #12"`。
 选择实际的 forge 远程和 provider；GitLab 使用 `--provider gitlab`，仅在自建 API
 需要时添加 `--api-host`。不要假设目标分支是 `main`。
 

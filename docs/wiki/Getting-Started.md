@@ -46,7 +46,9 @@ specgit init --provider github --remote origin --json
 ```
 
 `--check` reads project and native capabilities; `--dry-run` previews local writes.
-Neither initializes the project. Select the actual forge remote and provider; for
+Neither initializes the project. On a new project, init also installs the native Git
+guard: every commit needs a selected Issue, and pushed commits carry an
+`Issue: #N` trailer such as `git commit --trailer "Issue: #12"`. Select the actual forge remote and provider; for
 GitLab use `--provider gitlab`, adding `--api-host` only for a self-managed API.
 Do not assume the target branch is `main`.
 

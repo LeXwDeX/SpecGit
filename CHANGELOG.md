@@ -4,6 +4,13 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.15.0
+
+- Make every commit bind an Issue. `init` on a new project installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, and its dry-run lists the hook paths. Husky or other tracked hook directories, external `core.hooksPath` locations and linked worktrees keep the previous behavior and need explicit `setup --hook-purpose guard`; recorded installations keep their purposes, including an explicit guard removal. `doctor` reports guard `not_installed` with attention when an initialized project has no effective guard. This changes the 2.13/2.14 init default for the Git guard only; host hooks still require explicit selection. (#779)
+- Require each new non-merge commit in a push to carry an `Issue: #N` trailer for a selected Issue, so the binding survives in history. Existing guards enforce this after the CLI update; add trailers with `git commit --trailer "Issue: #N"` (Git 2.32+) or a final `Issue: #N` message line, or amend/rebase before pushing. (#780)
+- Retire a checkpoint once `pr --status` or `watch` (best effort) verifies its recorded request merged. The guard then rejects new commits on that branch; switch to the updated target branch and run `issue <spec> --branch <name>` to replace the delivered checkpoint in the same worktree. The local record grants nothing; `pr --status` reports it as the `record_delivered_checkpoint` effect. Library users constructing `selection::Selection` add `delivered_request`; delivered checkpoints require CLI 2.15 or newer. (#781)
+- Guide the minimal Issue plus PR/MR unit: forbid `--no-verify`, size requests by reviewability and split Issues instead of spreading them, create Milestones for named versions or cross-version changes, follow declared Issue granularity, read Issue history when it matters, and record decisions before closure. Documentation changes still need an Issue and a PR. (#782)
+
 # 2.14.0
 
 - Require explicit `setup --hook-purpose guard|context` for new hosts. Naming `--agent` only selects guidance and Skill assets; existing receipts keep their purposes. Agents that relied on implicit hooks must now select them explicitly. The catalog lists native preview/apply commands, and `--remove-hook-purpose guard|context` removes one selected purpose while preserving user entries and shared guard consumers. (#740–#742)
