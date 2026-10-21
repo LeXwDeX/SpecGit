@@ -161,7 +161,13 @@ pub(super) async fn apply(
         crate::guard::default_eligible(&process, &root).await?,
     )?;
     changes.extend(integration);
-    let guard_plan = crate::guard::setup_plan(&process, &root, guard_enabled).await?;
+    // Pin a default guard to the running CLI, as setup does; never a PATH lookup.
+    let guard_plan = match executable.as_ref() {
+        Some((source, _)) if guard_enabled => {
+            crate::guard::setup_plan_with_executable(&process, &root, guard_enabled, source).await?
+        }
+        _ => crate::guard::setup_plan(&process, &root, guard_enabled).await?,
+    };
     observations.extend(guard_plan.observations());
     let custody_store = guard_plan.transaction_store;
     changes.extend(guard_plan.changes);

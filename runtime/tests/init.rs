@@ -3141,12 +3141,15 @@ fn new_projects_bind_commits_to_issues_through_the_default_git_guard() {
     }
     let applied = f.run(&["init", "--provider", "github"]);
     assert_eq!(applied["exit"], 0, "{applied}");
+    // The default guard pins the running CLI, never whatever `specgit` is on PATH.
+    let running = executable::binary().canonicalize().unwrap();
     for stage in ["pre-commit", "pre-push"] {
         let hook = fs::read_to_string(hooks.join(stage)).unwrap();
         assert!(
             hook.contains(&format!("specgit-v2:{stage}:start")),
             "{hook}"
         );
+        assert!(hook.contains(running.to_str().unwrap()), "{hook}");
     }
     let health = f.run_raw(&["doctor", "--offline"]);
     let guard = health["evidence"]["health"]["checks"]
