@@ -567,6 +567,50 @@ fn guard_dependencies_unchanged(dependencies: &[Change]) -> Result<(), Diagnosti
     Ok(())
 }
 
+/// Init installs the guard by default only in the main worktree and only when
+/// Git uses hooks inside the common Git directory. Tracked hook directories
+/// (such as Husky), external hook paths and linked worktrees that share another
+/// worktree's choice need an explicit `setup --hook-purpose guard`.
+pub async fn default_eligible(process: &Process, root: &Path) -> Result<bool, Diagnostic> {
+    let git_dir = git_path(
+        project::git(process, root, &["rev-parse", "--absolute-git-dir"]).await?,
+        "Git directory",
+    )?;
+    let common = git_path(
+        project::git(
+            process,
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .await?,
+        "common Git directory",
+    )?;
+    if git_dir != common {
+        return Ok(false);
+    }
+    let hooks = config::worktree::hooks(process, root).await?;
+    Ok(hooks.starts_with(&common))
+}
+
+/// Whether both guard blocks are present in the effective hook files, whichever
+/// worktree owns them. Presence does not prove that Git runs the hooks.
+pub async fn installed(process: &Process, root: &Path) -> Result<bool, Diagnostic> {
+    let hook_root = config::worktree::hooks(process, root).await?;
+    for stage in ["pre-commit", "pre-push"] {
+        let marker = format!("# >>> specgit-v2:{stage}:start >>>");
+        let Some(bytes) = Snapshot::read(&hook_root.join(stage))?.bytes else {
+            return Ok(false);
+        };
+        if !bytes
+            .windows(marker.len())
+            .any(|part| part == marker.as_bytes())
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub async fn health_plan(
     process: &Process,
     cwd: &Path,
@@ -1062,6 +1106,17 @@ fn checkpoint_valid(
 ) -> Result<selection::Selection, Diagnostic> {
     let selected = selection::read(context)?
         .ok_or_else(|| rejected("No Issue checkpoint is selected for this project and branch."))?;
+    if let Some(request) = selected.delivered_request {
+        return Err(Diagnostic::new(
+            Code::EvidenceRejected,
+            "git_guard",
+            &format!(
+                "The checkpoint for refs/heads/{} was delivered by merged request #{request}; its Issues cannot bind new commits.",
+                selected.branch
+            ),
+            "Switch to the updated target branch, select the next Issues with `specgit issue <spec> --branch <name>`, then commit with an `Issue: #N` trailer.",
+        ));
+    }
     if !selected.checkpoint_valid(target) {
         return Err(rejected(
             "The selected checkpoint is incomplete or targets another delivery branch.",
@@ -1074,7 +1129,13 @@ fn zero_oid(value: &str) -> bool {
     [40, 64].contains(&value.len()) && value.bytes().all(|byte| byte == b'0')
 }
 
-fn pushed_branches(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
+/// A pushed branch and the exact local object Git is about to send.
+struct PushedBranch {
+    branch: String,
+    oid: String,
+}
+
+fn pushed_branches(bytes: &[u8]) -> Result<Vec<PushedBranch>, Diagnostic> {
     if bytes.len() > 1_048_576 {
         return Err(Diagnostic::input("pre-push input exceeds 1 MiB."));
     }
@@ -1110,7 +1171,14 @@ fn pushed_branches(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
         if branch.is_empty() || branch.len() > 1024 {
             return Err(Diagnostic::input("pre-push branch identity is invalid."));
         }
-        branches.push(branch.to_owned());
+        if ![40, 64].contains(&local_oid.len()) || !local_oid.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(Diagnostic::input("pre-push object identity is invalid."));
+        }
+        branches.push(PushedBranch {
+            branch: branch.to_owned(),
+            oid: (*local_oid).to_owned(),
+        });
         if branches.len() > 100 {
             return Err(Diagnostic::input(
                 "pre-push input contains too many ref updates.",
@@ -1184,16 +1252,107 @@ pub async fn check(
     .await?;
     let selected = checkpoint_valid(&context, declaration.target.as_deref())?;
     if matches!(stage, Stage::PrePush) {
-        for branch in pushed {
-            if branch != selected.branch {
+        for pushed in &pushed {
+            if pushed.branch != selected.branch {
                 return Err(rejected(&format!(
-                    "Ref refs/heads/{branch} is not covered by the checkpoint for refs/heads/{}.",
-                    selected.branch
+                    "Ref refs/heads/{} is not covered by the checkpoint for refs/heads/{}.",
+                    pushed.branch, selected.branch
                 )));
             }
         }
+        for pushed in &pushed {
+            bound_commits(process, &root, pushed, &selected).await?;
+        }
     }
     Ok(())
+}
+
+/// The most new commits one push may carry before the binding check fails closed.
+const MAX_BOUND_COMMITS: usize = 1000;
+
+/// Every new non-merge commit must name a selected Issue in an `Issue: #N`
+/// trailer, so the binding survives in history after the checkpoint is gone.
+async fn bound_commits(
+    process: &Process,
+    root: &Path,
+    pushed: &PushedBranch,
+    selected: &selection::Selection,
+) -> Result<(), Diagnostic> {
+    let target_ref = format!("refs/heads/{}", selected.target);
+    let target = project::git(
+        process,
+        root,
+        &["for-each-ref", "--format=%(objectname)", &target_ref],
+    )
+    .await?;
+    let target = String::from_utf8_lossy(&target).trim().to_owned();
+    let limit = format!("--max-count={}", MAX_BOUND_COMMITS + 1);
+    let mut args = vec![
+        "log",
+        "--no-merges",
+        &limit,
+        "--format=%H%x00%(trailers:key=Issue,valueonly,separator=%x2C)%x1e",
+        &pushed.oid,
+        "--not",
+        "--remotes",
+    ];
+    if !target.is_empty() {
+        args.push(&target);
+    }
+    args.push("--");
+    let output = project::git(process, root, &args).await?;
+    let text = String::from_utf8(output)
+        .map_err(|_| Diagnostic::input("Git returned non-UTF-8 commit trailers."))?;
+    let records: Vec<_> = text
+        .split('\u{1e}')
+        .map(str::trim)
+        .filter(|record| !record.is_empty())
+        .collect();
+    if records.len() > MAX_BOUND_COMMITS {
+        return Err(rejected(&format!(
+            "refs/heads/{} carries more than {MAX_BOUND_COMMITS} new commits; their Issue binding cannot be verified in one push.",
+            pushed.branch
+        )));
+    }
+    let mut unbound = vec![];
+    for record in records {
+        let (commit, values) = record.split_once('\0').unwrap_or((record, ""));
+        let bound = values.split(',').any(|value| {
+            value
+                .trim()
+                .strip_prefix('#')
+                .and_then(|id| id.parse::<u64>().ok())
+                .is_some_and(|id| selected.issues.contains(&id))
+        });
+        if !bound {
+            unbound.push(commit.chars().take(12).collect::<String>());
+        }
+    }
+    if unbound.is_empty() {
+        return Ok(());
+    }
+    let issues = selected
+        .issues
+        .iter()
+        .map(|id| format!("#{id}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let shown = unbound
+        .iter()
+        .take(10)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(Diagnostic::new(
+        Code::EvidenceRejected,
+        "git_guard",
+        &format!(
+            "{} new commit(s) on refs/heads/{} lack an `Issue: #N` trailer for the selected Issues ({issues}): {shown}.",
+            unbound.len(),
+            pushed.branch
+        ),
+        "Bind each commit to a selected Issue, for example `git commit --amend --no-edit --trailer \"Issue: #N\"` or `git rebase --exec 'git commit --amend --no-edit --trailer \"Issue: #N\"' <upstream>`, then push again. For new commits use `git commit --trailer \"Issue: #N\"`, or end the message with an `Issue: #N` line on Git before 2.32.",
+    ))
 }
 
 fn read_dependency(path: &Path) -> Result<Change, Diagnostic> {

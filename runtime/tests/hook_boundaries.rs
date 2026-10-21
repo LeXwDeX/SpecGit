@@ -511,6 +511,7 @@ async fn failed_pending_context_read_can_retry_all_offers_in_the_same_session() 
             request: Some(7),
             request_write_started: false,
             request_intent: None,
+            delivered_request: None,
         })
         .unwrap();
     let session = "retry-context";
@@ -603,6 +604,7 @@ async fn failed_pending_context_read_can_retry_all_offers_in_the_same_session() 
             request: Some(7),
             request_write_started: false,
             request_intent: None,
+            delivered_request: None,
         })
         .unwrap();
     let later = hook(
@@ -656,6 +658,7 @@ async fn branch_mismatched_checkpoint_keeps_its_uncertain_write_visible() {
             request: None,
             request_write_started: false,
             request_intent: None,
+            delivered_request: None,
         })
         .unwrap();
     let switched = std::process::Command::new("git")

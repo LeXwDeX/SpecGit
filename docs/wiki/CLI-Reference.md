@@ -4,7 +4,7 @@ Use the shared native CLI's `specgit --help` and offline `specgit --schema` as t
 
 | Commands | Purpose |
 | --- | --- |
-| `init` | Initialize or inspect one project's declaration and local guidance; does not install host hooks |
+| `init` | Initialize or inspect one project's declaration and local guidance; installs the native Git guard on a new project, not host hooks |
 | `setup` | Install/refresh the project Skill and guidance baseline; a new `--agent` adds guidance only, and hooks need explicit `--hook-purpose guard` and/or `--hook-purpose context` |
 | `update` | Check, verify or apply a signed GitHub Release to the shared executable |
 | `issue` / `pr` | Select complete specifications / aggregate a native draft; writes require existing authorization |

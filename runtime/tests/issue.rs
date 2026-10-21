@@ -1517,6 +1517,9 @@ fn doctor_checkpoint_context_is_redacted_read_only_and_keeps_api_probe_budget() 
         let f = Fixture::new(provider);
         let selected = f.run(&["issue", "--create-labels", "feat: private checkpoint title"]);
         assert_eq!(selected["exit"], 0, "{selected}");
+        // A guarded project reports ready; the missing-guard attention is covered elsewhere.
+        let guarded = f.command(&["guard", "--install"]).output().unwrap();
+        assert!(guarded.status.success(), "{guarded:?}");
         fs::write(f.root.join("dirty.txt"), "uncommitted").unwrap();
         let checkpoint = checkpoint_path(&f);
         // Persist valid recovery payloads to exercise redaction at the real CLI boundary.

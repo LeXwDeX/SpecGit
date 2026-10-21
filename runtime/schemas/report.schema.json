@@ -400,7 +400,7 @@
       "required": ["id", "status", "severity", "repairable", "evidence", "diagnostic"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
-        "status": {"enum": ["current", "change_required", "not_selected", "not_checked", "unknown", "needs_initialization"]},
+        "status": {"enum": ["current", "change_required", "not_selected", "not_checked", "unknown", "needs_initialization", "not_installed"]},
         "severity": {"enum": ["info", "warning", "error"]},
         "repairable": {"type": "boolean"},
         "evidence": {},
@@ -486,7 +486,7 @@
       "required": ["check", "finding", "evidence_pointer", "reason", "certainty", "recommendation", "command", "preconditions", "verification"],
       "properties": {
         "check": {"type": "string", "minLength": 1},
-        "finding": {"enum": ["unknown", "change_required", "needs_initialization"]},
+        "finding": {"enum": ["unknown", "change_required", "needs_initialization", "not_installed"]},
         "evidence_pointer": {"type": "string", "pattern": "^/evidence/health/checks/[0-9]+$"},
         "reason": {"type": "string", "minLength": 1},
         "certainty": {"enum": ["observed", "unconfirmed"]},

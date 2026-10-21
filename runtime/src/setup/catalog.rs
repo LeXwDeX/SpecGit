@@ -337,8 +337,8 @@ pub fn catalog() -> InstallationCatalog {
     items.extend([
         InstallationItem {
             id: InstallationId::GitGuard,
-            purpose: "在真实 Git pre-commit/pre-push 入口检查本地 Issue checkpoint。",
-            requirement: Requirement::Optional,
+            purpose: "在真实 Git pre-commit/pre-push 入口检查本地 Issue checkpoint，并要求推送的新提交带 `Issue: #N` trailer；新项目 init 默认安装。",
+            requirement: Requirement::Recommended,
             scope: "有效 Git hooks 目录；linked worktree 可能共享 hooks",
             owner: "SpecGit managed blocks; worktree receipts or retained setup ownership in shared Git metadata",
             bundle: None,
@@ -360,7 +360,7 @@ pub fn catalog() -> InstallationCatalog {
             verification: Verification {
                 written: "回读有效 hook_root、两个 hook、当前 worktree 或固定共享目录的 guard 收据及 doctor 本地证据。",
                 loading: "确认实际 Git hooksPath、可执行权限和共享 CLI 路径。",
-                effect: "在隔离场景运行真实 Git 操作，验证缺失 checkpoint 时阻止及有效 checkpoint 时放行。",
+                effect: "在隔离场景运行真实 Git 操作，验证缺失 checkpoint 或 Issue trailer 时阻止，有效时放行。",
             },
             fallback: "未安装或未触发时由 Agent 在相关 Git 操作前手动检查 Issue；若项目明确要求 guard，须完成安装与真实验证，提示词不能代替该验收。guard 不构成通用文件写入沙箱。",
             lifecycle: Lifecycle {

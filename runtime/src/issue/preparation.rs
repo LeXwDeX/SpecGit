@@ -4,6 +4,8 @@ use super::*;
 pub(super) struct Prepared {
     pub workspace: Workspace,
     pub previous: Option<Selection>,
+    /// A delivered checkpoint this preparation replaces; preflight rechecks it.
+    pub replaced: Option<Selection>,
     pub foreign_checkpoint: Option<selection::BranchMismatch>,
     pub selection: Selection,
     pub pool: Vec<String>,
@@ -50,9 +52,31 @@ pub(super) async fn prepare(
             "A new delivery branch must be valid, distinct from source/target, and start in a clean worktree.",
         ));
     }
+    let mut replaced = None;
     let (previous, foreign_checkpoint) = match selection::classify(&w.context)? {
         selection::ReadOutcome::Absent => (None, None),
+        // A delivered checkpoint admits no more work; a new branch replaces it.
+        selection::ReadOutcome::Current(current) if current.replaceable() => {
+            if options.branch.is_none() {
+                return Err(Diagnostic::input(&format!(
+                    "This branch's checkpoint was delivered by merged request #{}; switch to the updated target branch and select the next Issues with --branch <name>.",
+                    current.delivered_request.unwrap_or_default()
+                )));
+            }
+            replaced = Some(current);
+            (None, None)
+        }
         selection::ReadOutcome::Current(current) => (Some(current), None),
+        selection::ReadOutcome::BranchMismatch {
+            selection: recorded,
+            ..
+        } if recorded.replaceable()
+            && recorded.project_id == w.facts.id
+            && recorded.target == w.target =>
+        {
+            replaced = Some(recorded);
+            (None, None)
+        }
         selection::ReadOutcome::BranchMismatch {
             selection: recorded,
             checkpoint,
@@ -80,6 +104,7 @@ pub(super) async fn prepare(
         request: None,
         request_write_started: false,
         request_intent: None,
+        delivered_request: None,
     });
     if selection.project_id != w.facts.id || selection.target != w.target {
         return Err(Diagnostic::input(
@@ -136,6 +161,7 @@ pub(super) async fn prepare(
     Ok(Prepared {
         workspace: w,
         previous,
+        replaced,
         foreign_checkpoint,
         selection,
         pool,
