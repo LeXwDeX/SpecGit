@@ -24,7 +24,7 @@ impl Check {
         Self {
             id,
             status,
-            severity: if status == "needs_initialization" {
+            severity: if matches!(status, "needs_initialization" | "not_installed") {
                 "warning"
             } else {
                 "info"
@@ -116,11 +116,12 @@ impl Inspection {
     pub fn status(&self) -> &'static str {
         if self.checks.iter().any(|c| c.status == "unknown") {
             "unknown"
-        } else if self
-            .checks
-            .iter()
-            .any(|c| matches!(c.status, "change_required" | "needs_initialization"))
-        {
+        } else if self.checks.iter().any(|c| {
+            matches!(
+                c.status,
+                "change_required" | "needs_initialization" | "not_installed"
+            )
+        }) {
             "attention"
         } else {
             "healthy"
@@ -358,7 +359,20 @@ pub(super) async fn inspect(process: &Process, cwd: &Path, source: &Path) -> Ins
             evidence: json!({"assets": [], "repair_owner": "setup"}),
             diagnostic: None,
         }),
-        Ok(false) => result.plan("guard", guard.map(|p| p.map(Plan::Guard))),
+        // Every commit must bind an Issue; an initialized project without an
+        // effective guard needs attention, whichever worktree owns the hooks.
+        Ok(false) => match guard {
+            Ok(None) if result.declaration.is_some() => {
+                match specgit::guard::installed(process, &root).await {
+                    Ok(true) => result
+                        .checks
+                        .push(Check::fact("guard", "not_selected", Value::Null)),
+                    Ok(false) => result.checks.push(Check::fact("guard", "not_installed", json!({"remedy":"Commits are not bound to Issues. Preview specgit setup --hook-purpose guard --dry-run, then apply it under existing authorization."}))),
+                    Err(diagnostic) => result.checks.push(Check::failed("guard", diagnostic)),
+                }
+            }
+            guard => result.plan("guard", guard.map(|p| p.map(Plan::Guard))),
+        },
         Err(diagnostic) => result.checks.push(Check::failed("guard", diagnostic)),
     }
     if !declaration_valid {
@@ -384,7 +398,12 @@ pub(super) fn guidance(checks: &[Check], root: &Path, source: &Path) -> Value {
     let tasks: Vec<_> = checks
         .iter()
         .enumerate()
-        .filter(|(_, c)| matches!(c.status, "unknown" | "change_required" | "needs_initialization"))
+        .filter(|(_, c)| {
+            matches!(
+                c.status,
+                "unknown" | "change_required" | "needs_initialization" | "not_installed"
+            )
+        })
         .map(|(index, c)| {
             let command = c.repairable.then(|| json!({"executable":source,"argv":["doctor","--offline","--fix","--dry-run"],"cwd":root,"scope":"project","authorization":"existing_session_only"}));
             let reason = c.diagnostic.as_ref().map(|d| d.message.as_str()).unwrap_or_else(|| {
@@ -392,6 +411,7 @@ pub(super) fn guidance(checks: &[Check], root: &Path, source: &Path) -> Value {
                     (_, _, true) => "Recorded project assets differ from the current templates.",
                     ("initialization", "needs_initialization", _) => "The project declaration exists, but this worktree has no initialization markers.",
                     ("declaration", "needs_initialization", _) => "No project declaration or initialization state was found.",
+                    ("guard", "not_installed", _) => "The native Git guard is not installed, so commits can bypass Issue binding.",
                     _ => "This project check needs attention before initialization.",
                 }
             });

@@ -555,6 +555,7 @@ pub(crate) fn initialization_changes(
     root: &Path,
     private: &Path,
     mirror: bool,
+    default_guard: bool,
 ) -> Result<Initialization, Diagnostic> {
     let mut prepared = None;
     let mut agents = vec![Agent::Generic];
@@ -570,10 +571,18 @@ pub(crate) fn initialization_changes(
     };
     let source = std::env::current_exe()
         .map_err(|_| Diagnostic::input("Current executable is unavailable."))?;
+    // Every commit must bind an Issue, so a new project gets the native Git
+    // guard where the caller proved it eligible. A recorded integration keeps
+    // its explicit choices.
+    let fresh = default_guard && read(root, private)?.0.bytes.is_none();
     install_plan(
         &options,
         &HookOptions {
-            purposes: vec![HookPurpose::None],
+            purposes: vec![if fresh {
+                HookPurpose::Guard
+            } else {
+                HookPurpose::None
+            }],
             opencode_async_rewake: false,
         },
         root,

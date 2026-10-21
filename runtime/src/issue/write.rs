@@ -10,12 +10,17 @@ pub(super) async fn apply(
 ) -> Result<Report, Diagnostic> {
     let w = &mut p.workspace;
     let selection = &mut p.selection;
-    let previous = &p.previous;
+    // A replaced delivered checkpoint must still be exactly what preparation saw.
+    let expected = p.previous.as_ref().or(p.replaced.as_ref());
     w.unchanged_issue().await?;
     let mut lock = Locked::acquire(&w.context)?;
-    if serde_json::to_value(selection::read(&w.context)?)
-        .map_err(|_| Diagnostic::input("Cannot compare selection."))?
-        != serde_json::to_value(previous)
+    let current = match selection::classify(&w.context)? {
+        selection::ReadOutcome::Absent => None,
+        selection::ReadOutcome::Current(s)
+        | selection::ReadOutcome::BranchMismatch { selection: s, .. } => Some(s),
+    };
+    if serde_json::to_value(current).map_err(|_| Diagnostic::input("Cannot compare selection."))?
+        != serde_json::to_value(expected)
             .map_err(|_| Diagnostic::input("Cannot compare selection."))?
     {
         return Err(Diagnostic::new(

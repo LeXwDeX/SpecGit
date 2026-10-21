@@ -72,7 +72,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `native_file` | 4 | `declaration`, `diagnostic`, `forge_read`, `forge_routes`, `identity` |
 | `observation` | 8 | `assets`, `delivery_context`, `delivery_model`, `diagnostic`, `forge`, `native_delivery`, `observation_model`, `process`, `project`, `selection`, `spec` |
 | `observation_model` | 0 | `delivery_model`, `diagnostic`, `identity` |
-| `pr` | 8 | `delivery_context`, `delivery_model`, `diagnostic`, `identity`, `init`, `native_delivery`, `observation`, `process`, `project`, `report`, `selection`, `spec`, `templates` |
+| `pr` | 8 | `config`, `delivery_context`, `delivery_model`, `diagnostic`, `identity`, `init`, `native_delivery`, `observation`, `process`, `project`, `report`, `selection`, `spec`, `templates` |
 | `probe` | 4 | `assets`, `delivery_model`, `diagnostic`, `forge_read`, `identity`, `process`, `project` |
 | `process` | 1 | `diagnostic` |
 | `project` | 2 | `diagnostic`, `identity`, `process` |
@@ -87,7 +87,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `spec` | 0 | `declaration`, `diagnostic`, `identity`, `label_rules`, `template_rules` |
 | `template_rules` | 0 | `declaration` |
 | `templates` | 2 | `assets`, `declaration`, `diagnostic`, `label_rules`, `template_rules` |
-| `watch` | 8 | `assets`, `config`, `delivery_model`, `diagnostic`, `observation`, `process`, `project`, `report`, `watch_store` |
+| `watch` | 8 | `assets`, `config`, `delivery_model`, `diagnostic`, `observation`, `process`, `project`, `report`, `selection`, `watch_store` |
 | `watch_store` | 2 | `assets`, `declaration`, `delivery_model`, `diagnostic`, `identity`, `input`, `observation_model`, `project` |
 <!-- runtime-components:end -->
 
@@ -169,6 +169,7 @@ flowchart TD
   probe --> forge_read
   watch --> observation
   watch --> watch_store
+  watch --> selection
   observation --> delivery_context
   observation --> forge
   observation --> native_delivery
