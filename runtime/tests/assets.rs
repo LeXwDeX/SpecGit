@@ -281,6 +281,29 @@ fn foreign_lock_content_is_preserved_and_rejected_after_acquisition() {
     assert_eq!(std::fs::read(path).unwrap(), b"user-owned content");
 }
 
+#[test]
+fn empty_lock_left_by_a_creator_is_initialized_after_acquisition() {
+    let (_temp, root) = fixture();
+    let state = root.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let path = state.join(".specgit-lock");
+    // A creator that has not written the marker yet still holds the OS lock.
+    let creator = std::fs::File::create_new(&path).unwrap();
+    creator.lock().unwrap();
+    let waiter = {
+        let (state, root) = (state.clone(), root.clone());
+        std::thread::spawn(move || {
+            AssetStore::lock(&state, std::slice::from_ref(&root), Duration::from_secs(2)).map(drop)
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+    drop(creator);
+    waiter.join().unwrap().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"specgit-owned-assets-v2\n");
+    drop(store(&root));
+    assert_eq!(std::fs::read(path).unwrap(), b"specgit-owned-assets-v2\n");
+}
+
 #[cfg(unix)]
 #[test]
 fn rollback_preserves_later_chmod_and_restores_permission_only_transactions() {
