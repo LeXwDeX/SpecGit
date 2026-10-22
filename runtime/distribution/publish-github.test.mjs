@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { githubFiles, publishGithub, releaseNotes, verifySignature } from './publish.mjs';
 
 const source = 'a'.repeat(40);
+const changelog = '# Changelog\n\n# 2.0.0\n\n- Fixture change. (#1)\n\n# 1.9.0\n\n- Older change.\n';
 function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -29,6 +32,7 @@ function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUploa
   };
   const cli = args => {
     calls.push(args);
+    if (args.includes('--notes-file')) (remote.notes ??= []).push(readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8'));
     if (args[1] === 'create') { assert(args.includes('--draft')); remote.exists = true; remote.draft = true; return ''; }
     if (args[1] === 'view') return JSON.stringify({ tagName: 'v2.0.0', isDraft: remote.draft, isPrerelease: false, assets: [...remote.assets.keys()].map(name => ({ name })), url: 'https://example.invalid/release' });
     if (args[1] === 'download') { const name = args[args.indexOf('--pattern') + 1]; writeFileSync(args[args.indexOf('--output') + 1], remote.assets.get(name)); return ''; }
@@ -43,7 +47,7 @@ function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUploa
     }
     throw new Error(`Unexpected CLI ${args}`);
   };
-  return { directory, release, names, remote, calls, io: { request, cli, verify: () => {} } };
+  return { directory, release, names, remote, calls, io: { request, cli, verify: () => {}, buildRun: '123', notesSource: { changelog } } };
 }
 test('new release is created as draft and only published after all byte readbacks', t => {
   const f = fixture(t);
@@ -53,11 +57,22 @@ test('new release is created as draft and only published after all byte readback
   assert(!f.names.includes('wrapper.tgz'));
   assert(f.names.includes('SHA256SUMS.sigstore.json'));
   assert(f.names.filter(name => name.endsWith('.zip')).length === 3);
-  const notes = releaseNotes(f.release, '123');
-  for (const binary of f.release.archives) assert(notes.includes(binary.sha256));
-  assert(notes.includes(source));
-  assert(notes.includes('/actions/runs/123'));
-  assert(notes.includes('/docs/agent-install.md'));
+  const notes = releaseNotes(f.release, '123', { changelog });
+  assert.deepEqual(f.remote.notes, [notes, notes]);
+  for (const binary of f.release.archives) assert(notes.includes(`| \`${binary.filename}\` | \`${binary.sha256}\` |`));
+  assert(notes.startsWith('# SpecGit 2.0.0\n'));
+  assert(notes.includes('## Changes\n\n- Fixture change. (#1)\n\n## Install'));
+  assert(!notes.includes('Older change'));
+  assert(!notes.includes('<!--') && !/\{\{\w+\}\}/.test(notes));
+  assert(notes.includes(`/commit/${source})`));
+  assert(notes.includes(`/blob/${source}/LICENSE`));
+  assert(notes.includes('/actions/runs/123)'));
+  assert(notes.includes('/compare/v1.9.0...v2.0.0)'));
+  for (const doc of ['agent-install.md', 'agent-project-refresh.md', 'migration-v2.md']) {
+    assert(notes.includes(`/blob/v2.0.0/docs/${doc})`), doc);
+    assert(readFileSync(new URL(`../../docs/${doc}`, import.meta.url), 'utf8').length > 0);
+  }
+  assert(!notes.includes('/blob/main/'));
   assert(!notes.includes('into a directory on PATH'));
   const guide = readFileSync(new URL('../../docs/agent-install.md', import.meta.url), 'utf8');
   assert(guide.includes('cosign verify-blob'));
@@ -97,6 +112,35 @@ test('published releases are read back without duplicate uploads; foreign source
   assert.equal(foreign.calls.some(call => ['upload', 'create', 'edit'].includes(call[1])), false);
 });
 
+test('missing or incomplete release notes stop publication before the tag write', t => {
+  const f = fixture(t);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, notesSource: { changelog: '# 1.9.0\n\n- Older change.\n' } }), /no "# 2.0.0" section/);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, notesSource: { changelog: '# 2.0.0\n\n# 1.9.0\n\n- Older.\n' } }), /section 2.0.0 is empty/);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, notesSource: { changelog: '# 2.0.0\n\n- Only.\n' } }), /no version section before/);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, notesSource: { changelog, template: '{{version}} {{unknown}}' } }), /Unknown release template placeholder/);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, notesSource: { changelog, template: '{{ version }}' } }), /written as \{\{name\}\}/);
+  assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, buildRun: undefined }), /build run ID/);
+  assert.equal(f.calls.length, 0);
+});
+test('the repository template renders every placeholder for the current CHANGELOG version', () => {
+  const version = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+  const archives = ['darwin-arm64', 'linux-x64-gnu', 'win32-x64'].map(platform => ({ filename: `specgit-${version}-${platform}.zip`, sha256: 'c'.repeat(64) }));
+  const notes = releaseNotes({ version, source, archives }, '456');
+  assert(notes.startsWith(`# SpecGit ${version}\n`));
+  assert(!notes.includes('<!--') && !/\{\{\w+\}\}/.test(notes));
+  // A Windows autocrlf checkout must render the same LF notes.
+  const crlf = text => text.replace(/\r?\n/g, '\r\n');
+  const template = readFileSync(new URL('../../.github/RELEASE_TEMPLATE.md', import.meta.url), 'utf8');
+  const changelog = readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8');
+  assert.equal(releaseNotes({ version, source, archives }, '456', { template: crlf(template), changelog: crlf(changelog) }), notes);
+  assert(!notes.includes('\r'));
+});
+test('the release version check renders the notes before any build', () => {
+  const version = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./release-version.mjs', import.meta.url)), '--version', version], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).release_notes, 'renderable');
+});
 test('a rejected signature stops publication before any forge operation', t => {
   const f = fixture(t);
   assert.throws(() => publishGithub(f.release, f.directory, { ...f.io, verify: () => { throw new Error('Signature rejected'); } }), /Signature rejected/);
