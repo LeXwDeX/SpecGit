@@ -67,25 +67,39 @@ export function verifySignature(directory, execute = command) {
     '--certificate-identity', `https://github.com/${repository}/.github/workflows/release-prepare.yml@refs/heads/main`,
     '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', path.join(directory, checksumsName)]);
 }
-export function releaseNotes(release, buildRun) {
-  return `SpecGit v${release.version}: native Rust CLI for macOS arm64, Linux x64 (glibc), and Windows x64.
-
-Ask your coding agent to install SpecGit using https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md. The agent verifies the Sigstore signature and ZIP SHA-256 and selects the project capabilities. No Node.js, npm or Rust installation is required to run SpecGit.
-
-| ZIP | SHA-256 |
-| --- | --- |
-${release.archives.map(b => `| ${b.filename} | \`${b.sha256}\` |`).join('\n')}
-
-Each binary passed version, help and schema smoke tests on its GitHub-hosted standard native runner (Linux x64, macOS ARM64, or Windows x64).
-Source: \`${release.source}\`.
-${buildRun ? `Build: https://github.com/${repository}/actions/runs/${buildRun}\n` : ''}
-License: https://github.com/${repository}/blob/${release.source}/LICENSE
-See the v2 migration guide before replacing a v1 project configuration.
-`;
+const releaseTemplate = new URL('../../.github/RELEASE_TEMPLATE.md', import.meta.url);
+const changelogFile = new URL('../../CHANGELOG.md', import.meta.url);
+export function changelogSection(changelog, version) {
+  const headings = [...changelog.matchAll(/^# (\d+\.\d+\.\d+)[ \t]*$/gm)];
+  const index = headings.findIndex(heading => heading[1] === version);
+  need(index >= 0, `CHANGELOG.md has no "# ${version}" section; write the release notes there before publication.`);
+  need(index + 1 < headings.length, `CHANGELOG.md has no version section before ${version} for the comparison link.`);
+  const changes = changelog.slice(headings[index].index + headings[index][0].length, headings[index + 1].index).trim();
+  need(changes, `CHANGELOG.md section ${version} is empty.`);
+  return { changes, previous: headings[index + 1][1] };
 }
-export function publishGithub(release, directory, { request = api, cli = gh, buildRun, verify = verifySignature } = {}) {
+// Notes are rendered from the reviewed template and CHANGELOG section of the
+// release source, so a release never falls back to a generic body.
+export function releaseNotes(release, buildRun, { template = readFileSync(releaseTemplate, 'utf8'), changelog = readFileSync(changelogFile, 'utf8') } = {}) {
+  need(/^[1-9][0-9]*$/.test(String(buildRun ?? '')), 'Release notes require the native build run ID.');
+  // Windows checkouts may convert both inputs to CRLF; publish LF notes everywhere.
+  template = template.replace(/\r\n/g, '\n').replace(/^<!--[\s\S]*?-->\s*/, '');
+  need(!/\{\{(?!\w+\}\})/.test(template), 'Release template placeholders must be written as {{name}}.');
+  const { changes, previous } = changelogSection(changelog.replace(/\r\n/g, '\n'), release.version);
+  const values = {
+    version: release.version, previous_version: previous, changes, source: release.source, build_run: String(buildRun),
+    checksums: ['| Asset | SHA-256 |', '| --- | --- |', ...release.archives.map(b => `| \`${b.filename}\` | \`${b.sha256}\` |`)].join('\n'),
+  };
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name) => {
+    need(Object.hasOwn(values, name), `Unknown release template placeholder ${match}.`);
+    return values[name];
+  });
+}
+export function publishGithub(release, directory, { request = api, cli = gh, buildRun, verify = verifySignature, notesSource } = {}) {
   const files = githubFiles(release, directory);
   verify(directory);
+  // Render before the tag write so missing notes stop publication without side effects.
+  const body = releaseNotes(release, buildRun, notesSource);
   const tag = `v${release.version}`;
   // A tag with the right spelling alone does not prove its source commit.
   const tags = request(`repos/${repository}/git/matching-refs/tags/${tag}`);
@@ -105,7 +119,7 @@ export function publishGithub(release, directory, { request = api, cli = gh, bui
   const scratch = mkdtempSync(path.join(tmpdir(), 'specgit-release-metadata-'));
   try {
     const notes = path.join(scratch, 'notes.md');
-    writeFileSync(notes, releaseNotes(release, buildRun));
+    writeFileSync(notes, body);
     if (!current) {
       cli(['release', 'create', tag, '--repo', repository, '--verify-tag', '--title', `SpecGit ${tag}`, '--notes-file', notes, '--draft']);
     }
@@ -171,7 +185,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       requireMain(release.source);
       requireChecks(release.source);
     }
-    if (values.github && values.preflight) { githubFiles(release, directory); verifySignature(directory); }
+    if (values.github && values.preflight) { githubFiles(release, directory); verifySignature(directory); releaseNotes(release, values['build-run']); }
     const github = values.github && !values.preflight ? publishGithub(release, directory, { buildRun: values['build-run'] }) : undefined;
     process.stdout.write(JSON.stringify({ version: release.version, source: release.source, bundle_verified: true, ...(github ? { github } : {}), publication_performed: Boolean(github) }) + '\n');
     }

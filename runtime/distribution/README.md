@@ -12,7 +12,18 @@ After the intended changes are merged, dispatch the workflow on `main`:
 gh workflow run release-prepare.yml --ref main -f release_version=2.15.0
 ```
 
-The version must match Cargo and the private development workspace. The workflow
+The version must match Cargo and the private development workspace. Before dispatch,
+merge a `# <version>` section in [CHANGELOG.md](../../CHANGELOG.md) with the user-facing
+changes and compatibility notes. The publisher renders the Release body from
+[the Release template](../../.github/RELEASE_TEMPLATE.md) and that section, with tag-pinned
+installation, maintenance and migration links. The version check in each build job renders
+the notes first: a missing or empty section, a missing previous version or a malformed or
+unknown template placeholder stops the run before building or signing, and the publisher
+checks again before the tag is created. Fix such a failure with a new main commit; recovery
+cannot change the notes of a source commit. To change the Release layout, edit the
+template and its tests.
+
+The workflow
 builds on GitHub-hosted standard runners: Linux x64 glibc on `ubuntu-24.04`,
 macOS arm64 on `macos-15`, and Windows x64 on `windows-2025`, with pinned Rust.
 The macOS job verifies the hosted environment, ARM64 architecture and the image-provided
@@ -42,7 +53,7 @@ from GitHub Actions for the exact source SHA. Missing, pending, failed, ambiguou
 incomplete checks stop the release. The main CI run supplies both checks. It then
 verifies the signature against the exact main Release workflow identity, creates a
 draft, uploads missing assets, verifies downloaded bytes, then makes the Release
-stable/latest. Checksums also appear with the source/build link in Release notes.
+stable/latest. Checksums, the source commit and the build run appear in the rendered Release notes.
 The internal `native-release.json` and smoke reports remain Actions artifacts,
 not Release attachments. A branch dispatch cannot publish.
 
@@ -69,7 +80,8 @@ node runtime/distribution/publish.mjs \
   --github
 ```
 
-The recovery runner needs Python 3.13, Node.js and Cosign 3.1.3 (or compatible).
+Run recovery from a checkout of the release source commit so the notes use its template
+and CHANGELOG. The recovery runner needs Python 3.13, Node.js and Cosign 3.1.3 (or compatible).
 Without `--github`, archive/checksum verification is offline and read-only and does
 not claim signature verification. With `--preflight`,
 the publisher verifies provenance and current main but performs no publication.
