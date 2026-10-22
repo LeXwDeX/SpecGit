@@ -4,6 +4,10 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.15.1
+
+- Write the owned-asset lock marker only under the held lock. A concurrent SpecGit process that opens a just-created lock no longer fails with an ownership conflict, and an empty lock left by an interrupted creator is initialized instead of blocking later operations. Foreign non-empty lock content is still preserved and rejected. (#786)
+
 # 2.15.0
 
 - Make every commit bind an Issue. `init` on a new project installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, and its dry-run lists the hook paths. Husky or other tracked hook directories, external `core.hooksPath` locations and linked worktrees keep the previous behavior and need explicit `setup --hook-purpose guard`; recorded installations keep their purposes, including an explicit guard removal. `doctor` reports guard `not_installed` with attention when an initialized project has no effective guard. This changes the 2.13/2.14 init default for the Git guard only; host hooks still require explicit selection. (#779)
