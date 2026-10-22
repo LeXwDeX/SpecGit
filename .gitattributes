@@ -11,3 +11,6 @@ test/specgit/helpers/fake-gh-script.cjs text eol=lf
 # Vite's SSR shebang removal requires LF; this executable is also imported
 # by the workspace configuration tests on Windows (#432).
 scripts/ci-change-scope.mjs text eol=lf
+
+# The publisher renders Release notes from this template byte-for-byte.
+.github/RELEASE_TEMPLATE.md text eol=lf
