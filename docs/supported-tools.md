@@ -1,6 +1,6 @@
 # Supported coding agents
 
-SpecGit 2.15.0 provides a native CLI and managed project guidance. One shared
+SpecGit 2.15.1 provides a native CLI and managed project guidance. One shared
 user-level `specgit` executable serves every repository and worktree. Run
 `specgit init` in every clone and worktree: it installs the common project Skill
 and stable guidance entry points. Local declarations, Skills and private receipts
