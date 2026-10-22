@@ -13,6 +13,7 @@ use std::{
 
 const FILE_LIMIT: u64 = 134_217_728;
 const JOURNAL_LIMIT: usize = 1_048_576;
+const LOCK_MARKER: &[u8] = b"specgit-owned-assets-v2\n";
 pub fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -579,19 +580,15 @@ impl AssetStore {
         }
         let lock_path = root.join(".specgit-lock");
         safe_path(&lock_path)?;
+        // The creator writes the marker only under the held lock, so a
+        // concurrent opener never observes partial content after acquisition.
         let mut file = match OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .open(&lock_path)
         {
-            Ok(mut file) => {
-                file.write_all(b"specgit-owned-assets-v2\n")
-                    .map_err(|e| filesystem_error("lock_marker_write", &e))?;
-                file.sync_all()
-                    .map_err(|e| filesystem_error("lock_marker_sync", &e))?;
-                file
-            }
+            Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -625,7 +622,14 @@ impl AssetStore {
             .take(64)
             .read_to_end(&mut marker)
             .map_err(|e| filesystem_error("lock_marker_read", &e))?;
-        if marker != b"specgit-owned-assets-v2\n" {
+        // An empty lock is a SpecGit lock whose creator has not written the
+        // marker yet or stopped first; it holds no foreign bytes to preserve.
+        if marker.is_empty() {
+            file.write_all(LOCK_MARKER)
+                .map_err(|e| filesystem_error("lock_marker_write", &e))?;
+            file.sync_all()
+                .map_err(|e| filesystem_error("lock_marker_sync", &e))?;
+        } else if marker != LOCK_MARKER {
             return Err(error(
                 Code::OwnershipConflict,
                 "The asset lock path belongs to another owner.",
