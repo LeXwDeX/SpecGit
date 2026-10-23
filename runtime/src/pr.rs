@@ -22,6 +22,9 @@ pub struct Options {
     pub title: Option<String>,
     #[arg(long)]
     pub body_file: Option<PathBuf>,
+    /// Comma-separated labels for a new PR/MR per validation.labels; when omitted, repository template labels
+    /// apply first. kind derives one kind::<type> from the title when omitted, and explicit tags need exactly
+    /// one kind; project requires declared tags; off: pass only when the user or project asks.
     #[arg(long, value_delimiter = ',')]
     pub tags: Option<Vec<String>>,
     /// Preview a body replacement with --dry-run; differing bodies require native editing.
