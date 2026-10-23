@@ -39,6 +39,29 @@ fn concurrent_fixture_readers_never_observe_a_truncated_snapshot() {
         )
     });
 }
+/// The concurrent test above only races this state. Pin it: one replacement
+/// attempt must succeed while a reader holds the old snapshot open, and that
+/// reader must still see the whole old snapshot. A `MoveFileExW` replacement
+/// fails here on Windows with Access is denied.
+#[test]
+fn replacement_never_waits_for_a_reader_holding_the_old_snapshot() {
+    use std::io::Read;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("api.json");
+    let old = json!({"counter":0,"payload":vec![0;8192]});
+    snapshot::write(&path, &old);
+    let mut reader = std::fs::File::open(&path).unwrap();
+    let mut prefix = [0; 16];
+    reader.read_exact(&mut prefix).unwrap();
+    let new = json!({"counter":1,"payload":vec![1;8192]});
+    snapshot::replace(&path, &new).expect("replacement must not depend on readers");
+    let mut rest = Vec::new();
+    reader.read_to_end(&mut rest).unwrap();
+    let held: serde_json::Value = serde_json::from_slice(&[&prefix[..], &rest].concat()).unwrap();
+    assert_eq!(held, old);
+    drop(reader);
+    assert_eq!(snapshot::read(&path), new);
+}
 #[test]
 fn a_failed_writer_terminates_the_reader_and_reports_failure() {
     let temp = tempfile::tempdir().unwrap();
