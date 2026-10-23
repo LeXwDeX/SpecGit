@@ -7,26 +7,39 @@ use std::{
 };
 pub fn write(path: impl AsRef<Path>, value: &Value) {
     let path = path.as_ref();
-    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap()).unwrap();
-    serde_json::to_writer(&mut temporary, value).unwrap();
-    temporary.flush().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        match temporary.persist(path) {
-            Ok(_) => return,
+        match replace(path, value) {
+            Ok(()) => return,
+            // Fixture readers no longer cause this: they open with the default
+            // share-delete mode, which the POSIX rename tolerates. A foreign
+            // handle without it, such as a scanner, can still briefly block
+            // replacement; std reports that fallback failure as error 5.
             Err(error)
                 if cfg!(windows)
-                    && matches!(error.error.raw_os_error(), Some(5 | 32 | 33))
+                    && matches!(error.raw_os_error(), Some(5 | 32 | 33))
                     && Instant::now() < deadline =>
             {
-                // Windows may briefly reject replacement while another reader owns
-                // the old file. Retain the same complete temporary file for retry.
-                temporary = error.file;
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(error) => panic!("atomic fixture replacement failed: {}", error.error),
+            Err(error) => panic!("atomic fixture replacement failed: {error}"),
         }
     }
+}
+/// One atomic replacement attempt. `NamedTempFile::persist` only calls
+/// `MoveFileExW`, which denies replacement while any handle is open, so a busy
+/// reader could starve the writer. On that denial `std::fs::rename` retries with
+/// POSIX rename semantics, which replace the name while readers hold the old file
+/// open; they keep reading the complete old file.
+pub fn replace(path: &Path, value: &Value) -> std::io::Result<()> {
+    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+    serde_json::to_writer(&mut temporary, value)?;
+    temporary.flush()?;
+    // Close the temporary file so only its complete contents are renamed.
+    let temporary = temporary.into_temp_path().keep().map_err(|e| e.error)?;
+    std::fs::rename(&temporary, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+    })
 }
 #[allow(dead_code)]
 pub fn read(path: impl AsRef<Path>) -> Value {
