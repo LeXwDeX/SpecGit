@@ -7,6 +7,8 @@ and [release procedure](runtime/distribution/README.md).
 # 2.15.1
 
 - Write the owned-asset lock marker only under the held lock. A concurrent SpecGit process that opens a just-created lock no longer fails with an ownership conflict, and an empty lock left by an interrupted creator is initialized instead of blocking later operations. Foreign non-empty lock content is still preserved and rejected. (#786)
+- Explain label selection by `validation.labels` mode. `issue --tags` and `pr --tags` now have help and schema text; the Skill and SessionStart context state when to pass `--tags`: `kind` derives one `kind::<type>` from the title, `project` requires declared tags, and `off` passes tags only when the user or project asks. Label validation and writes are unchanged. (#790)
+- Update dependencies: tokio 1.53.3, jsonschema 0.59.0, serde_json 1.0.154, sha2 0.11.1 and syn 3.0.9, and pin a newer `actions/setup-python` in CI and release workflows. (#773–#778)
 
 # 2.15.0
 

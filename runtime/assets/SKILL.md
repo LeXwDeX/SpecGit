@@ -18,16 +18,15 @@ preview `migrate` before v2 delivery of legacy integration.
 The runtime checks bounded input, project/branch identity, write intent, concurrent changes, native references and asset
 ownership. Forge read handles cannot merge, close Issues or change platform settings. Installed native Git guards check
 local checkpoints and Issue trailers at commit/push. Host hooks provide context at SessionStart and PreToolUse; ordinary
-edits are not checkpoint gates. The Agent judges specification quality, repair scope and completion evidence.
-Title/label/body rules are optional. Repository guidance sets review and documentation policy.
+edits are not checkpoint gates. The Agent judges specification quality, repair scope and completion evidence. Title/body
+rules are optional; label rules are below. Repository guidance sets review and documentation policy.
 
 ## Discover the native environment
 Start read-only: confirm remote, project, target, identity and CLI commands. Hide credentials. For GitHub, separate github.com/Enterprise Server, visibility, personal/organization ownership, Free/Pro/Team/Enterprise plan and actual access.
 For GitLab, separate GitLab.com/Self-Managed/Dedicated, server version, CE/EE, subscription and actual capability. Keep gh/glab CLI versions separate. Plan/version/edition do not prove capability; 403/404 alone cannot distinguish access, hidden resources or plan limits.
 Do not query admin license/billing or hard-code plan rejection. Unknown stays unknown; use read-only evidence. Current CLI reports optional GitLab metadata only; do not invent a GitHub environment report. Record limits and needed manual checks. These checks promise no new SpecGit commands or fields.
 
-Report explicit feature/plan limits, credential/scope failures and unknown causes separately; optional feature reads
-do not establish repository-wide access.
+Report feature/plan limits, credential/scope failures and unknown causes separately; optional reads are not repo-wide.
 
 ## Plan goals with native objects
 
@@ -127,10 +126,11 @@ release evidence and must be included in the task; merge alone does not expand t
 
 Before commit/push, use `issue --inspect` to find duplicate WHYs and select a complete relevant Issue with `issue`. For
 distinct work, compare candidates and supply each exact `review_digest` with `--reviewed-candidates`; changed content
-needs fresh comparison. Missing labels need explicit `--create-labels`. Ordinary edits, planning Issue operations,
-read-only inspection, audits and reviews need no edit checkpoint. Pure documentation still needs an Issue and a request;
-repository policy may only shorten its verification. Local init/setup is maintenance; it does not select an Issue or
-establish platform completion.
+needs fresh comparison. Labels follow `validation.labels`: `kind` derives one `kind::<type>` from the title; `project`
+requires declared `tags`; `off` passes `--tags` only when asked. Never add undeclared legacy labels; missing ones need
+explicit `--create-labels`. Ordinary edits, planning Issue operations, read-only inspection, audits and reviews need no
+edit checkpoint. Pure documentation still needs an Issue and a request; repository policy may only shorten its
+verification. Local init/setup is maintenance; it does not select an Issue or establish platform completion.
 
 Try normal SpecGit inspect/dry-run first. If a reproducible SpecGit defect blocks Issue selection, record command,
 version, exit and diagnostic. Within the current task, use authenticated native gh/glab to search duplicate WHYs,

@@ -33,7 +33,14 @@ unambiguous. `target` defaults to the successfully read native default branch.
 
 Optional `validation` contains `titles`, `bodies` and `labels: off|kind|project`.
 Booleans default to false; labels default to `off`. Project labels require a
-`tags` catalog of name, six-digit color and optional description. The `templates`
+`tags` catalog of name, six-digit color and optional description. Comma-separated
+`--tags` on `issue` and a new `pr` follows this mode; when omitted, selected
+repository template labels apply first. `kind` otherwise derives one `kind::<type>`
+from the Conventional Commit title, and explicit tags need exactly one kind plus
+declared `tags`; `project` requires declared `tags`; `off` adds no mode rule, but
+tags must still be catalog, declared or existing labels with one per scoped axis,
+and Agents pass them only when the user or project asks. Generated Skill and
+SessionStart context state these rules. The `templates`
 object selects `issue` and `pr` templates: `source: builtin`, `repository` with a
 safe relative `path`, or `inline` with nonempty `body`. Optional `title` and
 `required_sections` describe selected content. Final body files override template
