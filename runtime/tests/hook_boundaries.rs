@@ -445,6 +445,77 @@ async fn typed_guard_plan_rejects_changed_git_layout_before_any_setup_write() {
 }
 
 #[test]
+fn session_rules_state_the_declared_label_mode() {
+    let f = delivery::Fixture::new("github");
+    let tags = "tags:\n- name: area::cli\n  color: 0e8a16\n";
+    for (language, labels, extra, rule) in [
+        (
+            "en",
+            "off",
+            "",
+            "Label mode off: pass --tags only when the user or project asks.",
+        ),
+        (
+            "en",
+            "kind",
+            "",
+            "Label mode kind: omit --tags so the title derives one kind::<type>",
+        ),
+        (
+            "en",
+            "project",
+            tags,
+            "Label mode project: pass --tags only from declared tags.",
+        ),
+        (
+            "zh",
+            "off",
+            "",
+            "Label 模式 off：仅在用户或项目要求时传 --tags。",
+        ),
+        (
+            "zh",
+            "kind",
+            "",
+            "Label 模式 kind：省略 --tags，由标题派生唯一 kind::<type>",
+        ),
+        (
+            "zh",
+            "project",
+            tags,
+            "Label 模式 project：--tags 只能取声明的 tags。",
+        ),
+    ] {
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            format!(
+                "version: 2\nremote: origin\nprovider: github\nlanguage: {language}\nvalidation:\n  labels: {labels}\n{extra}"
+            ),
+        )
+        .unwrap();
+        let session = format!("labels-{language}-{labels}");
+        let out = hook(
+            &f,
+            "SessionStart",
+            json!({"session_id":session,"hook_event_name":"SessionStart","cwd":f.root}),
+        );
+        assert!(out.status.success(), "{out:?}");
+        let context: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let text = context["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(text.contains(rule), "{language}/{labels}: {text}");
+        let others = ["off", "kind", "project"]
+            .into_iter()
+            .filter(|m| *m != labels);
+        for other in others {
+            assert!(!text.contains(&format!("mode {other}")), "{text}");
+            assert!(!text.contains(&format!("模式 {other}")), "{text}");
+        }
+    }
+}
+
+#[test]
 fn context_offer_cache_rolls_over_and_deduplicates_without_losing_new_sessions() {
     let f = delivery::Fixture::new("github");
     let directory = f.root.join(".git/specgit-v2/hook-context");

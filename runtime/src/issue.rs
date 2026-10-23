@@ -23,6 +23,9 @@ pub struct Options {
     /// One final Markdown body file per new title, in title order.
     #[arg(long)]
     pub body_file: Vec<PathBuf>,
+    /// Comma-separated labels per validation.labels; when omitted, repository template labels apply first.
+    /// kind derives one kind::<type> from the title when omitted, and explicit tags need exactly one kind;
+    /// project requires declared tags; off: pass only when the user or project asks.
     #[arg(long, value_delimiter = ',')]
     pub tags: Option<Vec<String>>,
     /// Create this branch only from a clean worktree; never replace an existing branch.
