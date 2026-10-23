@@ -53,5 +53,14 @@ mod tests {
         let skill = canonical(include_str!("../assets/SKILL.md"));
         assert!(skill.lines().count() <= 198, "keep one full workflow");
         assert!(skill.contains("Contract version: {{version}}."));
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for rule in [
+            "Labels follow `validation.labels`:",
+            "`kind` derives one `kind::<type>`",
+            "`project` requires declared `tags`",
+            "`off` passes `--tags` only when asked",
+        ] {
+            assert!(flat.contains(rule), "{rule}");
+        }
     }
 }

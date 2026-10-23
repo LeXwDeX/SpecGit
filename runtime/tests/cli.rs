@@ -404,3 +404,40 @@ fn init_check_visible_alias_is_published_and_accepted_by_the_real_cli() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["operation"], "init");
 }
+
+/// Agents read `--tags` help to decide whether and which labels to pass.
+#[test]
+fn schema_explains_tags_by_label_mode_for_issue_and_request() {
+    let out = executable::command()
+        .args(["--schema", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    for name in ["issue", "pr"] {
+        let command = report["evidence"]["command"]["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in schema"));
+        let help = command["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["long"] == "tags")
+            .unwrap_or_else(|| panic!("{name} --tags"))["help"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} --tags help"));
+        for rule in [
+            "validation.labels",
+            "kind derives one kind::<type> from the title",
+            "explicit tags need exactly",
+            "repository template labels",
+            "project requires declared tags",
+            "off: pass only when the user or project asks",
+        ] {
+            assert!(help.contains(rule), "{name}: {help}");
+        }
+    }
+}

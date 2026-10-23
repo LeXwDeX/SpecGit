@@ -1,7 +1,7 @@
 //! Bounded input and the addressed project/branch context.
 use super::{INPUT_LIMIT, Output, notice};
 use crate::{
-    config::{self, Language},
+    config::{self, Labels, Language},
     diagnostic::Code,
     input,
     process::{Limits, Process},
@@ -13,6 +13,7 @@ use std::{path::PathBuf, time::Duration};
 pub(super) struct Prepared {
     pub(super) context: project::Context,
     pub(super) language: Language,
+    pub(super) labels: Labels,
     pub(super) session: String,
     pub(super) observation: config::Observation,
 }
@@ -103,6 +104,7 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
     Ok(Some(Prepared {
         context,
         language: marker.language,
+        labels: marker.validation.labels,
         session: session.to_owned(),
         observation: marker.observation,
     }))
