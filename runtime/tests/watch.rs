@@ -15,6 +15,7 @@ struct WatchProcess {
     identity: Identity,
     scenario: &'static str,
     started: std::time::Instant,
+    lease_deadline: Option<u64>,
 }
 impl WatchProcess {
     fn spawn(
@@ -36,6 +37,7 @@ impl WatchProcess {
             identity: identity.clone(),
             scenario,
             started: std::time::Instant::now(),
+            lease_deadline: None,
         }
     }
     fn output(&mut self) -> (String, String) {
@@ -128,15 +130,48 @@ fn request_reads(f: &delivery::Fixture) -> usize {
         .count()
 }
 
+/// The observer's requested budget in polling tests.
+const POLLING_TIMEOUT_SECONDS: u64 = 60;
+
+impl WatchProcess {
+    /// Waits assert no tighter bound than the observer's own budget. Once the
+    /// child records its lease, its lease deadline bounds the wait: by then it
+    /// has polled or published `timed_out`. Before that, the test bounds child
+    /// startup by the same requested timeout.
+    fn within_budget(&mut self, state: Option<&watch_store::State>) -> bool {
+        if let Some(lease) = state
+            .and_then(|s| s.lease.as_ref())
+            .filter(|l| l.pid == self.child.id())
+        {
+            self.lease_deadline = Some(lease.deadline);
+        }
+        match self.lease_deadline {
+            Some(deadline) => watch_store::now() < deadline,
+            None => {
+                self.started.elapsed() < std::time::Duration::from_secs(POLLING_TIMEOUT_SECONDS)
+            }
+        }
+    }
+}
+
 fn wait_for_poll(f: &delivery::Fixture, child: &mut WatchProcess, polls: u64) -> usize {
-    use std::time::{Duration, Instant};
-    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let state = watch_store::read(&child.identity).unwrap().unwrap();
         if state
             .lease
+            .as_ref()
             .is_some_and(|l| l.pid == child.id() && l.polls_completed >= polls)
         {
+            // The final timed-out or cancelled publication also counts a poll
+            // before the lease is released; it is not a completed observation.
+            assert!(
+                !state.events.last().is_some_and(|e| matches!(
+                    e.state,
+                    EventState::TimedOut | EventState::Cancelled
+                )),
+                "{}",
+                child.diagnostic()
+            );
             return f.state()["calls"].as_array().unwrap().len();
         }
         assert!(
@@ -144,8 +179,8 @@ fn wait_for_poll(f: &delivery::Fixture, child: &mut WatchProcess, polls: u64) ->
             "{}",
             child.diagnostic()
         );
-        assert!(Instant::now() < deadline, "{}", child.diagnostic());
-        std::thread::sleep(Duration::from_millis(10));
+        assert!(child.within_budget(Some(&state)), "{}", child.diagnostic());
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -165,7 +200,7 @@ fn polling(f: &delivery::Fixture, scenario: &'static str) -> WatchProcess {
             "--poll-seconds",
             "2",
             "--timeout-seconds",
-            "60",
+            &POLLING_TIMEOUT_SECONDS.to_string(),
         ]),
         &identity,
         scenario,
@@ -240,9 +275,22 @@ fn changed_poll_verifies_checks_and_private_evidence_before_publishing() {
 
 fn finish_watcher(child: &mut WatchProcess) {
     use std::time::{Duration, Instant};
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // A timed-out observer still publishes, releases its lease and reaps its
+    // children before exiting; this grace only covers that teardown.
+    const EXIT_GRACE: Duration = Duration::from_secs(10);
+    let mut expired_at = None;
     while child.try_wait().unwrap().is_none() {
-        assert!(Instant::now() < deadline, "{}", child.diagnostic());
+        // Read the state only until the lease deadline is known, so these reads
+        // do not contend with the observer's final state replacements.
+        let state = child
+            .lease_deadline
+            .is_none()
+            .then(|| watch_store::read(&child.identity).unwrap())
+            .flatten();
+        if !child.within_budget(state.as_ref()) {
+            let expired = *expired_at.get_or_insert_with(Instant::now);
+            assert!(expired.elapsed() < EXIT_GRACE, "{}", child.diagnostic());
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
 }
