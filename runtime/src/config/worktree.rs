@@ -353,10 +353,14 @@ pub fn source_in_same_repository_checkout(source: &Path, root: &Path) -> Result<
     Ok(false)
 }
 
-/// Every other existing, non-bare worktree of this repository.
-pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, Diagnostic> {
-    let list = project::git(process, root, &["worktree", "list", "--porcelain", "-z"]).await?;
-    let mut records: Vec<(PathBuf, bool)> = vec![];
+struct WorktreeRecord {
+    path: PathBuf,
+    prunable: bool,
+    skipped: bool,
+}
+
+fn worktree_records(list: Vec<u8>) -> Result<Vec<WorktreeRecord>, Diagnostic> {
+    let mut records: Vec<WorktreeRecord> = vec![];
     for field in list.split(|b| *b == 0) {
         if let Some(raw) = field.strip_prefix(b"worktree ") {
             if records.len() >= WORKTREE_LIMIT {
@@ -369,40 +373,451 @@ pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, D
                     .map_err(|_| Diagnostic::input("Invalid worktree path."))?,
             );
             safe_path(&path)?;
-            records.push((path, false));
+            records.push(WorktreeRecord {
+                path,
+                prunable: false,
+                skipped: false,
+            });
         } else if (field == b"bare" || field.starts_with(b"prunable"))
             && let Some(last) = records.last_mut()
         {
-            last.1 = true;
+            last.skipped = true;
+            last.prunable |= field.starts_with(b"prunable");
         }
     }
+    Ok(records)
+}
+
+async fn prunable_checkouts(process: &Process, root: &Path) -> Result<Vec<PathBuf>, Diagnostic> {
+    let list = project::git(process, root, &["worktree", "list", "--porcelain", "-z"]).await?;
+    Ok(worktree_records(list)?
+        .into_iter()
+        .filter(|record| record.prunable)
+        .map(|record| record.path)
+        .collect())
+}
+
+/// Every other existing, non-bare worktree of this repository.
+pub async fn siblings(process: &Process, root: &Path) -> Result<Vec<Worktree>, Diagnostic> {
+    let list = project::git(process, root, &["worktree", "list", "--porcelain", "-z"]).await?;
+    let records = worktree_records(list)?;
     let current_private = private_root(process, root).await?;
     let common = common_dir(root)?;
     let mut worktrees = vec![];
-    for (path, skipped) in records {
+    for record in records {
         // A bare entry has no checkout; a prunable or missing one cannot consume assets.
-        if skipped || !path.is_dir() || same(&path, root) {
+        if record.skipped || !record.path.is_dir() || same(&record.path, root) {
             continue;
         }
         // Submodules may report their own Git metadata directory as a worktree.
         // It is neither a checkout nor an independent consumer.
         if common
             .as_ref()
-            .is_some_and(|common| path.starts_with(common))
+            .is_some_and(|common| record.path.starts_with(common))
         {
             continue;
         }
-        let sibling_private = private_root(process, &path).await?;
+        let sibling_private = private_root(process, &record.path).await?;
         if same(&sibling_private, &current_private) {
             continue;
         }
         worktrees.push(Worktree {
             private_root: sibling_private,
-            hooks: hooks(process, &path).await?,
-            root: path,
+            hooks: hooks(process, &record.path).await?,
+            root: record.path,
         });
     }
     Ok(worktrees)
+}
+
+fn evidence_conflict(message: &str) -> Diagnostic {
+    Diagnostic::new(
+        Code::RollbackConflict,
+        "rollback",
+        message,
+        "Retry the exact rollback after the sibling worktree and its SpecGit state are readable and stable; this attempt restored nothing and kept the journal.",
+    )
+}
+
+fn evidence_error(what: &str, path: &Path, cause: Diagnostic) -> Diagnostic {
+    evidence_conflict(&format!(
+        "{what} at {} cannot be read: {}",
+        path.display(),
+        cause.message
+    ))
+}
+
+/// Compare permissions the way the owned-asset journal records them. Windows
+/// has no Unix mode; the read-only flag remains the material bit there.
+fn permission_signature(permissions: Option<&std::fs::Permissions>) -> (Option<bool>, Option<u32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        (
+            permissions.map(std::fs::Permissions::readonly),
+            permissions.map(|permissions| permissions.mode() & 0o7777),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        (permissions.map(std::fs::Permissions::readonly), None)
+    }
+}
+
+fn same_snapshot(expected: &crate::assets::Snapshot, actual: &crate::assets::Snapshot) -> bool {
+    expected.bytes == actual.bytes
+        && permission_signature(expected.permissions.as_ref())
+            == permission_signature(actual.permissions.as_ref())
+}
+
+/// Evidence files are small receipts, not owned assets. Bound their read so a
+/// sibling cannot turn a rollback recheck into an unbounded memory operation.
+const EVIDENCE_LIMIT: usize = 1_048_576;
+
+fn bounded_snapshot(path: &Path, limit: usize) -> Result<crate::assets::Snapshot, Diagnostic> {
+    safe_path(path)?;
+    let file = match crate::assets::open_regular(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(crate::assets::Snapshot {
+                bytes: None,
+                permissions: None,
+            });
+        }
+        Err(_) => return Err(Diagnostic::input("The evidence file cannot be read.")),
+        Ok(file) => file,
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|_| Diagnostic::input("The evidence metadata cannot be read."))?;
+    if !metadata.is_file() || metadata.len() > limit as u64 {
+        return Err(Diagnostic::input(
+            "The evidence file is too large or not a regular file.",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Diagnostic::input("The evidence file cannot be read."))?;
+    if bytes.len() > limit {
+        return Err(Diagnostic::input("The evidence file is too large."));
+    }
+    Ok(crate::assets::Snapshot {
+        bytes: Some(bytes),
+        permissions: Some(metadata.permissions()),
+    })
+}
+
+fn checkout_marker(root: &Path) -> Result<Option<crate::assets::Snapshot>, Diagnostic> {
+    let path = root.join(".git");
+    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+        Diagnostic::new(
+            Code::RollbackConflict,
+            "rollback",
+            &format!(
+                "The Git worktree marker {} cannot be inspected ({:?}).",
+                path.display(),
+                error.kind()
+            ),
+            "Inspect the checkout, then retry the exact rollback; no rollback target was changed.",
+        )
+    })?;
+    if metadata.is_dir() {
+        return Ok(None);
+    }
+    if !metadata.is_file() {
+        return Err(evidence_conflict(
+            "A linked checkout marker is not a regular file.",
+        ));
+    }
+    let snapshot = bounded_snapshot(&path, 4096)
+        .map_err(|cause| evidence_error("The linked checkout marker", &path, cause))?;
+    if snapshot.bytes.is_none() {
+        return Err(evidence_conflict(
+            "A linked checkout marker disappeared while it was inspected.",
+        ));
+    }
+    Ok(Some(snapshot))
+}
+
+/// Native Git metadata that proves an index, reference or configuration
+/// operation is active. A registered checkout with such a lock is incomplete.
+fn active_git_lock(directory: &Path) -> Result<bool, Diagnostic> {
+    for name in ["index.lock", "HEAD.lock", "config.lock"] {
+        let path = directory.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(evidence_error(
+                    "A Git operation marker",
+                    &path,
+                    Diagnostic::input("The marker cannot be inspected."),
+                ));
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn private_snapshots(
+    private_root: &Path,
+) -> Result<Vec<(&'static str, crate::assets::Snapshot)>, Diagnostic> {
+    INITIALIZED_MARKERS
+        .iter()
+        .chain(RECEIPT_MARKERS.iter())
+        .map(|name| {
+            let path = private_root.join(name);
+            bounded_snapshot(&path, EVIDENCE_LIMIT)
+                .map(|snapshot| (*name, snapshot))
+                .map_err(|cause| evidence_error("SpecGit private worktree state", &path, cause))
+        })
+        .collect()
+}
+
+fn state_from_markers(markers: &[(&'static str, crate::assets::Snapshot)]) -> PrivateState {
+    let mut state = PrivateState::default();
+    for (name, snapshot) in markers {
+        if snapshot.bytes.is_none() {
+            continue;
+        }
+        if INITIALIZED_MARKERS.contains(name) {
+            state.initialized.push(name);
+        } else {
+            state.receipts.push(name);
+        }
+    }
+    state
+}
+
+/// Snapshot of one sibling's rollback-relevant state. It is read before the
+/// consumer lists are built and rechecked before every rollback write. The
+/// current worktree is intentionally absent: rollback changes its own assets.
+struct SiblingEvidence {
+    root: PathBuf,
+    private_root: PathBuf,
+    git_dir: PathBuf,
+    common: PathBuf,
+    hooks: PathBuf,
+    declaration: crate::assets::Snapshot,
+    state: PrivateState,
+    markers: Vec<(&'static str, crate::assets::Snapshot)>,
+    commondir: crate::assets::Snapshot,
+    git_marker: Option<crate::assets::Snapshot>,
+}
+impl SiblingEvidence {
+    fn initialized(&self) -> bool {
+        self.declaration.bytes.is_some() || self.state.is_initialized()
+    }
+    fn consumes_any(&self) -> bool {
+        self.initialized() || !self.state.receipts.is_empty()
+    }
+    fn consumes_hooks(&self, guard_demand: bool) -> bool {
+        self.initialized()
+            || self
+                .state
+                .receipts
+                .iter()
+                .any(|name| matches!(*name, "guard-hooks.json" | "setup-guard-hooks.json"))
+            || guard_demand
+    }
+    fn consumes_exclusions(&self) -> bool {
+        self.initialized() || self.state.receipts.contains(&"agent-assets/ownership.json")
+    }
+    fn as_consumer(&self) -> Consumer {
+        Consumer {
+            root: self.root.clone(),
+            declaration_sha256: self.declaration.digest(),
+            private_state: self.state.markers(),
+            hooks: self.hooks.clone(),
+        }
+    }
+    fn verify_active(&self) -> Result<(), Diagnostic> {
+        for directory in [&self.git_dir, &self.common] {
+            if active_git_lock(directory)? {
+                return Err(evidence_conflict(
+                    "A Git checkout or configuration operation is active in a sibling worktree.",
+                ));
+            }
+        }
+        Ok(())
+    }
+    fn verify(&self) -> Result<(), Diagnostic> {
+        if !self.root.is_dir() {
+            return Err(evidence_conflict(
+                "A sibling checkout disappeared after rollback planning.",
+            ));
+        }
+        self.verify_active()?;
+        let actual_git = git_dir(&self.root)
+            .map_err(|cause| evidence_error("The Git directory", &self.root, cause))?;
+        let expected_git = self.git_dir.canonicalize().map_err(|_| {
+            evidence_conflict("A sibling worktree's Git directory changed after rollback planning.")
+        })?;
+        if actual_git.as_deref() != Some(expected_git.as_path()) {
+            return Err(evidence_conflict(
+                "A sibling worktree's Git directory changed after rollback planning.",
+            ));
+        }
+        let actual_common = common_dir(&self.root)
+            .map_err(|cause| evidence_error("The Git common directory", &self.root, cause))?;
+        let expected_common = self.common.canonicalize().map_err(|_| {
+            evidence_conflict(
+                "A sibling worktree's Git common directory changed after rollback planning.",
+            )
+        })?;
+        if actual_common.as_deref() != Some(expected_common.as_path()) {
+            return Err(evidence_conflict(
+                "A sibling worktree's Git common directory changed after rollback planning.",
+            ));
+        }
+        let declaration = super::snapshot(&self.root).map_err(|cause| {
+            evidence_error("The declaration", &self.root.join(".specgit.yaml"), cause)
+        })?;
+        if !same_snapshot(&self.declaration, &declaration) {
+            return Err(evidence_conflict(
+                "A sibling worktree's SpecGit declaration changed after rollback planning.",
+            ));
+        }
+        for (name, expected) in &self.markers {
+            let path = self.private_root.join(name);
+            let actual = bounded_snapshot(&path, EVIDENCE_LIMIT)
+                .map_err(|cause| evidence_error("SpecGit private worktree state", &path, cause))?;
+            if !same_snapshot(expected, &actual) {
+                return Err(evidence_conflict(
+                    "A sibling worktree's SpecGit private state changed after rollback planning.",
+                ));
+            }
+        }
+        let commondir =
+            bounded_snapshot(&self.git_dir.join("commondir"), EVIDENCE_LIMIT).map_err(|cause| {
+                evidence_error(
+                    "The Git common-directory link",
+                    &self.git_dir.join("commondir"),
+                    cause,
+                )
+            })?;
+        if !same_snapshot(&self.commondir, &commondir) {
+            return Err(evidence_conflict(
+                "A sibling worktree's Git common-directory link changed after rollback planning.",
+            ));
+        }
+        let marker = checkout_marker(&self.root)?;
+        if marker.as_ref().map(|snapshot| {
+            (
+                &snapshot.bytes,
+                permission_signature(snapshot.permissions.as_ref()),
+            )
+        }) != self.git_marker.as_ref().map(|snapshot| {
+            (
+                &snapshot.bytes,
+                permission_signature(snapshot.permissions.as_ref()),
+            )
+        }) {
+            return Err(evidence_conflict(
+                "A sibling worktree's checkout identity changed after rollback planning.",
+            ));
+        }
+        // The stored paths are derived from the Git directory. If that
+        // directory moved without changing the checkout marker, its private
+        // state is no longer at the observed location.
+        if !self.private_root.is_dir()
+            && self
+                .markers
+                .iter()
+                .any(|(_, snapshot)| snapshot.bytes.is_some())
+        {
+            return Err(evidence_conflict(
+                "A sibling worktree's private state directory disappeared after rollback planning.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One consumer scan plus the evidence needed to recheck it before every
+/// rollback write. `siblings()` runs once so all three views see one state.
+struct SharedScan {
+    common: PathBuf,
+    consumers: Vec<Consumer>,
+    hook_consumers: Vec<Consumer>,
+    exclusion_consumers: Vec<Consumer>,
+    observations: Vec<SiblingEvidence>,
+}
+
+async fn scan_shared(process: &Process, root: &Path) -> Result<SharedScan, Diagnostic> {
+    let siblings = siblings(process, root)
+        .await
+        .map_err(|cause| evidence_error("The shared worktree inventory", root, cause))?;
+    let common = common_dir(root)
+        .map_err(|cause| evidence_error("The Git common directory", root, cause))?
+        .ok_or_else(|| evidence_conflict("The Git common directory is unavailable."))?;
+    let mut scan = SharedScan {
+        common: common.clone(),
+        consumers: vec![],
+        hook_consumers: vec![],
+        exclusion_consumers: vec![],
+        observations: vec![],
+    };
+    for sibling in siblings {
+        let declaration = super::snapshot(&sibling.root).map_err(|cause| {
+            evidence_error(
+                "The declaration",
+                &sibling.root.join(".specgit.yaml"),
+                cause,
+            )
+        })?;
+        let markers = private_snapshots(&sibling.private_root)?;
+        let state = state_from_markers(&markers);
+        let ownership = markers
+            .iter()
+            .find(|(name, _)| *name == "agent-assets/ownership.json")
+            .and_then(|(_, snapshot)| snapshot.bytes.as_deref());
+        let guard_demand = setup_guard_demand(ownership, &sibling.root).map_err(|cause| {
+            evidence_error(
+                "The setup guard demand",
+                &sibling.private_root.join("agent-assets/ownership.json"),
+                cause,
+            )
+        })?;
+        let git_dir = sibling
+            .private_root
+            .parent()
+            .ok_or_else(|| evidence_conflict("A sibling's Git directory is malformed."))?
+            .to_owned();
+        let commondir =
+            bounded_snapshot(&git_dir.join("commondir"), EVIDENCE_LIMIT).map_err(|cause| {
+                evidence_error(
+                    "The Git common-directory link",
+                    &git_dir.join("commondir"),
+                    cause,
+                )
+            })?;
+        let git_marker = checkout_marker(&sibling.root)?;
+        let evidence = SiblingEvidence {
+            root: sibling.root,
+            private_root: sibling.private_root,
+            git_dir,
+            common: common.clone(),
+            hooks: sibling.hooks,
+            declaration,
+            state,
+            markers,
+            commondir,
+            git_marker,
+        };
+        evidence.verify_active()?;
+        if evidence.consumes_any() {
+            scan.consumers.push(evidence.as_consumer());
+        }
+        if evidence.consumes_hooks(guard_demand) {
+            scan.hook_consumers.push(evidence.as_consumer());
+        }
+        if evidence.consumes_exclusions() {
+            scan.exclusion_consumers.push(evidence.as_consumer());
+        }
+        scan.observations.push(evidence);
+    }
+    Ok(scan)
 }
 
 /// Siblings that keep a declaration (even invalid or legacy) or selected integration state.
@@ -919,29 +1334,104 @@ pub async fn rollback(
     ))
 }
 
+/// One registered linked worktree. Checkout presence is part of the witness:
+/// `git worktree add` registers before checking out, and a prunable entry can
+/// become an active checkout without changing the registry name set.
+#[derive(Debug, PartialEq, Eq)]
+struct InventoryEntry {
+    name: std::ffi::OsString,
+    git_dir: PathBuf,
+    checkout: PathBuf,
+    checkout_present: bool,
+}
+
 /// Bounded witness of the linked-worktree registry (`<common>/worktrees`).
 /// Git adds an entry there when a checkout is registered, before its files
 /// are checked out, so a changed listing means the consumer scan is stale.
+#[derive(Debug)]
 struct WorktreeInventory {
     path: PathBuf,
-    entries: Vec<std::ffi::OsString>,
+    prunable: Vec<PathBuf>,
+    entries: Vec<InventoryEntry>,
 }
 impl WorktreeInventory {
     const LIMIT: usize = 1024;
-    fn read(path: PathBuf) -> Result<Self, Diagnostic> {
+    fn read(path: PathBuf, prunable: &[PathBuf]) -> Result<Self, Diagnostic> {
         let unreadable = || {
             Diagnostic::new(
                 Code::RollbackConflict,
                 "rollback",
-                "The Git worktree inventory is unreadable.",
+                "The Git worktree inventory is unreadable or incomplete.",
                 "Inspect the repository's linked worktrees, then retry the exact rollback; no rollback target was changed.",
             )
         };
+        let common = path
+            .parent()
+            .ok_or_else(unreadable)?
+            .canonicalize()
+            .map_err(|_| unreadable())?;
         let mut entries = Vec::new();
         match std::fs::read_dir(&path) {
             Ok(directory) => {
                 for entry in directory.take(Self::LIMIT + 1) {
-                    entries.push(entry.map_err(|_| unreadable())?.file_name());
+                    let entry = entry.map_err(|_| unreadable())?;
+                    let name = entry.file_name();
+                    let marker =
+                        metadata_path(&entry.path().join("gitdir")).map_err(|_| unreadable())?;
+                    let marker = if marker.is_absolute() {
+                        marker
+                    } else {
+                        entry.path().join(marker)
+                    };
+                    let checkout_marker = safe_git_path(&marker).map_err(|_| unreadable())?;
+                    let checkout = checkout_marker.parent().ok_or_else(unreadable)?.to_owned();
+                    safe_path(&checkout).map_err(|_| unreadable())?;
+                    let checkout_present = match std::fs::symlink_metadata(&checkout) {
+                        Ok(metadata) if metadata.is_dir() => true,
+                        Ok(_) => return Err(unreadable()),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(_) => return Err(unreadable()),
+                    };
+                    let prunable = prunable.iter().any(|path| same(path, &checkout));
+                    // Git reports a registry entry with a missing checkout as
+                    // prunable. A present directory with a prunable marker, a
+                    // missing marker or a marker for another Git directory is
+                    // not cleanup-safe: it may still hold a declaration.
+                    if checkout_present && prunable {
+                        return Err(unreadable());
+                    }
+                    if !checkout_present && !prunable {
+                        return Err(unreadable());
+                    }
+                    if checkout_present {
+                        let metadata = std::fs::symlink_metadata(checkout.join(".git"))
+                            .map_err(|_| unreadable())?;
+                        if !metadata.is_file() {
+                            return Err(unreadable());
+                        }
+                        let actual_git = git_dir(&checkout)
+                            .map_err(|_| unreadable())?
+                            .ok_or_else(unreadable)?;
+                        let expected_git = entry.path().canonicalize().map_err(|_| unreadable())?;
+                        if actual_git != expected_git {
+                            return Err(unreadable());
+                        }
+                        let actual_common = common_dir(&checkout)
+                            .map_err(|_| unreadable())?
+                            .ok_or_else(unreadable)?;
+                        if actual_common != common {
+                            return Err(unreadable());
+                        }
+                    }
+                    if prunable && active_git_lock(&entry.path()).map_err(|_| unreadable())? {
+                        return Err(unreadable());
+                    }
+                    entries.push(InventoryEntry {
+                        name,
+                        git_dir: entry.path(),
+                        checkout,
+                        checkout_present,
+                    });
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -955,11 +1445,15 @@ impl WorktreeInventory {
                 "Prune unused linked worktrees, then retry the exact rollback; no rollback target was changed.",
             ));
         }
-        entries.sort();
-        Ok(Self { path, entries })
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(Self {
+            path,
+            prunable: prunable.to_vec(),
+            entries,
+        })
     }
     fn verify(&self) -> Result<(), Diagnostic> {
-        if Self::read(self.path.clone())?.entries != self.entries {
+        if Self::read(self.path.clone(), &self.prunable)?.entries != self.entries {
             return Err(Diagnostic::new(
                 Code::RollbackConflict,
                 "rollback",
@@ -969,6 +1463,54 @@ impl WorktreeInventory {
         }
         Ok(())
     }
+    /// The registry and the consumer scan must cover the same present
+    /// checkouts. The main checkout has no registry entry, so it is accepted
+    /// only when its Git directory is the common directory.
+    fn verify_observed(
+        &self,
+        root: &Path,
+        common: &Path,
+        observations: &[SiblingEvidence],
+    ) -> Result<(), Diagnostic> {
+        for entry in &self.entries {
+            if !entry.checkout_present || same(&entry.checkout, root) {
+                continue;
+            }
+            if !observations
+                .iter()
+                .any(|observation| same(&observation.root, &entry.checkout))
+            {
+                return Err(evidence_conflict(
+                    "A registered checkout disappeared while shared consumers were scanned.",
+                ));
+            }
+        }
+        for observation in observations {
+            if same(&observation.root, root) || same(&observation.git_dir, common) {
+                continue;
+            }
+            if !self
+                .entries
+                .iter()
+                .any(|entry| entry.checkout_present && same(&entry.checkout, &observation.root))
+            {
+                return Err(evidence_conflict(
+                    "A sibling checkout is not registered in the Git worktree inventory.",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The marker written by the current native guard implementation. A journal
+/// target with this marker is a guard hook, not an unrelated user or legacy hook.
+fn has_native_guard(bytes: Option<&[u8]>) -> bool {
+    bytes.is_some_and(|bytes| {
+        bytes
+            .windows(b"specgit-v2:pre-".len())
+            .any(|part| part == b"specgit-v2:pre-")
+    })
 }
 
 /// Roll back with native serialization held before the transaction-store lock.
@@ -996,10 +1538,13 @@ pub async fn rollback_with_lock(
             .and_then(Path::parent)
             .ok_or_else(|| Diagnostic::input("The native guard lock path is malformed."))?
             .join("worktrees"),
+        &prunable_checkouts(process, root)
+            .await
+            .map_err(|cause| evidence_error("The shared worktree inventory", root, cause))?,
     )?;
-    let consumers = sibling_consumers(process, root).await?;
-    let hook_consumers = sibling_hook_consumers(process, root).await?;
-    let mut retain = if sibling_exclusion_consumers(process, root).await?.is_empty() {
+    let shared = scan_shared(process, root).await?;
+    inventory.verify_observed(root, &shared.common, &shared.observations)?;
+    let mut retain = if shared.exclusion_consumers.is_empty() {
         vec![]
     } else {
         vec![exclude.to_owned()]
@@ -1017,13 +1562,7 @@ pub async fn rollback_with_lock(
         .map(|stage| crate::assets::Snapshot::read(&hook_root.join(stage)))
         .collect::<Result<Vec<_>, _>>()?
         .iter()
-        .any(|snapshot| {
-            snapshot.bytes.as_deref().is_some_and(|bytes| {
-                bytes
-                    .windows(b"specgit-v2:pre-".len())
-                    .any(|part| part == b"specgit-v2:pre-")
-            })
-        });
+        .any(|snapshot| has_native_guard(snapshot.bytes.as_deref()));
     // A source-transfer rollback may restore the original owner without losing
     // either hook. Permit that recovery while retaining genuinely destructive
     // rollbacks that would remove a consumer's only guard.
@@ -1060,22 +1599,57 @@ pub async fn rollback_with_lock(
         });
     }
     let restores_complete_source = restores_source && source_count == 1 && preserves_hooks;
-    if installed_guard
-        && !restores_complete_source
-        && (current_setup_consumer
-            || hook_consumers
-                .iter()
-                .any(|consumer| shares_hooks(consumer, &hook_root)))
+    // The current worktree may point `core.hooksPath` elsewhere after the
+    // journal was written. A journal hook target is still the managed guard
+    // that an active sibling needs, so retain it without scanning other paths.
+    let journal_paths = store.rollback_paths(id)?;
+    let journal_hooks: Vec<_> = journal_paths
+        .iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| matches!(name, "pre-commit" | "pre-push"))
+        })
+        .cloned()
+        .collect();
+    let journal_sources: Vec<_> = journal_paths
+        .iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| matches!(name, "guard-hooks.json" | "setup-guard-hooks.json"))
+        })
+        .cloned()
+        .collect();
+    let mut native_journal_hooks = Vec::new();
+    for path in &journal_hooks {
+        let snapshot = crate::assets::Snapshot::read(path)
+            .map_err(|cause| evidence_error("A journal hook target", path, cause))?;
+        if has_native_guard(snapshot.bytes.as_deref()) {
+            native_journal_hooks.push(path.clone());
+        }
+    }
+    if !restores_complete_source
+        && (current_setup_consumer || !shared.hook_consumers.is_empty())
+        && (installed_guard || !native_journal_hooks.is_empty())
     {
+        retain.extend(native_journal_hooks);
+        retain.extend(journal_sources);
         retain.extend([hook_root.join("pre-commit"), hook_root.join("pre-push")]);
         retain.extend(source_paths);
     }
-    inventory.verify()?;
-    let (applied, retained) =
-        store.rollback_retaining_checked(id, &retain, &|| inventory.verify())?;
+    let check = || {
+        inventory.verify()?;
+        for sibling in &shared.observations {
+            sibling.verify()?;
+        }
+        Ok(())
+    };
+    check()?;
+    let (applied, retained) = store.rollback_retaining_checked(id, &retain, &check)?;
     let retained: Vec<_> = retained
         .iter()
-        .map(|path| json!({"path":path,"reason":if current_setup_consumer {"setup_guard_purpose"}else{"shared_initialized_worktree"},"shared_consumers":consumers}))
+        .map(|path| json!({"path":path,"reason":if current_setup_consumer {"setup_guard_purpose"}else{"shared_initialized_worktree"},"shared_consumers":shared.consumers}))
         .collect();
     Ok((applied, json!(retained)))
 }
@@ -1178,6 +1752,165 @@ mod tests {
         assert_eq!(
             safe_git_path(&root.join("real/../real")).unwrap(),
             root.join("real")
+        );
+    }
+
+    #[test]
+    fn inventory_witnesses_checkout_appearance_without_registry_change() {
+        use super::WorktreeInventory;
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let registry = base.join("common/worktrees");
+        let entry = registry.join("a");
+        let checkout = base.join("checkout");
+        fs::create_dir_all(&entry).unwrap();
+        fs::create_dir_all(&checkout).unwrap();
+        fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", entry.display()),
+        )
+        .unwrap();
+        fs::write(
+            entry.join("gitdir"),
+            format!("{}\n", checkout.join(".git").display()),
+        )
+        .unwrap();
+        fs::write(entry.join("commondir"), b"../..\n").unwrap();
+        let before = WorktreeInventory::read(registry.clone(), &[]).unwrap();
+        assert_eq!(before.entries.len(), 1);
+        assert_eq!(before.entries[0].checkout, checkout);
+        assert!(before.entries[0].checkout_present);
+
+        fs::remove_dir_all(&checkout).unwrap();
+        let gone =
+            WorktreeInventory::read(registry.clone(), std::slice::from_ref(&checkout)).unwrap();
+        assert!(!gone.entries[0].checkout_present);
+        assert_ne!(before.entries, gone.entries);
+
+        fs::create_dir_all(&checkout).unwrap();
+        assert!(
+            WorktreeInventory::read(registry.clone(), std::slice::from_ref(&checkout))
+                .unwrap_err()
+                .message
+                .contains("incomplete")
+        );
+        assert!(
+            WorktreeInventory::read(registry.clone(), &[])
+                .unwrap_err()
+                .message
+                .contains("incomplete")
+        );
+        fs::write(entry.join("index.lock"), b"").unwrap();
+        assert!(
+            WorktreeInventory::read(registry.clone(), std::slice::from_ref(&checkout))
+                .unwrap_err()
+                .message
+                .contains("incomplete")
+        );
+        fs::remove_file(entry.join("index.lock")).unwrap();
+        fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", entry.display()),
+        )
+        .unwrap();
+        assert!(
+            WorktreeInventory::read(registry.clone(), std::slice::from_ref(&checkout))
+                .unwrap_err()
+                .message
+                .contains("incomplete")
+        );
+        let active = WorktreeInventory::read(registry.clone(), &[]).unwrap();
+        assert!(active.entries[0].checkout_present);
+    }
+
+    fn evidence_for(root: &Path) -> super::SiblingEvidence {
+        use super::{checkout_marker, private_snapshots, state_from_markers};
+        let git_dir = root.join(".git");
+        let private_root = git_dir.join("specgit-v2");
+        let declaration = crate::config::snapshot(root).unwrap();
+        let markers = private_snapshots(&private_root).unwrap();
+        let state = state_from_markers(&markers);
+        let commondir = crate::assets::Snapshot::read(&git_dir.join("commondir")).unwrap();
+        let git_marker = checkout_marker(root).unwrap();
+        super::SiblingEvidence {
+            root: root.to_owned(),
+            private_root,
+            git_dir,
+            common: root.join(".git"),
+            hooks: root.join("hooks"),
+            declaration,
+            state,
+            markers,
+            commondir,
+            git_marker,
+        }
+    }
+
+    #[test]
+    fn sibling_evidence_rechecks_declaration_markers_commondir_and_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let root = base.join("checkout");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let evidence = evidence_for(&root);
+        evidence.verify().unwrap();
+
+        fs::write(root.join(".specgit.yaml"), b"version: 2\n").unwrap();
+        assert!(
+            evidence
+                .verify()
+                .unwrap_err()
+                .message
+                .contains("declaration changed")
+        );
+        fs::remove_file(root.join(".specgit.yaml")).unwrap();
+        fs::create_dir_all(root.join(".git/specgit-v2")).unwrap();
+        fs::write(
+            root.join(".git/specgit-v2/guidance.json"),
+            br#"{"version":1,"blocks":{}}"#,
+        )
+        .unwrap();
+        assert!(
+            evidence
+                .verify()
+                .unwrap_err()
+                .message
+                .contains("private state changed")
+        );
+        fs::remove_file(root.join(".git/specgit-v2/guidance.json")).unwrap();
+        fs::write(root.join(".git/commondir"), b".\n").unwrap();
+        assert!(
+            evidence
+                .verify()
+                .unwrap_err()
+                .message
+                .contains("common-directory")
+        );
+        fs::remove_file(root.join(".git/commondir")).unwrap();
+        fs::write(root.join(".git/index.lock"), b"").unwrap();
+        assert!(evidence.verify().unwrap_err().message.contains("active"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sibling_evidence_compares_declaration_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let root = base.join("checkout");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let declaration = root.join(".specgit.yaml");
+        fs::write(&declaration, b"version: 2\n").unwrap();
+        fs::set_permissions(&declaration, fs::Permissions::from_mode(0o644)).unwrap();
+        let evidence = evidence_for(&root);
+        evidence.verify().unwrap();
+        fs::set_permissions(&declaration, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            evidence
+                .verify()
+                .unwrap_err()
+                .message
+                .contains("declaration changed")
         );
     }
 }
