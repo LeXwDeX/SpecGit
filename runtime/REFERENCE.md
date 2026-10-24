@@ -577,8 +577,21 @@ unobserved, not passed. Ready requests distinguish registered,
 unregistered and unknown auto-merge state, and never infer review, merge or
 delivery completion from passing checks. Merged requests with open Issues name
 those IDs; a merged request without verified closing facts remains unknown.
-Watch, inbox and Hook actions are advisory and never ready, merge or close
-anything automatically.
+Once native evidence shows the selected request merged or closed, later local
+commits or edits keep that lifecycle result and the revision retains the local
+head. A completed request replaces its next-step message with bounded recovery
+guidance: the merged request accepts no new work, and additional work starts
+from a new branch or worktree with a new Issue selection. Merged requests with
+open Issues keep the unresolved inspection text and issue IDs; the same
+local-divergence guidance is recorded in the event reason, so the action message
+stays within its 1024-byte storage limit. Unknown closure keeps its verification
+step and records in the reason that current request and issue facts must be
+verified first; that guidance covers only additional local work. Closed-unmerged
+requests keep the explicit reopen or follow-up choice and state that a push
+cannot reopen them. These notes never claim a checkpoint was saved. Open
+requests keep the existing local-ahead and dirty pending behavior. Watch, inbox
+and Hook actions are advisory and never ready, merge or close anything
+automatically.
 
 Project setup-managed host hooks use only SessionStart and PreToolUse. Context
 purpose registers both. Guard purpose installs native Git pre-commit/pre-push

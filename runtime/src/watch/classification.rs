@@ -23,8 +23,13 @@ pub(super) fn classify(
     let request = evidence.request.as_ref();
     let codes: Vec<_> = assessment.diagnostics.iter().map(|d| &d.code).collect();
     let check_outcome = assessment.checks_outcome();
-    let state = if revision.head != revision.local_head
-        || request.is_some_and(|r| Some(r.source.as_str()) != context.branch.as_deref())
+    // A merged or closed request is already a settled lifecycle fact; later
+    // local commits cannot make it observably open again. The local divergence
+    // stays in revision.local_head. Source identity and inconsistent native
+    // evidence still fail closed below.
+    let settled = request.is_some_and(|r| matches!(r.state.as_str(), "merged" | "closed"));
+    let state = if request.is_some_and(|r| Some(r.source.as_str()) != context.branch.as_deref())
+        || (revision.head != revision.local_head && !settled)
     {
         EventState::IdentityChanged
     } else if codes.contains(&&Code::Cancelled) {
