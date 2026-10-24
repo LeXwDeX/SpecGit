@@ -560,32 +560,48 @@ fn pre_push_requires_new_commits_to_name_a_selected_issue() {
 fn installed_guard_rejects_a_real_push_of_unbound_commits() {
     let temp = fixture();
     let root = temp.path().canonicalize().unwrap();
-    checkpoint(&root, "feature");
-    assert!(manage(&root, "--install").status.success());
     let remote = tempfile::tempdir().unwrap();
     git(remote.path(), &["init", "--bare", "-q"]);
     git(
         &root,
         &["remote", "add", "local", remote.path().to_str().unwrap()],
     );
-    git(
-        &root,
-        &["push", "--no-verify", "-q", "local", "feature:main"],
-    );
+    // Seed the remote before hooks exist, so every hook invocation below is real.
+    let seed = hooked_git(&root, &["push", "-q", "local", "feature:main"]);
+    assert!(seed.status.success(), "{seed:?}");
     git(&root, &["fetch", "-q", "local"]);
+    assert!(manage(&root, "--install").status.success());
+
+    let index = root.join("guard-index");
+    fs::copy(root.join(".git/index"), &index).unwrap();
+    let git_dir = root.join(".git");
+    let environment = [
+        ("GIT_DIR", git_dir.as_path()),
+        ("GIT_WORK_TREE", root.as_path()),
+        ("GIT_INDEX_FILE", index.as_path()),
+    ];
     fs::write(root.join("source.rs"), "change").unwrap();
-    git(&root, &["add", "source.rs"]);
-    let commit = hooked_git(&root, &["commit", "-q", "-m", "change"]);
+    let add = hooked_git_env(&root, &environment, &["add", "source.rs"]);
+    assert!(add.status.success(), "{add:?}");
+    let denied = hooked_git_env(&root, &environment, &["commit", "-q", "-m", "change"]);
+    assert!(!denied.status.success());
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("No Issue checkpoint"),
+        "{denied:?}"
+    );
+    checkpoint(&root, "feature");
+    let commit = hooked_git_env(&root, &environment, &["commit", "-q", "-m", "change"]);
     assert!(
         commit.status.success(),
         "{}",
         String::from_utf8_lossy(&commit.stderr)
     );
-    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    let push = hooked_git_env(&root, &environment, &["push", "-q", "local", "feature"]);
     assert!(!push.status.success());
     assert!(String::from_utf8_lossy(&push.stderr).contains("Issue: #N"));
-    let amended = hooked_git(
+    let amended = hooked_git_env(
         &root,
+        &environment,
         &[
             "commit",
             "-q",
@@ -600,7 +616,7 @@ fn installed_guard_rejects_a_real_push_of_unbound_commits() {
         "{}",
         String::from_utf8_lossy(&amended.stderr)
     );
-    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    let push = hooked_git_env(&root, &environment, &["push", "-q", "local", "feature"]);
     assert!(
         push.status.success(),
         "{}",
@@ -725,6 +741,15 @@ fn type_change_only_requires_a_checkpoint() {
 /// Git with the tested `specgit` first on PATH, so installed hook blocks run it.
 #[cfg(unix)]
 fn hooked_git(root: &Path, args: &[&str]) -> std::process::Output {
+    hooked_git_env(root, &[], args)
+}
+
+#[cfg(unix)]
+fn hooked_git_env(
+    root: &Path,
+    environment: &[(&str, &Path)],
+    args: &[&str],
+) -> std::process::Output {
     let mut paths = vec![
         executable::binary()
             .canonicalize()
@@ -736,12 +761,18 @@ fn hooked_git(root: &Path, args: &[&str]) -> std::process::Output {
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
-    Command::new("git")
+    let mut command = Command::new("git");
+    command
         .current_dir(root)
         .env("PATH", std::env::join_paths(paths).unwrap())
-        .args(args)
-        .output()
-        .unwrap()
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    for (name, value) in environment {
+        command.env(name, value);
+    }
+    command.args(args).output().unwrap()
 }
 
 const OID: &str = "1111111111111111111111111111111111111111";

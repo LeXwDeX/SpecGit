@@ -180,6 +180,24 @@ pub(super) async fn doctor(process: Process, cwd: &Path, options: DoctorOptions)
             }
         }
     }
+    // A repair can write project assets, so reject repository-location
+    // overrides before any plan can be applied. Read-only doctor keeps Git's
+    // environment semantics for its probes.
+    let repository_environment = if fix && !account_only {
+        specgit::project::require_local_repository_environment().err()
+    } else {
+        None
+    };
+    if let (Some(health), Some(diagnostic)) = (&mut health, repository_environment.clone())
+        && !health
+            .checks
+            .iter()
+            .any(|check| check.id == "project_environment")
+    {
+        health
+            .checks
+            .push(Check::failed("project_environment", diagnostic));
+    }
     let before = health.as_ref().map(|h| h.summary());
     let plans = health
         .as_ref()
@@ -225,6 +243,18 @@ pub(super) async fn doctor(process: Process, cwd: &Path, options: DoctorOptions)
     } else {
         None
     };
+    // Recheck replaces the inspection, so restore the environment blocker
+    // before diagnostics and the final summary are built.
+    if let (Some(health), Some(diagnostic)) = (&mut health, repository_environment)
+        && !health
+            .checks
+            .iter()
+            .any(|check| check.id == "project_environment")
+    {
+        health
+            .checks
+            .push(Check::failed("project_environment", diagnostic));
+    }
     if let Some(health) = &mut health {
         for result in &results {
             if let Some(diagnostic) = &result.diagnostic {
