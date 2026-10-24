@@ -308,7 +308,7 @@ async fn collect_in_scope(
     let issues = evidence.issues.clone();
     let checks = evidence.checks.clone();
     let mut result = describe(evidence);
-    result.diagnostics = diagnostics;
+    result.diagnostics.extend(diagnostics);
     Ok(Collected {
         workspace: w,
         request: observed,

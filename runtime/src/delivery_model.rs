@@ -103,6 +103,14 @@ pub struct PullRequest {
     pub updated_at: String,
 }
 
+impl PullRequest {
+    /// GitLab may briefly report a merge request as `locked`. This is neither a
+    /// settled lifecycle fact nor evidence that discussion locking is enabled.
+    pub(crate) fn is_locked(&self) -> bool {
+        self.state == "locked"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Check {
     pub name: String,

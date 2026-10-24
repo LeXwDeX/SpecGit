@@ -31,6 +31,98 @@ fn complete_request(f: &delivery::Fixture, provider: &str) {
         s["issues"][0]["state"] = json!("closed");
     });
 }
+/// The mock uses the GitLab API field shape documented for list merge requests,
+/// including the valid transitional `state: "locked"` value:
+/// https://docs.gitlab.com/api/merge_requests/#list-merge-requests
+/// No live GitLab transition was captured; this is fixture evidence only.
+#[test]
+fn gitlab_locked_state_is_transient_unknown_and_preserves_verified_identity() {
+    let f = fixture("gitlab");
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("locked");
+        s["requests"][0]["merged"] = json!(true);
+        s["requests"][0]["merged_at"] = json!(STAMP);
+        s["requests"][0]["discussion_locked"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+    });
+    let writes = f.writes();
+    let result = f.run(&["pr", "--status"]);
+    assert_eq!(result["exit"], 3, "{result}");
+    assert_eq!(result["status"], "unknown", "{result}");
+    assert_eq!(result["evidence"]["request"]["id"], 41, "{result}");
+    assert_eq!(result["evidence"]["request"]["state"], "locked", "{result}");
+    assert_eq!(
+        result["evidence"]["request"]["source"], "feature",
+        "{result}"
+    );
+    assert_eq!(result["evidence"]["request"]["target"], "main", "{result}");
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "unsupported_operation"
+                && diagnostic["operation"] == "request_lifecycle"),
+        "{result}"
+    );
+    assert_eq!(f.writes(), writes);
+    let checkpoint: Value =
+        serde_json::from_slice(&fs::read(f.root.join(".git/specgit-v2/selection.json")).unwrap())
+            .unwrap();
+    assert!(
+        checkpoint["delivered_request"].is_null(),
+        "a locked request never retires the checkpoint: {checkpoint}"
+    );
+}
+
+#[test]
+fn gitlab_discussion_locking_does_not_change_an_open_lifecycle() {
+    let f = fixture("gitlab");
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("opened");
+        s["requests"][0]["discussion_locked"] = json!(true);
+    });
+    let result = f.run(&["pr", "--status"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    assert_eq!(result["status"], "open", "{result}");
+    assert_eq!(result["evidence"]["request"]["state"], "opened", "{result}");
+}
+
+#[test]
+fn gitlab_locked_identity_contradiction_stays_unknown_without_transient_claim() {
+    let f = fixture("gitlab");
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("locked");
+        s["requests"][0]["source_project_id"] = json!(8);
+        s["requests"][0]["target_project_id"] = json!(8);
+    });
+    let result = f.run(&["pr", "--status", "--request", "41"]);
+    assert_eq!(result["exit"], 3, "{result}");
+    assert_eq!(result["status"], "unknown", "{result}");
+    assert!(result["evidence"].is_null(), "{result}");
+    assert_eq!(
+        result["diagnostics"][0]["code"], "identity_mismatch",
+        "{result}"
+    );
+}
+
+#[test]
+fn gitlab_locked_incomplete_identity_stays_unknown_without_transient_claim() {
+    let f = fixture("gitlab");
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("locked");
+        s["requests"][0]["sha"] = json!("not-a-sha");
+    });
+    let result = f.run(&["pr", "--status", "--request", "41"]);
+    assert_eq!(result["exit"], 3, "{result}");
+    assert_eq!(result["status"], "unknown", "{result}");
+    assert!(result["evidence"].is_null(), "{result}");
+    assert_eq!(
+        result["diagnostics"][0]["code"], "malformed_response",
+        "{result}"
+    );
+}
+
 #[test]
 fn both_native_forges_observe_current_head_evidence_without_remote_writes() {
     for provider in ["github", "gitlab"] {
