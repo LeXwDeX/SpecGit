@@ -642,7 +642,13 @@ fn cli_doctor_repair_rejects_repository_location_overrides_without_writes() {
             .env(variable, override_value(variable, &b))
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(2), "{variable}");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{variable}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(report["ok"], false, "{variable}: {report}");
         assert_eq!(report["exit"], 2, "{variable}: {report}");
