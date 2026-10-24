@@ -201,6 +201,7 @@ async fn content(
                 &issue.labels,
             )?;
             selected.issues.push(id);
+            selected.record_adopted(issue.clone());
             issues.push(issue);
         }
     }
