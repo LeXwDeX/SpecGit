@@ -116,6 +116,10 @@ pub fn read_path(path: &Path) -> Result<Option<Selection>, Diagnostic> {
     };
     let value = crate::input::json(&bytes, crate::declaration::MAX_BYTES, 16)?;
     let s: Selection = serde_json::from_value(value).map_err(|_| invalid())?;
+    validate(&s)?;
+    Ok(Some(s))
+}
+fn validate(s: &Selection) -> Result<(), Diagnostic> {
     if s.version != 2
         || s.project_id == 0
         || !crate::declaration::valid_branch(&s.branch)
@@ -139,7 +143,7 @@ pub fn read_path(path: &Path) -> Result<Option<Selection>, Diagnostic> {
     {
         return Err(invalid());
     }
-    Ok(Some(s))
+    Ok(())
 }
 /// Read a checkpoint for mutation-capable flows, rejecting every ownership mismatch.
 pub fn read(context: &Context) -> Result<Option<Selection>, Diagnostic> {
@@ -223,6 +227,7 @@ impl Locked {
         })
     }
     pub fn save(&mut self, selection: &Selection) -> Result<(), Diagnostic> {
+        validate(selection)?;
         let bytes = serde_json::to_vec_pretty(selection).map_err(|_| invalid())?;
         if bytes.len() > crate::declaration::MAX_BYTES {
             return Err(Diagnostic::input(
