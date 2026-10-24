@@ -1183,3 +1183,122 @@ fn an_empty_init_marker_does_not_hide_claude_legacy_guidance_after_branch_switch
         "migration must not infer a new hook choice"
     );
 }
+
+#[tokio::test]
+async fn locked_save_rejects_malformed_checkpoints_before_writing_bytes() {
+    use specgit::{
+        delivery_model::Issue,
+        diagnostic::Code,
+        identity::Provider,
+        process::Process,
+        selection::{IssueIntent, Locked, RequestIntent, Selection, path, read_path},
+    };
+    let f = delivery::Fixture::new("github");
+    let context = specgit::config::resolve(
+        &Process::default(),
+        &f.root,
+        None,
+        Some(Provider::Github),
+        None,
+    )
+    .await
+    .unwrap();
+    let checkpoint = path(&context);
+    let issue = |id: u64| Issue {
+        id,
+        title: format!("fix: checkpoint {id}"),
+        body: "Specification WHY".into(),
+        labels: vec!["kind::fix".into()],
+        state: "open".into(),
+        updated_at: "2026-10-01T00:00:00Z".into(),
+    };
+    let intent = |issue: Option<u64>| IssueIntent {
+        title: format!("fix: checkpoint {issue:?}"),
+        body: "Specification WHY".into(),
+        labels: vec!["kind::fix".into()],
+        issue,
+        write_started: false,
+    };
+    let selection = |issues: Vec<u64>, adopted: Vec<Issue>, intents: Vec<IssueIntent>| Selection {
+        version: 2,
+        repository: context.repository.clone(),
+        project_id: 7,
+        branch: context.branch.clone().unwrap(),
+        target: "main".into(),
+        issues,
+        intents,
+        adopted,
+        request: None,
+        request_write_started: false,
+        request_intent: None,
+        delivered_request: None,
+    };
+    Locked::acquire(&context)
+        .unwrap()
+        .save(&selection(vec![1], vec![issue(1)], vec![intent(Some(1))]))
+        .unwrap();
+    let before = fs::read(&checkpoint).unwrap();
+    let mut too_many_intents = vec![];
+    for id in 1..=101 {
+        too_many_intents.push(intent(Some(id)));
+    }
+    let mut too_many_adopted = vec![];
+    for _ in 0..101 {
+        too_many_adopted.push(issue(1));
+    }
+    let mut zero_request = selection(vec![1], vec![issue(1)], vec![]);
+    zero_request.request = Some(0);
+    let mut zero_delivered = selection(vec![1], vec![issue(1)], vec![]);
+    zero_delivered.delivered_request = Some(0);
+    let invalid = vec![
+        selection((1..=101).collect(), vec![issue(1)], vec![]),
+        selection(vec![1, 1], vec![issue(1)], vec![]),
+        selection(vec![0], vec![], vec![]),
+        selection(vec![], vec![issue(1)], vec![]),
+        selection(vec![1], too_many_adopted, vec![]),
+        selection(vec![1], vec![issue(1)], too_many_intents),
+        selection(vec![1], vec![issue(1)], vec![intent(Some(0))]),
+        selection(
+            vec![1],
+            vec![issue(1)],
+            vec![IssueIntent {
+                title: " ".into(),
+                ..intent(Some(1))
+            }],
+        ),
+        zero_request,
+        zero_delivered,
+    ];
+    for malformed in invalid {
+        let diagnostic = Locked::acquire(&context)
+            .unwrap()
+            .save(&malformed)
+            .expect_err("malformed checkpoint was saved");
+        assert_eq!(diagnostic.code, Code::OwnershipConflict, "{diagnostic:?}");
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
+    }
+
+    let mut provisional = selection(vec![], vec![], vec![]);
+    provisional.request_write_started = true;
+    provisional.request_intent = Some(RequestIntent {
+        head: "a".repeat(40),
+        title: "feat: provisional request".into(),
+        body: "Specification WHY".into(),
+        labels: vec![],
+    });
+    Locked::acquire(&context)
+        .unwrap()
+        .save(&provisional)
+        .unwrap();
+    let reread = read_path(&checkpoint).unwrap().unwrap();
+    assert!(reread.request_intent.is_some());
+    assert!(reread.request_write_started);
+
+    let mut delivered = selection(vec![1], vec![issue(1)], vec![]);
+    delivered.delivered_request = Some(7);
+    Locked::acquire(&context).unwrap().save(&delivered).unwrap();
+    assert_eq!(
+        read_path(&checkpoint).unwrap().unwrap().delivered_request,
+        Some(7)
+    );
+}
