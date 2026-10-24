@@ -51,6 +51,41 @@ fn hook_block(stage: &str, executable: &str) -> String {
     )
 }
 
+fn repository_environment_name_matches(name: &std::ffi::OsStr, expected: &str) -> bool {
+    #[cfg(windows)]
+    {
+        // Windows environment names are case-insensitive. to_str() refuses
+        // invalid Unicode instead of applying a lossy conversion.
+        name.to_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+    }
+    #[cfg(not(windows))]
+    {
+        name == std::ffi::OsStr::new(expected)
+    }
+}
+
+fn require_guard_repository_environment(process: &Process) -> Result<(), Diagnostic> {
+    project::require_local_repository_environment()?;
+    if ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"]
+        .iter()
+        .any(|name| {
+            process
+                .environment
+                .keys()
+                .any(|key| repository_environment_name_matches(key.as_os_str(), name))
+        })
+    {
+        return Err(Diagnostic::new(
+            Code::InvalidInput,
+            "project_environment",
+            "Guard asset operations do not support GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR overrides.",
+            "Run the operation from its checkout without repository-location overrides; keep Git hook environment intact for guard stages.",
+        ));
+    }
+    Ok(())
+}
+
 fn hook_executable(
     old: Option<&HookReceipt>,
     hook_root: &Path,
@@ -199,6 +234,7 @@ pub(crate) async fn plan_named_with_executable(
     name: &str,
     source: Option<&Path>,
 ) -> Result<(Vec<Change>, PathBuf, PathBuf), Diagnostic> {
+    require_guard_repository_environment(process)?;
     let Some(root) = root(process, cwd).await? else {
         return Err(Diagnostic::new(
             Code::MissingProject,
@@ -512,6 +548,7 @@ impl GuardHealthPlan {
     /// Hold the guard transaction lock while re-reading the effective Git
     /// path, ownership receipt, sibling consumers and hook permissions.
     pub async fn apply(self, process: &Process) -> Result<assets::Applied, Diagnostic> {
+        require_guard_repository_environment(process)?;
         if self.assets().is_empty() {
             return Ok(assets::Applied {
                 transaction: String::new(),
@@ -615,6 +652,7 @@ pub async fn health_plan(
     process: &Process,
     cwd: &Path,
 ) -> Result<Option<GuardHealthPlan>, Diagnostic> {
+    require_guard_repository_environment(process)?;
     let Some(root) = root(process, cwd).await? else {
         return Ok(None);
     };
@@ -927,6 +965,7 @@ async fn install_with_preview(
     dry_run: bool,
     source: Option<&Path>,
 ) -> Result<Value, Diagnostic> {
+    require_guard_repository_environment(process)?;
     let root = root(process, cwd)
         .await?
         .ok_or_else(|| rejected("Native guard installation requires a Git worktree."))?;
