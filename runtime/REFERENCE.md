@@ -538,9 +538,11 @@ cross-branch reads. Fork and cross-project reads are unsupported.
 
 A GitHub workflow without visible check runs contributes its own status: queued
 or running remains pending, and a completed workflow succeeds only with native
-`conclusion: "success"`. GitLab `canceling` and `waiting_for_callback` remain
-pending. Unknown native check states remain unavailable and retryable within the
-watch budget; they never prove passing checks.
+`conclusion: "success"`. GitHub declares `head_branch` as `string|null`. A run
+with a null branch is observed independently: it neither replaces nor is
+replaced by another workflow run. GitLab `canceling` and `waiting_for_callback`
+remain pending. Unknown native check states remain unavailable and retryable
+within the watch budget; they never prove passing checks.
 
 Issue associations retain per-Issue sources: `native_closing`, `body_reference`
 and `local_selection`. The native source comes from the platform's closing-Issue
