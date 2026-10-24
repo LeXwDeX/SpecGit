@@ -116,6 +116,39 @@ fn inbox_for(goal: &'static str) -> [&'static str; 7] {
         goal,
     ]
 }
+/// Add one ordinary local commit while no guard is installed. This reproduces
+/// work that happened after a native merge but before the checkpoint retired.
+fn local_commit(f: &delivery::Fixture) -> String {
+    use std::process::Command;
+    std::fs::write(f.root.join("local-after-merge.txt"), "later work").unwrap();
+    for args in [
+        &["add", "local-after-merge.txt"][..],
+        &["commit", "-q", "-m", "local work after merge"][..],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&f.root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8(
+        Command::new("git")
+            .current_dir(&f.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned()
+}
+
 fn request_reads(f: &delivery::Fixture) -> usize {
     f.state()["calls"]
         .as_array()
@@ -1091,6 +1124,188 @@ fn merged_without_verified_issue_set_stays_unknown_and_closed_unmerged_has_an_ex
         );
         assert_eq!(closed.writes(), writes, "{provider}");
     }
+}
+
+#[test]
+fn settled_lifecycle_facts_survive_local_commits_without_push_guidance() {
+    for provider in ["github", "gitlab"] {
+        let merged = fixture(provider);
+        merged.edit(|state| {
+            state["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            state["requests"][0]["merged"] = json!(true);
+            state["issues"][0]["state"] = json!("open");
+        });
+        let local = local_commit(&merged);
+        let result = merged.run(&watch("lifecycle"));
+        assert_eq!(
+            result["status"], "merged_issues_open",
+            "{provider}: {result}"
+        );
+        let next_step = &result["next_actions"][0];
+        assert_eq!(next_step["kind"], "inspect_open_issues", "{result}");
+        assert_eq!(next_step["issue_ids"], json!([1]), "{result}");
+        assert!(
+            !next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("new branch"),
+            "{result}"
+        );
+        let reason = result["evidence"]["events"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("new branch") && reason.contains("select new Issues"),
+            "{result}"
+        );
+        assert_eq!(
+            result["evidence"]["events"][0]["revision"]["local_head"], local,
+            "{result}"
+        );
+        assert!(
+            !result.to_string().contains("Push reviewed commits"),
+            "{provider}: {result}"
+        );
+        let inbox = merged.run(&inbox_for("lifecycle"));
+        assert_eq!(inbox["status"], "merged_issues_open", "{provider}: {inbox}");
+        assert_eq!(inbox["next_actions"][0], *next_step, "{inbox}");
+
+        let closed = fixture(provider);
+        closed.edit(|state| {
+            state["requests"][0]["state"] = json!("closed");
+            state["requests"][0]["merged"] = json!(false);
+        });
+        let local = local_commit(&closed);
+        let result = closed.run(&watch("lifecycle"));
+        assert_eq!(result["status"], "closed_unmerged", "{provider}: {result}");
+        let next_step = &result["next_actions"][0];
+        assert_eq!(next_step["kind"], "reopen_or_choose_followup", "{result}");
+        assert!(
+            next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("not delivery completion"),
+            "{result}"
+        );
+        assert!(
+            !next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("new branch"),
+            "{result}"
+        );
+        let reason = result["evidence"]["events"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("push cannot reopen") && reason.contains("new branch"),
+            "{result}"
+        );
+        assert_eq!(
+            result["evidence"]["events"][0]["revision"]["local_head"], local,
+            "{result}"
+        );
+        assert!(
+            !result.to_string().contains("Push reviewed commits"),
+            "{provider}: {result}"
+        );
+        let inbox = closed.run(&inbox_for("lifecycle"));
+        assert_eq!(inbox["status"], "closed_unmerged", "{provider}: {inbox}");
+        assert_eq!(inbox["next_actions"][0], *next_step, "{inbox}");
+
+        let unknown = fixture(provider);
+        unknown.edit(|state| {
+            state["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            state["requests"][0]["merged"] = json!(true);
+            state["native_closing_failure"] = json!("forbidden");
+            state["issues"][0]["state"] = json!("closed");
+        });
+        let local = local_commit(&unknown);
+        let result = unknown.run(&watch("lifecycle"));
+        assert_eq!(result["status"], "unknown", "{provider}: {result}");
+        let next_step = &result["next_actions"][0];
+        assert_eq!(next_step["kind"], "verify_issue_closure", "{result}");
+        assert_eq!(next_step["issue_ids"], json!([1]), "{result}");
+        assert!(
+            next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("does not confirm"),
+            "{result}"
+        );
+        assert!(
+            !next_step["message"]
+                .as_str()
+                .unwrap()
+                .contains("new branch"),
+            "{result}"
+        );
+        let reason = result["evidence"]["events"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("Verify") && reason.contains("new branch"),
+            "{result}"
+        );
+        assert_eq!(
+            result["evidence"]["events"][0]["revision"]["local_head"], local,
+            "{result}"
+        );
+        assert!(
+            !result.to_string().contains("Push reviewed commits"),
+            "{provider}: {result}"
+        );
+        let inbox = unknown.run(&inbox_for("lifecycle"));
+        assert_eq!(inbox["status"], "unknown", "{provider}: {inbox}");
+        assert_eq!(inbox["next_actions"][0], *next_step, "{inbox}");
+    }
+}
+
+#[test]
+fn merged_open_issue_action_stays_bounded_when_local_commits_diverge() {
+    let f = fixture("github");
+    let ids: Vec<u64> = std::iter::once(1).chain(10_001..=10_099).collect();
+    f.edit(|state| {
+        state["native_closing"] = json!(&ids[1..]);
+        state["issues"] = json!(
+            ids.iter()
+                .map(|id| json!({
+                    "id": id,
+                    "number": id,
+                    "title": format!("Issue {id}"),
+                    "body": "",
+                    "labels": [],
+                    "state": "open",
+                    "updated_at": "2026-09-09T00:00:00Z",
+                }))
+                .collect::<Vec<_>>()
+        );
+        state["requests"][0]["body"] = json!("Scoped native observation.");
+        state["requests"][0]["state"] = json!("closed");
+        state["requests"][0]["merged"] = json!(true);
+    });
+    let local = local_commit(&f);
+    let result = f.run(&watch("lifecycle"));
+    assert_eq!(result["status"], "merged_issues_open", "{result}");
+    let event = &result["evidence"]["events"][0];
+    let next_step = &event["next_step"];
+    assert_eq!(next_step["kind"], "inspect_open_issues", "{result}");
+    assert_eq!(next_step["issue_ids"], json!(&ids), "{result}");
+    let message = next_step["message"].as_str().unwrap();
+    // This unresolved action is 984 bytes: valid alone, but over 1024 once the
+    // old local-divergence append was added.
+    assert_eq!(message.len(), 984, "{result}");
+    assert!(!message.contains("new branch"), "{result}");
+    let reason = event["reason"].as_str().unwrap();
+    assert!(reason.contains("new branch"), "{result}");
+    assert!(reason.contains("select new Issues"), "{result}");
+    assert_eq!(event["revision"]["local_head"], local, "{result}");
+    assert_eq!(result["next_actions"][0], *next_step, "{result}");
+    let inbox = f.run(&inbox_for("lifecycle"));
+    assert_eq!(inbox["status"], "merged_issues_open", "{inbox}");
+    assert_eq!(inbox["next_actions"][0], *next_step, "{inbox}");
 }
 
 #[test]
