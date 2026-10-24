@@ -366,6 +366,138 @@ fn terminal_poll_fully_verifies_merged_and_closed_requests() {
     }
 }
 
+/// GitLab documents `state: "locked"` as a short-lived transitional merge
+/// request state: https://docs.gitlab.com/api/merge_requests/#list-merge-requests
+/// These bounded polls are fixture evidence, not a live GitLab transition.
+#[test]
+fn gitlab_locked_transition_refreshes_then_completes_after_merge() {
+    let f = fixture("gitlab");
+    let mut child = polling(&f, "gitlab-locked-then-merged");
+    wait_for_poll(&f, &mut child, 1);
+    f.edit(|s| s["requests"][0]["state"] = json!("locked"));
+    wait_for_poll(&f, &mut child, 2);
+    let state = watch_store::read(&child.identity).unwrap().unwrap();
+    let locked = state.events.last().unwrap();
+    assert_eq!(locked.state, EventState::Unknown);
+    assert!(
+        locked.reason.contains("unsupported_operation"),
+        "{}",
+        child.diagnostic()
+    );
+    assert_eq!(
+        locked.next_step.as_ref().unwrap().request_state.as_deref(),
+        Some("locked")
+    );
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "a locked request is retryable within the watch budget: {}",
+        child.diagnostic()
+    );
+    f.edit(|s| {
+        s["native_closing"] = json!([1]);
+        s["requests"][0]["state"] = json!("merged");
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+    });
+    finish_watcher(&mut child);
+    let state = watch_store::read(&child.identity).unwrap().unwrap();
+    assert_eq!(state.events.last().unwrap().state, EventState::Completed);
+    assert!(state.lease.is_none());
+}
+
+#[test]
+fn gitlab_locked_transition_can_return_open_without_a_terminal_event() {
+    use std::time::{Duration, Instant};
+    let f = fixture("gitlab");
+    let mut child = polling(&f, "gitlab-locked-then-open");
+    wait_for_poll(&f, &mut child, 1);
+    f.edit(|s| s["requests"][0]["state"] = json!("locked"));
+    wait_for_poll(&f, &mut child, 2);
+    let state = watch_store::read(&child.identity).unwrap().unwrap();
+    let locked = state.events.last().unwrap();
+    assert_eq!(locked.state, EventState::Unknown);
+    assert!(locked.reason.contains("unsupported_operation"));
+    f.edit(|s| s["requests"][0]["state"] = json!("opened"));
+    let started = Instant::now();
+    loop {
+        let state = watch_store::read(&child.identity).unwrap().unwrap();
+        if state.events.last().is_some_and(|event| {
+            event.state == EventState::ChecksPassed
+                && event
+                    .next_step
+                    .as_ref()
+                    .and_then(|step| step.request_state.as_deref())
+                    == Some("opened")
+        }) {
+            break;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "a lock returning to open stopped the watch: {}",
+            child.diagnostic()
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{}",
+            child.diagnostic()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let state = watch_store::read(&child.identity).unwrap().unwrap();
+    let event = state.events.last().unwrap();
+    assert!(!event.reason.contains("unsupported_operation"));
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn watch_once_reports_locked_as_transient_without_writes() {
+    let f = fixture("gitlab");
+    f.edit(|s| s["requests"][0]["state"] = json!("locked"));
+    let writes = f.writes();
+    let result = f.run(&watch("lifecycle"));
+    assert_eq!(result["exit"], 3, "{result}");
+    assert_eq!(result["status"], "unknown", "{result}");
+    let event = &result["evidence"]["events"][0];
+    assert_eq!(event["state"], "unknown", "{result}");
+    assert_eq!(event["next_step"]["request_state"], "locked", "{result}");
+    assert!(
+        event["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported_operation"),
+        "{result}"
+    );
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn unsupported_operation_without_a_locked_request_stays_terminal() {
+    use std::time::{Duration, Instant};
+    let f = fixture("gitlab");
+    let mut child = polling(&f, "unsupported-operation-terminal");
+    wait_for_poll(&f, &mut child, 1);
+    // This is an unsupported native operation, but not the verified
+    // locked-request diagnostic. It must not enter the retry path.
+    f.edit(|s| {
+        s["read_routes"]["projects/7/pipelines/71"] = json!({"__fixture_error":"unknown command"});
+    });
+    let started = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "an unrelated unsupported operation was retried: {}",
+            child.diagnostic()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let state = watch_store::read(&child.identity).unwrap().unwrap();
+    let last = state.events.last().unwrap();
+    assert_eq!(last.state, EventState::Unknown);
+    assert!(last.reason.contains("unsupported_operation"));
+    assert!(state.lease.is_none());
+}
+
 #[test]
 fn inconsistent_changed_poll_does_not_publish_unverified_native_facts() {
     let f = fixture("github");

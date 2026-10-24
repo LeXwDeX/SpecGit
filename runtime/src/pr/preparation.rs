@@ -42,6 +42,13 @@ pub(super) async fn prepare(
         mut issues,
         pool,
     } = discover(o, &w).await?;
+    let transient_state = request
+        .as_ref()
+        .filter(|r| r.is_locked())
+        .map(|r| r.state.clone());
+    if transient_state.is_some() && !(o.inspect || o.dry_run) {
+        return Err(crate::diagnostic::transient_locked());
+    }
     let (intended, replacement) =
         content(o, &w, &request, &mut selected, &mut issues, &pool).await?;
     if let Some(report) = native_heads(o, &w, &request, replacement.is_some()).await? {
@@ -54,10 +61,14 @@ pub(super) async fn prepare(
         .cloned()
         .collect();
     if o.inspect || o.dry_run {
+        let mut evidence = serde_json::json!({"request":request,"intent":intended,"issues":issues,"flow":crate::init::flow(&w.facts,Some(&w.target)),"repository":repo,"project_id":w.facts.id,"source":branch,"target":w.target,"writes":false,"missing_labels":missing_labels,"label_creation_requested":o.create_labels,"ready_requested":o.ready,"body_update_requested":replacement.is_some(),"create_request":request.is_none()});
+        if let Some(state) = transient_state {
+            evidence["native_lifecycle"] = serde_json::json!("unknown");
+            evidence["head_verification"] = serde_json::json!("not_checked");
+            evidence["transient_state"] = serde_json::json!(state);
+        }
         return Ok(Outcome::Deferred(Box::new(Report::success(
-            "pr",
-            "prepared",
-            serde_json::json!({"request":request,"intent":intended,"issues":issues,"flow":crate::init::flow(&w.facts,Some(&w.target)),"repository":repo,"project_id":w.facts.id,"source":branch,"target":w.target,"writes":false,"missing_labels":missing_labels,"label_creation_requested":o.create_labels,"ready_requested":o.ready,"body_update_requested":replacement.is_some(),"create_request":request.is_none()}),
+            "pr", "prepared", evidence,
         ))));
     }
     if !o.create_labels && !missing_labels.is_empty() {
@@ -225,6 +236,9 @@ async fn native_heads(
     request: &Option<PullRequest>,
     replacing_body: bool,
 ) -> Result<Option<Report>, Diagnostic> {
+    if request.as_ref().is_some_and(PullRequest::is_locked) {
+        return Ok(None);
+    }
     let repo = &w.context.repository;
     let branch = w.branch()?;
     // Inspect/adoption of a terminal request does not require a deleted source branch.

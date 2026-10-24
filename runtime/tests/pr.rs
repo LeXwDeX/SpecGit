@@ -159,6 +159,96 @@ fn fixture(provider: &str, count: usize) -> Fixture {
     });
     f
 }
+fn clear_request_binding(f: &Fixture) {
+    let path = f.root.join(".git/specgit-v2/selection.json");
+    let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    saved["request"] = json!(null);
+    saved["request_write_started"] = json!(false);
+    saved["request_intent"] = json!(null);
+    fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+}
+
+#[test]
+fn gitlab_locked_candidate_blocks_mutations_but_previews_unknown_identity() {
+    let f = fixture("gitlab", 1);
+    assert_eq!(f.run(&["pr"])["exit"], 0);
+    clear_request_binding(&f);
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("locked");
+        s["requests"][0]["head"]["sha"] = json!("b".repeat(40));
+        s["requests"][0]["sha"] = json!("b".repeat(40));
+    });
+    let checkpoint_path = f.root.join(".git/specgit-v2/selection.json");
+    let checkpoint = fs::read(&checkpoint_path).unwrap();
+    let requests = f.state()["requests"].clone();
+    let writes = f.writes();
+
+    for args in [
+        vec!["pr", "--dry-run"],
+        vec!["pr", "--inspect"],
+        vec!["pr", "--ready", "--dry-run"],
+    ] {
+        let preview = f.run(&args);
+        assert_eq!(preview["exit"], 0, "{args:?}: {preview}");
+        assert_eq!(
+            preview["evidence"]["request"]["id"], 41,
+            "{args:?}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["request"]["state"], "locked",
+            "{args:?}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["create_request"], false,
+            "{args:?}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["native_lifecycle"], "unknown",
+            "{args:?}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["head_verification"], "not_checked",
+            "{args:?}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["transient_state"], "locked",
+            "{args:?}: {preview}"
+        );
+        assert_eq!(preview["evidence"]["writes"], false, "{args:?}: {preview}");
+        assert_eq!(f.writes(), writes, "{args:?}: {preview}");
+        assert_eq!(fs::read(&checkpoint_path).unwrap(), checkpoint, "{args:?}");
+        assert_eq!(f.state()["requests"], requests, "{args:?}");
+    }
+
+    for args in [vec!["pr"], vec!["pr", "--ready"]] {
+        let result = f.run(&args);
+        assert_eq!(result["exit"], 3, "{args:?}: {result}");
+        assert_eq!(
+            result["diagnostics"][0]["code"], "unsupported_operation",
+            "{args:?}: {result}"
+        );
+        assert_eq!(
+            result["diagnostics"][0]["operation"], "request_lifecycle",
+            "{args:?}: {result}"
+        );
+        assert_eq!(f.writes(), writes, "{args:?}");
+        assert_eq!(fs::read(&checkpoint_path).unwrap(), checkpoint, "{args:?}");
+        assert_eq!(f.state()["requests"], requests, "{args:?}");
+    }
+
+    fs::write(f.root.join("locked-body.md"), "Locked update\n\nCloses #1").unwrap();
+    let update = f.run(&["pr", "--update-body", "--body-file", "locked-body.md"]);
+    assert_eq!(update["exit"], 3, "{update}");
+    assert_eq!(
+        update["diagnostics"][0]["code"], "unsupported_operation",
+        "{update}"
+    );
+    assert_eq!(update["diagnostics"][0]["operation"], "request_lifecycle");
+    assert_eq!(f.writes(), writes, "{update}");
+    assert_eq!(fs::read(&checkpoint_path).unwrap(), checkpoint, "{update}");
+    assert_eq!(f.state()["requests"], requests, "{update}");
+}
+
 #[test]
 fn both_forges_create_draft_with_all_references_then_ready_without_push_or_dummy_commit() {
     for provider in ["github", "gitlab"] {

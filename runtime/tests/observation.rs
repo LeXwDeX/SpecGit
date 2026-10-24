@@ -134,6 +134,60 @@ fn malformed_native_identity_or_state_cannot_be_a_successful_observation() {
     }
 }
 
+/// GitLab documents `state: "locked"` as a short-lived transitional merge
+/// request state: https://docs.gitlab.com/api/merge_requests/#list-merge-requests
+/// This fixture is protocol-shaped mock evidence, not a live transition.
+#[test]
+fn locked_native_request_is_transient_unknown_with_verified_identity() {
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "locked".into();
+    let observed = observation::describe(e);
+    assert_eq!(observed.status, Status::Unknown);
+    assert_eq!(observed.exit(), 3);
+    assert_eq!(observed.diagnostics.len(), 1);
+    assert_eq!(observed.diagnostics[0].code, Code::UnsupportedOperation);
+    assert_eq!(observed.diagnostics[0].operation, "request_lifecycle");
+    assert!(observed.diagnostics[0].message.contains("locked"));
+    let request = observed
+        .evidence
+        .request
+        .as_ref()
+        .expect("a valid locked request keeps its verified identity");
+    assert_eq!((request.id, request.state.as_str()), (2, "locked"));
+    assert_eq!(observed.checks_outcome(), CheckOutcome::Passed);
+}
+
+#[test]
+fn locked_request_with_invalid_identity_remains_unavailable() {
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "locked".into();
+    e.request.as_mut().unwrap().head = "not-a-sha".into();
+    let observed = observation::describe(e);
+    assert_eq!(observed.status, Status::Unknown);
+    assert_eq!(observed.exit(), 3);
+    assert!(observed.evidence.request.is_none());
+    assert_eq!(observed.diagnostics[0].code, Code::MalformedResponse);
+}
+
+#[test]
+fn exit_priority_keeps_cancellation_and_invalid_input_ahead_of_transient() {
+    for (code, expected) in [
+        (Code::Cancelled, 130),
+        (Code::InvalidInput, 2),
+        (Code::EvidenceRejected, 1),
+        (Code::NetworkFailed, 3),
+    ] {
+        let mut e = evidence();
+        e.request.as_mut().unwrap().state = "locked".into();
+        let mut observed = observation::describe(e);
+        assert_eq!(observed.exit(), 3);
+        observed
+            .diagnostics
+            .push(Diagnostic::new(code, "test", "optional failure", "retry"));
+        assert_eq!(observed.exit(), expected);
+    }
+}
+
 #[test]
 fn completion_requires_merge_and_nonempty_known_closed_associations() {
     let mut e = evidence();

@@ -276,7 +276,7 @@ pub(crate) fn request_value(v: &Value, number: u64) -> Result<PullRequest, Diagn
     );
     let state = text(v, "state")?;
     if !crate::identity::valid_oid(&head)
-        || !["open", "opened", "closed", "merged"].contains(&state.as_str())
+        || !["open", "opened", "locked", "closed", "merged"].contains(&state.as_str())
     {
         return Err(malformed());
     }
