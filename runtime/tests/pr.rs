@@ -2,8 +2,136 @@
 #[path = "support/delivery.rs"]
 mod delivery;
 use delivery::Fixture;
-use serde_json::json;
-use std::{fs, process::Command};
+use serde_json::{Value, json};
+use std::{fs, path::Path, process::Command};
+fn git(root: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap()
+}
+fn native_issue(provider: &str, number: u64) -> Value {
+    json!({
+        "number":number,
+        "iid":number,
+        "project_id":7,
+        "title":format!("fix: adopted spec {number}"),
+        "body":format!("Specification {number} WHY"),
+        "description":format!("Specification {number} WHY"),
+        "labels":if provider == "github" {
+            json!([{"name":"kind::fix"}])
+        } else {
+            json!(["kind::fix"])
+        },
+        "state":if provider == "github" { "open" } else { "opened" },
+        "updated_at":"2026-10-01T00:00:00Z",
+        "html_url":format!("https://forge.example/fixture/repo/issues/{number}"),
+        "web_url":format!("https://forge.example/fixture/repo/-/issues/{number}")
+    })
+}
+fn install_guard(f: &Fixture) {
+    let binary = delivery::executable::binary().canonicalize().unwrap();
+    let mut paths = vec![binary.parent().unwrap().to_owned()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let output = f
+        .command(&["guard", "--install"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let binary = binary.to_string_lossy().replace('\\', "/");
+    // Windows canonical UNC paths keep the host: \\?\UNC\server\share -> //server/share.
+    let binary = match binary.strip_prefix("//?/UNC/") {
+        Some(unc) => format!("//{unc}"),
+        None => binary.strip_prefix("//?/").unwrap_or(&binary).to_owned(),
+    };
+    for stage in ["pre-commit", "pre-push"] {
+        let hook = fs::read_to_string(f.root.join(".git/hooks").join(stage)).unwrap();
+        assert!(
+            hook.contains(binary.as_str()),
+            "{stage} does not bind {binary}: {hook}"
+        );
+        assert!(
+            hook.contains(&format!("guard --stage {stage}")),
+            "{stage}: {hook}"
+        );
+    }
+}
+fn installed_guard_accepts_commit_and_push(f: &Fixture, provider: &str) {
+    let remote = tempfile::tempdir().unwrap();
+    assert!(
+        Command::new("git")
+            .current_dir(remote.path())
+            .args(["init", "--bare", "-q"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let local = remote.path().to_str().unwrap();
+    assert!(
+        git(&f.root, &["remote", "add", "local", local])
+            .status
+            .success()
+    );
+    // Fixture setup finishes before the guard; every later commit and push
+    // must pass the installed hooks without a bypass.
+    assert!(
+        git(&f.root, &["push", "-q", "local", "feature:main"])
+            .status
+            .success()
+    );
+    assert!(git(&f.root, &["fetch", "-q", "local"]).status.success());
+    install_guard(f);
+    fs::write(f.root.join("guarded.txt"), "guarded change").unwrap();
+    assert!(git(&f.root, &["add", "guarded.txt"]).status.success());
+    let unbound = git(&f.root, &["commit", "-q", "-m", "guarded change"]);
+    assert!(
+        unbound.status.success(),
+        "{provider} pre-commit rejected the adopted checkpoint: {}",
+        String::from_utf8_lossy(&unbound.stderr)
+    );
+    // A real push without the trailer fails in the installed hook, not in Git.
+    let rejected = git(&f.root, &["push", "-q", "local", "feature"]);
+    assert!(
+        !rejected.status.success(),
+        "{provider} pre-push accepted a commit without an Issue trailer"
+    );
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("Issue: #N"),
+        "{provider} pre-push did not report the missing trailer: {}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let commit = git(
+        &f.root,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--no-edit",
+            "--trailer",
+            "Issue: #1",
+        ],
+    );
+    assert!(
+        commit.status.success(),
+        "{provider} pre-commit rejected the adopted checkpoint: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    let push = git(&f.root, &["push", "-q", "local", "feature"]);
+    assert!(
+        push.status.success(),
+        "{provider} pre-push rejected the adopted checkpoint: {}",
+        String::from_utf8_lossy(&push.stderr)
+    );
+}
 fn fixture(provider: &str, count: usize) -> Fixture {
     let f = Fixture::new(provider);
     let mut args = vec!["issue", "--create-labels", "feat: first spec"];
@@ -383,6 +511,147 @@ fn github_existing_request_labels_keep_native_case_without_duplicate_writes() {
 }
 
 #[test]
+fn newly_referenced_issues_are_adopted_and_installed_guards_accept_the_checkpoint() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        f.edit(|s| {
+            s["issues"]
+                .as_array_mut()
+                .unwrap()
+                .push(native_issue(provider, 2))
+        });
+        fs::write(
+            f.root.join("body.md"),
+            "Preserved user body\n\nCloses #2\nCloses #2",
+        )
+        .unwrap();
+        let created = f.run(&["pr", "--body-file", "body.md"]);
+        assert_eq!(created["exit"], 0, "{provider}: {created}");
+        assert_eq!(
+            created["evidence"]["request"]["body"],
+            "Preserved user body\n\nCloses #2\nCloses #2\n\nCloses #1",
+            "{provider}: {created}"
+        );
+        let checkpoint: Value = serde_json::from_slice(
+            &fs::read(f.root.join(".git/specgit-v2/selection.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(checkpoint["issues"], json!([1, 2]), "{provider}");
+        let adopted: Vec<u64> = checkpoint["adopted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(adopted, vec![1, 2], "{provider}: {checkpoint}");
+        installed_guard_accepts_commit_and_push(&f, provider);
+    }
+}
+
+#[test]
+fn reference_union_limit_is_checked_before_checkpoint_or_native_writes() {
+    for provider in ["github", "gitlab"] {
+        // 101 unique references: the selected #1 plus a body of #2..#101.
+        let f = fixture(provider, 1);
+        f.edit(|s| {
+            let issues = s["issues"].as_array_mut().unwrap();
+            for id in 2..=101 {
+                issues.push(native_issue(provider, id));
+            }
+        });
+        let overflow = (2..=101)
+            .map(|id| format!("Closes #{id}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(f.root.join("overflow.md"), &overflow).unwrap();
+        let checkpoint = f.root.join(".git/specgit-v2/selection.json");
+        let before = fs::read(&checkpoint).unwrap();
+        let writes = f.writes();
+        let rejected = f.run(&["pr", "--body-file", "overflow.md"]);
+        assert_ne!(rejected["exit"], 0, "{provider}: {rejected}");
+        assert_eq!(f.writes(), writes, "{provider}: {rejected}");
+        assert_eq!(fs::read(&checkpoint).unwrap(), before, "{provider}");
+
+        // 100 unique references, including a duplicate body reference.
+        let f = fixture(provider, 1);
+        f.edit(|s| {
+            let issues = s["issues"].as_array_mut().unwrap();
+            for id in 2..=100 {
+                issues.push(native_issue(provider, id));
+            }
+        });
+        let mut boundary = String::from("Preserved boundary body\nCloses #2\n");
+        for id in 2..=100 {
+            boundary.push_str(&format!("Closes #{id}\n"));
+        }
+        fs::write(f.root.join("boundary.md"), boundary).unwrap();
+        let calls = f.state()["calls"].as_array().unwrap().len();
+        let created = f.run(&["pr", "--body-file", "boundary.md"]);
+        assert_eq!(created["exit"], 0, "{provider}: {created}");
+        let state = f.state();
+        let new_writes: Vec<_> = state["calls"].as_array().unwrap()[calls..]
+            .iter()
+            .filter(|call| call["method"] != "GET")
+            .map(|call| {
+                (
+                    call["method"].as_str().unwrap(),
+                    call["endpoint"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(new_writes.len(), 2, "{provider}: {new_writes:?}");
+        assert!(
+            new_writes.iter().any(|(method, endpoint)| *method == "POST"
+                && (endpoint.ends_with("/pulls") || endpoint.ends_with("/merge_requests"))),
+            "{provider}: {new_writes:?}"
+        );
+        // GitHub adds labels through its labels endpoint; GitLab updates the MR.
+        assert!(
+            new_writes.iter().any(|(method, endpoint)| {
+                (*method == "POST" && endpoint.ends_with("/labels"))
+                    || (*method == "PUT" && endpoint.contains("/merge_requests/"))
+            }),
+            "{provider}: {new_writes:?}"
+        );
+        let checkpoint: Value = serde_json::from_slice(
+            &fs::read(f.root.join(".git/specgit-v2/selection.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            checkpoint["issues"].as_array().unwrap().len(),
+            100,
+            "{provider}: {checkpoint}"
+        );
+        let adopted = checkpoint["adopted"].as_array().unwrap();
+        assert_eq!(adopted.len(), 100, "{provider}: {checkpoint}");
+
+        // Adoption of a native body must reject the same 101-reference union.
+        let adoption = fixture(provider, 1);
+        adoption.edit(|s| {
+            let issues = s["issues"].as_array_mut().unwrap();
+            for id in 2..=101 {
+                issues.push(native_issue(provider, id));
+            }
+        });
+        assert_eq!(adoption.run(&["pr"])["exit"], 0);
+        adoption.edit(|s| {
+            s["requests"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!(overflow);
+        });
+        let checkpoint = adoption.root.join(".git/specgit-v2/selection.json");
+        let before = fs::read(&checkpoint).unwrap();
+        let writes = adoption.writes();
+        let rejected = adoption.run(&["pr", "--update-references", "--dry-run"]);
+        assert_ne!(rejected["exit"], 0, "{provider}: {rejected}");
+        assert_eq!(adoption.writes(), writes, "{provider}: {rejected}");
+        assert_eq!(fs::read(&checkpoint).unwrap(), before, "{provider}");
+    }
+}
+
+#[test]
 fn gitlab_implement_references_are_adopted_and_preserved() {
     let f = fixture("gitlab", 1);
     assert_eq!(f.run(&["pr"])["exit"], 0);
@@ -393,4 +662,46 @@ fn gitlab_implement_references_are_adopted_and_preserved() {
         result["evidence"]["intent"]["body"], "Implements #1",
         "{result}"
     );
+}
+
+#[test]
+fn existing_request_references_are_adopted_and_installed_guards_accept_the_checkpoint() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        f.edit(|s| {
+            s["issues"]
+                .as_array_mut()
+                .unwrap()
+                .push(native_issue(provider, 2))
+        });
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        f.edit(|s| {
+            s["requests"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!("Preserved existing body\n\nCloses #1\nCloses #2");
+        });
+        let writes = f.writes();
+        let adopted = f.run(&["pr", "--request", "41"]);
+        assert_eq!(adopted["exit"], 0, "{provider}: {adopted}");
+        assert_eq!(f.writes(), writes, "{provider}: {adopted}");
+        assert_eq!(
+            adopted["evidence"]["request"]["body"],
+            "Preserved existing body\n\nCloses #1\nCloses #2",
+            "{provider}: {adopted}"
+        );
+        let checkpoint: Value = serde_json::from_slice(
+            &fs::read(f.root.join(".git/specgit-v2/selection.json")).unwrap(),
+        )
+        .unwrap();
+        let ids: Vec<u64> = checkpoint["adopted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![1, 2], "{provider}: {checkpoint}");
+        installed_guard_accepts_commit_and_push(&f, provider);
+    }
 }
