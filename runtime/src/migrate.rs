@@ -31,7 +31,7 @@ pub struct Options {
     /// Exact preview digest; a changed local/native inventory requires a new preview.
     #[arg(long, requires = "apply", conflicts_with = "rollback")]
     pub expect: Option<String>,
-    /// Retire proven local v1 assets while leaving the v1 declaration active for staged cutover.
+    /// Retire proven local v1 assets offline while leaving the v1 declaration active for staged cutover.
     #[arg(long, conflicts_with = "rollback")]
     pub retire_only: bool,
     #[arg(long, conflicts_with = "rollback")]
@@ -260,20 +260,31 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
         options.api_host.as_deref(),
     )
     .await?;
-    let probes = probe::commands(&process, &root, context.repository.provider).await;
-    let reader = ForgeRead::new(
-        process.clone(),
-        &root,
-        context.repository.provider,
-        &context.repository.host,
-    )?;
-    let (remote, remote_error) = if options.retire_only {
-        (None, None)
+    let (probes, unchecked_forge) = if options.retire_only {
+        probe::local_commands(&process, &root, context.repository.provider).await
     } else {
-        match migration_remote::inspect(&reader, &context.repository).await {
+        (
+            probe::commands(&process, &root, context.repository.provider).await,
+            Vec::new(),
+        )
+    };
+    // Offline retirement must not require or execute the selected forge CLI.
+    let reader = if options.retire_only {
+        None
+    } else {
+        Some(ForgeRead::new(
+            process.clone(),
+            &root,
+            context.repository.provider,
+            &context.repository.host,
+        )?)
+    };
+    let (remote, remote_error) = match &reader {
+        Some(reader) => match migration_remote::inspect(reader, &context.repository).await {
             Ok(value) => (Some(value), None),
             Err(error) => (None, Some(error)),
-        }
+        },
+        None => (None, None),
     };
     let mut changes = std::mem::take(&mut inventory.changes);
     if !options.retire_only {
@@ -347,9 +358,11 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
         || remote
             .as_ref()
             .is_some_and(|r| !r.blockers.is_empty() || !r.unfinished_runs.is_empty())
-        || probes
-            .iter()
-            .any(|p| p.status != probe::Capability::Available);
+        || probes.iter().any(|p| {
+            p.status != probe::Capability::Available
+                && !(p.status == probe::Capability::NotChecked
+                    && unchecked_forge.contains(&p.operation))
+        });
     if !options.apply {
         let mut report = Report::success(
             "migrate",
@@ -416,7 +429,8 @@ async fn execute(options: Options, process: Process, cwd: &Path) -> Result<Repor
         return Err(failure("The worktree identity changed during migration."));
     }
     if let Some(expected) = &remote
-        && &migration_remote::inspect(&reader, &context.repository).await? != expected
+        && let Some(reader) = &reader
+        && &migration_remote::inspect(reader, &context.repository).await? != expected
     {
         return Err(failure(
             "Native writer evidence changed before local migration.",

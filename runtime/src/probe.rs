@@ -178,93 +178,129 @@ pub fn now() -> u64 {
         .as_secs()
 }
 
+fn forge_commands(provider: Provider) -> Vec<Vec<&'static str>> {
+    if provider == Provider::Github {
+        vec![
+            vec!["--help"],
+            vec!["api", "--help"],
+            vec!["issue", "view", "--help"],
+            vec!["pr", "view", "--help"],
+        ]
+    } else {
+        vec![
+            vec!["--help"],
+            vec!["api", "--help"],
+            vec!["issue", "view", "--help"],
+            vec!["mr", "view", "--help"],
+        ]
+    }
+}
+
 pub async fn commands(process: &Process, cwd: &Path, provider: Provider) -> Vec<Probe> {
+    let mut results = probe_executable(process, cwd, "git", provider).await;
+    results.extend(probe_executable(process, cwd, provider.executable(), provider).await);
+    results
+}
+
+/// Offline retirement probes Git only and reports the selected forge CLI
+/// operations as intentionally not checked. Returns their exact names so the
+/// caller can distinguish these known gaps from a failed probe.
+pub(crate) async fn local_commands(
+    process: &Process,
+    cwd: &Path,
+    provider: Provider,
+) -> (Vec<Probe>, Vec<String>) {
+    let mut results = probe_executable(process, cwd, "git", provider).await;
+    let name = provider.executable();
+    let mut unchecked = vec![format!("{name}_version")];
+    unchecked.extend(
+        forge_commands(provider)
+            .iter()
+            .map(|args| format!("{name} {}", args.join(" "))),
+    );
+    results.extend(
+        unchecked
+            .iter()
+            .map(|operation| Probe::not_checked(operation)),
+    );
+    (results, unchecked)
+}
+
+async fn probe_executable(
+    process: &Process,
+    cwd: &Path,
+    name: &str,
+    provider: Provider,
+) -> Vec<Probe> {
+    let probe_started = Instant::now();
+    let path = match resolve_executable(name) {
+        Ok(path) => path,
+        Err(d) => return vec![Probe::failed(name, d).measured(probe_started)],
+    };
+    let operation = format!("{name}_version");
+    let out = process
+        .run(Request::new(&path, cwd, &operation).args(["--version"]))
+        .await;
     let mut results = vec![];
-    for name in ["git", provider.executable()] {
-        let probe_started = Instant::now();
-        let path = match resolve_executable(name) {
-            Ok(path) => path,
-            Err(d) => {
-                results.push(Probe::failed(name, d).measured(probe_started));
-                continue;
-            }
-        };
-        let operation = format!("{name}_version");
-        let out = process
-            .run(Request::new(&path, cwd, &operation).args(["--version"]))
-            .await;
-        match out {
-            Ok(out) if out.code == 0 && !out.stdout.is_empty() => {
-                // Record executable metadata rather than trusting a cached --help.
-                // Command support is currently refreshed every invocation.
-                let meta = std::fs::metadata(&path).ok();
-                let identity = format!(
-                    "{}:{}:{:?}",
-                    path.display(),
-                    meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                    meta.and_then(|m| m.modified().ok())
-                );
-                let version: String = String::from_utf8_lossy(&out.stdout)
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .take(200)
-                    .collect();
-                results.push(Probe::available(&operation, serde_json::json!({"version":version,"executable":path,"identity":crate::assets::hash(identity.as_bytes())})).measured(probe_started));
-            }
-            Ok(out) => {
-                results.push(
-                    Probe::failed(&operation, classify_failure(&operation, &out.stderr))
-                        .measured(probe_started),
-                );
-                continue;
-            }
-            Err(d) => {
-                results.push(Probe::failed(&operation, d).measured(probe_started));
-                continue;
-            }
+    match out {
+        Ok(out) if out.code == 0 && !out.stdout.is_empty() => {
+            // Record executable metadata rather than trusting a cached --help.
+            // Command support is currently refreshed every invocation.
+            let meta = std::fs::metadata(&path).ok();
+            let identity = format!(
+                "{}:{}:{:?}",
+                path.display(),
+                meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                meta.and_then(|m| m.modified().ok())
+            );
+            let version: String = String::from_utf8_lossy(&out.stdout)
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(200)
+                .collect();
+            results.push(Probe::available(&operation, serde_json::json!({"version":version,"executable":path,"identity":crate::assets::hash(identity.as_bytes())})).measured(probe_started));
         }
-        let commands: Vec<Vec<&str>> = if name == "git" {
-            vec![
-                vec!["--help"],
-                vec!["rev-parse", "-h"],
-                vec!["worktree", "-h"],
-                vec!["status", "-h"],
-                vec!["remote", "-h"],
-            ]
-        } else if provider == Provider::Github {
-            vec![
-                vec!["--help"],
-                vec!["api", "--help"],
-                vec!["issue", "view", "--help"],
-                vec!["pr", "view", "--help"],
-            ]
-        } else {
-            vec![
-                vec!["--help"],
-                vec!["api", "--help"],
-                vec!["issue", "view", "--help"],
-                vec!["mr", "view", "--help"],
-            ]
-        };
-        for args in commands {
-            let probe_started = Instant::now();
-            let operation = format!("{name} {}", args.join(" "));
-            match process
-                .run(Request::new(&path, cwd, &operation).args(args))
-                .await
+        Ok(out) => {
+            results.push(
+                Probe::failed(&operation, classify_failure(&operation, &out.stderr))
+                    .measured(probe_started),
+            );
+            return results;
+        }
+        Err(d) => {
+            results.push(Probe::failed(&operation, d).measured(probe_started));
+            return results;
+        }
+    }
+    let commands: Vec<Vec<&str>> = if name == "git" {
+        vec![
+            vec!["--help"],
+            vec!["rev-parse", "-h"],
+            vec!["worktree", "-h"],
+            vec!["status", "-h"],
+            vec!["remote", "-h"],
+        ]
+    } else {
+        forge_commands(provider)
+    };
+    for args in commands {
+        let probe_started = Instant::now();
+        let operation = format!("{name} {}", args.join(" "));
+        match process
+            .run(Request::new(&path, cwd, &operation).args(args))
+            .await
+        {
+            Ok(out)
+                if (out.code == 0 || (name == "git" && out.code == 129))
+                    && (!out.stdout.is_empty() || !out.stderr.is_empty()) =>
             {
-                Ok(out)
-                    if (out.code == 0 || (name == "git" && out.code == 129))
-                        && (!out.stdout.is_empty() || !out.stderr.is_empty()) =>
-                {
-                    results.push(Probe::available(&operation, Value::Null).measured(probe_started))
-                }
-                Ok(out) => results.push(
-                    Probe::failed(&operation, classify_failure(&operation, &out.stderr))
-                        .measured(probe_started),
-                ),
-                Err(d) => results.push(Probe::failed(&operation, d).measured(probe_started)),
+                results.push(Probe::available(&operation, Value::Null).measured(probe_started))
             }
+            Ok(out) => results.push(
+                Probe::failed(&operation, classify_failure(&operation, &out.stderr))
+                    .measured(probe_started),
+            ),
+            Err(d) => results.push(Probe::failed(&operation, d).measured(probe_started)),
         }
     }
     results
