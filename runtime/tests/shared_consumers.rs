@@ -36,6 +36,21 @@ fn cli(root: &Path, args: &[&str]) -> Value {
     report
 }
 
+#[cfg(unix)]
+fn cli_with_home(root: &Path, home: &Path, args: &[&str]) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(root)
+        .env("HOME", home)
+        .args(args)
+        .arg("--json")
+        .output()
+        .unwrap();
+    let report: Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"));
+    assert!(output.status.success(), "{report}: {output:?}");
+    report
+}
+
 fn owned_declaration(root: &Path) {
     let private = PathBuf::from(git(root, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
     AssetStore::lock(
@@ -616,6 +631,57 @@ fn failure(root: &Path, args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"))
 }
 
+fn guard_transaction_at(root: &Path) -> String {
+    let installed = cli(root, &["guard", "--install"]);
+    installed["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned()
+}
+
+fn setup_transaction_at(root: &Path) -> String {
+    let installed = cli(
+        root,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned()
+}
+
+fn git_arg_path(path: &Path) -> String {
+    let text = path.to_str().unwrap();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+    }
+}
+
+#[test]
+fn git_arg_path_strips_windows_verbatim_prefix() {
+    assert_eq!(
+        git_arg_path(Path::new(r"\\?\C:\tmp\hooks")),
+        r"C:\tmp\hooks"
+    );
+    assert_eq!(
+        git_arg_path(Path::new(r"\\?\UNC\server\share\hooks")),
+        r"\\server\share\hooks"
+    );
+    assert_eq!(git_arg_path(Path::new("/tmp/hooks")), "/tmp/hooks");
+}
+
+fn assert_same_path(actual: &Path, expected: &Path, context: &str) {
+    assert_eq!(
+        actual.canonicalize().unwrap(),
+        expected.canonicalize().unwrap(),
+        "{context}: actual={} expected={}",
+        actual.display(),
+        expected.display()
+    );
+}
+
 /// A, the original setup guard owner, retires into shared custody and is pruned;
 /// B, the surviving borrower, then moves `core.hooksPath`.
 struct MovedCustody {
@@ -874,6 +940,621 @@ fn worktree_added_during_setup_uninstall_transaction_keeps_shared_hooks() {
         "{report}"
     );
     f.assert_guard(true);
+}
+
+/// The registry can stay unchanged while a valid declaration appears in an
+/// already registered sibling. The rollback must recheck that state before
+/// writing, not trust the discovery-time consumer list.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn declaration_added_to_existing_sibling_during_rollback_keeps_shared_hooks() {
+    let f = Fixture::new();
+    let installed = cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    let id = installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned();
+    f.assert_guard(true);
+    let private =
+        PathBuf::from(git(&f.sibling, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
+    let receipt = private.join("agent-assets/ownership.json");
+    let source = private.join("setup-guard-hooks.json");
+    let before: Vec<_> = [
+        f.hooks.join("pre-commit"),
+        f.hooks.join("pre-push"),
+        receipt,
+        source,
+    ]
+    .iter()
+    .map(|path| fs::read(path).ok())
+    .collect();
+
+    let pause = tempfile::tempdir().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.sibling)
+        .args(["setup", "--rollback", &id, "--json"])
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", "before-rollback-write:1")
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", pause.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !pause.path().join("ready").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "rollback never paused"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The main checkout is already registered; only its declaration appears.
+    fs::write(f.root.join(".specgit.yaml"), "version: 2\n").unwrap();
+    fs::write(pause.path().join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report.to_string().contains("changed"), "{report}");
+    f.assert_guard(true);
+    let after: Vec<_> = [
+        f.hooks.join("pre-commit"),
+        f.hooks.join("pre-push"),
+        private.join("agent-assets/ownership.json"),
+        private.join("setup-guard-hooks.json"),
+    ]
+    .iter()
+    .map(|path| fs::read(path).ok())
+    .collect();
+    assert_eq!(
+        after, before,
+        "the aborted rollback must undo its own writes"
+    );
+
+    // A fresh scan sees the new consumer and retains the hooks and receipts.
+    let retried = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        !retried["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retried}"))
+            .is_empty(),
+        "{retried}"
+    );
+    f.assert_guard(true);
+    assert!(private.join("setup-guard-hooks.json").exists());
+
+    // Once the consumer leaves, the retained journal finishes the rollback.
+    fs::remove_file(f.root.join(".specgit.yaml")).unwrap();
+    let finished = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        finished["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{finished}"))
+            .is_empty(),
+        "{finished}"
+    );
+    f.assert_guard(false);
+}
+
+#[cfg(feature = "test-fixtures")]
+fn paused_rollback(root: &Path, args: &[&str]) -> (std::process::Child, tempfile::TempDir) {
+    let pause = tempfile::tempdir().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(root)
+        .args(args)
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", "before-rollback-write:1")
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", pause.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !pause.path().join("ready").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "rollback never paused"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    (child, pause)
+}
+
+#[cfg(feature = "test-fixtures")]
+fn finish_paused(child: std::process::Child, pause: &tempfile::TempDir) -> (Value, bool) {
+    fs::write(pause.path().join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let report: Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"));
+    (report, output.status.success())
+}
+
+/// The same stale-consumer race can remove the shared exclusion. A declaration
+/// appearing in an already registered sibling must retain it or fail closed.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn declaration_added_to_existing_sibling_during_rollback_keeps_shared_exclusion() {
+    let f = Fixture::new();
+    let id = f.exclusion_transaction();
+    let before = fs::read(&f.exclude).unwrap();
+    f.assert_excluded(&f.root, ".specgit.yaml", true);
+    let (child, pause) = paused_rollback(&f.root, &["init", "--rollback", &id, "--json"]);
+    fs::write(f.sibling.join(".specgit.yaml"), "version: 2\n").unwrap();
+    let (report, ok) = finish_paused(child, &pause);
+    assert!(!ok, "{report}");
+    assert!(report.to_string().contains("changed"), "{report}");
+    assert_eq!(fs::read(&f.exclude).unwrap(), before);
+    f.assert_excluded(&f.root, ".specgit.yaml", true);
+
+    let retried = cli(&f.root, &["init", "--rollback", &id]);
+    assert!(
+        !retried["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retried}"))
+            .is_empty(),
+        "{retried}"
+    );
+    f.assert_excluded(&f.sibling, ".specgit.yaml", true);
+}
+
+/// An active Git operation in a sibling can still finish a checkout after the
+/// consumer scan. Its native lock is evidence that the scan is not stable.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn active_git_operation_in_existing_sibling_aborts_rollback() {
+    let f = Fixture::new();
+    git(
+        &f.root,
+        &["worktree", "add", "-q", "-b", "second", "../second"],
+    );
+    let second = f.root.parent().unwrap().join("second");
+    let installed = cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    let id = installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned();
+    f.assert_guard(true);
+    let second_git = PathBuf::from(git(&second, &["rev-parse", "--absolute-git-dir"]));
+    let (child, pause) = paused_rollback(&f.sibling, &["setup", "--rollback", &id, "--json"]);
+    let lock = second_git.join("index.lock");
+    fs::write(&lock, b"locked").unwrap();
+    let (report, ok) = finish_paused(child, &pause);
+    assert!(!ok, "{report}");
+    assert!(report.to_string().contains("active"), "{report}");
+    f.assert_guard(true);
+    assert_eq!(fs::read(&lock).unwrap(), b"locked");
+    fs::remove_file(&lock).unwrap();
+
+    cli(&f.sibling, &["setup", "--rollback", &id]);
+    f.assert_guard(false);
+}
+
+/// A declaration permission change is rollback evidence too. The content did
+/// not change, so a digest-only witness would miss it.
+#[cfg(all(feature = "test-fixtures", unix))]
+#[test]
+fn declaration_permission_change_during_rollback_aborts() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let declaration = f.root.join(".specgit.yaml");
+    fs::write(&declaration, "version: 2\n").unwrap();
+    fs::set_permissions(&declaration, fs::Permissions::from_mode(0o644)).unwrap();
+    let installed = cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    let id = installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned();
+    f.assert_guard(true);
+    let (child, pause) = paused_rollback(&f.sibling, &["setup", "--rollback", &id, "--json"]);
+    fs::set_permissions(&declaration, fs::Permissions::from_mode(0o600)).unwrap();
+    let (report, ok) = finish_paused(child, &pause);
+    assert!(!ok, "{report}");
+    assert!(report.to_string().contains("changed"), "{report}");
+    f.assert_guard(true);
+    assert_eq!(
+        fs::metadata(&declaration).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    fs::set_permissions(&declaration, fs::Permissions::from_mode(0o644)).unwrap();
+    let retried = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        !retried["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retried}"))
+            .is_empty(),
+        "{retried}"
+    );
+    f.assert_guard(true);
+}
+
+/// Removing the declaration does not uninitialize the worktree: retained
+/// private markers keep the shared hooks in use after a fresh scan.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn declaration_removed_during_rollback_with_private_state_keeps_hooks() {
+    let f = Fixture::new();
+    let declaration = f.root.join(".specgit.yaml");
+    fs::write(&declaration, "version: 2\n").unwrap();
+    let private =
+        PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
+    fs::create_dir_all(&private).unwrap();
+    fs::write(
+        private.join("guidance.json"),
+        r#"{"version":1,"blocks":{}}"#,
+    )
+    .unwrap();
+    let installed = cli(
+        &f.sibling,
+        &["setup", "--agent", "generic", "--hook-purpose", "guard"],
+    );
+    let id = installed["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned();
+    f.assert_guard(true);
+    let (child, pause) = paused_rollback(&f.sibling, &["setup", "--rollback", &id, "--json"]);
+    fs::remove_file(&declaration).unwrap();
+    let (report, ok) = finish_paused(child, &pause);
+    assert!(!ok, "{report}");
+    assert!(report.to_string().contains("changed"), "{report}");
+    f.assert_guard(true);
+
+    let retried = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        !retried["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retried}"))
+            .is_empty(),
+        "{retried}"
+    );
+    f.assert_guard(true);
+}
+
+/// Stable non-consumers must not block rollback forever.
+#[test]
+fn stable_nonconsumer_sibling_does_not_block_rollback_cleanup() {
+    let f = Fixture::new();
+    let original = fs::read(&f.exclude).unwrap();
+    let id = f.exclusion_transaction();
+    let result = cli(&f.root, &["init", "--rollback", &id]);
+    assert_eq!(fs::read(&f.exclude).unwrap(), original);
+    assert!(!f.root.join(".specgit.yaml").exists());
+    assert!(
+        result["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{result}"))
+            .is_empty(),
+        "{result}"
+    );
+}
+
+/// A gone checkout stays in the registry until Git prunes it. Git's own
+/// prunable marking makes that state stable enough for cleanup.
+#[test]
+fn prunable_sibling_checkout_does_not_block_rollback_cleanup() {
+    let f = Fixture::new();
+    let original = fs::read(&f.exclude).unwrap();
+    let id = f.exclusion_transaction();
+    fs::remove_dir_all(&f.sibling).unwrap();
+    let result = cli(&f.root, &["init", "--rollback", &id]);
+    assert_eq!(fs::read(&f.exclude).unwrap(), original);
+    assert!(
+        result["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{result}"))
+            .is_empty(),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn global_config_symlink_does_not_block_rollback() {
+    use std::os::unix::fs::symlink;
+    let home = tempfile::tempdir().unwrap();
+    let target = home.path().join("gitconfig-target");
+    fs::write(&target, b"").unwrap();
+    symlink(&target, home.path().join(".gitconfig")).unwrap();
+    let f = Fixture::new();
+    let installed = cli_with_home(&f.root, home.path(), &["guard", "--install"]);
+    let id = installed["transaction"]["transaction"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{installed}"))
+        .to_owned();
+    f.assert_guard(true);
+    cli_with_home(&f.root, home.path(), &["setup", "--rollback", &id]);
+    f.assert_guard(false);
+}
+
+/// A registered checkout directory must expose the same Git identity as its
+/// registry entry. A prunable or invalid marker is not cleanup-safe.
+#[test]
+fn present_but_invalid_registered_checkout_blocks_rollback_cleanup() {
+    for case in ["missing_marker", "missing_target", "wrong_existing_target"] {
+        let f = Fixture::new();
+        fs::write(f.sibling.join(".specgit.yaml"), "version: 2\n").unwrap();
+        let id = guard_transaction_at(&f.root);
+        f.assert_guard(true);
+        let marker = f.sibling.join(".git");
+        let original = fs::read(&marker).unwrap();
+        let saved = f.sibling.join(".git.saved");
+        let base = f.root.parent().unwrap();
+        match case {
+            "missing_marker" => fs::rename(&marker, &saved).unwrap(),
+            "missing_target" => fs::write(
+                &marker,
+                format!("gitdir: {}\n", base.join("missing-gitdir").display()),
+            )
+            .unwrap(),
+            "wrong_existing_target" => {
+                let wrong = base.join("wrong-gitdir");
+                fs::create_dir(&wrong).unwrap();
+                fs::write(&marker, format!("gitdir: {}\n", wrong.display())).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let list = git(&f.root, &["worktree", "list", "--porcelain"]);
+        if case == "missing_marker" {
+            assert!(list.contains("prunable"), "{list}");
+        }
+        let report = failure(&f.root, &["setup", "--rollback", &id]);
+        assert!(
+            report.to_string().contains("incomplete"),
+            "{case}: {report}"
+        );
+        f.assert_guard(true);
+
+        match case {
+            "missing_marker" => fs::rename(&saved, &marker).unwrap(),
+            _ => fs::write(&marker, &original).unwrap(),
+        }
+        let retried = cli(&f.root, &["setup", "--rollback", &id]);
+        assert!(
+            !retried["evidence"]["retained"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{retried}"))
+                .is_empty(),
+            "{case}: {retried}"
+        );
+        f.assert_guard(true);
+
+        fs::remove_file(f.sibling.join(".specgit.yaml")).unwrap();
+        let finished = cli(&f.root, &["setup", "--rollback", &id]);
+        assert!(
+            finished["evidence"]["retained"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{finished}"))
+                .is_empty(),
+            "{case}: {finished}"
+        );
+        f.assert_guard(false);
+    }
+}
+
+/// A checkout marker removed after the inventory and consumer scan must abort
+/// the rollback instead of leaving the remaining consumers unobserved.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn marker_removed_after_scan_aborts_rollback() {
+    let f = Fixture::new();
+    fs::write(f.sibling.join(".specgit.yaml"), "version: 2\n").unwrap();
+    let id = setup_transaction_at(&f.root);
+    f.assert_guard(true);
+    let marker = f.sibling.join(".git");
+    let saved = f.sibling.join(".git.saved");
+    let (child, pause) = paused_rollback(&f.root, &["setup", "--rollback", &id, "--json"]);
+    fs::rename(&marker, &saved).unwrap();
+    let (report, ok) = finish_paused(child, &pause);
+    assert!(!ok, "{report}");
+    f.assert_guard(true);
+
+    fs::rename(&saved, &marker).unwrap();
+    let retried = cli(&f.root, &["setup", "--rollback", &id]);
+    assert!(
+        !retried["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retried}"))
+            .is_empty(),
+        "{retried}"
+    );
+    f.assert_guard(true);
+
+    fs::remove_file(f.sibling.join(".specgit.yaml")).unwrap();
+    cli(&f.root, &["setup", "--rollback", &id]);
+    f.assert_guard(false);
+}
+
+/// The main checkout is not in the linked-worktree registry. Its active hook
+/// demand must still be observed and retain the shared hooks.
+#[test]
+fn main_hook_demand_retains_shared_hooks_from_linked_rollback() {
+    let f = Fixture::new();
+    fs::write(f.root.join(".specgit.yaml"), "version: 2\n").unwrap();
+    let id = guard_transaction_at(&f.sibling);
+    f.assert_guard(true);
+    let retained = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        !retained["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{retained}"))
+            .is_empty(),
+        "{retained}"
+    );
+    f.assert_guard(true);
+
+    fs::remove_file(f.root.join(".specgit.yaml")).unwrap();
+    let finished = cli(&f.sibling, &["setup", "--rollback", &id]);
+    assert!(
+        finished["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{finished}"))
+            .is_empty(),
+        "{finished}"
+    );
+    f.assert_guard(false);
+}
+
+/// Main can move its own worktree hook path while a sibling keeps the shared
+/// hooks. The current path has no installed guard, so retention must use the
+/// journal targets and the sibling demand, not the drifted current path.
+#[test]
+fn main_hook_path_drift_keeps_sibling_shared_hooks() {
+    let f = Fixture::new();
+    let main_id = setup_transaction_at(&f.root);
+    fs::write(f.sibling.join(".specgit.yaml"), "version: 2\n").unwrap();
+    f.assert_guard(true);
+    git(&f.root, &["config", "extensions.worktreeConfig", "true"]);
+    let empty = f.root.parent().unwrap().join("empty-hooks");
+    fs::create_dir(&empty).unwrap();
+    git(
+        &f.root,
+        &[
+            "config",
+            "--worktree",
+            "core.hooksPath",
+            &git_arg_path(&empty),
+        ],
+    );
+    let main_hooks = git(
+        &f.root,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    );
+    assert_same_path(Path::new(&main_hooks), &empty, "main hooks");
+    let sibling_hooks = git(
+        &f.sibling,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    );
+    assert_same_path(Path::new(&sibling_hooks), &f.hooks, "sibling hooks");
+    let report = cli(&f.root, &["setup", "--rollback", &main_id]);
+    let retained = report["evidence"]["retained"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{report}"));
+    assert!(
+        retained.iter().any(
+            |entry| entry["path"].as_str().is_some_and(|path| Path::new(path)
+                .file_name()
+                .is_some_and(|name| name == "pre-commit"))
+        ),
+        "{report}"
+    );
+    assert!(
+        retained.iter().any(
+            |entry| entry["path"].as_str().is_some_and(|path| Path::new(path)
+                .file_name()
+                .is_some_and(|name| name == "setup-guard-hooks.json"))
+        ),
+        "{report}"
+    );
+    f.assert_guard(true);
+
+    fs::remove_file(f.sibling.join(".specgit.yaml")).unwrap();
+    let finished = cli(&f.root, &["setup", "--rollback", &main_id]);
+    assert!(
+        finished["evidence"]["retained"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{finished}"))
+            .is_empty(),
+        "{finished}"
+    );
+    f.assert_guard(false);
+}
+
+/// A dynamic hook path must not turn an active declaration into a deletion
+/// reason. Retain until the last demand leaves, then finish the same journal.
+#[test]
+fn dynamic_hook_path_change_keeps_shared_hooks_until_the_last_demand() {
+    for case in ["missing_include", "empty_include", "onbranch"] {
+        let f = Fixture::new();
+        git(&f.root, &["config", "extensions.worktreeConfig", "true"]);
+        let extra = f.root.parent().unwrap().join("dynamic-hooks.config");
+        let other = f.root.parent().unwrap().join("other-hooks");
+        fs::create_dir(&other).unwrap();
+        match case {
+            "missing_include" | "empty_include" => {
+                git(
+                    &f.sibling,
+                    &[
+                        "config",
+                        "--worktree",
+                        "include.path",
+                        &git_arg_path(&extra),
+                    ],
+                );
+            }
+            "onbranch" => {
+                git(
+                    &f.sibling,
+                    &[
+                        "config",
+                        "--worktree",
+                        "includeIf.onbranch:other.path",
+                        &git_arg_path(&extra),
+                    ],
+                );
+            }
+            _ => unreachable!(),
+        }
+        if case == "empty_include" {
+            fs::write(&extra, b"").unwrap();
+        }
+        let id = setup_transaction_at(&f.root);
+        setup_transaction_at(&f.sibling);
+        f.assert_guard(true);
+        git(
+            &f.root,
+            &[
+                "config",
+                "--file",
+                &git_arg_path(&extra),
+                "core.hooksPath",
+                &git_arg_path(&other),
+            ],
+        );
+        if case == "onbranch" {
+            git(&f.sibling, &["switch", "-q", "-c", "other"]);
+        }
+        let actual = git(
+            &f.sibling,
+            &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+        );
+        assert_same_path(Path::new(&actual), &other, case);
+        let report = cli(&f.root, &["setup", "--rollback", &id]);
+        assert!(
+            !report["evidence"]["retained"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{case}: {report}"))
+                .is_empty(),
+            "{case}: {report}"
+        );
+        f.assert_guard(true);
+
+        git(
+            &f.sibling,
+            &[
+                "config",
+                "--worktree",
+                "core.hooksPath",
+                &git_arg_path(&f.hooks),
+            ],
+        );
+        cli(&f.sibling, &["setup", "--uninstall"]);
+        let finished = cli(&f.root, &["setup", "--rollback", &id]);
+        assert!(
+            finished["evidence"]["retained"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{case}: {finished}"))
+                .is_empty(),
+            "{case}: {finished}"
+        );
+        f.assert_guard(false);
+    }
 }
 
 /// An exact-ID rollback scans consumers before writing. A checkout added by
