@@ -898,6 +898,178 @@ fn github_workflow_supersession_preserves_independent_contexts() {
     }
 }
 
+fn workflow_runs_mut(f: &delivery::Fixture, edit: impl Fn(&mut Value)) {
+    f.edit(|s| {
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/actions/runs?head_sha=") {
+                for run in value["workflow_runs"].as_array_mut().unwrap() {
+                    edit(run);
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn github_nullable_workflow_branch_preserves_successful_current_checks() {
+    let f = fixture("github");
+    // GitHub's workflow-run schema declares head_branch as string|null. This
+    // protocol case is derived from the schema, not from a captured response.
+    workflow_runs_mut(&f, |run| run["head_branch"] = Value::Null);
+    let writes = f.writes();
+    let status = f.run(&["pr", "--status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    let checks = status["evidence"]["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1, "{status}");
+    assert_eq!(checks[0]["id"], 81, "{status}");
+    assert_eq!(checks[0]["conclusion"], "success", "{status}");
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "null-branch",
+        "--goal",
+        "checks",
+        "--once",
+    ]);
+    assert_eq!(watched["status"], "checks_passed", "{watched}");
+    let inbox = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "null-branch",
+        "--goal",
+        "checks",
+    ]);
+    assert_eq!(inbox["status"], "checks_passed", "{inbox}");
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn github_nullable_workflow_branch_pending_run_is_not_green() {
+    let f = fixture("github");
+    workflow_runs_mut(&f, |run| {
+        run["head_branch"] = Value::Null;
+        run["status"] = json!("in_progress");
+        run["conclusion"] = Value::Null;
+    });
+    f.edit(|s| {
+        for (route, value) in s["read_routes"].as_object_mut().unwrap() {
+            if route.contains("/check-runs?filter=latest") {
+                value["check_runs"][0]["status"] = json!("in_progress");
+                value["check_runs"][0]["conclusion"] = Value::Null;
+                value["check_runs"][0]["completed_at"] = Value::Null;
+            }
+        }
+    });
+    let status = f.run(&["pr", "--status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    assert!(
+        status["evidence"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|check| check["conclusion"] != "success"),
+        "{status}"
+    );
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "null-pending",
+        "--goal",
+        "checks",
+        "--once",
+    ]);
+    assert_eq!(watched["status"], "pending", "{watched}");
+    let inbox = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "null-pending",
+        "--goal",
+        "checks",
+    ]);
+    assert_eq!(inbox["status"], "pending", "{inbox}");
+}
+
+#[test]
+fn github_nullable_workflow_branch_does_not_swallow_parallel_failure() {
+    let f = fixture("github");
+    replacement_workflow(&f, Some(("head_branch", Value::Null)), true, false);
+    workflow_runs_mut(&f, |run| {
+        if run["id"] == 71 {
+            run["conclusion"] = json!("failure");
+        }
+    });
+    let status = f.run(&["pr", "--status"]);
+    assert_eq!(status["exit"], 0, "{status}");
+    let checks = status["evidence"]["checks"].as_array().unwrap();
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["id"] == 81 && check["conclusion"] == "failure"),
+        "{status}"
+    );
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["id"] == 82 && check["conclusion"] == "success"),
+        "{status}"
+    );
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "null-parallel",
+        "--goal",
+        "checks",
+        "--once",
+    ]);
+    assert_eq!(watched["status"], "failed", "{watched}");
+    let inbox = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "null-parallel",
+        "--goal",
+        "checks",
+    ]);
+    assert_eq!(inbox["status"], "failed", "{inbox}");
+}
+
+#[test]
+fn github_workflow_branch_requires_a_nonempty_string_or_null() {
+    for branch in [
+        None,
+        Some(json!(7)),
+        Some(json!(false)),
+        Some(json!("")),
+        Some(json!({})),
+        Some(json!([])),
+    ] {
+        let f = fixture("github");
+        workflow_runs_mut(&f, |run| match &branch {
+            Some(value) => run["head_branch"] = value.clone(),
+            None => {
+                run.as_object_mut().unwrap().remove("head_branch");
+            }
+        });
+        let result = f.run(&["pr", "--status"]);
+        assert_eq!(result["exit"], 3, "{branch:?}: {result}");
+        assert!(
+            result["evidence"]["checks"].is_null(),
+            "{branch:?}: {result}"
+        );
+    }
+}
+
 #[test]
 fn github_running_replacement_cannot_reuse_old_success() {
     for with_checks in [false, true] {
