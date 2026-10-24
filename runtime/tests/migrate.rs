@@ -9,6 +9,66 @@ use std::{
     process::Command,
 };
 const MAIN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+/// A PATH that contains Git but no forge CLI. The delivery fixture prepends
+/// fake `gh`/`glab`; callers must override PATH explicitly to remove it.
+fn git_only_path() -> (Option<tempfile::TempDir>, std::ffi::OsString) {
+    let git = specgit::process::resolve_executable("git").unwrap();
+    #[cfg(unix)]
+    {
+        let temp = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&git, temp.path().join("git")).unwrap();
+        let path = temp.path().as_os_str().to_owned();
+        (Some(temp), path)
+    }
+    #[cfg(windows)]
+    {
+        let directory = git.parent().unwrap();
+        for name in ["gh.exe", "glab.exe", "gh", "glab"] {
+            assert!(
+                !directory.join(name).exists(),
+                "cannot isolate Git from forge CLIs: {} contains {name}",
+                directory.display()
+            );
+        }
+        (None, directory.as_os_str().to_owned())
+    }
+}
+fn run_with_path(f: &Fixture, path: &std::ffi::OsStr, args: &[&str]) -> Value {
+    let out = f.command(args).env("PATH", path).output().unwrap();
+    let value: Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|_| panic!("stdout={:?} stderr={:?}", out.stdout, out.stderr));
+    assert_eq!(value["exit"].as_i64(), out.status.code().map(i64::from));
+    value
+}
+fn assert_provider_probes_not_checked(report: &Value, provider: &str) {
+    let operations: &[&str] = if provider == "github" {
+        &[
+            "gh_version",
+            "gh --help",
+            "gh api --help",
+            "gh issue view --help",
+            "gh pr view --help",
+        ]
+    } else {
+        &[
+            "glab_version",
+            "glab --help",
+            "glab api --help",
+            "glab issue view --help",
+            "glab mr view --help",
+        ]
+    };
+    for operation in operations {
+        let probe = report["evidence"]["probes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|probe| probe["operation"] == *operation)
+            .unwrap_or_else(|| panic!("missing probe {operation}: {report}"));
+        assert_eq!(probe["status"], "not_checked", "{operation}: {report}");
+        assert!(probe["diagnostic"].is_null(), "{operation}: {report}");
+    }
+}
 fn git(root: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(root)
@@ -328,6 +388,169 @@ fn unfinished_remote_runs_block_activation_but_local_retirement_preserves_v1() {
             .unwrap()
             .contains("specgit:v2")
     );
+}
+#[test]
+fn retire_only_preview_and_apply_are_offline_when_both_forge_clis_are_absent() {
+    let (_git_only, path) = git_only_path();
+    for provider in ["github", "gitlab"] {
+        let (f, config) = fixture(provider);
+        let pointer = fs::read(f.root.join(".specgit.yaml")).unwrap();
+        let p = run_with_path(
+            &f,
+            &path,
+            &[
+                "migrate",
+                "--config-file",
+                config.to_str().unwrap(),
+                "--retire-only",
+            ],
+        );
+        assert_eq!(p["exit"], 0, "{p}");
+        assert_eq!(p["status"], "preview", "{p}");
+        assert_eq!(p["evidence"]["remote_retirement"], Value::Null, "{p}");
+        assert_eq!(p["evidence"]["native_writes"], false, "{p}");
+        assert_eq!(
+            p["evidence"]["probes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|probe| probe["operation"] == "git_version")
+                .unwrap()["status"],
+            "available",
+            "{p}"
+        );
+        assert_provider_probes_not_checked(&p, provider);
+        assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), pointer);
+        assert!(
+            f.root
+                .join(".github/workflows/specgit-complete.yml")
+                .exists()
+        );
+        let a = run_with_path(
+            &f,
+            &path,
+            &[
+                "migrate",
+                "--config-file",
+                config.to_str().unwrap(),
+                "--apply",
+                "--expect",
+                p["evidence"]["preview_sha256"].as_str().unwrap(),
+                "--retire-only",
+            ],
+        );
+        assert_eq!(a["exit"], 0, "{a}");
+        assert_eq!(a["status"], "retired_local_assets", "{a}");
+        assert_eq!(a["evidence"]["activation"], "v1_preserved", "{a}");
+        assert_eq!(a["evidence"]["remote_retirement"], Value::Null, "{a}");
+        assert_provider_probes_not_checked(&a, provider);
+        assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), pointer);
+        let agents = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
+        assert_eq!(agents, "Human prefix\nHuman suffix\n");
+        assert!(
+            !f.root
+                .join(".github/workflows/specgit-complete.yml")
+                .exists()
+        );
+        assert!(
+            !f.root
+                .join(".agents/skills/specgit-finish/SKILL.md")
+                .exists()
+        );
+        let r = run_with_path(
+            &f,
+            &path,
+            &[
+                "migrate",
+                "--rollback",
+                a["evidence"]["transaction"].as_str().unwrap(),
+            ],
+        );
+        assert_eq!(r["exit"], 0, "{r}");
+        assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), pointer);
+        assert!(
+            f.root
+                .join(".github/workflows/specgit-complete.yml")
+                .exists()
+        );
+        assert!(
+            fs::read_to_string(f.root.join("AGENTS.md"))
+                .unwrap()
+                .contains("old contract")
+        );
+        assert_eq!(f.state()["calls"], json!([]), "{provider} forge was called");
+    }
+}
+
+#[test]
+fn normal_migration_still_requires_the_selected_forge_cli() {
+    let (_git_only, path) = git_only_path();
+    let (f, config) = fixture("github");
+    let pointer = fs::read(f.root.join(".specgit.yaml")).unwrap();
+    let p = run_with_path(
+        &f,
+        &path,
+        &["migrate", "--config-file", config.to_str().unwrap()],
+    );
+    assert_eq!(p["exit"], 3, "{p}");
+    assert_eq!(p["diagnostics"][0]["code"], "missing_executable", "{p}");
+    assert_eq!(fs::read(f.root.join(".specgit.yaml")).unwrap(), pointer);
+}
+
+#[test]
+fn retire_only_changed_inventory_invalidates_the_preview_digest() {
+    let (f, config) = fixture("github");
+    let p = preview(&f, &config, &["--retire-only"]);
+    assert_eq!(p["exit"], 0, "{p}");
+    fs::write(
+        f.root.join(".github/workflows/specgit-complete.yml"),
+        "# changed after preview\n",
+    )
+    .unwrap();
+    let a = apply(&f, &config, &p, &["--retire-only"]);
+    assert_eq!(a["exit"], 3, "{a}");
+    assert_eq!(a["diagnostics"][0]["code"], "concurrent_edit", "{a}");
+    assert!(
+        fs::read_to_string(f.root.join(".specgit.yaml"))
+            .unwrap()
+            .starts_with("version: 1")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn retire_only_never_executes_a_resolvable_forge_cli() {
+    let git = specgit::process::resolve_executable("git").unwrap();
+    for provider in ["github", "gitlab"] {
+        let (f, config) = fixture(provider);
+        let bin = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&git, bin.path().join("git")).unwrap();
+        let marker = bin.path().join("forge-called");
+        for name in ["gh", "glab"] {
+            let script = format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$0\" >> '{}'\nexit 127\n",
+                marker.display()
+            );
+            fs::write(bin.path().join(name), script).unwrap();
+            let mut permissions = fs::metadata(bin.path().join(name)).unwrap().permissions();
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(0o755);
+            fs::set_permissions(bin.path().join(name), permissions).unwrap();
+        }
+        let p = run_with_path(
+            &f,
+            bin.path().as_os_str(),
+            &[
+                "migrate",
+                "--config-file",
+                config.to_str().unwrap(),
+                "--retire-only",
+            ],
+        );
+        assert_eq!(p["exit"], 0, "{p}");
+        assert_provider_probes_not_checked(&p, provider);
+        assert!(!marker.exists(), "{provider} forge CLI was executed: {p}");
+    }
 }
 #[test]
 fn rollback_keeps_post_migration_user_edits_and_retains_backups() {

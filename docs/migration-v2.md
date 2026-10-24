@@ -59,7 +59,11 @@ specgit migrate --config-file /absolute/v2.yaml --apply --expect <fresh-preview-
 ```
 
 `--retire-only` supports a staged local retirement while retaining the old
-declaration. Applying a migration records recoverable local asset preimages.
+declaration. It runs offline with Git only: it does not require or execute the
+selected `gh`/`glab` CLI, reports those probes as `not_checked`, leaves
+`remote_retirement` null, meaning remote retirement was not checked or proven. Use it only to clean up
+proven local v1 assets; complete the native retirement and the normal migration
+barrier separately. Applying a migration records recoverable local asset preimages.
 A changed inventory/digest requires a new preview. `--rollback <transaction>`
 restores proven local assets only when later user changes remain protected; it
 does not undo remote administrative changes. Preserve the returned transaction ID
