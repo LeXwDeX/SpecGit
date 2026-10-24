@@ -854,6 +854,13 @@ can locate an exact transaction ID in the current worktree or this shared store.
 Applying it still requires the original worktree and its allowed paths; ambiguous
 IDs and paths outside those roots remain conflicts. Recovery never recreates
 pruned Git metadata or grants access to another worktree's files.
+Rollback retains the journal's native guard hooks and ownership receipts while
+any active sibling worktree or the current setup consumer still consumes them.
+A later `core.hooksPath` in the sibling or the current worktree does not decide
+deletion. When the current hook path differs, a journal hook is retained only if
+it still contains the current native guard marker; legacy hooks are not retained
+by that rule. Once those consumers disappear or the checkout is pruned, retry the
+same transaction ID to finish cleanup; retention is not permanent.
 If `core.hooksPath` changes while such custody is retained, setup, `guard`
 install/inspection and exact-ID recovery report a conflict instead of treating the
 old custody as absent. Restore the recorded hook directory, then uninstall or
