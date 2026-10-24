@@ -222,6 +222,12 @@ pub(super) async fn subscribe(
     Ok(result)
 }
 
+fn append_bounded(text: &mut String, suffix: &str, limit: usize) {
+    if text.len().saturating_add(suffix.len()) <= limit {
+        text.push_str(suffix);
+    }
+}
+
 struct Subscription<'a> {
     options: &'a Options,
     process: &'a Process,
@@ -285,6 +291,43 @@ async fn refresh(
                     );
                     observation.revision.local_head = current.head.clone();
                     observation.terminal = true;
+                } else if observation
+                    .next_step
+                    .request_state
+                    .as_deref()
+                    .is_some_and(|state| matches!(state, "merged" | "closed"))
+                {
+                    // The native request state is merged or closed. Local
+                    // divergence stays in the revision and bounded guidance; it
+                    // is never treated as new deliverable work for that request.
+                    let divergent = context.dirty
+                        || observation.revision.head != observation.revision.local_head
+                        || current.head != context.head
+                        || current.dirty != context.dirty;
+                    if divergent {
+                        match observation.state {
+                            EventState::Completed => {
+                                observation.next_step.message = "Native evidence confirms the selected request was merged and its associated issues were closed. This merged request accepts no new work; local commits or edits do not change that result. Start additional work from a new branch or worktree and select new Issues.".into();
+                            }
+                            EventState::MergedIssuesOpen => append_bounded(
+                                &mut observation.reason,
+                                " Local commits or edits do not change this native merge; this request accepts no new work. Start additional work from a new branch or worktree and select new Issues. The listed open Issues still require inspection.",
+                                4096,
+                            ),
+                            EventState::Unknown => append_bounded(
+                                &mut observation.reason,
+                                " Local commits or edits do not change the native state. Verify the current request and issue facts first; additional local work requires a new branch or worktree and a new Issue selection.",
+                                4096,
+                            ),
+                            EventState::ClosedUnmerged => append_bounded(
+                                &mut observation.reason,
+                                " Local commits or edits do not change this closed request, and a push cannot reopen it. Choose reopen or follow-up explicitly; additional local work requires a new branch or worktree and a new Issue selection.",
+                                4096,
+                            ),
+                            _ => {}
+                        }
+                        observation.revision.local_head = current.head.clone();
+                    }
                 } else if local_ahead {
                     observation.state = EventState::Pending;
                     observation.reason = "Local commits are ahead of the selected native source head; previous success is superseded.".into();

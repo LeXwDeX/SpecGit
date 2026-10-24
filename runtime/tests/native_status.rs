@@ -1065,6 +1065,161 @@ fn a_merged_lifecycle_watch_also_retires_the_checkpoint() {
     assert_eq!(checkpoint(&f)["delivered_request"], 41, "{watched}");
 }
 
+#[tokio::test]
+async fn delivered_merge_ignores_local_divergence_and_installed_guard_rejects_new_commits() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        complete_request(&f, provider);
+        let merged = f.run(&["pr", "--status"]);
+        assert_eq!(merged["status"], "completed", "{provider}: {merged}");
+        assert_eq!(
+            checkpoint(&f)["delivered_request"],
+            41,
+            "{provider}: {merged}"
+        );
+        let writes = f.writes();
+
+        // A dirty worktree after the merge does not change the lifecycle result.
+        fs::write(f.root.join("dirty-after-merge.txt"), "uncommitted work").unwrap();
+        let dirty = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+            "--once",
+        ]);
+        assert_eq!(dirty["status"], "completed", "{provider}: {dirty}");
+        assert_eq!(
+            dirty["next_actions"][0]["kind"], "completed",
+            "{provider}: {dirty}"
+        );
+        let message = dirty["next_actions"][0]["message"].as_str().unwrap();
+        assert!(message.contains("new branch"), "{provider}: {dirty}");
+        assert!(
+            !message.contains("No further action"),
+            "{provider}: {dirty}"
+        );
+        assert!(
+            !dirty.to_string().contains("Push reviewed commits"),
+            "{provider}: {dirty}"
+        );
+        assert_eq!(
+            checkpoint(&f)["delivered_request"],
+            41,
+            "{provider}: {dirty}"
+        );
+
+        // Add the local commit before installing the guard; existing tests cover
+        // the direct guard entry point, this covers the actual hook.
+        fs::write(f.root.join("local-after-merge.txt"), "later work").unwrap();
+        git(&f, &["add", "local-after-merge.txt"]);
+        git(&f, &["commit", "-q", "-m", "local work after merge"]);
+        let local = String::from_utf8(
+            Command::new("git")
+                .current_dir(&f.root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+
+        let watched = f.run(&[
+            "watch",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+            "--once",
+        ]);
+        assert_eq!(watched["status"], "completed", "{provider}: {watched}");
+        assert_eq!(
+            watched["next_actions"][0]["kind"], "completed",
+            "{provider}: {watched}"
+        );
+        assert_eq!(
+            watched["evidence"]["events"][0]["revision"]["local_head"], local,
+            "{provider}: {watched}"
+        );
+        let refreshed = f.run(&[
+            "inbox",
+            "--request",
+            "41",
+            "--session",
+            "session-a",
+            "--goal",
+            "lifecycle",
+        ]);
+        assert_eq!(refreshed["status"], "completed", "{provider}: {refreshed}");
+        assert_eq!(
+            refreshed["next_actions"][0], watched["next_actions"][0],
+            "{provider}: {refreshed}"
+        );
+        assert_eq!(
+            refreshed["evidence"]["events"][0]["id"], watched["evidence"]["events"][0]["id"],
+            "{provider}: {refreshed}"
+        );
+        let status = f.run(&["pr", "--status"]);
+        assert_eq!(status["status"], "completed", "{provider}: {status}");
+        assert!(
+            status["evidence"]["local_applicability"]["reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("head_mismatch")),
+            "{provider}: {status}"
+        );
+        assert_eq!(f.writes(), writes, "{provider}");
+
+        specgit::guard::install_with_executable(
+            &specgit::process::Process::default(),
+            &f.root,
+            false,
+            &delivery::executable::binary(),
+        )
+        .await
+        .unwrap();
+        fs::write(f.root.join("blocked.txt"), "blocked").unwrap();
+        git(&f, &["add", "blocked.txt"]);
+        let blocked = Command::new("git")
+            .current_dir(&f.root)
+            .args(["commit", "-q", "-m", "blocked by guard"])
+            .output()
+            .unwrap();
+        assert_eq!(blocked.status.code(), Some(1), "{provider}");
+        let stderr = String::from_utf8_lossy(&blocked.stderr);
+        assert!(
+            stderr.contains("merged request #41"),
+            "{provider}: {stderr}"
+        );
+        assert!(stderr.contains("--branch"), "{provider}: {stderr}");
+        git(&f, &["reset", "-q", "--", "blocked.txt"]);
+        fs::remove_file(f.root.join("blocked.txt")).ok();
+        fs::remove_file(f.root.join("dirty-after-merge.txt")).ok();
+
+        // The documented recovery still admits new work on a new selection.
+        let selected = f.run(&[
+            "issue",
+            "--create-labels",
+            "--branch",
+            "next",
+            "feat: next spec",
+        ]);
+        assert_eq!(selected["exit"], 0, "{provider}: {selected}");
+        let next_issue = checkpoint(&f)["issues"][0].as_u64().unwrap();
+        fs::write(f.root.join("next.txt"), "next work").unwrap();
+        git(&f, &["add", "next.txt"]);
+        let message = format!("next work\n\nIssue: #{next_issue}");
+        git(&f, &["commit", "-q", "-m", message.as_str()]);
+    }
+}
+
 #[test]
 fn a_checkpoint_without_its_recorded_request_is_never_retired() {
     let f = fixture("github");
